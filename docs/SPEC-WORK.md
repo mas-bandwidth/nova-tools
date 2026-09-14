@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 25, 2026-09-13)
+# nova-work — specification (DRAFT 26, 2026-09-14)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -47,6 +47,21 @@ validator* and *Cost*; her scoped clearances at draft 24 are folded as cleared w
 and her four inter-section questions are closed under *What this draft does not do*. Nothing of the
 COW root, the remove-settles-only-open rule, the revive-appends rule or the worked acceptance
 changes except where the bound changes its text, and each such place says so.
+
+**Draft 26 integrates Stella's two further companions, and it is the same integration as draft
+25's.** `docs/SPEC-WORK-PILOT.md` and `docs/SPEC-WORK-VALIDATION.md` at `81c2885` on
+`codex/work-closed-day-partitions` — the resident engine and roadmap parity, and the preservation
+and recovery acceptance — are folded **into this file**, for the reasons draft 25 gives and her own
+lock gate asks for: *integrate this companion with the main spec into one unambiguous revision
+before implementation approval*. Neither companion lands as a file; what each carries is below,
+her sections marked hers, and **where a companion and this document disagreed the older sentence is
+deleted rather than kept beside the newer one** — the six places are named in *What draft 26
+changed in the older text*. **Where a companion left a syntax or a protocol open, this draft closes
+it and says so**: every such decision is Rowan's, marked **(Rowan's decision, for review)** at the
+sentence that makes it, and listed together in *Additions of the authors'*. **Three words are
+fixed here and used nowhere else**: the letters are **C**, **O** and **W**; the set **O** is
+*open* and is never called *active*; and **ACTIVE**, in capitals, is Glenn's per-friend live-data
+node of *CONFIG and ACTIVE* below and is the only thing that word names in this document.
 
 **One recursive work set, and its root is COW: closed, open, working.** The root is `(root C
 O)` — **C** the closed work, **O** the open work — and **W**, the working view, is a predicate
@@ -232,8 +247,14 @@ session listening at that path (a Unix socket the session creates at start; no d
 and prints its one-line answer; a fresh CLI process is never a fresh parse. A reader who is
 not the coordinator reads a published snapshot with `--snapshot <path>` in place of
 `--session`, read-only, and its answers carry the snapshot's revision. The client is Go under
-this repository's conventions; the session's own language is the pilot's decision (Stella:
-*trusted implementation code may be Lisp*), and the version line is the client's; a session in another language answers `session
+this repository's conventions; **the session's own language is Common Lisp** — Stella,
+`docs/SPEC-WORK-PILOT.md` at `81c2885`, which supersedes *the pilot's decision* this sentence
+carried through draft 25: typed data, stable-id indexes, recursive policies and incremental
+updates live in one process — **and Lisp is not itself the complexity guarantee**: the maintained
+indexes and the bounded access of *Cost* below are, imported s-expressions stay restricted data
+and never reach `eval` or reader evaluation by *The data* above, and the engine's runtime
+packaging and its supported platforms are pinned and tested before any release. The version line
+is the client's; a session in another language answers `session
 status` with its own `SESSION OK … build=<identity>` field, so every running binary says
 which build it is. A session's identity, bounds, state, journal path, base revision and clip cadence are
 explicit at start and readable at any time (`session status`, whose `SESSION OK` carries
@@ -657,8 +678,13 @@ they are distinct kinds:
 
 - `:work-set` — a container. Its completion is its required children's completion; an empty
   required set is **never** done.
+- `:epic` — a container above features, one level of **Glenn's agreed hierarchy**
+  (repository → roadmap → epic → feature → subtasks, with sub-features and subtasks recursive
+  beneath). It is a `:work-set` by every rule; it is a kind of its own because **a row kind must be
+  queryable and never inferred from a title word** (Stella, `docs/SPEC-WORK-PILOT.md`).
 - `:feature` — a work-set whose completion is what a roadmap row counts; the unit of "green
-  feature cells / applicable rows".
+  feature cells / applicable rows". **A feature decomposes into sub-features recursively**, each a
+  `:feature` under it, and the counting unit of every rollup stays the one `unit=` names.
 - `:roadmap` — a typed view over its cells: `:axes` (ordered, named members), `:cells` mapping
   a coordinate to a `:ref`, `:scope-revision`, `:completion-policy` (`:all-required-features` is the only policy in this
   draft). A cell references a node; it never contains state of its own. An unknown axis member and a
@@ -666,8 +692,20 @@ they are distinct kinds:
   complete (5653990830). A cell may be marked `:out-of-scope` by a recorded scope event, which
   is distinct from unstarted and from unknown, and **an out-of-scope cell leaves that axis
   member's applicable rows** (5654160320: *fully green features / applicable features*).
-  **The members of a roadmap's first axis are its rows, and a row is a `:feature`**; the
-  members of every other axis are columns. Adding a column is an `:axis` scope event of the
+  **The members of a roadmap's first axis are its rows, and a row is a node of the roadmap's
+  declared `:row-kind`** — `:feature` by default, and `:epic` or `:work-set` where the roadmap
+  declares it, each with the `:aggregation` policy that says how a row of that kind rolls its
+  members up. **This amends draft 24's feature-only rule** (Stella,
+  `docs/SPEC-WORK-PILOT.md`: *amend draft24's feature-only first axis rule for explicitly declared
+  row kinds and their aggregation policies*); the kind is declared on the roadmap, read by rule 2,
+  and **never inferred from a node's title**. The
+  members of every other axis are columns. **The axis and cell layer is optional, and it is
+  optional whole**: a roadmap may declare `:axes ()`, in which case its rows are its declared
+  members in order, there are no coordinates and no cells, and **no synthetic cell is interposed
+  between a feature and its subtasks** — the optional split on a second dimension (a language, a
+  platform, a backend) is what introduces cells at all, and a roadmap that does not split has
+  none. A projection to a table needs an explicit two-axis selection, or fixed selections for the
+  further axes, and **a matrix is never silently flattened**. Adding a column is an `:axis` scope event of the
   roadmap and adding a row a `:discovery` one, each a scope revision by the delta table below;
   removing one is not
   completion.
@@ -796,9 +834,9 @@ no cell while its cancel is still the roadmap's event (Fable and Opus at 7472e54
 | `:settle` | **none** — it moves the item from O to C, and a member that has finished is still a member: what takes one out of a set is the `:remove`, `:cancel` or `:supersede` in the same envelope, by its own row above | none — the node's revision moves, no set does | `state --to done`, `event --kind cancel`, `event --kind supersede` and `node remove`, each inside its envelope, and never `event --kind settle`, which is exit 2 |
 | `:revive` | **none** — it moves the item from C back to O, at `:todo` by the transition table | none — the node's revision moves, no set does | `event --kind reopen` inside its envelope, and never `event --kind revive`, which is exit 2 |
 
-**A roadmap's required set is the members of its first axis whose feature is live** — live
+**A roadmap's required set is the members of its first axis whose node is live** — live
 meaning not removed, not cancelled and not superseded — **and the axis list is not the set**.
-Each row is the `:feature` whose completion that row counts; a row enters the set with the
+Each row is the node of the roadmap's declared `:row-kind` whose completion that row counts; a row enters the set with the
 `:discovery` an `axis --add` on the first axis writes; and it leaves the set, **while staying on
 the axis**, with the `:remove`, `:cancel` or `:supersede` of its feature, by the delta table
 above. **The two differ by exactly the rows that have left, and that is the design**: `axis`
@@ -1041,7 +1079,10 @@ strings and integers, by the reader's paragraph above — and C, O and W are der
 events the file already carries, which the `:settle` and the `:revive` below are.
 **Where the record quoted in this document says S it means O**; the quotations keep the word
 the record used, and *live rows* in *Counting* below is the roadmap denominator's own term
-and names no branch of the root; the word *active* names W's predicate and no set of rows.
+and names no branch of the root; the word *active* names W's predicate and no set of rows. **And `ACTIVE` in capitals is a third
+thing and the last one this document spells with those letters**: it is the per-friend live-data
+node of *CONFIG and ACTIVE* below, Glenn's own word for it, defined there once and never used of a
+branch, a row, a session state or a lease.
 **This is a partition and not a second ledger**: C and O hold
 the same nodes, the same events, the same evidence and the same ids this document already
 defines, told apart by one derived fact, and no verb, count, rule or file below is duplicated
@@ -1127,6 +1168,24 @@ never done** by the kinds above, so an empty container never settles by cascade 
 does not close a repository behind the team's back. A `:revive` cascades the same way in
 reverse: reopening one item returns its settled ancestors to O in the same envelope, because a
 container over open work is open (replay `containers-settle-with-their-members`).
+
+**A roadmap outlives the work that built it, and settling one closes no view.** A `:roadmap`
+settles with its members like any other container — the cascade above is not amended — but **a
+roadmap is a durable named view and a capability inventory, never a queue item that vanishes when
+its last task closes** (Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`). So **a roadmap's view
+record stays in the live snapshot's structure and never passes into the retention archive**: its
+stable id, its ordered axes and their members, its `:row-kind` and `:aggregation`, its cell
+mapping, its baseline and scope history, its projection targets and its publication receipts are
+retained whatever branch the roadmap is in and however old its work is **(Rowan's decision, for
+review** — the alternative was exempting `:roadmap` from the settle cascade, which would leave a
+view standing in O for ever and make `remaining` answer with work nobody has**)**. Opening a named
+roadmap is therefore an **explicit scoped query**, answered from that retained record plus bounded
+indexed reads of its members' closed rows — **never a load of C, and never narrowed by the default
+`[now - 24h, now)` window**, which bounds what a *closed-activity listing* opens and not what a
+named view may reach. **Completed rows stay in the table**: *remaining only* is an explicit filter
+and never a pruning, and retiring a row is a recorded scope decision that leaves every older
+revision's view reproducible (replays `roadmap-outlives-its-work`,
+`roadmap-opened-after-the-window`).
 
 **Settling is the record that the work ended and never a claim that it was verified.** A `:to
 :done` standing on unverified or stale evidence settles its item and still counts `unknown` with
@@ -1325,7 +1384,10 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   one feature holding twelve leaves is one discovery under either unit; `required=` is **always
   leaves**, the total required leaves under the scope, because it is the denominator of cell
   progress and cell progress has one grain; `green=`, `applicable=`, `rows=` and `baseline-rows=`
-  are **always features**, because a row is a `:feature` by the kinds above. So one line carries
+  are **always the roadmap's rows**, a row being a node of that roadmap's declared `:row-kind` by
+  the kinds above; **the line prints `row-kind=<kind>` beside them** so a reader never has to infer
+  what a row was, and `unit=features` is the label where that kind is `:feature`, which is the
+  default and was the only kind before draft 26. So one line carries
   four named grains and guesses at none (Opus at 7472e545, 2026-09-13: one `unit=` labelled a
   `percent` line that printed feature counts and a leaf count together; Fable and Opus at
   efc26a2e, 2026-09-13: `since-baseline=` was promised in `unit=` and defined in members, so a
@@ -1351,6 +1413,19 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   `rows=`, `applicable=` and every percentage fold both branches, because a member that has
   finished is still a member and a denominator that dropped it would be the silent denominator
   of 5654160320 arriving by a new road.
+- **`|O|` is a counter carried by every accepted mutation envelope and is read, never computed**
+  (Stella, `docs/SPEC-WORK-PILOT.md`). The root's open-item count, and the per-repository and
+  per-container counts beneath it, are updated by the same envelope that moves an item, including
+  the whole of a settle or revive cascade, before its `OK` line is printed; **a resident
+  current-revision `|O|` query reads the counter and triggers no rollup, no scan, no parse and no
+  replay**, and a test that mutates and then asks repeatedly asserts zero visits, zero parses and
+  zero replays and compares against an independent full count after a close, a reopen and an
+  import replay (replay `open-count-is-read-not-computed`). **The counters count canonical item ids
+  once** and exclude references, attempts and history records; **the count's unit and revision are
+  printed with it**; and **an open linked issue count and an open leaf-task count are separate
+  counters, neither of which is silently labelled `|O|`**. Startup and recovery may reconstruct the
+  counters from the canonical state — an ordinary query may not — and **no promise of constant time
+  is made for an arbitrary new filter**, only for the counters this bullet names.
 - **Future cannot lower the active percentage; a deferred item cannot raise the completed
   count** (5653970526). Both are tests.
 - **Unknown is a count of its own**, printed on every answer; `done-unverified=<n>` is the
@@ -1375,7 +1450,7 @@ from the same rows, it opens the day partitions its range intersects and no othe
 `pages=<n>` — the index and segment pages this answer read — so the cost of reaching back is on
 the line the answer is printed on and never hidden in it. **Per ask, named in brackets in the
 grammar and by the table here, so the table can never promise a field the grammar lacks**:
-`percent` adds `green=`, `applicable=` and `baseline-rows=`; `who` and `stale` add `held-not-worked=`,
+`percent` adds `green=`, `applicable=`, `baseline-rows=` and `row-kind=`; `who` and `stale` add `held-not-worked=`,
 `unowned=` and `responsible=`; `done`, `remaining`, `size`, `stream` and `under` add
 `responsible=`; `stream` adds `leases=`, the live lease count its row in the table promises.
 **A listing that may print a settled item prints the disposition row**, which is `done`,
@@ -1409,6 +1484,10 @@ transition log is not a counting row. Every other ask prints the counting row. A
 | `under --repo <owner/name> --category <label>` | compact listing of nodes by category with state (5654164074; taxonomy TBD); under `--branch root` it spans C and O in one answer, one row per id, which is the worked acceptance below |
 | `stale --window <dur>` | leases past deadline or past the heartbeat window, grouped by holder |
 | `handoffs --since <revision>` | the lease transition log |
+| `roadmap --node R` | one named roadmap opened whole: its axes and ordered members, its `:row-kind` and `:aggregation`, its cell mapping, its baseline and scope history, its projection targets and publication receipts, and one row per member with its current verification state — from the retained view record plus bounded indexed reads, **never a load of C and never narrowed by the default window** |
+| `friends` / `friends --owner <name>` | every known friend, idle, resting and unavailable ones included, with status, observation age, working count and the pending and acknowledged assignments; expanding one friend costs `O(k)` in its k tasks and answers *friend, task, executing model* directly |
+| `models` / `models --category <task-class>` | the shared model catalog by stable model and version identity, with declared capability, friend assessment and measured result kept apart, each with its observation age, sample count and uncertainty, and bounded drill-down to the receipts |
+| `ready --node X` | the work that can actually be started under X, derived from dependencies, agreed scope, acceptance readiness, ownership, availability and resource limits; **every row that cannot proceed prints its exact reason and who can resolve it**, because waiting is not execution (replay `ready-names-the-blocker-and-the-resolver`) |
 
 ### The worked acceptance: findings per repository across C and O *(Glenn's own query, 23:36Z)*
 
@@ -1549,10 +1628,28 @@ nova-work session replay --session <path> --from <path> --as <name> [--max <n>]
 nova-work session status --session <path>
 nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
 nova-work session handoff --session <path> --to <name> --git-timeout <seconds> [--attempts <n>]
+nova-work operation status  --session <path> --id <id>
+nova-work operation list    --session <path> [--max <n>]
+nova-work operation wait    --session <path> --id <id> --timeout <duration> [--after <cursor>]
+nova-work operation cancel  --session <path> --id <id> --reason <text>
+nova-work checkpoint list    --session <path> [--max <n>]
+nova-work checkpoint create  --session <path> --as <name> --reason <text>
+nova-work checkpoint verify  --session <path> --id <id>
+nova-work checkpoint restore --checkpoint <path> --into <path> --max-bytes <n> --max-depth <n> --max-nodes <n>   (isolated and read-only: takes no ownership, dispatches nothing, replays no message)
+nova-work checkpoint compare --checkpoint <path> --against (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) [--max <n>]
+nova-work undo-plan      --session <path> --request <id> [--max <n>]
+nova-work undo           --session <path> <write flags> --request-of <id> --reason <text>
+nova-work redo-plan      --session <path> --request <id> [--max <n>]
+nova-work redo           --session <path> <write flags> --request-of <id> --reason <text>
+nova-work friend         --session <path> <write flags> (--register <name> | --retire <name> | --role <name>=<role>[:<scope>] | --participation <name>=<yes|no|withdrawn> | --capability <name>=<capability-id> --group <child|swarm|local|one-shot> --limit <n> | --limit <name>=<n>) --reason <text>
+nova-work config         --session <path> (--request <name> --base <hash|-> | --export <name> --into <path> | --intake --from <path> <write flags>) [--max <n>]
+nova-work model          --session <path> <write flags> (--register <id> --provider <name> --route <text> --billing <metered|subscription|local|unknown> | --rate <id>=<pricing-id> --effective <stamp> --source <pointer> | --evidence <id> --task-class <label> --result <pointer> --samples <n>) --reason <text>
+nova-work observe        --session <path> <write flags> --friend <name> (--state <awake|resting|unavailable|unconfirmed> --source <pointer> | --attempt <id> --observed-model <id> --bench <name> --usage <pointer>) --reason <text>
 nova-work clip           --session <path> --as <name> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
 nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]
 nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
 nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
+                         (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready)
                          [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>]
                          [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--max <n>]
                          (who and stale: --window <duration>, required; percent: --axis <member>, required;
@@ -1783,6 +1880,358 @@ results after a change. Adopt the abstraction only if it reduces implementation
 or coordination cost without obscuring acceptance evidence.
 
 
+## The engine and its client *(shared; Stella's `docs/SPEC-WORK-PILOT.md` at `81c2885`, integrated; the wire schema is Rowan's)*
+
+**The engine is the resident Common Lisp session of the execution model above; the Go CLI is a
+thin client of it over one explicitly named local Unix-domain socket.** The engine owns the
+canonical state, the journal, the indexes and the mutation ordering; **starting a CLI process
+reloads nothing**; the session and journal locks and the coordinator fencing of the execution
+model are unchanged. **The socket and the directory that holds it belong to the account that runs
+the session** — the directory created `0700` and the socket `0600`, both owned by that account —
+**there is no network listener and no remote evaluation protocol anywhere in this scope**, and
+**reaching the socket is not a grant of coordinator authority**: every request still carries its
+author, its request id and its expectation, and the fencing rules still decide.
+
+**The wire is a versioned, bounded, length-prefixed UTF-8 JSON protocol, and this paragraph pins
+it** (Stella's requirement; **the exact schema below is Rowan's decision, for review**, since her
+text names the properties and leaves the spelling open). One message is a **4-byte big-endian
+unsigned length** followed by that many bytes of one UTF-8 JSON object; a frame past
+`--max-frame-bytes` (defaulting to the session's `--max-bytes`) is refused with one framed error
+and the connection is then closed, never truncated and never partially applied. **Every integer
+the protocol carries is a JSON string of decimal digits — ids, revisions, counters, byte counts
+and token totals alike — and the protocol carries no JSON numbers at all**, because an IEEE-754
+double rounds silently above 2^53 and a usage total is exactly where that bites; a reader that
+meets a JSON number refuses the frame. **Every timestamp is RFC 3339 in UTC with a trailing `Z`**,
+the same spelling `:stamp` uses, never an offset, never a local zone and never an epoch count.
+**An absent key and a JSON `null` both mean *not given*, while an empty string and an empty array
+are values** — the same distinction the payload digest's `()` makes, so the two serializations
+agree. A request is `{"op": "<verb>", "request": "<id>", "as": "<name>", "expect": "<rev>", "now":
+"<stamp>", "max": "<n>", "deadline": "<stamp>", "args": {…}}` with `op` a **typed operation name
+and never an executable form**, no Lisp, no shell, no path the engine did not resolve itself. A
+response is `{"ok": true|false, "exit": "<0|1|2>", "lines": [ … ], "rev": "<n>", "pushed":
+"<rev>|-"}`, where **`lines` are exactly the one-line answers of *Output grammar* below,
+verbatim** — so the grammar has one definition and the CLI prints what it was handed rather than
+formatting a second time. **Versions are negotiated before any request**: the client's first frame
+is `{"op": "hello", "protocol": ["1"], "client": "<build identity>"}` and the session answers with
+the one version it will speak or refuses, naming what it supports, and closes; an unsupported
+version fails clearly and never degrades into a guess. **Restricted s-expressions remain the
+durable work-data format** — JSON is the wire and never the store (replays
+`wire-integers-are-strings`, `protocol-version-negotiated-or-refused`).
+
+**Durability across the wire is the journal's, not the connection's.** Mutations enter the single
+writer's queue; the accepted envelope is journaled and applied before its success response.
+**A socket disconnect is never a rollback and never a cancellation**: the work either was accepted
+or was not, and the caller finds out by asking. **A retry with the same request id and an identical
+body is answered with the recorded disposition; the same id with different arguments is refused**,
+by the dedup predicate of *Retention* above and its bounded indexed pages — **never by an unbounded
+resident map of request ids**. **The local durable revision and the last shared Git revision stay
+two fields in every response**, `rev=` and `pushed=`, because *accepted here* and *shared there*
+are two facts and one number for both is how a coordinator loses work (replay
+`disconnect-is-not-a-rollback`).
+
+**Slow work returns a durable operation id, and the control plane never waits behind it.** A quick
+query or mutation returns its bounded result. A long operation — a source capture, an import
+staging, an export, a clip's transport — returns **an operation id and a state at once**, and the
+CLI may exit while the work continues: `nova-work operation status --id <id>`, `operation list`,
+`operation wait --id <id> --timeout <duration> [--after <cursor>]` and `operation cancel --id
+<id>`, each bounded and capped like every other listing. **Waiting is an event cursor and a bounded
+block, never a model asking again in a loop** (a poll loop is a whole agent per tick, which the
+record already paid for). **A wait that times out leaves the operation running**; a completed
+result is retrievable by its id afterwards; **a cancellation is a request with its own
+acknowledgement and its own final disposition**, and it can neither erase an accepted mutation nor
+undo an external effect that may already have happened. **Slow I/O stages its inputs and results
+outside the mutation loop** and only the owning engine admits a validated result at an expected
+revision, so a concurrent capture never becomes a second writer; queues, jobs, staged bytes and
+retained results are bounded by explicit limits, accepted work stays recoverable, and **recovery
+reconciles interrupted operation ids and their external outcomes before anything is retried**.
+**No unbounded scan and no network wait may hold the mutation loop**: it is paginated or staged,
+and status and cancellation responsiveness are measured under load (replays
+`operation-survives-the-client`, `cancel-is-a-request-not-an-erasure`,
+`status-answers-while-io-runs`).
+
+**Mistakes are reversible by appending, never by erasing.** `undo-plan` and `undo`, `redo-plan` and
+`redo` name **accepted request ids**, and each reversible verb records enough preimage and
+provenance for the engine to build a **typed compensating envelope**: the original event stays
+exactly where it is, the reversal is appended with its lineage, and **redo reapplies the intent
+against current preconditions rather than deleting the undo**. A plan is revision-bound and shows
+the nodes, dependencies, counters, verification and assignment effects it would move; **a stale or
+conflicting plan refuses atomically**, naming what changed, and is never half-applied. **Accepted
+evidence and source and accounting receipts are historical facts**: an undo may supersede what they
+currently support and can never erase that they happened. **A sent message, a paid execution, a
+publication and a source deletion are not undone by rewinding local state** — they are reported as
+external effects with their own compensating workflow, a cancellation stays a request until its
+outcome is known, and **a generic undo of an irreversible or uncertain operation is refused**.
+**Resetting shared Git history is never the undo mechanism** (replays `undo-appends-and-preserves`,
+`redo-refuses-a-stale-plan`, `undo-refuses-an-external-effect`).
+
+**The verb families below are a coverage requirement, and the grammar above is the one spelling.**
+Every canonical field maps to an owning typed mutation or is explicitly marked derived or
+immutable; **no generic set-field escape hatch may bypass an invariant**; each verb states its
+argument types, prerequisites, read and write set, invalidation and counter effects, authority and
+fencing checks, all-or-none boundary, idempotency, its success, refusal and unknown outcomes, and
+its evidence receipt; a multi-node change is one atomic validated envelope; and **a dry run
+produces a revision-bound plan and accepts no mutation**, an applied stale plan revalidating and
+refusing its conflicting assumptions. **No parallel aliases**: one name per operation, and nothing
+that acquires a different meaning under a second spelling. **Import is not overloaded with
+deletion, completion is not overloaded with retirement, and a correction is not proof that a worker
+received it.**
+
+| data or action | required coordinator operations |
+| --- | --- |
+| session and durability | start, status, clip, checkpoint list/create/verify, isolated restore and compare, export/replay, stop, fenced handoff |
+| reversible mistakes | undo-plan/undo and redo-plan/redo of named requests; appending compensating history and refusing conflicting or irreversible effects |
+| work structure | add, edit permitted metadata, move/reparent, decompose, link/unlink, require, retire; stable ids and historical scope preserved |
+| scope and dependencies | baseline, discovery, dependency add/remove, prioritise, defer, cancel, reopen, supersede |
+| assignments and execution | offer, acknowledge/decline, assign/responsible, take/heartbeat/release, attempt/result/usage intake, correction, pause/stop/reconcile |
+| evidence and completion | criteria add/change/retire, source revision, attest/evidence, review/finding/disposition, verify, settle/revive under their explicit guards |
+| roadmaps | create/edit view, axes and members, cells and references, projection targets and policy, query/render/check; no duplicated task state |
+| friends and CONFIG | register/retire, role and participation changes, capability and limit changes, config request/export/validated intake |
+| ACTIVE | observation and availability intake, current attempts and pending offers, return reconciliation; occupancy derived from execution records |
+| models and prices | register/version, evidence and suitability updates, route and rate revisions with provenance; historical receipts immutable |
+| issue correspondence | inventory, read-only capture and plan, non-destructive import, reconcile, archive/export/restore, a separately selected absorb or external update |
+| queries and operations | indexed counts, focus and subtree, ready and blockers, friend/model/cost/history views, bounded operation status/wait/cancel |
+
+**Every normal coordinator workflow runs through these public verbs** — no hand-edited Lisp, no
+hand-edited JSON, no hand-edited journal record and no hand-edited derived cache — and the
+implementation plan names the missing verbs and the conflicting existing semantics **before the
+lock gate below** (replay `every-field-has-an-owning-verb`).
+
+## Friends, CONFIG and ACTIVE *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
+
+**Nothing in this section names a friend, a bench, a repository or a house.** Every identity below
+is configuration a team supplies; **no friend name, no model name and no role is hardcoded into
+nova-work**, and a tool that shipped one would be specific to whoever wrote it (Glenn, and Stella's
+own rule: *team-specific role records belong in team configuration, never hardcoded into the
+generic tool*). The examples in this document are marked as invented where they appear.
+
+**The coordinator's fast in-memory tracker of who has what is nova-work's, and it is indexes, not
+a second store.** A stable friend identity index and a reverse assignment index from an identity
+to canonical task ids live in the same resident model, under the one writer and the one journal;
+**rereading the bus is not the query path**. Configuration, assignments and observation receipts
+persist in the checkpoint; time-sensitive availability is revalidated on recovery. A `friends`
+section names **every known friend, idle, resting and unavailable ones included**, with the
+`working` task references and the pending and acknowledged assignments under each. **Those
+references are references**: they never become second containment parents, never duplicate a
+completion or a cost record, and never inflate `|O|` or a roadmap's completion. A direct lookup
+returns a friend's status and working count in constant time; expanding one friend's list costs
+`O(k)` in its k tasks and is capped and counted like every listing.
+
+**CONFIG and ACTIVE are two sections and the difference is how often they change** (Glenn's own
+separation). **CONFIG** is each friend's mostly constant capability and configuration: selectable
+models, the maximum number of child agents, each swarm with its models and slot limits, local-model
+routes, one-shot launchers, agreed roles and budget policies, each with provenance and scope. It
+is updated **only on a meaningful configuration change** and is never rewritten by a heartbeat or a
+token sample. **ACTIVE = active data per friend** — Glenn's words, and the one thing this document
+spells with that word: what each friend is doing now, the tasks and the children, swarms, local
+runs and one-shots executing them, the chosen and the observed model, the bench, the handle, the
+status, the timestamps, the tokens and the costs. **ACTIVE is variable operational data and is
+never called configuration**; it references CONFIG's stable identity and revision rather than
+copying a definition into every activity record; and its updates and observations are journaled and
+retained under the event and accounting contracts this document already has.
+
+**The coordinator is a friend in `friends` and is tracked by the same indexes as everyone else** —
+her or his own tasks, executions, model, bench, usage and availability, through the same queries.
+**Coordinator ownership is a role with the single-writer and fencing rules of the execution model,
+and never an exemption from attribution or accounting.** A role transfer moves that authority; it
+**merges no two friend identities and erases neither friend's historical work**.
+
+**A role is configured, never inferred, and a model's capability never cancels a friend's agreed
+limits.** CONFIG's role records carry agreed roles, preferred participation and reserved duties
+with their provenance and scope, and the configuration is **expressive enough for the three shapes
+the record asks for**: a role reserved for **essential security work only** on a paid plan, so
+routine work never spends it; a **specialised different-perspective role on a reserved plan**,
+asked at decision points and not for receipts; and **agreed participation**, which is a recorded
+consent with a scope and a revision rather than a capacity reading. **Strengths and weaknesses
+belong to the model catalog below and never to a second per-friend rating system**; a friend's
+agreed limits are never raised silently at any level (replays `roles-are-configured-not-inferred`,
+`reserved-role-is-not-spent-on-routine-work`, `no-friend-name-in-the-tool`).
+
+**Configured capability, observed fact and current free capacity are three fields and never one.**
+CONFIG holds what a friend *may* do; **observations** hold last contact and its source, explicit
+rest or return, rate-limit or credit unavailability, and pending offers, acknowledged assignments
+and live leases. **Missing contact is unknown and stale capacity — never proof of failure and never
+proof of consent** — no secret is stored, and **willingness is never inferred from configured
+capacity**. Each friend may expose four execution capability groups — **child agents, swarms, local
+models and one-shots** — each entry with a stable capability id, its source, its last-verified
+stamp, its availability and its budget or permission constraints, and with **declared support,
+successful runtime verification and current free capacity as three separate fields**: a catalog
+entry is not evidence of a live child or of free credits. **Actual children, swarm jobs, local runs
+and one-shots are execution instances** linked to their friend, capability, canonical task and
+attempt, retaining requested and observed model, bench, status, deadline, provider handle and usage
+receipts; **nested delegated executions keep their parent lineage without counting one attempt
+twice** in a friend's, a pool's or a task's totals; and **one-shot names a launch shape, not one
+model call**.
+
+**Dispatch, delivery, acknowledgement and accepted ownership are four facts.** A dispatch through
+the bus or a worker launcher records intent and a stable request identity; **a pending offer
+reserves only explicitly declared capacity until it is reconciled**, and **a timeout alone never
+blindly launches a duplicate while the old worker may still be running**. A correction or a
+reassignment retains lineage and reconciles the cancellation, the lease and the side-effect
+authority under the fencing rules above. **An imported message is data**; what changes the set is a
+validated coordinator verb applied to it. **The requested model and the observed model are two
+fields and unknown stays unknown**: a friend's usual model is not proof of the model that executed
+a delegated task, concurrent attempts keep separate model and usage attribution, and **a retry never
+overwrites the attempt before it**. The compact view answers *friend, task, executing model*
+directly from these records and shows delegated execution as delegated (replays
+`dispatch-ack-and-ownership-are-three`, `requested-model-is-not-observed-model`,
+`a-retry-does-not-overwrite-its-attempt`).
+
+**Availability is observed, and silence is a question rather than an answer.** ACTIVE records
+whether a friend is confirmed awake, explicitly resting, unavailable on a confirmed plan, credit or
+provider limit, or unconfirmed and unreachable, each with its source and last-contact stamp;
+remaining quota and expected return are kept **only where they were observed**, and neither an old
+heartbeat nor an elapsed estimate proves a current one. **Explicit rest is respected.** A
+configured silence threshold — `--silence-ping <duration>`, **a team's configuration and not a
+number this tool believes in** — triggers **one bounded availability ping** through the existing
+wake protocol unless the friend is resting or is reserved from routine wakeups; a configured answer
+window then marks that capacity **unavailable for scheduling with reason `unconfirmed`**, which
+**asserts neither sleep nor exhausted credit without evidence**. **A failed probe is unresolved
+delivery and not a failed friend.** A return reconciles outstanding assignments and observed
+capacity before any new dispatch. **The same rules apply to the coordinator**, and an automatic
+role transfer still needs fencing and recovery and never a stale-contact test alone (replays
+`silence-is-a-ping-not-a-verdict`, `explicit-rest-is-not-pinged`, `return-reconciles-before-dispatch`).
+
+**Configuration is exchanged in bounded pieces and never as prose every poll.** A request names a
+friend and the last-known config hash and revision; the answer is **`UNCHANGED` with that
+identity** where they are equal, and otherwise a validated manifest or a **bounded delta against
+the exact named base**; an unknown base asks for a bounded full manifest. **A changed fragment is
+applied atomically after schema, identity and hash validation, by the coordinator, and a message
+never executes imported code.** A large manifest uses explicit bounded parts with a completeness
+hash, and **a partial config is never admitted as a complete replacement**. Each manifest records
+its schema version, its stable friend, capability and route ids, its revision, its content hash and
+its observation provenance; each executable model route gives its provider, its exact model or
+alias with the resolved identity, its harness or endpoint class, its billing mode (metered,
+subscription, local or unknown), its pricing reference and its effective stamps. **No API key, no
+credential value and no secret-store content is in a manifest**, and sharing respects the audience
+the configuration names (replays `unchanged-config-is-one-bounded-answer`,
+`an-invalid-delta-leaves-the-old-config`, `a-partial-manifest-is-refused`).
+
+**What this section does not decide, and must not.** Whether friends participate in swarms at all,
+or whether pools hold model-only workers, is **an open design decision to be asked and recorded,
+not settled here**: a swarm is an execution capability holding jobs and **is neither a friend nor a
+model**; a swarm labelled with a friend's name does not make its workers that friend, carry that
+friend's continuity or speak for them; a model-only worker needs no invented friend identity; and
+the friend responsible for a pool and the actor executing a job are two references that are never
+double-counted. **A friend's own disposition is the only record of that friend's consent** — a
+worker's reply and a silence are not it — and the friend whose participation Stella's companion at
+`81c2885` names must be asked directly. **Until it is resolved, identity provenance stands as it is
+and no historical actor is renamed**; if model-only pools are chosen, the capability carries a
+model or route label and every past source label and attribution is preserved; if participation is
+supported, it needs an explicit participation record with its scope and revision and a withdrawal
+behaviour that reconciles running jobs. This is in *What this draft does not do* as well, so it is
+not read as settled.
+
+## Models, prices and what they are evidence of *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
+
+**A shared `models` section is keyed by stable model and version identity, with provider route and
+alias mappings where they differ**, and friend CONFIG **references** those records rather than
+repeating a description in every pool. Each carries concise strengths, limitations and
+task-suitability notes, supported modalities, tool and harness needs, context and output
+constraints, and a pricing reference. **Declared vendor capability, a friend's assessment and a
+measured result are three separate fields**, and **unknown or outdated evidence never hardens into
+an established strength or weakness**.
+
+**An observation carries its workload and revision**, the model, provider and harness
+configuration, the accepted quality and verification outcome, the operational tokens, the review,
+retry and correction overhead, the cost and the wall time, with its date, source, sample count and
+uncertainty. **A failed attempt is evidence and is not a verdict on a model's or a friend's
+worth**; a change of version, route or configuration **does not inherit the old conclusions**; and
+**no numerical ranking is published from a handful of unmatched tasks**. Compact suitability
+summaries are indexed by task class and capability with bounded drill-down to the original
+receipts.
+
+**A pricing record is immutable by content identity** and states its currency, its unit scale (a
+price per million tokens, say), its separate input, output, cache-write and cache-read rates, and
+its treatment of reasoning tokens, saying whether cache and reasoning counters are inside the
+parent totals; tiers, long-context thresholds and batch or discount conditions are explicit where
+they apply. **A missing or unsupported dimension is unknown and never zero.** **Measured provider
+cash charges, estimated marginal cash and virtual reference token cost are three separately
+labelled values**: a subscription does not make reference cost zero, exhausting an allowance or
+paying overflow changes whether a route is usable under its policy, and local inference counts its
+tokens with a **declared API charge of zero** while any hardware or energy cost is a separate model.
+**Live remaining quota is an observation and not a CONFIG edit.** The coordinator resolves a rate
+reference once, caches it by immutable identity, and computes comparable costs mechanically from
+retained source-normalised usage; **every execution and every estimate pins its configuration and
+pricing revision**, so an old estimate stays reproducible when a rate changes, and **a price
+refresh is a meaningful config change with its source and effective time and never a silent edit to
+a historical receipt** (replays `pricing-is-pinned-by-revision`, `unknown-price-is-not-zero`,
+`subscription-is-not-free-reference-cost`, `local-tokens-cost-zero-api`).
+
+**These facts inform a coordinator and grant nothing.** They combine with availability, actual free
+capacity, prerequisites, agreed limits and cost policy to prefer a capable economical route by
+**total operational cost for accepted work, reviews and rework included, never token price alone**,
+while keeping specialised perspectives and security roles available where they are needed.
+**Routine scheduling is automated only under an explicit policy and measured real-work results**,
+and **no model profile grants access, execution authority or capacity by itself.**
+
+## The hierarchy, the table and the roadmap's own record *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
+
+**Glenn's hierarchy is repository → roadmap → epic → feature → subtasks**, with sub-features and
+subtasks recursive beneath, and it is **stored and queried rather than inferred by a renderer from
+a name**. Optionally a feature splits on another named dimension — a language, a platform, a
+backend — and **that optional dimension is what introduces cells**; without the split there is no
+mandatory synthetic cell between a feature and its subtasks. A table projection **selects** rows and
+an axis from this durable hierarchy and **copies no work**; a cell references its canonical target;
+and **W selects the leased open execution items beneath the selected feature or cell and is not
+another level of ownership**. Epics, features, sub-features and tasks are typed canonical work
+nodes by *The data* above; an implementation may realise epic and sub-feature as named container
+policies, but **their meaning and their counting unit stay explicit and queryable**.
+
+**A feature's implementation record and its acceptance record are two records and both are joined
+by stable id.** The first links the source repository, the implementation commit or pull request
+and the relevant paths or symbols; the second names the criteria, the tests or assertions, the
+reproducible invocation and configuration, and the retained result receipts **at exact source
+revisions**. **A file name and a green aggregate badge prove nothing**, and no renderer owns a
+second verdict.
+
+**Historical delivery and current verification are two questions and this document keeps both.**
+When code, criteria or dependencies change, the past completion and its receipts are retained, the
+affected current-verification summaries are invalidated, and the answer **says a recheck is
+needed** — it does not erase history, claim an old test ran on new code, or silently reopen a
+closed task because evidence went stale. **A confirmed regression creates linked open repair work**
+under the ordinary policy. **A change outside a feature's declared proof scope invalidates no
+unrelated receipt without a dependency reason**: provenance and scope decide what is still reusable
+(replays `historic-tick-survives-a-source-change`, `regression-opens-repair-work`,
+`unrelated-receipts-stay-reusable`).
+
+**The table's display is Glenn's and is locked.** Rows are the roadmap's rows and columns are the
+selected axis members; **the status cells are centred**; **a tick only for fully verified and an X
+for every other state**; a percentage summary shows `z%` only. **Partial and unknown work is
+preserved internally** and is reachable by drill-down, which separates *missing*, *partial* and
+*stale*; **each column's percentage is fully verified applicable feature cells over applicable
+feature rows and never an average of subtask percentages**, by *Counting* above; **an empty
+denominator stays explicitly undefined**; discoveries append visibly and preserve the baseline
+membership; and **a scope removal can never wear completion's clothes**.
+
+**One renderer, two modes, byte-identical output.** A **read-only Markdown mode** prints the
+selected roadmap's table so a coordinator can paste it without writing a file or asking a model to
+recompute a cell, and the **file mode** writes the same bytes into a marked region — the same
+renderer, rendering from **one captured work, evidence and scope revision whose provenance is in
+the receipt**. The file mode **changes only the selected marker region**, refuses a missing,
+duplicate or reversed marker pair, writes atomically and **preserves every other byte**; a check
+mode reports drift and writes nothing; and **rendering into a repository is not permission to
+commit or push it**, existing working-tree edits being respected. **Requiring the two modes to be
+byte-identical for one projection and revision is a test**, shared prerequisites and private-data
+filtering included (replay `chat-and-file-render-are-byte-identical`).
+
+**A projection's target is stored view metadata, not a remembered command line.** Each configured
+projection records its target repository and path, its marker pair and its display policy as
+**non-executable** metadata on the roadmap, resolved **only within explicitly configured permitted
+target roots**; the target state and the publishing receipts are stored **apart from the
+authoritative progress data**; and **a missing mapping or a conflicting change is an explicit
+refusal and never a guessed destination** (replay `render-refuses-a-target-outside-its-roots`).
+
+**Every capability the fixed-table prototype has is kept, and its two known defects are fixed
+rather than copied.** Kept: bounded restricted-data validation; the duplicate, dangling and cycle
+checks; required-work rollups; exact roadmap selection; Unicode-safe marker replacement;
+deterministic rerendering; drift checks; refusal of empty and whitespace-only evidence; and no
+sentinel collision at a literal end of file. Fixed as production work: **the quadratic
+descendant-set** and **the pre-parse depth gap** — *copying the prototype verbatim is not
+completion*. Derived cell and column summaries are cached and the affected references invalidated
+after a mutation, rendering costs the selected output's size, and **the whole table is never
+claimed constant-time when it holds many cells**. Real operational token use is measured before and
+after adoption at equal report quality, with implementation tokens sunk and excluded.
+
 ## The validator *(Rowan; every rule is a hurt already paid)*
 
 The validator is one set of rules run two ways: **whole**, at session load and at every clip,
@@ -1810,7 +2259,8 @@ it names), refusing the event at exit 1 with the finding's line and changing not
    different answers and a validation that reported neither would be claiming every rule valid
    with its history missing (Stella at e79847fb, W1) (replay `rule-2-unavailable-is-not-green`); and, **for a first-axis
    member that is in its roadmap's required set**, a member naming nothing, or naming a node
-   that is not a `:feature`, is the same finding, because such a member is counted by `rows=`
+   that is not of its roadmap's declared `:row-kind`, is the same finding, because such a member
+   is counted by `rows=`
    and a mistyped or wrongly typed row was a phantom in the denominator that no rule refused
    (Opus at 7472e545, 2026-09-13). **What this rule checks for a first-axis member is the
    roadmap's required set and never the axis list**, so **a member whose feature has been
@@ -1966,7 +2416,12 @@ current state from the journal is one pass at load, O(E_log), and incremental th
 A full validation or fold visits every node and every edge once: O(V+E), with a visited set
 for shared subgraphs, and detects cycles in the same walk. Counts roll up bottom-up over the
 containment forest in O(V), cached per node keyed by its scope revision, the journal position
-and the verification cache's revision, since a `verify` pass changes which done counts as done. **No transitive descendant set is materialised anywhere**; an ad hoc set query
+and the verification cache's revision, since a `verify` pass changes which done counts as done.
+**The root and container open-item counters are the exception and are maintained on the write
+path**, by the *Counting* bullet above: a mutation pays for the ancestors it touches and `|O|` is
+then a read, so the cost of asking how much is open does not grow with the set — which is the one
+number a coordinator asks for most often and the one a lazy rollup would make expensive exactly
+when the set got large. **No transitive descendant set is materialised anywhere**; an ad hoc set query
 walks the reached subgraph once, O(V_reached + E_reached), when it is asked. Propagation over
 the dependency DAG is one affected topological pass, never a whole-S fixed point (Stella,
 *Reusable recursion*). **These bounds are the resident graph's only**: fetching evidence is
@@ -1981,6 +2436,7 @@ chain, high fan-out, and on one multi-command session.
 ## Output grammar
 
 Every line's first token is the verb's (`SESSION`, `EXPORT`, `REPLAY`, `HANDOFF`, `CLIP`,
+`OPERATION`, `CHECKPOINT`, `UNDO`, `REDO`, `FRIEND`, `CONFIG`, `MODEL`, `OBSERVE`,
 `WORK`, `VERIFY`, `QUERY`, `RENDER`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
 `RESPONSIBLE`, `ACCEPT`, `SOURCE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`,
 `ATTESTED`, `STATE`, `CORRECT`, `EVENT`), the second is `OK` or `FAIL`, `RACED` for a push the base predicate
@@ -1991,8 +2447,9 @@ success. Every `OK` line ends `emitted=<bytes>`. Every mutation's `OK` line carr
 event's id, its request id, the session's local revision after it (`rev=<n>`), and
 `pushed=<rev|->`, the clipped revision, the same number as the last `CLIP OK`'s `pushed=`;
 `SESSION OK` is one shape, printed by `session start`, `session status` and `session stop`
-alike, and its `state=` reads `live`, `fenced` or `red`: *active* is W's word in the root
-section above and names no session state here.
+alike, and its `state=` reads `live`, `fenced` or `red`: lowercase *active* is W's word in the
+root section above, `ACTIVE` in capitals is the per-friend live-data node, and neither names a
+session state here.
 
 ```
 SESSION OK session=<path> owner=<name> generation=<n> state=<live|fenced|red> until=<stamp> file=<path> base=<sha> journal=<path> events=<n> pending=<n> pushed=<rev|-> nodes=<n> edges=<n> parses=<n> replays=<n> every=<duration> skew=<duration> clip-every=<duration> clip-after=<n> retain=<duration> index-cache=<n> page-bytes=<n> page-records=<n> closed-window=<duration> max-bytes=<n> max-depth=<n> max-nodes=<n> boundary=<rev> findings=<n> build=<identity> emitted=<bytes>
@@ -2016,7 +2473,7 @@ WORK FAIL nodes=<n> findings=<n> shown=<n> expired=<n> escalated=<n> stale=<n>
 VERIFY OK pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> pushed=<rev|-> emitted=<bytes>
 VERIFY ROW <event-id> pointer=<p> verdict=<verified|unverified|stale> at=<stamp>
 VERIFY FAIL pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> pushed=<rev|-> shown=<n>
-QUERY OK ask=<kind> scope=<rev> membership=<rule> branch=<open|closed|root> unit=<unit> source=<sha|-> freshest=<stamp|-> done=<n> done-unverified=<n> unknown=<n> deferred=<n> cancelled=<n> superseded=<n> stale=<n> required=<n> since-baseline=<n> private=<n> open=<n> closed=<n> gap=<n> [from=<stamp> to=<stamp> closed-in=<n> settles-in=<n> revives-in=<n> items-in=<n>] [green=<k> applicable=<n> baseline-rows=<n0>] [held-not-worked=<n> unowned=<n>] [leases=<n>] [responsible=<name|->] pushed=<rev|-> rows=<n> shown=<n> pages=<n> parses=<n> replays=<n> emitted=<bytes>
+QUERY OK ask=<kind> scope=<rev> membership=<rule> branch=<open|closed|root> unit=<unit> source=<sha|-> freshest=<stamp|-> done=<n> done-unverified=<n> unknown=<n> deferred=<n> cancelled=<n> superseded=<n> stale=<n> required=<n> since-baseline=<n> private=<n> open=<n> closed=<n> gap=<n> [from=<stamp> to=<stamp> closed-in=<n> settles-in=<n> revives-in=<n> items-in=<n>] [green=<k> applicable=<n> baseline-rows=<n0> row-kind=<kind>] [held-not-worked=<n> unowned=<n>] [leases=<n>] [responsible=<name|->] pushed=<rev|-> rows=<n> shown=<n> pages=<n> parses=<n> replays=<n> emitted=<bytes>
 QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> escalated-to=<name|-> blocked-by=<id|->
 QUERY ROW <id> lease=<lease-id> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|-> escalated-to=<name|-> responsible=<name|->   (who, stale)
 QUERY ROW <id> branch=<open|closed> disposition=<pending|working|deferred|done|cancelled|superseded|removed> repo=<o/n|-> kind=<k> state=<s> landed=<sha|-> released=<version|-> holder=<name|unowned> settled=<stamp|-> evidence=<n> verified=<n> responsible=<name|->   (done, remaining and under, under --branch closed or --branch root)
@@ -2025,6 +2482,20 @@ QUERY ROW <lease-id> node=<id> kind=<lease|heartbeat|release|handoff> rev=<n> at
 QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
 QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable   (a state-as-of ask whose day partition the committed root names and this read could not open; never answered from a later row)
 QUERY FAIL ask=<kind> after=<cursor> pinned=<rev> current=<rev>: page expired   (a continuation whose captured revision the session can no longer serve; never a drifted page)
+OPERATION OK id=<id> op=<kind> state=<queued|running|done|cancelling|cancelled|failed> started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>
+OPERATION ROW id=<id> op=<kind> state=<s> started=<stamp> updated=<stamp> external=<known|uncertain|none>   (operation list, and one per event of a wait's cursor)
+OPERATION NOTE waiting id=<id> timeout=<duration> after=<cursor>   (a wait that timed out: the operation is still running, and this line says so)
+OPERATION FAIL id=<id> op=<kind> state=<s>: <reason>
+CHECKPOINT OK id=<id> kind=<local|shared> rev=<n> pushed=<rev|-> boundary=<rev> age=<duration> unshared=<n> manifest=<sha> shown=<n> emitted=<bytes>
+CHECKPOINT ROW id=<id> kind=<local|shared> rev=<n> at=<stamp> manifest=<sha> verdict=<good|corrupt|unverified>
+CHECKPOINT NOTE recovery-gap kind=<missing-tail|remote-unavailable> since=<rev>   (reported, never rounded to success)
+CHECKPOINT FAIL id=<id> kind=<local|shared> rev=<n>: <reason>
+UNDO OK id=<event-id> request=<id> request-of=<id> nodes=<n> rev=<n> pushed=<rev|-> emitted=<bytes>   (redo prints REDO OK with the same fields)
+UNDO ROW node=<id> effect=<state|scope|assignment|counter|verification> before=<text> after=<text>   (an undo-plan's or redo-plan's rows; redo-plan prints REDO ROW)
+UNDO FAIL request-of=<id> expect=<rev> current=<rev>: stale plan   (nothing written)
+UNDO FAIL request-of=<id> effect=<external> handle=<text>: not reversible here   (a sent message, a paid execution, a publication, a source deletion)
+CONFIG OK friend=<name> verdict=<unchanged|manifest|delta> base=<hash|-> revision=<n> hash=<hash> parts=<n> emitted=<bytes>
+CONFIG FAIL friend=<name> base=<hash|-> verdict=<schema|identity|hash|incomplete>: <reason>   (the old config is left intact)
 RENDER OK view=<id> cells=<n> private=<n> bytes=<n> into=<path> pushed=<rev|-> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> private=<n> drifted=<n> into=<path>: <reason>
 NODE NOTE already-closed node=<id> disposition=<d> settled=<stamp>   (a `node remove` of an item already in C: nothing written, exit 0, its NODE OK line following)
@@ -2043,7 +2514,8 @@ nova-work <build identity> <goos>/<goarch> <go version>
 
 where `<MUTATION>` is one of `NODE`, `DECOMPOSE`, `ACCEPT`, `SOURCE`, `DEP`, `AXIS`, `CELL`,
 `RESPONSIBLE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`, `ATTESTED`, `STATE`,
-`CORRECT`, `EVENT`, each
+`CORRECT`, `EVENT`, `UNDO`, `REDO`, `FRIEND`, `MODEL`, `OBSERVE` and `CONFIG` (its `--intake`
+form alone), each
 adding the fields its section names (`LEASE OK … holder= deadline= default= live=`, `STATE OK
 … from= to= evidence=`, `ATTEMPT OK … by= result= generation=`, `EVIDENCE OK … criterion=
 against=`, `CORRECT OK … generation=`, `EVENT OK … kind= scope=`, and `DECOMPOSE OK …
@@ -2327,8 +2799,223 @@ are named because they were asked for by name):
   reported `rule 2: unavailable partition=<yyyy-mm-dd>` at exit 1, distinct from `dangling`, and
   the validation never printing green over history it could not read.
 
+**Draft 26's replays, for Stella's `docs/SPEC-WORK-PILOT.md` and `docs/SPEC-WORK-VALIDATION.md`
+at `81c2885`** (the suite names of *Preservation and recovery acceptance* below are the other half
+of this list and are not repeated here):
+
+- **`wire-integers-are-strings`** — an id, a revision, a counter and a token total each above 2^53
+  crossing the wire and returning unchanged; a frame carrying a JSON number refused; `null` and an
+  absent key reading alike, and an empty string and an empty array reading as values.
+- **`protocol-version-negotiated-or-refused`** — a client offering an unsupported version refused
+  with the supported list named and the connection closed, no request admitted before the
+  handshake, and an oversized frame refused with one framed error before the close.
+- **`disconnect-is-not-a-rollback`** — a client killed after its mutation was journaled: the event
+  stands, the same request id and body returns the recorded disposition, and the same id with
+  different arguments is refused; `rev=` and `pushed=` distinct in every response.
+- **`operation-survives-the-client`** — a long import returning an operation id, the CLI exiting,
+  the work continuing, the result retrievable by id afterwards, and `operation wait` timing out
+  while leaving the operation running.
+- **`status-answers-while-io-runs`** — status and cancel answered within their bound while a busy
+  capture, export and clip are in flight, with queues, staged bytes and retained results bounded,
+  and a restart reconciling the operation ids that were pending.
+- **`cancel-is-a-request-not-an-erasure`** — a cancellation acknowledged with its own final
+  disposition, erasing no accepted mutation, and reporting an uncertain external effect as
+  uncertain rather than as cancelled.
+- **`undo-appends-and-preserves`** — an undo of a named request appending a typed compensating
+  envelope with its lineage while the original event and every receipt stay exactly where they are.
+- **`redo-refuses-a-stale-plan`** — a redo whose preconditions moved refused atomically, naming
+  what changed, writing nothing, and never reached by deleting the undo.
+- **`undo-refuses-an-external-effect`** — an undo over a sent message, a paid execution, a
+  publication and a source deletion refused and reported as an external effect with its own
+  compensating workflow; shared Git history never reset as the undo path.
+- **`every-field-has-an-owning-verb`** — every canonical field mapped to its owning typed mutation
+  or marked derived or immutable, with no generic set-field escape hatch and no parallel alias.
+- **`open-count-is-read-not-computed`** — mutate, then ask `|O|` repeatedly: zero visits, zero
+  parses, zero replays, and the counter equal to an independent full count after a close, a reopen
+  and an import replay; the open-issue and open-leaf counters separate and neither labelled `|O|`.
+- **`no-friend-name-in-the-tool`** — the whole normative text and the whole binary carrying no
+  friend, bench, repository or house name; every identity arriving as configuration.
+- **`roles-are-configured-not-inferred`** and **`reserved-role-is-not-spent-on-routine-work`** — a
+  role read from CONFIG and never from the underlying model; a model capability never cancelling an
+  agreed limit; an essential-security-only reserved role, a specialised different-perspective
+  reserved-plan role and an agreed participation each expressible, and the reserved ones not spent
+  on routine work.
+- **`dispatch-ack-and-ownership-are-three`** — dispatch, delivery, acknowledgement and accepted
+  ownership distinguished; a pending offer reserving only declared capacity; **a timeout alone
+  launching no duplicate** while the old worker may run; a return reconciling before new dispatch.
+- **`requested-model-is-not-observed-model`** and **`a-retry-does-not-overwrite-its-attempt`** —
+  unknown staying unknown, concurrent attempts keeping separate model and usage attribution, and a
+  friend's usual model never standing as proof of a delegated task's executor.
+- **`silence-is-a-ping-not-a-verdict`**, **`explicit-rest-is-not-pinged`** and
+  **`return-reconciles-before-dispatch`** — the configured silence threshold triggering one bounded
+  ping, a nonresponsive capacity marked unavailable with reason `unconfirmed` and no claim of sleep
+  or exhausted credit, a failed probe read as unresolved delivery, and explicit rest respected.
+- **`unchanged-config-is-one-bounded-answer`**, **`an-invalid-delta-leaves-the-old-config`** and
+  **`a-partial-manifest-is-refused`** — the exchange bounded, validated and atomic, with no roster
+  and no prose repeated per poll and no secret in a manifest.
+- **`pricing-is-pinned-by-revision`**, **`unknown-price-is-not-zero`**,
+  **`subscription-is-not-free-reference-cost`** and **`local-tokens-cost-zero-api`** — an old
+  estimate reproducible after a rate change, a missing dimension unknown, and the three cost values
+  kept separately labelled.
+- **`roadmap-outlives-its-work`** and **`roadmap-opened-after-the-window`** — an epic completed,
+  clipped, restarted and advanced past 24 hours, then its roadmap listed and opened, rendering
+  identical historical rows and retrieving the exact code and test receipts **without loading all
+  of C**; completed rows still in the table and *remaining only* an explicit filter.
+- **`historic-tick-survives-a-source-change`**, **`regression-opens-repair-work`** and
+  **`unrelated-receipts-stay-reusable`** — a changed source or criterion preserving the historic
+  tick at its pinned revision while the current view requires re-verification, a confirmed
+  regression creating linked open repair work, and unrelated receipts untouched.
+- **`chat-and-file-render-are-byte-identical`** and **`render-refuses-a-target-outside-its-roots`**
+  — one projection and revision rendering the same bytes to chat and to a marker region, every
+  other byte preserved, a missing, duplicate or reversed marker pair refused, and a target outside
+  the configured permitted roots refused rather than guessed.
+- **`restore-is-isolated-and-dispatches-nothing`**, **`local-checkpoint-is-not-a-shared-backup`**
+  and **`compaction-keeps-the-last-copy`** — a restore taking no ownership, reanimating no
+  assignment and replaying no message; checkpoint age, local and shared revisions, unshared work
+  and failed backups all readable; and compaction never removing the only recoverable copy.
+
 The stall replays of 5649089106
 belong to stall detection, deferred below, and are listed there so they are not lost.
+
+## Preservation and recovery acceptance *(Stella, `docs/SPEC-WORK-VALIDATION.md` at `81c2885`)*
+
+**These are release gates, and what they demonstrate is specific protection against specific
+failures — never that no defect remains.** **Nothing in this section is claimed implemented**: it
+is the list of tests a release must have passed, and a list of intended tests is not evidence that
+anything passed them.
+
+**The oracle is independent and the evidence is retained.** Comparison uses **immutable source
+captures and an independently implemented semantic comparator**, never the production serializer
+checking itself. Raw provider records are preserved with a manifest of source ids, revisions,
+counts and content hashes beside the normalised work; **originals are stored byte for byte where
+the API supplies bytes**, and an API-normalised value keeps its declared semantics and its
+provenance. **Every test retains** its input fixtures, its deterministic seed, the engine, client
+and schema versions, its fault point, its invocation, its captured revision, its expected-against-
+actual reconciliation and its result. **A fixture validation and a real read-only pilot are
+distinguished and never traded for one another.** **An unknown, inaccessible, truncated or
+unsupported source field is visible** — there is no silent success by dropping one — and where a
+provider cannot expose deleted or private records, **completeness is claimed only for the declared
+observable inventory and capture scope**.
+
+| suite | required cases and pass condition |
+| --- | --- |
+| `source-inventory` | open and closed issues, comments, identities, labels, relationships, attachments and pagination; every captured source record maps to a preserved original plus a normalised mapping, or to an explicit unresolved entry; the same counts with different ids or content must fail reconciliation |
+| `read-only-intake` | a dry-run capture or plan and a normal initial import **cannot call a source mutation endpoint**: a recording adapter fails on POST, PATCH, DELETE or equivalent, and the remote inventory is compared before and after; applying a plan changes only the destination, after revalidation |
+| `import-replay` | repeated batches, interleaved retries, overlapping pages, reordered records, interruption and resume; a stable source id yields exactly one mapping, with no duplicate canonical work and no lost comment |
+| `moving-source` | a body edited, a visible comment added and deleted, labels and state changed and an issue reopened **during** capture; captured versions preserved, a mixed or incomplete capture marked as such, newer observations reconciled, and no claim of a consistent provider snapshot where none was available |
+| `archive-completeness` | a missing attachment, an unavailable comment, unsupported fields, size truncation, a rate limit and a mid-page failure each remain explicit gaps **and prohibit absorption**; mixed, external and unknown authors retain their source issues |
+| `full-round-trip` | export a captured revision, load it in a **fresh isolated engine**, export again, and compare every semantic field, stable ids, Unicode and literal text, order where it means something, links, evidence, roles, CONFIG, ACTIVE observations, model and rate records, O and C history, roadmaps and accounting provenance; derived caches rebuild to equivalent values |
+| `format-determinism` | one state and schema produce identical canonical bytes; null, absent and empty stay distinct; large integers, timestamps, escaping, multiline text and Unicode normalisation differences survive; an arbitrary provider's JSON key order is **not** required to be meaningful |
+| `old-history` | an export includes the whole explicitly selected archive, records outside the resident 24-hour window included, with its scope and omissions declared; an old completed roadmap restores and yields its exact proof **without loading all of C**; **a recent-only export is never labelled a full backup** |
+| `referential-integrity` | duplicate ids, dangling references, cycles, conflicting parents, invalid cells, duplicate ownership and mismatched manifests all fail **before** publication; a scoped export carries its dependency closure or names its unresolved external references, never a falsely complete backup |
+| `atomic-mutation` | failure injected before, during and after the journal append, the durable sync, the apply, the checkpoint write, the rename and the reply; **every acknowledged mutation survives a process restart** under the declared storage assumptions; a torn unaccepted tail is diagnosed; no partial envelope and no count-versus-evidence split is admitted |
+| `retry-protocol` | a lost reply, fragmented frames, a disconnect, a repeated id with an identical body, the same id with a different body, invalid UTF-8, types and versions, oversized frames and deadlines; **no duplicate accepted mutation and no executable payload**, and the outcome retrievable after the uncertainty |
+| `async-operations` | status, wait and cancel under a busy import, export and clip; bounded queues and output; a restart with operations pending; a stale staged result and an uncertain external effect; **no double launch, no false cancellation success and no control plane stalled behind network I/O** |
+| `single-writer` | two local processes, alias paths, a stale socket, partitioned benches, lease expiry, a delayed old owner and a handoff crash; the fencing rules prevent **stale mutation authority** and not only a stale Git push; exported unshared journal work is preserved |
+| `indexes-and-counters` | random legal verb sequences compared after each step against an independent full reconstruction; the open-item counters and the friend indexes agree; closure, reopen, reparent and shared references never double-count; the required constant-time queries and the bounded historical paging are instrumented |
+| `roadmap-proof` | full fixed-table prototype parity, optional axes, partial and stale evidence, shared prerequisites, newly discovered scope and closed members; chat and file renders identical; a marker edit preserving every unrelated byte and refusing ambiguity |
+| `undo-redo` | reversible edits reversed, history preserved, redo only against valid preconditions; dependent later edits, changed criteria, close and reopen, decomposition, accounting receipts and uncertain external actions exercised; **a conflict is explicit and mutates nothing** |
+| `recovery` | restore the newest valid checkpoint plus journal; reject a corrupt checkpoint; recover from a prior checkpoint **without silent loss**; compare an isolated old restore against current state; a missing tail or an unavailable remote backup **reported as a recovery gap** |
+| `schema-evolution` | supported old schemas migrate losslessly against golden fixtures and semantic comparison; an unsupported version refuses while preserving the originals; **a migration never rewrites the only source copy** |
+| `hostile-data` | reader evaluation disabled; pre-parse depth, byte and node limits enforced; path traversal and escaping archive paths rejected; imported prose cannot execute a command or alter authority; deep and high-fan-out inputs handled without quadratic copying |
+
+**Checkpoints are local and shared and the two are never reported as one.** Every accepted mutation
+is durably journaled before its success acknowledgement. **Validated atomic local snapshots** are
+created periodically, by a configured elapsed time **and** a configured accepted-event count, each
+naming its schema, revision, journal boundary and content manifest; the **periodic clip supplies
+the separately observable shared checkpoint**, and **a local success is never reported as a shared
+backup**. `checkpoint list`, `create` and `verify` expose checkpoint age, the local and shared
+revisions, the unshared work and the failed backup attempts, and **the last known-good checkpoint
+is kept while its replacement is written**. **Retention and journal compaction may never remove the
+only recoverable copy** of accepted work or historical evidence; **pruning checkpoints is a
+different thing from retaining C**; a remote outage that leaves new work only on this bench is
+**stated as that exposure**; and **a local journal alone does not protect against losing the
+machine** — an independent verified copy does. **A restore opens a read-only, isolated,
+non-dispatching recovery session**: it inherits no coordinator ownership, reanimates no
+assignment, replays no bus message and duplicates no external side effect, and a selected repair is
+promoted only through a fenced validated reconciliation with the current state (replays
+`restore-is-isolated-and-dispatches-nothing`, `local-checkpoint-is-not-a-shared-backup`,
+`compaction-keeps-the-last-copy`).
+
+**Seven obligations come from work already done and are fixtures or real-work replays, not an
+invitation to grow a second scheduler** (Stella, `docs/SPEC-WORK-PILOT.md`; each needs an owner in
+the implementation plan, and each already-captured requirement is linked and tested rather than
+rewritten as a competing tool):
+
+- **`inventory-expansion-and-contraction`** — the initial inventory preserved and discovered,
+  completed, reopened, decomposed and explicitly removed work counted **separately**; expansion and
+  contraction shown over a named interval; sustained divergence warned under a stated policy; **a
+  changed denominator visible beside progress and never silently revised**.
+- **`ready-names-the-blocker-and-the-resolver`** — the ready-to-assign view derived from
+  dependencies, agreed scope, acceptance readiness, ownership, availability and resource limits,
+  with **the exact reason work cannot proceed and who can resolve it** on every row that cannot.
+- **`shared-prerequisite-owned-once`** — a shared prerequisite owned once and referenced by every
+  affected cell, with integration and release gates beside feature completion: **a merged fix,
+  verified behaviour and a published distribution are three evidence obligations**.
+- **`review-cycles-stay-visible`** — each required friend's exact-revision review and finding ids,
+  the author's dispositions and the clearance recorded; valid evidence reused and only the affected
+  delta reread; **repeated review and repair cycles visible as work and as operational cost**.
+- **`a-broken-assertion-must-fail`** — a test that still passes with its asserted behaviour
+  deliberately broken is not regression evidence; the specific criterion and revision coverage and
+  the remaining uncertainty are preserved, not a green badge.
+- **`a-stop-reaches-distributed-work`** — a priority change, correction, pause or stop across
+  already-distributed tasks, with durable request identity, delivery and acknowledgement and
+  reconciled execution handles; blocked questions and bounded fallback plans persisted **so a
+  missing answer at night does not stall every independent task**.
+- **`cost-joins-include-the-coordinator`** — comparable-work experiment records and complete
+  operational cost joins, coordinator overhead and rework included, with elapsed time attributed to
+  execution, queueing, review and CI waiting where it is observable; the token-saving hypothesis run
+  against real work after adoption, implementation cost sunk.
+
+**Verification is staged, and the fast lane stays fast.** (1) unit, generated and property, golden
+and independent-comparator suites, **with mutation tests proving the important assertions fail when
+preservation is broken** — a test that still passes with its asserted behaviour deliberately broken
+is not regression evidence. (2) process-level fault injection and restart-and-replay against
+temporary Git remotes and fake providers, two-process fencing and interrupted I/O included. (3) an
+authorised real repository for **read-only capture and dry-run plans only**, reconciled against the
+captured records. (4) an import into a **disposable destination with the originals untouched**,
+exported, loaded in a fresh engine, independently compared, repeated and resumed, with every gap
+inspected. (5) dogfooding the reversible coordinator workflows with periodic snapshots, tested undo
+and redo and **an actual isolated restore** — and only then ordinary live work. **Destructive
+absorption is a separately gated feature and is never a pilot step.**
+
+**The lanes are named because a slow gate is a gate nobody runs.** A per-change check **targets one
+minute and must finish inside two**; the exhaustive fault, scale and generated matrices run in an
+explicit pre-release, manual or nightly lane and **not on every change**. **The full preservation
+and recovery gates still pass at the release revision**, and changing the code a receipt covers
+invalidates that receipt. **Before the lock gate each suite is mapped to its named scenarios,
+assertions, owner, command and CI lane**; before a release the exact-revision results are attached.
+
+## What draft 26 changed in the older text *(Rowan)*
+
+**Where a companion and this document disagreed, the older sentence is deleted and not kept beside
+the newer one**, which is what *one unambiguous revision* means. The six places, so a reader of
+draft 25 can find every one of them:
+
+1. **The engine's language.** *The session's own language is the pilot's decision* is gone: it is
+   **Common Lisp**, with the Go client thin over the socket, and the complexity guarantee named as
+   the indexes and the bounded access rather than the language.
+2. **The first axis.** *A row is a `:feature`* is gone: a row is a node of the roadmap's declared
+   **`:row-kind`** with its **`:aggregation`** policy, `:feature` by default. Rule 2, the
+   required-set definition and `rows=` all read the declared kind now.
+3. **The axis and cell layer.** It is **optional, and optional whole**: a roadmap may declare no
+   axes, in which case it has rows and no coordinates, and **no synthetic cell stands between a
+   feature and its subtasks**.
+4. **`|O|`.** A count reached by a cached bottom-up rollup is gone for this one number: the root
+   and container **open-item counters are maintained by the accepted mutation envelope** and a
+   resident `|O|` is a **read** with zero visits, parses and replays.
+5. **A roadmap's fate when its work ends.** A roadmap still settles with its members, but its
+   **view record no longer passes into the retention archive**: it stays in the live snapshot, so
+   opening a named roadmap after everything under it closed is a bounded read and never a load of
+   C **(Rowan's decision, for review)**.
+6. **The word *active*.** It had one meaning and now has a second that must not blur into it:
+   lowercase *active* stays W's predicate, **O is never called active**, and **ACTIVE** in capitals
+   is the per-friend live-data node and nothing else.
+
+**And one thing that reads like a contradiction and is not**: the engine section's revision-bound
+**dry-run plan** — for an undo, a redo or an import — is not the `plan`/`apply`/`reconcile` triple
+of 5653982211, which stays deferred below. A plan here shows what one named request would move and
+accepts no mutation; the deferred triple is a different design with its own section to come.
 
 ## What this draft does not do
 
@@ -2340,6 +3027,25 @@ section below; the adapter is its own spec), token and cost joins beyond the att
 `:usage` pointer (#175, #181), and the categories taxonomy (5654164074) are later revisions,
 each with its issue. Nothing here deletes, migrates or publishes an issue. Known work is not
 authorized, working, scheduled or public by being in O.
+
+**One design decision is deliberately open and this draft does not close it**: whether friends
+participate in swarms at all, or whether pools hold model-only workers. It is asked and recorded,
+not settled — **a friend's own disposition is the only record of that friend's consent, and a
+worker's reply or a silence is not it** — and until it is resolved, identity provenance stands as
+it is and no historical actor is renamed (Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`; *Friends,
+CONFIG and ACTIVE* above says the same in its own place).
+
+**Nothing here is implemented, and the lock gate says what would have to be true before it is.**
+This document is integrated with both of Stella's companions into one revision, which is her first
+condition. The rest of her gate stands unmet and is named so it cannot be skipped: **each requested
+friend's explicit disposition at this exact revision**, with unresolved, unavailable and reserved
+reviewers recorded separately and **no reply never counted as approval**; a resolved participation
+policy; the complete verb and protocol schemas, including every **(Rowan's decision, for review)**
+above; the migration and round-trip acceptance coverage of *Preservation and recovery acceptance*
+mapped to named scenarios, owners, commands and CI lanes; and named implementation slices. **Cold
+model reads supplement friend discussion and do not replace it.** The agreed revision is then
+locked and every later change is explicit, scoped and reviewed — and **recording a requirement or
+passing a fixture is not a runtime and is not adoption**.
 
 **The four questions between Stella's sections and the shared ones are closed, by her, at
 e79847fb**, and the answers are here rather than only in a review comment because that is where
@@ -2395,7 +3101,20 @@ Glenn's and whose mechanism is Stella's** — `--index-cache`, `--page-bytes`, `
 `--closed-window` with its 48-hour refusal, `pages=` on an answer, `settles-in=`, `revives-in=`
 and `items-in=` beside `closed-in=`, the `<event-rev>:<id>` cursor and its pinned revision, the
 `page expired`, `historical window unavailable` and `dedup unavailable` refusals, and rule 2's
-`unavailable` reason told apart from `dangling`;
+`unavailable` reason told apart from `dangling`; **and draft 26's decisions, each marked
+*(Rowan's decision, for review)* where it is made and gathered here so a reviewer can find them in
+one place**: the wire schema whole — the 4-byte big-endian length prefix, `--max-frame-bytes`, the
+`hello` handshake and its version list, **every protocol integer a decimal string and no JSON
+number anywhere**, RFC 3339 UTC stamps, absent and `null` alike against empty-as-a-value, the
+request and response object shapes and `lines` carrying the output grammar verbatim; the socket's
+`0700` directory and `0600` mode; the `operation status|list|wait|cancel` spelling with its event
+cursor; the `undo-plan`/`undo`/`redo-plan`/`redo` spelling and `--request-of`; the
+`checkpoint list|create|verify|restore|compare` spelling; the `friend`, `config`, `model` and
+`observe` verb spellings and their flags; the `roadmap`, `friends`, `models` and `ready` asks; the
+`OPERATION`, `CHECKPOINT`, `UNDO`, `REDO`, `CONFIG` line shapes; `--silence-ping` as a configured
+duration rather than a number this tool believes in; `:row-kind` and `:aggregation` as the
+declared spelling of Stella's row-kind amendment; and **the retention of a roadmap's view record
+in the live snapshot** rather than exempting `:roadmap` from the settle cascade;
 `cell --in-scope`; the exact list of refused reader syntax beyond `#.` (every dispatch macro,
 `#'`, quote, backquote, package-prefixed symbols, ratios, floats, characters); `;` comments
 discarded by the reader; the three bound flags and their no-default rule; unknown keys
@@ -2426,7 +3145,22 @@ an explicit query or a required indexed lookup, the append-only per-transition c
 bounded as-of lookup over them, closure activity counted beside item state, pagination pinned to a
 captured revision and filter, an absent day told apart from a missing segment, the dedup page that
 refuses rather than admits, one revision publishing snapshot, segments, indexes and manifests
-together, and the real-work acceptance with its honesty rules; and in her sections below,
+together, and the real-work acceptance with its honesty rules; **and the whole of draft 26's two
+companions, `docs/SPEC-WORK-PILOT.md` and `docs/SPEC-WORK-VALIDATION.md` at `81c2885`** — the
+Common Lisp resident engine with a thin Go client over a local socket, the bounded typed JSON wire
+and its properties, durable request ids and expected revisions under one writer, durable operation
+ids for long work with status, wait and cancel, the complete verb-family coverage requirement,
+guarded undo and redo by compensating events, the friend and assignment indexes, CONFIG against
+ACTIVE with the coordinator inside `friends`, role configuration expressive enough for a reserved
+essential-security-only role, a specialised different-perspective reserved-plan role and agreed
+participation, the bounded config exchange and the pricing and cost records with their three
+separately labelled values, the model catalog and what its observations are evidence of, Glenn's
+agreed hierarchy with epics and recursive sub-features, the declared row kinds and the optional
+axis layer, roadmaps as durable views that outlive their work, the locked table display and the
+one renderer in two modes, the prototype capabilities kept and its two defects named, the seven
+operational obligations, the preservation and recovery suites whole, the checkpoint, restore and
+undo contract, the staged verification and the fast-lane-and-nightly split, and the lock gate; and
+in her sections below,
 the pilot branch and sha, the prototype facts, the rate schedule and virtual cost, the
 `NEXT-TOOLS.md` hand-off, and the fixed-table capability boundary. Each is open to be cut by
 the pilot.
