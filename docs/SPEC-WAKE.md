@@ -177,6 +177,38 @@ draft 5 is reversed**: the ping is still intended before it is made and the one
 evidence is still the lane's fetched remote ref — what changed is that the
 evidence is now the note's own id.
 
+**Draft 7, 2026-09-13**, repairs draft 6 (head 79194bc6) against the Astra read
+at that head, which cleared K1, K2, K4, K5 and K6 and held **K3** with one
+qualifier, and every passage it changes is marked `draft 7` beside the change
+with the defect named. **K3**: draft 6 said in one passage that the correlation
+was two bounded `nova-bus inbox` reads and in another that both were bounded,
+and neither could be true — SPEC.md's inbox prints every **NEW** note in full
+on every run and caps only the carried list with `--open-max`, so the plain
+read's size is the bus's and capping it from here would mean asking for a
+friend's mail and truncating it, which is a capture and a cut and not a bound.
+So the correlation stops being an inbox call at all. The probe makes its own
+read: `git`, read-only, over the pinged line's lane from the ping's anchor
+forward, taking note **headers** and appended `RECEIPTS` lines and never a
+body, under a per-poll budget of `--correlate-max` items and
+`--correlate-bytes` bytes; where the budget stops short of the lane's tip the
+line says `correlation=partial remaining=<n>`, the state word stays `PINGED`
+however far `--answer-within` has run, and the position reached is bookmarked
+in the record's new seventh field so the next poll **resumes** there. Bounded
+per poll, complete over polls, and `UNAVAILABLE` is never inferred from a read
+that could not have seen the answer. The read is non-destructive as draft 6's
+was and more plainly so: no cursor advance, no `OPEN` write, no `nova-bus`
+started, and the caller's own cursor is nowhere in the correlation — which
+closes draft 5's finding M4 by construction rather than by a union of two
+listings. The qualifier: *`pinged` is recorded after `SEND OK pushed=true` and
+never otherwise* now reads **on a living call, or after a reconcile that finds
+the prepared note id on the lane's fetched remote ref**, which is the second
+path the reconcile paragraphs have described since draft 4 and which that one
+sentence excluded. **No design of draft 6 is reversed**: one prepared identity
+offered until it lands, the fetched remote ref as the one evidence, the anchor
+as the correlation range's floor and the caller's cursor kept out of the answer
+all stand — what changed is which program performs the correlation read, and
+that it can stop and resume.
+
 The
 amendment adds four sources to `watch`, one flag on the bus source, one verdict,
 and one verb (`probe`); it changes no exit code that exists and takes the one
@@ -222,6 +254,7 @@ nova-wake watch --state <file> --max <duration> --on-deadline <word> --interval 
       [--lock <path> ...]
 nova-wake probe --bus <dir> --line <name> --state <file> [--silent-after <d>] [--answer-within <d>]   (draft 2: defaults 5m, 2m)
       [--rest <file>] [--refresh --remote <name> --branch <name> --interval <duration>] [--ping-draft <file> --as <name>] [--gh-timeout <seconds>]
+      [--correlate-max <n>] [--correlate-bytes <n>]                        (draft 7: defaults 300, 262144)
 nova-wake probe --here [--quiet-load <x>]
 nova-wake serve --bus <dir> --as <name> --on-note <command> --interval <duration> --state <file> --hours <h> [--receipt --remote <name> --branch <name>] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
 nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> [--on-note-idempotent]
@@ -304,9 +337,13 @@ one at a time* was already false of entries and the amendment added two more
 batched sources). (Amended 2026-09-13: the four new
 sources add `gh` calls, named per source in **What one tick costs**, and the
 lock source starts nothing at all; `probe` adds one `nova-bus send` under
-`--ping-draft`, and one read-only `nova-bus inbox --as <caller>` per poll while
-a ping is outstanding, which is how an answer is correlated to the probe and
-not to any newer commit (draft 4, finding 3). **The write-side calls this tool can make to a bus are three,
+`--ping-draft`, and, while a ping is outstanding, **one bounded read-only
+`git` read of the pinged line's lane** per poll, which is how an answer is
+correlated to the probe and not to any newer commit (draft 4, finding 3;
+**amended draft 7, K3**: draft 6 made that correlation two `nova-bus inbox`
+calls, and a plain `inbox` prints every NEW note in full, so its size was never
+this tool's to bound — see **An answer is a note or a receipt from the
+line**). **The write-side calls this tool can make to a bus are three,
 one per verb and each behind a flag that names it** — amended 2026-09-13,
 draft 2, from the Fable read, which found three sentences disagreeing about
 which was *the only one*: `watch --advance-cursor`'s `nova-bus inbox
@@ -314,11 +351,15 @@ which was *the only one*: `watch --advance-cursor`'s `nova-bus inbox
 receipt (rule 10, and stated there). No verb makes another's: `watch` sends
 nothing and receipts nothing, `probe` moves no cursor, `serve` moves none
 either. Without those flags the tool writes nowhere but `--state`.) `git` is started only against the bus
-checkout, read-only: for `--line` (rule 2 below) and for the checkout's head,
+checkout, read-only: for `--line` (rule 2 below), for the checkout's head,
 which is the freshness the `WAKE SOURCE bus` line shows (**How the checkout
-receives mail**). `nova-bus` is started once before the opening line as
+receives mail**), and — under `probe`, while a ping is outstanding — for the
+bounded correlation read of the pinged line's lane, which walks commits and
+reads note **headers** and `RECEIPTS` lines under a per-poll budget and writes
+nothing (draft 7, K3). `nova-bus` is started once before the opening line as
 `nova-bus version`; once per bus poll as `inbox` without `--advance`, or as
-`wait` without `--advance` under `--refresh`; a second
+`wait` without `--advance` under `--refresh` — `probe`'s correlation read is
+none of these and starts no `nova-bus` at all (draft 7, K3); a second
 time on a poll that advances, as `inbox --advance`; and once, as `inbox
 --open`, at the start of a call that finds an advance interrupted (**The bus
 inbox**). It opens no socket
@@ -1377,11 +1418,13 @@ and the clocks, and every `WAKE SOURCE` line for a **forge** source — `prs`,
 `runs`, `branches` — carries
 `calls=<n>`, the `gh` invocations that source made this run, so the spend is on
 the record beside the news and a rate limit arrives as `unreadable:` rather
-than as silence. `probe` adds **two** `nova-bus inbox` reads per poll — the
-plain listing and one bounded `--open --open-max <n>`, `n` at most 300 (draft
-6) — and only while a ping is
-outstanding (draft 4, finding 3; two since draft 5, finding M4, because one
-listing is read from the caller's own cursor and two are a read of the lane).
+than as silence. `probe` adds **no** `nova-bus` read per poll and **one bounded
+`git` walk of the pinged line's lane** — at most `--correlate-max` items and
+`--correlate-bytes` bytes, resuming where the last poll stopped — and only
+while a ping is outstanding (draft 4, finding 3; two inbox reads from draft 5,
+finding M4, until **draft 7**, K3, which took the correlation off the inbox
+altogether because a plain `inbox` prints every NEW note in full and so cannot
+be bounded from here).
 **`WAKE SOURCE locks` carries no `calls=` and no `login=`**
 (amended 2026-09-13, draft 3, from both cold reads: draft 2 gave the four new
 sources one grammar line and so gave the lock source two fields it can never
@@ -1403,9 +1446,10 @@ watched thing, namespaced by source — `bus:line:<bytes>`, `bus:note:<id>`,
 `entry:<repo>#<n>`, `report:<path>`, `line:<name>`, and since 2026-09-13
 `pr:<owner/repo>#<n>`, `run:<owner/repo>@<sha>`, `branch:<owner/repo>:<name>`,
 `lock:<path>` and `probe:<name>` — which holds exactly one of
-`<sign sha>|sending|<stamp>|<note id>|<anchor>|<scope>`, the durable intent, and
-`<sign sha>|pinged|<stamp>|<note id>|<anchor>|<scope>`, the recorded ping —
-**the same six fields in both, with only the phase word moved** (draft 6, K3:
+`<sign sha>|sending|<stamp>|<note id>|<anchor>|<scope>|<read>`, the durable
+intent, and `<sign sha>|pinged|<stamp>|<note id>|<anchor>|<scope>|<read>`, the
+recorded ping —
+**the same seven fields in both, with only the phase word moved** (draft 6, K3:
 draft 5's intent had no note id to name and its ping dropped the anchor that
 **probe**'s answer lookup then required on every poll, so each form lost exactly
 what the other needed). `<note id>` is the id `nova-bus prepare` fixed before
@@ -1415,7 +1459,12 @@ before the send and is the **correlation range's floor and nothing else** (draft
 first twelve hex characters of SHA-256 over the resolved bus path, `--remote`,
 `--branch`, `--as` and `--line` joined by NUL, so a state file carried to
 another checkout, lane, branch or caller cannot present another transport's ping
-as this one's (draft 6, K6) — plus one `fail:<source>`
+as this one's (draft 6, K6); `<read>` is how far the bounded correlation read
+has got — `<lane commit>:<items taken inside it>`, or `-` before the first read
+— so a read that ran out of budget resumes where it stopped and never at the
+anchor, and the anchor is left standing as the range's floor (draft 7, K3), and
+it is the one field a poll that sends nothing may rewrite — plus one
+`fail:<source>`
 per source, the **delivery queue** `queue:<n>` with its counter `queue:next`,
 the advance marker `bus:advance`, and for `serve` one `serve:<id>` per note
 holding exactly one of `queued|<stamp>`, `dispatching|<stamp>|attempt=<n>`,
@@ -2144,6 +2193,7 @@ amendment's table and each written so a test can be built from it.
 ```
 nova-wake probe --bus <dir> --line <name> --state <file> [--silent-after <d>] [--answer-within <d>]   (draft 2: defaults 5m, 2m)
       [--rest <file>] [--refresh --remote <name> --branch <name> --interval <duration>] [--ping-draft <file> --as <name>] [--gh-timeout <seconds>]
+      [--correlate-max <n>] [--correlate-bytes <n>]                        (draft 7: defaults 300, 262144)
 nova-wake probe --here [--quiet-load <x>]
 ```
 
@@ -2278,56 +2328,112 @@ that is still committing is a true thing to see and is still not an assignment.
 Without `--rest` no rest is known and none is invented: this tool never infers
 a stop from a line's own words, which it does not read.
 
-**An answer is a note from the line to the caller, read from the lane and never
-from the caller's cursor; an unrelated commit is not an answer** (draft 4,
-finding 3; the cursor half is draft 5, from the Fable read, finding M4). While a
-record stands — the `sending` intent or the `pinged` record, and only then — the
-probe makes **two** read-only `nova-bus inbox --as <caller>` calls per poll,
-never `--advance`, the cursor never moves: the plain listing, and then `--open
---open-max <n>` with `n` the smaller of the `carrying=<n>` that listing printed
-and 300 (draft 6, K3, below), which
-is the pattern **How the checkout receives mail** already gives a cold watcher,
-bounded.
-Two rather than one, because a plain `inbox` lists a note **only while the
-caller's own cursor stands behind it**, and once the cursor has passed it only
-`--open --open-max <n>` lists it (measured, **How the checkout receives mail**)
-— so draft 4's single plain read made `ANSWERED` depend on where the caller's
-cursor happened to stand: a window reading its own mail with `--advance` between
-two probes moved the reply onto its `OPEN` list, and the next probe read
-`UNAVAILABLE` of a line that had answered. The union of the two listings is what
-the bus would show this caller on either side of its cursor, and of that union
-the probe considers only notes whose bus commit is **newer than the ping's
-anchor** — a range fixed by the anchor this tool wrote and by no cursor at all,
-and **that is the anchor's whole job** (draft 6, K2: it is a correlation range
-and never evidence that a note was delivered).
-`ANSWERED` requires one of them to be `from=` the pinged line. A cursor commit,
-a receipt to somebody else, a note to a third line: none of them is an answer,
-and draft 3 took all three for one.
+**An answer is a note or a receipt from the line to the caller, read from the
+lane and never from the caller's cursor; an unrelated commit is not an answer**
+(draft 4, finding 3; the cursor half is draft 5, from the Fable read, finding
+M4). While a record stands — the `sending` intent or the `pinged` record, and
+only then — the probe makes **one bounded, incremental, read-only correlation
+read of its own** per poll, and it is **not an inbox call** (draft 7, K3). It
+moves no cursor, writes no `OPEN`, writes nothing on the bus at all and starts
+no `nova-bus`: it is `git`, read-only, over the same ref the reconcile reads —
+the lane's **fetched** remote ref where this call fetched, the bus checkout's
+head where it did not, and `head-at=` says which moment was read.
 
-**The two reads are bounded, and a read that could not cover the range says so
-rather than calling a friend unavailable** (draft 6, K3). `nova-bus inbox` takes
-no `--since <commit>`, so the anchor filters the listing after it arrives, and a
-filter is not a bound: draft 5's `--open --open-max <carrying>` asked a busy
-caller's bus for every open note it had, which is unbounded output on the
-noisiest bench — against **Bounded output**, and against rule 13's *bounded by
-design, tested at the largest plausible state*. So the second read is `--open
---open-max <n>` with `n` the smaller of the `carrying=<n>` the plain listing
-printed and **300**, the bound **State** already uses for its sighting memory.
-Where `carrying=` exceeded that cap the union cannot cover the whole range
-beyond the anchor: the line carries `correlation=partial`, one `WAKE NOTE probe
-<name>: the inbox carries <n> notes past this read's cap of 300, so this
-correlation is partial and no unavailability is declared; drain the inbox` is
-printed, and **the state word stays `PINGED`** however far `--answer-within` has
-run. An unanswered friend is never called `UNAVAILABLE` on a read that could not
-have seen the answer, and the record stands so a later probe over a drained
-inbox decides it. A read that covered the range carries `correlation=complete`,
-and only a complete read with no answer past `--answer-within` is a **timeout**;
-a probe that makes no correlation read at all prints `correlation=-`.
+**What it walks.** The pinged line's lane is `from-<line>/`: one file per note
+whose first lines are a `Key: value` header, and one append-only `RECEIPTS`
+file whose every line is `<stamp> <target>` (SPEC.md, **nova-bus** — *The
+cursor, the open list and the catalogue*, which is the bus's on-disk layout;
+*The header*, which is the eight keys and their order; *The receipt rule*,
+which is that line). This read uses that layout as **data**, exactly as a
+person reading the bus in a browser does, and asserts nothing about it that
+those sections do not already say. It walks the lane's commits **forward from
+the ping's anchor** — the floor the `probe:<name>` record already carries — and
+of each commit takes only what that commit added under `from-<line>/`:
 
-What this correlation proves is *this line
-wrote to me after my ping*, not *this note answers that note*: `nova-bus inbox`
-prints a note's id and its sender and not its `Re:` line, so the exact
-correlation is the bus's to show and a person's to read. So the ping's
+- a **note file**: the **header only**. The read stops at the first blank line,
+  never opens the body, and takes `From`, `To`, `Cc`, `Re`, `Id` and `Date` and
+  nothing else. It is an answer when the header addresses the caller on `To` or
+  `Cc` and its `From` resolves to the pinged line — the same condition draft 4
+  wrote and draft 6 kept, with the caller's cursor nowhere in it;
+- a line appended to **`from-<line>/RECEIPTS`**: an answer when its target is
+  the ping's own id. A receipt is the one answer that is exact by construction,
+  and reading the lane is what makes it visible at all.
+
+`ANSWERED` still requires the note or receipt to be **from** the pinged line
+and **addressed to the caller**. A cursor commit, a receipt to somebody else, a
+note to a third line: none of them is an answer, and draft 3 took all three for
+one. The anchor is the range's floor and **that is the anchor's whole job**
+(draft 6, K2: it is a correlation range and never evidence that a note was
+delivered).
+
+**Why the lane and not the inbox** (draft 7, K3). A plain `inbox` lists a note
+only while the caller's own cursor stands behind it, and once the cursor has
+passed it only `--open --open-max <n>` lists it (measured, **How the checkout
+receives mail**) — so draft 4's single plain read made `ANSWERED` depend on
+where the caller's cursor happened to stand: a window reading its own mail with
+`--advance` between two probes moved the reply onto its `OPEN` list, and the
+next probe read `UNAVAILABLE` of a line that had answered. Draft 5 answered
+that with the union of two listings and draft 6 tried to bound the second one,
+and **the pair cannot be bounded from outside**: `nova-bus inbox` prints every
+**NEW** note in full on every run, and `--open-max` caps only the carried list
+(SPEC.md, *The cursor, the open list and the catalogue*), so the size of the
+plain read is the bus's business and not this tool's — and the only way to cap
+it from here is to truncate a friend's mail after asking for it, which is not a
+bound, it is a capture and a cut. The lane read has no cursor in it, so there
+is nothing to be on the wrong side of; it reads headers and not bodies; and its
+size is this tool's own to bound before the bytes are read rather than after.
+
+**The budget, and `correlation=partial` rather than a guess** (draft 7, K3).
+One poll's read takes at most `--correlate-max <n>` items and
+`--correlate-bytes <n>` bytes: an **item** is one note header read or one
+appended `RECEIPTS` line, the bytes are every byte this read takes out of the
+object store, and the defaults are **300** items — the bound **State** already
+uses for its sighting memory — and **262144** bytes. One file is read at most
+**4 KiB** deep looking for the end of its header; one with no blank line by
+there is counted, skipped and named once, because a note whose header does not
+end is the bus's `INBOX UNREADABLE` and not this probe's verdict. Either flag
+at `0` is exit 2 naming it (**No guessed anything**: a budget of nothing is not
+a budget), and a `--correlate-max` over **2000** or a `--correlate-bytes` over
+**4194304** is exit 2 naming that ceiling — a bound a caller can raise without
+limit is not a bound, which is the ceiling `--answer-within` already has.
+Where a budget runs out before the lane's tip:
+
+- the line carries `correlation=partial` and `remaining=<n>`, the number of
+  lane commits between the position reached and the ref's tip — a `git rev-list
+  --count`, which opens no note;
+- one `WAKE NOTE probe <name>: this poll's correlation read covered <n> items
+  to <sha>, <n> lane commits remain; the correlation is partial and no
+  unavailability is declared` is printed;
+- **the state word stays `PINGED`** however far `--answer-within` has run, and
+  the record stands;
+- the position reached — `<lane commit>:<items taken inside it>` — is written
+  into the record as its **seventh field**, so the **next** poll resumes there
+  and not at the anchor.
+
+So the read is bounded **per poll** and complete **over polls**: a lane nine
+hundred notes deep is covered in three polls of the default budget rather than
+in one long one, and the answer is found on the poll that reaches it. The
+anchor stays in the record as the range's true floor — a person checking by
+hand starts there — and the seventh field is only how far this tool has got.
+
+An unanswered friend is **never** called `UNAVAILABLE` on a read that could not
+have seen the answer. `UNAVAILABLE` needs `correlation=complete`, which is a
+read that reached the ref's tip, and only a complete read with no answer past
+`--answer-within` is a **timeout**; a probe that makes no correlation read at
+all prints `correlation=-` and `remaining=-`. Where the recorded position is no
+longer an ancestor of the ref — a bus whose history was rewritten — the read
+restarts from the anchor; where the **anchor** is not an ancestor either no
+range can be formed at all, and that is `correlation=partial`, `remaining=-`
+and one `WAKE NOTE` naming the anchor, never an `UNAVAILABLE` by inference.
+
+What this correlation proves is *this line wrote to me after my ping*; where
+the answer is a receipt naming the ping's id, or a note whose `Re` names it,
+the lane read has also seen *this answers that* and prints one `WAKE NOTE probe
+<name>: <id> answers ping <ping id> by its <Re line|receipt>` (draft 7, K3:
+reading headers on the lane shows the `Re` line an `inbox` listing does not).
+It is the stronger reading and not the gate — a line that answers in a fresh
+note is answering — so `ANSWERED` stays the addressed-and-from condition and
+the residual below stays named. The ping's
 id is printed on the `WAKE PING` line and carried on `WAKE PROBE` as
 `pinged-id=`, `nova-bus receipt --note <that id>` from the line is a
 correlation anybody can check by hand, and the residual — a note the line was
@@ -2383,8 +2489,11 @@ and **`--as` is required with `--ping-draft`, and on any call that finds a
 flag). Without a draft there is nothing to send and nothing to sign, and a probe
 with no record standing is a read of the checkout's commits (rule 2) that needs
 no roster at all — but a standing record was made *for* a caller, the
-correlation read is `nova-bus inbox --as <caller>`, and a record read without
-that caller is a record read blind: such a call is `WAKE REFUSED`, exit 2,
+correlation read asks whether a note or receipt on the lane is addressed to
+**that** caller (draft 7, K3: the question is the same one draft 6 put to
+`nova-bus inbox --as <caller>`, asked now of the lane's own headers), and a
+record read without that caller is a record read blind: such a call is
+`WAKE REFUSED`, exit 2,
 naming the key and the flag, and it sends nothing and writes nothing. Test
 19's *a `--line` not on the roster is exit 2* is scoped to the `--ping-draft`
 call for the same reason.
@@ -2438,8 +2547,15 @@ whole of K1). `pushed=false` is printed and is not a ping: *"a bus send alone
 does not wake a stopped harness"*, and a send that did not land did not even
 reach the
 bus. **The state records `probe:<name>` = `<sign sha>|pinged|<stamp>|<note
-id>|<anchor>|<scope>` after `SEND OK pushed=true` and never otherwise** (amended
-2026-09-13, draft 3, from the Fable read; the six fields are draft 6's). Draft 2
+id>|<anchor>|<scope>|<read>` after `SEND OK pushed=true` returned to a living
+call, **or** after a reconcile that found the prepared note id on the lane's
+fetched remote ref — and never otherwise** (amended 2026-09-13, draft 3, from
+the Fable read; the fields are draft 6's and draft 7's; the reconcile half is
+**draft 7**, which admits in this sentence the second path the reconcile
+paragraphs below have described since draft 4 — a kill between a pushed send
+and the state write leaves `sending`, and the fetch that finds the id is the
+same evidence the send's own `pushed=true` was, arriving one call later).
+Draft 2
 wrote *after `SEND OK` and never
 before* two lines under *`pushed=false` … is not a ping*, and SPEC.md's
 grammar is `SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false>` — a
@@ -2589,21 +2705,30 @@ primitive `watch` uses, and a probe over a state file a `watch` (or another
 probe) holds is `WAKE REFUSED`, exit 2, on one line naming the holder's pid,
 the lock path and the fix — a state file of its own. A probe therefore never
 shares a map with a live watcher and never writes over one: the only key it
-ever writes is `probe:<name>`, and it is written in exactly these five places,
-counted rather than asserted (draft 5, finding L10: draft 4 said *exactly
-three* with a fourth two paragraphs above it) — **before a send**, the durable
+ever writes is `probe:<name>`, and it is written in exactly these **six**
+places, counted rather than asserted (draft 5, finding L10: draft 4 said
+*exactly three* with a fourth two paragraphs above it; the sixth is draft 7,
+K3) — **before a send**, the durable
 intent with the prepared note id and the anchor (draft 4; the id is draft 6);
 **after `SEND OK pushed=true`**, the ping recorded against the sign it was made
 on (draft 3); **on a send that did not
 land**, the intent cleared (a `pushed=false`, a refusal, a non-zero exit);
 **on `ANSWERED`**, the record cleared, once; and **on a retired ping**, where a
 fresh sign ended the silence an unanswered ping measured (draft 5, the
-`UNAVAILABLE`→`PRESENT` cell). A probe that did none of those five —
-`PRESENT`, `RESTING` (draft 4), `SILENT` with no send attempted, a second
-`PINGED` that sends nothing, an `UNRECONCILED` that leaves the intent exactly
-as it found it (draft 5), and `--here`, which takes no state and no lock at
-all — writes **nothing**, and leaves the file's bytes as it found them. A
-measurement is not a state change. The prepared artifact beside the file is
+`UNAVAILABLE`→`PRESENT` cell); and **on a correlation read that stopped short
+of the lane's tip**, the `<read>` field of a record that already stands and
+**nothing else** — not the phase word, not the sign, the stamp, the note id,
+the anchor or the scope, and never a record created or cleared (draft 7, K3).
+That sixth write is what makes the bounded read incremental instead of a read
+that starts again from the anchor every poll and so never finishes a deep lane;
+it is a bookmark in a record already written and not a new claim about the
+line, which is why it is allowed where a measurement is not. A probe that did
+none of those six — `PRESENT`, `RESTING` (draft 4), `SILENT` with no send
+attempted, a `PINGED` whose read reached the tip and sent nothing, an
+`UNRECONCILED` that leaves the intent exactly as it found it (draft 5), and
+`--here`, which takes no state and no lock at all — writes **nothing**, and
+leaves the file's bytes as it found them. A measurement is not a state
+change. The prepared artifact beside the file is
 written **once**, before the first send of a silence, and is deleted with the
 record it belongs to — on `ANSWERED`, on a retired ping, and on a cleared intent
 (draft 6): it is this tool's own file by the rule this section already states,
@@ -2615,7 +2740,12 @@ probe that has pinged blocks for the rest of `--answer-within`, fetching each
 --refresh` does (the checkout fast-forwards; nothing advances) and making the
 correlation read again after each, and it returns **`ANSWERED` the poll a note
 or receipt from the line addressed to the caller appears on that read** or
-`UNAVAILABLE` at the window's end — one turn, one answer. Draft 3's *returns
+`UNAVAILABLE` at the window's end — one turn, one answer. `UNAVAILABLE` there
+is still owed a **complete** correlation (draft 7, K3): a window that ends on a
+read still short of the lane's tip returns `PINGED` with `correlation=partial`
+and `remaining=<n>`, and because each `--interval` resumes the read where the
+last one stopped, a deep lane is covered across the polls that call already
+makes rather than in one unbounded read at the end. Draft 3's *returns
 `ANSWERED` the poll a new sign appears* stood here until draft 5 (from the
 Fable read, finding M3): it is the exact defect finding 3 closed, left standing
 in the one paragraph that decides when the blocking call returns, and a fresh
@@ -3161,13 +3291,14 @@ left without what it pins.
     cursor** (draft 5, from the Fable read, finding M4): with the caller's own
     `nova-bus inbox --as <caller> --advance` run by hand between the two probes,
     so the reply is on the caller's `OPEN` list and a plain `inbox` no longer
-    lists it, the next probe still reaches `ANSWERED` exit 0, the fake
-    `nova-bus` records **two** `inbox` reads for that poll — the plain listing
-    and the bounded `--open --open-max <n>` — and a mutation that makes the plain
-    read the only one leaves that probe `PINGED` and then `UNAVAILABLE` of a
-    line that answered, and turns the test red; the fake `nova-bus` is asserted
-    to record **no** `inbox` read at all on a `PRESENT`, `SILENT` or `RESTING`
-    probe (draft 5, finding L15); with no sign by 8m `UNAVAILABLE` exit 1
+    lists it, the next probe still reaches `ANSWERED` exit 0, and the fake
+    `nova-bus` records **no** `inbox` read at all for that poll (amended draft
+    7, K3: draft 6 asserted two reads here, and the correlation is now the
+    tool's own lane walk) — a mutation that correlates from an `inbox` listing
+    instead leaves that probe `PINGED` and then `UNAVAILABLE` of a line that
+    answered, and turns the test red; the fake `nova-bus` is asserted to record
+    **no** `inbox` read on any probe (draft 5, finding L15, widened draft 7);
+    with no sign by 8m `UNAVAILABLE` exit 1
     and the word `credits` appears nowhere on stdout or stderr; **the
     transitions are driven as a table** (draft 5, finding M2): `SILENT` to
     `PRESENT` on a fresh sign with no ping ever sent, `PINGED` to `PINGED` on a
@@ -3239,15 +3370,31 @@ left without what it pins.
     over fifty randomised kill points across the three: for one silence the
     remote ever carries **at most one** note, its id is the prepared one, and
     `send --prepared` runs again only on a call whose own fetch found that id
-    absent from the lane's remote ref; **the correlation read is bounded and says
-    when it is partial** (draft 6, K3): with the caller's inbox made to print
-    `carrying=900`, the second read is asserted to be `--open --open-max 300`,
-    the line carries `correlation=partial`, the `WAKE NOTE` naming the cap is
-    printed, and the probe stays `PINGED` exit 1 at 8m — never `UNAVAILABLE` —
-    while the same probe over a drained inbox carries `correlation=complete` and
-    does reach `UNAVAILABLE` at 8m; a mutation that passes the raw `carrying=`
-    to `--open-max`, and one that declares `UNAVAILABLE` on a partial
-    correlation, each turn the test red; **a record is bound to its transport
+    absent from the lane's remote ref; **the correlation read is bounded per poll,
+    incremental across polls, and says when it is partial** (draft 7, K3,
+    replacing draft 6's inbox-cap assertions) — **the 900-note lane**: the
+    pinged line's lane carries 900 notes past the ping's anchor and the answer
+    — a note from that line addressed to the caller — is the **850th**. Under
+    the default budget the first poll is `correlation=partial remaining=600`,
+    `PINGED`, exit 1; the second is `correlation=partial remaining=300`,
+    `PINGED`, exit 1, **at 8m, past `--answer-within`, and never
+    `UNAVAILABLE`**; the third reaches the answer and is `ANSWERED`, exit 0,
+    with `pinged-id=` on the line. Asserted with it: **no `nova-bus` is started
+    by the read** on any of the three, the bytes each poll takes out of the
+    object store are **under `--correlate-bytes`** and the items under
+    `--correlate-max`, **no note body is opened** (each poll's reads stop at
+    the header), the caller's `CURSOR` and `OPEN` are **byte-identical** after
+    all three, and the only state byte that changes between polls one and two
+    is the record's seventh field. A mutation that restarts each poll from the
+    anchor turns it red by never reaching the 850th note; one that reads the
+    lane unbounded and truncates after turns it red on the byte assertion; one
+    that declares `UNAVAILABLE` on a partial correlation turns it red on poll
+    two; one that advances the cursor or writes `OPEN` turns it red on the
+    byte-identical assertion. The same lane drained to 200 notes is
+    `correlation=complete remaining=-` on one poll and does reach
+    `UNAVAILABLE` at 8m; and a **receipt** naming the ping id, appended to that
+    lane's `RECEIPTS` inside the range, is `ANSWERED` on its own with no note
+    at all; **a record is bound to its transport
     and `--as` is required wherever one stands** (draft 6, K6): the same state
     file presented with a different `--remote`, a different `--branch`, a
     different `--bus` or a different `--as` is `WAKE REFUSED` exit 2 naming both
@@ -3346,9 +3493,11 @@ left without what it pins.
   adapter beyond the bus is the line's. **Contact is never eligibility**
   (draft 4, finding 3): `PRESENT` says contact is fresh and nothing more, a
   rest is known only from `--rest` and never inferred, and `ANSWERED` proves
-  that the line wrote to the caller after the ping and not that the note
-  answered it — `nova-bus inbox` prints no `Re:` line, so the exact
-  correlation is a person's to read from `pinged-id=`.
+  that the line wrote to the caller after the ping and not, by itself, that the
+  note answered it. The lane read does see the `Re` line and a receipt's target
+  (draft 7, K3), so an exact correlation is **reported** where the answer
+  carries one; where it does not, the residual stands and `pinged-id=` is what
+  a person reads it against.
 - **A ping is one identity, offered until it lands** (draft 4, finding 5;
   re-derived draft 5, H1; re-derived again **draft 6**, K1 and K2): the note id
   is fixed by `nova-bus prepare` before any send, every send is `nova-bus send
@@ -3617,12 +3766,17 @@ shared packages used rather than re-spelled.
     send, the `sending` intent naming that note id with the checkout head as its
     correlation anchor, and every send `nova-bus send --prepared` of the one
     saved artifact, resent only where a fetch found that id absent from the
-    lane's remote ref** (draft 6), and **`ANSWERED` from two bounded read-only
-    `nova-bus inbox --as <caller>` reads per poll — a note or receipt from the
-    pinged line addressed to the caller, never any newer commit** (draft 4,
-    bounded draft 6), the `probe:<name>`
-    record written after **`SEND OK
-    pushed=true`** and never otherwise (draft 3)
+    lane's remote ref** (draft 6), and **`ANSWERED` from one bounded incremental
+    read-only `git` walk of the pinged line's lane per poll — note headers and
+    `RECEIPTS` lines from the ping's anchor forward under `--correlate-max` and
+    `--correlate-bytes`, resuming from the record's seventh field, a note or
+    receipt from the pinged line addressed to the caller and never any newer
+    commit, `correlation=partial remaining=<n>` where the budget stopped
+    short** (draft 4; bounded draft 6; the lane walk, the budget and the resume
+    are **draft 7**, K3), the `probe:<name>`
+    record written after **`SEND OK pushed=true`** on a living call or after a
+    reconcile that finds the prepared id on the fetched remote ref, and never
+    otherwise (draft 3, qualified draft 7)
     **under `<state>.lock`, with no other key written and nothing written at
     all when nothing was sent** (draft 2), the unknown `--line` as `SILENT`
     rather than a roster refusal (draft 3),
