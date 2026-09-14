@@ -618,6 +618,90 @@ func TestPerFileDiffOmissionAndRemedy(t *testing.T) {
 	}
 }
 
+func TestPacketOmitsGiantUnquotedPathWholeAndRetainsTinyFile(t *testing.T) {
+	lane, _ := packetLab(t)
+	repo := filepath.Join(lane, merge.RepoDir)
+	git := func(args ...string) {
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		if b, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, b)
+		}
+	}
+	giantPath := filepath.Join(repo, "a b", "x b", "y.txt")
+	if err := os.MkdirAll(filepath.Dir(giantPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(giantPath, []byte(strings.Repeat("x", 2*1024*1024)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "tiny.txt"), []byte("tiny\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a b/x b/y.txt", "tiny.txt")
+	git("commit", "-qm", "giant and tiny")
+
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	if err := os.Chdir(lane); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", "giant.md", "--max-bytes", "4096"}, &out, &errb); code != 0 {
+		t.Fatalf("giant packet=%d stderr=%s", code, errb.String())
+	}
+	body, err := os.ReadFile("giant.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "diff --git a/tiny.txt b/tiny.txt") || strings.Contains(text, strings.Repeat("x", 1024)) {
+		t.Fatalf("packet did not retain only the small whole-file payload:\n%s", text)
+	}
+	if !strings.Contains(text, "'a b/x b/y.txt': 1 hunks, +1 -0; print with: git diff") || !strings.Contains(out.String(), "files=3") || !strings.Contains(out.String(), "hunks=3") || !strings.Contains(out.String(), "cut=1") {
+		t.Fatalf("omission metadata is not source-complete: stdout=%s\npacket=%s", out.String(), text)
+	}
+}
+
+func TestPacketRefusesOmittedGiantLineWhoseScopedCitationCannotBeRead(t *testing.T) {
+	lane, _ := packetLab(t)
+	repo := filepath.Join(lane, merge.RepoDir)
+	git := func(args ...string) {
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		if b, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, b)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "docs", "SPEC.md"), []byte("## Rules\n1. do the thing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	giantPath := filepath.Join(repo, "a b", "x b", "y.txt")
+	if err := os.MkdirAll(filepath.Dir(giantPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(giantPath, []byte("+"+strings.Repeat("x", patchControlPrefix)+" SPEC.md rule 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "docs/SPEC.md", "a b/x b/y.txt")
+	git("commit", "-qm", "large cited line")
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	if err := os.Chdir(lane); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", "refused.md", "--max-bytes", "4096", "--spec", "docs/SPEC.md#Rules"}, &out, &errb); code != 2 || !strings.Contains(errb.String(), "cannot fully inspect scoped rule citations") {
+		t.Fatalf("large omitted citation code=%d stderr=%s", code, errb.String())
+	}
+	if _, err := os.Stat("refused.md"); !os.IsNotExist(err) {
+		t.Fatalf("incomplete scoped source published a packet: %v", err)
+	}
+}
+
 func TestMaxFlagTruncatesEarlierVerdicts(t *testing.T) {
 	lane, _, _, _ := packetLabTwoHeads(t)
 	old, _ := os.Getwd()

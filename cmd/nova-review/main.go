@@ -243,17 +243,22 @@ func packet(args []string, out, errOut io.Writer) int {
 		// two separate endpoints would instead include unrelated base-only work.
 		diffRange = base + "..." + current
 	}
-	diff, err := gitOut(timeout, repo, "diff", "--no-ext-diff", "--unified=3", diffRange)
+	scopedSpecs, err := loadScopedSpecs(timeout, repo, current, specs)
+	if err != nil {
+		return refuse(errOut, err.Error())
+	}
+	baseSpecs := loadBaseScopedSpecs(timeout, repo, base, scopedSpecs)
+	first, _, err := readPatch(timeout, repo, diffRange, nil, 0, scopedSpecs, baseSpecs)
 	if err != nil {
 		return refuse(errOut, fmt.Sprintf("could not read the selected diff: %v", err))
 	}
-	fileDiffs := parseFileDiffs(diff)
+	fileDiffs := first.Files
 	files := len(fileDiffs)
 	hunks := 0
 	for _, f := range fileDiffs {
 		hunks += f.Hunks
 	}
-	ruleText, ruleCount, err := selectedRules(timeout, repo, base, current, diff, specs, rules, *maxFlag, *lane)
+	ruleText, ruleCount, err := selectedRulesFromPatch(timeout, repo, base, current, scopedSpecs, fileDiffs, rules, *maxFlag, *lane)
 	if err != nil {
 		return refuse(errOut, err.Error())
 	}
@@ -264,30 +269,33 @@ func packet(args []string, out, errOut io.Writer) int {
 	openFindingsSec, openCount := formatOpenFindings(*maxFlag, *lane)
 	rulesTouchedSec := fmt.Sprintf("## Rules touched\n%s\n", ruleText)
 
-	assembleBody := func(diffSec, notIncSec string, cut int) string {
-		hdr := packetHeader{
-			ID:    packetID,
-			Entry: id,
-			Head:  current,
-			Base:  base,
-			Range: rangeText,
-			Who:   *who,
-			Built: time.Now().UTC().Format(time.RFC3339),
-			Cut:   cut,
-		}
-		bodyRest := thisHeadSec + "\n" +
-			yourPriorSec + "\n" +
-			allVerdictsSec + "\n" +
-			openFindingsSec + "\n" +
-			rulesTouchedSec + "\n" +
-			diffSec + "\n" +
-			notIncSec
-		return formatPacket(hdr, bodyRest)
+	bodyPrefix := thisHeadSec + "\n" +
+		yourPriorSec + "\n" +
+		allVerdictsSec + "\n" +
+		openFindingsSec + "\n" +
+		rulesTouchedSec + "\n"
+	hdr := packetHeader{
+		ID: packetID, Entry: id, Head: current, Base: base, Range: rangeText,
+		Who: *who, Built: time.Now().UTC().Format(time.RFC3339),
 	}
-
-	_, _, cut, body, err := buildDiffAndNotIncluded(fileDiffs, rangeText, *maxBytes, assembleBody)
+	selected, notIncluded, cut, err := planPatch(fileDiffs, rangeText, *maxBytes, hdr, bodyPrefix)
 	if err != nil {
 		return refuse(errOut, err.Error())
+	}
+	second, payload, err := readPatch(timeout, repo, diffRange, selected, *maxBytes, nil, nil)
+	if err != nil {
+		return refuse(errOut, fmt.Sprintf("could not reread the selected diff: %v", err))
+	}
+	if !samePatch(first, second) {
+		return refuse(errOut, "selected diff changed between bounded passes; build again from the pinned commits")
+	}
+	diffSec := renderPatchDiff(rangeText, payload)
+	body := formatPacket(packetHeader{
+		ID: packetID, Entry: id, Head: current, Base: base, Range: rangeText,
+		Who: *who, Built: hdr.Built, Cut: cut,
+	}, bodyPrefix+diffSec+"\n"+notIncluded)
+	if len(body) > *maxBytes {
+		return refuse(errOut, fmt.Sprintf("--max-bytes %d cannot hold packet metadata and bounded remedy (%d bytes)", *maxBytes, len(body)))
 	}
 	return writePacket(*dest, body, out, errOut, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(body), cut, false)
 }
@@ -810,21 +818,9 @@ func lastReadAt(reads []merge.Read, who string) string {
 	return best
 }
 func selectedRules(timeout time.Duration, repo, base, head, diff string, specFlags, requested []string, maxRules int, lane string) (string, int, error) {
-	var specs []scopedSpec
-	for _, flag := range specFlags {
-		p, heading, err := splitSpecFlag(flag)
-		if err != nil {
-			return "", 0, err
-		}
-		text, err := gitOut(timeout, repo, "show", head+":"+p)
-		if err != nil {
-			return "", 0, fmt.Errorf("--spec %s is not readable at head", p)
-		}
-		spec, err := parseScopedSpec(p, text, heading)
-		if err != nil {
-			return "", 0, err
-		}
-		specs = append(specs, spec)
+	specs, err := loadScopedSpecs(timeout, repo, head, specFlags)
+	if err != nil {
+		return "", 0, err
 	}
 	files := changedFiles(diff)
 	selected := map[string]specRule{}
@@ -945,6 +941,133 @@ func selectedRules(timeout time.Duration, repo, base, head, diff string, specFla
 	return strings.Join(out, "\n"), len(selected), nil
 }
 
+func loadScopedSpecs(timeout time.Duration, repo, head string, flags []string) ([]scopedSpec, error) {
+	var specs []scopedSpec
+	for _, flag := range flags {
+		p, heading, err := splitSpecFlag(flag)
+		if err != nil {
+			return nil, err
+		}
+		text, err := gitOut(timeout, repo, "show", head+":"+p)
+		if err != nil {
+			return nil, fmt.Errorf("--spec %s is not readable at head", p)
+		}
+		spec, err := parseScopedSpec(p, text, heading)
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, spec)
+	}
+	return specs, nil
+}
+
+// loadBaseScopedSpecs follows selectedRules' established behavior: an absent
+// or unparsable base-side spec simply has no removable rule witness.
+func loadBaseScopedSpecs(timeout time.Duration, repo, base string, specs []scopedSpec) map[string]scopedSpec {
+	out := make(map[string]scopedSpec)
+	for _, spec := range specs {
+		text, err := gitOut(timeout, repo, "show", base+":"+spec.Path)
+		if err != nil {
+			continue
+		}
+		old, err := parseScopedSpec(spec.Path, text, spec.Heading)
+		if err == nil {
+			out[spec.Path] = old
+		}
+	}
+	return out
+}
+
+// selectedRulesFromPatch renders the same source-derived rule section as
+// selectedRules, but takes line coordinates and citation witnesses produced by
+// the streaming first pass. It therefore accounts for a rule citation even
+// when that file's payload is later omitted from the packet body.
+func selectedRulesFromPatch(timeout time.Duration, repo, base, head string, specs []scopedSpec, patchFiles []fileDiff, requested []string, maxRules int, lane string) (string, int, error) {
+	selected := map[string]specRule{}
+	previous := map[string]specRule{}
+	touched := map[string][]string{}
+	add := func(rule specRule, why string) {
+		key := fmt.Sprintf("%s:%d", rule.Path, rule.Line)
+		selected[key] = rule
+		touched[key] = append(touched[key], why)
+	}
+	for _, file := range patchFiles {
+		for _, rule := range file.Cited {
+			add(rule, fmt.Sprintf("%s (cited)", file.Path))
+		}
+	}
+	for _, flag := range requested {
+		p, nText, ok := strings.Cut(flag, ":")
+		if !ok || p == "" || nText == "" {
+			return "", 0, fmt.Errorf("--rule wants <spec>:<n>")
+		}
+		n, err := strconv.Atoi(nText)
+		if err != nil || n <= 0 {
+			return "", 0, fmt.Errorf("--rule wants <spec>:<n>")
+		}
+		var found specRule
+		exists := false
+		for _, spec := range specs {
+			if spec.Path == p {
+				found, exists = spec.Rules[n]
+				break
+			}
+		}
+		if !exists {
+			return "", 0, fmt.Errorf("--rule %s names no scoped rule at head; add a matching --spec", flag)
+		}
+		add(found, "caller (named)")
+	}
+	for _, file := range patchFiles {
+		for _, rule := range file.ChangedHead {
+			add(rule, fmt.Sprintf("%s (changed at head)", file.Path))
+		}
+		for _, changed := range file.ChangedBase {
+			if changed.Current != nil {
+				current := *changed.Current
+				previous[fmt.Sprintf("%s:%d", current.Path, current.Line)] = changed.Old
+				add(current, fmt.Sprintf("%s (changed at base)", file.Path))
+			} else {
+				add(changed.Old, fmt.Sprintf("%s (changed at base; removed at head)", file.Path))
+			}
+		}
+	}
+	var out []string
+	for _, file := range patchFiles {
+		count := 0
+		for _, rule := range selected {
+			for _, why := range touched[fmt.Sprintf("%s:%d", rule.Path, rule.Line)] {
+				if strings.HasPrefix(why, file.Path+" ") {
+					count++
+					break
+				}
+			}
+		}
+		out = append(out, fmt.Sprintf("%s: rules=%d", file.Path, count))
+	}
+	allOrdered := orderedRules(selected)
+	limit := len(allOrdered)
+	if maxRules > 0 && limit > maxRules {
+		limit = maxRules
+	}
+	for i := 0; i < limit; i++ {
+		rule := allOrdered[i]
+		key := fmt.Sprintf("%s:%d", rule.Path, rule.Line)
+		quoted := fmt.Sprintf("> %s", strings.ReplaceAll(rule.Text, "\n", "\n> "))
+		if old, ok := previous[key]; ok {
+			quoted = fmt.Sprintf("> head:\n> %s\n> base:\n> %s", strings.ReplaceAll(rule.Text, "\n", "\n> "), strings.ReplaceAll(old.Text, "\n", "\n> "))
+		}
+		out = append(out, fmt.Sprintf("### %s:%d rule %d\n%s\ntouched by: %s", rule.Path, rule.Line, rule.Number, quoted, strings.Join(touched[key], ", ")))
+	}
+	if maxRules > 0 && len(allOrdered) > maxRules {
+		out = append(out, fmt.Sprintf("%d more of %d; print with: nova-review packet --lane %s ... --rule <spec>:<n>", len(allOrdered)-maxRules, len(allOrdered), lane))
+	}
+	if len(patchFiles) == 0 {
+		out = append(out, "No changed files.")
+	}
+	return strings.Join(out, "\n"), len(selected), nil
+}
+
 func getAuthorIntent(timeout time.Duration, repo, hostRepo string, pr int, branch, head string) (title, body string, err error) {
 	if pr > 0 && hostRepo != "" {
 		b, err := sourceOutput(timeout, "", packetGHBinary, "pr", "view", fmt.Sprint(pr), "--repo", hostRepo, "--json", "title,body")
@@ -1057,12 +1180,23 @@ func formatOpenFindings(max int, lane string) (string, int) {
 }
 
 type fileDiff struct {
-	Header   string
-	Path     string
-	Hunks    int
-	Added    int
-	Deleted  int
-	FullText string
+	Header      string
+	Path        string
+	Hunks       int
+	Added       int
+	Deleted     int
+	Cited       []specRule
+	ChangedHead []specRule
+	ChangedBase []patchBaseChange
+	seenCited   map[string]bool
+	seenHead    map[string]bool
+	seenBase    map[string]bool
+	// Bytes is the exact raw patch span for this file, including its header.
+	// FullText remains for legacy unit helpers; the packet path uses Bytes and
+	// streams selected payload in a second pinned Git invocation.
+	Bytes       int64
+	EndsNewline bool
+	FullText    string
 }
 
 func parseFileDiffs(diff string) []fileDiff {
@@ -1070,6 +1204,7 @@ func parseFileDiffs(diff string) []fileDiff {
 	lines := strings.Split(diff, "\n")
 	var cur *fileDiff
 	var curLines []string
+	inHunk := false
 
 	flush := func() {
 		if cur != nil {
@@ -1084,6 +1219,7 @@ func parseFileDiffs(diff string) []fileDiff {
 		if strings.HasPrefix(line, "diff --git ") {
 			flush()
 			cur = &fileDiff{Header: line}
+			inHunk = false
 			parts := strings.Split(strings.TrimPrefix(line, "diff --git a/"), " b/")
 			if len(parts) == 2 {
 				cur.Path = parts[1]
@@ -1096,10 +1232,11 @@ func parseFileDiffs(diff string) []fileDiff {
 		}
 		curLines = append(curLines, line)
 		if strings.HasPrefix(line, "@@") {
+			inHunk = true
 			cur.Hunks++
-		} else if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+		} else if strings.HasPrefix(line, "+") && (inHunk || !strings.HasPrefix(line, "+++")) {
 			cur.Added++
-		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+		} else if strings.HasPrefix(line, "-") && (inHunk || !strings.HasPrefix(line, "---")) {
 			cur.Deleted++
 		}
 	}
