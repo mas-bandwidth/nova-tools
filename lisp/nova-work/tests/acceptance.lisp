@@ -687,5 +687,39 @@ is compared against; it is never the path `query --ask size` takes."
                                                                   :node "acme/work/f1/t2"))
       (ok (not okp) "a request past the bound was treated as new")
       (check-equal 1 code "the past-bound exit code")
-      (ok (search "dedup unavailable" line)
-          "the refusal does not say dedup unavailable: ~A" line))))
+        (ok (search "dedup unavailable" line)
+            "the refusal does not say dedup unavailable: ~A" line))))
+
+;;; ------------------------------------------------------------------
+;; 12. malformed trailing suffixes must be refused
+;; ------------------------------------------------------------------
+
+(deftest "malformed-trailing-unclosed-list" "docs/SPEC-WORK.md:678-679"
+    "expected=refused-by-reader"
+  (handler-case
+      (progn (read-restricted "(:X 1) (")
+             (fail "(:X 1) ( was read instead of refusing malformed trailing form"))
+    (restricted-data-violation (c)
+      (ok (search "trailing bytes" (princ-to-string c))
+          "(:X 1) ( refused without trailing bytes message: ~A" c))))
+
+(deftest "malformed-trailing-unclosed-form" "docs/SPEC-WORK.md:678-679"
+    "expected=refused-by-reader"
+  (handler-case
+      (progn (read-restricted "(:X 1) (:Y")
+             (fail "(:X 1) (:Y was read instead of refusing malformed trailing form"))
+    (restricted-data-violation (c)
+      (ok (search "trailing bytes" (princ-to-string c))
+          "(:X 1) (:Y refused without trailing bytes message: ~A" c))))
+
+(deftest "empty-suffix-accepted" "docs/SPEC-WORK.md:678-679"
+    "expected=value-returned"
+  (check-equal '(:X 1) (read-restricted "(:X 1)") "empty suffix accepted"))
+
+(deftest "whitespace-suffix-accepted" "docs/SPEC-WORK.md:678-679"
+    "expected=value-returned"
+  (check-equal '(:X 1) (read-restricted "(:X 1)  ") "whitespace suffix accepted"))
+
+(deftest "comment-suffix-accepted" "docs/SPEC-WORK.md:678-679"
+    "expected=value-returned"
+  (check-equal '(:X 1) (read-restricted "(:X 1) ; comment") "comment suffix accepted"))
