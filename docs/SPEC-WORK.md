@@ -747,9 +747,9 @@ they are distinct kinds:
 
 - `:work-set` — a container. Its completion is its required children's completion; an empty
   required set is **never** done.
-- `:epic` — a container above features, one level of **Glenn's agreed hierarchy**
-  (repository → roadmap → epic → feature → subtasks, with sub-features and subtasks recursive
-  beneath). It is a `:work-set` by every rule; it is a kind of its own because **a row kind must be
+- `:epic` — a semantic container, not a prescribed depth or mandatory layer.
+  Project and stream containers may sit above it; epics and features may decompose recursively.
+  It is a `:work-set` by every rule; it is a kind of its own because **a row kind must be
   queryable and never inferred from a title word** (Stella, `docs/SPEC-WORK-PILOT.md`).
 - `:feature` — a work-set whose completion is what a roadmap row counts; the unit of "green
   feature cells / applicable rows". **A feature decomposes into sub-features recursively**, each a
@@ -1209,6 +1209,58 @@ work; a cross-repository goal is a view over canonical owned nodes, never a copy
 O is the team's authorized known work, never a scan of every reachable repository. A GitHub
 issue or PR is a `:links` entry on a node, not the node's type; intake from issues is in
 Stella's section.
+
+### Recursive structure within a repository
+
+**The repository boundary does not prescribe the hierarchy beneath it.** Glenn's
+2026-09-14 clarification makes project and stream layers first-class uses of the existing
+recursive container, not additional mandatory levels. For example:
+
+```text
+nova-tools repository
+  stream (nova-work)
+    epic
+      feature
+        sub-feature
+          task
+
+monorepo
+  project
+    stream
+      epic
+        feature
+          sub-feature
+            task
+```
+
+These are examples, not grammars. A team may omit, repeat or nest grouping layers as its
+work requires; validation must not enforce a repository/epic/feature depth sequence.
+Project and stream containers use `:type :work-set` with the existing explicit `:category`
+label (`"project"` or `"stream"`), plus stable `:id`, display `:title` and `:children`.
+A tool stream may use category `"stream"` and title `"nova-work"`; its role must not be
+inferred from that title or from its position. This adds no new kind, executable Lisp or
+untyped mutation verb. Existing kind-specific evidence and completion rules still apply.
+
+Canonical containment, reference edges, ownership, required-member aggregation, settling
+and reopening retain the same meaning at every grouping depth. Roadmaps remain durable
+views over selected node ids; a roadmap is not a compulsory containment level. Queries
+and renders select a scope by stable id and declared units, never by a fixed number of
+parent hops. Existing category/repository indexes support discovery of streams and projects;
+adding a grouping layer must not make finding W or reading maintained open counts require
+a walk of O. Mutations update the affected ancestry and references under the existing
+atomic envelope. Any operational depth or size limit must be explicit and fail without
+partial mutation; it must not masquerade as a domain hierarchy restriction.
+
+**Acceptance:** round-trip both examples with identity, labels, order, evidence and links
+preserved; also round-trip a deeper witness, repository → project → project → stream →
+work-set → stream → epic → feature → sub-feature → sub-feature → task, and a shallow
+repository → feature → task witness with optional layers omitted; exercise omitted and
+repeated grouping layers; query equal semantic scopes at different depths; verify a task is
+counted once even when referenced by multiple roadmaps;
+settle and reopen through nested project/stream ancestors; compare maintained counts and W
+against an independent traversal oracle in tests; reject cycles and multiple containment
+parents atomically. Rendering must preserve the selected scope and completion unit across
+these layouts. None of this relaxes the separate repository registration or access boundary.
 
 **The move from O to C is an event, and the item's id, its history and its evidence move with
 it unchanged.** An item settles when its work has ended: a `:to :done` transition, a `:cancel`,
@@ -2730,9 +2782,11 @@ roadmap features. They add no verified completion until implementation and failu
 
 ## The hierarchy, the table and the roadmap's own record *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
 
-**Glenn's hierarchy is repository → roadmap → epic → feature → subtasks**, with sub-features and
-subtasks recursive beneath, and it is **stored and queried rather than inferred by a renderer from
-a name**. Optionally a feature splits on another named dimension — a language, a platform, a
+**Repository → epic → feature → subtasks is one example of Glenn's recursive hierarchy**,
+with optional, repeated project and stream groups and recursive sub-features and subtasks.
+Containment is **stored and queried rather than inferred by a renderer from a name**;
+a roadmap is a durable view over that structure, not a required containment level. Optionally
+a feature splits on another named dimension — a language, a platform, a
 backend — and **that optional dimension is what introduces cells**; without the split there is no
 mandatory synthetic cell between a feature and its subtasks. A table projection **selects** rows and
 an axis from this durable hierarchy and **copies no work**; a cell references its canonical target;
@@ -3853,8 +3907,8 @@ ACTIVE with the coordinator inside `friends`, role configuration expressive enou
 essential-security-only role, a specialised different-perspective reserved-plan role and agreed
 participation, the bounded config exchange and the pricing and cost records with their three
 separately labelled values, the model catalog and what its observations are evidence of, Glenn's
-agreed hierarchy with epics and recursive sub-features, the declared row kinds and the optional
-axis layer, roadmaps as durable views that outlive their work, the locked table display and the
+recursive hierarchy with optional and repeated grouping layers, epics and sub-features,
+the declared row kinds and the optional axis layer, roadmaps as durable views that outlive their work, the locked table display and the
 one renderer in two modes, the prototype capabilities kept and its two defects named, the seven
 operational obligations, the preservation and recovery suites whole, the savepoint, checkpoint,
 restore and undo contract, the staged verification and the fast-lane-and-nightly split, and the lock gate; and
