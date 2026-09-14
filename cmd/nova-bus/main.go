@@ -41,10 +41,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -58,7 +61,7 @@ usage:
   nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>]
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
   nova-bus send --bus <dir> (--file <path>|--stdin | --prepared <path>|--prepared-stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
-  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open [--open-max <n>]] [--open-warn <n>]
+  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]] [--full] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
@@ -894,6 +897,10 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	openList := f.fs.Bool("open", false, "list every open note, not only what is new; the default prints one INBOX OPEN line for them")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
+	bodies := f.fs.Bool("bodies", false, "print bodies for NEW notes, bounded by --max-notes and --max-bytes")
+	maxNotes := f.fs.Int("max-notes", defaultBodiesNotes, "with --bodies, maximum NEW items to print")
+	maxBytes := f.fs.Int64("max-bytes", defaultBodiesBytes, "with --bodies, maximum body bytes to print")
+	after := f.fs.String("after", "", "continue a bounded --bodies snapshot")
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it, the way a receipt is pushed")
 	remote := f.fs.String("remote", "", "the git remote to push the cursor to (required with --advance)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required with --advance)")
@@ -948,6 +955,18 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.atLeastZero("open-warn", *openWarn, stderr) {
 		return 2
 	}
+	if *after != "" && !*bodies {
+		fmt.Fprintln(stderr, "nova-bus inbox: --after requires --bodies")
+		return 2
+	}
+	if *bodies && (*maxNotes < 1 || int64(*maxNotes) > maxBodiesNotesCeiling) {
+		fmt.Fprintf(stderr, "nova-bus inbox: --max-notes must be between 1 and %d\n", maxBodiesNotesCeiling)
+		return 2
+	}
+	if *bodies && (*maxBytes < 1 || *maxBytes > maxBodiesBytesCeiling) {
+		fmt.Fprintf(stderr, "nova-bus inbox: --max-bytes must be between 1 and %d\n", maxBodiesBytesCeiling)
+		return 2
+	}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
 		return 2
 	}
@@ -971,6 +990,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		full: *full, openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
+		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
 	}
 	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --bus at a
 	// subdirectory of a bigger repository and the run refused with "participants.json: no
@@ -990,7 +1010,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		defer release()
 	}
 	code, r := inboxListing(o, stdout, stderr, now)
-	if code != 0 || !o.advance {
+	if code != 0 || !o.advance || (o.bodies && r.Next != "") {
 		return code
 	}
 	return advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, stdout, stderr)
@@ -1020,6 +1040,10 @@ type inboxOpts struct {
 	// What a run actually reads under is effectiveLegacy of this and the cursor's own.
 	legacy       bus.LegacyLine
 	carryHistory bool
+	bodies       bool
+	maxNotes     int
+	maxBytes     int64
+	after        string
 }
 
 // inboxReading is what one listing found, for the caller that has to act on it: `inbox`
@@ -1045,7 +1069,11 @@ type inboxReading struct {
 	// who has been shown nothing yet -- the whole open list. It is what `wait` returns on,
 	// and it is deliberately not the size of the open list on an incremental run: a reader
 	// carrying five hundred settled notes is not a reader with news.
-	New int
+	New         int
+	Next        string
+	BodyBytes   int64
+	BodyPrinted int
+	BodyGaps    int
 }
 
 // inboxListing is the whole of an inbox report: what to read, what it found, and every
@@ -1272,8 +1300,27 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// full read -- because the new entries are in that list and printing them twice is the
 	// same noise from the other end.
 	listCarried := o.openList || scope.Full
-	if !listCarried {
-		printOpenEntries(stdout, res.Fresh, len(res.Fresh))
+	if o.bodies || !listCarried {
+		if o.bodies {
+			fresh := res.Fresh
+			if scope.Full {
+				fresh = res.Open
+			}
+			head, headErr := bus.HeadCommit(o.busDir)
+			if headErr != nil {
+				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(headErr))
+				return 1, r
+			}
+			fresh, start := bodyPageStart(fresh, o.after, cursor.Commit, head, me.Name)
+			if o.after != "" && start < 0 {
+				fmt.Fprintln(stderr, "INBOX REFUSED: --after is not valid for this reader's current cursor")
+				return 1, r
+			}
+			r.BodyPrinted, r.BodyBytes, r.BodyGaps, r.Next = printBodies(stdout, o.busDir, fresh, o.maxNotes, o.maxBytes, cursor.Commit, head, me.Name)
+			fmt.Fprintf(stdout, "INBOX BODIES printed=%d bytes=%d oversize=%d gaps=%d drained=%t complete=%t next=%s\n", r.BodyPrinted, r.BodyBytes, r.BodyGaps, r.BodyGaps, r.Next == "", r.Next == "" && r.BodyGaps == 0, oneline.Field(dash(r.Next)))
+		} else {
+			printOpenEntries(stdout, res.Fresh, len(res.Fresh))
+		}
 	}
 	// THEN ONE LINE FOR THE BACKLOG, whichever way the run was asked. It was printed only on
 	// the runs that did NOT list, which meant the two shapes of return had no line in common
@@ -1471,6 +1518,83 @@ func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) int {
 	return shown
 }
 
+const (
+	defaultBodiesNotes          = 20
+	defaultBodiesBytes    int64 = 65536
+	maxBodiesNotesCeiling       = 10000
+	maxBodiesBytesCeiling int64 = 1048576
+)
+
+type bodyToken struct {
+	Version                      int `json:"v"`
+	Cursor, Head, Selector, Last string
+}
+
+func bodyPageStart(entries []bus.OpenEntry, token, cursor, head, selector string) ([]bus.OpenEntry, int) {
+	if token == "" {
+		return entries, 0
+	}
+	if len(token) > 8192 {
+		return nil, -1
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return nil, -1
+	}
+	var t bodyToken
+	if json.Unmarshal(raw, &t) != nil || t.Version != 1 || t.Cursor != cursor || t.Head != head || t.Selector != selector {
+		return nil, -1
+	}
+	for i, e := range entries {
+		if e.Path == t.Last {
+			return entries[i+1:], i + 1
+		}
+	}
+	return nil, -1
+}
+
+func printBodies(stdout io.Writer, root string, entries []bus.OpenEntry, max int, budget int64, cursor, head, selector string) (printed int, bytes int64, gaps int, next string) {
+	for i, e := range entries {
+		if printed+gaps >= max {
+			next = encodeBodyToken(bodyToken{Version: 1, Cursor: cursor, Head: head, Selector: selector, Last: entries[i-1].Path})
+			break
+		}
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(e.Path)))
+		if err != nil {
+			fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=- path=%s: unreadable\n", oneline.Field(dash(e.ID)), oneline.Field(e.Path))
+			gaps++
+			continue
+		}
+		_, body, ok := strings.Cut(string(raw), "\n\n")
+		if !ok {
+			gaps++
+			fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=%d path=%s: unreadable\n", oneline.Field(dash(e.ID)), len(raw), oneline.Field(e.Path))
+			continue
+		}
+		bodyBytes := []byte(body)
+		if int64(len(bodyBytes)) > budget-bytes || int64(len(bodyBytes)) > maxBodiesBytesCeiling {
+			gaps++
+			fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=%d path=%s\n", oneline.Field(dash(e.ID)), len(bodyBytes), oneline.Field(e.Path))
+			continue
+		}
+		fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject))
+		fmt.Fprintf(stdout, "INBOX BODY id=%s bytes=%d\n", oneline.Field(dash(e.ID)), len(bodyBytes))
+		fmt.Fprintf(stdout, "%s", bodyBytes)
+		if len(bodyBytes) == 0 || bodyBytes[len(bodyBytes)-1] != '\n' {
+			fmt.Fprint(stdout, "\n")
+		}
+		fmt.Fprintf(stdout, "INBOX BODY END id=%s\n", oneline.Field(dash(e.ID)))
+		printed++
+		bytes += int64(len(bodyBytes))
+	}
+	return
+}
+
+func encodeBodyToken(t bodyToken) string {
+	raw, _ := json.Marshal(t)
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
 // countListable is how many entries printOpenEntries would print with no cap: the whole
 // list bar the unreadable entries, which have no header to print a line from and are named
 // on their own INBOX UNREADABLE lines instead.
@@ -1520,6 +1644,10 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
+	bodies := f.fs.Bool("bodies", false, "print bodies for NEW notes, bounded by --max-notes and --max-bytes")
+	maxNotes := f.fs.Int("max-notes", defaultBodiesNotes, "with --bodies, maximum NEW items to print")
+	maxBytes := f.fs.Int64("max-bytes", defaultBodiesBytes, "with --bodies, maximum body bytes to print")
+	after := f.fs.String("after", "", "continue a bounded --bodies snapshot")
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it when this wait returns, the way inbox --advance does")
 	remote := f.fs.String("remote", "", "the git remote to fetch the bus from (required: a wait that cannot fetch cannot notice anything)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required)")
@@ -1550,6 +1678,18 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if !f.atLeastZero("open-warn", *openWarn, stderr) {
+		return 2
+	}
+	if *after != "" && !*bodies {
+		fmt.Fprintln(stderr, "nova-bus wait: --after requires --bodies")
+		return 2
+	}
+	if *bodies && (*maxNotes < 1 || int64(*maxNotes) > maxBodiesNotesCeiling) {
+		fmt.Fprintf(stderr, "nova-bus wait: --max-notes must be between 1 and %d\n", maxBodiesNotesCeiling)
+		return 2
+	}
+	if *bodies && (*maxBytes < 1 || *maxBytes > maxBodiesBytesCeiling) {
+		fmt.Fprintf(stderr, "nova-bus wait: --max-bytes must be between 1 and %d\n", maxBodiesBytesCeiling)
 		return 2
 	}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
@@ -1605,6 +1745,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
+		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
@@ -1746,7 +1887,7 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	if !keep(r) {
 		return 0, r, ""
 	}
-	if o.advance {
+	if o.advance && !(o.bodies && r.Next != "") {
 		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
 	}
 	return code, r, buf.String()
