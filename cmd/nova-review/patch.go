@@ -20,6 +20,7 @@ import (
 // be named faithfully in a one-line packet remedy, so refuse rather than guess.
 const patchControlPrefix = 64 * 1024
 const patchNameTokenCap = 64 * 1024
+const patchHeaderPrefix = "diff --git "
 
 type patchBaseChange struct {
 	Old     specRule
@@ -111,6 +112,8 @@ type patchReader struct {
 	inHunk             bool
 	prefix             []byte
 	raw                []byte
+	headerProbe        []byte
+	headerState        uint8 // 0 undecided, 1 header, 2 ordinary payload
 	lineBytes          int64
 	truncated          bool
 	lineEnded          bool
@@ -156,10 +159,9 @@ func (p *patchReader) Write(data []byte) (int, error) {
 
 func (p *patchReader) part(data []byte, end bool) error {
 	if p.collect != nil && p.selected {
-		if len(data) > p.payloadMax-p.payload.Len()-len(p.raw) {
-			return fmt.Errorf("selected diff exceeds packet byte budget")
+		if err := p.stageSelectedLine(data); err != nil {
+			return err
 		}
-		p.raw = append(p.raw, data...)
 	}
 	p.lineBytes += int64(len(data))
 	line := data
@@ -185,9 +187,53 @@ func (p *patchReader) part(data []byte, end bool) error {
 	}
 	p.prefix = p.prefix[:0]
 	p.raw = p.raw[:0]
+	p.headerProbe = p.headerProbe[:0]
+	p.headerState = 0
 	p.lineBytes = 0
 	p.truncated = false
 	p.lineEnded = false
+	return nil
+}
+
+// stageSelectedLine holds only the short possible-header prefix before deciding
+// whether this line belongs to the selected file. A following unselected file
+// header must never be charged to the preceding selected file's exact budget.
+func (p *patchReader) stageSelectedLine(data []byte) error {
+	for len(data) != 0 {
+		switch p.headerState {
+		case 1:
+			// finishLine will attribute this complete header to its next file.
+			return nil
+		case 2:
+			return p.appendSelectedRaw(data)
+		}
+		need := len(patchHeaderPrefix) - len(p.headerProbe)
+		if need > len(data) {
+			need = len(data)
+		}
+		p.headerProbe = append(p.headerProbe, data[:need]...)
+		data = data[need:]
+		if !bytes.HasPrefix([]byte(patchHeaderPrefix), p.headerProbe) {
+			p.headerState = 2
+			if err := p.appendSelectedRaw(p.headerProbe); err != nil {
+				return err
+			}
+			p.headerProbe = p.headerProbe[:0]
+			continue
+		}
+		if len(p.headerProbe) == len(patchHeaderPrefix) {
+			p.headerState = 1
+			p.headerProbe = p.headerProbe[:0]
+		}
+	}
+	return nil
+}
+
+func (p *patchReader) appendSelectedRaw(data []byte) error {
+	if len(data) > p.payloadMax-p.payload.Len()-len(p.raw) {
+		return fmt.Errorf("selected diff exceeds packet byte budget")
+	}
+	p.raw = append(p.raw, data...)
 	return nil
 }
 

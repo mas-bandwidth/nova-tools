@@ -68,6 +68,21 @@ func TestPatchReaderSelectedLargeLineRetainsOnlyBudgetedOutput(t *testing.T) {
 	}
 }
 
+func TestPatchReaderDoesNotChargeFollowingUnselectedHeaderAtExactBudget(t *testing.T) {
+	first := "diff --git a/a.txt b/a.txt\n@@ -0,0 +1 @@\n+one\n"
+	second := "diff --git a/b.txt b/b.txt\n@@ -0,0 +1 @@\n+two\n"
+	p := newPatchReader([]bool{true, false}, len(first), nil, nil, []patchName{{Old: "a.txt", New: "a.txt"}, {Old: "b.txt", New: "b.txt"}})
+	if _, err := p.Write([]byte(first + second)); err != nil {
+		t.Fatalf("following unselected header consumed selected budget: %v", err)
+	}
+	if err := p.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.payload.String(); got != first {
+		t.Fatalf("selected payload=%q, want first file only %q", got, first)
+	}
+}
+
 func TestPatchReaderCountsHunkPayloadPrefixesAndDoesNotAdvanceNoNewlineMarker(t *testing.T) {
 	spec, err := parseScopedSpec("docs/SPEC.md", "## Rules\n1. rule\n", "Rules")
 	if err != nil {
