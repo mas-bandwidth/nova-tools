@@ -927,6 +927,15 @@ func packetFakeCommand(t *testing.T, body string) string {
 	return path
 }
 
+func packetFakeStdout(t *testing.T, raw string) string {
+	t.Helper()
+	var escaped strings.Builder
+	for _, b := range []byte(raw) {
+		fmt.Fprintf(&escaped, "\\%03o", b)
+	}
+	return packetFakeCommand(t, fmt.Sprintf("printf '%%b' '%s'", escaped.String()))
+}
+
 func withPacketSourceBinaries(t *testing.T, git, gh string) {
 	t.Helper()
 	oldGit, oldGH := packetGitBinary, packetGHBinary
@@ -959,24 +968,152 @@ func TestPacketSourceCommandsUseSuccessFailureAndTimeoutBudgets(t *testing.T) {
 			t.Fatalf("git timeout err=%v", err)
 		}
 	})
+	t.Run("fixed-shape output refuses overflow without a prefix", func(t *testing.T) {
+		fake := packetFakeCommand(t, "printf 'abcdef'")
+		got, err := sourceOutputWithLimit(time.Second, t.TempDir(), fake, 5)
+		if err == nil || !strings.Contains(err.Error(), "5-byte fixed-shape bound") || got != "" {
+			t.Fatalf("overflow got=%q err=%v", got, err)
+		}
+	})
+	t.Run("fixed-shape timeout keeps its timeout diagnostic", func(t *testing.T) {
+		fake := packetFakeCommand(t, "exec sleep 2")
+		_, err := sourceOutputWithLimit(25*time.Millisecond, t.TempDir(), fake, fullSHACommandOutputBytes)
+		if err == nil || !strings.Contains(err.Error(), "timed out") || !strings.Contains(err.Error(), "--timeout") {
+			t.Fatalf("fixed-shape timeout err=%v", err)
+		}
+	})
+	t.Run("git commit resolution is one verified full sha", func(t *testing.T) {
+		sha := strings.Repeat("a", 40)
+		fake := packetFakeCommand(t, "[ \"$1\" = rev-parse ] && [ \"$2\" = --verify ] && [ \"$3\" = --end-of-options ] && [ \"$4\" = 'topic^{commit}' ] || exit 9; printf '"+sha+"\\n'")
+		withPacketSourceBinaries(t, fake, packetGHBinary)
+		got, err := gitCommitSHA(time.Second, t.TempDir(), "topic")
+		if err != nil || got != sha {
+			t.Fatalf("git commit got=%q err=%v", got, err)
+		}
+	})
+	t.Run("git commit resolution refuses extra output", func(t *testing.T) {
+		sha := strings.Repeat("a", 40)
+		fake := packetFakeCommand(t, "printf '"+sha+"\\nextra'")
+		withPacketSourceBinaries(t, fake, packetGHBinary)
+		got, err := gitCommitSHA(time.Second, t.TempDir(), "topic")
+		if err == nil || !strings.Contains(err.Error(), "fixed-shape bound") || got != "" {
+			t.Fatalf("git overflow got=%q err=%v", got, err)
+		}
+	})
 	t.Run("gh success", func(t *testing.T) {
 		sha := strings.Repeat("a", 40)
-		fake := packetFakeCommand(t, "printf '{\\\"headRefOid\\\":\\\""+sha+"\\\"}'")
+		fake := packetFakeCommand(t, "[ \"$1\" = pr ] && [ \"$2\" = view ] && [ \"$6\" = --json ] && [ \"$7\" = headRefOid ] && [ \"$8\" = --jq ] && [ \"$9\" = .headRefOid ] || exit 9; printf '"+sha+"\\n'")
 		withPacketSourceBinaries(t, packetGitBinary, fake)
 		got, err := hostPRHead(time.Second, "owner/repo", 7)
 		if err != nil || got != sha {
 			t.Fatalf("gh success got=%q err=%v", got, err)
 		}
 	})
-	t.Run("gh warning stays out of JSON", func(t *testing.T) {
+	t.Run("gh warning stays out of scalar stdout", func(t *testing.T) {
 		sha := strings.Repeat("b", 40)
-		fake := packetFakeCommand(t, "printf '{\"headRefOid\":\""+sha+"\"}'; printf 'warning only' >&2")
+		fake := packetFakeCommand(t, "printf '"+sha+"\\n'; printf 'warning only' >&2")
 		withPacketSourceBinaries(t, packetGitBinary, fake)
 		got, err := hostPRHead(time.Second, "owner/repo", 8)
 		if err != nil || got != sha {
 			t.Fatalf("gh warning got=%q err=%v", got, err)
 		}
 	})
+	t.Run("gh head refuses extra output", func(t *testing.T) {
+		sha := strings.Repeat("c", 40)
+		fake := packetFakeCommand(t, "printf '"+sha+"\\nextra'")
+		withPacketSourceBinaries(t, packetGitBinary, fake)
+		got, err := hostPRHead(time.Second, "owner/repo", 9)
+		if err == nil || !strings.Contains(err.Error(), "fixed-shape bound") || got != "" {
+			t.Fatalf("gh overflow got=%q err=%v", got, err)
+		}
+	})
+}
+
+func TestFixedSHACommandScalarProtocol(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	cases := []struct {
+		name     string
+		wire     string
+		ok       bool
+		overflow bool
+	}{
+		{"eof", sha, true, false},
+		{"lf", sha + "\n", true, false},
+		{"crlf", sha + "\r\n", false, true},
+		{"leading space", " " + sha[:39], false, false},
+		{"trailing space", sha[:39] + " ", false, false},
+		{"39 chars", sha[:39], false, false},
+		{"40 nonhex", sha[:39] + "g", false, false},
+		{"upper case", strings.ToUpper(sha), false, false},
+		{"second line", sha[:39] + "\nX", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+"/git", func(t *testing.T) {
+			fake := packetFakeStdout(t, tc.wire)
+			withPacketSourceBinaries(t, fake, packetGHBinary)
+			got, err := gitCommitSHA(time.Second, t.TempDir(), "topic")
+			if tc.ok {
+				if err != nil || got != sha {
+					t.Fatalf("got=%q err=%v", got, err)
+				}
+				return
+			}
+			if err == nil || got != "" {
+				t.Fatalf("got=%q err=%v", got, err)
+			}
+			if tc.overflow && !strings.Contains(err.Error(), "fixed-shape bound") {
+				t.Fatalf("overflow err=%v", err)
+			}
+			if !tc.overflow && !strings.Contains(err.Error(), "no full commit sha") {
+				t.Fatalf("semantic refusal err=%v", err)
+			}
+		})
+		t.Run(tc.name+"/gh", func(t *testing.T) {
+			fake := packetFakeStdout(t, tc.wire)
+			withPacketSourceBinaries(t, packetGitBinary, fake)
+			got, err := hostPRHead(time.Second, "owner/repo", 7)
+			if tc.ok {
+				if err != nil || got != sha {
+					t.Fatalf("got=%q err=%v", got, err)
+				}
+				return
+			}
+			if err == nil || got != "" {
+				t.Fatalf("got=%q err=%v", got, err)
+			}
+			if tc.overflow && !strings.Contains(err.Error(), "fixed-shape bound") {
+				t.Fatalf("overflow err=%v", err)
+			}
+			if !tc.overflow && !strings.Contains(err.Error(), "no full pull request head") {
+				t.Fatalf("semantic refusal err=%v", err)
+			}
+		})
+	}
+}
+
+func TestGitCommitSHARequiresCommitAndResolvesTags(t *testing.T) {
+	lane, head := packetLab(t)
+	repo := filepath.Join(lane, merge.RepoDir)
+	if got, err := gitCommitSHA(time.Second, repo, "feature"); err != nil || got != head {
+		t.Fatalf("branch got=%q err=%v", got, err)
+	}
+	cmd := exec.Command("git", "tag", "v1", head)
+	cmd.Dir = repo
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("tag: %v %s", err, b)
+	}
+	if got, err := gitCommitSHA(time.Second, repo, "v1"); err != nil || got != head {
+		t.Fatalf("tag got=%q err=%v", got, err)
+	}
+	cmd = exec.Command("git", "hash-object", "-w", "a.txt")
+	cmd.Dir = repo
+	blob, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("blob: %v", err)
+	}
+	if got, err := gitCommitSHA(time.Second, repo, strings.TrimSpace(string(blob))); err == nil || got != "" {
+		t.Fatalf("blob got=%q err=%v", got, err)
+	}
 }
 
 func TestPacketTimeoutFlagBoundsSourceCommand(t *testing.T) {

@@ -32,6 +32,11 @@ const defaultPacketTimeout = 120 * time.Second
 const maxPacketTimeoutSeconds = int64(time.Duration(1<<63-1) / time.Second)
 const packetDiagnosticCap = oneline.TailBytes
 
+// fullSHACommandOutputBytes is the fixed wire shape used for both Git and gh
+// head resolution: forty lower-case hexadecimal bytes followed by Git/gh's
+// one newline.  A resolver never needs a general JSON/document buffer.
+const fullSHACommandOutputBytes = 41
+
 var packetGitBinary = "git"
 var packetGHBinary = "gh"
 
@@ -144,7 +149,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	if *pr > 0 {
 		current, err = hostPRHead(timeout, st.Repo, *pr)
 	} else {
-		current, err = gitOut(timeout, repo, "rev-parse", selector)
+		current, err = gitCommitSHA(timeout, repo, selector)
 	}
 	if err != nil {
 		return refuse(errOut, fmt.Sprintf("could not resolve the entry head: %v", err))
@@ -233,7 +238,7 @@ func packet(args []string, out, errOut io.Writer) int {
 		}
 		return writePacket(*dest, newBody, out, errOut, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(newBody), hdr.Cut, true)
 	}
-	if _, err := gitOut(timeout, repo, "rev-parse", base+"^{commit}"); err != nil {
+	if _, err := gitCommitSHA(timeout, repo, base); err != nil {
 		return refuse(errOut, fmt.Sprintf("the lane does not hold the recorded base commit: %v", err))
 	}
 	diffRange := base + ".." + current
@@ -331,6 +336,71 @@ func (d *diagnosticCapture) String() string {
 	return oneline.Cap(oneline.Escape(strings.TrimSpace(text)), packetDiagnosticCap)
 }
 
+type boundedSourceOutput struct {
+	data     []byte
+	limit    int
+	overflow bool
+	cancel   context.CancelFunc
+}
+
+func (b *boundedSourceOutput) Write(p []byte) (int, error) {
+	remaining := b.limit - len(b.data)
+	if remaining < 0 {
+		remaining = 0
+	}
+	kept := remaining
+	if kept > len(p) {
+		kept = len(p)
+	}
+	b.data = append(b.data, p[:kept]...)
+	if kept < len(p) {
+		b.overflow = true
+		// Closing the context stops a child which continues writing after the
+		// pipe rejects its over-limit stdout.  The overflow is reported below
+		// before cancellation can be mistaken for a caller timeout.
+		b.cancel()
+		return len(p), errors.New("source stdout exceeds fixed-shape bound")
+	}
+	return len(p), nil
+}
+
+func (b *boundedSourceOutput) String() string { return string(b.data) }
+
+func sourceOutputWithLimit(timeout time.Duration, dir, binary string, stdoutLimit int, args ...string) (string, error) {
+	if stdoutLimit <= 0 {
+		return "", fmt.Errorf("source stdout limit must be positive")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Dir = dir
+	stdout := &boundedSourceOutput{limit: stdoutLimit, cancel: cancel}
+	stderr := &diagnosticCapture{}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	// A deadline must still return when a killed command left a child holding
+	// its output pipe; this is the lifecycle guard merge.Exec uses as well.
+	cmd.WaitDelay = 2 * time.Second
+	err := cmd.Run()
+	diagnostic := stderr.String()
+	if stdout.overflow {
+		return "", fmt.Errorf("%s output exceeds its %d-byte fixed-shape bound", binary, stdoutLimit)
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if diagnostic != "" {
+			return stdout.String(), fmt.Errorf("%s timed out after %s; raise --timeout <seconds> to wait longer: %s", binary, timeout, diagnostic)
+		}
+		return stdout.String(), fmt.Errorf("%s timed out after %s; raise --timeout <seconds> to wait longer", binary, timeout)
+	}
+	if err != nil {
+		if diagnostic != "" {
+			return stdout.String(), fmt.Errorf("%s failed: %w: %s", binary, err, diagnostic)
+		}
+		return stdout.String(), fmt.Errorf("%s failed: %w", binary, err)
+	}
+	return stdout.String(), nil
+}
+
 func sourceOutput(timeout time.Duration, dir, binary string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -363,18 +433,31 @@ func sourceOutput(timeout time.Duration, dir, binary string, args ...string) (st
 func gitOut(timeout time.Duration, repo string, args ...string) (string, error) {
 	return sourceOutput(timeout, repo, packetGitBinary, args...)
 }
-func hostPRHead(timeout time.Duration, repo string, pr int) (string, error) {
-	b, err := sourceOutput(timeout, "", packetGHBinary, "pr", "view", fmt.Sprint(pr), "--repo", repo, "--json", "headRefOid")
+
+func gitCommitSHA(timeout time.Duration, repo, revision string) (string, error) {
+	out, err := sourceOutputWithLimit(timeout, repo, packetGitBinary, fullSHACommandOutputBytes,
+		"rev-parse", "--verify", "--end-of-options", revision+"^{commit}")
 	if err != nil {
 		return "", err
 	}
-	var v struct {
-		Head string `json:"headRefOid"`
+	sha := strings.TrimSuffix(out, "\n")
+	if !merge.IsSHA(sha) {
+		return "", fmt.Errorf("git returned no full commit sha")
 	}
-	if err := json.Unmarshal([]byte(b), &v); err != nil || !merge.IsSHA(v.Head) {
+	return sha, nil
+}
+
+func hostPRHead(timeout time.Duration, repo string, pr int) (string, error) {
+	b, err := sourceOutputWithLimit(timeout, "", packetGHBinary, fullSHACommandOutputBytes,
+		"pr", "view", fmt.Sprint(pr), "--repo", repo, "--json", "headRefOid", "--jq", ".headRefOid")
+	if err != nil {
+		return "", err
+	}
+	head := strings.TrimSuffix(b, "\n")
+	if !merge.IsSHA(head) {
 		return "", fmt.Errorf("host returned no full pull request head")
 	}
-	return v.Head, nil
+	return head, nil
 }
 func diffCounts(diff string) (files, hunks int) {
 	for _, l := range strings.Split(diff, "\n") {
