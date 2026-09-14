@@ -2601,8 +2601,12 @@ as preregistered. Outcomes are `:saving`, `:inconclusive`, or `:regression`, wit
 uncertainty. A zero accepted-unit denominator is undefined, never zero cost per result.
 
 ACTIVE executions reference policy revision, task generation, attempt and parent execution,
-packet digest/byte count, requested and observed model, harness, bench, deadline, checkpoint,
-result and usage pointers. These extend existing execution/attempt records; references never
+packet digest/byte count, requested and observed model, harness, bench,
+`:execution-limit-ms` (positive integer), `:execution-started-at` and
+`:execution-expires-at` (UTC stamps or explicitly unknown before launch),
+`:stop-outcome` (not-requested, requested, confirmed-stopped, completed or unresolved),
+`:stop-observed-at` (UTC stamp or explicitly unknown), checkpoint, result and usage pointers.
+The client wait deadline is not stored in any of these execution-bound fields. These extend existing execution/attempt records; references never
 duplicate usage. Unattributed coordinator work remains an explicit allocation gap. C retains
 closed experiments and attempts; roadmap and friend views reference them after closure.
 
