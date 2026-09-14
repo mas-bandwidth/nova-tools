@@ -1,20 +1,80 @@
 # Optional batch admission receipts
 
-**Status: proposal, not implemented or approved for build.** Root cold review and each participating friend's independent disposition must name the exact revision before implementation. This extends the existing `batch` admission boundary; it introduces no dispatcher, model-call batching, accounting ledger, dependency scheduler or cancellation behavior. The current `batch` invocation without the new option remains compatible.
+**Status: proposal, not implemented or approved for build.** Maintainer review and independent reviewers' dispositions must name the exact revision before implementation. This extends the existing `batch` admission boundary; it introduces no dispatcher, model-call batching, accounting ledger, dependency scheduler or cancellation behavior. The current `batch` invocation without the new option remains compatible.
 
 ## Problem and evidence
 
 At public main `86785fd0accf997662c1cd5356f60acaf7a0821c`, [batch admission](https://github.com/mas-bandwidth/nova-tools/blob/86785fd0accf997662c1cd5356f60acaf7a0821c/cmd/nova-swarm/main.go#L365) reads all task files and then writes jobs sequentially. It does not preserve the input filename in the sidecar or return a filename/job mapping. [IDs](https://github.com/mas-bandwidth/nova-tools/blob/86785fd0accf997662c1cd5356f60acaf7a0821c/internal/swarm/pool.go#L136) contain second-resolution time and randomness: sorting them does not reconstruct card order. [Pool.Add](https://github.com/mas-bandwidth/nova-tools/blob/86785fd0accf997662c1cd5356f60acaf7a0821c/internal/swarm/pool.go#L182) writes the task before its sidecar; a later write failure does not roll back earlier jobs.
 
-Workshop capability probes used source `1a14c7a52b80`, version `v0.15.3-0.20260914142654-1a14c7a52b80`, binary SHA256 `1fc75157070cf7b98151dc967aa2f419fa2ea3f67173a98f9d6ed27d36c9b83b`. The root retains `20260914-batch-receipt-gap/` with exact input bytes, binary identity, argv, stdout/stderr, source copies and a passing artifact verifier. These are synthetic admission/parser probes, not production review or operational savings evidence:
+Workshop capability probes used source `1a14c7a52b80`, version `v0.15.3-0.20260914142654-1a14c7a52b80`, binary SHA256 `1fc75157070cf7b98151dc967aa2f419fa2ea3f67173a98f9d6ed27d36c9b83b`. The retained `20260914-batch-receipt-gap/` evidence includes exact input bytes, binary identity, argv, stdout/stderr, source copies and a passing artifact verifier; the setup and commands below make these witnesses independently reproducible. An independent reviewer also reproduced the first three at public main `86785fd0`, as recorded in [review 5670745380](https://github.com/mas-bandwidth/nova-tools/pull/326#issuecomment-5670745380). These are synthetic admission/parser probes, not production review or operational savings evidence:
 
-| Witness | Observed result |
-| --- | --- |
-| `card-alpha.txt` and `card-beta.txt`, both exactly `Synthetic identity probe only. Do not execute.` followed by LF; SHA256 `878f6d603d1a46843a7251593c344c22d5802d137cccb34bd6fe261e6e4e3b8b`; common label | Two unique jobs, same prompt hash/label/batch; either named card matches both jobs. |
-| Repeat the exact batch argv | A new batch and two more jobs; pending count 2 becomes 4. |
-| Sorted small first card and second card larger than 4096 bytes; child process alone has `RLIMIT_FSIZE=4096`, SIGXFSZ ignored | First task and sidecar survive; second task write returns `file too large`, exit 2. |
-| `triage --batch ID --no-state` while every admitted job is pending | Exit 1: triage's job selection excludes pending. Status/sidecars retain their identities. |
-| Hand-built retained report, then changed bytes; another job has no report; empty usage directory | Triage names the new hash prefix and counts the missing report. Cost says `tasks=0`; aggregate zeros are not observed per-job usage. No worker ran. |
+Set `SWARM` to the absolute path of a binary built from either cited source revision, and `BASE` to a new disposable absolute directory. Record the chosen source revision and binary SHA256; a rebuild need not reproduce the recorded workshop binary hash. The partial-write helper uses POSIX `resource`/SIGXFSZ; the following Python setup uses only local synthetic files:
+
+```sh
+export SWARM=/absolute/path/to/nova-swarm
+export BASE=/absolute/path/to/new-disposable-witness-directory
+python3 - <<'PYSETUP'
+import os
+from pathlib import Path
+b = Path(os.environ['BASE'])
+b.mkdir(parents=True, exist_ok=False)
+for name in ('duplicate-tasks', 'duplicate-pool', 'partial-tasks', 'partial-pool'):
+    (b / name).mkdir()
+for name in ('card-alpha.txt', 'card-beta.txt'):
+    (b / 'duplicate-tasks' / name).write_bytes(
+        b'Synthetic identity probe only. Do not execute.\n')
+(b / 'partial-tasks' / '01-small.txt').write_bytes(
+    b'First synthetic card; do not execute.\n')
+(b / 'partial-tasks' / '02-large.txt').write_bytes(
+    b'Second synthetic card; do not execute.\n' + b'x' * 16384)
+(b / 'limit-exec.py').write_text(
+    'import os,resource,signal,sys\n'
+    'resource.setrlimit(resource.RLIMIT_FSIZE,(4096,4096))\n'
+    'signal.signal(signal.SIGXFSZ,signal.SIG_IGN)\n'
+    'os.execv(sys.argv[1],sys.argv[1:])\n')
+PYSETUP
+```
+
+Run rows 1–4 in order. Shell quotes delimit argv, not task contents. Save stdout/stderr and exit status separately for each row; `BATCH_ID` below must be exported as the literal ID from row 1's `BATCH OK`, not a guessed value.
+
+| Witness | Exact command / argv after the setup | Observed result |
+| --- | --- | --- |
+| 1. Two named files with identical LF-terminated bytes; SHA256 `878f6d603d1a46843a7251593c344c22d5802d137cccb34bd6fe261e6e4e3b8b`; common label | `"$SWARM" batch --pool "$BASE/duplicate-pool" --tasks "$BASE/duplicate-tasks" --files 1 --tokens 100 --label identity-probe` | Two unique jobs, same prompt hash/label/batch; either named card matches both jobs in `pending/*.json` and `pending/*.task`. |
+| 2. Repeat identical admission | `"$SWARM" batch --pool "$BASE/duplicate-pool" --tasks "$BASE/duplicate-tasks" --files 1 --tokens 100 --label identity-probe` | A new batch and two more jobs; pending count 2 becomes 4. |
+| 3. Sequential partial write; child process alone has `RLIMIT_FSIZE=4096`, SIGXFSZ ignored | `python3 "$BASE/limit-exec.py" "$SWARM" batch --pool "$BASE/partial-pool" --tasks "$BASE/partial-tasks" --files 1 --tokens 100 --label partial-probe` | First task and sidecar survive; second task write returns `file too large`, exit 2. The helper only installs the child limit and execs the displayed nova-swarm argv. |
+| 4. Every admitted job remains pending | `"$SWARM" triage --pool "$BASE/duplicate-pool" --batch "$BATCH_ID" --no-state --max 20`; `"$SWARM" status --pool "$BASE/duplicate-pool" --max 20` | Triage exits 1 because its selection excludes pending. Status/sidecars retain their identities. |
+| 5. Hand-built retained report at two byte revisions, one absent report, empty usage directory; fixture setup below | `"$SWARM" triage --pool "$BASE/synthetic-results-pool" --batch "$BATCH_ID" --no-state --max 1`; `"$SWARM" result --pool "$BASE/synthetic-results-pool" --id "$REPORT_JOB_ID"`; `"$SWARM" cost --pool "$BASE/synthetic-results-pool" --max 20` | Triage names the changed hash prefix and counts the missing report. Cost says `tasks=0`; aggregate zeros are not observed per-job usage. No worker ran. |
+
+For row 5, set `BATCH_ID` to row 1's ID, then create a separate parser fixture. Its `done` records are fabricated reader inputs, not completed executions:
+
+```sh
+python3 - <<'PYFIXTURE'
+import json, os, shutil
+from pathlib import Path
+b = Path(os.environ['BASE']); p = b / 'synthetic-results-pool'
+(p / 'done').mkdir(parents=True, exist_ok=False)
+rows = sorted((json.loads(f.read_text())
+               for f in (b / 'duplicate-pool' / 'pending').glob('*.json')),
+              key=lambda row: row['id'])
+rows = [row for row in rows if row['batch'] == os.environ['BATCH_ID']]
+assert len(rows) == 2
+for row in rows:
+    ident = row['id']
+    (p / 'done' / (ident + '.json')).write_text(json.dumps(row) + '\n')
+    shutil.copyfile(b / 'duplicate-pool' / 'pending' / (ident + '.task'),
+                    p / 'done' / (ident + '.task'))
+report = p / 'reports' / rows[0]['id'] / 'RESULT.md'
+report.parent.mkdir(parents=True)
+report.write_bytes(b'# Synthetic fixture report\n\n## Head\nfindings: 0\n'
+                   b'Synthetic parser fixture; no job was executed.\n')
+(b / 'report-job-id.txt').write_text(rows[0]['id'] + '\n')
+print('report-job-id=' + rows[0]['id'])
+print('report-path=' + str(report))
+PYFIXTURE
+export REPORT_JOB_ID="$(cat "$BASE/report-job-id.txt")"
+```
+
+Run row 5 once, then change only `Synthetic fixture report` to `Synthetic revised fixture report` in the printed report path and rerun the same argv. Preserve both raw revisions and outputs. These commands admit synthetic cards and inspect files only; none uses `run`, `supervise` or a provider.
 
 A wrapper using distinct labels and durable correlation can solve parts of this problem. It is not impossible. The native choice preserves the caller's label and places recovery at the boundary that assigns IDs and publishes task/sidecar files, including orphan-file cases.
 
@@ -95,8 +155,10 @@ Missing per-job usage is unavailable, not zero; an empty cost aggregate cannot f
 
 ## Measurement and remaining gates
 
-This is design cost. The CLI-delta baseline is current batch+triage plus necessary status/result reads. Rowan's actual historical one-card route may be measured separately as an adoption comparison; label it separately rather than substituting it for the implementation baseline.
+This is design cost. The CLI-delta baseline is current batch+triage plus necessary status/result reads. A caller's historical one-card route may be measured separately as an adoption comparison; label it separately rather than substituting it for the implementation baseline.
+
+The comparison remains a hypothesis until measured: predeclare paired runs of the same frozen cards with independent shadow reviews, or predeclare matched cards and label that comparison observational; record the chosen design before collecting outcomes.
 
 Before either operational comparison, freeze exact prompt and transport bytes (raw/admitted), source IDs/revisions, worker/model/settings, concurrency, output contract and equal accepted workload. Count parent and child preparation/dispatch/collection plus retries, repair, review and validation through the same acceptance gate on both sides; retain shared/unknown overhead. Preserve producer-defined cache/read/write/miss and reasoning semantics, price coverage and unavailable observations. Local tokens remain counted with zero declared inference API charge. Record local CLI count, model turns, wall time and artifact bytes separately. Design/implementation cost is not an operational saving, nor is reduced command count by itself.
 
-Before build: exact encoding and pool-binding rules, supported synchronization/no-replace behavior, crash injection tests, and exact-revision root/friend review remain required. No production receipt test or token-saving result is claimed by this draft.
+Before build: exact encoding and pool-binding rules, supported synchronization/no-replace behavior, crash injection tests, and exact-revision maintainer and independent-reviewer dispositions remain required. No production receipt test or token-saving result is claimed by this draft.
