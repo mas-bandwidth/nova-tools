@@ -108,6 +108,18 @@ func TestFoldFetchedTipUsesPinnedTreeWithoutCheckoutLock(t *testing.T) {
 	}
 }
 
+func TestFoldTipRetainsLegacyTreeishInput(t *testing.T) {
+	lane, _, _ := fetchedTipLab(t)
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, nil), time.Second)
+	folded, err := records.FoldTip("HEAD")
+	if err != nil {
+		t.Fatalf("legacy tree-ish HEAD must remain accepted: %v", err)
+	}
+	if reads := folded.Reads["951"]; len(reads) != 1 || reads[0].Who != "tip" {
+		t.Fatalf("legacy FoldTip lost its tree-ish fold: %+v", reads)
+	}
+}
+
 type tipRunner struct {
 	calls [][]string
 }
