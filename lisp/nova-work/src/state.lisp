@@ -1,0 +1,265 @@
+;;;; state.lisp --- the root, its two branches, and the counters kept on write.
+;;;;
+;;;; docs/SPEC-WORK.md:1169 — "The root is COW: closed, open, working. The root
+;;;; is `(root C O)`". C and O hold the same nodes told apart by one derived
+;;;; fact; this is a partition and not a second ledger (SPEC-WORK.md:1187-1190).
+;;;;
+;;;; SPEC-WORK.md:1562 — "|O| is a counter carried by every accepted mutation
+;;;; envelope and is read, never computed ... The root's open-item count, and
+;;;; the per-repository and per-container counts beneath it, are updated by the
+;;;; same envelope that moves an item ... before its OK line is printed".
+;;;; Every counter here moves on the write path, along the item's containment
+;;;; ancestors only, and never by a walk of O on a read.
+
+(in-package #:nova-work)
+
+(defstruct (wnode (:conc-name wnode-))
+  id type parent children state branch open-count links
+  ;; SPEC-WORK.md:1222 -- the newest row of an id carries revived=<rev|-> and
+  ;; settles=<n>. Both are kept on the node and moved on write, like every
+  ;; other counter here, so a row is written and never computed by a scan.
+  settles revived)
+
+(defstruct (wstate (:conc-name wstate-))
+  seed       ; the seed forest, verbatim, so a reconstruction starts where this did
+  nodes      ; id -> wnode
+  order      ; ids in seed order
+  root-open  ; |O|
+  closed     ; |C|
+  leaf-open  ; the open leaf-task counter -- separate, and never labelled |O|
+  issue-open ; the open linked-issue counter -- separate, and never labelled |O|
+  history    ; envelope records, newest first
+  rows       ; closed-index rows, newest first
+  revision)
+
+(defun %node (state id)
+  "Every node access goes through here so *VISITS* is honest."
+  (incf *visits*)
+  (gethash id (wstate-nodes state)))
+
+(defun %node-quiet (state id)
+  "Node access on a path that is not a read of the work set: the write path's
+own ancestor walk, and serialization of the whole state."
+  (gethash id (wstate-nodes state)))
+
+(defun make-seed-state (nodes)
+  (let ((table (make-hash-table :test #'equal))
+        (order '()))
+    (dolist (spec nodes)
+      (let ((id (getf spec :id)))
+        (when (gethash id table)
+          (error 'unsupported-input :what (format nil "rule 1: duplicate id ~A" id)))
+        (push id order)
+        (setf (gethash id table)
+              (make-wnode :id id
+                          :type (getf spec :type)
+                          :parent (getf spec :parent)
+                          :children '()
+                          :state (getf spec :state :unknown)
+                          :branch :o
+                          :open-count 0
+                          :links (getf spec :links)
+                          :settles 0
+                          :revived "-"))))
+    (setf order (nreverse order))
+    ;; Containment edges, in seed order.
+    (dolist (id order)
+      (let* ((node (gethash id table))
+             (parent (and (wnode-parent node) (gethash (wnode-parent node) table))))
+        (when (and (wnode-parent node) (null parent))
+          (error 'unsupported-input
+                 :what (format nil "rule 2: ~A names a parent that does not exist" id)))
+        (when parent
+          (setf (wnode-children parent)
+                (append (wnode-children parent) (list id))))))
+    ;; SPEC-WORK.md:3347 referential-integrity -- "duplicate ids, dangling
+    ;; references, cycles, conflicting parents ... all fail BEFORE publication".
+    ;; Rule 1 is above and rule 2 is in the edge walk; rule 3 is the forest
+    ;; check, and it is here rather than left to the ancestor walk, which would
+    ;; spin on a cycle instead of refusing. It is bounded by the node count.
+    (let ((limit (hash-table-count table)))
+      (dolist (id order)
+        (let ((cur id) (steps 0))
+          (loop while cur
+                do (when (> (incf steps) limit)
+                     (error 'unsupported-input
+                            :what (format nil "rule 3: :children edges are not a forest; a cycle of :parent through ~A"
+                                          id)))
+                   (let ((node (gethash cur table)))
+                     (unless node (return))
+                     (setf cur (wnode-parent node)))))))
+    (let ((state (make-wstate :seed (copy-tree nodes) :nodes table :order order
+                              :root-open 0 :closed 0 :leaf-open 0 :issue-open 0
+                              :history '() :rows '() :revision 0)))
+      ;; Seed the counters once, on the write path that builds the set.
+      (dolist (id order)
+        (%adjust-counters state id 1))
+      ;; The seed is entirely open; |C| starts at zero rather than at the
+      ;; mirror of the seeding walk.
+      (setf (wstate-closed state) 0)
+      state)))
+
+(defun %adjust-counters (state id delta)
+  "Move the root counter, every containment ancestor's counter, and the two
+separate counters, by DELTA. The walk is the item's ancestor chain, which is
+bounded by depth and is acyclic by rule 3 above; it is never a walk of O.
+
+A CONTAINER IS IN ITS OWN COUNT -- the chain starts at the item itself, so a
+container's counter is the open canonical item ids in its subtree INCLUDING
+itself. SPEC-WORK.md:1568 says only \"the per-repository and per-container
+counts beneath it\", where \"beneath it\" is beneath the root; it does not
+settle self-inclusion. The root's |O| counts containers as items -- five at the
+suite's seed, of which three are containers -- and :1573 says the counters
+\"count canonical item ids once\", so a per-container count that excluded its
+own id would not be the same counting rule one level down. Decision for review."
+  (let ((node (%node-quiet state id)))
+    (let ((cur id))
+      (loop while cur
+            do (let ((n (%node-quiet state cur)))
+                 (unless n (return))
+                 (incf (wnode-open-count n) delta)
+                 (setf cur (wnode-parent n)))))
+    (incf (wstate-root-open state) delta)
+    (decf (wstate-closed state) delta)
+    (when (eq :task (wnode-type node))
+      (incf (wstate-leaf-open state) delta))
+    (incf (wstate-issue-open state) (* delta (length (wnode-links node))))))
+
+;;; Reads that are the counters themselves. No node is visited here.
+
+(defun state-open-count (state) (wstate-root-open state))
+(defun state-closed-count (state) (wstate-closed state))
+(defun state-revision (state) (wstate-revision state))
+(defun state-history (state) (reverse (wstate-history state)))
+(defun state-closed-rows (state) (reverse (wstate-rows state)))
+
+;;; Reads of one node. These do visit.
+
+(defun node-open-count (state id)
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (wnode-open-count n)))
+
+(defun node-branch (state id)
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (wnode-branch n)))
+
+(defun node-state (state id)
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (wnode-state n)))
+
+;;; The root, as bytes.
+
+(defun root-form (state)
+  (list :root
+        (list :open (wstate-root-open state))
+        (list :closed (wstate-closed state))
+        (list :revision (wstate-revision state))
+        (list :leaf-open (wstate-leaf-open state))
+        (list :issue-open (wstate-issue-open state))
+        (cons :nodes
+              (loop for id in (sort (copy-list (wstate-order state)) #'string<)
+                    collect (let ((n (%node-quiet state id)))
+                              (list (wnode-id n) (wnode-type n) (wnode-state n)
+                                    (wnode-branch n) (wnode-open-count n)))))))
+
+(defun root-digest (state)
+  (sha256-hex (canonical-string (root-form state))))
+
+(defun state-canonical-form (state)
+  "The durable bytes: the seed the set began at, and the append-only history."
+  (list :seed (wstate-seed state)
+        :history (state-history state)))
+
+;;; Copy-on-write, so an envelope is applied to a candidate and the candidate is
+;;; installed only when the whole of it succeeded.
+
+(defun copy-state (state)
+  (let ((table (make-hash-table :test #'equal :size (hash-table-count (wstate-nodes state)))))
+    (maphash (lambda (id node) (setf (gethash id table) (copy-wnode node)))
+             (wstate-nodes state))
+    (make-wstate :seed (wstate-seed state)
+                 :nodes table
+                 :order (wstate-order state)
+                 :root-open (wstate-root-open state)
+                 :closed (wstate-closed state)
+                 :leaf-open (wstate-leaf-open state)
+                 :issue-open (wstate-issue-open state)
+                 :history (wstate-history state)
+                 :rows (wstate-rows state)
+                 :revision (wstate-revision state))))
+
+;;; Applying one event. The live path and the replay path share it, which is
+;;; what makes the reconstruction independent of the live counters.
+
+(defun apply-event (state event)
+  (let* ((id (work-event-node event))
+         (node (%node-quiet state id)))
+    (unless node
+      (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (ecase (work-event-kind event)
+      (:transition
+       (setf (wnode-state node) (getf (work-event-fields event) :to)))
+      (:reopen
+       (setf (wnode-state node) :todo))
+      (:settle
+       (unless (eq :o (wnode-branch node))
+         (error 'unsupported-input :what (format nil "rule 18: ~A is already in C" id)))
+       (setf (wnode-branch node) :c)
+       (%adjust-counters state id -1)
+       (incf (wnode-settles node))
+       (setf (wnode-revived node) "-")
+       (push (list :key (closed-row-key event) :kind :settle :node id
+                   :rev (work-event-rev event)
+                   :disposition (getf (work-event-fields event) :disposition)
+                   :stamp (work-event-stamp event)
+                   :revived (wnode-revived node)
+                   :settles (wnode-settles node))
+             (wstate-rows state)))
+      (:revive
+       (unless (eq :c (wnode-branch node))
+         (error 'unsupported-input :what (format nil "rule 18: ~A is not in C" id)))
+       (setf (wnode-branch node) :o)
+       (%adjust-counters state id 1)
+       (setf (wnode-revived node) (work-event-rev event))
+       (push (list :key (closed-row-key event) :kind :revive :node id
+                   :rev (work-event-rev event)
+                   :disposition (getf (work-event-fields event) :disposition +absent+)
+                   :stamp (work-event-stamp event)
+                   :revived (wnode-revived node)
+                   :settles (wnode-settles node))
+             (wstate-rows state))))
+    (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
+    state))
+
+(defun apply-envelope (state envelope)
+  "Pure: STATE is never touched. The candidate is built whole and returned, so
+the caller installs all of it or none of it."
+  (let ((candidate (copy-state state)))
+    (dolist (event (getf envelope :events))
+      (apply-event candidate event))
+    (push (list :request (getf envelope :request)
+                :digest (getf envelope :digest)
+                :events (mapcar #'event-record-form (getf envelope :events)))
+          (wstate-history candidate))
+    candidate))
+
+(defun reconstruct-state (text)
+  "A full independent reconstruction: parse the canonical bytes, seed a fresh
+set, and replay the history over it."
+  (let* ((form (read-restricted text))
+         (seed (getf form :seed))
+         (history (getf form :history))
+         (state (make-seed-state seed)))
+    (dolist (record history)
+      (incf *replays*)
+      (let ((events (loop for e in (getf record :events)
+                          collect (record-form->event
+                                   e :session-written-p
+                                   (member (getf e :kind) '(:settle :revive))))))
+        (setf state (apply-envelope state (list :request (getf record :request)
+                                                :digest (getf record :digest)
+                                                :events events)))))
+    state))
