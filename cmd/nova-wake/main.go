@@ -607,7 +607,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		sources = append(sources, &polled{src: prSrc, due: now})
 	}
 	if len(runs) > 0 {
-		runSrc = &wake.Runs{Names: runs, Every_: entryEveryDur, Timeout: timeout, Final: *finalOnly}
+		runSrc = &wake.Runs{Names: runs, Every_: entryEveryDur, Timeout: timeout, Final: *finalOnly, Prev: prev}
 		sources = append(sources, &polled{src: runSrc, due: now})
 	}
 	if len(refs) > 0 {

@@ -435,16 +435,18 @@ func TestTheBoundedCorrelationRead(t *testing.T) {
 		}
 	})
 
-	t.Run("a deep lane is bounded per poll and complete over polls", func(t *testing.T) {
+	t.Run("a deep lane spread over commits resumes across them", func(t *testing.T) {
+		// The same arithmetic as the spec's 900, one tenth the fixture, and
+		// spread over NINE COMMITS so the bookmark has to cross them: the
+		// spec's own one-commit fixture is the subtest below.
 		busDir, anchor := newLaneBus(t)
-		// 900 notes in nine commits, the answer the 850th.
 		n := 0
 		for c := 0; c < 9; c++ {
 			var batch []note
-			for i := 0; i < 100; i++ {
+			for i := 0; i < 10; i++ {
 				n++
 				to := "Somebody-Else"
-				if n == 850 {
+				if n == 85 {
 					to = caller
 				}
 				batch = append(batch, note{name: fmt.Sprintf("n%04d.md", n), from: peer, to: to, subject: "note"})
@@ -453,11 +455,11 @@ func TestTheBoundedCorrelationRead(t *testing.T) {
 		}
 		state := filepath.Join(t.TempDir(), "probe.state")
 		seedPing(t, state, busDir, peer, "rowan-00000000000a", anchor, at)
-		args := []string{"--bus", busDir, "--line", peer, "--state", state, "--as", caller}
+		args := []string{"--bus", busDir, "--line", peer, "--state", state, "--as", caller, "--correlate-max", "30"}
 		first := probeAt(t, at.Add(time.Minute), args...)
-		hasFields(t, probeLine(t, first.stdout), "state=PINGED correlation=partial remaining=600 gaps=0")
+		hasFields(t, probeLine(t, first.stdout), "state=PINGED correlation=partial remaining=60 gaps=0")
 		second := probeAt(t, at.Add(8*time.Minute), args...)
-		hasFields(t, probeLine(t, second.stdout), "state=PINGED correlation=partial remaining=300 gaps=0")
+		hasFields(t, probeLine(t, second.stdout), "state=PINGED correlation=partial remaining=30 gaps=0")
 		if strings.Contains(second.stdout, "UNAVAILABLE") {
 			t.Errorf("past --answer-within and never UNAVAILABLE on a partial read:\n%s", second.stdout)
 		}
@@ -465,6 +467,75 @@ func TestTheBoundedCorrelationRead(t *testing.T) {
 		hasFields(t, probeLine(t, third.stdout), "state=ANSWERED pinged-id=rowan-00000000000a")
 		if third.exit != 0 {
 			t.Errorf("exit %d, want 0\n%s", third.exit, third.all())
+		}
+	})
+
+	t.Run("the 900-notes-in-one-commit lane", func(t *testing.T) {
+		// The spec's own separately named fixture, and the mutation catcher for
+		// remaining=: nine hundred notes added in ONE commit are remaining=1 in
+		// commits and nine hundred items of work.
+		busDir, anchor := newLaneBus(t)
+		var batch []note
+		for i := 1; i <= 900; i++ {
+			to := "Somebody-Else"
+			if i == 850 {
+				to = caller
+			}
+			batch = append(batch, note{name: fmt.Sprintf("n%04d.md", i), from: peer, to: to, subject: "note"})
+		}
+		addLaneCommit(t, busDir, "from-peer", at.Add(-time.Minute), batch...)
+
+		// The caller's own cursor and open list, which this read never touches.
+		cursor := filepath.Join(busDir, "from-rowan", "CURSOR")
+		open := filepath.Join(busDir, "from-rowan", "OPEN")
+		write(t, cursor, "abc123\n")
+		write(t, open, "one open note\n")
+		cursorBefore, openBefore := read(t, cursor), read(t, open)
+
+		// A fake nova-bus on PATH, so "no nova-bus is started by the read" is a
+		// measurement and not a hope.
+		busFake, _ := fakes(t)
+
+		state := filepath.Join(t.TempDir(), "probe.state")
+		seedPing(t, state, busDir, peer, "rowan-00000000000a", anchor, at)
+		args := []string{"--bus", busDir, "--line", peer, "--state", state, "--as", caller}
+
+		first := probeAt(t, at.Add(time.Minute), args...)
+		hasFields(t, probeLine(t, first.stdout), "state=PINGED correlation=partial remaining=600 gaps=0")
+		afterFirst := probeRecord(t, state)
+
+		second := probeAt(t, at.Add(8*time.Minute), args...)
+		hasFields(t, probeLine(t, second.stdout), "state=PINGED correlation=partial remaining=300 gaps=0")
+		afterSecond := probeRecord(t, state)
+
+		// THE ONLY STATE BYTE THAT CHANGES between polls one and two is the
+		// record's seventh field.
+		for i := 0; i < 6 && i < len(afterFirst) && i < len(afterSecond); i++ {
+			if afterFirst[i] != afterSecond[i] {
+				t.Errorf("field %d of the record moved: %q then %q; only the seventh is a poll's to write",
+					i+1, afterFirst[i], afterSecond[i])
+			}
+		}
+		if len(afterFirst) > 6 && len(afterSecond) > 6 && afterFirst[6] == afterSecond[6] {
+			t.Errorf("the bookmark did not move between two partial polls")
+		}
+
+		third := probeAt(t, at.Add(9*time.Minute), args...)
+		hasFields(t, probeLine(t, third.stdout), "state=ANSWERED pinged-id=rowan-00000000000a")
+		if third.exit != 0 {
+			t.Errorf("exit %d, want 0\n%s", third.exit, third.all())
+		}
+
+		if n := len(calls(t, busFake)); n != 0 {
+			t.Errorf("the correlation read started nova-bus %d times; it starts none at all:\n%v", n, calls(t, busFake))
+		}
+		if read(t, cursor) != cursorBefore || read(t, open) != openBefore {
+			t.Errorf("the caller's CURSOR and OPEN are byte-identical after the read")
+		}
+		for _, r := range []result{first, second, third} {
+			if strings.Contains(r.all(), "the body") {
+				t.Errorf("a note body reached the output; the read stops at the header:\n%s", r.all())
+			}
 		}
 	})
 
@@ -500,6 +571,17 @@ func TestTheBoundedCorrelationRead(t *testing.T) {
 			seen[mark] = true
 		}
 	})
+}
+
+// probeRecord answers the seven fields of the probe record.
+func probeRecord(t *testing.T, statePath string) []string {
+	t.Helper()
+	st, err := wake.Load(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, _ := st.Get("probe:" + peer)
+	return wake.Decompose(v)
 }
 
 func bookmarkOf(t *testing.T, statePath string) string {

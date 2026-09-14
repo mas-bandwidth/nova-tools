@@ -208,10 +208,18 @@ func (p *Probe) correlate(ctx context.Context, st *State, stdout, stderr io.Writ
 		line.correlation, line.remaining = "complete", "0"
 	}
 	if read.Answered {
-		line.state, line.correlation, line.remaining = StateAnswered, "complete", "0"
+		// WHAT WAS MEASURED, not what an answer would like to be true (the
+		// Fable read, F7): an answer found in the middle of a deep lane leaves
+		// everything behind it uncovered, and saying `complete` there would be
+		// the same unearned negative evidence K4c reserves for a covered lane.
+		line.state = StateAnswered
 		if read.AnswerVia != "" {
-			fmt.Fprintf(stdout, "WAKE NOTE probe %s: an answer names ping %s by its %s\n",
-				oneline.Field(p.Line), oneline.Field(rec.noteID), oneline.Escape(read.AnswerVia))
+			// The spec's own sentence, with the ANSWERING item's id in it: a
+			// note's own Id, and for a receipt the ping id it names, which is
+			// what `nova-bus receipt --note <that id>` checks by hand.
+			fmt.Fprintf(stdout, "WAKE NOTE probe %s: %s answers ping %s by its %s\n",
+				oneline.Field(p.Line), oneline.Field(read.AnswerID),
+				oneline.Field(rec.noteID), oneline.Escape(read.AnswerVia))
 		}
 		st.Delete("probe:" + p.Line)
 		p.dropArtifact()
@@ -278,10 +286,17 @@ func (p *Probe) read(ctx context.Context, rec record) LaneResult {
 	if p.Refresh && p.Remote != "" && p.Branch != "" {
 		ref = p.Remote + "/" + p.Branch
 	}
+	// THE WHOLE READ'S BOUND is --interval or 30s, whichever is smaller (the
+	// fourth of the five). Where no --interval was given there is no smaller
+	// number to take, so it is 30s.
+	whole := WholeReadCap
+	if p.Interval > 0 && p.Interval < whole {
+		whole = p.Interval
+	}
 	r := &LaneRead{
 		Dir: p.Bus, Ref: ref, Lane: lane, Anchor: rec.anchor, Caller: p.As,
 		PingID: rec.noteID, MaxItems: p.CorrelateMax, MaxBytes: p.CorrelateBytes,
-		Config: cfg, Wall: GitWall,
+		Config: cfg, Wall: GitWall, Whole: whole,
 	}
 	return r.Run(ctx, rec.read)
 }

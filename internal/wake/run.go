@@ -45,6 +45,11 @@ type Runs struct {
 	Every_  time.Duration
 	Timeout time.Duration
 	Final   bool
+	// Prev reads the stored value, so changed= on the WAKE SOURCE line counts
+	// what MOVED rather than standing at zero for ever (the Fable read, F5): a
+	// count nothing increments is a field that cannot go wrong, which is the
+	// same thing as a field nobody can read.
+	Prev func(key string) (string, bool)
 
 	calls
 	read, changed, unreadable int
@@ -90,7 +95,13 @@ func (r *Runs) Poll(ctx context.Context, now time.Time) (Result, error) {
 			bad++
 			r.unreadable++
 		}
-		res.Items = append(res.Items, Item{Kind: KindRun, Key: "run:" + r.Names[i], Value: a.value})
+		key := "run:" + r.Names[i]
+		if r.Prev != nil {
+			if old, had := r.Prev(key); !had || old != a.value {
+				r.changed++
+			}
+		}
+		res.Items = append(res.Items, Item{Kind: KindRun, Key: key, Value: a.value})
 	}
 	if len(r.Names) > 0 && bad == len(r.Names) {
 		_, reason := Unreadable(out[0].value)

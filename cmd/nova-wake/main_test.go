@@ -68,14 +68,14 @@ func buildFakes(t *testing.T) {
 	fakeOnce.Do(func() {
 		dir := t.TempDir()
 		cmd := exec.Command("go", "build", "-o", dir,
-			"./testdata/fakebus", "./testdata/fakegh", "./testdata/fakenote")
+			"./testdata/fakebus", "./testdata/fakegh", "./testdata/fakenote", "./testdata/fakegit")
 		if raw, err := cmd.CombinedOutput(); err != nil {
 			fakeBuilt = fmt.Errorf("building the fakes: %v\n%s", err, raw)
 			return
 		}
 		fakeBins = map[string][]byte{}
 		for _, f := range []struct{ name, built string }{
-			{"nova-bus", "fakebus"}, {"gh", "fakegh"}, {"on-note", "fakenote"},
+			{"nova-bus", "fakebus"}, {"gh", "fakegh"}, {"on-note", "fakenote"}, {"git", "fakegit"},
 		} {
 			built := filepath.Join(dir, f.built)
 			if runtime.GOOS == "windows" {
