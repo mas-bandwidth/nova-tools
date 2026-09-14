@@ -56,6 +56,8 @@ const usage = `nova-bus: the bus, with the races taken out (see docs/SPEC.md)
 
 usage:
   nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>]
+  nova-bus draft --bus <dir> --as <name> --reply-to <id-or-path-or-subject> --body-file <path> --draft-dir <dir> --remote <name> --branch <name>
+        [--to <names>] [--cc <names>] [--subject <text>] [--max-body-bytes <n>]
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
   nova-bus send --bus <dir> (--file <path>|--stdin | --prepared <path>|--prepared-stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
   nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]] [--full] [--open [--open-max <n>]] [--open-warn <n>]
@@ -220,7 +222,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "draft":
-		return cmdDraft(rest, stdout, stderr)
+		return cmdDraft(rest, stdout, stderr, now)
 	case "prepare":
 		return cmdPrepare(rest, stdin, stdout, stderr, now)
 	case "send":
@@ -367,6 +369,11 @@ func (f *flags) gitTimeoutFlag(seconds int, stderr io.Writer) bool {
 // defaultGitTimeoutSeconds is DefaultGitTimeout as the flag spells it.
 const defaultGitTimeoutSeconds = 60
 
+// refreshCheckout is the reply form's refresh, and it is `wait`'s poll: one implementation
+// and not a second that could drift. It is a var so a test can take the fetch out at the
+// seam and prove the fetch is load-bearing; nothing else replaces it.
+var refreshCheckout = bus.FetchAndFastForward
+
 // checkoutLockWait is how long a second run on one checkout waits for the first. It is a
 // var so a test can shorten it; nothing else replaces it.
 var checkoutLockWait = 10 * time.Second
@@ -448,7 +455,7 @@ func openBus(verb, busDir string, stderr io.Writer) (*bus.Bus, bool) {
 // Its standard output is a FILE: the skeleton, alone, with no OK line under it, so
 // `nova-bus draft ... > draft.md` is a draft. Refusals go to stderr like every other
 // verb's, and every one of them is printed rather than the first.
-func cmdDraft(args []string, stdout, stderr io.Writer) int {
+func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("draft")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required: the roster lives in it)")
 	as := f.fs.String("as", "", "which participant you are (required)")
@@ -457,8 +464,49 @@ func cmdDraft(args []string, stdout, stderr io.Writer) int {
 	subject := f.fs.String("subject", "", "the subject line (default: a placeholder you must replace)")
 	var re stringList
 	f.fs.Var(&re, "re", "an id, a path, or the SUBJECT of a note on your open list that this note answers, or `new` to start a thread (repeatable)")
-	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "to": to}) {
+	// The reply form's flags. Every one of them is inert without --reply-to, which is what
+	// keeps the released form byte-identical: see cmd/nova-bus/reply.go.
+	replyTo := f.fs.String("reply-to", "", "an id, a path, or the SUBJECT of a note on your live listing to ANSWER: the reply form, which refreshes the bus and writes the whole header for you")
+	bodyFile := f.fs.String("body-file", "", "the reply's body, as a file: body text and never a header (--reply-to only)")
+	draftDir := f.fs.String("draft-dir", "", "where the reply is written, OUTSIDE the bus checkout (--reply-to only)")
+	remote := f.fs.String("remote", "", "the remote the reply is resolved against, after a fetch (--reply-to only)")
+	branch := f.fs.String("branch", "", "the branch the reply is resolved against, after a fetch (--reply-to only)")
+	maxBodyBytes := f.fs.Int("max-body-bytes", defaultMaxBodyBytes, "the budget --body-file is read under")
+	gitTimeout := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long the reply form's fetch may take (--reply-to only)")
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
+	}
+	given := map[string]bool{}
+	f.fs.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
+	if !given["reply-to"] {
+		// A reply-only flag without the flag that means the reply form: this form runs no
+		// git and writes no file, so there is nothing for it to do. Exit 2, which is what
+		// an undefined flag already costs, with a sentence in place of `not defined`.
+		refused := false
+		for _, name := range replyOnlyFlags {
+			if given[name] {
+				fmt.Fprintf(stderr, "DRAFT REFUSED: --%s belongs to --reply-to; without it draft runs no git and writes no file\n", name)
+				refused = true
+			}
+		}
+		if refused {
+			return 2
+		}
+		if strings.TrimSpace(*to) == "" {
+			fmt.Fprintf(stderr, "nova-bus draft: --to is required; refusing to guess\n")
+			return 2
+		}
+	} else {
+		if !f.gitTimeoutFlag(*gitTimeout, stderr) {
+			return 2
+		}
+		return cmdDraftReply(replyOpts{
+			busDir: *busDir, as: *as, to: *to, cc: *cc, subject: *subject,
+			replyTo: *replyTo, bodyFile: *bodyFile, draftDir: *draftDir,
+			remote: *remote, branch: *branch, maxBodyBytes: *maxBodyBytes,
+			reGiven: len(re) > 0, toGiven: given["to"], ccGiven: given["cc"],
+			subjectGiven: given["subject"],
+		}, f, stdout, stderr, now)
 	}
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
