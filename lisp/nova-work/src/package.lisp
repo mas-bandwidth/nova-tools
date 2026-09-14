@@ -14,6 +14,14 @@
    #:restricted-data-violation
    #:unsupported-input
    #:not-implemented
+   #:journal-error
+   #:journal-corrupt-data
+   #:journal-corrupt-data-path
+   #:journal-corrupt-data-offset
+   #:journal-corrupt-data-reason
+   #:journal-mismatch
+   #:journal-mismatch-path
+   #:journal-mismatch-what
    ;; restricted data and canonical serialization
    #:+absent+
    #:absentp
@@ -66,10 +74,22 @@
    #:journal-order
    #:rejecting-journal
    #:make-rejecting-journal
+   #:journal-reject-on
+   #:file-journal
+   #:make-file-journal
+   #:open-file-journal
+   #:close-file-journal
+   #:with-file-journal
+   #:replay-journal
+   #:read-header
+   #:read-record-frame
+   #:journal-path
+   #:journal-seq
    ;; kernel
    #:make-kernel
    #:kernel-state
    #:kernel-journal
+   #:kernel-next-rev
    #:submit
    #:ask-size
    #:open-issue-count
