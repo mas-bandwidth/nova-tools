@@ -238,7 +238,7 @@ journal, and I hold the journal's lock (Stella's finding 1, comment 5654659093, 
    and the tip's if known), except that a fenced session admits `operation status|wait|cancel`
    ONLY with an explicit id resolving to its own `session.export` operation; other ids,
    general operation listing and every other `operation` verb keep the fenced refusal; an
-   unknown or non-export id refuses (#293).
+   unknown or non-export id refuses (#293),
    because a fenced session's resident O may be behind a new owner's and an answer from it
    would be a stale answer wearing a live one's clothes; it keeps its journal. Offline or
    partitioned, it fences at `until` without any network at all. So at no instant do two
@@ -2358,7 +2358,8 @@ not a second way in:
   any of them. A pending offer has no verb and so no event.
 - **`pause`, `stop`, `reconcile`** — `a-stop-reaches-distributed-work` is an obligation with no
   verb to reach it, and `:cancel-requested` is a state written by `state --to :cancel-requested`
-  from `:todo`, `:doing`, or `:blocked` (994–996; 1007–1008).
+  from `:todo`, `:doing`, or `:blocked` (997–999; 1007–1008), and reachable from
+  `:unknown` by a transition carrying evidence or a reason (1002–1003).
 - **`session export --at <revision>`** — `full-round-trip` asks for the **export of a captured
   revision**, and `session export` exports requests, not a revision's state. The export the
   acceptance suite names is a verb this draft does not have.
@@ -2779,9 +2780,10 @@ access and never O(1)**: a cold lookup may read as many pages as the index is de
 session prints `pages=<n>` on the answer so the number is read rather than assumed. **The
 measurement that keeps all of this honest is one experiment and it is named**: hold O, the
 recent-window volume and the page bounds fixed, grow the old history, and assert that startup
-resident bytes, segment bytes read, parses, replays and emitted bytes DO NOT MOVE; index pages
-read stay BOUNDED BY THE INDEX DEPTH -- the `pages=<n>` bound at :2773-2775 -- and may grow with
-the depth, never with the volume within one depth (replay `history-grows-startup-does-not`, and
+resident bytes, segment bytes read, parses, replays and emitted bytes **do not move**; index
+pages read stay **bounded by the index depth** — the `pages=<n>` bound of the bounded indexed
+access promise above — and may grow with the depth, never with the volume within one depth
+(replay `history-grows-startup-does-not`, and
 Stella's `SPEC-WORK-CLOSED.md` acceptance 6,
 whose *no whole-C load, no directory scan and no whole-history dedup load on the ordinary path* is
 what the replay asserts). **The sixth is on the write path and not the read path**: a `:cancel`, a
@@ -3160,9 +3162,10 @@ are named because they were asked for by name):
   `--max` capping the rows, `MORE` naming `--after`, and the day never read whole.
 - **`history-grows-startup-does-not`** — O, the recent-window volume and the page bounds held
   fixed while the old history grows by orders of magnitude: startup resident bytes, segment bytes
-  read, parses, replays and emitted bytes DO NOT MOVE; index pages read stay BOUNDED BY THE INDEX
-  DEPTH -- the `pages=<n>` bound at :2773-2775 -- and may grow with the depth, never with the volume
-  within one depth, and no whole-C load, no directory scan and no whole-history dedup load anywhere
+  read, parses, replays and emitted bytes **do not move**; index pages read stay **bounded by the
+  index depth** — the `pages=<n>` bound of the bounded indexed access promise in *Cost* — and may
+  grow with the depth, never with the volume within one depth, and no whole-C load, no directory
+  scan and no whole-history dedup load anywhere
   on the ordinary path.
 - **`one-revision-publishes-together`** — a clip staging its segments, verifying the hashes its
   manifests name, then committing the snapshot, both index roots and every file they reference in
