@@ -211,7 +211,14 @@ func packet(args []string, out, errOut io.Writer) int {
 	if _, err := gitOut(repo, "rev-parse", base+"^{commit}"); err != nil {
 		return refuse(errOut, "the lane does not hold the recorded base commit")
 	}
-	diff, err := gitOut(repo, "diff", "--no-ext-diff", "--unified=3", base, current)
+	diffRange := base + ".." + current
+	if priorRead == nil {
+		// A first packet is the change from the merge base to the selected head.
+		// Passing a single triple-dot revision to Git makes that selection real;
+		// two separate endpoints would instead include unrelated base-only work.
+		diffRange = base + "..." + current
+	}
+	diff, err := gitOut(repo, "diff", "--no-ext-diff", "--unified=3", diffRange)
 	if err != nil {
 		return refuse(errOut, "could not read the selected diff")
 	}
