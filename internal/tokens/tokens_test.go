@@ -67,6 +67,81 @@ func TestTheShrinkComparisonWithADashOnEitherSide(t *testing.T) {
 	}
 }
 
+// R5 (issue #268): the merge itself -- retained, replaced, blended, collision. A retained
+// row comes back byte for byte, because the fold that wrote it is the only run that could
+// compute it and this one must not touch it.
+func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
+	row := func(model, repo string, in int64, sources ...string) DayRow {
+		var c Counts
+		c.Set(Input, in)
+		return DayRow{Date: "2026-09-14", Model: model, Repo: repo, Counts: c, Basis: UTC, Sources: sources}
+	}
+
+	// Retained and replaced, in one merge.
+	old := []DayRow{row("claude-x", "serialize.rs", 410, "swarm:glenn"), row("mercury-2.5", "serialize.rs", 1, "swarm:freddy")}
+	fresh := []DayRow{row("mercury-2.5", "serialize.rs", 2000, "swarm:freddy")}
+	merged, retained, partials := MergeDay(old, fresh, []string{"swarm:freddy"})
+	if len(partials) != 0 {
+		t.Fatalf("partials on a clean merge: %v", partials)
+	}
+	if retained != 1 {
+		t.Errorf("retained=%d, want 1", retained)
+	}
+	if len(merged) != 2 || merged[0].Model != "claude-x" || merged[1].Model != "mercury-2.5" {
+		t.Fatalf("merged rows are not the two, sorted by (model, repo): %v", merged)
+	}
+	if got, _ := merged[0].Counts.Get(Input); got != 410 {
+		t.Errorf("the retained row's input is %d, want 410 -- byte for byte is the promise", got)
+	}
+	if got, _ := merged[1].Counts.Get(Input); got != 2000 {
+		t.Errorf("the replaced row's input is %d, want 2000 (replaced, never summed with the file's 1)", got)
+	}
+
+	// A blended row: one row's sources name a declared label and an undeclared one.
+	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:freddy", "swarm:glenn")}
+	fresh = []DayRow{row("mercury-2.5", "serialize.rs", 2000, "swarm:freddy")}
+	_, _, partials = MergeDay(old, fresh, []string{"swarm:freddy"})
+	if len(partials) != 1 || partials[0].Model != "claude-x" {
+		t.Fatalf("a blended row was not refused: %v", partials)
+	}
+	if partials[0].Why != PartialBlended {
+		t.Errorf("why=%q, want %q", partials[0].Why, PartialBlended)
+	}
+
+	// A collision: a retained row and a recomputed row with the same (model, repo).
+	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:glenn")}
+	fresh = []DayRow{row("claude-x", "serialize.rs", 2000, "swarm:freddy")}
+	_, _, partials = MergeDay(old, fresh, []string{"swarm:freddy"})
+	if len(partials) != 1 || partials[0].Why != PartialCollision {
+		t.Fatalf("a collision was not refused: %v", partials)
+	}
+
+	// Full replacement: nothing retained, and the merge is exactly this run's rows.
+	old = []DayRow{row("claude-x", "serialize.rs", 410, "swarm:glenn")}
+	fresh = []DayRow{row("claude-x", "serialize.rs", 900, "swarm:glenn")}
+	merged, retained, partials = MergeDay(old, fresh, []string{"swarm:glenn"})
+	if len(partials) != 0 || retained != 0 || len(merged) != 1 {
+		t.Fatalf("full replacement is not today's behaviour: %d rows, retained=%d, %v", len(merged), retained, partials)
+	}
+	if got, _ := merged[0].Counts.Get(Input); got != 900 {
+		t.Errorf("input %d, want 900 (replaced, not summed)", got)
+	}
+
+	// Byte for byte: the retained row renders exactly the line it was parsed from.
+	before := (&DayFile{Day: "2026-09-14", At: "s", Build: "b", Turns: Dash,
+		Sources: []string{"swarm:glenn"}, Rows: []DayRow{row("claude-x", "serialize.rs", 410, "swarm:glenn")}}).Render()
+	parsed, findings := ParseDayFile("2026-09-14", before)
+	if len(findings) != 0 {
+		t.Fatalf("the fixture file does not parse: %v", findings)
+	}
+	merged, _, _ = MergeDay(parsed.Rows, []DayRow{row("mercury-2.5", "serialize.rs", 2000, "swarm:freddy")}, []string{"swarm:freddy"})
+	after := (&DayFile{Day: "2026-09-14", At: "s", Build: "b", Turns: Dash,
+		Sources: []string{"swarm:glenn"}, Rows: []DayRow{merged[0]}}).Render()
+	if after != before {
+		t.Errorf("a retained row did not come back byte-identical:\nwas:  %q\nnow:  %q", before, after)
+	}
+}
+
 func TestTheAttributionLadder(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
