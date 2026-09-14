@@ -124,17 +124,17 @@ func TestBodyRecordsAtSnapshotKeepsTwoReceiptOffsetsInOnePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := "from-bo/RECEIPTS"
-	write(t, clone, path, "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: receipt source\n\nreceipt records are selected by the inbox layer")
+	write(t, clone, path, "2026-09-09T12:34:56Z bo-aaaaaaaaaaaa\n2026-09-09T12:35:56Z bo-bbbbbbbbbbbb\n")
 	commitByHand(t, clone, path, "append two receipts")
 	head, err := HeadCommit(clone)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A receipt source may have multiple appended records in one path.  A path-keyed
-	// paginator would keep just one and let the cursor pass the other forever.
+	// A real RECEIPTS source has multiple appended timestamp/target records in one path.
+	// A path-keyed paginator would keep just one and let the cursor pass the other forever.
 	records, err := BodyRecordsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, []BodyItem{
-		{Path: path, Offset: 0, Entry: OpenEntry{Path: path}},
-		{Path: path, Offset: 1, Entry: OpenEntry{Path: path}},
+		{Path: path, Offset: 0, Entry: OpenEntry{ID: "bo-aaaaaaaaaaaa", Kind: OpenReceipt, Path: path}},
+		{Path: path, Offset: 1, Entry: OpenEntry{ID: "bo-bbbbbbbbbbbb", Kind: OpenReceipt, Path: path}},
 	})
 	if err != nil {
 		t.Fatal(err)

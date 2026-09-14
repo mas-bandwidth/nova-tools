@@ -453,12 +453,20 @@ func BodyRecordsAtSnapshot(root string, snapshot BodySnapshot, eligible []BodyIt
 			if err != nil {
 				return nil, fmt.Errorf("snapshot %s cannot read %s: %w", commit, p, err)
 			}
-			note, err := ParseNote(p, raw)
-			if err != nil {
-				return nil, fmt.Errorf("snapshot %s cannot parse %s: %w", commit, p, err)
+			needsBody := false
+			for _, record := range records {
+				needsBody = needsBody || bodyFrameItem(record)
+			}
+			body := []byte(nil)
+			if needsBody {
+				note, err := ParseNote(p, raw)
+				if err != nil {
+					return nil, fmt.Errorf("snapshot %s cannot parse %s: %w", commit, p, err)
+				}
+				body = []byte(note.Body)
 			}
 			for _, record := range records {
-				record.Commit, record.Path, record.Body = commit, p, []byte(note.Body)
+				record.Commit, record.Path, record.Body = commit, p, body
 				byKey[record.key()] = record
 			}
 		}
