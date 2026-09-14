@@ -402,6 +402,19 @@ func TestBodiesModeCapsTheNewSummaryLinesToo(t *testing.T) {
 		t.Fatalf("a run without --bodies printed a bodies line:\n%s", plain.stdout)
 	}
 
+	// `wait` is `inbox` on a clock and they share one listing, so the flag lands on both
+	// at once and the bound is the same bound. A verb would have been a second caller of
+	// that listing; this asserts that it is not one.
+	waited := invoke(t, "", "wait", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--timeout", "5s", "--interval", "1s", "--remote", "origin", "--branch", "main",
+		"--bodies", "--max-notes", "5").mustCode(t, 0)
+	if !strings.Contains(waited.stdout, expected) {
+		t.Fatalf("wait --bodies is not the same bounded return as inbox --bodies:\n%s", waited.stdout)
+	}
+	if n := len(readFrames(t, waited.stdout)); n != 5 {
+		t.Fatalf("wait --bodies carried %d frames, want 5", n)
+	}
+
 	// Mixed pages: a heard item and a receipt-only item count against the item cap as
 	// summaries, and neither opens a frame.
 	mixed := settledBus(t)

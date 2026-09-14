@@ -608,6 +608,31 @@ func TestSnapshotTokenValidationAndBound(t *testing.T) {
 		})
 	}
 
+	// The other half of the frontier rule: a token may not claim a frontier past its own
+	// GAP either, and the fixture for that needs a gap in it.
+	t.Run("frontier past a gap", func(t *testing.T) {
+		gapped := settledBus(t)
+		commitFiles(t, gapped, "g1", busFile{"from-bo/g1.md", noteFrom("nGa", "g1", fill(2048))})
+		commitFiles(t, gapped, "g2", busFile{"from-bo/g2.md", noteFrom("nGb", "g2", fill(150))})
+		page1 := invoke(t, "", "inbox", "--bus", gapped, "--as", "Ada", "--receipt-max-words", "40",
+			"--bodies", "--max-notes", "1", "--max-bytes", "1024").mustCode(t, 0)
+		token := bodyNext(t, page1.stdout)
+		if decodeToken(t, token).Gap == nil {
+			t.Fatalf("the fixture produced no gap:\n%s", page1.stdout)
+		}
+		bad := retoken(t, token, `"f":""`, `"f":"`+decodeToken(t, token).Head+`"`)
+		before := readBusState(t, gapped)
+		r := invoke(t, "", "inbox", "--bus", gapped, "--as", "Ada", "--receipt-max-words", "40",
+			"--bodies", "--max-notes", "1", "--max-bytes", "1024", "--after", bad).mustCode(t, 2)
+		got := strings.TrimRight(r.stderr, "\n")
+		if !strings.HasPrefix(got, "INBOX REFUSED: --after <token> is not a continuation for this read: ") ||
+			!strings.HasSuffix(got, "; rerun without --after") {
+			t.Fatalf("refusal is not the one shape:\n  %q", got)
+		}
+		mustPrintNoBodies(t, r)
+		readBusState(t, gapped).mustEqual(t, before, "a refused token")
+	})
+
 	// A token is client-supplied query state: it opens no lane it did not already open.
 	t.Run("no new authority", func(t *testing.T) {
 		r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Bo", "--receipt-max-words", "40",
