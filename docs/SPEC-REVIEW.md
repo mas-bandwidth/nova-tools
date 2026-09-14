@@ -588,7 +588,7 @@ the end. The date on a rule is the day it was learned.
 ## The verbs
 
 ```
-nova-review packet  --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max-input-bytes <n>] [--max <n>]
+nova-review packet  --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max-input-bytes <n>] [--max-source-bytes <n>] [--max <n>]
 nova-review verdict --lane <dir> (--pr <n>|--branch <name>) --who <name> --model <id> --kind line|child|card [--of <line>] [--job <id>] --head <sha> [--base <sha>] --verdict approve|hold|abstain (--findings <file> | --reason <text>) [--note <text>] [--usage <file> --usage-source <id> --bench <name> | --receipt <id>] [--started <stamp>] [--max <n>] [--max-rows <n>] [--max-input-bytes <n>] [--max-line-bytes <n>]
 nova-review answer  --lane <dir> (--pr <n>|--branch <name>) --who <name> --finding <id> --head <sha> --as fixed|declined|dup [--of <id>] [--note <text>]
 nova-review policy  --lane <dir> (--pr <n>|--branch <name>) --who <name> --readers <name,...> --reserved <name,...> --deadline <stamp> --reason <text> --head <sha>
@@ -2113,3 +2113,54 @@ Cold review of c0d909b by GPT-5.6 Terra found the older concurrency test still
 required both publishers to succeed and the packet usage/reuse contract omitted
 the new input flag. Those concrete clauses are aligned above. This is a cold
 model review; Emma and Rowan have not yet supplied a disposition on draft 7.
+
+
+## Proposed packet source-read budget — 2026-09-14
+
+This is a scoped amendment for the outstanding PR277 source-acquisition gate,
+not a claim of implementation or new friend approval. The streamed diff must
+continue to support whole-file omissions without retaining its raw payload.
+Bounding that stream does not bound `git show`, `git log` or host JSON buffered
+by the packet builder.
+
+Add positive `packet --max-source-bytes <n>`, default 1048576, independent of
+`--max-bytes` (rendered output) and `--max-input-bytes` (reuse-file admission).
+It bounds the **aggregate raw stdout bytes captured from non-diff source
+commands during one packet invocation**: head/commit resolution, scoped blobs
+at head and base, and the author's title/body or commit message. All their
+success and failure paths use the same budget. Diagnostic stderr retains its
+separate capped capture. The patch and NUL filename streams use their bounded
+streaming readers, not this buffered-input allowance.
+
+A command may retain at most the remaining source allowance. Detect overflow
+with at most one additional byte; do not allocate from a source-declared size,
+buffer a whole response first, or decode JSON before enforcing the cap. Once
+overflow is observed, stop source acquisition, cancel and reap the owned command
+under the existing bounded timeout/pipe-cleanup protocol, and publish no packet.
+Report exit 2 with `PACKET REFUSED input=source source=<kind> limit=<n> used=<n>`
+and an executable remedy naming `--max-source-bytes`. The kind is one of `head`,
+`commit`, `spec`, `intent`; diagnostics do not copy source payload. `used` counts
+retained raw stdout bytes, not the extra detection byte. Distinguish an observed
+limit refusal from a timeout or command failure; never return a partial response
+as successful source material.
+
+Charge each actual source read, including partial failed reads; a cache hit
+that performs no read consumes no additional allowance. An implementation may
+reuse already loaded immutable blobs keyed to their full commit and literal
+path, but must not silently cache a mutable branch or host-head lookup. The
+limit does not authorize additional reads or change which head the packet binds.
+On `--reuse`, it still bounds the required source lookup independently of the
+reuse artifact's input limit; increasing it changes no copied packet section.
+Zero, negative, unrepresentable or detection-arithmetic-overflowing limits refuse
+before source commands run. No packet header can raise this caller-owned limit.
+
+Acceptance requires a single oversized source, individually small sources whose
+sum exceeds the allowance, exact-limit success, overflow by one byte, and a
+large producer that keeps a pipe open after cancellation. Assert bounded capture,
+bounded cleanup, the named refusal, and no published artifact. Test oversized
+success **and error** stdout, JSON bodies containing escaped/control characters,
+raw blob bytes, repeated immutable reads/cache hits if caching is implemented,
+and reuse at its independent input limit. Retain a large streamed diff with small
+non-diff sources as a positive case: the source budget must not become a hidden
+whole-diff cap. The existing citation, framing, fold and immutable-publication
+gates remain unchanged.
