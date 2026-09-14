@@ -132,11 +132,15 @@ func (s *streamCitationSpec) appendRules(numbers []int) {
 }
 
 func (s *streamingCitations) Finish() []specRule {
-	if len(s.pending) != 0 {
-		// Go's range/strings behavior treats an incomplete final sequence as a
-		// RuneError. Feed the same replacement rune rather than dropping it.
-		s.feedRune(utf8.RuneError)
-		s.pending = nil
+	for len(s.pending) != 0 {
+		// A prior Write may have supplied an invalid prefix followed by an
+		// ordinary ASCII byte. Decode one rune at a time, as Go's range does:
+		// DecodeRune consumes one invalid byte, leaving that ASCII byte to be
+		// processed rather than replacing the whole pending suffix with one
+		// RuneError. The same drain handles a genuinely incomplete final rune.
+		r, n := utf8.DecodeRune(s.pending)
+		s.pending = s.pending[n:]
+		s.feedRune(r)
 	}
 	if s.bare != nil {
 		s.bare.Finish()

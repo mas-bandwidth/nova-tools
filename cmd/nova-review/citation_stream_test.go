@@ -145,6 +145,39 @@ func TestStreamingCitationsKeepProseAndPrefixBoundaries(t *testing.T) {
 	}
 }
 
+func TestStreamingCitationsPreserveTrailingBytesAfterInvalidUTF8(t *testing.T) {
+	spec := citationSpec(t, "docs/SPEC.md", "1. one\n2. two\n")
+	for _, tc := range []struct {
+		name string
+		line []byte
+		want []string
+	}{
+		{"invalid prefix then citation", []byte{0xe2, ' ', 'r', 'u', 'l', 'e', ' ', '1'}, []string{"docs/SPEC.md:2"}},
+		{"incomplete prefix then citation", []byte{0xf0, 0x9f, ' ', 'r', 'u', 'l', 'e', ' ', '2'}, []string{"docs/SPEC.md:3"}},
+		{"mixed invalid and valid utf8", append([]byte{0xff, ' '}, append([]byte("🤖 rule 1; "), []byte{0xc3, ' ', 'r', 'u', 'l', 'e', ' ', '2'}...)...), []string{"docs/SPEC.md:2", "docs/SPEC.md:3"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for split := 0; split <= len(tc.line); split++ {
+				s := newStreamingCitations([]scopedSpec{spec})
+				s.Feed(tc.line[:split])
+				s.Feed(tc.line[split:])
+				if got := ruleIDs(s.Finish()); !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("split=%d got %v, want %v", split, got, tc.want)
+				}
+			}
+			// One-byte writes are the boundary that previously dropped the last
+			// ASCII rune behind an invalid prefix.
+			chunks := make([]int, len(tc.line))
+			for i := range chunks {
+				chunks[i] = 1
+			}
+			if got := ruleIDs(streamCitationTargets([]scopedSpec{spec}, string(tc.line), chunks...)); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("one-byte chunks got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStreamingCitationsUseClosedBoundaries(t *testing.T) {
 	spec := citationSpec(t, "docs/SPEC.md", "1. one\n2. two\n3. three\n")
 	for _, tc := range []struct {
