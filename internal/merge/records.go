@@ -135,6 +135,10 @@ func safeName(who string) string {
 	return b.String()
 }
 
+// RecordName is the stable filename component for a record's actor. Record formats outside
+// this package use it instead of duplicating the path codec beside the writer that owns it.
+func RecordName(who string) string { return safeName(who) }
+
 // EntryDirName is the directory one entry's records live in: the pull request's number or
 // the branch's name with its slashes flattened, so that reads/<entry>/ is one level and
 // the fold can read the entry out of the path.
