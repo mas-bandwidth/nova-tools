@@ -39,7 +39,7 @@ var underTheCallersLock = map[string]string{
 	// never writes; every WRITING path still goes through Fold, which locks.
 	"FoldReadOnly":   "rule 23's lock-free work-tree read: packet writes nothing and takes no lock",
 	"FoldFetchedTip": "rule 23's lock-free immutable-tree fold; FetchTip itself remains locked",
-	"foldFetchedTip": "the shared immutable-tree implementation behind the lock-free public fold and locked legacy FoldTip",
+	"foldTipTree":    "the shared immutable-tree walk behind the lock-free public fold and locked legacy FoldTip",
 	"tipRecordPaths": "the immutable commit's NUL-delimited tree walk; callers select its lock policy",
 }
 

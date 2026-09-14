@@ -617,16 +617,15 @@ func mergeFolds(a, b *Folded) *Folded {
 	return out
 }
 
-// FoldTip folds the record files of the fetched tip in memory, writing neither the state
-// nor the checkout. Its existing callers hold the checkout lock because FetchTip acquires
-// and reads FETCH_HEAD under that lock.
+// FoldTip folds a Git tree-ish in memory, writing neither the state nor the checkout. It
+// keeps its legacy locked behavior; FetchTip is a separate operation with its own lock.
 func (r *Records) FoldTip(tip string) (*Folded, error) {
 	release, err := r.LockCheckout()
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	return r.foldFetchedTip(tip)
+	return r.foldTipTree(tip)
 }
 
 // FoldFetchedTip folds one already acquired immutable commit without taking the checkout
@@ -634,10 +633,6 @@ func (r *Records) FoldTip(tip string) (*Folded, error) {
 // make the two tree reads different snapshots, and state.json or the work tree is never a
 // fallback. Fetch acquisition itself remains a separate locked integration step.
 func (r *Records) FoldFetchedTip(tip string) (*Folded, error) {
-	return r.foldFetchedTip(tip)
-}
-
-func (r *Records) foldFetchedTip(tip string) (*Folded, error) {
 	if !IsSHA(tip) {
 		return nil, fmt.Errorf("fetched tip must be a full 40-character sha, got %q", tip)
 	}
@@ -648,6 +643,12 @@ func (r *Records) foldFetchedTip(tip string) (*Folded, error) {
 	if kind != "commit" {
 		return nil, fmt.Errorf("fetched tip %s is a %s, not a commit", tip, oneLineOf(kind))
 	}
+	return r.foldTipTree(tip)
+}
+
+// foldTipTree is the common immutable-object walk. FoldTip decides locking for its legacy
+// tree-ish API; FoldFetchedTip decides the full-SHA commit admission for report readers.
+func (r *Records) foldTipTree(tip string) (*Folded, error) {
 	paths, err := r.tipRecordPaths(tip)
 	if err != nil {
 		return nil, err
