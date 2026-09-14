@@ -4,12 +4,11 @@
 
 Help AI friends coordinate work without repeatedly rebuilding the plan in their context.
 
-**Planning baseline: 10 epics, 52 features, 171 sub-features and acceptance items.**
+**Planning baseline: 10 epics, 52 features, 163 acceptance items and 5 open questions.**
 **Verified implementation: 0%.** This is proposed scope for review, not a delivery-date or effort estimate.
 The current main branch has no production `nova-work` engine or CLI; existing prototypes and written specs do not count as verified production features.
 
-We are improving and adopting practical token-saving changes in existing tools first.
-nova-work planning and review continue in parallel. We will keep measuring and fixing small inefficiencies during implementation.
+The current work register is below; nova-work remains inventory/specification scope until those changes are adopted.
 
 ✅ = implemented and verified against the agreed criteria at a recorded source revision. ❌ = any other state.
 Completion is verified features divided by applicable features; it is not averaged subtask percentages or an estimate of time remaining.
@@ -17,28 +16,41 @@ Completion is verified features divided by applicable features; it is not averag
 The hierarchy is **epic → feature → sub-feature/acceptance item**, with no language axis.
 [Recursive work data](docs/roadmaps/nova-work.sexp) retains stable IDs, dependencies and source references.
 This baseline format is planning data, not a claim that nova-work import/export already exists.
+Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. A source-section label below is resolved through that file/revision key.
 
 | Epic | Features | Verified |
 |---|:---:|:---:|
 | [Canonical work data and restricted representation](#e01) | 5 | 0% |
-| [Resident coordinator session and fencing](#e02) | 6 | 0% |
+| [Resident coordinator session and fencing](#e02) | 7 | 0% |
 | [Typed mutation and work lifecycle](#e03) | 5 | 0% |
-| [Counting, indexes and bounded queries](#e04) | 5 | 0% |
-| [Evidence, verification and acceptance proof](#e05) | 5 | 0% |
+| [Counting, indexes and bounded queries](#e04) | 6 | 0% |
+| [Evidence, verification and acceptance proof](#e05) | 6 | 0% |
 | [Persistence, closed history and recovery](#e06) | 5 | 0% |
-| [Roadmap views and Fixed Tables pilot parity](#e07) | 5 | 0% |
+| [Roadmap views and Fixed Tables pilot parity](#e07) | 6 | 0% |
 | [Coordinator protocol, friends and execution records](#e08) | 5 | 0% |
 | [Issue intake, migration and external boundaries](#e09) | 5 | 0% |
-| [Diagnostics, measurement and release gates](#e10) | 6 | 0% |
+| [Diagnostics, measurement and release gates](#e10) | 7 | 0% |
 
 ## Scope movement
 
 | Baseline features | Discovered after baseline | Verified | Reopened | Removed | Current features |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| 52 | 0 | 0 | 0 | 0 | 52 |
+| 52 | 6 | 0 | 0 | 0 | 57 |
 
-Preserve feature IDs and the baseline. Append discoveries with reasons; record decomposition and removal separately.
+Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review. Append discoveries with reasons; record decomposition and removal separately.
 Do not count removal as completion. These counts track inventory movement, not estimated engineering effort.
+
+## Open questions
+
+- Common Lisp runtime packaging and supported platforms must be pinned before release.
+- Category taxonomy and roadmap completion policy beyond `all-required-features` remain open.
+- Exact verb and wire protocol spelling must be finalized in one schema before lock.
+- Friend participation in swarms versus model-only pools requires explicit dispositions, including Freddy's.
+- Absorption remains disabled pending independent reconciliation and authorization gates.
+
+## Now
+
+The team is first adopting measured efficiency improvements in existing tools, tracked by [#267](https://github.com/mas-bandwidth/nova-tools/issues/267), [#239](https://github.com/mas-bandwidth/nova-tools/issues/239), [#236](https://github.com/mas-bandwidth/nova-tools/issues/236), [#264](https://github.com/mas-bandwidth/nova-tools/issues/264), [#270](https://github.com/mas-bandwidth/nova-tools/pull/270) and [#271](https://github.com/mas-bandwidth/nova-tools/pull/271). This is a current work register, outside the nova-work feature denominator. Results and negative or inconclusive experiments remain evidence; any scope change is recorded as a scope event and does not become completion credit.
 
 ## Feature inventory
 
@@ -104,7 +116,6 @@ Prerequisites: E01-F01, E01-F04.
 - [ ] Produce deterministic bytes with explicit absent/empty and Unicode semantics
 - [ ] Preserve large integers, timestamps, escaping and multiline text
 - [ ] Compare exports with an independent semantic comparator
-- [ ] Unresolved: Common Lisp runtime packaging and supported platforms must be pinned before release
 
 Source sections: Format determinism; Full data round trip.
 
@@ -122,6 +133,7 @@ Source sections: Format determinism; Full data round trip.
 | E02-F04 — Lease expiry, reconfirmation and self-fencing | ❌ |
 | E02-F05 — Handoff, stop and successor recovery | ❌ |
 | E02-F06 — Runtime packaging and first-run installation | ❌ |
+| E02-F07 — Execution leases and worker ownership | ❌ |
 
 <details>
 <summary>Sub-features, prerequisites and acceptance scope</summary>
@@ -143,7 +155,7 @@ Prerequisites: E02-F01.
 - [ ] Persist owner name, generation, random token, stamp and expiry
 - [ ] Allow take, resume and successor handoff with generation rules
 - [ ] Refuse competing live owners and name holder details
-- [ ] Verify the proposed Git generation/lease fencing under partitions and clock skew; reject unsafe takeover rather than relying on PID locks alone
+- [ ] Verify generation fencing under partitions and clock skew; reject unsafe takeover rather than relying on PID locks alone
 
 Source sections: The execution model; One coordinator, one live reader/writer.
 
@@ -185,7 +197,18 @@ Prerequisites: E02-F01, E08-F02.
 - [ ] Version client/engine/protocol explicitly and refuse unsupported combinations
 - [ ] Provide reproducible build/install and small startup/status/shutdown smoke tests
 
-Source sections: Engine and representation; Coordinator verbs and asynchronous transport.
+Source sections: Engine and representation; The execution model.
+
+**E02-F07 — Execution leases and worker ownership**
+
+Prerequisites: E02-F04.
+
+- [ ] Keep execution leases distinct from the coordinator ownership lease, with at most one live lease per node
+- [ ] Support take, heartbeat, holder-only release, handed release, one extension and explicit escalation with deadline/default fields
+- [ ] Derive who, stale, expired and handoffs views from lease history; distinguish responsible from working-now
+- [ ] Preserve lease state through reassignment, correction, pause, stop and recovery without counting an attempt twice
+
+Source sections: The data; The execution model; Operational lessons the pilot must exercise.
 
 </details>
 
@@ -267,6 +290,7 @@ Source sections: Checkpoints, undo and redo; Undo/redo.
 | E04-F03 — Scope movement and branch counts | ❌ |
 | E04-F04 — Stable resident indexes and bounded access | ❌ |
 | E04-F05 — Historical indexed queries and coverage honesty | ❌ |
+| E04-F06 — As-of reconstruction over O | ❌ |
 
 <details>
 <summary>Sub-features, prerequisites and acceptance scope</summary>
@@ -321,6 +345,16 @@ Prerequisites: E04-F04, E06-F02.
 
 Source sections: The execution model — retention; Queries — the contract; Old history.
 
+**E04-F06 — As-of reconstruction over O**
+
+Prerequisites: E04-F04, E03-F01.
+
+- [ ] Answer --at <revision> over O by replaying retained events in memory
+- [ ] Include the replay in revision-labelled counts and refuse before the retention boundary
+- [ ] Keep historical O answers separate from indexed C as-of queries and report unavailable history honestly
+
+Source sections: Queries — the contract; The execution model — retention; Counting.
+
 </details>
 
 <a id="e05"></a>
@@ -334,6 +368,7 @@ Source sections: The execution model — retention; Queries — the contract; Ol
 | E05-F03 — Reviews, findings and attestations | ❌ |
 | E05-F04 — Dependency and release gates | ❌ |
 | E05-F05 — Independent proof and mutation regression checks | ❌ |
+| E05-F06 — Evidence resolvers and verification cache | ❌ |
 
 <details>
 <summary>Sub-features, prerequisites and acceptance scope</summary>
@@ -387,6 +422,16 @@ Prerequisites: E05-F02.
 - [ ] Reject green claims unsupported by criterion-level proof
 
 Source sections: Independent oracle and retained evidence; Roadmap proof.
+
+**E05-F06 — Evidence resolvers and verification cache**
+
+Prerequisites: E05-F01.
+
+- [ ] Resolve configured pointer schemes by direct executable invocation with fact/stamp arguments and no shell
+- [ ] Enforce max-fetch, fetch-timeout and offline behavior; an absent resolver is unreachable
+- [ ] Cache by pointer, subject and resolver identity, pin resolver identity on snapshot reads, and preserve unknown results
+
+Source sections: The validator; The resident session; Required test suites.
 
 </details>
 
@@ -469,6 +514,7 @@ Source sections: Lossless migration and round-trip release gates; Schema evoluti
 | E07-F03 — Generated ROADMAP drift checks | ❌ |
 | E07-F04 — Fixed Tables imported baseline inventory | ❌ |
 | E07-F05 — Pilot retrospective and scope evolution | ❌ |
+| E07-F06 — Private-node projection filtering | ❌ |
 
 <details>
 <summary>Sub-features, prerequisites and acceptance scope</summary>
@@ -480,7 +526,6 @@ Prerequisites: E01-F04, E03-F03.
 - [ ] Represent ordered axes and coordinate-to-node references
 - [ ] Refuse unknown axis members and duplicate coordinates
 - [ ] Treat missing cells and out-of-scope cells distinctly
-- [ ] Unresolved: category taxonomy and any roadmap completion policy beyond all-required-features remain open
 - [ ] Preserve epic -> feature -> recursive sub-feature hierarchy without mandatory axis or cell wrappers
 - [ ] Retain completed roadmap members and historical code/test evidence beyond the active 24-hour window
 
@@ -526,6 +571,16 @@ Prerequisites: E07-F04, E05-F05.
 
 Source sections: Retrospective required before production implementation; Operational lessons the pilot must exercise.
 
+**E07-F06 — Private-node projection filtering**
+
+Prerequisites: E07-F02.
+
+- [ ] Omit private nodes and descendants from rendered output files
+- [ ] When a public view reaches private work through a parent, print only the private count
+- [ ] Preserve private state in O and validation while applying filtering only at projection boundaries
+
+Source sections: The data; Output grammar; A cell is a reference, not another state store.
+
 </details>
 
 <a id="e08"></a>
@@ -550,7 +605,6 @@ Prerequisites: E03-F01.
 - [ ] Use one schema for client validation, protocol, help and examples
 - [ ] Provide bounded family/verb help and machine discovery with schema hash
 - [ ] Refuse stale discovery and invalid suggested actions
-- [ ] Unresolved: exact verb and protocol spelling must be finalized in one schema before lock
 - [ ] List next valid actions and missing prerequisites without granting authority or executing suggestions
 
 Source sections: The verbs; Learn verbs without carrying the manual in context.
@@ -573,7 +627,7 @@ Prerequisites: E04-F04, E03-F04.
 - [ ] Index every known friend, assignments and working task references
 - [ ] Separate stable capabilities/config from observed active executions
 - [ ] Include coordinator identity and attribute model, bench, attempt and usage
-- [ ] Store agreed specialist roles per friend and strengths/weaknesses per model
+- [ ] Store agreed specialist roles per friend; keep model strengths/weaknesses in the shared model catalog
 - [ ] Represent children, swarm capabilities, local runs and one-shots separately from friend identity; agreed concurrency limits apply
 
 Source sections: Friends and assignments are resident indexes too; CONFIG and ACTIVE are different sections.
@@ -585,7 +639,7 @@ Prerequisites: E08-F03, E02-F04.
 - [ ] Represent explicit rest, unavailable and unconfirmed contact with observation age
 - [ ] Distinguish offer, acknowledgment, ownership, lease and execution
 - [ ] Reconcile uncertain prior attempts before relaunch or reassignment
-- [ ] After five-minute silence use a bounded availability probe; nonresponse is unconfirmed capacity, never proof of exhausted credits
+- [ ] After the team-configured silence threshold use one bounded availability probe; nonresponse is unconfirmed capacity, never proof of exhausted credits
 
 Source sections: Observed availability; Friends and assignments are resident indexes too.
 
@@ -596,7 +650,6 @@ Prerequisites: E08-F03.
 - [ ] Exchange UNCHANGED manifests or validated deltas by hash/revision
 - [ ] Store model route, pricing, quota and provenance without secrets
 - [ ] Keep requested versus observed model and measured suitability separate
-- [ ] Unresolved: friend participation in swarms versus model-only pools requires explicit dispositions, including Freddy's
 
 Source sections: Efficient friend config exchange and token pricing; Model knowledge informs scheduling; Swarms, models and friend participation: decision required.
 
@@ -654,7 +707,6 @@ Prerequisites: E09-F03, E05-F05.
 - [ ] Separate absorb from default link and require selected scope/authority
 - [ ] Archive source identity, provenance and content before removal; append the actual deletion outcome receipt after the attempt
 - [ ] Leave deletion pending on missing content, source change or uncertain network result
-- [ ] Unresolved: absorption remains disabled pending independent reconciliation and authorization gates
 
 Source sections: Link versus absorb; Archive completeness; Lossless migration and round-trip release gates.
 
@@ -681,7 +733,8 @@ Source sections: Public issue correspondence survives intake; Link versus absorb
 | E10-F03 — Generated, golden, property and fault suites | ❌ |
 | E10-F04 — Process-level recovery and two-writer verification | ❌ |
 | E10-F05 — Measured Fixed Tables go/no-go gate | ❌ |
-| E10-F06 — Operational adoption and continuous efficiency review | ❌ |
+| E10-F07 — Validator and repair modes | ❌ |
+| E10-F08 — Output grammar and bounded results | ❌ |
 
 <details>
 <summary>Sub-features, prerequisites and acceptance scope</summary>
@@ -712,7 +765,7 @@ Prerequisites: E01-F05, E05-F05, E06-F04.
 
 - [ ] Run parser, round-trip, invariant, index/counter and roadmap proof suites
 - [ ] Inject failures at journal, checkpoint, apply, reply and publication boundaries
-- [ ] Retain exact fixture, seed, revision, invocation and reconciliation evidence
+- [ ] Map each suite to an owner, command and CI lane without duplicating its acceptance evidence
 - [ ] Keep per-change CI within two minutes, exhaustive fault/scale suites explicit nightly or pre-release; failures block affected gates
 
 Source sections: Required test suites; Staged verification and release.
@@ -721,9 +774,9 @@ Source sections: Required test suites; Staged verification and release.
 
 Prerequisites: E02-F05, E06-F04, E09-F03.
 
-- [ ] Exercise crash/restart, partition, stale owner, alias paths and handoff
-- [ ] Verify bounded paging, missing coverage gaps and as-of refusals
-- [ ] Run read-only real repository capture with disposable destination
+- [ ] Orchestrate process-level runs against temporary remotes and fake providers, including crash/restart, partition, stale owner and handoff
+- [ ] Collect release-level results from the owning fencing, recovery, paging and as-of features without re-owning their assertions
+- [ ] Run the authorized read-only real-repository pilot and disposable import, then publish a reconciliation disposition
 
 Source sections: Required test suites; Staged verification and release.
 
@@ -737,15 +790,25 @@ Prerequisites: E07-F05, E10-F02, E10-F03.
 
 Source sections: The measurement that decides; Agreement and lock gate.
 
-**E10-F06 — Operational adoption and continuous efficiency review**
+**E10-F07 — Validator and repair modes**
 
-Prerequisites: E10-F02, E10-F05.
+Prerequisites: E01-F04, E03-F01.
 
-- [ ] Adopt practical small existing-tool optimizations before nova-work implementation without an endless optimization prerequisite
-- [ ] Capture equivalent real-work before/after token receipts including coordination, review, retry and correction; implementation cost excluded
-- [ ] Fix small measured friction during work; retain larger proposals and inconclusive/negative experiments without claiming wins
+- [ ] Validate duplicate IDs, dangling versus unavailable references, dependency cycles, two parents, invalid cells, conflicting leases and in-two-branches
+- [ ] Run whole-state validation at load/clip and candidate-gate validation at every mutation
+- [ ] Support session start --repair only when findings strictly decrease, preserving the unmodified source and emitting a repair diff
 
-Source sections: The measurement that decides; Operational lessons the pilot must exercise; Live priority steering 2026-09-14.
+Source sections: The validator; The data; Required test suites.
+
+**E10-F08 — Output grammar and bounded results**
+
+Prerequisites: E08-F01, E10-F01.
+
+- [ ] Define per-verb first tokens, OK/FAIL/RACED/ROW/NOTE/MORE records, stdout/stderr split and exit codes 0/1/2
+- [ ] Emit emitted= on OK lines and pushed= on scope lines; never exceed configured output caps
+- [ ] Enforce --max default 20, zero meaning all, reject negatives, and print MORE with a usable continuation remedy
+
+Source sections: Output grammar; The verbs; Required test suites.
 
 </details>
 

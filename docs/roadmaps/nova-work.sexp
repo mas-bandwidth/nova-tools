@@ -1,14 +1,35 @@
 ; Proposed recursive roadmap data; not an implemented nova-work interchange schema.
 (  :schema "nova-work-roadmap-baseline-1"
-  :scope-revision 1
+  :scope-revision 3
   :inventory-status "proposed baseline; awaiting friend review"
-  :sources (    :main-spec "f36b85850620504a74e1229043c7cee2c14ea594"
-    :companion "6e3413f"
+  :sources (    :main-spec "SPEC-WORK.md@f36b85850620504a74e1229043c7cee2c14ea594"
+    :companion "SPEC-WORK-PILOT.md@6e3413f"
+    :validation "SPEC-WORK-VALIDATION.md@6e3413f"
     :production-inventory "ec01647")
   :baseline-features 52
+  :discovered-features 6
+  :current-features 57
   :events (    (      :kind "baseline"
       :feature-count 52
-      :reason "Full initial nova-work source survey; implementation not started"))
+      :reason "Full initial nova-work source survey; implementation not started")
+    (      :kind "discovery"
+      :feature-count 6
+      :reason "PR 269 review found six source-backed inventory gaps; implementation not started")
+    (      :kind "remove"
+      :feature-count 1
+      :reason "E10-F06 moved to the Now register outside the product feature denominator"))
+  :open-questions (    "Common Lisp runtime packaging and supported platforms must be pinned before release"
+    "Category taxonomy and roadmap completion policy beyond all-required-features remain open"
+    "Exact verb and wire protocol spelling must be finalized in one schema before lock"
+    "Friend participation in swarms versus model-only pools requires explicit dispositions, including Freddy's"
+    "Absorption remains disabled pending independent reconciliation and authorization gates")
+  :now (    "Adopt measured efficiency improvements in existing tools first"
+    "https://github.com/mas-bandwidth/nova-tools/issues/267"
+    "https://github.com/mas-bandwidth/nova-tools/issues/239"
+    "https://github.com/mas-bandwidth/nova-tools/issues/236"
+    "https://github.com/mas-bandwidth/nova-tools/issues/264"
+    "https://github.com/mas-bandwidth/nova-tools/pull/270"
+    "https://github.com/mas-bandwidth/nova-tools/pull/271")
   :epics (    (      :id "E01"
       :title "Canonical work data and restricted representation"
       :features (        (          :id "E01-F01"
@@ -54,8 +75,7 @@
           :title "Canonical encoding and semantic round trip"
           :subfeatures (            "Produce deterministic bytes with explicit absent/empty and Unicode semantics"
             "Preserve large integers, timestamps, escaping and multiline text"
-            "Compare exports with an independent semantic comparator"
-            "Unresolved: Common Lisp runtime packaging and supported platforms must be pinned before release")
+            "Compare exports with an independent semantic comparator")
           :depends-on (            "E01-F01"
             "E01-F04")
           :source-sections (            "Format determinism"
@@ -80,7 +100,7 @@
           :subfeatures (            "Persist owner name, generation, random token, stamp and expiry"
             "Allow take, resume and successor handoff with generation rules"
             "Refuse competing live owners and name holder details"
-            "Verify the proposed Git generation/lease fencing under partitions and clock skew; reject unsafe takeover rather than relying on PID locks alone")
+            "Verify generation fencing under partitions and clock skew; reject unsafe takeover rather than relying on PID locks alone")
           :depends-on (            "E02-F01")
           :source-sections (            "The execution model"
             "One coordinator, one live reader/writer")
@@ -125,7 +145,19 @@
           :depends-on (            "E02-F01"
             "E08-F02")
           :source-sections (            "Engine and representation"
-            "Coordinator verbs and asynchronous transport")
+            "The execution model")
+          :state "missing"
+          :evidence ())
+        (          :id "E02-F07"
+          :title "Execution leases and worker ownership"
+          :subfeatures (            "Keep execution leases distinct from the coordinator ownership lease, with at most one live lease per node"
+            "Support take, heartbeat, holder-only release, handed release, one extension and explicit escalation with deadline/default fields"
+            "Derive who, stale, expired and handoffs views from lease history; distinguish responsible from working-now"
+            "Preserve lease state through reassignment, correction, pause, stop and recovery without counting an attempt twice")
+          :depends-on (            "E02-F04")
+          :source-sections (            "The data"
+            "The execution model"
+            "Operational lessons the pilot must exercise")
           :state "missing"
           :evidence ())))
     (      :id "E03"
@@ -244,6 +276,18 @@
             "Queries — the contract"
             "Old history")
           :state "missing"
+          :evidence ())
+        (          :id "E04-F06"
+          :title "As-of reconstruction over O"
+          :subfeatures (            "Answer --at <revision> over O by replaying retained events in memory"
+            "Include the replay in revision-labelled counts and refuse before the retention boundary"
+            "Keep historical O answers separate from indexed C as-of queries and report unavailable history honestly")
+          :depends-on (            "E04-F04"
+            "E03-F01")
+          :source-sections (            "Queries — the contract"
+            "The execution model — retention"
+            "Counting")
+          :state "missing"
           :evidence ())))
     (      :id "E05"
       :title "Evidence, verification and acceptance proof"
@@ -297,6 +341,17 @@
           :depends-on (            "E05-F02")
           :source-sections (            "Independent oracle and retained evidence"
             "Roadmap proof")
+          :state "missing"
+          :evidence ())
+        (          :id "E05-F06"
+          :title "Evidence resolvers and verification cache"
+          :subfeatures (            "Resolve configured pointer schemes by direct executable invocation with fact/stamp arguments and no shell"
+            "Enforce max-fetch, fetch-timeout and offline behavior; an absent resolver is unreachable"
+            "Cache by pointer, subject and resolver identity, pin resolver identity on snapshot reads, and preserve unknown results")
+          :depends-on (            "E05-F01")
+          :source-sections (            "The validator"
+            "The resident session"
+            "Required test suites")
           :state "missing"
           :evidence ())))
     (      :id "E06"
@@ -365,7 +420,6 @@
           :subfeatures (            "Represent ordered axes and coordinate-to-node references"
             "Refuse unknown axis members and duplicate coordinates"
             "Treat missing cells and out-of-scope cells distinctly"
-            "Unresolved: category taxonomy and any roadmap completion policy beyond all-required-features remain open"
             "Preserve epic -> feature -> recursive sub-feature hierarchy without mandatory axis or cell wrappers"
             "Retain completed roadmap members and historical code/test evidence beyond the active 24-hour window")
           :depends-on (            "E01-F04"
@@ -418,6 +472,17 @@
           :source-sections (            "Retrospective required before production implementation"
             "Operational lessons the pilot must exercise")
           :state "missing"
+          :evidence ())
+        (          :id "E07-F06"
+          :title "Private-node projection filtering"
+          :subfeatures (            "Omit private nodes and descendants from rendered output files"
+            "When a public view reaches private work through a parent, print only the private count"
+            "Preserve private state in O and validation while applying filtering only at projection boundaries")
+          :depends-on (            "E07-F02")
+          :source-sections (            "The data"
+            "Output grammar"
+            "A cell is a reference, not another state store")
+          :state "missing"
           :evidence ())))
     (      :id "E08"
       :title "Coordinator protocol, friends and execution records"
@@ -426,7 +491,6 @@
           :subfeatures (            "Use one schema for client validation, protocol, help and examples"
             "Provide bounded family/verb help and machine discovery with schema hash"
             "Refuse stale discovery and invalid suggested actions"
-            "Unresolved: exact verb and protocol spelling must be finalized in one schema before lock"
             "List next valid actions and missing prerequisites without granting authority or executing suggestions")
           :depends-on (            "E03-F01")
           :source-sections (            "The verbs"
@@ -451,7 +515,7 @@
           :subfeatures (            "Index every known friend, assignments and working task references"
             "Separate stable capabilities/config from observed active executions"
             "Include coordinator identity and attribute model, bench, attempt and usage"
-            "Store agreed specialist roles per friend and strengths/weaknesses per model"
+            "Store agreed specialist roles per friend; keep model strengths/weaknesses in the shared model catalog"
             "Represent children, swarm capabilities, local runs and one-shots separately from friend identity; agreed concurrency limits apply")
           :depends-on (            "E04-F04"
             "E03-F04")
@@ -464,7 +528,7 @@
           :subfeatures (            "Represent explicit rest, unavailable and unconfirmed contact with observation age"
             "Distinguish offer, acknowledgment, ownership, lease and execution"
             "Reconcile uncertain prior attempts before relaunch or reassignment"
-            "After five-minute silence use a bounded availability probe; nonresponse is unconfirmed capacity, never proof of exhausted credits")
+            "After the team-configured silence threshold use one bounded availability probe; nonresponse is unconfirmed capacity, never proof of exhausted credits")
           :depends-on (            "E08-F03"
             "E02-F04")
           :source-sections (            "Observed availability"
@@ -476,7 +540,6 @@
           :subfeatures (            "Exchange UNCHANGED manifests or validated deltas by hash/revision"
             "Store model route, pricing, quota and provenance without secrets"
             "Keep requested versus observed model and measured suitability separate"
-            "Unresolved: friend participation in swarms versus model-only pools requires explicit dispositions, including Freddy's")
           :depends-on (            "E08-F03")
           :source-sections (            "Efficient friend config exchange and token pricing"
             "Model knowledge informs scheduling"
@@ -523,7 +586,6 @@
           :subfeatures (            "Separate absorb from default link and require selected scope/authority"
             "Archive source identity, provenance and content before removal; append the actual deletion outcome receipt after the attempt"
             "Leave deletion pending on missing content, source change or uncertain network result"
-            "Unresolved: absorption remains disabled pending independent reconciliation and authorization gates")
           :depends-on (            "E09-F03"
             "E05-F05")
           :source-sections (            "Link versus absorb"
@@ -570,7 +632,7 @@
           :title "Generated, golden, property and fault suites"
           :subfeatures (            "Run parser, round-trip, invariant, index/counter and roadmap proof suites"
             "Inject failures at journal, checkpoint, apply, reply and publication boundaries"
-            "Retain exact fixture, seed, revision, invocation and reconciliation evidence"
+            "Map each suite to an owner, command and CI lane without duplicating its acceptance evidence"
             "Keep per-change CI within two minutes, exhaustive fault/scale suites explicit nightly or pre-release; failures block affected gates")
           :depends-on (            "E01-F05"
             "E05-F05"
@@ -581,9 +643,9 @@
           :evidence ())
         (          :id "E10-F04"
           :title "Process-level recovery and two-writer verification"
-          :subfeatures (            "Exercise crash/restart, partition, stale owner, alias paths and handoff"
-            "Verify bounded paging, missing coverage gaps and as-of refusals"
-            "Run read-only real repository capture with disposable destination")
+          :subfeatures (            "Orchestrate process-level runs against temporary remotes and fake providers, including crash/restart, partition, stale owner and handoff"
+            "Collect release-level results from the owning fencing, recovery, paging and as-of features without re-owning their assertions"
+            "Run the authorized read-only real-repository pilot and disposable import, then publish a reconciliation disposition")
           :depends-on (            "E02-F05"
             "E06-F04"
             "E09-F03")
@@ -603,15 +665,27 @@
             "Agreement and lock gate")
           :state "missing"
           :evidence ())
-        (          :id "E10-F06"
-          :title "Operational adoption and continuous efficiency review"
-          :subfeatures (            "Adopt practical small existing-tool optimizations before nova-work implementation without an endless optimization prerequisite"
-            "Capture equivalent real-work before/after token receipts including coordination, review, retry and correction; implementation cost excluded"
-            "Fix small measured friction during work; retain larger proposals and inconclusive/negative experiments without claiming wins")
-          :depends-on (            "E10-F02"
-            "E10-F05")
-          :source-sections (            "The measurement that decides"
-            "Operational lessons the pilot must exercise"
-            "Live priority steering 2026-09-14")
+        (          :id "E10-F07"
+          :title "Validator and repair modes"
+          :subfeatures (            "Validate duplicate IDs, dangling versus unavailable references, dependency cycles, two parents, invalid cells, conflicting leases and in-two-branches"
+            "Run whole-state validation at load/clip and candidate-gate validation at every mutation"
+            "Support session start --repair only when findings strictly decrease, preserving the unmodified source and emitting a repair diff")
+          :depends-on (            "E01-F04"
+            "E03-F01")
+          :source-sections (            "The validator"
+            "The data"
+            "Required test suites")
           :state "missing"
-          :evidence ())))))
+          :evidence ())
+        (          :id "E10-F08"
+          :title "Output grammar and bounded results"
+          :subfeatures (            "Define per-verb first tokens, OK/FAIL/RACED/ROW/NOTE/MORE records, stdout/stderr split and exit codes 0/1/2"
+            "Emit emitted= on OK lines and pushed= on scope lines; never exceed configured output caps"
+            "Enforce --max default 20, zero meaning all, reject negatives, and print MORE with a usable continuation remedy")
+          :depends-on (            "E08-F01"
+            "E10-F01")
+          :source-sections (            "Output grammar"
+            "The verbs"
+            "Required test suites")
+          :state "missing"
+          :evidence ())))))))
