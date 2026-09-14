@@ -1560,9 +1560,15 @@ remedy line. The rules are numbered on from rule 21.
     — the `nova.tokens.observation/2` shards it references at their final
     relative paths, any new `nova.tokens.mapping/2` envelopes it references,
     optional `inventories/<digest>.json` files for shards using the `inventory_file`
-    branch, and no other file, symlink or executable content. Its
-    destinations are the retained-format packet's own, not this verb's
-    invention: `records/<friend>/<bench>/<day>/<shard-sha256-hex>.jsonl`,
+    branch, and no other file, symlink or executable content. An input
+    package contains no `coverage/` replica;
+    `coverage/<collector-friend>/<collection-bench>/<UTC-collection-day>/<coverage-sha256-hex>.json`
+    is strictly the destination path written into the ledger repository on
+    publication. A batch directory holding an input `coverage/` directory or
+    replica, an unreferenced file, an orphan mapping, an unreferenced
+    inventory, a symlink or a second `batch.json` is exit 2. Its destinations
+    are the retained-format packet's own, not this verb's invention:
+    `records/<friend>/<bench>/<day>/<shard-sha256-hex>.jsonl`,
     `mappings/<mapping-sha256-hex>.json`,
     `inventories/<inventory-sha256-hex>.json`,
     `coverage/<collector-friend>/<collection-bench>/<UTC-collection-day>/<coverage-sha256-hex>.json`,
@@ -1570,13 +1576,19 @@ remedy line. The rules are numbered on from rule 21.
     interval-only allocation; that packet's own line, "the ledger README must
     be reconciled to these exact paths before the first publication", is a
     condition on the first publication and not on this spec.
-    **Strict 3-way mapping closure**: a batch enforces exact tripartite mapping
-    closure ($\text{Packaged Mappings} \equiv \text{Coverage } \texttt{mapping\_ids} \equiv \text{Observation } \texttt{mapping\_id}\text{s}$).
+    **Strict 3-way mapping closure and observation validation**: a batch
+    enforces exact tripartite mapping closure ($\text{Packaged Mappings} \equiv \text{Coverage } \texttt{mapping\_ids} \equiv \text{Observation } \texttt{mapping\_id}\text{s}$).
     Every mapping file in `mappings/` must be declared in `coverage.mapping_ids`
     (no orphan mappings); every mapping declared in `coverage.mapping_ids` must
     exist in `mappings/` (no missing mappings); and every mapping declared in
     coverage must be referenced by at least one observation in the batch shards
-    (no unused mappings). Any divergence is exit 2.
+    (no unused mappings). Every shard line is strictly validated as a
+    `nova.tokens.observation/2` envelope under its declared mapping manifest;
+    each record's own `friend`, `bench`, and UTC `day` must match the shard's
+    path `records/<friend>/<bench>/<day>/...` (with `_` for null friend or bench
+    and `unallocated` for null or unallocated day). Shard observation IDs and
+    inventory file contents are compared as sorted ID sets (order-independent).
+    Any divergence, malformed observation, or origin/day path mismatch is exit 2.
     **Provenance is the record's, never the uploader's**: a shard's
     `friend`/`bench` come from the observation's own origin, the coverage
     envelope's collector fields are the collector's, the commit author is
@@ -1608,9 +1620,11 @@ remedy line. The rules are numbered on from rule 21.
     whose clone identity and configured author differ from the records' origin
     still writes the records' paths, and an implementation that used the
     uploader's identity fails the test. `_` and `unallocated` are exercised. A
-    batch holding an unreferenced file (including an unreferenced inventory or
-    orphan mapping), a symlink or a second `batch.json` is exit 2; a batch
-    failing strict 3-way mapping closure is exit 2; one naming
+    batch holding an unreferenced file (including an unreferenced inventory,
+    an orphan mapping, or an input `coverage/` directory), a symlink or a second
+    `batch.json` is exit 2; a batch failing strict 3-way mapping closure,
+    containing a malformed observation envelope, or containing an observation
+    whose origin or day does not match its shard path is exit 2; one naming
     `nova.tokens.coverage/2` with no validator compiled in is exit 2 naming the
     missing validator, the batch directory byte-identical afterwards and
     nothing pushed; `--batch` with `--day`, `--seat`, `--supersede`, `--public`
@@ -2141,13 +2155,15 @@ paragraphs are the normative text and these ten lines are the index.
 29. A fixture batch lands every path of the retained layout, the shard paths
     taken from each record's own friend, bench and day and never from the
     uploader's identity; `_` and `unallocated` are exercised; a batch holding
-    an unreferenced file, an unreferenced inventory, an orphan mapping, a symlink
-    or a second `batch.json` is exit 2; a batch failing strict 3-way mapping
-    closure is exit 2; a batch naming a schema with no validator compiled in is
-    exit 2 naming the missing validator, the batch untouched and nothing pushed;
-    `--batch` with `--day`, `--seat`, `--supersede`, `--public` or `--v1-day` is
-    exit 2, each its own case and none a success; no `records/` path appears in a
-    v1 day's commit, nor a `v1-days/` path in a batch's.
+    an unreferenced file, an unreferenced inventory, an orphan mapping, an input
+    `coverage/` directory, a symlink or a second `batch.json` is exit 2; a
+    batch failing strict 3-way mapping closure, a malformed observation envelope,
+    or a shard path origin mismatch is exit 2; a batch naming a schema with no
+    validator compiled in is exit 2 naming the missing validator, the batch
+    untouched and nothing pushed; `--batch` with `--day`, `--seat`,
+    `--supersede`, `--public` or `--v1-day` is exit 2, each its own case and
+    none a success; no `records/` path appears in a v1 day's commit, nor a
+    `v1-days/` path in a batch's.
 30. A remote on the wrong host with the right owner and name is exit 2
     printing both; a matching fetch URL whose `pushurl` names another host is
     exit 2 before any object is written; two push URLs that do not all match
