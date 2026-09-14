@@ -1430,8 +1430,9 @@ abbreviated commit strings: where `next=` is opaque the receipt is quoted up to
 - `TestBodiesWithoutAdvanceMovesNoCursor`: complete, partial, empty and gapped
   returns leave every lane's `CURSOR`, `OPEN`, `RECEIPTS` and `INDEX` unchanged,
   with no commit and no push, and the partial return still carries a usable
-  continuation, `expected=next=` followed by a token that decodes to the item
-  after the last printed. **Read-only resume:** that token is accepted by the
+  continuation, `expected=next=` followed by a token that decodes to the last
+  accounted item (the last printed one in this no-gap fixture), so the next call
+  starts after it. **Read-only resume:** that token is accepted by the
   next read-only call and the chain reaches
   `expected=drained=true complete=true next=-` with no `--advance` on any call,
   `CURSOR` byte-identical to its value before the first, and no hidden writable
