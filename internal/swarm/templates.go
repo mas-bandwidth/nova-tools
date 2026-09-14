@@ -39,6 +39,15 @@ const templateReadPR = `read-pr — read one pull request against the rules
    found nothing is NOT a failed task: write the ` + "`## Head`" + ` with ` + "`findings: 0`" + `.
    Never report a finding to have something to report.
 6. Check the board before reporting: a card that already names this is a ` + "`dup:`" + `.
+
+Keep RESULT.md concise: omit progress narration, praise, repeated task text, and a
+separate summary. Each finding keeps its proof in compact form: severity, ` + "`file:line`" + `,
+the exact quoted rule, the fix, and ` + "`dup:`" + ` status when applicable. Retain every valid
+finding, its context and evidence, and any coverage limitation; do not drop context or
+evidence by default. Brevity is a soft target: never hard-truncate findings or proof; if
+the report overflows, preserve the proof and say so. Preserve the complete RESULT.md
+shape and its mandatory ` + "`## Head`" + `, ` + "`## Findings`" + `, ` + "`## Per item`" + `, ` + "`## Gates`" + `,
+` + "`## Left owed`" + `, and ` + "`## One line`" + ` sections.
 `
 
 const templateProbeRow = `probe-row — make one claim true or false
