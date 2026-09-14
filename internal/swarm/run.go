@@ -283,12 +283,17 @@ func Run(in RunInput) int {
 	// job directory or supervisor exists; checking it here keeps a missing worker home from
 	// stranding the task in running/ with no owner. This follows startup recovery, so an
 	// existing job can still be adopted or reclaimed even when the next worker cannot start.
+	var preparationRefusal error
 	if pending, err := p.List(Pending); err != nil {
-		fmt.Fprintf(errOut, "RUN REFUSED reason=prepare: pending tasks could not be read: %s\n", oneline.Escape(redactedReason(err)))
-		return 2
+		preparationRefusal = fmt.Errorf("pending tasks could not be read: %s", redactedReason(err))
 	} else if len(pending) > 0 {
-		if err := workerDirReady(in.Worker.WorkerDir); err != nil {
-			fmt.Fprintf(errOut, "RUN REFUSED reason=prepare: %s\n", oneline.Escape(err.Error()))
+		preparationRefusal = workerDirReady(in.Worker.WorkerDir)
+	}
+	if preparationRefusal != nil {
+		fmt.Fprintf(errOut, "RUN REFUSED reason=prepare: %s\n", oneline.Escape(preparationRefusal.Error()))
+		said = true
+		haltAdmissions = true
+		if len(watching) == 0 {
 			return 2
 		}
 	}
@@ -425,6 +430,26 @@ func workerDirReady(path string) error {
 	return nil
 }
 
+func (in RunInput) retainFailedPreparation(sc Sidecar, slot int, jobDir, nonce string, prepErr, rollbackErr error) (string, int) {
+	// A rollback failure leaves the task and reservation deliberately together. Establish
+	// the confirmed no-launch with nonce-bound aborted.json so the next dispatcher can move
+	// it back to pending without guessing that a supervisor never existed.
+	abortErr := error(nil)
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		abortErr = err
+	} else if err := WriteJSON(AbortedPath(jobDir), AbortedRecord{
+		Nonce: nonce, Reason: "preparation failed: " + redactedReason(prepErr), At: Stamp(in.Now()), Survivors: 0,
+	}); err != nil {
+		abortErr = err
+	}
+	if abortErr == nil {
+		return fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: preparation failed: %s; rollback retained nonce-bound reservation: %s",
+			oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(prepErr)), oneline.Escape(redactedReason(rollbackErr))), launchBroken
+	}
+	return fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: preparation failed: %s; rollback incomplete and slot retained: %s (%s)",
+		oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(prepErr)), oneline.Escape(redactedReason(rollbackErr)), oneline.Escape(redactedReason(abortErr))), launchBroken
+}
+
 // freeSlot is the allocation, and it asks ONE authority: the slot files. Never a directory
 // scan, never a lock file in the slot, never a timer. A slot whose file exists in any state
 // is held, so a reserved slot counts against --workers.
@@ -474,11 +499,22 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		// Preparation is a confirmed no-launch: retain the task and its diagnostic in
 		// pending/ so the next run can retry it. The slot is freed only after the task
 		// leaves running/, and no supervisor or worker process exists to make this uncertain.
-		_ = p.WriteSidecar(Running, sc)
-		if moveErr := p.Claim(sc.ID, Running, Pending); moveErr == nil {
-			_ = p.WriteSidecar(Pending, sc)
+		if writeErr := p.WriteSidecar(Running, sc); writeErr != nil {
+			line, code := in.retainFailedPreparation(sc, slot, jobDir, nonce, err, writeErr)
+			return nil, line, code
 		}
-		_ = p.Free(slot)
+		if moveErr := p.Claim(sc.ID, Running, Pending); moveErr != nil {
+			line, code := in.retainFailedPreparation(sc, slot, jobDir, nonce, err, moveErr)
+			return nil, line, code
+		}
+		if writeErr := p.WriteSidecar(Pending, sc); writeErr != nil {
+			line, code := in.retainFailedPreparation(sc, slot, jobDir, nonce, err, writeErr)
+			return nil, line, code
+		}
+		if freeErr := p.Free(slot); freeErr != nil {
+			line, code := in.retainFailedPreparation(sc, slot, jobDir, nonce, err, freeErr)
+			return nil, line, code
+		}
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: preparation failed: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), launchBroken
 	}
 	// A prior confirmed preparation failure is diagnostic history, not this successful

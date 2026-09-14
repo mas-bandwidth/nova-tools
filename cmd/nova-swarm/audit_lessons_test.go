@@ -3,10 +3,13 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // THE NEW-USER AUDIT (2026-09-11). Each test below is one footgun or one stumble a person
@@ -122,6 +125,54 @@ func TestPreparationFailureRollsTaskBackBeforeSupervisor(t *testing.T) {
 		t.Fatalf("the corrected slot preparation did not recover the task, exit %d:\n%s%s", exit, stdout, stderr)
 	}
 	mustContain(t, "recovered run", stdout, "RUN DONE id="+id)
+}
+
+func TestPreparationRefusalStillMonitorsAdoptedJob(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	p, err := swarm.OpenPool(b.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveID := "adopted-preparation-test"
+	liveJob := filepath.Join(b.dir, "worker-home-1", "jobs", liveID)
+	if err := os.MkdirAll(liveJob, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Add([]byte("an adopted task"), swarm.Sidecar{ID: liveID, Files: 5, Tokens: 100000, Deadline: "30s", RC: -1, Job: liveJob, Slot: 1, Started: swarm.Stamp(time.Now().UTC())}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Claim(liveID, swarm.Pending, swarm.Running); err != nil {
+		t.Fatal(err)
+	}
+	liveCmd := exec.Command("sleep", "1")
+	if err := liveCmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = liveCmd.Wait() }()
+	if err := swarm.WriteJSON(filepath.Join(b.pool, "slots", "1.json"), swarm.SlotFile{
+		Job: liveID, JobDir: liveJob, State: swarm.SlotLaunched, Pid: liveCmd.Process.Pid,
+		PidStarted: swarm.StartStamp(liveCmd.Process.Pid), RunnerPid: 0, Nonce: "adopted-nonce",
+		LaunchedAt: swarm.Stamp(time.Now().UTC()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pendingID := b.add("a pending task waits for preparation\nFAKE-FINDINGS 1\n")
+	missing := filepath.Join(b.dir, "worker-home-missing")
+	b.rewriteWorker(func(d map[string]any) { d["worker_dir"] = missing })
+
+	exit, stdout, stderr := b.run()
+	if exit == 0 {
+		t.Fatalf("a preparation refusal with an adopted job must be nonzero:\n%s%s", stdout, stderr)
+	}
+	mustContain(t, "adoption", stdout, "RUN ADOPT id="+liveID)
+	mustContain(t, "preparation refusal", stderr, "RUN REFUSED reason=prepare")
+	if _, err := os.Stat(filepath.Join(b.pool, "pending", pendingID+".task")); err != nil {
+		t.Fatalf("pending task was lost while monitoring adopted work: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "running", liveID+".task")); err == nil {
+		t.Fatal("adopted task was abandoned in running/")
+	}
 }
 
 // F6 / lesson 83: "a negative ceiling is refused (0 already means all; a negative number is
