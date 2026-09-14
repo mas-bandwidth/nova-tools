@@ -1,6 +1,6 @@
 ; Proposed recursive roadmap data; not an implemented nova-work interchange schema.
 (  :schema "nova-work-roadmap-baseline-1"
-  :scope-revision 6
+  :scope-revision 7
   :inventory-status "proposed baseline; awaiting friend review"
   :sources (    :main-spec "SPEC-WORK.md@f36b85850620504a74e1229043c7cee2c14ea594"
     :companion "SPEC-WORK-PILOT.md@6e3413f"
@@ -11,6 +11,8 @@
     :resident-window-bound-proposed "SPEC-WORK.md@a0cfcf580d3140ce6c30d51b3a7f884c9b2afcd6"
     :efficiency-policy "SPEC-WORK.md@685b7c2"
     :recursive-grouping-proposed "SPEC-WORK.md@9488a19"
+    :v2-recursive-node-proposed "https://github.com/mas-bandwidth/nova-tools/issues/321@2026-09-14T20:47:32Z"
+    :v2-recursive-node-body-sha256 "138fd865383982f2729484eadb4edeefeb448cd0eb7c56716bd118858a42e0e6"
     :production-inventory "ec01647")
   :baseline-features 52
   :baseline-items 171
@@ -96,11 +98,36 @@
       :acceptance "recursive-container-settle-reopen"
       :item-count 1
       :reason "Proposed PR 319 requires settle and reopen behavior through required-member ancestors at every grouping depth"))
+  :v2-proposed (    :state "proposed"
+    :outside-v1-denominator "yes"
+    :mapped-feature-areas 4
+    :acceptance-items 12
+    :source-updated-at "2026-09-14T20:47:32Z"
+    :roadmap-base "a61171522f89c627a0e9011b4b6b70036840c8a0"
+    :reason "Meaningful issue321 planning expansion before the hourly refresh: arbitrary real/virtual/mixed hierarchies and durable mapped GitHub completion return; no v1 feature/item addition or verified completion"
+    :features (
+      (:extends "E08-F03" :title "Friends, CONFIG and ACTIVE indexes" :state "proposed"
+       :subfeatures ("Keep node membership, human/AI coordinator composition, real or virtual organizational role and transport backing separate, with stable node and actor identities"
+         "Exercise all-real company-style, all-virtual and mixed real/virtual branches at arbitrary finite depths without fixed company/team/person levels; exceeding declared bounds refuses visibly"
+         "Keep one coordinating parent distinct from work containment and cross-branch references; record membership, parent and ownership transitions without duplicating work or spend"))
+      (:extends "E08-F04" :title "Availability, offers and assignment reconciliation" :state "proposed"
+       :subfeatures ("Apply the same offer, acceptance/deferral/refusal, local-work/delegation and evidence-return contract at every depth, including a root originating work and a leaf finishing locally"
+         "Integrate local and child results against parent acceptance; preserve partial failures, independent reviews, unresolved live handles and explicit pause/cancel/correction/reopen behavior"
+         "Return actor/model/bench/attempt usage through every parent mapping, counting local work, descendants, retry, integration, review and rescue once while missing usage remains unknown"))
+      (:extends "E09-F02" :title "Link mode and correspondence reconciliation" :state "proposed"
+       :subfeatures ("Support repository-backed virtual nodes using GitHub Issues and Discussions with optional correlated email; keep shared-project repository layout explicit and duplicate or delayed notices separate from acceptance"
+         "Retain delegating/receiving node, offer/assignment, local work, project/repository, Issue and linked Discussion identities and revisions; distinguish GitHub assignees from receiving nodes through regrouping, delegation and transfers"
+         "Record a virtual parent creating and assigning an Issue as a locally initiated offer, then accept it through the same contract without inventing an independent human request"))
+      (:extends "E09-F05" :title "External adapter and side-effect safety" :state "proposed"
+       :subfeatures ("After agreed completion and review, close the correctly mapped Issue and post or update one correlated Discussion completion summary with evidence; a child alone cannot close a group Issue and a summary does not imply Discussion closure or accepted answer"
+         "Persist the intended upstream operation before delivery and retain acknowledgment; local accepted completion with failed or interrupted GitHub delivery remains visibly pending and reconciles after restart without duplicate comments or closures"
+         "Preserve mappings and resolve contradictory upstream reopen, reassignment or transfer while updates are pending; an externally closed Issue does not prove local acceptance, and a future native backing preserves unresolved work and evidence"))))
   :open-questions (    "Common Lisp runtime packaging and supported platforms must be pinned before release"
     "Category taxonomy and roadmap completion policy beyond all-required-features remain open"
     "Exact verb and wire protocol spelling must be finalized in one schema before lock"
     "Friend participation in swarms versus model-only pools requires explicit dispositions, including Freddy's"
     "Absorption remains disabled pending independent reconciliation and authorization gates")
+  :now-snapshot-at "2026-09-14T20:00:00Z"
   :now (    "Test operational efficiency improvements while building nova-work; count retries, review and rescue, but exclude implementation cost"
     "https://github.com/mas-bandwidth/nova-tools/pull/300"
     "https://github.com/mas-bandwidth/nova-tools/issues/185"
@@ -111,7 +138,7 @@
     "PR 320 is at 83269f66 with root and Emma clear while Rowan and Freddy remain pending; PR 322 is based on main at 76cc160e with root 29/29, CI green and Emma APPROVE/CLEAR 5669726199 at that head; Rowan requested three scoped repairs: named closed/history/event assertions, journal-rejection wording and the required-boolean source citation; repairs are in progress and Freddy remains pending; neither implementation is merged or makes a feature green"
     "PR 319 remains a proposed v1 recursive-grouping refinement at repaired 9488a19, with Emma APPROVE/CLEAR 5669804565; Rowan and Freddy exact-head delta reviews remain pending; three non-duplicate acceptance gaps map existing features without implementation credit"
     "PRs 293, 294 and 295 have current Rowan/Fable approvals at 47c3f9a, 4fddfcb and c2be4d6b; other friend, parent and schema gates remain"
-    "Issue 321 tracks v2 multiple-human/coordinator direction outside the v1 denominator"
+    "Issue 321 updated 2026-09-14T20:47:32Z: recursive real/virtual/mixed nodes, optional repository/Issues/Discussions/email backing and durable delegated-work mappings with accepted completion returned upstream; proposed v2 discoveries remain outside the v1 denominator"
     "Issue 185: native Codex usage decoding exists without an operational ingestion path, so no parent-plus-child token saving is claimed"
     "https://github.com/mas-bandwidth/nova-tools/pull/314"
     "https://github.com/mas-bandwidth/nova-tools/pull/311"
