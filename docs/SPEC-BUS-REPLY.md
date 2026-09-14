@@ -262,6 +262,48 @@ bench's, the header is the bus's.
 naming the path — because the one thing that can be at that path is a draft of
 this same reply that somebody is editing in another window.
 
+**That refusal is made by the publish itself, and never by a check in front of
+it.** Two bus checkouts on one bench can be pointed at one `--draft-dir`, and
+two readers of one lane compose the same `<UTC minute>Z-re-<target id>.md` by
+construction: a check that finds nothing, followed by an ordinary rename,
+replaces whatever was created in the gap between the two, and the loser's draft
+is gone with no line printed anywhere. **The final name MUST be created
+exclusively** — by a call that fails when the destination exists rather than
+replacing it. A cheap pre-check is allowed as an early courtesy, but it never
+makes the guarantee, and its line and its exit code are the same ones the
+publish's own already-exists error produces, so a reader cannot tell which of
+the two spoke.
+
+The write is therefore two steps, and the second is the one that matters here.
+First the complete draft goes into a unique temporary inside `--draft-dir`: a
+name drawn from the OS random source, created exclusively, refusing to follow a
+symlink, written, flushed and closed — the same discipline the lane state files
+use, and what keeps a kill from leaving half a reply that looks sendable. Then
+it is **published no-replace**, by the first of these the platform and the
+filesystem support:
+
+1. **hard-link the temporary onto the final name, then unlink the temporary.**
+   The link call is atomic and fails with an already-exists error rather than
+   replacing, on every POSIX filesystem and on NTFS, so this is the primary path
+   on all three platforms the family builds for.
+2. **the operating system's own no-replace rename**, where the filesystem
+   refuses hard links — some network mounts, some container overlays, FAT:
+   `renameat2` with `RENAME_NOREPLACE` on Linux, `renamex_np` with `RENAME_EXCL`
+   on macOS, and `MoveFileEx` **without** `MOVEFILE_REPLACE_EXISTING` on
+   Windows, which is refusal-by-default and not a flag that has to be added.
+3. **where neither is available** — an old kernel, or a filesystem that
+   implements neither, seen as the call reporting that it is not supported — the
+   tool **refuses to publish**: exit 2, naming the directory, the call it tried
+   and what the call said, with one remedy line: name a `--draft-dir` on a
+   filesystem that has one of the two. It does not fall back to a replacing
+   rename and it does not fall back to check-then-rename, because both are the
+   race this rule exists to close. A plain replacing rename MUST NOT appear
+   anywhere on this path.
+
+The temporary is removed on every failing path — the already-exists refusal and
+the unsupported-filesystem refusal alike — so a refused run leaves `--draft-dir`
+holding exactly what it held before, and no stray `.tmp` beside it.
+
 The path is printed, once, on the receipt line. Nothing else goes to stdout in
 this form.
 
@@ -345,13 +387,17 @@ bus state in that form to say anything — and this table is the reply form only
 | the target's sender is `--as` and no `--to` was given | a reply to your own note needs an explicit `--to` | 1 |
 | the body is empty, or over `--max-body-bytes` | the budget and the size, read at budget+1 and no further | 1 |
 | a file already exists at the draft path | the path, and that this tool never overwrites a draft | 1 |
+| the draft directory's filesystem offers no create-exclusive publish | the directory, the call tried, what it said, and to name a `--draft-dir` on a filesystem that has one | 2 |
 | another `nova-bus` holds this checkout | the existing lock refusal, unchanged | 1 |
 
-**No refusal writes a partial draft.** The file is written once, complete, by
-rename into `--draft-dir`, after every check above has passed — the same rename
-discipline the lane state files use, for the same reason: a kill between the
-truncate and the write leaves a file that is neither the old one nor the new
-one, and here it would leave half a reply that looks sendable.
+**No refusal writes a partial draft, and no publish replaces one.** The file is
+written once, complete, into a unique temporary and then published onto its
+final name by the create-exclusive step set out under the filename above, after
+every check in this table has passed. Two reasons, and the second is not the
+first: a kill between a truncate and a write leaves a file that is neither the
+old one nor the new one, and here that would be half a reply that looks
+sendable; and a rename that replaces silently loses a whole draft that another
+checkout sharing this directory created in the meantime.
 
 ## What a draft does not do to the open list
 
@@ -458,38 +504,60 @@ with the alternative and what it would cost.
 
 ## Measurement
 
-The claim under test is narrow: **this form removes turns from answering a note,
-and its own output does not cost back what it saved.** Nothing here claims a
-percentage, and shorter output on its own proves nothing about total cost.
+The claim under test is narrow: **this form removes operational tokens from
+answering a note, and its own output does not cost back what it saved.** Nothing
+here claims a percentage, and shorter output on its own proves nothing about
+total cost.
 
-**The comparison is the same real exchange, answered both ways.** Pick a handful
-of actual coordination replies — not synthetic ones, because a synthetic reply
-has no stale checkout and no ambiguous subject, which is where the turns
-actually go. Answer each one by hand as today, and once through this form, from
-the same checkout state.
+**Only operational tokens are compared: the same work before and after
+adoption, at equivalent accepted quality.** What it cost to build this form and
+to review it is sunk and is **excluded entirely** — not folded into the
+per-reply figure, not reported beside it, and above all not turned into a count
+of replies at which it pays for itself. A build cost is spent whatever happens
+next, so a payback threshold measures nothing anybody can act on. The question
+is only whether a line that has the form spends fewer tokens than a line that
+does not, on the same work, for a reply of the same accepted quality —
+"accepted" because a draft that needed a second pass before it could be sent did
+not do the same work as one that did not, and must carry that pass in its own
+column rather than in neither.
+
+**The two forms are compared without the same live reply being delivered
+twice.** Pick a handful of actual coordination replies — not synthetic ones,
+because a synthetic reply has no stale checkout and no ambiguous subject, which
+is where the cost actually goes. Then compare at draft time: the other side is
+composed as a draft and stopped there, or both sides are replayed as a fixture
+exchange against a disposable local bare remote. **A duplicate note is never put
+on the real bus to produce a number.** Where a real reply does go out it goes
+out once, by whichever form is in use that day, and the other form is the dry
+run beside it.
 
 What is counted, per reply:
 
 - **coordinator turns**, before and after, read out of the harness transcript
   rather than estimated. This is the number the slice exists to move;
+- **the coordinator's own input, output and cache-read tokens per reply**, where
+  the harness reports them, because a turn is mostly a cache read and a count of
+  turns alone would hide the category the saving actually lands in;
 - **the tokens of the tool's own output**, before and after: stdout plus stderr,
   measured **at the largest plausible state** — a reader carrying several
   hundred open notes — because a receipt that is bounded at ten notes and
-  unbounded at six hundred is unbounded;
-- **the coordinator's own input and cache-read tokens per reply**, where the
-  harness reports them, because a turn is mostly a cache read and a count of
-  turns alone would hide the category the saving actually lands in;
-- **errors, retries and wall time**, because a form that halves the turns and
-  doubles the refusals has moved the cost rather than removed it;
+  unbounded at six hundred is unbounded. The tool's output is an operational
+  cost like any other, counted on the after side and never netted out;
+- **operational review and retry overhead**: the turns and tokens spent reading
+  a generated draft before it is sent, every refusal met on the way, and every
+  re-run. A form that halves the composing turns and adds a review pass has
+  moved the cost rather than removed it;
+- **errors and wall time**, for that same reason;
 - **source and recipient correctness**: did the reply name the note it meant and
   reach the people it meant. A turn saved by a reply that went to the wrong
   audience is not a turn saved.
 
-**Implementation and review cost is excluded from the per-reply figure and
-reported beside it**, as its own number, with the count of replies at which it
-pays for itself. Folding it into the per-reply figure would hide the steady
-state; leaving it out entirely would hide the bill. Both numbers, separately, is
-the only honest shape.
+**Any category the harness does not report is labelled `unknown`, never zero,
+and the report states what share of each side's total is unmeasured.** A harness
+that reports turns but not cache reads yields a turn comparison and an unknown
+token comparison, and the summary says so in the same sentence as the number,
+not in a footnote. A saving claimed over a total that is largely unknown is not
+a saving claimed.
 
 Raw transcripts and the exact revision each side was measured at are retained,
 and the report names the harnesses and models involved without treating any of
@@ -499,7 +567,7 @@ loop stays supported for lines that prefer it.
 
 ## The tests, by name
 
-Every MUST above has a test, and the name says which one. **Twenty-nine tests
+Every MUST above has a test, and the name says which one. **Thirty tests
 are named below**, and each one names its fixture and its observable. They are
 ordinary package tests against disposable local bare git remotes, inside the
 existing fast tier's budget — one minute ideally, two at most — with anything heavier
@@ -581,6 +649,15 @@ declared in the certification tier rather than deleted.
   written, and the refusal names the resolved bus root.
 - `TestReplyNeverOverwritesAnExistingDraft` — a file at the composed path is a
   refusal, and the existing file is unchanged.
+- `TestTwoProcessesRacingOneDraftPathLeaveOneWinner` — **two `nova-bus`
+  processes**, not two goroutines, started together against **two separate bus
+  checkouts sharing one `--draft-dir`**, each composing the same filename for
+  the same target, run enough times to hit the interleaving. Exactly one exits
+  0; the other exits 1 with the existing-file line naming the path. The file at
+  that path is byte-equal to the winner's draft, no `.tmp` is left in the
+  directory, and no run produces two files. The same assertions hold with the
+  advisory pre-check disabled at the seam, which is what proves the publish
+  itself refuses rather than the check in front of it.
 - `TestNoPartialDraftOnAnyRefusal` — every row of the refusal table, asserted
   against an empty `--draft-dir`.
 - `TestReplyBodyAtTheBudgetAndOneByteOver` — at `--max-body-bytes`, at budget+1,
