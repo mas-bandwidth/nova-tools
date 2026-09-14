@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
@@ -17,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
@@ -105,7 +107,9 @@ func packet(args []string, out, errOut io.Writer) int {
 	if _, err := os.Stat(*dest); err == nil {
 		return refuse(errOut, "--out already exists; packets are immutable")
 	}
-	if *reuse != "" && (len(specs) != 0 || len(rules) != 0 || *maxBytes != defaultPacketMaxBytes) {
+	maxBytesSet := false
+	fs.Visit(func(f *flag.Flag) { maxBytesSet = maxBytesSet || f.Name == "max-bytes" })
+	if *reuse != "" && (len(specs) != 0 || len(rules) != 0 || maxBytesSet) {
 		return refuse(errOut, "--reuse cannot be combined with --spec, --rule or --max-bytes")
 	}
 	st, err := merge.Load(*lane)
@@ -165,7 +169,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	}
 	packetID := packetID(id, current, base, rangeText)
 	if *reuse != "" {
-		hdr, content, e := readReusePacket(*reuse, defaultPacketMaxBytes)
+		hdr, content, e := readReusePacket(*reuse)
 		if e != nil {
 			return refuse(errOut, fmt.Sprintf("--reuse file is not a valid packet: %v", e))
 		}
@@ -204,8 +208,15 @@ func packet(args []string, out, errOut io.Writer) int {
 			Who: *who, Built: time.Now().UTC().Format(time.RFC3339), Cut: hdr.Cut,
 		}
 		newBody := formatPacket(hdrNew, bodyRest)
-		if len(newBody) > *maxBytes {
-			return refuse(errOut, "--reuse packet exceeds the byte budget")
+		reuseLimit := hdr.Bytes
+		if reuseLimit < defaultPacketMaxBytes {
+			// v1 packets below the default were necessarily admitted by that
+			// default unless a smaller flag was used; the header has no field
+			// that can distinguish those historical artifacts.
+			reuseLimit = defaultPacketMaxBytes
+		}
+		if len(newBody) > reuseLimit {
+			return refuse(errOut, "--reuse packet exceeds the original packet byte bound")
 		}
 		return writePacket(*dest, newBody, out, errOut, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(newBody), hdr.Cut, true)
 	}
@@ -504,8 +515,17 @@ type packetSections struct {
 // readReusePacket opens the supplied artifact once.  The opened descriptor is
 // checked as a regular file and read with the packet's fixed admission ceiling;
 // its declared byte count then binds the header to exactly the bytes reused.
-func readReusePacket(path string, limit int) (*packetHeader, string, error) {
-	f, err := os.Open(path)
+func readReusePacket(path string) (*packetHeader, string, error) {
+	// Lstat rejects named pipes and devices before opening them. O_NONBLOCK also
+	// keeps a path swapped to a FIFO between that check and open from hanging.
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, "", err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return nil, "", fmt.Errorf("reuse candidate is not a regular file")
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, "", err
 	}
@@ -517,25 +537,32 @@ func readReusePacket(path string, limit int) (*packetHeader, string, error) {
 	if !info.Mode().IsRegular() {
 		return nil, "", fmt.Errorf("reuse candidate is not a regular file")
 	}
-	if info.Size() > int64(limit) {
-		return nil, "", fmt.Errorf("reuse candidate exceeds the %d-byte packet limit", limit)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
-	if err != nil {
-		return nil, "", err
-	}
-	if len(data) > limit {
-		return nil, "", fmt.Errorf("reuse candidate exceeds the %d-byte packet limit", limit)
-	}
-	firstLine, _, found := bytes.Cut(data, []byte{'\n'})
-	if !found || len(firstLine) > packetHeaderLimit {
+	// Keep the one descriptor open while the framed header fixes the exact
+	// byte budget for the remainder. A caller cannot turn a small header read
+	// into an unbounded second read by swapping the pathname.
+	r := bufio.NewReaderSize(f, packetHeaderLimit+1)
+	firstLine, err := r.ReadSlice('\n')
+	if err != nil || len(firstLine) > packetHeaderLimit+1 {
 		return nil, "", fmt.Errorf("packet header exceeds %d bytes or is unterminated", packetHeaderLimit)
 	}
-	hdr, err := parsePacketFirstLine(strings.TrimSuffix(string(firstLine), "\r"))
+	hdr, err := parsePacketFirstLine(strings.TrimSuffix(strings.TrimSuffix(string(firstLine), "\n"), "\r"))
 	if err != nil {
 		return nil, "", err
 	}
-	if hdr.Bytes != len(data) {
+	if int64(hdr.Bytes) != info.Size() {
+		return nil, "", fmt.Errorf("header bytes=%d does not match regular-file size %d", hdr.Bytes, info.Size())
+	}
+	if hdr.Bytes < len(firstLine) {
+		return nil, "", fmt.Errorf("header bytes=%d is shorter than its header", hdr.Bytes)
+	}
+	data := make([]byte, 0, hdr.Bytes)
+	data = append(data, firstLine...)
+	rest, err := io.ReadAll(io.LimitReader(r, int64(hdr.Bytes-len(firstLine))+1))
+	if err != nil {
+		return nil, "", err
+	}
+	data = append(data, rest...)
+	if len(data) != hdr.Bytes {
 		return nil, "", fmt.Errorf("header bytes=%d does not match %d bytes read", hdr.Bytes, len(data))
 	}
 	return hdr, string(data), nil
@@ -555,32 +582,29 @@ func splitPacketSections(content string) (packetSections, error) {
 	if firstEnd < 0 || !strings.HasPrefix(content[firstEnd:], "\n\n## This head\n") {
 		return sections, fmt.Errorf("packet must begin with This head after the header")
 	}
-	indexes := make([]int, len(packetSectionMarkers))
-	at := firstEnd + 2
-	for i, marker := range packetSectionMarkers {
-		off := strings.Index(content[at:], marker)
-		if off < 0 {
-			return sections, fmt.Errorf("missing required section %q", strings.TrimSpace(marker))
-		}
-		indexes[i] = at + off
-		at = indexes[i] + len(marker)
-	}
-	diffIndex := strings.Index(content[at:], "## Diff ")
-	if diffIndex < 0 {
-		return sections, fmt.Errorf("missing required Diff section")
-	}
-	diffIndex += at
-	notIncludedIndex := strings.Index(content[diffIndex:], "## Not included\n")
-	if notIncludedIndex < 0 {
+	thisHead := firstEnd + 2
+	// New packets quote author data, so it cannot form a top-level delimiter.
+	// For already-published legacy packets, locate the later fixed sections from
+	// the end: a literal heading in author prose then remains data, rather than
+	// stealing the reader-specific boundary.
+	notIncluded := strings.LastIndex(content, "## Not included\n")
+	if notIncluded < 0 {
 		return sections, fmt.Errorf("missing required Not included section")
 	}
-	notIncludedIndex += diffIndex
-	sections.thisHead = content[indexes[0]:indexes[1]]
-	sections.allVerdicts = content[indexes[2]:indexes[3]]
-	sections.openFindings = content[indexes[3]:indexes[4]]
-	sections.rules = content[indexes[4]:diffIndex]
-	sections.diff = content[diffIndex:notIncludedIndex]
-	sections.notIncluded = content[notIncludedIndex:]
+	diff := strings.LastIndex(content[:notIncluded], "## Diff ")
+	rules := strings.LastIndex(content[:diff], "## Rules touched\n")
+	open := strings.LastIndex(content[:rules], "## Open findings (answer with `dup <id>` if you see the same thing)\n")
+	all := strings.LastIndex(content[:open], "## All verdicts at earlier heads\n")
+	your := strings.LastIndex(content[:all], "## Your prior verdicts on this entry\n")
+	if diff < 0 || rules < 0 || open < 0 || all < 0 || your < 0 || !(thisHead < your && your < all && all < open && open < rules && rules < diff && diff < notIncluded) {
+		return sections, fmt.Errorf("missing or unordered required packet sections")
+	}
+	sections.thisHead = content[thisHead:your]
+	sections.allVerdicts = content[all:open]
+	sections.openFindings = content[open:rules]
+	sections.rules = content[rules:diff]
+	sections.diff = content[diff:notIncluded]
+	sections.notIncluded = content[notIncluded:]
 	count, err := packetNotIncludedCount(sections.notIncluded)
 	if err != nil {
 		return sections, err
@@ -652,23 +676,31 @@ func packetRulesSectionCount(section string) (int, error) {
 	if body == "No changed files." {
 		return 0, nil
 	}
-	count, rows := 0, 0
+	shown, rows, total := 0, 0, -1
 	for _, line := range strings.Split(body, "\n") {
-		i := strings.LastIndex(line, ": rules=")
-		if i <= 0 {
+		if i := strings.LastIndex(line, ": rules="); i > 0 {
+			if _, err := packetHeaderCount("rules", line[i+len(": rules="):]); err != nil {
+				return 0, err
+			}
+			rows++
 			continue
 		}
-		n, err := packetHeaderCount("rules", line[i+len(": rules="):])
-		if err != nil {
-			return 0, err
+		if strings.HasPrefix(line, "### ") {
+			shown++
+			continue
 		}
-		count += n
-		rows++
+		var omitted, all int
+		if n, err := fmt.Sscanf(line, "%d more of %d;", &omitted, &all); err == nil && n == 2 && omitted >= 0 && all >= shown && omitted+shown == all && total == -1 {
+			total = all
+		}
 	}
 	if rows == 0 {
 		return 0, fmt.Errorf("Rules touched has no per-file counts")
 	}
-	return count, nil
+	if total >= 0 {
+		return total, nil
+	}
+	return shown, nil
 }
 
 func packetTableSectionCount(section, marker, tableHeader string) (int, error) {
@@ -871,17 +903,31 @@ func getAuthorIntent(repo, hostRepo string, pr int, branch, head string) (title,
 	return "", "unknown: the lane state has no entry body; no intent is guessed.", nil
 }
 
+func quotedPacketData(text string) string {
+	if text == "" {
+		return ""
+	}
+	var out strings.Builder
+	for _, line := range strings.Split(text, "\n") {
+		out.WriteString("> ")
+		out.WriteString(line)
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
+
 func formatThisHead(title, body string) string {
 	var sb strings.Builder
 	sb.WriteString("## This head\n")
 	if title != "" {
-		sb.WriteString(title + "\n\n")
+		sb.WriteString(quotedPacketData(title))
+		sb.WriteByte('\n')
 	}
 	sb.WriteString("the author says:\n")
 	if body != "" {
-		sb.WriteString(body + "\n")
+		sb.WriteString(quotedPacketData(body))
 	} else {
-		sb.WriteString("(no description provided)\n")
+		sb.WriteString("> (no description provided)\n")
 	}
 	return sb.String()
 }

@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 )
@@ -439,7 +442,7 @@ func TestThePacketIsTheDelta(t *testing.T) {
 	}
 
 	// Author intent
-	if !strings.Contains(stellaText, "the author says:\nFix the network timeout instruction.") {
+	if !strings.Contains(stellaText, "the author says:\n> Fix the network timeout instruction.") {
 		t.Errorf("stella packet lacks author intent:\n%s", stellaText)
 	}
 
@@ -755,5 +758,66 @@ func TestPacketCommandReuseRoundTripsNontrivialEntryAndReader(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "reused=true") {
 		t.Fatalf("reuse receipt=%s", out.String())
+	}
+}
+
+func TestPacketReuseRejectsNamedPipeBeforeOpen(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "packet.fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPacketReuseNamedPipeHelper$")
+	cmd.Env = append(os.Environ(), "NOVA_REVIEW_REUSE_FIFO="+fifo)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("FIFO refusal hung or failed: %v %s", err, b)
+	}
+}
+
+func TestPacketReuseNamedPipeHelper(t *testing.T) {
+	fifo := os.Getenv("NOVA_REVIEW_REUSE_FIFO")
+	if fifo == "" {
+		return
+	}
+	if _, _, err := readReusePacket(fifo); err == nil {
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func TestPacketReuseAdmitsOriginalLargeBoundAndRejectsExplicitBoundFlag(t *testing.T) {
+	lane, head := packetLab(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	st, err := merge.Load(lane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rng := merge.Short(st.Base) + "..." + merge.Short(head)
+	rest := "## This head\n" + quotedPacketData(strings.Repeat("source data ", 15000)) + "\n" +
+		formatYourPriorVerdicts("emma", nil, st.Base, head, rng) + "\n" +
+		"## All verdicts at earlier heads\nnone recorded\n\n" +
+		"## Open findings (answer with `dup <id>` if you see the same thing)\nnone recorded\n\n" +
+		"## Rules touched\nNo changed files.\n\n" +
+		"## Diff " + rng + "\n```diff\n\n```\n\n## Not included\nnothing\n"
+	h := packetHeader{Entry: "feature", Head: head, Base: st.Base, Range: rng, Who: "emma", Built: "2026-09-14T00:00:00Z"}
+	h.ID = packetID(h.Entry, h.Head, h.Base, h.Range)
+	large := formatPacket(h, rest)
+	if len(large) <= defaultPacketMaxBytes {
+		t.Fatalf("fixture is not larger than the default bound: %d", len(large))
+	}
+	if err := os.WriteFile("large.md", []byte(large), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "jane", "--out", "reused.md", "--reuse", "large.md"}, &out, &errb); code != 0 {
+		t.Fatalf("large reuse=%d %s", code, errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "stella", "--out", "flagged.md", "--reuse", "large.md", "--max-bytes", "131072"}, &out, &errb); code != 2 {
+		t.Fatalf("explicit default max-bytes reuse=%d %s", code, errb.String())
 	}
 }
