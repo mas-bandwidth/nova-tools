@@ -115,6 +115,7 @@ func Run(in RunInput) int {
 	started, done, failed, killed := 0, 0, 0, 0
 	recovered := 0
 	launchFailed := 0
+	haltAdmissions := false
 
 	// The start-up pass, before a single pending task is claimed.
 	slots, bad, err := p.SlotNumbers()
@@ -297,7 +298,7 @@ func Run(in RunInput) int {
 
 	for {
 		// Start what can be started, while the dispatcher's own deadline is ahead of us.
-		for !now().After(deadline) && !p.Stopped() && len(watching) < in.Workers {
+		for !haltAdmissions && !now().After(deadline) && !p.Stopped() && len(watching) < in.Workers {
 			slot, ok := freeSlot(p, in.Workers, quarantined, retired, watching)
 			if !ok {
 				break
@@ -329,6 +330,7 @@ func Run(in RunInput) int {
 			default:
 				said = true
 				launchFailed++
+				haltAdmissions = true
 				tasks.Line(line)
 			}
 		}
@@ -468,9 +470,20 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	slot, jobDir := got, jobDirFor(got)
 	CheckKillPoint("after-reserve")
 	if err := in.prepare(sc, text, slot, jobDir); err != nil {
+		sc.Launch, sc.End, sc.Ended, sc.RC = "failed", EndLaunchFailed, Stamp(in.Now()), -1
+		// Preparation is a confirmed no-launch: retain the task and its diagnostic in
+		// pending/ so the next run can retry it. The slot is freed only after the task
+		// leaves running/, and no supervisor or worker process exists to make this uncertain.
+		_ = p.WriteSidecar(Running, sc)
+		if moveErr := p.Claim(sc.ID, Running, Pending); moveErr == nil {
+			_ = p.WriteSidecar(Pending, sc)
+		}
 		_ = p.Free(slot)
-		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), launchBroken
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: preparation failed: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), launchBroken
 	}
+	// A prior confirmed preparation failure is diagnostic history, not this successful
+	// attempt's outcome. Clear it before the sidecar is written for the new launch.
+	sc.Launch, sc.End, sc.Ended = "", "", ""
 	// THE TASK BUDGET NAMES THE WINDOW IT FITS, AND IT IS CHECKED BEFORE THE LAUNCH (#103).
 	// Two Freddy reads of whole specs spent 215 seconds each to be told by the provider that
 	// they did not fit; a task that says how big its window is can be told that here, for

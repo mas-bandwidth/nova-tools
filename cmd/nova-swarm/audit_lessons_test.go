@@ -73,6 +73,57 @@ func TestMissingWorkerDirRefusesBeforeTaskAdmission(t *testing.T) {
 	mustContain(t, "recovered run", stdout, "RUN DONE id="+id)
 }
 
+func TestPreparationFailureRollsTaskBackBeforeSupervisor(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a task must roll back when slot preparation fails\nFAKE-FINDINGS 1\n")
+	// worker_dir exists and passes the preflight, but the destination slot path is a file.
+	// RefreshSlot therefore fails deterministically before any supervisor can start.
+	blocker := filepath.Join(b.dir, "worker-home-1")
+	write(t, blocker, "not a directory\n")
+
+	exit, stdout, stderr := b.run()
+	if exit != 1 {
+		t.Fatalf("post-preflight preparation failure exits %d, want launch failure:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "launch failure", stdout, "RUN LAUNCH-FAILED id="+id)
+	mustContain(t, "launch failure", stdout, "preparation failed")
+	if _, err := os.Stat(filepath.Join(b.pool, "pending", id+".task")); err != nil {
+		t.Fatalf("task was not rolled back to pending: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "running", id+".task")); err == nil {
+		t.Fatal("post-preflight preparation failure stranded the task in running/")
+	}
+	raw, err := os.ReadFile(filepath.Join(b.pool, "pending", id+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sc struct {
+		Launch string `json:"launch"`
+		End    string `json:"end"`
+	}
+	if err := json.Unmarshal(raw, &sc); err != nil {
+		t.Fatal(err)
+	}
+	if sc.Launch != "failed" || sc.End != "launch-failed" {
+		t.Fatalf("pending sidecar lost preparation evidence: launch=%q end=%q", sc.Launch, sc.End)
+	}
+	if entries, err := os.ReadDir(filepath.Join(b.pool, "slots")); err != nil {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Fatalf("preparation failure left slot ownership behind: %d files", len(entries))
+	}
+
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr = b.run()
+	if exit != 0 {
+		t.Fatalf("the corrected slot preparation did not recover the task, exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "recovered run", stdout, "RUN DONE id="+id)
+}
+
 // F6 / lesson 83: "a negative ceiling is refused (0 already means all; a negative number is
 // a typo with two readings)". `--max -1` listed a whole pool with no MORE line and exit 0 --
 // a typo on the one flag whose job is to bound output un-bounding it, on the largest state.
