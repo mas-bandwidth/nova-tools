@@ -20,11 +20,12 @@ A wrapper using distinct labels and durable correlation can solve parts of this 
 
 ## Finite opt-in interface and identity
 
-Propose one admission option:
+Propose an admission identity option and one explicit retained-intent recovery form:
 
 ```
 nova-swarm batch --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered \
   [existing batch options] --submission <id>
+nova-swarm batch --pool <dir> --submission <id> --resume
 ```
 
 `--submission` is a caller-chosen stable identifier, scoped to this pool: 1–128 ASCII letters, digits, period, underscore or hyphen. It is an idempotency identity, not authority. Omission preserves legacy behavior. No per-card profile/model fields are added.
@@ -37,9 +38,15 @@ Store metadata and admitted byte snapshots under `<pool>/admissions/<sha256-of-s
 
 ## Publication, replay and recovery
 
-Serialize same-submission admission with an exclusive lock; a competing invocation receives a bounded busy response without writing jobs. Persist the complete immutable intent and byte snapshots before assigning any card a publishing phase. An existing submission with identical captured content and parameters uses its existing IDs. Any content, label, template, budget or source/card mapping change under that ID refuses without mutation. The same bytes under a different submission ID deliberately describe a different admission.
+Serialize same-submission admission with an exclusive lock; a competing invocation receives a bounded busy response without writing jobs. Persist the complete immutable intent and byte snapshots before assigning any card a publishing phase. The ordinary form, without `--resume`, always captures and compares the current source files and all admission parameters before replay or continuation. Identical captured content and parameters use the existing IDs. Changed content, label, template, budget or source/card mapping refuses without mutation; a missing or unreadable task directory also refuses, even if all cards were previously accepted. It never falls back implicitly to retained bytes. The same bytes under a different submission ID deliberately describe a different admission.
 
-Use immutable, numbered outcome revisions with atomic publication and no overwrite of intent or prior revisions. Bound admission metadata to 1 MiB/intent and 1 MiB/outcome revision, excluding bounded prompt snapshots; allow at most 1024 outcome revisions. Refuse further mutating invocations at that limit before publication, retaining all evidence and allowing read/replay of completed outcomes. One revision describes every card, with one of:
+The explicit `--resume` form requires an existing complete intent and verified retained admitted-byte snapshots. Only `--pool`, `--submission` and `--resume` are allowed: reject `--tasks`, budgets, label, template and all other admission overrides. It neither reads nor compares the original task directory, whether unchanged, changed, gone or unreadable. It resumes only the originally recorded intent and IDs using retained admitted bytes without wrapping again; it never admits changed source content. Missing/corrupt intent or snapshots refuse. This explicit choice permits source-independent reconciliation/continuation; it does not relax pool binding, publication or outcome eligibility. A completed intent returns replay without new outcome writes.
+
+Use immutable, numbered outcome revisions with atomic publication and no overwrite of intent or prior revisions. Bound admission metadata to 1 MiB/intent and 1 MiB/outcome revision, excluding bounded prompt snapshots; allow at most 1024 outcome revision slots. Before any job/sidecar write, preflight and durably reserve enough available slots for the invocation's whole worst-case transition plan under the submission lock. For `R` cards requiring reconciliation and `P` eligible cards that may publish, reserve `R + 2P + 2` slots: one reservation revision, at most one reconciliation outcome per `R`, one publishing-phase and one terminal outcome per `P`, and one final summary/release revision. A card may count in both `R` and `P`; no card is retried twice in one invocation. All outcome changes, including failure recording, use these reserved slots; no unbudgeted diagnostic revisions are allowed. If capacity is insufficient, refuse before any job/sidecar write and leave prior outcomes intact. Completed read/replay needs zero slots.
+
+The reservation records its slot range and transition budget. Write revisions in increasing slot order. A normal final summary uses the next available reserved slot and releases only the never-written trailing suffix; written revisions are immutable. After a crash, reserved slots stay unavailable to other invocations until the prior owner's absence and written revisions are reconciled under the lock. Use that reservation's remaining terminal-outcome/reconciliation slot and final-summary slot to record the interrupted card and close the reservation before considering a new publication plan; do not spend its unused publication allowance on fresh jobs. If safe ownership or remaining allowance cannot be proved, refuse without new job writes. New invocations then preflight afresh. Thus hitting the global limit cannot be a reason to publish a task without its reserved recording capacity. Storage/synchronization failures remain separately unresolved under the failure contract below.
+
+Intent publication, prompt-snapshot publication and pool-binding initialization each occur at most once; they are not outcome revisions. Each planned card publication has at most one sidecar publication and one task publication, both preceded by its reserved publishing-phase revision. Temporary-file writes/cleanup and lock operations create no outcome revisions. The implementation must not add another outcome-writing boundary without updating this budget and its acceptance witnesses. One outcome revision describes every card, with one of:
 
 | Outcome | Meaning |
 | --- | --- |
@@ -71,7 +78,10 @@ Missing per-job usage is unavailable, not zero; an empty cost aggregate cannot f
 | Identical prompt bodies, distinct filenames, original label | Distinct card/job mappings; same raw hashes; label unchanged; admitted hashes exact. |
 | Explicit template | Raw and admitted hashes/lengths differ as expected; bytes wrapped once, including recovery. |
 | Input limits/nonregular entry/mutation | Bounded refusal before job publication; no silently dropped card. |
-| Same submission replay / changed intent | Zero extra jobs and same IDs / refusal with prior receipt intact. |
+| Ordinary same-submission invocation with identical/changed/gone/unreadable source | Identical content replays/continues with the same IDs; every other case refuses without falling back to snapshots. |
+| Explicit `--resume` with changed/gone/unreadable source | Uses verified retained bytes and original parameters without touching the source; overrides or absent/corrupt snapshots refuse. |
+| Revision capacity below / exactly at worst-case budget | Below: no job/sidecar writes; exact: every reconciliation, publishing phase, terminal/failure outcome and final summary fits. |
+| Crash after dispatchable publication near revision limit | Reserved recording/reconciliation capacity survives; no new publication until reservation recovery and fresh preflight succeed. |
 | Concurrent same submission / different submissions | One owner or bounded busy; independent admissions cannot overwrite each other's jobs. |
 | Crash before intent sync / after intent sync | No dispatchable job / recover same preassigned IDs from retained bytes. |
 | Response lost after task publication, job moved or reclaimed | Recover accepted from sufficient matching evidence, otherwise unresolved; no duplicate admission. |
