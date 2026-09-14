@@ -267,7 +267,8 @@
             "E01-F03")
           :source-sections (            "The data"
             "Counting"
-            "Queries — the contract")
+            "Queries — the contract"
+            "W is an eagerly maintained working index")
           :state "missing"
           :evidence ())
         (          :id "E04-F05"
@@ -548,7 +549,7 @@
           :title "Bounded config/pricing exchange and model suitability"
           :subfeatures (            "Exchange UNCHANGED manifests or validated deltas by hash/revision"
             "Store model route, pricing, quota and provenance without secrets"
-            "Keep requested versus observed model and measured suitability separate"
+            "Keep requested versus observed model and measured suitability separate")
           :depends-on (            "E08-F03")
           :source-sections (            "Efficient friend config exchange and token pricing"
             "Model knowledge informs scheduling"
@@ -594,7 +595,7 @@
           :title "Explicit absorb operation and deletion gate"
           :subfeatures (            "Separate absorb from default link and require selected scope/authority"
             "Archive source identity, provenance and content before removal; append the actual deletion outcome receipt after the attempt"
-            "Leave deletion pending on missing content, source change or uncertain network result"
+            "Leave deletion pending on missing content, source change or uncertain network result")
           :depends-on (            "E09-F03"
             "E05-F05")
           :source-sections (            "Link versus absorb"
@@ -697,4 +698,4 @@
             "The verbs"
             "Required test suites")
           :state "missing"
-          :evidence ())))))))
+          :evidence ())))))
