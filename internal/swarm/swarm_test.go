@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,9 +266,14 @@ func TestTemplatesCarryTheirConditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"OWED LIST FIRST", "QUOTE EVERY RULE VERBATIM", "THE MOMENT IT EXISTS", "12 files", "read PR #42"} {
+	for _, want := range []string{"OWED LIST FIRST", "QUOTE EVERY RULE VERBATIM", "THE MOMENT IT EXISTS", "12 files", "read PR #42", "omit progress narration", "severity", "every valid", "never hard-truncate", "## Head", "## Gates", "## One line"} {
 		if !strings.Contains(string(wrapped), want) {
 			t.Errorf("the wrapped task does not contain %q", want)
+		}
+	}
+	for n := 1; n <= 6; n++ {
+		if !strings.Contains(string(wrapped), fmt.Sprintf("%d.", n)) {
+			t.Errorf("the wrapped read-pr task lost rule %d", n)
 		}
 	}
 	if _, err := WrapTemplate("result", 3, nil); err == nil {
