@@ -39,6 +39,22 @@ must mutate, query repeatedly and show zero node visits/parses/replays for |O|,
 then compare against an independent full count after close/reopen/import replay.
 Arbitrary new filters are not promised constant time.
 
+## The agreed hierarchy
+
+Glenn's hierarchy is repository -> roadmap -> epic -> feature -> subtasks,
+with recursive sub-features/subtasks as needed. Optionally a feature splits on
+another named dimension (language, platform, backend or another variable), and
+that optional dimension introduces cells which reference the work containing
+its subtasks. The axis and cell layer is optional together: without that split,
+there is no mandatory synthetic cell between the feature and its subtasks.
+
+A table projection selects the rows/axis from this durable hierarchy; it does
+not make another copy of the work. A cell references its canonical work target.
+Roadmaps themselves remain durable named views even when all their work closes.
+W selects leased open execution items beneath the selected feature/cell; it is
+not another ownership level. Persist and query the declared shape rather than
+having a renderer infer hierarchy from names.
+
 ## Roadmaps outlive the work that built them
 
 A roadmap is a durable named view/capability inventory owned by nova-work, not a
