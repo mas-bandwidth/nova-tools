@@ -35,7 +35,13 @@ func fakeGit(t *testing.T) string {
 	return bin
 }
 
-func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
+func alive(pid int) bool {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil
+}
 
 // ---------------------------------------------------------------------------
 // Opus 1 and Fable F3: the fourth bound is a real deadline on a real process.

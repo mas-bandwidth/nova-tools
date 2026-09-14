@@ -355,6 +355,11 @@ func (r *LaneRead) retry(ctx context.Context, res *LaneResult, gaps *[]gap, carr
 		*budgetBytes -= cost
 		res.Progress = true
 		if gerr != nil {
+			kind, _ := splitGapError(gerr)
+			if permanentGap(kind) && g.kind != kind {
+				updateKind(*gaps, g.at, kind)
+				continue
+			}
 			continue
 		}
 		*gaps = drop(*gaps, g.at)
@@ -508,6 +513,16 @@ func drop(gaps []gap, at string) []gap {
 		}
 	}
 	return out
+}
+
+func updateKind(gaps []gap, at, newKind string) bool {
+	for i, g := range gaps {
+		if g.at == at {
+			gaps[i].kind = newKind
+			return true
+		}
+	}
+	return false
 }
 
 // remaining counts ITEMS -- note headers plus appended RECEIPTS lines --
