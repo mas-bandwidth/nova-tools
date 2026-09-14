@@ -54,8 +54,10 @@ trusted configuration, never task text, is UTF-8 and at most 4096 bytes. The
 complete generated prompt is still measured against `max_input`. A harness that
 cannot express the named tool profile is refused before launch.
 
-A normative catalog example uses fake endpoints and names only; it contains no
-secret value and is not a provider availability claim:
+This illustrative profile projection uses fake endpoints and names only. It
+omits the required worker description and credential-source binding and is not
+a launchable catalog or an acceptance fixture. The complete schema remains an
+explicit interface gate below; this projection makes no availability claim:
 
 ```json
 {
@@ -78,8 +80,11 @@ secret value and is not a provider availability claim:
 ```
 
 The coordinator constructs every child environment from an empty environment
-set plus the selected profile's one secret variable. It does not inherit the
-parent environment or copy variables for other routes. Tests use fake variable
+set, adds only adapter-declared non-secret runtime variables (such as absolute
+PATH entries and the isolated HOME/XDG homes), and adds exactly the selected
+profile's one secret variable. Runtime variables cannot alias a secret name or
+import arbitrary parent values. It never copies the parent environment wholesale
+or variables for other routes. Tests use fake variable
 names and values; real key material is never needed. The variable name may be
 written to configuration and the sanitized projection, but the value may occur
 only in the child environment while the harness runs. Secret values are
@@ -236,11 +241,17 @@ endpoint/protocol. Neither
 example hardcodes a price, model list, allowance, retention claim or protocol
 shape. Existing key-file handling remains the swarm's responsibility; this
 spec does not define a second credential store. A live-route profile launches
-only under the `nova-secrets exec` gate.
-`nova-swarm run` refuses exit 2 before the first worker when the selected
-profile environment was not produced by that gate. The gate refuses exit 125
-for a missing or malformed store shape, including anything other than one seat
-key and exactly the declared route key. A fixture with three recipients must
+only through a coordinator-controlled invocation of `nova-secrets exec
+--only <route-env> --require <route-env> -- <isolated-worker-launcher>`. The
+coordinator invokes the gate for each selected live-route worker; an environment
+flag claiming a parent wrapper ran is not proof. The immutable profile pins
+non-secret store/seat/key-path/sops and executable bindings, with the credential
+interface schema finalized before implementation. `nova-swarm run` refuses
+exit 2 before the first worker if that binding is absent or unsupported. The gate refuses exit 125
+for a missing or malformed store shape, including a missing/malformed recovery.pub or a recipient rule other than one
+seat age public key plus exactly the recovery age public key declared there.
+Encryption recipients are not API keys: --only and --require select the one
+API-key environment variable needed by the route. A fixture with three recipients must
 exit 125 and start zero workers. The gate keeps key values out of profiles,
 snapshots, receipts, task argv and logs, and passes recovery and scope checks
 before real traffic is enabled.
@@ -305,7 +316,7 @@ ledger or silently filling gaps.
 The following remain machinery invariants and cannot be weakened by a profile
 or task wording: per-job worker/data homes and durable slot ownership;
 read/write sandbox boundaries; an empty-built child environment containing only
-the selected route secret;
+adapter-declared non-secret runtime variables and the selected route secret;
 written config containing a variable name rather than its value; written
 deadlines and file/token budgets; bounded prompt and provider calls; one
 process group and cancellation; whole `RESULT.md` publication; completion
@@ -382,8 +393,10 @@ wall clock.
    tiny task, then checks token count and finally wall clock.
 5. **CHILD-ENV-SANDBOX.** Profile tools cannot grant task paths, network, key
    access or background work; mixed slots never share a data home or live
-   writer. Each child starts from an empty environment plus exactly its selected
-   route variable; parent extras and the other route variable are absent.
+   writer. Each child starts from an empty environment plus its declared non-secret
+   runtime variables and exactly its selected route secret; parent extras and
+   other route secrets are absent. The fixture also proves the isolated harness
+   still starts with its required runtime environment.
 6. **CAPACITY-RESERVATION.** Quota, allowance, balance, overflow and usage
    remain separate; unknowns are `-`; catalog and metadata refreshes are bounded
    to 256 KiB and 5 seconds by default, stale/oversized results are unknown;
@@ -401,9 +414,11 @@ wall clock.
    explicit settlement, and settlement is atomic.
 9. **SECRETS-EXEC-SHAPE.** Retention/training defaults to private, unknown
    provider attestations refuse before send, and an explicit profile or selector
-   cannot weaken policy. A live-route profile must run under `nova-secrets exec`;
-   an environment without that provenance causes `run` exit 2 before the first
-   worker, while a fake three-recipient store causes `nova-secrets exec` exit 125
+   cannot weaken policy. The coordinator launches a live-route worker through the pinned
+   `nova-secrets exec --only <route-env> --require <route-env>` invocation;
+   missing bindings cause `run` exit 2 before the first worker, a forged parent
+   environment marker cannot bypass it, and a fake three-recipient store causes
+   `nova-secrets exec` exit 125
    and starts zero workers. No key value appears in argv, snapshots, receipts,
    raw evidence, `RESULT.md` or logs.
 10. **COMMON-ACCOUNTING.** Legacy, profiled, `nova-local` and direct one-shot
@@ -411,8 +426,8 @@ wall clock.
     one-shots each retain their own attempt evidence; local inference reports
     `usd=0`, absent API cost/usage is `-`, source coverage is
     observed/missing/unsupported, and a cache or reasoning subtype is never
-    added twice to a parent total. A source-declared inclusive-basis fixture (input=1000/output=800) retains
-    aggregate input=1000; a source-declared exclusive-basis fixture
+    added twice to a parent total. A source-declared inclusive-basis fixture (input=1000/cache_read=800)
+    retains aggregate input=1000; a source-declared exclusive-basis fixture
     (input=200/cache_read=800) retains aggregate input=1000. New receipts
     support daily bench/repo/model/actor views while legacy rows stay readable.
 
@@ -425,8 +440,10 @@ this document makes no claim that the gate has passed.
 
 This is a consolidation draft, not an approval to skip unresolved interfaces.
 A child implementation may start only after every awake friend has independently
-reviewed this exact revision and recorded `APPROVE`; silence or `HOLD` is not
-approval. Before the runtime PR, pin the catalog JSON schema and limits, exact
+reviewed this exact revision and recorded a disposition. Every required
+review must be APPROVE or an explicit ABSTAIN under the agreed policy; silence
+stays pending and a HOLD must be resolved by its author. Specialist rest is not
+an implicit review or an instruction to wake a reserved friend. Before the runtime PR, pin the catalog JSON schema and limits, exact
 tool-profile adapter contract, credential-provider interface, protected snapshot encoding and
 hash canonicalization, budget-domain storage/locking protocol and stable usage
 mapping. Each lands with deterministic fixtures; no mutable pricing table becomes
