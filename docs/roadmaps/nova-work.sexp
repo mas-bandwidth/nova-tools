@@ -10,7 +10,8 @@
     :response-correlation "SPEC-WORK.md@7db3b95cd4c16b1eb34b1c77c0fc224755cc7a64"
     :resident-window-bound-proposed "SPEC-WORK.md@a0cfcf580d3140ce6c30d51b3a7f884c9b2afcd6"
     :efficiency-policy "SPEC-WORK.md@685b7c2"
-    :recursive-grouping-proposed "SPEC-WORK.md@9488a19"
+    :recursive-grouping "SPEC-WORK.md@9488a19"
+    :recursive-grouping-integration "spec/nova-work@9c120a3b0c1b01475e13cb7bd36014ada2dfa729"
     :v2-recursive-node-proposed "https://github.com/mas-bandwidth/nova-tools/issues/321@2026-09-14T20:47:32Z"
     :v2-recursive-node-body-sha256 "138fd865383982f2729484eadb4edeefeb448cd0eb7c56716bd118858a42e0e6"
     :production-inventory "ec01647")
@@ -127,7 +128,9 @@
     "Exact verb and wire protocol spelling must be finalized in one schema before lock"
     "Friend participation in swarms versus model-only pools requires explicit dispositions, including Freddy's"
     "Absorption remains disabled pending independent reconciliation and authorization gates")
-  :now-snapshot-at "2026-09-14T20:57:36Z"
+  :now-snapshot-at "2026-09-14T21:57:38Z"
+  :now-source-main "b97e46c1305ff19495306cdf2ac866c652335c9a"
+  :now-source-spec "9c120a3b0c1b01475e13cb7bd36014ada2dfa729"
   :now (    "Test operational efficiency improvements while building nova-work; count retries, review and rescue, but exclude implementation cost"
     "https://github.com/mas-bandwidth/nova-tools/pull/300"
     "https://github.com/mas-bandwidth/nova-tools/issues/185"
@@ -135,16 +138,16 @@
     "PR 310 merged as 95ceae8b into draft PR 264 at 19:11 UTC; parent and schema gates remain"
     "PR 316 merged as 269e56d2 into held parent PR 240 at 18:33:30 UTC; the parent remains held on other findings"
     "PR 317 merged as cf5dd8f5 into spec/nova-work at 19:29 UTC after Rowan, Emma and Freddy reviewed current 685b7c2; its acceptance replays are mapped here without implementation credit"
-    "PR #320 at 83269f66 has root 5669188583, Emma 5669320707 and Rowan 5670125575 clear; Freddy remains pending. It is not merged and makes no feature green."
-    "PR #322 at dd47e24b has root 5670041086, Emma 5670109927 and Rowan 5670125753 clear after exact closed/history/event identity assertions, journal-rejection wording and the required-boolean citation repair; Freddy remains pending. It is not merged and makes no feature green."
-    "PR #320 reader plus PR #322 container integration passed 32/32 with a fresh cache in a local rehearsal from main 86785fd0: combined commit 5b1b194f, tree 07585441495f8f6ea27d52929e1ab71a98e21cd9, with the exact union of unchanged test bodies. Only the acceptance append conflict was resolved. Evidence: workshop docs/experiments/20260914-reader-cascade-integration/. No remote integration or push occurred; Freddy reviews remain pending."
-    "PR #319 at 9488a19 has root clear, Emma 5669804565 clear and Rowan 5670125417 clear; Freddy remains pending. The recursive-grouping acceptance discoveries remain proposed without implementation credit."
+    "PR #320 merged reviewed reader head 83269f66389cb81bd3098ab4d8fa88b96b9348db into main as edb9f7f1e0dd110a0dec48f38e447d503af04479 at 21:33:11 UTC. Restricted-reader repairs are merged subset evidence, not full-feature verification."
+    "PR #322 merged reviewed container head 671cde5c81ba3d7cdcbe8f8f4955058aac1cff57 into main as b97e46c1305ff19495306cdf2ac866c652335c9a at 21:48:32 UTC. Atomic container settle/revive and maintained O counters extend the internal C/O kernel; they do not implement the resident COW session or make any full feature green."
+    "The earlier PR #320/#322 local rehearsal at 5b1b194f (tree 07585441495f8f6ea27d52929e1ab71a98e21cd9) passed 32/32 subset tests. Both changes are now integrated on main b97e46c1; that historical rehearsal is not a new test of the merged head. Evidence remains workshop docs/experiments/20260914-reader-cascade-integration/."
+    "PR #319 merged reviewed recursive-grouping head 9488a194b43b7d3292234f1b44510e01c670f585 into spec/nova-work as 9c120a3b0c1b01475e13cb7bd36014ada2dfa729 at 21:31:02 UTC. Its three existing acceptance discoveries remain in the unchanged 200-item inventory; spec integration is not implementation credit."
     "PRs 293, 294 and 295 have current Rowan/Fable approvals at 47c3f9a, 4fddfcb and c2be4d6b; other friend, parent and schema gates remain"
     "Issue 321 updated 2026-09-14T20:47:32Z: recursive real/virtual/mixed nodes, optional repository/Issues/Discussions/email backing and durable delegated-work mappings with accepted completion returned upstream; proposed v2 discoveries remain outside the v1 denominator"
-    "PR #323 at d438bdb7 retains one root finding (5670639237): unreadable turn ID does not itself imply unspendable. Package, durability, mapping, additive-reason and source-local truncation repairs are clear; the remaining prose correction is required."
-    "PR #325 at d5f412f has root 5670630047 clear and 9/9 CI checks green; friend gates remain pending. This reconciles swarm migration status and re-reservation hashes without enabling the parent runtime."
-    "PR #326 at c598fc3 proposes optional native batch admission receipts, with root review 5670508751. Exact-revision friend review and contract gates remain; no build or operational saving is claimed."
-    "Issue 185: native Codex usage decoding exists without an operational ingestion path, so no parent-plus-child token saving is claimed"
+    "PR #323 remains open at 01ac4a956fa920fc60b0df9f1dacb08fc23aa8da. Root 5671287793 clears the four-line normative wording delta and 10/10 CI checks are green. Freddy card35 HOLD was on 347189af and has not been withdrawn; his exact-current disposition remains required. Existing envelope validators do not implement the proposed whole-package closure."
+    "PR #325 merged reviewed d5f412ff7e71dc97f827983afca15311ca0643b7 into the held profile branch as e750e3a32c5bbe38e0c4217368a13178a3e91a12 at 21:48:39 UTC. PR #264 remains draft at that head with other parent/schema/runtime gates; migration-status and re-reservation repairs do not enable profiles."
+    "PR #326 remains a draft proposal at a8942963d48397fbe4c932f501cd056766481d7f. Root 5670911553, Emma 5670936896 and Rowan 5671021563 clear circulation of the current delta; Freddy current review and exact encoding/platform/crash-proof gates remain. The local Darwin/APFS primitive capability probe is not build approval or crash/power-loss proof."
+    "Issue #185: actual card33/card35 usage exports are retained. The native-tsv reader accepted two card33 usage rows (not 23 underlying messages); source gaps, retry attribution and missing parent usage retain their limits. Card33 triage adoption remains ineligible. No valid matched before/after parent-plus-child token-saving result is claimed; retained artifacts alone do not establish production ingestion coverage."
     "https://github.com/mas-bandwidth/nova-tools/pull/314"
     "https://github.com/mas-bandwidth/nova-tools/pull/311"
     "https://github.com/mas-bandwidth/nova-tools/pull/312"
@@ -199,7 +202,7 @@
           :depends-on (            "E01-F02")
           :source-sections (            "The data"
             "Engine and representation"
-            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
+            "Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b)")
           :state "partial"
           :evidence ("PR300@d21d65f0: event identity and parent-cycle refusal; full canonical node lifecycle remains incomplete; 26/26 subset tests, no full feature verification"))
         (          :id "E01-F04"
@@ -210,7 +213,7 @@
             "Represent project and stream groupings as work-set categories without inferring kind from title or position")
           :depends-on (            "E01-F03")
           :source-sections (            "The data"
-            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
+            "Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b)")
           :state "missing"
           :evidence ())
         (          :id "E01-F05"
@@ -349,7 +352,7 @@
           :source-sections (            "The data"
             "The validator"
             "Required coordinator operations"
-            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
+            "Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b)")
           :state "missing"
           :evidence ())
         (          :id "E03-F05"
@@ -575,7 +578,7 @@
             "E03-F03")
           :source-sections (            "The data"
             "A cell is a reference, not another state store"
-            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
+            "Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b)")
           :state "missing"
           :evidence ())
         (          :id "E07-F02"

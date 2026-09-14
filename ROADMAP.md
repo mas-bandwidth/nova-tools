@@ -17,7 +17,7 @@ Completion is verified features divided by applicable features; it is not averag
 This roadmap uses **epic → feature → sub-feature/acceptance item**, with no language axis.
 [Recursive work data](docs/roadmaps/nova-work.sexp) retains stable IDs, dependencies and source references.
 This baseline format is planning data, not a claim that nova-work import/export already exists.
-Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation), proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound), `SPEC-WORK.md@685b7c2` (efficiency policy, merged to `spec/nova-work` by PR #317 as `cf5dd8f5`), and proposed PR #319 `SPEC-WORK.md@9488a19` (recursive project/stream grouping). A source-section label below is resolved through its named file/revision key.
+Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation), proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound), `SPEC-WORK.md@685b7c2` (efficiency policy, merged to `spec/nova-work` by PR #317 as `cf5dd8f5`), and PR #319 `SPEC-WORK.md@9488a19` (recursive project/stream grouping, merged to `spec/nova-work` as `9c120a3b`). A source-section label below is resolved through its named file/revision key.
 
 | Epic | Features | Verified |
 |---|:---:|:---:|
@@ -38,7 +38,7 @@ Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WOR
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | 52 | 6 | 0 | 0 | 1 | 57 |
 
-Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation, ten efficiency-policy and three proposed recursive-grouping acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
+Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation, ten efficiency-policy and three recursive-grouping acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
 Do not count removal as completion. These counts track inventory movement, not estimated engineering effort.
 
 ## Open questions
@@ -55,22 +55,22 @@ The team is testing efficiency improvements in existing tools while building nov
 
 The first internal Common Lisp C/O kernel and maintained open counter merged through [#300](https://github.com/mas-bandwidth/nova-tools/pull/300), while its feature rows remain incomplete. Operational token and worker-cost experiments run alongside real work under [#185](https://github.com/mas-bandwidth/nova-tools/issues/185); implementation cost is excluded, while retries, review and rescue remain part of accepted-work cost.
 
-Current evidence at 2026-09-14T20:57:36Z; proposed v2 planning source remains issue #321 updated 2026-09-14T20:47:32Z:
+Current evidence at 2026-09-14T21:57:38Z, main `b97e46c1305ff19495306cdf2ac866c652335c9a` and spec branch `9c120a3b0c1b01475e13cb7bd36014ada2dfa729`; proposed v2 planning source remains issue #321 updated 2026-09-14T20:47:32Z:
 
 - Merged foundations remain [PR #300](https://github.com/mas-bandwidth/nova-tools/pull/300) at d21d65f0, [PR #314](https://github.com/mas-bandwidth/nova-tools/pull/314) at 4b99c1b4, [PR #311](https://github.com/mas-bandwidth/nova-tools/pull/311) at 14ef63b1 and [PR #312](https://github.com/mas-bandwidth/nova-tools/pull/312) merged at 20f8581; the workshop adopted reviewed nova-bus source 0921c800 (its bus paths match the merge). Feature rows remain partial; no whole criterion or measured efficiency result is green.
 - [#310](https://github.com/mas-bandwidth/nova-tools/pull/310) merged as `95ceae8b` into draft [#264](https://github.com/mas-bandwidth/nova-tools/pull/264) at 19:11 UTC; parent and schema gates remain.
 - [#316](https://github.com/mas-bandwidth/nova-tools/pull/316) merged as `269e56d2` into held parent [#240](https://github.com/mas-bandwidth/nova-tools/pull/240) at 18:33:30 UTC; the parent remains held on other findings.
 - [#317](https://github.com/mas-bandwidth/nova-tools/pull/317) merged as `cf5dd8f5` into `spec/nova-work` at 19:29 UTC after Rowan, Emma and Freddy reviewed current `685b7c2`; its acceptance replays are mapped here without implementation credit.
-- [PR #320](https://github.com/mas-bandwidth/nova-tools/pull/320) at 83269f66 has root 5669188583, Emma 5669320707 and Rowan 5670125575 clear; Freddy remains pending. It is not merged and makes no feature green.
-- [PR #322](https://github.com/mas-bandwidth/nova-tools/pull/322) at dd47e24b has root 5670041086, Emma 5670109927 and Rowan 5670125753 clear after exact closed/history/event identity assertions, journal-rejection wording and the required-boolean citation repair; Freddy remains pending. It is not merged and makes no feature green.
-- [PR #320](https://github.com/mas-bandwidth/nova-tools/pull/320) reader plus [PR #322](https://github.com/mas-bandwidth/nova-tools/pull/322) container integration passed 32/32 with a fresh cache in a local rehearsal from main 86785fd0: combined commit 5b1b194f, tree 07585441495f8f6ea27d52929e1ab71a98e21cd9, with the exact union of unchanged test bodies. Only the acceptance append conflict was resolved. Evidence: workshop docs/experiments/20260914-reader-cascade-integration/. No remote integration or push occurred; Freddy reviews remain pending.
-- [PR #319](https://github.com/mas-bandwidth/nova-tools/pull/319) at 9488a19 has root clear, Emma 5669804565 clear and Rowan 5670125417 clear; Freddy remains pending. The recursive-grouping acceptance discoveries remain proposed without implementation credit.
+- [PR #320](https://github.com/mas-bandwidth/nova-tools/pull/320) merged reviewed reader head 83269f66389cb81bd3098ab4d8fa88b96b9348db into main as edb9f7f1e0dd110a0dec48f38e447d503af04479 at 21:33:11 UTC. Restricted-reader repairs are merged subset evidence, not full-feature verification.
+- [PR #322](https://github.com/mas-bandwidth/nova-tools/pull/322) merged reviewed container head 671cde5c81ba3d7cdcbe8f8f4955058aac1cff57 into main as b97e46c1305ff19495306cdf2ac866c652335c9a at 21:48:32 UTC. Atomic container settle/revive and maintained O counters extend the internal C/O kernel; they do not implement the resident COW session or make any full feature green.
+- The earlier [PR #320](https://github.com/mas-bandwidth/nova-tools/pull/320)/#322 local rehearsal at 5b1b194f (tree 07585441495f8f6ea27d52929e1ab71a98e21cd9) passed 32/32 subset tests. Both changes are now integrated on main b97e46c1; that historical rehearsal is not a new test of the merged head. Evidence remains workshop docs/experiments/20260914-reader-cascade-integration/.
+- [PR #319](https://github.com/mas-bandwidth/nova-tools/pull/319) merged reviewed recursive-grouping head 9488a194b43b7d3292234f1b44510e01c670f585 into spec/nova-work as 9c120a3b0c1b01475e13cb7bd36014ada2dfa729 at 21:31:02 UTC. Its three existing acceptance discoveries remain in the unchanged 200-item inventory; spec integration is not implementation credit.
 - [#293](https://github.com/mas-bandwidth/nova-tools/pull/293), [#294](https://github.com/mas-bandwidth/nova-tools/pull/294) and [#295](https://github.com/mas-bandwidth/nova-tools/pull/295) have current Rowan/Fable approvals at `47c3f9a`, `4fddfcb` and `c2be4d6b`; other friend, parent and schema gates remain.
 - [#321](https://github.com/mas-bandwidth/nova-tools/issues/321) now specifies recursive real/virtual/mixed nodes, optional repository/Issues/Discussions/email backing, and durable delegated-work mappings with accepted completion returned upstream; the proposed v2 inventory below remains outside the v1 denominator.
-- [PR #323](https://github.com/mas-bandwidth/nova-tools/pull/323) at d438bdb7 retains one root finding (5670639237): unreadable turn ID does not itself imply unspendable. Package, durability, mapping, additive-reason and source-local truncation repairs are clear; the remaining prose correction is required.
-- [PR #325](https://github.com/mas-bandwidth/nova-tools/pull/325) at d5f412f has root 5670630047 clear and 9/9 CI checks green; friend gates remain pending. This reconciles swarm migration status and re-reservation hashes without enabling the parent runtime.
-- [PR #326](https://github.com/mas-bandwidth/nova-tools/pull/326) at c598fc3 proposes optional native batch admission receipts, with root review 5670508751. Exact-revision friend review and contract gates remain; no build or operational saving is claimed.
-- [#185](https://github.com/mas-bandwidth/nova-tools/issues/185) records that native Codex usage decoding exists without an operational ingestion path. No parent-plus-child token saving is claimed.
+- [PR #323](https://github.com/mas-bandwidth/nova-tools/pull/323) remains open at 01ac4a956fa920fc60b0df9f1dacb08fc23aa8da. Root 5671287793 clears the four-line normative wording delta and 10/10 CI checks are green. Freddy card35 HOLD was on 347189af and has not been withdrawn; his exact-current disposition remains required. Existing envelope validators do not implement the proposed whole-package closure.
+- [PR #325](https://github.com/mas-bandwidth/nova-tools/pull/325) merged reviewed d5f412ff7e71dc97f827983afca15311ca0643b7 into the held profile branch as e750e3a32c5bbe38e0c4217368a13178a3e91a12 at 21:48:39 UTC. [PR #264](https://github.com/mas-bandwidth/nova-tools/pull/264) remains draft at that head with other parent/schema/runtime gates; migration-status and re-reservation repairs do not enable profiles.
+- [PR #326](https://github.com/mas-bandwidth/nova-tools/pull/326) remains a draft proposal at a8942963d48397fbe4c932f501cd056766481d7f. Root 5670911553, Emma 5670936896 and Rowan 5671021563 clear circulation of the current delta; Freddy current review and exact encoding/platform/crash-proof gates remain. The local Darwin/APFS primitive capability probe is not build approval or crash/power-loss proof.
+- [Issue #185](https://github.com/mas-bandwidth/nova-tools/issues/185): actual card33/card35 usage exports are retained. The native-tsv reader accepted two card33 usage rows (not 23 underlying messages); source gaps, retry attribution and missing parent usage retain their limits. Card33 triage adoption remains ineligible. No valid matched before/after parent-plus-child token-saving result is claimed; retained artifacts alone do not establish production ingestion coverage.
 
 This current work register is outside the nova-work feature denominator. Results and negative or inconclusive experiments remain evidence; any scope change is recorded as a scope event and does not become completion credit.
 
@@ -120,7 +120,7 @@ Prerequisites: E01-F02.
 - [ ] Preserve IDs through rename, close, reopen and reparent
 - [ ] Allow omitted, repeated and recursively nested work-set grouping layers without a prescribed depth
 
-Source sections: The data; Engine and representation; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
+Source sections: The data; Engine and representation; Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b).
 
 **E01-F04 — Typed work kinds and acceptance schema**
 
@@ -131,7 +131,7 @@ Prerequisites: E01-F03.
 - [ ] Validate acceptance kind, subject, predicate and required flag
 - [ ] Represent project and stream groupings as work-set categories without inferring kind from title or position
 
-Source sections: The data; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
+Source sections: The data; Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b).
 
 **E01-F05 — Canonical encoding and semantic round trip**
 
@@ -290,7 +290,7 @@ Prerequisites: E03-F03, E05-F01.
 - [ ] Keep reopen, pause and stop as durable events
 - [ ] Settle and reopen required-member ancestors at every grouping depth while empty required sets remain incomplete
 
-Source sections: The data; The validator; Required coordinator operations; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
+Source sections: The data; The validator; Required coordinator operations; Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b).
 
 **E03-F05 — Reversible undo and redo plans**
 
@@ -556,7 +556,7 @@ Prerequisites: E01-F04, E03-F03.
 - [ ] Preserve selected scope and completion unit across recursive grouping layouts without mandatory axis or cell wrappers
 - [ ] Retain completed roadmap members and historical code/test evidence beyond the active 24-hour window
 
-Source sections: The data; A cell is a reference, not another state store; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
+Source sections: The data; A cell is a reference, not another state store; Recursive structure within a repository (SPEC-WORK.md@9488a19; merged by PR319@9c120a3b).
 
 **E07-F02 — Completion-only projection renderer**
 
