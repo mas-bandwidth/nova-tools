@@ -111,12 +111,17 @@ opened what, or when, so nobody may build a belief on an audit trail that does n
 ## The verbs
 
 ```
+nova-secrets version
 nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
 nova-secrets names  --store <dir> --as <name> [--max <n>]
 nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
 nova-secrets help
 ```
+
+`version` (or `--version`) prints this binary's shared four-field build identity and takes
+no flags or arguments. It opens no store or key and starts no sops, age or network program,
+so an installed-tool inventory can ask it on a bench with no credential setup.
 
 No verb writes into the store — the store is edited by `sops` and committed by `git`, both a
 person's hands; `keygen` writes exactly one file, outside it; and no verb reads the store and
