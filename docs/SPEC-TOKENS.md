@@ -3210,7 +3210,7 @@ contract. The rules are numbered on from rule 31.
       no longer either** (draft 5): a completing run does not open the source,
       so a transcript that has since gone is not this verb's problem.
 
-    With every receipt of the session complete, the run is `USAGE FAIL
+    With every receipt of the session complete and equal, the run is `USAGE FAIL
     reason=receipted by=<id> receipts=<n>`, nothing written, which is draft
     2's case unchanged. **`by=` names one receipt and `receipts=` counts
     them** (draft 5): draft 4 printed `by=<id[,id…]>`, an unbounded list on
@@ -3220,7 +3220,7 @@ contract. The rules are numbered on from rule 31.
     `by=` is the first in `started` order on `receipted`, and on `differs`,
     `missing` and `incomplete` it is the one receipt the line is about, where
     `receipts=` is not printed.
-    With days written it is `USAGE OK … state=completed`,
+    With days written and no differing row, it is `USAGE OK … state=completed`,
     `receipt=` the stored id it completed and `days=` the days this run added.
     A completing run takes `node`, `stage` and `who` **from the selected retained
     file's header** (draft 5, where draft 4 took them from the stored rows,
