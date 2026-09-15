@@ -126,10 +126,13 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     never `git push` bare, never to `main` (a `BRANCH main` line is `mismatch`) — and a
     draft PR is opened with `gh pr create --draft` whose body is the `RESULT.md` lines, capped
     at `--max-body-bytes` (default 4096). One `HARVEST PR` line per PR.
-13. **Every PR gets a read card in the next pool.** `harvest` appends (`pr`, `<repo>#<n>`,
-    `read`, `<title>`, `read`) to `<root>/next.tsv`, which the next `pool` reads after
-    `queue.tsv` and before the sources. Reads go by verb, through cards, like everything
-    else; a PR nobody is asked to read is a PR that waits.
+13. **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
+    appends (`pr`, `<repo>#<n>`, `read`, `<title>`, `read`) to `<root>/next.tsv` — template
+    `read`, or `tone` for a seed page — which the next `pool` reads after `queue.tsv` and
+    before the sources. The read card's model comes from the bench cost table, cheapest
+    route that can hold it (the local model first, per the cost-row issue), so reads stay
+    off the paid routes. Reads go by verb, through cards, like everything else; a PR nobody
+    is asked to read is a PR that waits.
 14. **An abstain is a prompt defect; it is written down and never retried as is.** For every
     `ABSTAIN` row and every card with no `RESULT.md`, `harvest` files nothing, counts it
     in `abstain=<n>`, and appends to `<root>/retry.tsv`: `label`, `card path`, and the last
@@ -309,7 +312,8 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
     and the harness log's last `permission`/`refused` line, no push, no PR, no
     `nova-swarm requeue` in the argv log, `seen.tsv` rows `retry`.
 15. `harvest-cuts-read-card-per-pr`: every PR opened yields one row in `next.tsv` with
-    template `read`, and the next `pool` counts it in `next=<n>` after `queue.tsv` rows.
+    template `read` (or `tone` for a seed page), carrying the bench cost table's cheapest
+    model that can hold it, and the next `pool` counts it in `next=<n>` after `queue.tsv`.
 16. `harvest-relaunches-queue-first`: `queue.tsv` with three rows, `next.tsv` with one, a
     source with two new items, five free slots: the next batch's `--tasks` dir holds the
     three queued cards first, then the read card, then one source card; `queued=1`; the
