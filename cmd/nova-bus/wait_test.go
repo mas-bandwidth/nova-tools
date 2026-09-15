@@ -490,11 +490,12 @@ func TestWaitWritesBeatEachTick(t *testing.T) {
 
 	invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "1h")...).mustCode(t, 0)
 
-	// Rewritten, not appended: one line, an RFC 3339 UTC stamp and the cursor sha.
+	// Rewritten, not appended: one line, an RFC 3339 UTC stamp, the cursor sha, and a
+	// lease until=<stamp>.
 	beat := strings.TrimSpace(read(t, checkout, "from-ada/BEAT"))
 	fields := strings.Fields(beat)
-	if len(fields) != 2 {
-		t.Fatalf("BEAT is %q, want one line <stamp> <cursor>", beat)
+	if len(fields) != 3 {
+		t.Fatalf("BEAT is %q, want one line <stamp> <cursor> until=<stamp>", beat)
 	}
 	if _, err := time.Parse(time.RFC3339Nano, fields[0]); err != nil {
 		t.Fatalf("BEAT stamp %q is not an RFC 3339 UTC stamp: %v", fields[0], err)
@@ -505,6 +506,38 @@ func TestWaitWritesBeatEachTick(t *testing.T) {
 	}
 	if strings.Count(beat, "\n") != 0 {
 		t.Fatalf("BEAT is more than one line (rewritten, not appended):\n%q", beat)
+	}
+}
+
+// THE BEAT CARRIES A LEASE, and it is written on exit as well as on every tick. A wait
+// that returns hands the harness the note and then is done: between that return and the
+// next wait there is a gap where the duty process is alive but no beat is written, and
+// over a slow note the gap outruns --window and the line reads asleep to `nova-wake
+// awake`. So the exit beat extends until=now+--beat-lease out over that gap, and the
+// lease is what keeps a working duty cycle reading awake.
+func TestWaitWritesLeaseOnExit(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "1h")...).mustCode(t, 0)
+
+	beat := strings.TrimSpace(read(t, checkout, "from-ada/BEAT"))
+	fields := strings.Fields(beat)
+	if len(fields) != 3 || !strings.HasPrefix(fields[2], "until=") {
+		t.Fatalf("BEAT is %q, want <stamp> <cursor> until=<stamp>", beat)
+	}
+	stamp, err := time.Parse(time.RFC3339Nano, fields[0])
+	if err != nil {
+		t.Fatalf("BEAT stamp %q is not an RFC 3339 UTC stamp: %v", fields[0], err)
+	}
+	until, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(fields[2], "until="))
+	if err != nil {
+		t.Fatalf("BEAT until %q is not an RFC 3339 UTC stamp: %v", fields[2], err)
+	}
+	if d := until.Sub(stamp); d != 10*time.Minute {
+		t.Fatalf("the exit beat's lease is %s, want the 10m default: %q", d, beat)
 	}
 }
 

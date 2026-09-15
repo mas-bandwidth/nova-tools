@@ -19,10 +19,10 @@ import (
 const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]  (not yet implemented)
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> --files <n> --tokens <n>|unmetered [--queue] [--max <n>]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
-nova-pulse width   --root <dir> --pool <pool.tsv>
+nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]  (not yet implemented)
+nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
 
@@ -71,8 +71,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
-		fmt.Fprintln(stdout, "nova-pulse dev")
-		return 0
+		return cmdVersion(rest, stdout, stderr)
 	case "pool":
 		return cmdPool(rest, stdout, stderr)
 	case "launch":
