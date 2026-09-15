@@ -2211,3 +2211,142 @@ is compared against; it is never the path `query --ask size` takes."
 ;;   ;; different payload under the id refused; every refusal leaves both parents
 ;;   ;; unchanged.)
 ;; NEEDS-KERNEL: the node move verb (no move in slice 1).
+;;; Replays promised by docs/SPEC-WORK.md:2400-3600 but whose verb/kernel
+;;; machinery (move, roadmap/axis, render, priority, state-export) does
+;;; not yet exist in this slice-1 kernel. Each is kept, marked
+;;; NEEDS-KERNEL, and counted but not yet run.
+;;; ------------------------------------------------------------------
+
+;;; NEEDS-KERNEL: move-refuses-by-name (SPEC-WORK.md:2890) — the `move` verb:
+;;;   a wrong --from, a destination inside the subtree, a root container, a
+;;;   repository root, a shared container, another repository, or a roadmap as
+;;;   either parent are each refused with its named reason and the identity,
+;;;   and nothing is written.
+
+;;; NEEDS-KERNEL: move-keeps-the-lease (SPEC-WORK.md:2890) — the `move` verb:
+;;;   a working subtree moved with its effective :responsible unchanged keeps
+;;;   the same lease, attempt and usage; a move that would change it over an
+;;;   unreconciled attempt is refused "active context change" naming the ids;
+;;;   a move under a public parent from a private one is refused "privacy
+;;;   reduction", the reverse admitted and the public render losing the rows.
+
+;;; NEEDS-KERNEL: move-updates-every-roadmap-scope (SPEC-WORK.md:2891) — the
+;;;   `move` verb: a row referenced by two roadmaps outside both parent chains
+;;;   and one unrelated roadmap advances both referencing scope revisions in
+;;;   the envelope, leaves the unrelated one, a failed acceptance moves none,
+;;;   historical renders keep the old captured scope, and an intervening
+;;;   affected-roadmap mutation makes undo conflict.
+
+;;; NEEDS-KERNEL: move-undo-refuses-a-reorder (SPEC-WORK.md:2891) — undo after
+;;;   a sibling reorder, a further reparent or a privacy change is refused
+;;;   conflict and guesses no position; undo otherwise restores the exact
+;;;   before order and required sets with fresh scope revisions, the old
+;;;   numbers unwritten; a kill around acceptance and during clip exposes
+;;;   neither two parents nor none.
+
+;;; NEEDS-KERNEL: axisless-history (SPEC-WORK.md:2948) — `roadmap row`/axis:
+;;;   two ordered rows added, one finished, the state exported and loaded, the
+;;;   view reopened past the default window: both rows and their evidence
+;;;   present, the denominator not reduced by completion; a row retired records
+;;;   a scope movement, keeps its node, and the prior view reconstructs at its
+;;;   captured revision.
+
+;;; NEEDS-KERNEL: matrix-retirement (SPEC-WORK.md:2948) — `axis --remove`: of a
+;;;   first-axis row then of another axis's member, only the selected
+;;;   coordinates retired and recoverable, no task cancelled, an unknown member
+;;;   refused, a layout change on a populated roadmap refused "layout
+;;;   populated" with no partial write, and a matrix never flattened without
+;;;   explicit selections.
+
+;;; NEEDS-KERNEL: configure-no-effect-and-undo-conflict (SPEC-WORK.md:2949) —
+;;;   `roadmap configure`: an equal-value configure, its reply lost, a later
+;;;   edit, then the retry: the original receipt returned and the later value
+;;;   kept; undo restores an ordered preimage only while its guards match.
+
+;;; NEEDS-KERNEL: completed-view-mutation (SPEC-WORK.md:2949) — metadata,
+;;;   projection and render on a settled roadmap revive nothing; an outstanding
+;;;   member added applies the atomic revival rule so no settled container
+;;;   silently holds open required work; counts and indexes are checked by the
+;;;   reference fold after each step.
+
+;;; NEEDS-KERNEL: chat-and-file-render-are-byte-identical (SPEC-WORK.md:2950) —
+;;;   `render`: chat and file mode are byte-identical for one projection and
+;;;   revision, shared prerequisites and private-data filtering included.
+
+;;; NEEDS-KERNEL: render-refuses-a-target-outside-its-roots (SPEC-WORK.md:2950)
+;;;   — `render`: a projection target is resolved only within explicitly
+;;;   configured permitted roots; a missing mapping or a conflicting change is
+;;;   an explicit refusal and never a guessed destination.
+
+;;; NEEDS-KERNEL: render-artifact-is-bounded (SPEC-WORK.md:2977) — `render`:
+;;;   ordinary replies and a --chat artifact interleaved in one correlated
+;;;   batch, request ids, byte length and hash verified; a corrupt or oversized
+;;;   artifact is a bounded refusal and never partial Markdown; --check creates
+;;;   no target, no receipt claiming a write, no commit and no push.
+
+;;; NEEDS-KERNEL: a-root-id-grants-nothing (SPEC-WORK.md:2977) — `render`: a
+;;;   stored permitted root with no --render-root mapping refuses file mode
+;;;   while --chat renders; an escaping path, a symlink escape and a target
+;;;   identity other than the mapping's are refused; the cooperative lock is
+;;;   exercised and its external-editor limit retained.
+
+;;; NEEDS-KERNEL: priority-orders-only-the-eligible (SPEC-WORK.md:3015) — a
+;;;   blocked rank-0 task stays blocked with its reason and resolver while a
+;;;   rank-9 ready sibling is first among the eligible; --order priority under
+;;;   done exits 2; capacity loss, approval withdrawal, a dependency change or
+;;;   a hold is rechecked before ranking and starts or interrupts nothing.
+
+;;; NEEDS-KERNEL: priority-inherits-and-clears (SPEC-WORK.md:3015) — a root
+;;;   :subtree rank changes ready order with no lease, attempt, state, O, C, W,
+;;;   counter, baseline or roadmap moved; a child's :self overrides it; a clear
+;;;   reveals the parent; settle and reopen keep the slots; a move re-reads
+;;;   inheritance with no cloned event.
+
+;;; NEEDS-KERNEL: rank-2-precedes-10 (SPEC-WORK.md:3015) — ranks are compared
+;;;   as integers, and equal and default rows are ordered by id across a
+;;;   restart, a handoff, a cursor continuation and skewed clocks; a first
+;;;   unseen filter is O(k log k), later pages come from the pinned order, and
+;;;   a subtree invalidation touches no unrelated scope and no C.
+
+;;; NEEDS-KERNEL: priority-undo-is-history-not-value (SPEC-WORK.md:3016) — a
+;;;   same-value set and a clear of an absent slot are each the no-effect
+;;;   receipt; set 2, set 9, set 2, then undo of the first is refused although
+;;;   the value matches.
+
+;;; NEEDS-KERNEL: priority-grants-nothing (SPEC-WORK.md:3016) — with priority
+;;;   set on every node, `who` is unchanged, no lease is written, no worker is
+;;;   selected, and no approval is bypassed.
+
+;;; NEEDS-KERNEL: state-export-describes-exactly-r (SPEC-WORK.md:3117) —
+;;;   `session export --state --at <revision>`: capturing R while R+1 is
+;;;   accepted yields bytes that describe R; an exact-snapshot export with B
+;;;   equal to R and an absent end, and one with B below R over a multi-record
+;;;   prefix across a rotation; an absent end below R, a missing or swapped
+;;;   record, a wrong end hash or revision and a cut inside an envelope are each
+;;;   refused, and a present later tail is never replayed.
+
+;;; NEEDS-KERNEL: state-export-is-one-long-operation (SPEC-WORK.md:3117) — an
+;;;   export blocked on archive I/O acknowledges its operation at once, status,
+;;;   cancel and an unrelated mutation stay responsive under it, and wait
+;;;   returns the same operation and captured revision after publication or
+;;;   refusal; an export inside an atomic batch is refused by entry id.
+
+;;; NEEDS-KERNEL: state-export-pin-survives-clip (SPEC-WORK.md:3118) — capturing
+;;;   R, a clip and a retention pass at R+1 during the copy, then exactly R
+;;;   completes or a recovery gap is named; no pinned member is reclaimed and
+;;;   no current bytes are substituted.
+
+;;; NEEDS-KERNEL: state-export-disconnect-and-cancel (SPEC-WORK.md:3118) — a
+;;;   lost client, a restart and a cancellation around the no-replace
+;;;   publication keep one operation and one output identity, no duplicate
+;;;   directory and no claim to reverse a published one; an existing destination
+;;;   is refused; a staged manifest before the commit is not published.
+
+;;; NEEDS-KERNEL: state-export-refuses-a-gap (SPEC-WORK.md:3119) — a missing
+;;;   mandatory member, a changed digest, a dangling internal reference, a path
+;;;   escape, a symlink, an output overrun and a corrupt S-expression are each
+;;;   refused with no valid load; a historical export whose resolver observations
+;;;   are gone is refused with a named proof gap and never given current ones;
+;;;   --closed-history range over [from,to) declares its omissions while keeping
+;;;   closure, all reaches C past the resident window and a fresh load reproduces
+;;;   its proof.
