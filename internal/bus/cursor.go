@@ -56,11 +56,16 @@ const (
 	OpenName = "OPEN"
 	// IndexName is the lane's catalogue of the notes it has sent.
 	IndexName = "INDEX"
+	// BeatName is a line's liveness beat: one line, an RFC 3339 UTC stamp and the
+	// cursor sha, rewritten on every `wait` poll tick so a waiting line's cursor that
+	// does not move still records that the line is alive. See docs/SPEC-WORK.md,
+	// Presence, source bus-beat.
+	BeatName = "BEAT"
 )
 
 // laneStateFiles is every state file a lane may hold. A lane holds notes, these, its
 // README, and nothing else; anything else is a stray and check says so.
-var laneStateFiles = []string{ReceiptsName, CursorName, OpenName, IndexName}
+var laneStateFiles = []string{ReceiptsName, CursorName, OpenName, IndexName, BeatName}
 
 // LaneDocName is the one file in a lane that is neither a note nor a state file and is
 // still allowed there.
@@ -174,6 +179,7 @@ type Cursor struct {
 func CursorPath(lane string) string { return lane + "/" + CursorName }
 func OpenPath(lane string) string   { return lane + "/" + OpenName }
 func IndexPath(lane string) string  { return lane + "/" + IndexName }
+func BeatPath(lane string) string   { return lane + "/" + BeatName }
 
 // ReadCursor reads a lane's CURSOR. A lane with no CURSOR file returns the zero Cursor and
 // no error: that is a reader who has not read yet, not a bus that is broken.
@@ -426,7 +432,45 @@ func WriteCursor(root, lane, commit string, open int, legacy string, now time.Ti
 	return replaceLaneFile(root, CursorPath(lane), line+"\n")
 }
 
-// OpenKind is what one open entry IS, decided once when the note went open and recorded,
+// WriteBeat writes a lane's BEAT: one line, the RFC 3339 UTC stamp of `now` and the cursor
+// sha the line is standing at (or "-" when it has no cursor yet). The stamp is full RFC
+// 3339 with nanoseconds so two poll ticks a fraction of a second apart carry different
+// stamps, which is what lets a reader tell the line is alive rather than merely that it
+// polled once; the beat is rewritten, not appended, because only the newest one matters.
+//
+// A beat's sha is the cursor commit and carries no ValidCommitHex guard of its own: the
+// value written here came from ReadCursor, which already checked it, or is "-". It is a
+// presence signal, not a git argument.
+func WriteBeat(root, lane, cursor string, now time.Time) error {
+	if cursor == "" {
+		cursor = "-"
+	}
+	line := now.UTC().Format(time.RFC3339Nano) + " " + cursor
+	return replaceLaneFile(root, BeatPath(lane), line+"\n")
+}
+
+// ReadBeat reads a lane's BEAT and returns its stamp as a moment, or the zero value and
+// false when the lane has no beat (or a beat that does not parse). Nothing else in this
+// tool computes from a beat; it exists so `check` validates the one file the same way it
+// validates CURSOR, OPEN and INDEX rather than stepping over a corrupt one in silence.
+func ReadBeat(root, lane string) (time.Time, error) {
+	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(BeatPath(lane))))
+	if errors.Is(err, os.ErrNotExist) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	fields := strings.Fields(strings.TrimSpace(string(raw)))
+	if len(fields) != 2 {
+		return time.Time{}, fmt.Errorf("%s: a beat is <stamp> <cursor>", BeatPath(lane))
+	}
+	stamp, err := time.Parse(time.RFC3339Nano, fields[0])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s: %q is not an RFC 3339 UTC stamp", BeatPath(lane), fields[0])
+	}
+	return stamp, nil
+}
 // so that a later run can print the entry without opening the note again.
 type OpenKind string
 

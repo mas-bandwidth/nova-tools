@@ -83,7 +83,10 @@ the first lesson, a load per tick, and this tool offers no verb for it (Johnny,
 the bus clone, the newest commit touching the cursor is that friend's last beat,
 classified `awake` inside `--window`, `asleep` past it, and `unknown` where no
 cursor has ever been written (docs/SPEC-WORK.md, **Presence**, source
-`bus-cursor`).
+`bus-cursor`). A `from-<name>/BEAT` file is also read, from its own content
+rather than its commit time, and where its stamp is newer than the cursor commit
+the friend reads `source=bus-beat` — the signal a merely-waiting line still
+writes every poll.
 
 **At least one source, named.** A `watch` with no `--bus`, no `--entry` and no
 `--reports` is exit 2 and `refusing to guess`: a watcher with nothing to watch is
