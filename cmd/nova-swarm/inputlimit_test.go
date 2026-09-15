@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -87,6 +89,35 @@ func TestATaskOverItsMaxInputIsRefusedBeforeTheLaunch(t *testing.T) {
 	mustContain(t, "the run", stdout, "RUN OK started=0 done=0 failed=1")
 	if strings.Contains(stdout, "RUN START id="+id) {
 		t.Errorf("the check is BEFORE the launch; nothing is paid for a task that cannot fit:\n%s", stdout)
+	}
+	if sc := b.sidecar(id); sc.End != "input-limit" {
+		t.Errorf("the sidecar wants end=input-limit, got %q", sc.End)
+	}
+}
+
+// ISSUE #163, END TO END, WITH A STRUCTURED SIGNAL: the harness adapter records the
+// provider's refusal as a field -- class, value, limit -- and the supervisor reads that field
+// and re-emits it as one line, classing the job input-limit with no heuristic over the
+// transcript. The supervisor's own line lands in its log, and the job is still named, not
+// retried, in one line.
+func TestAStructuredInputLimitSignalIsEmittedByTheSupervisor(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a read of a whole spec\nFAKE-INPUT-LIMIT-SIGNAL token 12345 8192\nFAKE-LAUNCHES\n")
+
+	exit, stdout, stderr := b.run("--backoff", "1")
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN INPUT-LIMIT id="+id)
+	// The class, the measured size and the limit are a FIELD the supervisor re-emitted.
+	sup, err := os.ReadFile(filepath.Join(b.jobDir(id), "supervisor.log"))
+	if err != nil {
+		t.Fatalf("the supervisor's own log: %v", err)
+	}
+	mustContain(t, "the supervisor", string(sup), "INPUT LIMIT class=token value=12345 limit=8192")
+	if strings.Contains(stdout, "rc=429") {
+		t.Errorf("an input limit is not a 429:\n%s", stdout)
 	}
 	if sc := b.sidecar(id); sc.End != "input-limit" {
 		t.Errorf("the sidecar wants end=input-limit, got %q", sc.End)

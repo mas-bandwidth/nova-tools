@@ -97,6 +97,26 @@ func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) 
 	return code, out.String(), errb.String()
 }
 
+// testIdleBudget is the --idle every test in the idle family passes, and the
+// margin is the point. These tests drive a /bin/sh runner that writes every 150
+// to 200 ms and then assert either that it was left alone or that a silent one
+// was killed. A one-second budget makes the nominal margin 5x, which is not a
+// margin on a SHARED runner: `sleep 0.2` in a shell loop is 200 ms of sleeping
+// plus however long the machine takes to schedule the process again, and four
+// runners share each of these machines. Run 35019905236 caught
+// it both ways at once — in test (3/8 studio) a card that kept writing was
+// idle-killed, and in an earlier local run a card that publishes immediately
+// was killed before it could. Four seconds is a 20-27x margin on the same tick,
+// so a failure means the monitor watched the wrong file, not that the runner
+// was slow. It costs the three tests that DO expect a kill their budget each,
+// about nine seconds, and buys a test that means what it says.
+const testIdleBudget = 4 * time.Second
+
+// idleReason is the ABSTAIN token the batch prints for an idle kill -- batch.go
+// formats it as "idle=<seconds>" -- derived from the budget so the two cannot
+// drift apart when the budget is retuned.
+var idleReason = "ABSTAIN reason=idle=" + itoa(int(testIdleBudget.Seconds()))
+
 func runBatchIdle(t *testing.T, cards, root, runner string, deadline, idle time.Duration) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
@@ -142,8 +162,11 @@ func TestBatchAbstainsMissingResult(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1") {
 		t.Fatalf("the missing result is an abstain row:\n%s", out)
 	}
-	if !strings.Contains(out, "b slot=2: ABSTAIN -- stalled (no output after the wall opened)") {
-		t.Fatalf("a card that ended with no output is named stalled, never folded:\n%s", out)
+	if !strings.Contains(out, "b slot=2: ABSTAIN reason=no-result log=0") {
+		t.Fatalf("the missing result names its one reason token and its empty log, never folded:\n%s", out)
+	}
+	if !strings.Contains(out, "stalled=1") {
+		t.Fatalf("a card that ended with no output after the wall opened is counted stalled:\n%s", out)
 	}
 }
 
@@ -175,11 +198,11 @@ func TestBatchNamesMissingResultOnCleanExit(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1") || !strings.Contains(out, "stalled=0") {
 		t.Fatalf("a clean exit is an abstain, never a stall:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- no RESULT.md in "+filepath.Join(root, "1", "jobs", "a")+" (rc=0)") {
-		t.Fatalf("a clean exit with no RESULT.md names its reason, not a stall:\n%s", out)
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=no-result log=1 job="+filepath.Join(resolvedPath(t, root), "1", "jobs", "a")) {
+		t.Fatalf("a clean exit with no RESULT.md names reason=no-result and the job that holds none:\n%s", out)
 	}
-	if strings.Contains(out, "stalled (no output after the wall opened)") {
-		t.Fatalf("a clean exit is not named stalled:\n%s", out)
+	if strings.Contains(out, "reason=rc=") {
+		t.Fatalf("a clean exit names no exit code; it published no result:\n%s", out)
 	}
 }
 
@@ -247,7 +270,7 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if time.Since(start) > 10*time.Second {
 		t.Fatalf("the wait ends when the idle card is killed, it does not burn the deadline")
 	}
@@ -257,8 +280,8 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the idle kill is counted as an abstain and the idle count:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s") {
-		t.Fatalf("an idle-killed card names its idle reason:\n%s", out)
+	if !strings.Contains(out, "a slot=1: "+idleReason+" log=0") {
+		t.Fatalf("an idle-killed card names its idle reason token:\n%s", out)
 	}
 }
 
@@ -285,7 +308,7 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, 2*time.Second)
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
 	if code != 0 {
 		t.Fatalf("a batch over a card that keeps writing exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -317,14 +340,14 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if code != 1 {
 		t.Fatalf("a batch with one idle kill exits 1, got %d:\n%s", code, out)
 	}
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the BATCH line counts the idle kill in its own idle=<n> field:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s") || !strings.Contains(out, "b slot=2: done and clean") {
+	if !strings.Contains(out, "a slot=1: "+idleReason) || !strings.Contains(out, "b slot=2: done and clean") {
 		t.Fatalf("the idle card is named with its reason and the done card is folded:\n%s", out)
 	}
 }
@@ -353,7 +376,7 @@ func TestIdleWatchesNativeLog(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, 1*time.Second)
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
 	if code != 0 {
 		t.Fatalf("a card writing native.log is never idle-killed, exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -385,14 +408,14 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if code != 1 {
 		t.Fatalf("a card whose native.log stops growing is idle-killed, exits 1, got %d:\n%s", code, out)
 	}
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the stopped native.log card is counted idle:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s ("+filepath.Join(root, "1", "native.log")+")") {
+	if !strings.Contains(out, "a slot=1: "+idleReason+" log=3 watched="+filepath.Join(resolvedPath(t, root), "1", "native.log")) {
 		t.Fatalf("the ABSTAIN reason names the child's log it watched:\n%s", out)
 	}
 }
@@ -443,8 +466,11 @@ func TestStalledCardIsNamed(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("a batch with a stalled card exits 1, got %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- stalled (no output after the wall opened)") {
-		t.Fatalf("a card that ended with no output after the wall opened is named stalled, not a slow model:\n%s", out)
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=no-result log=0") {
+		t.Fatalf("a card that ended with no output after the wall opened names its reason and its empty log:\n%s", out)
+	}
+	if !strings.Contains(out, "stalled=1") {
+		t.Fatalf("the stall is counted on the BATCH line, not read out of a RESULT:\n%s", out)
 	}
 }
 
@@ -483,8 +509,8 @@ func TestBatchLineCountsStalled(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=0 stalled=1") {
 		t.Fatalf("the BATCH line counts the stalled cards:\n%s", out)
 	}
-	if !strings.Contains(out, "b slot=2: ABSTAIN -- stalled (no output after the wall opened)") {
-		t.Fatalf("the stalled card is named:\n%s", out)
+	if !strings.Contains(out, "b slot=2: ABSTAIN reason=no-result log=0") {
+		t.Fatalf("the stalled card is named by its reason token and its empty log:\n%s", out)
 	}
 }
 
@@ -716,7 +742,7 @@ func TestGatherStallOnlyWithoutResult(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=0 stalled=1") {
 		t.Fatalf("the stall is counted only for the card without a valid RESULT.md:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: all green") || !strings.Contains(out, "b slot=2: ABSTAIN -- stalled (no output after the wall opened)") {
+	if !strings.Contains(out, "a slot=1: all green") || !strings.Contains(out, "b slot=2: ABSTAIN reason=no-result log=0") {
 		t.Fatalf("done wins over an empty log; the stall names only the missing-result card:\n%s", out)
 	}
 	if strings.Contains(out, "a slot=1: ABSTAIN") {
@@ -724,11 +750,26 @@ func TestGatherStallOnlyWithoutResult(t *testing.T) {
 	}
 }
 
+// resolvedPath is a path made absolute and symlink-resolved, which is the form admission
+// records. A test that builds its expectation from t.TempDir() must resolve it too: on
+// darwin the temp directory is handed out under /var, a symlink to /private/var, so the
+// unresolved spelling and the recorded one are two names for one directory and a string
+// compare between them fails on every macOS bench (issue #578).
+func resolvedPath(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolving %s: %v", path, err)
+	}
+	return real
+}
+
 // TestBatchRelativeRootIsAbsolutized: the batch absolutizes --root at admission, so the
-// runner's fifth argument ($5) and NOVA_SWARM_ROOT both name the root in absolute form --
-// a relative root passed on to the wall was the refusal Emma met (the wall refused
-// `--read ./root/1` and `--write root/1/...`). The runner records both and the test asserts
-// each is the absolute root, never the relative spelling it was handed.
+// runner's fifth argument ($5) and NOVA_SWARM_ROOT both name the root in absolute and
+// symlink-resolved form -- a relative root passed on to the wall was the refusal Emma met
+// (the wall refused `--read ./root/1` and `--write root/1/...`). The runner records both and
+// the test asserts each is the resolved absolute root, never the relative spelling it was
+// handed.
 func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -772,11 +813,19 @@ func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
 		t.Fatalf("a clean batch exits 0, got %d; stderr: %s:\n%s", code, errs, out)
 	}
 	arg5 := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".arg5")))
-	if arg5 != root {
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolving the root %q: %v", root, err)
+	}
+	if got, err := filepath.EvalSymlinks(arg5); err != nil {
+		t.Errorf("the runner's $5 %q does not resolve: %v", arg5, err)
+	} else if got != want {
 		t.Errorf("the runner's $5 is %q, want the absolute root %q; a relative root reached the runner", arg5, root)
 	}
 	envRoot := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".envroot")))
-	if envRoot != root {
+	if got, err := filepath.EvalSymlinks(envRoot); err != nil {
+		t.Errorf("NOVA_SWARM_ROOT %q does not resolve: %v", envRoot, err)
+	} else if got != want {
 		t.Errorf("NOVA_SWARM_ROOT is %q, want the absolute root %q; a relative root reached the environment", envRoot, root)
 	}
 }
@@ -788,4 +837,40 @@ func readTestFile(t *testing.T, path string) string {
 		t.Fatalf("reading %s: %v", path, err)
 	}
 	return string(raw)
+}
+
+// ISSUE #163: a card whose job was refused for size is scored reason=input-limit, read from
+// the STRUCTURED signal the supervisor recorded, not from prose over the transcript. The
+// runner writes the one line -- `INPUT LIMIT class=token value=12345 limit=8192` -- into the
+// card's native.log and no RESULT.md, and the gather names the class instead of a plain
+// missing-result abstain.
+func TestBatchScoresInputLimit(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\ndone and green"},
+		{"b", "RESULT: b\nMISSING"},
+	})
+	runner := filepath.Join(dir, "runner-inputlimit.sh")
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"if [ \"$line2\" = \"MISSING\" ]; then printf '%s\\n' 'INPUT LIMIT class=token value=12345 limit=8192' > \"$root/$slot/native.log\"; exit 0; fi\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch with an input-limited card is not green, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "b slot=2: ABSTAIN reason=input-limit") {
+		t.Fatalf("an input-limited card scores reason=input-limit:\n%s", out)
+	}
+	if !strings.Contains(out, "a slot=1: done and green") {
+		t.Fatalf("a card that fits still scores its line 2:\n%s", out)
+	}
 }

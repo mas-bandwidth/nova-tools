@@ -226,7 +226,11 @@ prefix is one arm.
 
 A card for a DeepSeek model states the working directory and the clone as step 1, with one
 command per line, numbered steps with one check each, the verdict vocabulary inside the step,
-the RESULT shape last and short, no capitalised contract block and no launcher text.
+the RESULT shape last and short, no capitalised contract block and no launcher text in its
+contract lines. **The word check reads lines 1-3 — the contract line, the role line and
+`STEP 1` — and nothing below them**: a card that *quotes* an issue mentioning a launcher is a
+card about one, not a card run by one, and refusing it cost a batch 34 cards (nova-tools
+issue #529).
 **Measured:** 2026-09-15, three read cards in the capitalised-contract shape stalled 20
 minutes with no output on opencode/deepseek-v4-flash (cards 50, 51, 52); the same job in the
 numbered shape ran in 148 s for USD 0.007 with correct quoted evidence (card 55); four writing
@@ -260,6 +264,23 @@ alone; a merged but abstained card does not advance the chain. **Measured:** 202
 merged on a chain while its card had abstained; corrected by #415. **Not measured:** a chain
 that gates on the verdict from the start. **Expires** on a chain rule change. **Rollback:**
 gating on mergeability alone. **Held by:** Rowan.
+
+## 21. A tool card names the sequence a friend runs through the verb it changes
+
+A card that changes a verb names, in its contract, THE SEQUENCE a friend runs that verb inside
+-- the verbs before it and after it, in order -- and adds the round trip for that sequence
+beside the verb's own tests, named `TestFriendSequence<Sequence>`, which is the name CI's
+`e2e` job selects on. A verb's own tests see what the verb prints; only the
+sequence sees the state it LEAVES, which is what the next verb refuses over. **Measured:**
+2026-09-15: three breakages in one sitting, every one of them a verb passing its own tests --
+`wait` left `from-<me>/BEAT` uncommitted and the `send` after it refused over that file (#488,
+#459); `nova-version snapshot` wrote a manifest `nova-version report` refuses as an unknown
+kind (#571); `nova-review packet` diffed against the lane's stale base, 130 KB of packet for a
+12-line PR (#418). **Not measured:** how many sequences a verb is in, so a card names the one
+it changes and not a catalogue. **Expires** on a change to how the tools compose, or 2026-12-15.
+**Rollback:** per-verb tests alone. **Held by:** Glenn, 2026-09-15: "make sure to capture the
+dogfood breakage with new tests"; the sequences are `-run TestFriendSequence` in CI's `e2e`
+job.
 
 ## Open
 
