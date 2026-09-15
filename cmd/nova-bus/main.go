@@ -355,6 +355,80 @@ func (f *flags) count(name string, value int, stderr io.Writer) bool {
 	return true
 }
 
+// set answers whether a flag was named on the command line at all, so a default source can
+// tell "absent" from "given a value that is not usable", which are different mistakes.
+func (f *flags) set(name string) bool {
+	given := false
+	f.fs.Visit(func(fl *flag.Flag) {
+		if fl.Name == name {
+			given = true
+		}
+	})
+	return given
+}
+
+// receiptMaxWords resolves the one count a body is a receipt under. The flag wins; when it
+// is absent, a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults is read, then the
+// NOVA_BUS_RECEIPT_MAX_WORDS environment variable. It refuses only when none of the three
+// yields a positive number, and the refusal names the two default sources as the remedy.
+func (f *flags) receiptMaxWords(flagValue int, flagWasSet bool, busDir string, stderr io.Writer) (int, bool) {
+	if !flagWasSet {
+		if v, ok := receiptMaxWordsFromDefaults(busDir); ok {
+			flagValue = v
+		} else if v, ok := receiptMaxWordsFromEnv(); ok {
+			flagValue = v
+		}
+	}
+	if flagValue < 1 {
+		fmt.Fprintf(stderr, "nova-bus %s: --receipt-max-words must be given and at least 1, got %d; refusing to guess; give it as a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults or the NOVA_BUS_RECEIPT_MAX_WORDS env var\n", f.verb, flagValue)
+		return 0, false
+	}
+	return flagValue, true
+}
+
+// receiptMaxWordsFromDefaults reads the `receipt-max-words=<n>` line out of
+// <bus>/.nova-bus/defaults, the file default source. The file is key=value lines; only this
+// one key matters. A missing file, a missing key, or an unusable value is "absent".
+func receiptMaxWordsFromDefaults(busDir string) (int, bool) {
+	if busDir == "" {
+		return 0, false
+	}
+	raw, err := os.ReadFile(filepath.Join(busDir, ".nova-bus", "defaults"))
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != "receipt-max-words" {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(val))
+		if err != nil || n < 1 {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
+}
+
+// receiptMaxWordsFromEnv reads NOVA_BUS_RECEIPT_MAX_WORDS, the environment default source.
+// An empty or unusable value is "absent".
+func receiptMaxWordsFromEnv() (int, bool) {
+	s := strings.TrimSpace(os.Getenv("NOVA_BUS_RECEIPT_MAX_WORDS"))
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
+}
+
 // defaultAttempts is the retry budget when the caller names none.
 //
 // THE ONE FLAG THAT GETS A DEFAULT, and it is a departure from the rule above, so here is
@@ -1050,7 +1124,8 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stderr, "nova-bus inbox: --legacy-before draws a switch-day line and --carry-history says there is none to draw; give one or the other\n")
 		return 2
 	}
-	if !f.count("receipt-max-words", *maxWords, stderr) {
+	maxWordsValue, ok := f.receiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir, stderr)
+	if !ok {
 		return 2
 	}
 	if !f.count("open-max", *openMax, stderr) {
@@ -1088,7 +1163,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	o := inboxOpts{
-		busDir: *busDir, as: *as, maxWords: *maxWords,
+		busDir: *busDir, as: *as, maxWords: maxWordsValue,
 		full: *full, openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
@@ -1939,7 +2014,8 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stderr, "nova-bus wait: --legacy-before draws a switch-day line and --carry-history says there is none to draw; give one or the other\n")
 		return 2
 	}
-	if !f.count("receipt-max-words", *maxWords, stderr) {
+	maxWordsValue, ok := f.receiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir, stderr)
+	if !ok {
 		return 2
 	}
 	if !f.count("open-max", *openMax, stderr) {
@@ -2007,7 +2083,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	o := inboxOpts{
-		busDir: *busDir, as: *as, maxWords: *maxWords,
+		busDir: *busDir, as: *as, maxWords: maxWordsValue,
 		openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
