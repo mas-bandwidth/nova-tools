@@ -977,8 +977,10 @@ one `rsync` at the end, one `ssh stat` per `--idle/3` while it runs, and
 nothing per poll beyond the idle watch the batch already keeps.
 
 **The wall on a bench** is whatever `nova-sandbox check` reports there: on
-darwin `sandbox-exec`, on linux today `none`, because the Landlock body is not
-built (SPEC-SANDBOX, "Linux"). A bench runs unwalled only when **both** the
+darwin `sandbox-exec`, and on linux `landlock` with the kernel's Landlock ABI
+wherever that kernel has it — the Landlock body is built (SPEC-SANDBOX,
+"Linux"), so a linux bench is `wall=sandbox` like any other and needs no
+`--no-wall`. A linux kernel without Landlock still reports `none`. A bench runs unwalled only when **both** the
 table says `wall=none` and the batch was typed with `--no-wall`, passed
 through to `native` on the bench; the `--no-sandbox` paragraph above is the
 rule here, unchanged — argv, never a default, never implied by a missing
