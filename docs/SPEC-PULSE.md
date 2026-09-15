@@ -178,6 +178,7 @@ nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse handoff --to <name> --root <dir>
 nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--max <n>]
+nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse width   --root <dir> --pool <pool.tsv>
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse version
@@ -191,7 +192,7 @@ Those lines are the string `nova-pulse help` prints, byte for byte. `--timeout <
 
 ## Handoff
 
-The duty shift is the coordinator's turn on a queue, and it ends by handoff and begins again
+The manager shift is the coordinator's turn on a queue, and it ends by handoff and begins again
 by takeover. `handoff --to <name>` ends the shift: it writes the `SHIFT END` line, stops the
 loop, releases the `OWNER` lock (name, host, pid, since), writes a `HANDOFF` record (last
 `WIDTH`, in-flight cards by bench, pending, escalations open, benches and state) and posts
@@ -199,7 +200,7 @@ one bus note to the successor carrying the record. It refuses mid-harvest — it
 harvest first — and refuses when the successor is asleep by `nova-wake awake`, and then
 prints `HANDOFF OK`. `takeover --as <name>` refuses when `OWNER` names a live process on a
 reachable host (`TAKEOVER REFUSED owner=<name> pid=<n> host=<h>`); a stale lock is taken with
-one `NOTE` line, then the loop and a duty shift start on the same queue and it prints
+one `NOTE` line, then the loop and a manager shift start on the same queue and it prints
 `TAKEOVER OK`. When nova-work is open, `handoff` also moves the coordinator ownership record
 in the tree — generation, token, fencing, the `:handoff` event SPEC-WORK names.
 
@@ -319,18 +320,18 @@ after line 2. `<head>` is the repo's default-branch head at cut time, read once 
 - **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `--then`;
   the alarm is `width`, run by nova-wake or a person.
 
-## The duty tier
+## The manager tier
 
 Stella's answer to Glenn's *"I want the intelligence; I don't want to spend it sending out jobs
 and reading results"* is a third tier between planning and work. **Planning** is a person and
-the strong model: decisions, specs, rules; its output is cards and notes. **Duty** is a bounded
+the strong model: decisions, specs, rules; its output is cards and notes. **Manager** is a bounded
 controller on the cheapest qualified model: it owns the bus wait, harvests, triages abstains
 and HOLD reads by rewriting cards from templates, files dogfood issues, cuts fix cards, merges
 non-draft PRs on an approving read plus green CI, and escalates a decision as one line.
-**Work** is swarms and local models. Duty is where the intelligence is spent once and the
+**Work** is swarms and local models. Manager is where the intelligence is spent once and the
 scatter-gather is spent never.
 
-Duty executes an approved finite policy and never expands it; it is the single owner of the bus
+Manager executes an approved finite policy and never expands it; it is the single owner of the bus
 wait; it keeps one card per work item, deduplicated on the contract line; it revalidates the PR
 head before any side effect; it runs an explicit shift length and ends with a handoff line; quiet
 time makes no model call and sends no status note; state is published mechanically (the `WIDTH`
@@ -351,9 +352,31 @@ The handoff at the end of a shift:
 SHIFT END cycles=<n> decisions=<n> escalations=<n>
 ```
 
-Replays: `duty-never-expands-policy`, `duty-quiet-time-makes-no-call`,
-`duty-dedups-on-contract-line`, `duty-revalidates-head-before-merge`,
-`duty-never-merges-draft`, `duty-shift-ends-with-handoff`.
+The tier is a verb, and the verb makes no model call:
+
+```
+nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
+```
+
+One cycle is: `nova-bus wait` in the foreground with the policy's timeout (the one call a
+quiet cycle makes); receipt every `START` and `DONE` note and append every other note to
+`<queue>/ESCALATE` as one line, composing no reply; harvest every card whose job holds a
+`RESULT.md` — push its branch by explicit refspec, open or update its PR, cut its read card
+from `<queue>/templates`, and refuse a fix PR carrying neither a `red:` line nor a test file
+in its diff; triage each abstain by its reason token, requeueing it once under a new number
+on the other bench and escalating the second; merge a non-draft PR whose read said `APPROVE`
+once the head revalidates and every check is `SUCCESS`, never on `HOLD`; refill the queue
+from the policy's sources to its floor, deduplicated on PR number, issue number and the
+contract sentence, in the policy's scope, leaving `AFTER: PR<n> merged` gates gated; and
+write one `MANAGER` line to `<queue>/MANAGER.log`. The policy is key=value lines —
+`wait-timeout`, `floor`, `scope-regex`, `sources`, `known-flakes`, `max-attempts` — and an
+unknown key is a refusal, exit 2, because a policy the tool half-understands is a policy
+nobody approved.
+
+Replays: `manager-never-expands-policy`, `manager-quiet-time-makes-no-call`,
+`manager-dedups-on-contract-line`, `manager-revalidates-head-before-merge`,
+`manager-never-merges-draft`, `manager-shift-ends-with-handoff`,
+`manager-requeues-once-then-escalates`, `manager-refuses-fix-pr-without-test`.
 
 ## Tests this spec demands
 
@@ -449,7 +472,7 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
 27. `takeover-refuses-live-owner`: `OWNER` names a live process on a reachable host —
     `TAKEOVER REFUSED owner=<name> pid=<n> host=<h>`, exit 2, nothing taken.
 28. `takeover-takes-stale-lock-with-note`: `OWNER` names a dead process or an unreachable
-    host — the lock is taken, one `NOTE` line says so, and the loop and a duty shift start on
+    host — the lock is taken, one `NOTE` line says so, and the loop and a manager shift start on
     the same queue.
 29. `takeover-inherits-queue`: the taken `HANDOFF` record's inflight, pending and
     escalations are inherited and printed as `TAKEOVER OK from=<name>
