@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,7 +72,7 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir)
+	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	harnessDir := filepath.Dir(bin)
 	if !hasFlagPair(argv, "--read", harnessDir) {
 		t.Errorf("the wall argv does not read the harness directory %s:\n%s", harnessDir, strings.Join(argv, " "))
@@ -848,10 +849,11 @@ func TestNativeRunsWalledWithoutHostRulesWhenNoRepos(t *testing.T) {
 
 // TestNativeEnvIsCleanAndInsideTheWall: the walled child is handed a clean environment, not
 // the caller's. HOME and XDG_DATA_HOME appear exactly once and point at the data home, TMPDIR
-// sits under a --write, and XDG_CONFIG_HOME / XDG_CACHE_HOME do not survive to point outside
-// the wall. A planted foreign HOME/XDG_CONFIG_HOME/XDG_CACHE_HOME/TMPDIR and a provider key
-// are set first, and the run happens from a foreign cwd, proving the child's own environment
-// and directory are the run's, not the caller's.
+// is the slot's own tmp/<label> (outside the git-inited job directory), and XDG_CONFIG_HOME /
+// XDG_CACHE_HOME do not survive to point outside the wall. A planted foreign
+// HOME/XDG_CONFIG_HOME/XDG_CACHE_HOME/TMPDIR and a provider key are set first, and the run
+// happens from a foreign cwd, proving the child's own environment and directory are the
+// run's, not the caller's.
 func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 	bin := nativeHarness(t)
@@ -927,8 +929,8 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	if len(tmp) != 1 {
 		t.Fatalf("the child has %d TMPDIR entries, want 1: %v", len(tmp), tmp)
 	}
-	if rel, err := filepath.Rel(dataHome, tmp[0]); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		t.Errorf("TMPDIR %q is not inside the data home %q (a --write)", tmp[0], dataHome)
+	if want := filepath.Join(slot, "tmp", label); tmp[0] != want {
+		t.Errorf("TMPDIR is %q, want the slot's own tmp dir %q", tmp[0], want)
 	}
 	if got := env["FAKE_KEY"]; len(got) != 1 || got[0] != "<redacted>" {
 		t.Errorf("the secret's value is not redacted in the log: %v", got)
@@ -1075,5 +1077,54 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
 	if !hasFlagPair(strings.Fields(argv), "--read", slot) {
 		t.Errorf("the wall argv does not read the slot by absolute path %s:\n%s", slot, argv)
+	}
+}
+
+// TestNativeTmpDirIsOutsideAnyRepo: the native run hands the child a TMPDIR that is the slot's
+// own tmp/<label>, not the job directory. Native admission git-inits the job directory into a
+// repo, and a card's temp dir inside a repo is exactly what makes nova-wake's
+// TestAwakeRefusesNonBus fail for a reason the card did not cause (#460). The test git-inits
+// the job directory the way admission does, then runs `git rev-parse --show-toplevel` from
+// inside the exported TMPDIR and asserts it does not resolve into the job's repo.
+func TestNativeTmpDirIsOutsideAnyRepo(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "tmp-outside-repo"
+
+	// git-init the job directory the way native admission does, before the run starts.
+	jobDir := filepath.Join(slot, "jobs", label)
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", "-q", jobDir).CombinedOutput(); err != nil {
+		t.Skipf("git init unavailable: %v: %s", err, out)
+	}
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
+	}
+
+	// The exported TMPDIR is the slot's own tmp/<label>, not under the job directory.
+	want := filepath.Join(slot, "tmp", label)
+	if res.tmp != want {
+		t.Errorf("TMPDIR is %q, want %q", res.tmp, want)
+	}
+	if st, err := os.Stat(res.tmp); err != nil || !st.IsDir() {
+		t.Fatalf("the exported TMPDIR %q is not a made directory: %v", res.tmp, err)
+	}
+
+	// A git rev-parse from inside the exported TMPDIR must not resolve into the job's repo.
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = res.tmp
+	out, err := cmd.CombinedOutput()
+	toplevel := strings.TrimSpace(string(out))
+	if err == nil && sameDir(toplevel, jobDir) {
+		t.Errorf("git rev-parse --show-toplevel from TMPDIR %q resolved into the job's repo %q", res.tmp, toplevel)
 	}
 }
