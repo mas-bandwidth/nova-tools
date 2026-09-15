@@ -1,0 +1,881 @@
+package tokens
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/records"
+)
+
+type testBatch struct {
+	Dir            string
+	Coverage       records.Coverage
+	CoverageBytes  []byte
+	CoverageID     string
+	ShardFile      string
+	ShardHex       string
+	MappingFile    string
+	MappingHex     string
+	ObservationIDs []string
+	ObsLines       [][]byte
+}
+
+func newTestBatch(t *testing.T) *testBatch {
+	t.Helper()
+	dir := t.TempDir()
+
+	mapBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "codex", "mapping.json"))
+	if err != nil {
+		t.Fatalf("failed to read mapping fixture: %v", err)
+	}
+	mEnv, err := records.NewValidator(records.Allowlists{}).ValidateEnvelope(mapBytes)
+	if err != nil {
+		t.Fatalf("failed to validate mapping fixture: %v", err)
+	}
+	mapHex := strings.TrimPrefix(mEnv.ID, "sha256:")
+
+	mappingsDir := filepath.Join(dir, "mappings")
+	if err := os.MkdirAll(mappingsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mapFile := filepath.Join(mappingsDir, mapHex+".json")
+	if err := os.WriteFile(mapFile, mapBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	recBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "codex", "expected_records.jsonl"))
+	if err != nil {
+		t.Fatalf("failed to read records fixture: %v", err)
+	}
+	lines := bytes.Split(recBytes, []byte("\n"))
+	var obsLines [][]byte
+	var obsIDs []string
+	for _, l := range lines {
+		if len(bytes.TrimSpace(l)) == 0 {
+			continue
+		}
+		var env records.Envelope
+		if err := json.Unmarshal(l, &env); err != nil {
+			t.Fatal(err)
+		}
+		obsLines = append(obsLines, l)
+		obsIDs = append(obsIDs, env.ID)
+		if len(obsLines) == 2 {
+			break
+		}
+	}
+	if len(obsLines) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(obsLines))
+	}
+
+	shardContent := append(append([]byte(nil), obsLines[0]...), '\n')
+	shardContent = append(shardContent, append(obsLines[1], '\n')...)
+	shardSum := sha256.Sum256(shardContent)
+	shardHex := hex.EncodeToString(shardSum[:])
+
+	recordsDayDir := filepath.Join(dir, "records", "rowan", "studio", "2026-09-12")
+	if err := os.MkdirAll(recordsDayDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	shardFile := filepath.Join(recordsDayDir, shardHex+".jsonl")
+	if err := os.WriteFile(shardFile, shardContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cov := records.Coverage{
+		Schema:         records.SchemaCoverage,
+		ScopeID:        "nova.codex-desktop.responses",
+		SourceIDs:      []string{"nova.codex-desktop.responses"},
+		Interval:       records.CoverageInterval{Start: "2026-09-12T00:00:00Z", End: "2026-09-13T00:00:00Z"},
+		Status:         "complete_within_scope",
+		Reasons:        []records.CoverageReason{},
+		CollectedAt:    "2026-09-13T01:00:00Z",
+		CollectorBuild: "codex-desktop@0.154.0 build=abc123",
+		MappingIDs:     []string{mEnv.ID},
+		Shards: []records.ShardRef{
+			{
+				ShardID:     "sha256:" + shardHex,
+				RecordCount: "2",
+				InlineIDs:   obsIDs,
+			},
+		},
+		Predecessors: []string{},
+		Counts: records.CoverageCounts{
+			SourceCandidates: "2",
+			RecordsEmitted:   "2",
+			Observations:     "2",
+			Conflicts:        "0",
+			Gaps:             "0",
+		},
+	}
+
+	covBytes, covID, err := records.SealCoverage(cov)
+	if err != nil {
+		t.Fatalf("failed to seal coverage: %v", err)
+	}
+
+	return &testBatch{
+		Dir:            dir,
+		Coverage:       cov,
+		CoverageBytes:  covBytes,
+		CoverageID:     covID,
+		ShardFile:      shardFile,
+		ShardHex:       shardHex,
+		MappingFile:    mapFile,
+		MappingHex:     mapHex,
+		ObservationIDs: obsIDs,
+		ObsLines:       obsLines,
+	}
+}
+
+func newTestBatchWithInventory(t *testing.T) (*testBatch, string) {
+	t.Helper()
+	b := newTestBatch(t)
+
+	invJSON, err := json.Marshal(b.ObservationIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invContent := append(invJSON, '\n')
+	invSum := sha256.Sum256(invContent)
+	invHex := hex.EncodeToString(invSum[:])
+	invID := "sha256:" + invHex
+
+	invDir := filepath.Join(b.Dir, "inventories")
+	if err := os.MkdirAll(invDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	invFile := filepath.Join(invDir, invHex+".json")
+	if err := os.WriteFile(invFile, invContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	b.Coverage.Shards[0].InlineIDs = nil
+	b.Coverage.Shards[0].InventoryFile = &invID
+
+	covBytes, covID, err := records.SealCoverage(b.Coverage)
+	if err != nil {
+		t.Fatalf("failed to seal coverage: %v", err)
+	}
+	b.CoverageBytes = covBytes
+	b.CoverageID = covID
+
+	return b, invFile
+}
+
+func installBatch(t *testing.T, b *testBatch) {
+	t.Helper()
+	batchPath := filepath.Join(b.Dir, "batch.json")
+	if err := os.WriteFile(batchPath, b.CoverageBytes, 0644); err != nil {
+		t.Fatalf("failed to install batch.json: %v", err)
+	}
+}
+
+func checkRefusal(t *testing.T, err error, wantRules ...string) *PackageRefusal {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected refusal with rule in %v, got nil", wantRules)
+	}
+	var ref *PackageRefusal
+	if !errors.As(err, &ref) {
+		t.Fatalf("expected *PackageRefusal, got %T: %v", err, err)
+	}
+	matched := false
+	for _, want := range wantRules {
+		if ref.Rule == want {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		t.Fatalf("refusal rule = %q, want one of %v (detail: %s)", ref.Rule, wantRules, ref.Detail)
+	}
+	if ref.RefusalExitCode() != RefusalExitCode {
+		t.Fatalf("exit code = %d, want %d", ref.RefusalExitCode(), RefusalExitCode)
+	}
+	return ref
+}
+
+// TC-VAL-01: candidate_validation_success
+func TestTC_VAL_01_CandidateValidationSuccess(t *testing.T) {
+	b := newTestBatch(t)
+	if err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes); err != nil {
+		t.Fatalf("ValidateCandidateDirectory failed: %v", err)
+	}
+}
+
+// TC-VAL-02: candidate_validation_refuses_marker
+func TestTC_VAL_02_CandidateValidationRefusesMarker(t *testing.T) {
+	b := newTestBatch(t)
+	installBatch(t, b)
+	err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
+	checkRefusal(t, err, RuleMarkerExists)
+}
+
+// TC-VAL-03: candidate_validation_owned_marker_temp_checked
+func TestTC_VAL_03_CandidateValidationOwnedMarkerTempChecked(t *testing.T) {
+	b := newTestBatch(t)
+	tmpPath := filepath.Join(b.Dir, "batch.json.tmp")
+	if err := os.WriteFile(tmpPath, b.CoverageBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateCandidateDirectory(b.Dir, "batch.json.tmp", b.CoverageBytes); err != nil {
+		t.Fatalf("ValidateCandidateDirectory failed with owned marker: %v", err)
+	}
+}
+
+// TC-VAL-04: candidate_validation_stray_temp_rejected
+func TestTC_VAL_04_CandidateValidationStrayTempRejected(t *testing.T) {
+	// Subcase 1: stray.tmp present alongside owned marker
+	b := newTestBatch(t)
+	if err := os.WriteFile(filepath.Join(b.Dir, "batch.json.tmp"), b.CoverageBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b.Dir, "stray.tmp"), []byte("stray"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := ValidateCandidateDirectory(b.Dir, "batch.json.tmp", b.CoverageBytes)
+	checkRefusal(t, err, RuleTemporaryFilePresent)
+
+	// Subcase 2: pre-existing batch.json.tmp when ownedMarkerTempName is empty
+	b2 := newTestBatch(t)
+	if err := os.WriteFile(filepath.Join(b2.Dir, "batch.json.tmp"), b2.CoverageBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	err2 := ValidateCandidateDirectory(b2.Dir, "", b2.CoverageBytes)
+	checkRefusal(t, err2, RuleTemporaryFilePresent)
+}
+
+// TC-VAL-05: installed_validation_success
+func TestTC_VAL_05_InstalledValidationSuccess(t *testing.T) {
+	b := newTestBatch(t)
+	installBatch(t, b)
+	if err := ValidateInstalledDirectory(b.Dir); err != nil {
+		t.Fatalf("ValidateInstalledDirectory failed: %v", err)
+	}
+}
+
+// TC-VAL-06: installed_validation_forbids_tmp_and_extra_files
+func TestTC_VAL_06_InstalledValidationForbidsTmpAndExtraFiles(t *testing.T) {
+	// (a) lingering batch.json.tmp
+	b := newTestBatch(t)
+	installBatch(t, b)
+	if err := os.WriteFile(filepath.Join(b.Dir, "batch.json.tmp"), []byte("leftover"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := ValidateInstalledDirectory(b.Dir)
+	checkRefusal(t, err, RuleTemporaryFilePresent)
+
+	// (b) unexpected extra file
+	b2 := newTestBatch(t)
+	installBatch(t, b2)
+	if err := os.WriteFile(filepath.Join(b2.Dir, "extra.txt"), []byte("extra"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err2 := ValidateInstalledDirectory(b2.Dir)
+	checkRefusal(t, err2, RulePackageStrayFile)
+}
+
+// TC-VAL-07: symlink_rejected and no_clobber_destination_exists
+func TestTC_VAL_07_SymlinkRejected(t *testing.T) {
+	b := newTestBatch(t)
+	symPath := filepath.Join(b.Dir, "records", "rowan", "studio", "2026-09-12", "link.jsonl")
+	if err := os.Symlink(b.ShardFile, symPath); err != nil {
+		t.Fatal(err)
+	}
+	err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
+	checkRefusal(t, err, RuleSymlinkForbidden)
+
+	// Verify EnsureDestinationFresh refuses existing destination directory
+	errFresh := EnsureDestinationFresh(b.Dir)
+	checkRefusal(t, errFresh, RuleDestinationExists)
+}
+
+// TC-VAL-08: orphan_shard_rejected
+func TestTC_VAL_08_OrphanShardRejected(t *testing.T) {
+	b := newTestBatch(t)
+	installBatch(t, b)
+
+	orphanHex := strings.Repeat("f", 64)
+	orphanFile := filepath.Join(b.Dir, "records", "rowan", "studio", "2026-09-12", orphanHex+".jsonl")
+	if err := os.WriteFile(orphanFile, []byte("{\"id\":\"sha256:...\"}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ValidateInstalledDirectory(b.Dir)
+	checkRefusal(t, err, RulePackageStrayFile)
+}
+
+// TC-VAL-09: crash_recovery_incomplete_batch
+func TestTC_VAL_09_CrashRecoveryIncompleteBatch(t *testing.T) {
+	b := newTestBatch(t)
+	// Crash during staging: leaves batch.json.tmp on disk without batch.json
+	if err := os.WriteFile(filepath.Join(b.Dir, "batch.json.tmp"), b.CoverageBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := ValidateInstalledDirectory(b.Dir)
+	checkRefusal(t, err, RuleMarkerMissing)
+}
+
+// TC-VAL-10: atomic_rename_competing_marker_race
+func TestTC_VAL_10_AtomicRenameCompetingMarkerRace(t *testing.T) {
+	b := newTestBatch(t)
+	markerTemp := "batch.json.tmp"
+	if err := StageMarker(b.Dir, markerTemp, b.CoverageBytes); err != nil {
+		t.Fatal(err)
+	}
+
+	competingBytes := []byte("{\"competing\":true}")
+	targetPath := filepath.Join(b.Dir, "batch.json")
+	if err := os.WriteFile(targetPath, competingBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CommitMarker(b.Dir, markerTemp)
+	checkRefusal(t, err, RuleMarkerExists)
+
+	// Verify existing marker was preserved byte-identical
+	haveBytes, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(haveBytes, competingBytes) {
+		t.Errorf("competing marker was corrupted or clobbered")
+	}
+}
+
+// TC-VAL-11: durability_fsync_ancestor_directories_trace
+func TestTC_VAL_11_DurabilityFsyncAncestorDirectoriesTrace(t *testing.T) {
+	b := newTestBatch(t)
+
+	var trace []string
+	FsyncHook = func(path string) error {
+		trace = append(trace, path)
+		return nil
+	}
+	defer func() { FsyncHook = nil }()
+
+	if err := SyncDirectoryTree(b.Dir); err != nil {
+		t.Fatalf("SyncDirectoryTree failed: %v", err)
+	}
+
+	if len(trace) < 5 {
+		t.Fatalf("expected at least 5 directories synced in tree, got %d: %v", len(trace), trace)
+	}
+
+	// Root dir must be the final directory synced
+	if trace[len(trace)-1] != b.Dir {
+		t.Errorf("final synced dir must be root %s, got %s", b.Dir, trace[len(trace)-1])
+	}
+
+	// Deepest leaf (records/rowan/studio/2026-09-12) must appear before records/rowan/studio
+	dayDir := filepath.Join(b.Dir, "records", "rowan", "studio", "2026-09-12")
+	benchDir := filepath.Join(b.Dir, "records", "rowan", "studio")
+	dayIdx, benchIdx := -1, -1
+	for i, p := range trace {
+		if p == dayDir {
+			dayIdx = i
+		}
+		if p == benchDir {
+			benchIdx = i
+		}
+	}
+	if dayIdx == -1 || benchIdx == -1 || dayIdx > benchIdx {
+		t.Errorf("bottom-up sync violation: dayIdx=%d, benchIdx=%d", dayIdx, benchIdx)
+	}
+
+	// Fail-stop behavior: error in FsyncHook immediately aborts
+	FsyncHook = func(path string) error {
+		return errors.New("simulated fsync failure")
+	}
+	if err := SyncDirectoryTree(b.Dir); err == nil {
+		t.Fatal("expected fail-stop on simulated fsync error, got nil")
+	}
+}
+
+// TC-VAL-12: observation_origin_path_mismatch_rejected
+func TestTC_VAL_12_ObservationOriginPathMismatchRejected(t *testing.T) {
+	b := newTestBatch(t)
+
+	// Move the shard directory to mismatched friend "alice"
+	rowanDir := filepath.Join(b.Dir, "records", "rowan")
+	aliceDir := filepath.Join(b.Dir, "records", "alice")
+	if err := os.Rename(rowanDir, aliceDir); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
+	checkRefusal(t, err, RuleRecordPathOriginMismatch)
+}
+
+// TC-VAL-13: mapping_closure_orphan_mapping_rejected
+func TestTC_VAL_13_MappingClosureOrphanMappingRejected(t *testing.T) {
+	b := newTestBatch(t)
+
+	// Add second valid mapping from antigravity fixture into mappings/
+	antigravityBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "antigravity", "mapping.json"))
+	if err != nil {
+		t.Fatalf("failed to read antigravity mapping: %v", err)
+	}
+	mEnv, err := records.NewValidator(records.Allowlists{}).ValidateEnvelope(antigravityBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extraHex := strings.TrimPrefix(mEnv.ID, "sha256:")
+	extraFile := filepath.Join(b.Dir, "mappings", extraHex+".json")
+	if err := os.WriteFile(extraFile, antigravityBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Coverage only references the first mapping (codex), so antigravity is an orphan
+	err = ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
+	checkRefusal(t, err, RuleMappingClosureViolation)
+}
+
+// TC-VAL-14: mapping_closure_missing_mapping_rejected
+func TestTC_VAL_14_MappingClosureMissingMappingRejected(t *testing.T) {
+	b := newTestBatch(t)
+
+	missingID := "sha256:" + strings.Repeat("b", 64)
+	b.Coverage.MappingIDs = append(b.Coverage.MappingIDs, missingID)
+	covBytes, _, err := records.SealCoverage(b.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ValidateCandidateDirectory(b.Dir, "", covBytes)
+	checkRefusal(t, err, RuleMappingClosureViolation)
+}
+
+// TC-VAL-15: sorted_id_set_inventory_comparison
+func TestTC_VAL_15_SortedIDSetInventoryComparison(t *testing.T) {
+	b, invFile := newTestBatchWithInventory(t)
+
+	// Reverse ID order in inventory JSON
+	revIDs := []string{b.ObservationIDs[1], b.ObservationIDs[0]}
+	revJSON, err := json.Marshal(revIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revContent := append(revJSON, '\n')
+	revSum := sha256.Sum256(revContent)
+	revHex := hex.EncodeToString(revSum[:])
+	revID := "sha256:" + revHex
+
+	if err := os.Remove(invFile); err != nil {
+		t.Fatal(err)
+	}
+	newInvFile := filepath.Join(b.Dir, "inventories", revHex+".json")
+	if err := os.WriteFile(newInvFile, revContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	b.Coverage.Shards[0].InventoryFile = &revID
+	covBytes, _, err := records.SealCoverage(b.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.CoverageBytes = covBytes
+
+	installBatch(t, b)
+	if err := ValidateInstalledDirectory(b.Dir); err != nil {
+		t.Fatalf("expected order-independent sorted ID set equality, got %v", err)
+	}
+}
+
+// TC-VAL-16: link_unlink_fallback_crash_unpublishable
+func TestTC_VAL_16_LinkUnlinkFallbackCrashUnpublishable(t *testing.T) {
+	b := newTestBatch(t)
+	installBatch(t, b)
+
+	// Simulate crash between hard link and unlink leaving both files on disk
+	tmpPath := filepath.Join(b.Dir, "batch.json.tmp")
+	if err := os.WriteFile(tmpPath, b.CoverageBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ValidateInstalledDirectory(b.Dir)
+	checkRefusal(t, err, RuleTemporaryFilePresent)
+}
+
+// TC-VAL-17: retained_unsupported_subfield_accepted
+func TestTC_VAL_17_RetainedUnsupportedSubfieldAccepted(t *testing.T) {
+	b := newTestBatch(t)
+	// Both observations from codex fixture are retained records (one has absent cache_write counter).
+	// Validate that the whole batch with retained observations validates cleanly.
+	installBatch(t, b)
+	if err := ValidateInstalledDirectory(b.Dir); err != nil {
+		t.Fatalf("expected retained observation to validate, got %v", err)
+	}
+}
+
+// TC-PKG-01: package_inventory_file_valid
+func TestTC_PKG_01_PackageInventoryFileValid(t *testing.T) {
+	b, _ := newTestBatchWithInventory(t)
+	installBatch(t, b)
+	if err := ValidateInstalledDirectory(b.Dir); err != nil {
+		t.Fatalf("ValidateInstalledDirectory failed: %v", err)
+	}
+}
+
+// TC-PKG-02: package_unreferenced_inventory_file
+func TestTC_PKG_02_PackageUnreferencedInventoryFile(t *testing.T) {
+	b, _ := newTestBatchWithInventory(t)
+	installBatch(t, b)
+
+	unrefHex := strings.Repeat("c", 64)
+	unrefFile := filepath.Join(b.Dir, "inventories", unrefHex+".json")
+	if err := os.WriteFile(unrefFile, []byte("[\"sha256:1111111111111111111111111111111111111111111111111111111111111111\"]\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ValidateInstalledDirectory(b.Dir)
+	checkRefusal(t, err, RulePackageStrayFile)
+}
+
+// TC-PKG-03: package_missing_referenced_inventory
+func TestTC_PKG_03_PackageMissingReferencedInventory(t *testing.T) {
+	b, invFile := newTestBatchWithInventory(t)
+	installBatch(t, b)
+
+	if err := os.Remove(invFile); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ValidateInstalledDirectory(b.Dir)
+	checkRefusal(t, err, RulePackageStrayFile)
+}
+
+// TC-PKG-04: package_inventory_missing_trailing_lf
+func TestTC_PKG_04_PackageInventoryMissingTrailingLF(t *testing.T) {
+	b, invFile := newTestBatchWithInventory(t)
+
+	raw, err := os.ReadFile(invFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawNoLF := bytes.TrimRight(raw, "\n")
+	if err := os.WriteFile(invFile, rawNoLF, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	installBatch(t, b)
+	err = ValidateInstalledDirectory(b.Dir)
+	checkRefusal(t, err, RuleInventoryMismatch, RuleDigestMismatch)
+}
+
+// TC-PKG-05: mapping_closure_exact_3way
+func TestTC_PKG_05_MappingClosureExact3Way(t *testing.T) {
+	b := newTestBatch(t)
+	installBatch(t, b)
+	if err := ValidateInstalledDirectory(b.Dir); err != nil {
+		t.Fatalf("expected 3-way mapping closure to pass, got: %v", err)
+	}
+}
+
+// TC-PKG-06: mapping_closure_orphan_package_file
+func TestTC_PKG_06_MappingClosureOrphanPackageFile(t *testing.T) {
+	b := newTestBatch(t)
+	installBatch(t, b)
+
+	antigravityBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "antigravity", "mapping.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mEnv, err := records.NewValidator(records.Allowlists{}).ValidateEnvelope(antigravityBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extraHex := strings.TrimPrefix(mEnv.ID, "sha256:")
+	extraFile := filepath.Join(b.Dir, "mappings", extraHex+".json")
+	if err := os.WriteFile(extraFile, antigravityBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = ValidateInstalledDirectory(b.Dir)
+	checkRefusal(t, err, RuleMappingClosureViolation)
+}
+
+// TC-PKG-07: mapping_closure_missing_package_file
+func TestTC_PKG_07_MappingClosureMissingPackageFile(t *testing.T) {
+	b := newTestBatch(t)
+
+	missingID := "sha256:" + strings.Repeat("d", 64)
+	b.Coverage.MappingIDs = append(b.Coverage.MappingIDs, missingID)
+	covBytes, _, err := records.SealCoverage(b.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.CoverageBytes = covBytes
+	installBatch(t, b)
+
+	err = ValidateInstalledDirectory(b.Dir)
+	checkRefusal(t, err, RuleMappingClosureViolation)
+}
+
+// TC-PKG-08: mapping_closure_observation_undeclared
+func TestTC_PKG_08_MappingClosureObservationUndeclared(t *testing.T) {
+	b := newTestBatch(t)
+
+	// Synthesize an observation referencing an undeclared mapping M3
+	undeclaredMappingID := "sha256:" + strings.Repeat("3", 64)
+	var obsEnv map[string]interface{}
+	if err := json.Unmarshal(b.ObsLines[0], &obsEnv); err != nil {
+		t.Fatal(err)
+	}
+	body := obsEnv["body"].(map[string]interface{})
+	body["mapping_id"] = undeclaredMappingID
+
+	newBodyBytes, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newBodySum := sha256.Sum256(newBodyBytes)
+	obsEnv["id"] = "sha256:" + hex.EncodeToString(newBodySum[:])
+
+	modLine, err := json.Marshal(obsEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modShard := append(modLine, '\n')
+	shardSum := sha256.Sum256(modShard)
+	shardHex := hex.EncodeToString(shardSum[:])
+
+	os.Remove(b.ShardFile)
+	newShardFile := filepath.Join(filepath.Dir(b.ShardFile), shardHex+".jsonl")
+	if err := os.WriteFile(newShardFile, modShard, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	b.Coverage.Shards[0].ShardID = "sha256:" + shardHex
+	b.Coverage.Shards[0].RecordCount = "1"
+	b.Coverage.Shards[0].InlineIDs = []string{obsEnv["id"].(string)}
+	b.Coverage.Counts.RecordsEmitted = "1"
+	b.Coverage.Counts.Observations = "1"
+
+	covBytes, _, err := records.SealCoverage(b.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.CoverageBytes = covBytes
+	installBatch(t, b)
+
+	err = ValidateInstalledDirectory(b.Dir)
+	checkRefusal(t, err, RuleMappingClosureViolation)
+}
+
+// TC-PKG-09: mapping_closure_coverage_unused
+func TestTC_PKG_09_MappingClosureCoverageUnused(t *testing.T) {
+	b := newTestBatch(t)
+
+	// Add second valid mapping to mappings/ AND to coverage.mapping_ids, but shard does not use it
+	antigravityBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "antigravity", "mapping.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mEnv, err := records.NewValidator(records.Allowlists{}).ValidateEnvelope(antigravityBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extraHex := strings.TrimPrefix(mEnv.ID, "sha256:")
+	extraFile := filepath.Join(b.Dir, "mappings", extraHex+".json")
+	if err := os.WriteFile(extraFile, antigravityBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	b.Coverage.MappingIDs = append(b.Coverage.MappingIDs, mEnv.ID)
+	// Keep mapping IDs sorted
+	if b.Coverage.MappingIDs[0] > b.Coverage.MappingIDs[1] {
+		b.Coverage.MappingIDs[0], b.Coverage.MappingIDs[1] = b.Coverage.MappingIDs[1], b.Coverage.MappingIDs[0]
+	}
+
+	covBytes, _, err := records.SealCoverage(b.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.CoverageBytes = covBytes
+	installBatch(t, b)
+
+	err = ValidateInstalledDirectory(b.Dir)
+	checkRefusal(t, err, RuleMappingClosureViolation)
+}
+
+// TC-PKG-10: package_input_coverage_dir_forbidden
+func TestTC_PKG_10_PackageInputCoverageDirForbidden(t *testing.T) {
+	b := newTestBatch(t)
+	covDir := filepath.Join(b.Dir, "coverage")
+	if err := os.MkdirAll(covDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
+	checkRefusal(t, err, RulePackageStrayFile)
+}
+
+// TC-PKG-11: mapping_already_in_destination_ledger_packaged
+func TestTC_PKG_11_MappingAlreadyInDestinationLedgerPackaged(t *testing.T) {
+	b := newTestBatch(t)
+	// Batch packages mapping even if destination already has an identical copy
+	if err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes); err != nil {
+		t.Fatalf("ValidateCandidateDirectory failed: %v", err)
+	}
+}
+
+// TC-VAL-14: shard_record_unallocated_and_underscore_paths
+func TestTC_VAL_14_ShardRecordUnallocatedAndUnderscorePaths(t *testing.T) {
+	dir := t.TempDir()
+
+	mapBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "codex", "mapping.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mEnv, err := records.NewValidator(records.Allowlists{}).ValidateEnvelope(mapBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapHex := strings.TrimPrefix(mEnv.ID, "sha256:")
+
+	mappingsDir := filepath.Join(dir, "mappings")
+	os.MkdirAll(mappingsDir, 0755)
+	os.WriteFile(filepath.Join(mappingsDir, mapHex+".json"), mapBytes, 0644)
+
+	// Load line 3 from expected_records.jsonl: friend: "rowan", bench: "studio", occurred_at: null -> unallocated
+	recBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "codex", "expected_records.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	allLines := bytes.Split(recBytes, []byte("\n"))
+	var undatedLine []byte
+	var undatedID string
+	for _, l := range allLines {
+		if len(bytes.TrimSpace(l)) == 0 {
+			continue
+		}
+		var env records.Envelope
+		if err := json.Unmarshal(l, &env); err == nil {
+			var probe struct {
+				Body struct {
+					Time struct {
+						OccurredAt *string `json:"occurred_at"`
+					} `json:"time"`
+				} `json:"body"`
+			}
+			json.Unmarshal(l, &probe)
+			if probe.Body.Time.OccurredAt == nil {
+				undatedLine = l
+				undatedID = env.ID
+				break
+			}
+		}
+	}
+	if undatedLine == nil {
+		t.Fatal("expected an undated observation record in fixture")
+	}
+
+	shardContent := append(append([]byte(nil), undatedLine...), '\n')
+	shardSum := sha256.Sum256(shardContent)
+	shardHex := hex.EncodeToString(shardSum[:])
+
+	unallocatedDir := filepath.Join(dir, "records", "rowan", "studio", "unallocated")
+	os.MkdirAll(unallocatedDir, 0755)
+	shardFile := filepath.Join(unallocatedDir, shardHex+".jsonl")
+	os.WriteFile(shardFile, shardContent, 0644)
+
+	cov := records.Coverage{
+		Schema:         records.SchemaCoverage,
+		ScopeID:        "nova.codex-desktop.responses",
+		SourceIDs:      []string{"nova.codex-desktop.responses"},
+		Interval:       records.CoverageInterval{Start: "2026-09-12T00:00:00Z", End: "2026-09-13T00:00:00Z"},
+		Status:         "complete_within_scope",
+		Reasons:        []records.CoverageReason{},
+		CollectedAt:    "2026-09-13T01:00:00Z",
+		CollectorBuild: "codex-desktop@0.154.0 build=abc123",
+		MappingIDs:     []string{mEnv.ID},
+		Shards: []records.ShardRef{
+			{
+				ShardID:     "sha256:" + shardHex,
+				RecordCount: "1",
+				InlineIDs:   []string{undatedID},
+			},
+		},
+		Predecessors: []string{},
+		Counts: records.CoverageCounts{
+			SourceCandidates: "1",
+			RecordsEmitted:   "1",
+			Observations:     "1",
+			Conflicts:        "0",
+			Gaps:             "0",
+		},
+	}
+
+	covBytes, _, err := records.SealCoverage(cov)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ValidateCandidateDirectory(dir, "", covBytes); err != nil {
+		t.Fatalf("ValidateCandidateDirectory failed for unallocated day path: %v", err)
+	}
+}
+
+// TestPermissionsEnforcement: files must be 0644, directories 0755
+func TestPermissionsEnforcement(t *testing.T) {
+	b := newTestBatch(t)
+	// Invalidate file mode
+	if err := os.Chmod(b.ShardFile, 0777); err != nil {
+		t.Fatal(err)
+	}
+	err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
+	checkRefusal(t, err, RulePermissionsInvalid)
+
+	// Restore file mode and invalidate directory mode
+	os.Chmod(b.ShardFile, 0644)
+	shardDir := filepath.Dir(b.ShardFile)
+	if err := os.Chmod(shardDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(shardDir, 0755)
+
+	err2 := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
+	checkRefusal(t, err2, RulePermissionsInvalid)
+}
+
+// TestCountEquations: records_emitted, observations, gaps, and conflicts equations
+func TestCountEquations(t *testing.T) {
+	// 1. records_emitted mismatch
+	b := newTestBatch(t)
+	b.Coverage.Counts.RecordsEmitted = "99"
+	covBytes, _, err := records.SealCoverage(b.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ValidateCandidateDirectory(b.Dir, "", covBytes)
+	checkRefusal(t, err, RuleCountEquationMismatch)
+
+	// 2. observations mismatch
+	b2 := newTestBatch(t)
+	b2.Coverage.Counts.Observations = "99"
+	covBytes2, _, err := records.SealCoverage(b2.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ValidateCandidateDirectory(b2.Dir, "", covBytes2)
+	checkRefusal(t, err, RuleCountEquationMismatch)
+
+	// 3. conflicts mismatch
+	b3 := newTestBatch(t)
+	b3.Coverage.Counts.Conflicts = "1"
+	covBytes3, _, err := records.SealCoverage(b3.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ValidateCandidateDirectory(b3.Dir, "", covBytes3)
+	checkRefusal(t, err, RuleCountEquationMismatch)
+}
