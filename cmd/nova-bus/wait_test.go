@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -77,6 +78,23 @@ func push(dir string) error {
 		return fmt.Errorf("push from %s: %v\n%s", dir, err, out)
 	}
 	return nil
+}
+
+// readToOf is the commit a run READ TO: the parent of the cursor commit that run made.
+//
+// It finds the cursor commit BY NAME -- the last commit that touched the lane's CURSOR --
+// rather than assuming it is the tip. A wait commits its lane's BEAT on every tick so the
+// checkout is never left dirty for the next verb (#488), and those commits land after the
+// cursor commit, so `HEAD~1` is no longer the commit that was read to. What is asserted is
+// unchanged and is now named exactly: the cursor stands on the commit under the cursor
+// commit itself.
+func readToOf(t *testing.T, checkout, lane string) string {
+	t.Helper()
+	sha := strings.TrimSpace(gitIn(t, checkout, "log", "-1", "--format=%H", "--", lane+"/CURSOR"))
+	if sha == "" {
+		t.Fatalf("no commit in this checkout touched %s/CURSOR", lane)
+	}
+	return strings.TrimSpace(gitIn(t, checkout, "rev-parse", sha+"^"))
 }
 
 // A wait is one read, and every return ends with one terminal line that says it ended and
@@ -288,7 +306,7 @@ func TestWaitAdvancesTheCursorExactlyAsInboxDoes(t *testing.T) {
 		// The commit the run READ TO, which is the one under the cursor commit it then
 		// made: both verbs advance to the head they read, and the cursor is what they
 		// commit on top of it.
-		readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD~1"))
+		readTo := readToOf(t, checkout, "from-ada")
 		cursor := strings.TrimSpace(read(t, checkout, "from-ada/CURSOR"))
 		fields := strings.Fields(cursor)
 		if len(fields) < 3 || fields[0] != readTo {
@@ -514,7 +532,7 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	}
 	// The cursor moved over the heard note: its commit is the one this run read to, which
 	// is the parent of the cursor commit the advance itself made.
-	readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD~1"))
+	readTo := readToOf(t, checkout, "from-ada")
 	if onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR")); len(onLane) == 0 || onLane[0] != readTo {
 		t.Fatalf("the cursor was not advanced to head over the heard note (read to %s):\n%s", readTo, read(t, checkout, "from-ada/CURSOR"))
 	}
@@ -586,15 +604,28 @@ func TestWaitWritesLeaseOnExit(t *testing.T) {
 }
 
 // THE PUSH IS BOUNDED. A beat push costs somebody's server, so only the push is gated at
-// --beat, never the write: over a wait whose --beat is far longer than --interval the BEAT
-// is written on every poll but pushed only when a whole beat has elapsed. Here the beat is
+// --beat: over a wait whose --beat is far longer than --interval the BEAT is written and
+// committed on every poll -- a beat left uncommitted is a dirty checkout the next verb
+// refuses over (#488) -- but pushed only when a whole beat has elapsed. Here the beat is
 // short enough that a push MUST happen, and the assertion is that pushes never outrun the
 // polls -- a beat pushed once per poll would be a poller, not a beat.
+//
+// It counts PUSHES, at the remote's own update hook, which is the only place a push can be
+// counted. Counting beat commits counted the wrong thing twice over: in the local log they
+// are the part that is deliberately not bounded, and at the remote one push carries every
+// beat committed since the last one.
 func TestWaitBeatPushBounded(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
-	checkout, _ := busDir(t)
+	checkout, bare := busDir(t)
 	settled(t, checkout)
+
+	// One line per ref this remote is asked to update, written by git itself, after the
+	// fixture's own pushes are already done.
+	hook := filepath.Join(bare, "hooks", "update")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho \"$1\" >> \"$GIT_DIR/pushes\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "150ms")...).mustCode(t, 0)
 
@@ -603,18 +634,20 @@ func TestWaitBeatPushBounded(t *testing.T) {
 		t.Fatalf("polls=%d, want at least 1:\n%s", pollCount, r.stdout)
 	}
 
-	log := gitIn(t, checkout, "log", "--format=%s", "main")
-	beats := 0
-	for _, line := range strings.Split(log, "\n") {
-		if strings.Contains(line, "beat ada") {
-			beats++
-		}
+	raw, err := os.ReadFile(filepath.Join(bare, "pushes"))
+	if err != nil {
+		t.Fatalf("a wait with --beat 150ms pushed nothing at all: %v", err)
 	}
-	if beats < 1 {
-		t.Fatalf("a wait with --beat 150ms pushed no beat commit:\n%s", log)
+	pushes := len(strings.Fields(strings.TrimSpace(string(raw))))
+	if pushes < 1 {
+		t.Fatalf("a wait with --beat 150ms pushed no beat:\n%q", raw)
 	}
-	if beats > pollCount {
-		t.Fatalf("pushed %d beat commits over %d polls; the push is bounded by --beat, not once per tick:\n%s", beats, pollCount, log)
+	if pushes > pollCount {
+		t.Fatalf("pushed %d times over %d polls; the push is bounded by --beat, not once per tick:\n%q", pushes, pollCount, raw)
+	}
+	// And the beat did land there, which is what the push was for.
+	if log := gitIn(t, bare, "log", "--format=%s", "main"); !strings.Contains(log, "beat ada") {
+		t.Fatalf("the pushes carried no beat commit to the remote:\n%s", log)
 	}
 }
 
@@ -695,4 +728,52 @@ func splitShellWords(line string) []string {
 		words = append(words, cur.String())
 	}
 	return words
+}
+
+// A WAIT LEAVES THE CHECKOUT CLEAN. The beat is this tool's own file, written on entry,
+// on every tick and on exit -- and a file this tool writes and does not commit is a dirty
+// checkout that the NEXT verb refuses over, naming a file the caller never touched. The
+// write is per tick and so is the commit now; only the push is bounded (#488, #459).
+func TestWaitLeavesCheckoutClean(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "1h")...).mustCode(t, 0)
+
+	if out := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain", "--untracked-files=all")); out != "" {
+		t.Fatalf("the wait left the checkout dirty, so the next verb refuses over a file the caller never touched:\n%s", out)
+	}
+}
+
+// AND THE SEND AFTER IT GOES OUT. This is the production incident of 2026-09-15, twice in
+// one sitting: a line waiting on the bus could not then send, because wait's own BEAT was
+// sitting uncommitted in the checkout and send refuses over changes that are not its note.
+// The beat commit carries the tool's trailer, so the branch-ahead guard already knows it
+// for machinery of ours and the send carries it out along with the note.
+func TestSendAfterWaitBeatSucceeds(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, bare := busDir(t)
+	settled(t, checkout)
+
+	// --beat 1h, so the wait's beat is committed and NOT pushed: the send meets both an
+	// uncommitted-file guard and a branch-ahead guard, which is the state that broke.
+	invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "1h")...).mustCode(t, 0)
+
+	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "SEND OK id=ada-").
+		mustContain(t, "stdout", "pushed=true")
+
+	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
+	if !strings.Contains(files, "from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-") {
+		t.Fatalf("the note is not on the remote:\n%s", files)
+	}
+	// The beat the wait could not push went out with the note: a wait and a send are one
+	// line's machinery, and neither leaves the other's work behind.
+	if !strings.Contains(files, "from-ada/BEAT") {
+		t.Fatalf("the send did not carry the wait's beat out with it:\n%s", files)
+	}
 }

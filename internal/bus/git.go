@@ -490,6 +490,26 @@ func trackingRef(dir, remote, branch string) string {
 //   - the two have DIVERGED: a refusal naming the recovery, because a run that read a
 //     history nobody else has would report an inbox nobody else can see.
 func FetchAndFastForward(dir, remote, branch string) (bool, error) {
+	return fetchAndTake(dir, Identity{}, remote, branch, false)
+}
+
+// FetchAndTakeOurs is FetchAndFastForward for the one caller that has commits of ITS OWN
+// sitting on the branch: `wait`, whose lane BEAT is committed on every tick so that the
+// checkout is never left dirty for the verb the caller runs next (#488, #459). Its push is
+// bounded at --beat, so between pushes the branch is legitimately ahead -- and when a note
+// then arrives from somebody else, the two histories have both moved and a fast-forward is
+// no longer possible. A wait that stopped seeing notes there would be a far worse bug than
+// the one the commit fixes.
+//
+// So a divergence whose local side is ENTIRELY this tool's own commits -- the trailer says
+// so, the same test the branch-ahead guard makes -- is rebased onto what arrived instead of
+// refused. A divergence holding one commit this tool did not make is refused exactly as
+// before: that is somebody's unfinished work and not ours to move.
+func FetchAndTakeOurs(dir string, id Identity, remote, branch string) (bool, error) {
+	return fetchAndTake(dir, id, remote, branch, true)
+}
+
+func fetchAndTake(dir string, id Identity, remote, branch string, takeOurs bool) (bool, error) {
 	if err := ValidGitArg("remote", remote); err != nil {
 		return false, err
 	}
@@ -522,6 +542,23 @@ func FetchAndFastForward(dir, remote, branch string) (bool, error) {
 		}
 		if ahead {
 			return false, nil
+		}
+		if takeOurs {
+			foreign, ferr := notOurs(dir, ref)
+			if ferr == nil && len(foreign) == 0 {
+				if _, rerr := git(dir, append(identityArgs(id), "rebase", ref)...); rerr != nil {
+					// The files a rebase of our own commits can land on are this tool's
+					// own, and settleRebase is what settles them; anything it will not
+					// settle is aborted and reported, leaving the checkout as it was.
+					if serr := settleRebase(dir, id); serr != nil {
+						if aerr := abortRebase(dir); aerr != nil {
+							return false, aerr
+						}
+						return false, fmt.Errorf("this checkout holds only commits this tool made, and replaying them over what arrived on %s conflicted on %s; %s", ref, oneLineOf(serr.Error()), pullRebaseAdvice)
+					}
+				}
+				return true, nil
+			}
 		}
 		return false, fmt.Errorf("this checkout and %s have both moved since they last agreed, so nothing here can be fast-forwarded onto the bus's history; %s", ref, pullRebaseAdvice)
 	}
@@ -598,6 +635,17 @@ func CurrentBranch(dir string) (string, error) {
 		return "", errors.New("the bus's checkout is not on a branch (detached HEAD)")
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// PathDirty reports whether a checkout holds an uncommitted change to one path -- staged,
+// unstaged or untracked. It is what a caller asks before committing a file it has just
+// written: a `git commit` of a path with nothing to commit is an error, not a no-op.
+func PathDirty(dir, path string) (bool, error) {
+	out, err := git(dir, "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(strings.ReplaceAll(out, "\x00", "")) != "", nil
 }
 
 // EnsureClean refuses to run the protocol over a checkout holding changes that are not the
@@ -771,7 +819,41 @@ func CommitAndPush(dir string, id Identity, paths []string, message, remote, bra
 		return res, err
 	}
 	res.Commit = sha
+	return pushWithRetry(dir, id, remote, branch, attempts, res)
+}
 
+// PushPending pushes what is already committed on this branch, with the same protocol
+// CommitAndPush uses for the commit it just made: the same retries, the same fetch and
+// rebase over what arrived, the same settlement of this tool's own files. It stages and
+// commits NOTHING.
+//
+// It exists for the beat. `wait` commits its lane's BEAT on every tick -- a file this tool
+// writes and leaves uncommitted is a dirty checkout the next verb refuses over (#488) --
+// and pushes it only once per --beat, because a push costs somebody's server. The push at
+// that cadence therefore has nothing left to commit, and a commit of nothing is an error
+// rather than a push.
+func PushPending(dir string, id Identity, remote, branch string, attempts int) (PushResult, error) {
+	var res PushResult
+	if attempts < 1 {
+		return res, fmt.Errorf("attempts must be at least 1, got %d", attempts)
+	}
+	if err := ValidGitArg("remote", remote); err != nil {
+		return res, err
+	}
+	if err := ValidGitArg("branch", branch); err != nil {
+		return res, err
+	}
+	sha, err := git(dir, "rev-parse", "HEAD")
+	if err != nil {
+		return res, err
+	}
+	res.Commit = strings.TrimSpace(sha)
+	return pushWithRetry(dir, id, remote, branch, attempts, res)
+}
+
+// pushWithRetry is the push protocol both of the above run: push, and on a refusal wait,
+// fetch, rebase over what arrived and push again, up to attempts times.
+func pushWithRetry(dir string, id Identity, remote, branch string, attempts int, res PushResult) (PushResult, error) {
 	for attempt := 1; attempt <= attempts; attempt++ {
 		res.Attempts = attempt
 		if _, err := git(dir, "push", remote, "HEAD:refs/heads/"+branch); err == nil {

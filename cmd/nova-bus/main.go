@@ -2335,9 +2335,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)))
 	// THE ENTRY BEAT, written before the first poll, so a line that is about to wait
 	// already reads awake the moment its call begins, lease and all.
-	if err := bus.WriteBeat(*busDir, me.Lane, held.Commit, now, now.Add(*beatLease)); err != nil {
-		fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
-	}
+	landBeat(o, held.Commit, stderr)
 	// The command the caller issues again to re-arm this wait: the next one, with the same
 	// flags, echoed back so a harness that does not wake on its own can paste it. A wait is
 	// ONE read, with one terminal line saying it ended and must be re-armed. Each argument
@@ -2386,6 +2384,36 @@ func writeBeatLease(o inboxOpts, cursor string) error {
 	return bus.WriteBeat(o.busDir, o.me.Lane, cursor, now, now.Add(o.lease))
 }
 
+// landBeat is the whole of a beat: the write, and the LOCAL COMMIT that keeps it from
+// being a dirty checkout. It is called on entry, on every tick and on exit, and every one
+// of those three sites has to commit -- a beat written at any of them and left in the
+// working tree is what makes the caller's next `send` refuse over "changes that are not
+// this note", naming a file they never touched (#459, twice in one sitting; #488 is the
+// line of code).
+//
+// The commit is local and costs nothing. Only the PUSH is bounded at --beat, in the loop,
+// because only the push costs somebody's server; the commit carries this tool's trailer,
+// so the branch-ahead guard reads it as machinery of ours and the next send or receipt
+// carries it out along with its own note.
+func landBeat(o inboxOpts, cursor string, stderr io.Writer) {
+	if err := writeBeatLease(o, cursor); err != nil {
+		fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+		return
+	}
+	dirty, err := bus.PathDirty(o.busDir, bus.BeatPath(o.me.Lane))
+	if err != nil {
+		fmt.Fprintf(stderr, "WAIT NOTE beat commit failed: %s\n", oneline.Err(err))
+		return
+	}
+	if !dirty {
+		return
+	}
+	if _, err := commit(o.busDir, o.me, []string{bus.BeatPath(o.me.Lane)},
+		bus.WithTrailer("beat "+o.me.Slug(), bus.TrailerBeat), o.remote, o.branch, o.attempts, true); err != nil {
+		fmt.Fprintf(stderr, "WAIT NOTE beat commit failed: %s\n", oneline.Err(err))
+	}
+}
+
 // waitLoop is the clock: poll, and either return what arrived or sleep and poll again
 // until the deadline. It is apart from the flags so that what it does is readable without
 // them.
@@ -2419,11 +2447,17 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		}
 		// The beat write, carried for every exit below: a wait that is handing the harness
 		// a note and stopping has a gap to the next wait, and the lease covers it.
-		writeBeat := func() {
-			if err := writeBeatLease(o, cursor); err != nil {
-				fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
-			}
-		}
+		//
+		// THE COMMIT IS PART OF THE WRITE, and it is why this is not one line. A BEAT
+		// written into the working tree and not committed is a dirty checkout, and the
+		// next verb this line runs -- the send that answers the note the wait just handed
+		// over -- refuses over "changes that are not this note", naming a file the caller
+		// never touched (#459, twice in one sitting; #488 is the line of code). The commit
+		// is local and costs nothing; only the PUSH is bounded at --beat below, because
+		// only the push costs somebody's server. The commit carries the tool's own
+		// trailer, so the branch-ahead guard already reads it as machinery of ours and the
+		// next send carries it out along with the note.
+		writeBeat := func() { landBeat(o, cursor, stderr) }
 		if code != 0 {
 			// The listing this poll had already printed, if it printed one, under the
 			// refusal that is on stderr: a reader who was shown their inbox has been shown
@@ -2443,8 +2477,11 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		writeBeat()
 		if time.Since(lastBeat) >= o.beat {
 			lastBeat = time.Now()
-			if _, err := commit(o.busDir, o.me, []string{bus.BeatPath(o.me.Lane)},
-				bus.WithTrailer("beat "+o.me.Slug(), bus.TrailerBeat), o.remote, o.branch, o.attempts, false); err != nil {
+			// The beat is already committed, every tick, by the write above; what is
+			// bounded at --beat is the push, so this pushes what is on the branch rather
+			// than committing again -- a commit of nothing is an error, not a push.
+			if _, err := bus.PushPending(o.busDir, bus.Identity{Name: o.me.GitName, Email: o.me.GitEmail},
+				o.remote, o.branch, o.attempts); err != nil {
 				fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
 			}
 		}
@@ -2496,9 +2533,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 	// and the caller's move is to issue the next wait. Exit 0, with the counts that say the
 	// tool was awake the whole time. The exit beat extends the lease over the gap to the
 	// next wait exactly as the entry and tick beats do.
-	if err := writeBeatLease(o, cursor); err != nil {
-		fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
-	}
+	landBeat(o, cursor, stderr)
 	fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s\n",
 		oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
 	fmt.Fprintf(stdout, "WAIT DONE reason=timeout rearm=required next=%s\n", next)
@@ -2520,7 +2555,11 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	// THE FETCH IS THE POLL. Every read in this tool reads the working tree, so a poll that
 	// fetched and left the checkout where it was would never see anything; see
 	// bus.FetchAndFastForward, which moves it only when moving it is a fast-forward.
-	if _, err := bus.FetchAndFastForward(o.busDir, o.remote, o.branch); err != nil {
+	// FetchAndTakeOurs, not FetchAndFastForward: this reader's own beat commits sit on the
+	// branch between the bounded pushes, so a note arriving from somebody else is a
+	// divergence -- of our commits against theirs -- and taking theirs is replaying ours on
+	// top. Anything this tool did not commit is still refused (#488).
+	if _, err := bus.FetchAndTakeOurs(o.busDir, bus.Identity{Name: o.me.GitName, Email: o.me.GitEmail}, o.remote, o.branch); err != nil {
 		if first {
 			// The first poll's fetch failing is the invocation being wrong -- a remote that
 			// is not there, a branch nobody has, a checkout that has diverged -- and the

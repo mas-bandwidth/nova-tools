@@ -3496,7 +3496,7 @@ goes open. A run parses the notes that are NEW and nothing else.
 | `from-<me>/CURSOR` | one reader's | one line: the commit I last read to, and when |
 | `from-<me>/OPEN` | one reader's | one line per note I have been shown and have not answered — its whole display line, and whether I have heard it |
 | `from-<lane>/INDEX` | one lane's | one line per note that lane has sent: id, path, date, To, Re |
-| `from-<me>/BEAT` | one reader's | one line, an RFC 3339 UTC stamp, the cursor sha, and a `until=<stamp>` lease, rewritten on `wait` entry, every poll tick, and exit so a waiting line's cursor that does not move still records that the line is alive — and the lease keeps a duty cycle between two waits reading awake |
+| `from-<me>/BEAT` | one reader's | one line, an RFC 3339 UTC stamp, the cursor sha, and a `until=<stamp>` lease, rewritten on `wait` entry, every poll tick, and exit so a waiting line's cursor that does not move still records that the line is alive — and the lease keeps a duty cycle between two waits reading awake. **It is `wait`'s own file and its own commit**: every write is committed locally the moment it is made, so a wait never leaves the checkout dirty for the verb the caller runs next, and the push is bounded at `--beat` because only the push costs somebody's server. The commit carries this tool's trailer, so the branch-ahead guard reads it as machinery of ours: a `send`, a `receipt` or an `inbox --advance` that finds beat commits on the branch carries them out with its own note instead of refusing, and a `wait` whose bus has moved replays its beats over what arrived |
 
 They are files a person can read, like everything else on the bus. Blank lines
 and `#` comments are ignored in all three.
