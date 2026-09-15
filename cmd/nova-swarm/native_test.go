@@ -1203,3 +1203,66 @@ func TestNativeTmpDirIsOutsideAnyRepo(t *testing.T) {
 		t.Errorf("git rev-parse --show-toplevel from TMPDIR %q resolved into the job's repo %q", res.tmp, toplevel)
 	}
 }
+
+// TestNativeNoWallWritesHarnessLog: the UNWALLED run captures the harness's own output to
+// <job>/harness.log, exactly as the walled run does. Before this, `native --no-wall` pinned
+// the child's stdout and stderr to <slot>/native.log alone and wrote no harness log at all,
+// so every unwalled Space card that produced no RESULT left NO evidence of what the harness
+// said -- the whole no-result class of 2026-09-16 was undiagnosable -- and `harness=silent`
+// (#604) could not tell a silent harness from a lost log (issue #608). The fake harness says
+// one line on each stream; both modes must hold both lines in the same file.
+func TestNativeNoWallWritesHarnessLog(t *testing.T) {
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+
+	for _, tc := range []struct {
+		name    string
+		sandbox string
+		noWall  bool
+	}{
+		{"unwalled", "", true},
+		{"walled", sandbox, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.sandbox != "" {
+				t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+			}
+			root, slot := aSlot(t)
+			label := "harness-log-" + tc.name
+			touched := filepath.Join(t.TempDir(), "touched")
+			card := []byte("FAKE-SAY the-harness-said-this\nFAKE-TOUCH " + touched + "\n")
+
+			var errOut bytes.Buffer
+			_, code := nativeRun(nativeRunConfig{
+				binary: bin, model: "fake/fake-model", label: label,
+				card: card, slotDir: slot, root: root, deadline: 30 * time.Second,
+				sandbox: tc.sandbox, noWall: tc.noWall,
+			}, &errOut)
+			if code != 0 {
+				t.Fatalf("the %s run exits 0, got %d:\n%s", tc.name, code, errOut.String())
+			}
+
+			logPath := filepath.Join(slot, "jobs", label, "harness.log")
+			raw, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatalf("the %s run wrote no harness log at %s: %v", tc.name, logPath, err)
+			}
+			for _, want := range []string{"the-harness-said-this", "touch " + touched} {
+				if !strings.Contains(string(raw), want) {
+					t.Errorf("the %s harness log %s does not carry %q:\n%s", tc.name, logPath, want, raw)
+				}
+			}
+			// One capture path: whatever the harness log holds, the run log holds too, so a
+			// reader of either sees the same run.
+			runLog, err := os.ReadFile(filepath.Join(slot, "native.log"))
+			if err != nil {
+				t.Fatalf("the %s run wrote no native.log: %v", tc.name, err)
+			}
+			for _, want := range []string{"the-harness-said-this", "touch " + touched} {
+				if !strings.Contains(string(runLog), want) {
+					t.Errorf("the %s native.log does not carry %q:\n%s", tc.name, want, runLog)
+				}
+			}
+		})
+	}
+}

@@ -236,12 +236,29 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		refuseNative(errOut, fmt.Sprintf("the run log %s could not be opened: %s", oneline.Field(filepath.Join(cfg.slotDir, "native.log")), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
+	// ONE CAPTURE PATH, WALLED OR NOT (issue #608). The child's output also lands in the
+	// job's own `harness.log`, the name every other part of this tool reads a run's evidence
+	// by: `finish` counts refusals there, the input-limit reader looks for the provider's
+	// words there, batch's idle watch measures it, and `harness=silent` (#604) asks whether
+	// it holds bytes. Before this the native path wrote only <slot>/native.log, so an
+	// UNWALLED card -- every Space card -- that produced no RESULT left no evidence at all
+	// and its failure could not be diagnosed; a silent harness and a lost log read the same.
+	// The file is opened O_APPEND and never truncated: a batch opens this same path and
+	// pins its runner's stdout to it before this process starts, and truncating it here
+	// would cut the runner's own lines out from under it.
+	harnessLog, err := os.OpenFile(filepath.Join(jobDir, "harness.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		log.Close()
+		refuseNative(errOut, fmt.Sprintf("the harness log %s could not be opened: %s", oneline.Field(filepath.Join(jobDir, "harness.log")), oneline.Escape(err.Error())))
+		return nativeRunResult{}, 2
+	}
 	// The wall's own stderr is split out of the log: the SANDBOX OK line the wall prints
 	// is where the tool learns the wall's name and the cwd it actually applied, and neither
-	// is guessed. The log still carries every byte; the buffer holds stderr for the parse.
+	// is guessed. The logs still carry every byte; the buffer holds stderr for the parse.
 	var wallOut bytes.Buffer
-	cmd.Stdout = log
-	cmd.Stderr = io.MultiWriter(log, &wallOut)
+	capture := io.MultiWriter(log, harnessLog)
+	cmd.Stdout = capture
+	cmd.Stderr = io.MultiWriter(capture, &wallOut)
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -265,6 +282,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	res.wallSeconds = time.Since(start).Seconds()
 	log.Close()
+	harnessLog.Close()
 
 	if wall != "" {
 		backend, cwd, ok := wallNamed(wallOut.String())
