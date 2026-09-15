@@ -89,11 +89,20 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    run go build, go test or any toolchain; read and write only`, and `cut` refuses a text
    template that lacks it; `fix`, `replay` and `drift` carry rule 4 of WORKER-CARDS: red
    line then green line, one row per item.
-7. **The model is decided by the kind and nowhere else.** `read`, `text`, `tone` → `flash`;
-   `fix`, `replay`, `drift` → `pro`; the ids come from `models.tsv`. `cards.tsv` is four
-   fields per line: `label`, `slot`, `model`, `card` (the card's path). `slot` is `-` until
-   `launch` allocates. There is no `--model` flag on any verb: a person who wants another
-   route edits `models.tsv`, in git, once.
+7. **The route is the cheapest capable, from a cost table, never a hand.** `cut` reads the
+   cost table `--benches <file>` (default `benches.tsv` beside `--templates`; a `routes.tsv`
+   beside it is read the same way): one column per model, two rows — `cost`, a class
+   `zero|flat|metered` with a `usd per Mtok`, and `capability`, `read|text|code|replay`. Per
+   card class a model is capable when its capability covers the kind's (`read`, `text` and
+   `tone` need `read|text|replay`; `fix` and `drift` need `code`; `replay` needs `replay`),
+   and `cut` picks the capable model with the lowest average cost per token — `zero` beats
+   `flat` beats `metered`, ties broken by `usd per Mtok` — so routing is mechanical: local is
+   zero, Go is flat, Zen is metered. It prints `route=<model> reason=<class>` on its
+   `CUT ROUTE` line, `class` the cost class. A retry after an abstain (rule 14) moves the pick
+   one capability class up (`read` → `text` → `code` → `replay`), so a rewritten card routes
+   to a stronger class. There is no `--model` flag on any verb: the table is the whole
+   policy, in git, edited once. `cards.tsv` is four fields per line: `label`, `slot`, `model`,
+   `card`; `slot` is `-` until `launch` allocates.
 8. **A slot is free when no job holds it and its `native.log` is quiet.** `launch` reads the
    swarm pool under `--root`: a slot is free when `<pool>/slots/<n>.json` is absent or
    `state=free` **and** `<slot>/native.log` has not been written for 120 s. Both, never
@@ -168,7 +177,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
 
 ```
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--benches <benches.tsv>] [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>
@@ -193,6 +202,7 @@ state the coordinator must act on, and it exits like a refusal so a wake fires o
 POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
 POOL REFUSED source=<kind>:<locator>: <reason> (<remedy>)
 CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
+CUT ROUTE route=<model> reason=<class>
 CUT SKIPPED source=<kind> id=<id> template=<name>: no template
 CUT REFUSED template=<name>: <which rule> (<remedy>)
 PULSE OK id=<id> n=<n> free-before=<n> queued=<n> batches=<n> deadline=<s>
@@ -329,8 +339,15 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
 21. `output-bounded-at-the-largest-plausible-state`: 200 done cards and 60 abstains print at
     most `2 * --max + 6` lines over both streams with a `MORE` line per capped kind; every
     value is one token; `--max 0` prints all; `--max -1` is exit 2.
-22. `every-refusal-names-its-remedy`: every refusal in the package lives in one table the
-    test walks; each ends in a parenthesised remedy, and removing one turns the test red.
+ 22. `every-refusal-names-its-remedy`: every refusal in the package lives in one table the
+     test walks; each ends in a parenthesised remedy, and removing one turns the test red.
+ 23. `cut-picks-cheapest-capable-route`: a benches table with a zero-cost local, a flat Go and
+     a metered Zen, and one card per capability class, yields `route=<model> reason=<class>`
+     on `CUT ROUTE` for the cheapest capable model — the mutation that matters: a pick that
+     ignores cost and takes a route by kind.
+ 24. `retry-moves-one-class-up`: a card rewritten from `retry.tsv` after an abstain routes one
+     capability class above the first attempt's, so `CUT ROUTE` names a stronger class and a
+     `reason` that reflects it.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 
