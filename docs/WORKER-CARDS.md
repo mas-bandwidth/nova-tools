@@ -236,6 +236,31 @@ whichever comes first. **Rollback:** the capitalised-contract shape. **Held by:*
 2026-09-15: "You are responsible for prompting. If we don't get the result we want, fix the
 prompt."
 
+## 18. Scratch notes live in the repo directory as notes.txt
+
+A card's scratch notes are written to `notes.txt` inside the repo directory it names, never
+under `../scratch` or any path above the job, and `notes.txt` is never committed. **Measured:**
+2026-09-15: card 255 died when the wall refused `jobs/scratch`, a path above the job; a note
+beside the work is inside the wall. **Not measured:** a note file inside the job directory
+refused. **Expires** on a change to the wall's path rule. **Rollback:** notes above the job.
+**Held by:** Rowan.
+
+## 19. A text-only card says so on its second line
+
+A text-only card states on its second line that it forbids `go build`, `go test` and any test
+harness, so a worker spends no budget verifying what it was told not to build. **Measured:**
+2026-09-15: card 250 spent its whole budget building a harness to verify a grammar edit and
+changed nothing. **Not measured:** the same card with the second line present. **Expires** on
+a harness or template change. **Rollback:** the second line dropped. **Held by:** Rowan.
+
+## 20. A chain step after a card gates on the verdict line
+
+A chain step that follows a card gates on `RESULT.md`'s verdict line, never on mergeability
+alone; a merged but abstained card does not advance the chain. **Measured:** 2026-09-15: #239
+merged on a chain while its card had abstained; corrected by #415. **Not measured:** a chain
+that gates on the verdict from the start. **Expires** on a chain rule change. **Rollback:**
+gating on mergeability alone. **Held by:** Rowan.
+
 ## Open
 
 - **The DeepSeek key route is a human's.** Unauthorized is verified for that credential

@@ -30,7 +30,9 @@ usage:
                                                      then nocode. Both run even if the
                                                      first says NO.
   nova-check attest --home <dir> --manifest <file>   did the full self load
-  nova-check links  --dir <dir>                      every relative md link resolves
+  nova-check links  --dir <dir> [--exclude <prefix>] every relative md link resolves;
+                                                     --exclude (repeatable) leaves a subtree
+                                                     unscanned and skips links into it
   nova-check kernel --file <file> --max-bytes <n>    kernel size budget, in bytes
   nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>
                                                      kernel size budget, in tokens
@@ -239,6 +241,8 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("quickstart", flag.ContinueOnError)
 	dir := fs.String("dir", "", "directory tree to check (required)")
 	failMax := addFailMax(fs)
+	var exclude repeatable
+	fs.Var(&exclude, "exclude", "path prefix not scanned by links (repeatable; empty by default)")
 	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
 		return 2
 	}
@@ -251,7 +255,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	// cost about forty.
 	max := fmt.Sprintf("%d", *failMax)
 	fmt.Fprintf(stdout, "QUICKSTART OK dir=%s checks=2: links, then nocode\n", oneline.Field(*dir))
-	linksCode := cmdLinks([]string{"--dir", *dir, "--fail-max", max}, stdout, stderr)
+	linksCode := cmdLinks(append([]string{"--dir", *dir, "--fail-max", max}, excludeFlags(exclude)...), stdout, stderr)
 	nocodeCode := cmdNoCode([]string{"--dir", *dir, "--fail-max", max}, stdout, stderr)
 	worst := 0
 	for _, code := range []int{linksCode, nocodeCode} {
@@ -298,20 +302,22 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("links", flag.ContinueOnError)
 	dir := fs.String("dir", "", "directory tree to scan for markdown links (required)")
 	failMax := addFailMax(fs)
+	var exclude repeatable
+	fs.Var(&exclude, "exclude", "path prefix not scanned, and links into it not checked (repeatable; empty by default)")
 	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
 		return 2
 	}
 	if !checkFailMax(fs, *failMax, stderr) {
 		return 2
 	}
-	mdFiles, checked, broken, err := check.Links(*dir)
+	res, err := check.LinksExcluding(*dir, exclude)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-check links: %s\n", oneline.Err(err))
 		return 2
 	}
-	if len(broken) > 0 {
+	if len(res.Broken) > 0 {
 		list := bounded.Capped(stderr, *failMax, "LINKS", "broken", failMaxRemedy)
-		for _, b := range broken {
+		for _, b := range res.Broken {
 			if b.Line == 0 && b.Target == "" {
 				// A whole-file finding: the .md itself could not be read, so there
 				// is no line and no target — `LINKS FAIL <file>: unreadable (<why>)`.
@@ -326,10 +332,10 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 		// The count line prints on FAILURE too. It did not, so a failing run gave N lines
 		// and never N: the one number a reader wanted was the one thing they had to
 		// derive by counting the output.
-		fmt.Fprintf(stderr, "LINKS FAIL files=%d links=%d broken=%d shown=%d\n", mdFiles, checked, list.Total(), list.Shown())
+		fmt.Fprintf(stderr, "LINKS FAIL files=%d links=%d broken=%d shown=%d excluded=%d\n", res.MDFiles, res.Checked, list.Total(), list.Shown(), res.Excluded)
 		return 1
 	}
-	fmt.Fprintf(stdout, "LINKS OK files=%d links=%d\n", mdFiles, checked)
+	fmt.Fprintf(stdout, "LINKS OK files=%d links=%d excluded=%d\n", res.MDFiles, res.Checked, res.Excluded)
 	return 0
 }
 
@@ -428,6 +434,16 @@ type repeatable []string
 
 func (r *repeatable) String() string     { return strings.Join(*r, ",") }
 func (r *repeatable) Set(v string) error { *r = append(*r, v); return nil }
+
+// excludeFlags flattens a repeatable exclude set into the argv spellings
+// cmdLinks expects, so quickstart forwards the same narrowing it accepted.
+func excludeFlags(exclude repeatable) []string {
+	out := make([]string, 0, len(exclude)*2)
+	for _, ex := range exclude {
+		out = append(out, "--exclude", ex)
+	}
+	return out
+}
 
 func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("nocode", flag.ContinueOnError)

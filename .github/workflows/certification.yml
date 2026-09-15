@@ -841,6 +841,100 @@ jobs:
           refuse_assertion_args 'no expected tag given' "" "$dist/%s_${stamp}_linux_amd64"
           refuse_assertion_args 'holds no %s' "$stamp" "$dist/nova-board_${stamp}_linux_amd64"
 
+      - name: the certified gate refuses newer-failure-after-older-success and in-flight, and passes one green
+        shell: bash
+        run: |
+          set -euo pipefail
+          # THE CERTIFIED GATE'S NEGATIVE CONTROLS (#253). release-certified.sh is now the
+          # whole `certified` job of release.yml, but until this step nothing in CI proved
+          # the script can say NO -- a break in its shell would refuse nothing, and the
+          # first sign of it would be a release built on a commit no green certification
+          # vouched for. So the gate is driven here, the same way the two steps above drive
+          # the ldflags helper and the assertion: through a fake `gh` on PATH, against the
+          # three outcomes the script has to decide. A newer FAILURE after an older SUCCESS
+          # must refuse (that is the fixture that fails a naive gate counting any green --
+          # "a run succeeded somewhere" is not a voucher), a run still in flight must refuse
+          # (an unfinished run vouches for nothing and its result is unknowable), and one
+          # green must PASS, or no release is ever possible.
+          #
+          # The fixtures live in .github/testdata/release-certified/ rather than in this
+          # heredoc because they are whole API bodies: the script reads total_count and a
+          # workflow_runs list, and a list hand-typed in the run block is a list that
+          # drifts from the shape the API actually returns.
+
+          # A fake `gh` on PATH. release-certified.sh calls `gh api -i` once and reads the
+          # STATUS LINE rather than the exit code (gh exits 1 on both a non-200 and an
+          # empty answer alike), so the fake reproduces exactly what -i promises: one
+          # HTTP status line, then the body after a blank line. The body is whatever
+          # fixture RELEASE_CERT_RESPONSE names.
+          mkdir -p "${RUNNER_TEMP}/fake-gh"
+          cat > "${RUNNER_TEMP}/fake-gh/gh" <<'GH'
+          #!/usr/bin/env bash
+          printf 'HTTP/2 200 OK\r\n'
+          printf 'date: a-fake-gh-does-not-have-dates\r\n\r\n'
+          cat "$RELEASE_CERT_RESPONSE"
+          GH
+          chmod +x "${RUNNER_TEMP}/fake-gh/gh"
+
+          # The script's input guard demands the whole environment release.yml provides,
+          # so gate_env exports it before each run.
+          gate_env() {
+            export GITHUB_REPOSITORY=mas-bandwidth/nova-tools
+            export SHA=dr-y-run-sha
+            export REF=v9.9.9-dry-run
+            export GITHUB_RUN_ID=0000000000
+            export GH_TOKEN=fake-gh-needs-a-token-to-be-set
+            export PATH="${RUNNER_TEMP}/fake-gh:$PATH"
+          }
+
+          # ONE: newer failure after older success must refuse, BY NAMING the red. This is
+          # the fixture a gate that "counts any green" would pass, so its refusal is the
+          # proof the refusal is not merely "something went wrong".
+          gate_env
+          set +e
+          out=$(RELEASE_CERT_RESPONSE=".github/testdata/release-certified/old-green-new-red.json" \
+            .github/scripts/release-certified.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "the certified gate VOUCHED for a commit whose latest evidence is a failure"; exit 1; }
+          case "$out" in
+            *"not uniformly green"*) echo "ok: a newer failure after an older success is refused, by naming the red" ;;
+            *) echo "the gate refused the old-green/new-red fixture, but not for the red; that is a different defect"; exit 1 ;;
+          esac
+
+          # TWO: a run in flight must refuse with the wait line, whatever a completed green
+          # beside it would say -- one snapshot sees the unfinished run and refuses before
+          # any conclusion is read.
+          gate_env
+          set +e
+          out=$(RELEASE_CERT_RESPONSE=".github/testdata/release-certified/in-flight.json" \
+            .github/scripts/release-certified.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "the certified gate VOUCHED while a certification run was still in flight"; exit 1; }
+          case "$out" in
+            *"not yet completed"*) echo "ok: a run in flight is refused, and the remedy says wait" ;;
+            *) echo "the gate refused the in-flight fixture, but not for the unfinished run; that is a different defect"; exit 1 ;;
+          esac
+
+          # THREE: one green must PASS, and print a receipt -- the negative controls above
+          # are worth nothing if the gate says no to everything, which is as much a
+          # blocked release as saying yes to everything.
+          gate_env
+          set +e
+          out=$(RELEASE_CERT_RESPONSE=".github/testdata/release-certified/single-green.json" \
+            .github/scripts/release-certified.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -eq 0 ] || { echo "the certified gate REFUSED a commit one green certification vouches for; no release would be possible"; exit 1; }
+          case "$out" in
+            *"receipt run 3001"*) echo "ok: one green vouches, and the receipt names the run" ;;
+            *) echo "the certified gate did not print a receipt for the one green run; a release would have nothing to show"; exit 1 ;;
+          esac
+
       - name: upload the cross-built binaries
         # So that the smoke job runs THE BINARY THIS WOULD SHIP rather than one it builds
         # itself with different flags. The job above already builds with -trimpath and

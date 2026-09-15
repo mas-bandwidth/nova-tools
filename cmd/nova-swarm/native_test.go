@@ -239,6 +239,219 @@ func TestNativeRunAuthCopyIs0600(t *testing.T) {
 	}
 }
 
+// TestNativeCarriesProviderConfig: a `--config` opencode.json is copied beside the carried
+// auth file into the job's own data home, mode 0600, byte for byte, and the fake harness
+// sees it at the path it resolves from its own XDG data home. Without --config the file is
+// absent, and with it the NATIVE OK line records its sha8.
+func TestNativeCarriesProviderConfig(t *testing.T) {
+	bin := nativeHarness(t)
+	const config = `{"provider":{"fake":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
+
+	t.Run("without_config", func(t *testing.T) {
+		root, slot := aSlot(t)
+		auth := filepath.Join(t.TempDir(), "auth.json")
+		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var errOut bytes.Buffer
+		_, code := nativeRun(nativeRunConfig{
+			binary: bin, model: "fake/fake-model", label: "lbl",
+			card: []byte("FAKE-RECORD-CONFIG\n"), slotDir: slot, root: root, authFile: auth,
+			deadline: 30 * time.Second, noWall: true,
+		}, &errOut)
+		if code != 0 {
+			t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+		}
+		assertConfigRecord(t, slot, "absent", "")
+	})
+
+	t.Run("with_config", func(t *testing.T) {
+		root, slot := aSlot(t)
+		auth := filepath.Join(t.TempDir(), "auth.json")
+		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+		if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var errOut bytes.Buffer
+		res, code := nativeRun(nativeRunConfig{
+			binary: bin, model: "fake/fake-model", label: "lbl",
+			card: []byte("FAKE-RECORD-CONFIG\n"), slotDir: slot, root: root, authFile: auth,
+			configFile: cfgPath, deadline: 30 * time.Second, noWall: true,
+		}, &errOut)
+		if code != 0 {
+			t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+		}
+		wantSum := sha256.Sum256([]byte(config))
+		wantSHA := hex.EncodeToString(wantSum[:])[:8]
+		if res.configSHA != wantSHA {
+			t.Errorf("the run records config sha8 %q, want %q", res.configSHA, wantSHA)
+		}
+		assertConfigRecord(t, slot, "0600", config)
+		copied := filepath.Join(slot, "data", ".config", "opencode", "opencode.json")
+		st, err := os.Stat(copied)
+		if err != nil {
+			t.Fatalf("the config copy was not written: %v", err)
+		}
+		if st.Mode().Perm() != 0o600 {
+			t.Errorf("the config copy is mode %04o, want 0600", st.Mode().Perm())
+		}
+		body, err := os.ReadFile(copied)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(body) != config {
+			t.Errorf("the config copy bytes differ:\n%s", body)
+		}
+	})
+}
+
+// assertConfigRecord reads what the fake harness recorded about the provider config and
+// proves it saw the file (or its absence) at its own XDG data home path.
+func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(slot, "jobs", "lbl", "config-record"))
+	if err != nil {
+		t.Fatalf("the harness recorded no config-record: %v", err)
+	}
+	rec := string(raw)
+	if wantMode == "absent" {
+		if rec != "absent\n" {
+			t.Errorf("the harness saw a config where none should be: %q", rec)
+		}
+		return
+	}
+	if !strings.HasPrefix(rec, "mode="+wantMode+"\n") {
+		t.Errorf("the harness saw %q, want mode %s", rec, wantMode)
+	}
+	if wantBody != "" && !strings.HasSuffix(rec, "\n"+wantBody) {
+		t.Errorf("the harness saw different bytes:\n%s", rec)
+	}
+}
+
+// TestNativeRefusesConfigProviderWithoutKey: a --config that names a provider whose key is
+// absent from --auth is refused before anything runs, in one line, naming the provider and
+// never the key.
+func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"provider":{"fake":{},"zeta":{}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "lbl",
+		card: []byte("a card\n"), slotDir: slot, root: root, authFile: auth,
+		configFile: cfgPath, deadline: time.Second,
+	}, &errOut)
+	if code != 2 {
+		t.Fatalf("a config naming a provider without a key exits 2, got %d:\n%s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Fatalf("the refusal is one REFUSED line:\n%s", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "zeta") {
+		t.Fatalf("the refusal names the provider, never the key:\n%s", errOut.String())
+	}
+	if strings.Contains(errOut.String(), "the-fake-secret") {
+		t.Fatalf("the refusal never prints a key:\n%s", errOut.String())
+	}
+	if got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1; got != 1 {
+		t.Fatalf("exactly one REFUSED line, got %d:\n%s", got, errOut.String())
+	}
+}
+
+// TestNativeConfigKeylessProviderAdmitted: a --config that names a provider whose entry is
+// absent from --auth is admitted, not refused, when that provider's options carry a baseURL
+// and no apiKey field -- ollama on localhost needs no key, so there is no key to be absent.
+// The config is still copied verbatim, mode 0600, and the run records its sha8.
+func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "ollama/north-mini-code-32k", label: "lbl",
+		card: []byte("FAKE-RECORD-CONFIG\n"), slotDir: slot, root: root, authFile: auth,
+		configFile: cfgPath, deadline: 30 * time.Second, noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("a keyless provider (baseURL, no apiKey) is admitted, got exit %d:\n%s", code, errOut.String())
+	}
+	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Fatalf("the keyless provider is not refused, got:\n%s", errOut.String())
+	}
+	wantSum := sha256.Sum256([]byte(config))
+	wantSHA := hex.EncodeToString(wantSum[:])[:8]
+	if res.configSHA != wantSHA {
+		t.Errorf("the run records config sha8 %q, want %q", res.configSHA, wantSHA)
+	}
+	assertConfigRecord(t, slot, "0600", config)
+}
+
+// TestFriendSequenceLocalModelCard runs one known-answer card on a fake local provider: the
+// harness is the fake, the provider is a keyless ollama (baseURL, no apiKey, no auth entry),
+// and the card FAKE-PWD answers with the job directory. The run is walled, admitted without a
+// refusal, and the wall's own name and the card's known answer both land where a reader looks.
+func TestFriendSequenceLocalModelCard(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	label := "local-model-card"
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "ollama/north-mini-code-32k", label: label,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, authFile: auth,
+		configFile: cfgPath, deadline: 30 * time.Second, sandbox: sandbox,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the keyless local provider runs walled, got exit %d:\n%s", code, errOut.String())
+	}
+	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Fatalf("the local provider card is admitted, not refused:\n%s", errOut.String())
+	}
+	if res.wall != "fake-wall" {
+		t.Errorf("the run names the wall it ran inside, got %q", res.wall)
+	}
+	jobDir := filepath.Join(slot, "jobs", label)
+	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+	if err != nil {
+		t.Fatalf("the card's known answer was not written: %v", err)
+	}
+	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
+	if !sameDir(got, jobDir) {
+		t.Errorf("the card's known answer is %q, want the job directory %q", got, jobDir)
+	}
+}
+
 // TestNativeRunRefusalsNameTheirReason drives the remaining three refusals -- a model with
 // no provider prefix, an auth file looser than 0600, and a slot outside its root -- so each
 // prints its one REFUSED line.
