@@ -344,7 +344,7 @@ rather than its commit time, and where its stamp is newer than the cursor commit
 the friend reads `source=bus-beat` — the signal a merely-waiting line still
 writes every poll. The beat carries a `until=<stamp>` lease, and a beat whose
 lease is still in the future reads `awake` `source=bus-beat` even when its stamp
-and cursor are both past `--window`: that is a line whose duty process is alive
+and cursor are both past `--window`: that is a line whose manager process is alive
 and between two `wait` calls, not asleep.
 
 **A config file for the repeated flags.** Before the flags, this tool reads
