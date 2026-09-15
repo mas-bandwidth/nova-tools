@@ -2,6 +2,8 @@
 
 **Status: proposal, not implemented or approved for build.** Maintainer review and independent reviewers' dispositions must name the exact revision before implementation. This extends the existing `batch` admission boundary; it introduces no dispatcher, model-call batching, accounting ledger, dependency scheduler or cancellation behavior. The current `batch` invocation without the new option remains compatible.
 
+The companion [proposed batch admission implementation contract](PROPOSAL-SWARM-BATCH-ADMISSION-CONTRACT.md) specifies proposed v1 encoding, reservation transitions, platform and recovery limits, and required witnesses. It remains subject to exact-revision maintainer and independent reviewer dispositions and the existing build gates; it does not establish implementation or durability approval.
+
 ## Problem and evidence
 
 At public main `86785fd0accf997662c1cd5356f60acaf7a0821c`, [batch admission](https://github.com/mas-bandwidth/nova-tools/blob/86785fd0accf997662c1cd5356f60acaf7a0821c/cmd/nova-swarm/main.go#L365) reads all task files and then writes jobs sequentially. It does not preserve the input filename in the sidecar or return a filename/job mapping. [IDs](https://github.com/mas-bandwidth/nova-tools/blob/86785fd0accf997662c1cd5356f60acaf7a0821c/internal/swarm/pool.go#L136) contain second-resolution time and randomness: sorting them does not reconstruct card order. [Pool.Add](https://github.com/mas-bandwidth/nova-tools/blob/86785fd0accf997662c1cd5356f60acaf7a0821c/internal/swarm/pool.go#L182) writes the task before its sidecar; a later write failure does not roll back earlier jobs.
@@ -147,7 +149,7 @@ Missing per-job usage is unavailable, not zero; an empty cost aggregate cannot f
 | Response lost after task publication, job moved or reclaimed | Recover accepted from sufficient matching evidence, otherwise unresolved; no duplicate admission. |
 | Second-card write failure | First mapping survives; failed card refused only if nonpublication proved, otherwise unresolved; later cards unattempted. |
 | Sidecar-only / task-only / conflicting orphan | Complete only proven-owned, unpublished staging; task-only/conflict unresolved; no overwrite. |
-| Dispatcher observes publication | Never sees this mode's task without its complete intended sidecar. |
+| Dispatcher observes publication | At initial pending publication, the task becomes discoverable only after its complete intended sidecar is published and synchronized. Later legacy Claim moves are outside this guarantee; split, moving or otherwise insufficient evidence remains unresolved and never authorizes resubmission. |
 | Directory sync failure / stale lock / unsupported no-replace | Refused or unresolved per actual publication point; no durability claim or forced unlock. |
 | Pending/no report/quarantine/changed report/unknown usage | Every receipt job remains named; current full hashes and gaps preserved; no fabricated usage or completion. |
 | Retry/rework, overlapping usage sources | Separate existing job identities and one accounting contribution per scope. |
