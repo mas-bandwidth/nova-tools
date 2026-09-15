@@ -28,11 +28,11 @@ const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REV
 
 usage:
   nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--reuse <file>] [--timeout <seconds>]
-  nova-review version
+  nova-review version    print this build identity (--version also accepted)
   nova-review help
 
 example:
-  nova-review version
+  nova-review --version
 `
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -58,12 +58,8 @@ func run(args []string, out, errOut io.Writer) int {
 	case "help", "-h", "--help":
 		fmt.Fprint(out, usage)
 		return 0
-	case "version":
-		if len(args) != 1 {
-			return refuse(errOut, "version takes no arguments")
-		}
-		fmt.Fprintln(out, "nova-review devel")
-		return 0
+	case "version", "--version":
+		return cmdVersion(args[1:], out, errOut)
 	case "packet":
 		return packet(args[1:], out, errOut)
 	default:

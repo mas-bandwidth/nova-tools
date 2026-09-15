@@ -108,10 +108,12 @@ func Batch(in BatchInput) int {
 	// the process starts so a runner can write RESULT.md straight into place.
 	type proc struct {
 		cmd        *exec.Cmd
-		logPath    string
-		done       bool // guarded by doneMu
-		idleKilled bool // guarded by doneMu
-		rc         int  // the child's exit code; guarded by doneMu
+		slot       int
+		label      string
+		idleLog    string // the file the idle monitor watched; set only on an idle kill
+		done       bool   // guarded by doneMu
+		idleKilled bool   // guarded by doneMu
+		rc         int    // the child's exit code; guarded by doneMu
 		lastGrow   time.Time
 	}
 	var doneMu sync.Mutex
@@ -141,13 +143,14 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 		_ = logFile.Close()
-		procs[i] = proc{cmd: cmd, logPath: logPath, lastGrow: time.Now()}
+		procs[i] = proc{cmd: cmd, slot: c.slot, label: c.label, lastGrow: time.Now()}
 	}
 
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
 	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
-	// --idle is set, one monitor re-reads each running card's log and kills a card whose log
-	// has not grown for the idle window: a dead card is removed from the wait, so the batch
+	// --idle is set, one monitor re-reads each running card's own log -- <slot>/native.log
+	// when the child wrote one, else the job's harness.log -- and kills a card whose log has
+	// not grown for the idle window: a dead card is removed from the wait, so the batch
 	// returns on its slowest still-working card rather than burning the whole deadline.
 	var wg sync.WaitGroup
 	allDone := make(chan struct{})
@@ -191,7 +194,7 @@ func Batch(in BatchInput) int {
 						if procs[i].done || procs[i].idleKilled {
 							continue
 						}
-						size := logSize(procs[i].logPath)
+						size := logSize(cardLogPath(in.Root, procs[i].slot, procs[i].label))
 						if size != lastSize[i] {
 							lastSize[i] = size
 							procs[i].lastGrow = now
@@ -199,6 +202,7 @@ func Batch(in BatchInput) int {
 						}
 						if now.Sub(procs[i].lastGrow) >= in.Idle {
 							procs[i].idleKilled = true
+							procs[i].idleLog = cardLogPath(in.Root, procs[i].slot, procs[i].label)
 							if procs[i].cmd.Process != nil {
 								_ = procs[i].cmd.Process.Kill()
 							}
@@ -246,6 +250,7 @@ func Batch(in BatchInput) int {
 		usd      float64
 		hold     bool
 		idle     bool
+		idleLog  string // the file the idle monitor watched, for an idle-killed card
 		logLines int
 		stalled  bool
 		missing  bool   // RESULT.md was not there at all
@@ -266,6 +271,7 @@ func Batch(in BatchInput) int {
 		if procs[i].idleKilled {
 			rows[i].state = "abstain"
 			rows[i].idle = true
+			rows[i].idleLog = procs[i].idleLog
 			abstain++
 			idle++
 			continue
@@ -322,7 +328,7 @@ func Batch(in BatchInput) int {
 	for _, r := range rows {
 		switch {
 		case r.idle:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- idle %ds\n", oneline.Field(r.label), r.slot, idleSeconds)
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- idle %ds (%s)\n", oneline.Field(r.label), r.slot, idleSeconds, r.idleLog)
 		case r.stalled:
 			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- stalled (no output after the wall opened)\n", oneline.Field(r.label), r.slot)
 		case r.noResult:
