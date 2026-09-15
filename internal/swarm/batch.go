@@ -124,14 +124,15 @@ func Batch(in BatchInput) int {
 	// scatter: one runner process per card, in TSV order. The job directory is made before
 	// the process starts so a runner can write RESULT.md straight into place.
 	type proc struct {
-		cmd        *exec.Cmd
-		slot       int
-		label      string
-		idleLog    string // the file the idle monitor watched; set only on an idle kill
-		done       bool   // guarded by doneMu
-		idleKilled bool   // guarded by doneMu
-		rc         int    // the child's exit code; guarded by doneMu
-		lastGrow   time.Time
+		cmd            *exec.Cmd
+		slot           int
+		label          string
+		idleLog        string // the file the idle monitor watched; set only on an idle kill
+		done           bool   // guarded by doneMu
+		idleKilled     bool   // guarded by doneMu
+		deadlineKilled bool   // guarded by doneMu
+		rc             int    // the child's exit code; guarded by doneMu
+		lastGrow       time.Time
 	}
 	var doneMu sync.Mutex
 	procs := make([]proc, len(cards))
@@ -250,7 +251,8 @@ func Batch(in BatchInput) int {
 	case <-time.After(in.Deadline):
 		doneMu.Lock()
 		for i := range procs {
-			if !procs[i].done && procs[i].cmd.Process != nil {
+			if !procs[i].done && !procs[i].idleKilled && procs[i].cmd.Process != nil {
+				procs[i].deadlineKilled = true
 				_ = procs[i].cmd.Process.Kill()
 			}
 		}
@@ -275,6 +277,7 @@ func Batch(in BatchInput) int {
 		label    string
 		slot     int
 		state    string
+		reason   string // the ABSTAIN reason token, for a card that named why it stopped
 		line2    string
 		in       int
 		out      int
@@ -308,12 +311,14 @@ func Batch(in BatchInput) int {
 			rows[i].state = "abstain"
 			rows[i].idle = true
 			rows[i].idleLog = procs[i].idleLog
+			rows[i].reason = fmt.Sprintf("idle=%d", idleSeconds)
 			abstain++
 			idle++
 			continue
 		}
 		if rows[i].inLimit {
 			rows[i].state = "abstain"
+			rows[i].reason = "input-limit"
 			abstain++
 			continue
 		}
@@ -327,8 +332,16 @@ func Batch(in BatchInput) int {
 			continue
 		}
 		lines := strings.Split(string(raw), "\n")
-		if !strings.EqualFold(strings.TrimSpace(first(lines)), strings.TrimSpace(c.contract)) {
+		line1 := strings.TrimSpace(first(lines))
+		if strings.HasPrefix(strings.ToUpper(line1), "ABSTAIN") {
 			rows[i].state = "abstain"
+			rows[i].reason = "card-abstain"
+			abstain++
+			continue
+		}
+		if !strings.EqualFold(line1, strings.TrimSpace(c.contract)) {
+			rows[i].state = "abstain"
+			rows[i].reason = "line1-mismatch"
 			abstain++
 			continue
 		}
@@ -342,24 +355,31 @@ func Batch(in BatchInput) int {
 	}
 
 	// A card that ended -- killed, abstained or refused -- with no output after the wall
-	// opened is a prompt or harness defect, not a slow model: it is named stalled. But a
-	// card that ran to a clean exit (rc 0) and still has no RESULT.md is not a stall: the
-	// model finished its run and named its own reason, so the abstain says so rather than
-	// blaming a wall that opened on nothing.
+	// opened is a prompt or harness defect, not a slow model: it is named stalled. But every
+	// abstain names its reason as one token (issue #461): the run's own ending decides it for
+	// a card with no RESULT.md, and a mismatch or a card's own ABSTAIN line already named one.
 	for i := range rows {
-		if rows[i].state == "done" {
+		if rows[i].state == "done" || rows[i].inLimit {
 			continue
 		}
-		if rows[i].inLimit {
+		if rows[i].reason != "" || rows[i].idle {
+			if rows[i].logLines == 0 {
+				rows[i].stalled = true
+				stalled++
+			}
 			continue
+		}
+		switch {
+		case procs[i].deadlineKilled:
+			rows[i].reason = "deadline"
+		case procs[i].rc == 0:
+			rows[i].reason = "no-result"
+		default:
+			rows[i].reason = fmt.Sprintf("rc=%d", procs[i].rc)
 		}
 		if rows[i].logLines == 0 {
 			rows[i].stalled = true
 			stalled++
-			continue
-		}
-		if rows[i].missing && procs[i].rc == 0 {
-			rows[i].noResult = true
 		}
 	}
 
@@ -370,20 +390,11 @@ func Batch(in BatchInput) int {
 	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d\n",
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
 	for _, r := range rows {
-		switch {
-		case r.inLimit:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN reason=input-limit\n", oneline.Field(r.label), r.slot)
-		case r.idle:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- idle %ds (%s)\n", oneline.Field(r.label), r.slot, idleSeconds, r.idleLog)
-		case r.stalled:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- stalled (no output after the wall opened)\n", oneline.Field(r.label), r.slot)
-		case r.noResult:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- no RESULT.md in %s (rc=0)\n", oneline.Field(r.label), r.slot, r.jobDir)
-		case r.state == "abstain":
-			fmt.Fprintf(in.Stdout, "%s slot=%d abstain log=%d\n", oneline.Field(r.label), r.slot, r.logLines)
-		default:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: %s log=%d\n", oneline.Field(r.label), r.slot, r.line2, r.logLines)
+		if r.reason != "" {
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN reason=%s log=%d\n", oneline.Field(r.label), r.slot, r.reason, r.logLines)
+			continue
 		}
+		fmt.Fprintf(in.Stdout, "%s slot=%d: %s log=%d\n", oneline.Field(r.label), r.slot, r.line2, r.logLines)
 	}
 	for i := 0; i < len(holds) && i < maxHoldLines; i++ {
 		fmt.Fprintf(in.Stdout, "HOLD: %s\n", oneline.Escape(oneline.Cap(holds[i], oneline.TailBytes)))

@@ -721,7 +721,7 @@ are the thing the packet replaced.
 ```
 BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum> idle=<n> [benches=<n>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
-<label>: ABSTAIN reason=<token>
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain> log=<lines>
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED bench=<name>: <reason>
 HOLD: <one bounded quoted line>
