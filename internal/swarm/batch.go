@@ -50,8 +50,13 @@ type BatchInput struct {
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
 	Runner   string        // the command, one process per card
-	Benches  string        // path to the benches table; empty means no table is read
-	Bench    string        // comma-separated bench names to allocate the cards across; empty means local only
+	// PullWait and PullPoll bound the pull that brings a remote card's files back: how
+	// long to wait for RESULT.md to exist on the bench, and how often to ask. Zero takes
+	// the spec's own numbers (30 s, one second), and the tests take short ones.
+	PullWait time.Duration
+	PullPoll time.Duration
+	Benches  string // path to the benches table; empty means no table is read
+	Bench    string // comma-separated bench names to allocate the cards across; empty means local only
 	Stdout   io.Writer
 	Stderr   io.Writer
 }
@@ -132,8 +137,13 @@ func Batch(in BatchInput) int {
 	// scatter: one runner process per card, in TSV order. The job directory is made before
 	// the process starts so a runner can write RESULT.md straight into place.
 	type proc struct {
-		cmd        *exec.Cmd
-		slot       int
+		cmd  *exec.Cmd
+		slot int
+		// scratch is the directory under the local root this card's files are read from:
+		// <bench>-<n> for a remote card, whose files the pull below brings back, and the
+		// bare <n> for a local one.
+		scratch    string
+		bench      string
 		label      string
 		idleLog    string // the file the idle monitor watched; set only on an idle kill
 		done       bool   // guarded by doneMu
@@ -182,7 +192,7 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 		_ = logFile.Close()
-		procs[i] = proc{cmd: cmd, slot: c.slot, label: c.label, lastGrow: time.Now()}
+		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label, lastGrow: time.Now()}
 	}
 
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
@@ -233,7 +243,7 @@ func Batch(in BatchInput) int {
 						if procs[i].done || procs[i].idleKilled {
 							continue
 						}
-						size := logSize(cardLogPath(in.Root, procs[i].slot, procs[i].label))
+						size := logSize(cardLogPath(in.Root, procs[i].scratch, procs[i].label))
 						if size != lastSize[i] {
 							lastSize[i] = size
 							procs[i].lastGrow = now
@@ -241,7 +251,7 @@ func Batch(in BatchInput) int {
 						}
 						if now.Sub(procs[i].lastGrow) >= in.Idle {
 							procs[i].idleKilled = true
-							procs[i].idleLog = cardLogPath(in.Root, procs[i].slot, procs[i].label)
+							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
 							if procs[i].cmd.Process != nil {
 								_ = procs[i].cmd.Process.Kill()
 							}
@@ -270,6 +280,32 @@ func Batch(in BatchInput) int {
 	// settled before the gather decides whether a missing RESULT.md is a clean exit.
 	wg.Wait()
 
+	// THE PULL. A remote slot's files are on the bench, and the gather below reads the
+	// local root: nothing is scored until what the card wrote has come back. It runs after
+	// every child has been reaped, one card at a time, and a bench that could not be
+	// reached marks its cards rather than failing the batch -- the other benches' cards are
+	// still theirs to score.
+	unreachable := make([]bool, len(cards))
+	for i, c := range cards {
+		if c.bench == "" {
+			continue
+		}
+		b := benches[c.bench]
+		err := pullFromBench(benchPull{
+			host:      b.Host,
+			remoteJob: b.Root + "/" + strconv.Itoa(c.slot) + "/jobs/" + c.label,
+			localJob:  filepath.Join(in.Root, scratchName(c), "jobs", c.label),
+			wait:      in.PullWait,
+			poll:      in.PullPoll,
+			notes:     in.Stderr,
+		})
+		if err != nil {
+			unreachable[i] = isUnreachable(err)
+			fmt.Fprintf(in.Stderr, "BATCH NOTE pull %s from bench %s: %s\n",
+				oneline.Field(c.label), oneline.Field(c.bench), oneline.Err(err))
+		}
+	}
+
 	// gather: fold every card into one bounded packet. A missing or wrong-line-1 result is
 	// an ABSTAIN row; done is decided by the contract alone, never by the process's timing.
 	idleSeconds := int(in.Idle.Seconds())
@@ -296,20 +332,30 @@ func Batch(in BatchInput) int {
 		jobDir   string // the job directory, for the missing-result reason
 		noResult bool   // missing RESULT.md on a clean exit (rc==0)
 		inLimit  bool   // the card's own usage row named end=input-limit
+		bench    bool   // the pull could not reach the bench this card ran on
 	}
 	rows := make([]row, len(cards))
 	for i, c := range cards {
 		rows[i].label = c.label
 		rows[i].slot = c.slot
-		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(cardUsagePath(in.Root, c.slot, c.label))
+		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(cardUsagePath(in.Root, scratchName(c), c.label))
 		totalIn += rows[i].in
 		totalOut += rows[i].out
 		total += rows[i].usd
-		rows[i].logLines = logOutputLines(cardLogPath(in.Root, c.slot, c.label))
+		rows[i].logLines = logOutputLines(cardLogPath(in.Root, scratchName(c), c.label))
 		// A card whose job was refused for size is its own score, `reason=input-limit`: the
 		// class is the provider's own structured signal, and the batch names it rather than
 		// reading a missing result as a plain abstain (issue #163).
-		rows[i].inLimit = cardEndsInputLimit(cardLogPath(in.Root, c.slot, c.label))
+		rows[i].inLimit = cardEndsInputLimit(cardLogPath(in.Root, scratchName(c), c.label))
+		// A card whose bench could not be reached is its own score, and the reason token
+		// says which of the two it is: the bench never answered the pull, so nothing about
+		// what the card did on it is known here (SPEC-SWARM, "Benches").
+		if unreachable[i] {
+			rows[i].state = "abstain"
+			rows[i].bench = true
+			abstain++
+			continue
+		}
 		// A card the idle monitor killed is its own score, an ABSTAIN that names its reason,
 		// not a missing-result abstain: the card was not hung by its work but stopped growing.
 		if procs[i].idleKilled {
@@ -325,7 +371,7 @@ func Batch(in BatchInput) int {
 			abstain++
 			continue
 		}
-		path := filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "RESULT.md")
+		path := filepath.Join(in.Root, scratchName(c), "jobs", c.label, "RESULT.md")
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			rows[i].state = "abstain"
@@ -358,7 +404,7 @@ func Batch(in BatchInput) int {
 		if rows[i].state == "done" {
 			continue
 		}
-		if rows[i].inLimit {
+		if rows[i].inLimit || rows[i].bench {
 			continue
 		}
 		if rows[i].logLines == 0 {
@@ -379,6 +425,8 @@ func Batch(in BatchInput) int {
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
 	for _, r := range rows {
 		switch {
+		case r.bench:
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN reason=bench-unreachable\n", oneline.Field(r.label), r.slot)
 		case r.inLimit:
 			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN reason=input-limit\n", oneline.Field(r.label), r.slot)
 		case r.idle:
@@ -480,12 +528,12 @@ func logSize(path string) int64 {
 
 // cardUsagePath resolves one card's usage.tsv: the job directory beside RESULT.md first,
 // then the slot directory fallback (lesson 24: the BATCH line sums in/out/usd from the usage rows).
-func cardUsagePath(root string, slot int, label string) string {
-	jobPath := filepath.Join(root, strconv.Itoa(slot), "jobs", label, "usage.tsv")
+func cardUsagePath(root, scratch, label string) string {
+	jobPath := filepath.Join(root, scratch, "jobs", label, "usage.tsv")
 	if _, err := os.Stat(jobPath); err == nil {
 		return jobPath
 	}
-	return filepath.Join(root, strconv.Itoa(slot), "usage.tsv")
+	return filepath.Join(root, scratch, "usage.tsv")
 }
 
 // readCardUsage reads one card's usage.tsv -- the native run's header-plus-row -- and
@@ -521,12 +569,22 @@ func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }
 // NATIVE OK line). Run 10's defect was counting a log the child never wrote: a card with a
 // valid RESULT.md looked stalled because the gather counted a non-existent native.log under
 // the job directory instead of the child's real log under the slot.
-func cardLogPath(root string, slot int, label string) string {
-	native := filepath.Join(root, strconv.Itoa(slot), "native.log")
+func cardLogPath(root, scratch, label string) string {
+	native := filepath.Join(root, scratch, "native.log")
 	if _, err := os.Stat(native); err == nil {
 		return native
 	}
-	return filepath.Join(root, strconv.Itoa(slot), "jobs", label, "harness.log")
+	// A remote card's own log comes back from the bench as the job's native.log; a local
+	// card that wrote none leaves the runner's harness.log, as today.
+	if job := filepath.Join(root, scratch, "jobs", label, "native.log"); fileExists(job) {
+		return job
+	}
+	return filepath.Join(root, scratch, "jobs", label, "harness.log")
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // logOutputLines counts a card's own output lines: everything in the run log after the
