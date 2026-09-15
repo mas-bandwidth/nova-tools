@@ -520,6 +520,16 @@ zero. Writes nothing. Exits
 0 whenever it ran, including over a month with gaps: answering is its job,
 and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 
+`sum --swarm-root <dir> --day <d> --out <ledger.tsv>` is the one form that
+writes: it walks every card's `usage.tsv` under `<dir>/*/jobs/*/`, keeps the
+rows whose `started` stamp is on `--day`, and appends one row per model to the
+ledger in the ledger's own column order — `day`, `model`, `tokens_in`,
+`tokens_out`, `usd`, `cards` — reading the header and refusing (exit 2) when it
+differs, so a ledger filled by hand and one filled by this verb agree. A second
+run for the same day replaces that day's rows, never doubling, so the ledger can
+be filled again and again; a kept field a card did not report is `-` in the ledger, never 0,
+and the trailing `dashes` column counts how many cards left each of input, output and usd unknown.
+
 ### `check`
 
 Asserts what rule 13 says. Says NO (exit 1) on any malformed file, any
@@ -805,7 +815,13 @@ its own dates with `day_basis=<zone>`, the zone taken from the export's own
 declaration and printed on `TOKENS SOURCE`, never from the bench's clock or
 a guess; an export with neither timestamps nor a declared zone is
 `TOKENS UNREADABLE` naming what it lacks. A `(day, model, repo)` fed by a
-`utc` row and a zoned row is `TOKENS MIXED` and not written.
+`utc` row and a zoned row is `TOKENS MIXED` and not written. The `xai`
+parser also reads a `grok usage` JSON export (a `sessionId` and a `turns`
+array, chosen by the file's leading `{` or `[`), folding each turn into the
+same rows: `endedAt` is the day, `primaryModelId` the model, and
+`inputTokens`/`outputTokens`/`cacheCreationTokens`/`cachedReadTokens`/
+`reasoningTokens` the five counts, with a field the turn did not carry left
+a `-`, never a zero.
 
 ### `--bus <dir>`: friends' self-reports
 

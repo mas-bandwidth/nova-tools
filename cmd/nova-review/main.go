@@ -138,12 +138,17 @@ func packet(args []string, out, errOut io.Writer) int {
 	}
 	repo := filepath.Join(*lane, merge.RepoDir)
 	oldHead := entry.OID
-	current, err := fetchEntryHead(ctx, repo, *pr, *branch)
+	current, err := fetchEntryHead(ctx, repo, *pr, *branch, st.Repo)
 	if err != nil {
-		return refuse(errOut, fmt.Sprintf("could not fetch the entry head: %v", err))
+		if *asked != "" && merge.IsSHA(*asked) {
+			current = *asked
+			fmt.Fprintf(errOut, "PACKET NOTE fetch failed, using --head\n")
+		} else {
+			return refuse(errOut, fmt.Sprintf("could not fetch the entry head: %v", err))
+		}
 	}
 	current = strings.TrimSpace(current)
-	if oldHead != "" && current != oldHead {
+	if err == nil && oldHead != "" && current != oldHead {
 		fmt.Fprintf(errOut, "PACKET NOTE head moved %s -> %s\n", merge.Short(oldHead), merge.Short(current))
 		if uerr := merge.Update(*lane, time.Duration(*timeout)*time.Second, func(s *merge.State) error {
 			e := s.Find(id)
@@ -186,14 +191,10 @@ func packet(args []string, out, errOut io.Writer) int {
 	// that is already a full sha names one commit and cannot go stale, so it needs no fetch.
 	baseSHA := base
 	if !merge.IsSHA(base) {
-		if _, err := gitOut(ctx, repo, "fetch", "origin", base); err != nil {
-			return refuse(errOut, fmt.Sprintf("could not fetch the base %q: %v", base, err))
-		}
-		fetched, err := gitOut(ctx, repo, "rev-parse", "refs/remotes/origin/"+base+"^{commit}")
+		baseSHA, err = fetchBase(ctx, repo, *pr, base, st.Repo)
 		if err != nil {
-			return refuse(errOut, fmt.Sprintf("the lane does not hold the fetched base %q: %v", base, err))
+			return refuse(errOut, err.Error())
 		}
-		baseSHA = strings.TrimSpace(fetched)
 	}
 	rangeText := ""
 	var fullRange string
@@ -369,15 +370,43 @@ func gitOut(ctx context.Context, repo string, args ...string) (string, error) {
 // `pull/<n>/head` for a PR, the branch itself for a branch, then reads the fetched commit
 // back out of FETCH_HEAD. The fetch is the verb's one way to learn a head the remote moved
 // (a force-push) without trusting a local ref that has not been updated.
-func fetchEntryHead(ctx context.Context, repo string, pr int, branch string) (string, error) {
+//
+// A PR head comes from the GitHub remote the lane's --repo names (https://github.com/<owner>/<name>.git),
+// never from the lane's --remote: --remote is the record-branch push target, and a local
+// rehearsal remote has no pull/*/head refs (#449). A branch entry still fetches from the
+// lane remote as before.
+func fetchEntryHead(ctx context.Context, repo string, pr int, branch, hostRepo string) (string, error) {
 	refspec := branch
+	remote := "origin"
 	if pr > 0 {
 		refspec = fmt.Sprintf("pull/%d/head", pr)
+		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
 	}
-	if _, err := gitOut(ctx, repo, "fetch", "origin", refspec); err != nil {
-		return "", err
+	if _, err := gitOut(ctx, repo, "fetch", remote, refspec); err != nil {
+		return "", fmt.Errorf("fetching %q from %q: %w", refspec, remote, err)
 	}
 	return gitOut(ctx, repo, "rev-parse", "FETCH_HEAD")
+}
+
+// fetchBase fetches the merge base into the lane's clone and returns its sha.
+// A PR's base lives on the GitHub remote the lane's --repo names, never on the
+// lane's --remote: a local rehearsal remote has no main branch (#493). A branch
+// entry still fetches its base from the lane remote as before.
+func fetchBase(ctx context.Context, repo string, pr int, base, hostRepo string) (string, error) {
+	remote := "origin"
+	refOut := "refs/remotes/origin/" + base + "^{commit}"
+	if pr > 0 {
+		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
+		refOut = "FETCH_HEAD"
+	}
+	if _, err := gitOut(ctx, repo, "fetch", remote, base); err != nil {
+		return "", fmt.Errorf("could not fetch the base %q from %q: %v", base, remote, err)
+	}
+	fetched, err := gitOut(ctx, repo, "rev-parse", refOut)
+	if err != nil {
+		return "", fmt.Errorf("the lane does not hold the fetched base %q: %v", base, err)
+	}
+	return strings.TrimSpace(fetched), nil
 }
 
 // outEscapes reports whether --out, resolved against the current directory, lies outside
