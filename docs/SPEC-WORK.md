@@ -997,7 +997,9 @@ they are distinct kinds:
     (the tree it was read against), `:generation` (the node's, at the time of writing),
     `:attempt` (optional).
   - `:attempt` — `:model`, `:bench`, `:started`, `:ended`, `:result` (a pointer), `:usage` (a
-    pointer to a token record, #181), `:generation` (the task generation it answered).
+    `usage:<receipt-id>` pointer to a token record, #181; `receipt-id` is a 32-character
+    hexadecimal string naming the SPEC-TOKENS usage receipt, rule 32), `:generation` (the task
+    generation it answered).
   - `:correct` — a correction to a task: `:reason`; bumps the task's `:generation`
     (5653982211).
   - `:review-attest` — a reviewer's attestation that a result satisfies an `:attested`
