@@ -452,3 +452,47 @@ func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(
 	r.mustContain(t, "stdout", "WAIT OK new=1").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-555555555555")
 }
+
+// Issue #328: a coordinator who receipts a note and then waits is a reader whose only news
+// is a note they have already heard. Without --advance the wait returns at once on that
+// note -- heard is not answered, so it is still news to the open list -- and the caller pays
+// a turn for nothing. With --advance the cursor is moved to the head over the heard note,
+// one WAIT ADVANCED line says so, and the wait blocks for a genuinely new note instead of
+// returning.
+func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, bare := busDir(t)
+	settled(t, checkout)
+
+	other := bench(t, bare)
+	note(t, other, "bo-555555555555", "a note already receipted")
+	if err := push(other); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, checkout, "pull", "-q", "--ff-only", "origin", "main")
+	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-555555555555",
+		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+
+	const timeout = 1 * time.Second
+	start := time.Now()
+	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String(), "--advance")...).mustCode(t, 0)
+	took := time.Since(start)
+
+	r.mustContain(t, "stdout", "WAIT ADVANCED from=").
+		mustContain(t, "stdout", " to=").
+		mustContain(t, "stdout", " heard=1").
+		mustContain(t, "stdout", "WAIT TIMEOUT after=")
+	if strings.Contains(r.stdout, "WAIT OK new=1") {
+		t.Fatalf("wait --advance returned WAIT OK on a note it had already receipted:\n%s", r.stdout)
+	}
+	if took < timeout {
+		t.Fatalf("wait --advance returned after %s, before its %s deadline, over only a heard note:\n%s", took, timeout, r.stdout)
+	}
+	// The cursor moved over the heard note: its commit is the one this run read to, which
+	// is the parent of the cursor commit the advance itself made.
+	readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD~1"))
+	if onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR")); len(onLane) == 0 || onLane[0] != readTo {
+		t.Fatalf("the cursor was not advanced to head over the heard note (read to %s):\n%s", readTo, read(t, checkout, "from-ada/CURSOR"))
+	}
+}
