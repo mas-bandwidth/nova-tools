@@ -38,6 +38,19 @@ func nativeSandbox(t *testing.T) string {
 	return bin
 }
 
+// nativeSandboxOnPath puts the fake sandbox on PATH under its own name (`nova-sandbox`), so
+// the native run resolves the wall itself rather than being handed a --sandbox path. It
+// returns the directory that now names the wall on PATH.
+func nativeSandboxOnPath(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if _, err := build(t, dir, "nova-sandbox", "./cmd/nova-swarm/testdata/fakesandbox"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return dir
+}
+
 // sandboxArgv reads the argv the wall recorded into the job directory, if any.
 func sandboxArgv(t *testing.T, jobDir string) string {
 	t.Helper()
@@ -109,7 +122,7 @@ func TestNativeRunRecordsCardAndBinaryHashes(t *testing.T) {
 	var errOut bytes.Buffer
 	res, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: "a-label",
-		card: card, slotDir: slot, root: root, deadline: 30 * time.Second,
+		card: card, slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
 	if code != 0 {
 		t.Fatalf("a finished run exits 0, got %d:\n%s", code, errOut.String())
@@ -144,7 +157,7 @@ func TestNativeRunKillsAtDeadline(t *testing.T) {
 	start := time.Now()
 	res, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: "lbl",
-		card: []byte("FAKE-SLEEP 60\n"), slotDir: slot, root: root, deadline: time.Second,
+		card: []byte("FAKE-SLEEP 60\n"), slotDir: slot, root: root, deadline: time.Second, noWall: true,
 	}, &errOut)
 	elapsed := time.Since(start)
 	if code != 0 {
@@ -171,7 +184,7 @@ func TestNativeRunAuthCopyIs0600(t *testing.T) {
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: "lbl",
-		card: []byte("a card\n"), slotDir: slot, root: root, authFile: auth, deadline: 30 * time.Second,
+		card: []byte("a card\n"), slotDir: slot, root: root, authFile: auth, deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
 	if code != 0 {
 		t.Fatalf("an 0600 auth copy runs, got exit %d:\n%s", code, errOut.String())
@@ -270,6 +283,7 @@ func TestCmdNativeCLI(t *testing.T) {
 		"--slot", slot,
 		"--root", root,
 		"--deadline", "10s",
+		"--no-wall",
 	}
 	rc = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 0 {
@@ -294,7 +308,7 @@ func TestNativeRunChildDirIsJobDir(t *testing.T) {
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: label,
-		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
 	}, &errOut)
 	if code != 0 {
 		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
@@ -375,12 +389,12 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
-			"--deadline", "10s"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 0 {
 			t.Fatalf("exit 0, got %d:\n%s", rc, stderr.String())
 		}
-		if !strings.Contains(stdout.String(), "NATIVE OK ") || !strings.Contains(stdout.String(), " sandbox=none ") {
-			t.Fatalf("NATIVE OK names the wall none when no wall runs:\n%s", stdout.String())
+		if !strings.Contains(stdout.String(), "NATIVE OK ") || !strings.Contains(stdout.String(), " sandbox=none-by-flag ") {
+			t.Fatalf("NATIVE OK names the wall none-by-flag when --no-wall runs:\n%s", stdout.String())
 		}
 	})
 
@@ -470,13 +484,13 @@ func TestNativeRefusesWhenWallCannotExpressRule(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 
-	// No wall at all: the card named repos there is no wall to allow.
+	// No wall at all (--no-wall): the card named repos there is no wall to allow.
 	t.Run("no_wall", func(t *testing.T) {
 		var errOut bytes.Buffer
 		_, code := nativeRun(nativeRunConfig{
 			binary: bin, model: "fake/fake-model", label: "lbl",
 			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
-			repos: []string{"mas-bandwidth/nova-tools"},
+			repos: []string{"mas-bandwidth/nova-tools"}, noWall: true,
 		}, &errOut)
 		if code != 2 {
 			t.Fatalf("the refusal exits 2, got %d:\n%s", code, errOut.String())
@@ -511,5 +525,140 @@ func assertRepoRefusal(t *testing.T, out string) {
 	}
 	if got := strings.Count(strings.TrimSpace(out), "\n") + 1; got != 1 {
 		t.Fatalf("exactly one REFUSED line, got %d:\n%s", got, out)
+	}
+}
+
+// TestNativeRefusesWithoutWallUnlessFlagged: the wall is never implied away (SPEC-SANDBOX
+// rule 1). A machine with no wall binary -- none named with --sandbox and none on PATH -- is
+// a refusal naming what was looked for, unless the caller typed --no-wall, in which case the
+// run goes unwalled and says so by its own name.
+func TestNativeRefusesWithoutWallUnlessFlagged(t *testing.T) {
+	bin := nativeHarness(t)
+	t.Setenv("PATH", t.TempDir()) // no nova-sandbox on PATH anywhere
+
+	t.Run("no_wall_no_flag", func(t *testing.T) {
+		root, slot := aSlot(t)
+		var errOut bytes.Buffer
+		_, code := nativeRun(nativeRunConfig{
+			binary: bin, model: "fake/fake-model", label: "lbl",
+			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
+		}, &errOut)
+		if code != 2 {
+			t.Fatalf("a run with no wall and no --no-wall exits 2, got %d:\n%s", code, errOut.String())
+		}
+		if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
+			t.Fatalf("the refusal is one REFUSED line, got:\n%s", errOut.String())
+		}
+		if !strings.Contains(errOut.String(), "lbl no wall:") {
+			t.Fatalf("the refusal names the label and the missing wall, got:\n%s", errOut.String())
+		}
+		if !strings.Contains(errOut.String(), "nova-sandbox") {
+			t.Fatalf("the refusal names what was looked for, got:\n%s", errOut.String())
+		}
+		if got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1; got != 1 {
+			t.Fatalf("exactly one REFUSED line, got %d:\n%s", got, errOut.String())
+		}
+	})
+
+	t.Run("no_wall_with_flag", func(t *testing.T) {
+		root, slot := aSlot(t)
+		var errOut bytes.Buffer
+		res, code := nativeRun(nativeRunConfig{
+			binary: bin, model: "fake/fake-model", label: "lbl",
+			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
+			noWall: true,
+		}, &errOut)
+		if code != 0 {
+			t.Fatalf("--no-wall owns the run and exits 0, got %d:\n%s", code, errOut.String())
+		}
+		if res.wall != "none-by-flag" {
+			t.Errorf("--no-wall names the run none-by-flag, got %q", res.wall)
+		}
+	})
+}
+
+// TestNativeRunsWalledWithoutHostRulesWhenNoRepos: a wall that cannot express a host rule
+// (its check does not say hosts=enforceable) is still a wall. A card naming no repos runs
+// inside it without --repo rules -- never unwalled, and no refusal -- while the same wall
+// and a named repo is the refusal asserted elsewhere.
+func TestNativeRunsWalledWithoutHostRulesWhenNoRepos(t *testing.T) {
+	bin := nativeHarness(t)
+	nativeSandboxOnPath(t)
+	label := "a-label"
+	root, slot := aSlot(t)
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("a wall without host rules still walls a card naming no repos, got %d:\n%s", code, errOut.String())
+	}
+	if res.wall != "fake-wall" {
+		t.Errorf("the run names the wall it resolved on PATH, got %q", res.wall)
+	}
+	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
+	if strings.Contains(argv, "--repo") {
+		t.Errorf("no repo was named, so no --repo rule is built:\n%s", argv)
+	}
+}
+
+// TestNativeChildCwdIsJobDirUnwalled: the child runs in its job directory on BOTH paths --
+// walled and unwalled -- even when the caller's own cwd is somewhere else entirely. The
+// unwalled half is the one the sixth run proved: with no wall the child must still be in the
+// job directory, not the invoker's.
+func TestNativeChildCwdIsJobDirUnwalled(t *testing.T) {
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+
+	for _, tc := range []struct {
+		name    string
+		sandbox string
+		noWall  bool
+	}{
+		{"unwalled", "", true},
+		{"walled", sandbox, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.sandbox != "" {
+				t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+			}
+			root, slot := aSlot(t)
+			label := "foreign-cwd-" + tc.name
+
+			foreign := t.TempDir()
+			orig, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chdir(foreign); err != nil {
+				t.Fatalf("chdir to a foreign directory: %v", err)
+			}
+			defer func() { _ = os.Chdir(orig) }()
+
+			var errOut bytes.Buffer
+			_, code := nativeRun(nativeRunConfig{
+				binary: bin, model: "fake/fake-model", label: label,
+				card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+				sandbox: tc.sandbox, noWall: tc.noWall,
+			}, &errOut)
+			if code != 0 {
+				t.Fatalf("the %s run exits 0, got %d:\n%s", tc.name, code, errOut.String())
+			}
+			jobDir := filepath.Join(slot, "jobs", label)
+			raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+			if err != nil {
+				t.Fatalf("the child did not write pwd into RESULT.md under the job directory: %v", err)
+			}
+			got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
+			want, err := filepath.EvalSymlinks(jobDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Errorf("from cwd %s the %s child's cwd is %q, want the job directory %q", foreign, tc.name, got, want)
+			}
+		})
 	}
 }

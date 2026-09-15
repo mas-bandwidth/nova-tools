@@ -1272,11 +1272,15 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	label := f.fs.String("label", "", "")
 	auth := f.fs.String("auth", "", "")
 	sandbox := f.fs.String("sandbox", "", "")
+	noWall := f.fs.Bool("no-wall", false, "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	if *noWall && *sandbox != "" {
+		f.add("--no-wall and --sandbox together: one asks for no containment at all and the other names the wall to use; pass at most one")
 	}
 	f.want(*harness, "harness", "the harness binary path, checked for existence and execution")
 	f.want(*model, "model", "the model to run: provider/model, one slash, both sides nonempty")
@@ -1313,13 +1317,14 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		repos:      repos,
 		recipients: recipients,
 		sandbox:    *sandbox,
+		noWall:     *noWall,
 	}
 	res, code := nativeRun(cfg, stderr)
 	if code != 0 {
 		return code
 	}
 	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s%s\n",
-		oneline.Field(cfg.label), oneline.Field(res.job), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), usageSuffix(res.usageState))
+		oneline.Field(cfg.label), oneline.Field(res.job), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), usageSuffix(res.usageReason, res.usageState))
 	if res.rc != 0 {
 		if res.rc > 0 {
 			return res.rc
@@ -1360,13 +1365,14 @@ func dash(s string) string {
 }
 
 // usageSuffix renders the usage status the NATIVE OK line carries: the empty string when a
-// store answered, otherwise ` usage=none path=<looked>` with the looked path put through
-// oneline.Field here. It is registered as an escaper in the audit for exactly that reason.
-func usageSuffix(state string) string {
-	if state == "" {
+// store answered, otherwise ` usage=none reason=<r> path=<looked>` with the looked path put
+// through oneline.Field inside itself before returning, so the tail it adds is one safe token.
+// The reason is the literal one of no-rows, no-store or no-sqlite3 the reader reported.
+func usageSuffix(reason, path string) string {
+	if reason == "" {
 		return ""
 	}
-	return " usage=none path=" + oneline.Field(state)
+	return " usage=none reason=" + oneline.Field(reason) + " path=" + oneline.Field(path)
 }
 
 func orElse(a, b string) string {

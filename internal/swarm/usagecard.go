@@ -29,12 +29,26 @@ var CardUsageColumns = []string{
 }
 
 // cardMessagesSQL is the one statement this reader runs against the harness's own store: the
-// assistant rows of the messages table, grouped by provider and model. A column no message
-// reported sums to NULL, which prints as the empty string and is read back as an absence --
-// never as a zero.
-const cardMessagesSQL = `SELECT provider, model, ` +
-	`SUM(tokens_in), SUM(tokens_out), SUM(cache_write), SUM(cache_read), SUM(reasoning), SUM(usd) ` +
-	`FROM messages WHERE role='assistant' GROUP BY provider, model`
+// assistant rows of the `message` table, grouped by provider and model. The numbers live in
+// the `data` JSON -- the provider, the model, the role, and the five token types plus cost --
+// and the row's own `time_created` column is MILLISECONDS since the epoch, so the window is
+// two ms bounds, widened five seconds each side. A column no message reported sums to NULL,
+// which prints as the empty string and is read back as an absence -- never as a zero.
+func cardMessagesSQL(startedMs, endedMs int64) string {
+	return `SELECT ` +
+		`json_extract(data, '$.providerID'), ` +
+		`json_extract(data, '$.modelID'), ` +
+		`SUM(json_extract(data, '$.tokens.input')), ` +
+		`SUM(json_extract(data, '$.tokens.output')), ` +
+		`SUM(json_extract(data, '$.tokens.cache.write')), ` +
+		`SUM(json_extract(data, '$.tokens.cache.read')), ` +
+		`SUM(json_extract(data, '$.tokens.reasoning')), ` +
+		`SUM(json_extract(data, '$.cost')) ` +
+		`FROM message WHERE json_extract(data, '$.role') = 'assistant' ` +
+		`AND time_created >= ` + strconv.FormatInt(startedMs, 10) +
+		` AND time_created <= ` + strconv.FormatInt(endedMs, 10) +
+		` GROUP BY json_extract(data, '$.providerID'), json_extract(data, '$.modelID')`
+}
 
 // cardStoreLocations are the store paths OpenCode may keep inside one data home, in the
 // order this reader tries them: the run's own data directory first -- <dataHome>/opencode/
@@ -50,13 +64,18 @@ func cardStoreLocations(dataHome string) []string {
 }
 
 // ReadCardUsage reads one card's accounting out of its harness store and returns the values,
-// a note, and the store path that answered. The data home the native run chose is passed in
-// explicitly, and the reader looks in its standard locations in order rather than guessing
-// one path. A note names a condition the caller should carry to the person reading it --
-// most importantly, sqlite3 missing from PATH, under which the token columns are dashes and
-// the row still writes rather than the run failing on a number nobody can see. When no store
-// exists at either location the returned path is empty and the note names what was looked for.
-func ReadCardUsage(dataHome string) (ProviderUsage, string, string) {
+// a note, the store path that answered, and the reason the row keeps its dashes. The data
+// home the native run chose is passed in explicitly, and the reader looks in its standard
+// locations in order rather than guessing one path. The window is the run's own timestamps,
+// widened five seconds each side, read against the store's `time_created` column in
+// milliseconds. The reason is one of the three the NATIVE OK line carries -- no-sqlite3,
+// no-rows, or no-store -- or the empty string when the store answered. A note names a
+// condition the caller should carry to the person reading it, most importantly sqlite3
+// missing from PATH, under which the token columns are dashes and the row still writes
+// rather than the run failing on a number nobody can see.
+func ReadCardUsage(dataHome string, started, ended time.Time) (ProviderUsage, string, string, string) {
+	startedMs := started.Add(-5 * time.Second).UnixMilli()
+	endedMs := ended.Add(5 * time.Second).UnixMilli()
 	locations := cardStoreLocations(dataHome)
 	for _, dbPath := range locations {
 		st, err := os.Stat(dbPath)
@@ -66,23 +85,23 @@ func ReadCardUsage(dataHome string) (ProviderUsage, string, string) {
 		if _, err := exec.LookPath(SQLiteBinary); err != nil {
 			note := fmt.Sprintf("usage.tsv token columns are %q: %s is not on PATH, and the store is read with %q read-only",
 				Dash, SQLiteBinary, SQLiteBinary)
-			return ProviderUsage{Values: dashCardTokens()}, note, dbPath
+			return ProviderUsage{Values: dashCardTokens()}, note, dbPath, "no-sqlite3"
 		}
-		rows, err := queryCardMessages(dbPath)
+		rows, err := queryCardMessages(dbPath, startedMs, endedMs)
 		if err != nil {
-			return ProviderUsage{Values: dashCardTokens()}, "", dbPath
+			return ProviderUsage{Values: dashCardTokens()}, "", dbPath, "no-rows"
 		}
 		if len(rows) == 0 {
-			return ProviderUsage{Values: dashCardTokens()}, "", dbPath
+			return ProviderUsage{Values: dashCardTokens()}, "", dbPath, "no-rows"
 		}
 		usage, _ := foldCardMessages(rows)
 		if dbPath == locations[0] {
-			return usage, "", dbPath
+			return usage, "", dbPath, ""
 		}
 		note := fmt.Sprintf("usage.tsv read the store at %s (the primary %s was absent)", dbPath, locations[0])
-		return usage, note, dbPath
+		return usage, note, dbPath, ""
 	}
-	return ProviderUsage{Values: dashCardTokens()}, fmt.Sprintf("no harness store: looked at %s and %s", locations[0], locations[1]), ""
+	return ProviderUsage{Values: dashCardTokens()}, fmt.Sprintf("no harness store: looked at %s and %s", locations[0], locations[1]), "", "no-store"
 }
 
 // dashCardTokens is the row of a store that reported nothing: every numeric column a dash.
@@ -95,11 +114,11 @@ func dashCardTokens() map[string]string {
 }
 
 // queryCardMessages runs the one statement, read-only, under the same timeout every usage
-// read carries (rule 13).
-func queryCardMessages(path string) ([][]string, error) {
+// read carries (rule 13). The statement's window is the caller's two ms bounds.
+func queryCardMessages(path string, startedMs, endedMs int64) ([][]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, SQLiteBinary, "-readonly", "-tabs", path, cardMessagesSQL)
+	cmd := exec.CommandContext(ctx, SQLiteBinary, "-readonly", "-tabs", path, cardMessagesSQL(startedMs, endedMs))
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	cmd.WaitDelay = usageWaitDelay

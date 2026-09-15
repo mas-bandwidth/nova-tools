@@ -42,7 +42,8 @@ type nativeRunConfig struct {
 	// github.com only, expressed as a wall host rule
 	recipients []string // bus lanes a card may address; default none, and a bus
 	// send is denied inside the wall regardless
-	sandbox string // the nova-sandbox binary naming the wall; "" = no wall
+	sandbox string // the nova-sandbox binary naming the wall; "" = resolve on PATH
+	noWall  bool   // the caller typed --no-wall: run with no containment, named by its OK line
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -53,7 +54,8 @@ type nativeRunResult struct {
 	cardSHA256   string  // sha256 of the card text, lowercase hex
 	binarySHA256 string  // sha256 of the harness binary, lowercase hex
 	job          string  // the job directory <slot>/jobs/<label> the child ran in
-	usageState   string  // the looked-for store path when no store answered, "" otherwise
+	usageState   string  // the store path the NATIVE OK line names when no store answered, "" otherwise
+	usageReason  string  // no-rows | no-store | no-sqlite3, "" when the store answered
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -130,21 +132,30 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	binaryHash, _ := fileSHA256(bin)
 	cardHash := sha256.Sum256(cfg.card)
 
-	// (5) THE WALL (slice 11). When a wall is named the child runs inside nova-sandbox,
-	// and the two lists a run may carry -- repos a card may clone, recipients a card may
-	// address -- are the wall's allow rules. A repo is network to github.com only, which is
-	// a HOST rule; a wall that cannot express it is a refusal (`wall cannot express repo
-	// rule`), never an unwalled run. A recipient is never expressed: a bus send is denied
-	// inside the wall by construction (no nova-bus on PATH, no bus checkout in the write
-	// set), so the default of none is what the wall enforces and no allow rule is built.
+	// (5) THE WALL (slice 11). Every native run is walled unless the caller typed --no-wall:
+	// the wall is never implied away (SPEC-SANDBOX rule 1). A --sandbox name is used as typed;
+	// otherwise the tool's own name is resolved on PATH. A wall that cannot express a repo
+	// allow rule is still a wall -- a card naming no repos runs inside it without the rule,
+	// and one naming repos is refused, never unwalled. A machine with no wall binary at all
+	// refuses unless --no-wall owns every read and write the child makes.
 	runPath := bin
 	runArgv := []string{"run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card)}
-	if cfg.sandbox != "" {
-		if len(cfg.repos) > 0 && !sandboxHostRules(cfg.sandbox) {
+	wall := cfg.sandbox
+	if wall == "" && !cfg.noWall {
+		found, err := exec.LookPath(swarm.SandboxBinary)
+		if err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s no wall: %s is on no PATH entry and --sandbox names no file; name the wall with --sandbox <path> or run with --no-wall and own every read and write the child makes",
+				oneline.Field(cfg.label), oneline.Field(swarm.SandboxBinary)))
+			return nativeRunResult{}, 2
+		}
+		wall = found
+	}
+	if wall != "" {
+		if len(cfg.repos) > 0 && !sandboxHostRules(wall) {
 			refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 			return nativeRunResult{}, 2
 		}
-		runPath = cfg.sandbox
+		runPath = wall
 		runArgv = nativeSandboxArgv(bin, cfg, dataHome, jobDir)
 	} else if len(cfg.repos) > 0 {
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
@@ -182,6 +193,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		job:          jobDir,
 		wall:         "none",
 	}
+	if cfg.noWall {
+		res.wall = "none-by-flag"
+	}
 	start := time.Now()
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -193,7 +207,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	res.wallSeconds = time.Since(start).Seconds()
 	log.Close()
 
-	if cfg.sandbox != "" {
+	if wall != "" {
 		backend, cwd, ok := wallNamed(wallOut.String())
 		if !ok {
 			refuseNative(errOut, fmt.Sprintf("%s wall ran without a SANDBOX OK line naming its backend; the run is refused rather than silently unwalled", oneline.Field(cfg.label)))
@@ -208,7 +222,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 
 	// Slice 10: one usage.tsv beside the run, read from the harness's own store, so a batch
 	// can fold the card's tokens and dollars without re-reading the harness.
-	res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], start, time.Now(), res.rc, errOut)
+	res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], start, time.Now(), res.rc, errOut)
 	return res, 0
 }
 
@@ -294,9 +308,9 @@ func sameDir(a, b string) bool {
 // passed here explicitly (the run chose it), and the reader looks in its standard locations.
 // When sqlite3 is missing the columns are dashes and the note is carried to the caller, and
 // the run still finishes rather than failing on a number nobody can see. When no store exists
-// the row keeps its dashes and the returned state names the looked path for the NATIVE OK line.
-func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc int, errOut io.Writer) string {
-	usage, note, path := swarm.ReadCardUsage(dataHome)
+// the row keeps its dashes and the returned reason and path name what the NATIVE OK line says.
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc int, errOut io.Writer) (reason, path string) {
+	usage, note, storePath, rr := swarm.ReadCardUsage(dataHome, start, end)
 	rcCol := "-"
 	if rc >= 0 {
 		rcCol = strconv.Itoa(rc)
@@ -317,10 +331,13 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 	if note != "" {
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}
-	if path == "" {
-		return filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
+	if rr == "" {
+		return "", ""
 	}
-	return ""
+	if storePath == "" {
+		storePath = filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
+	}
+	return rr, storePath
 }
 
 // providerOf splits a native model id on its single slash and reports whether it
