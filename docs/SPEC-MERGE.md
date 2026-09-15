@@ -552,15 +552,18 @@ line rather than two.
 ```
 INIT OK lane=<dir> repo=<owner>/<name> base=<branch> lane_branch=<name> joined=<true|false> version=1
 INIT REFUSED: <reason>
+INIT NOTE the repository's default branch could not be read from <url>, so this lane records none and takes the STRONGER hosted-red rule: a hosted red stops the entry (rule 15); nova-merge init --lane <dir> --default-branch <branch> records it, and --hosted-red names states the other arm outright
 ADD OK kind=<pr|branch> entry=<n-or-name> needs_read=<yes|no> lane=<prs>/<branches>
 ADD NOTE <entry> is already in the lane (needs_read=<yes|no>)
 ADD REFUSED: <reason>
 READ OK entry=<n-or-name> who=<name> verdict=<approve|hold> head=<sha12> current=<true|false|-> approvals=<n> holds=<n> stale=<n> file=<path> pushed=true
 READ FAIL entry=<n-or-name> who=<name> head=<sha12> file=<path> pushed=false: <reason>; re-run the same verb to push it
 READ REFUSED: <reason>
+READ NOTE entry=<n-or-name> head=<sha12|->: <the record is pushed and this lane could not fold the branch, or this lane does not hold the entry or the sha; the next run folds it>
 GATE OK entry=<n-or-name> head=<sha12> base=<sha12> merge=<sha12> verdict=<green|red> summary=<path> in_lane=<true|false> newest=<true|false> file=<path> pushed=true
 GATE FAIL entry=<n-or-name> head=<sha12> base=<sha12> merge=<sha12> file=<path> pushed=false: <reason>; re-run the same verb to push it
 GATE REFUSED: <reason>
+GATE NOTE the record is pushed and this lane could not fold the branch afterwards: <reason>; the next run folds it
 RUN PASS n=<k> at=<stamp> build=<id> pulled=<n> planned_red=<text|-> hosted_red_policy=<blocks|names>
 RUN NEWER build=<id> on_disk=<id>: the binary changed; this loop ends after this pass; restart it by hand
 RUN BASE base=<branch> head=<sha12> checks=g<n>/p<n>/r<n> gate=<green|-> state=<GREEN|RED|PENDING|PLANNED-RED>
@@ -580,13 +583,20 @@ RUN NOTE <the one remedy line>
 RUN REFUSED: <reason>
 STATUS ENTRY kind=<pr|branch> entry=<n-or-name> head=<sha12> checks=g<n>/p<n>/r<n> read=<n>a/<n>h stale=<n> gate=<merge|head|stale|-> state=<STATE> last=<stamp>
 STATUS OK prs=<n> branches=<n> base=<branch> base_state=<GREEN|RED|PENDING|PLANNED-RED> ready=<n> blocked=<n> waiting=<n> reads=<n>a/<n>h
+STATUS READ entry=<n-or-name> who=<name> verdict=<approve|hold> head=<sha12> current=<true|false> at=<stamp> file=<path>
+STATUS STOPPED reason=malformed_record file=<path>: <reason>; this path names no entry, so no entry's state in this lane can be reported; re-record it with the verb that wrote it
+STATUS NOTE <the reason this report is not current>: the base or its checks could not be read, the lane branch was not pulled, or the entry is not in this lane
 DRY PLAN pos=<k> entry=<n-or-name> admitted=<hosted|gate> gate=<merge|head|stale|-> read=<n>a/<n>h
 DRY OK surveyed=<n> would_merge=<n-or-name|-> stopped=<n> waiting=<n>
 PACKET ENTRY entry=<n-or-name> head=<sha12> last_read=<sha12|-> range=<r> holds=<n> gate=<merge|head|stale|-> checks=g<n>/p<n>/r<n> url=<url|->
 PACKET HOLD who=<name> head=<sha12>: <note>
 PACKET MORE kind=hold shown=<n> total=<t> nova-merge packet --lane <dir> --who <name> --all --max 0
 PACKET OK entries=<n> holds=<n>
+PACKET REFUSED: <reason>
+PACKET NOTE entry=<n-or-name> who=<name>: <the reason this entry is not handed to a reader, or it is blocked by a record the fold refused>
+PACKET STOPPED reason=malformed_record file=<path>: <reason>; this path names no entry, so no entry in this lane can be handed over; re-record it with the verb that wrote it
 STOP OK lane=<dir>
+REHEARSE FIRST, against a bare repository of your own:
 ```
 
 `RUN PASS` is the first line of every pass and it says what the pass looked at
