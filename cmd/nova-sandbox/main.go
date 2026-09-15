@@ -318,7 +318,7 @@ func checkVerb(stdout io.Writer) int {
 		net = "enforceable"
 		note = note + "; backend at " + backend
 	}
-	fmt.Fprintf(stdout, "CHECK OK backend=%s abi=%s net=%s note=%s\n",
+	fmt.Fprintf(stdout, "CHECK OK backend=%s abi=%s net=%s hosts=none note=%s\n",
 		oneline.Field(name), oneline.Field(sandbox.ABI), oneline.Field(net), oneline.Escape(note))
 	return 0
 }

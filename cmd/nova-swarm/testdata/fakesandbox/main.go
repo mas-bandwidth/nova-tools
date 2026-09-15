@@ -14,6 +14,9 @@
 //	           command after -- verbatim, so a whole pass runs through the seam
 //	none       check says backend=none: the machine has no wall (rule 1)
 //	probefail  check says a backend is here and the probe FAILS a check (rule 10)
+//	hosts      like pass, but check also says hosts=enforceable: the wall can express a
+//	           repo allow rule (network to github.com), so the native run builds --repo
+//	           rules instead of refusing
 //
 // It writes the argv it was handed into `<--cwd>/sandbox-argv`, which is how a test reads
 // the argv the dispatcher built for a worker. The file goes in the job directory rather
@@ -44,10 +47,16 @@ func main() {
 	case "check":
 		backend := "fake-wall"
 		net := "enforceable"
+		hosts := "none"
 		if mode == "none" {
 			backend, net = "none", "unenforceable"
+		} else if mode == "hosts" {
+			// A wall that can express a repo allow rule: network to github.com for the
+			// named repos is a host rule, and this stand-in claims it so the native run's
+			// seam test can assert the --repo allow rules it builds.
+			hosts = "enforceable"
 		}
-		fmt.Printf("CHECK OK backend=%s abi=- net=%s note=the fake sandbox of the swarm seam tests\n", backend, net)
+		fmt.Printf("CHECK OK backend=%s abi=- net=%s hosts=%s note=the fake sandbox of the swarm seam tests\n", backend, net, hosts)
 		os.Exit(0)
 	case "probe":
 		if mode == "none" {

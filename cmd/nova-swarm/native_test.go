@@ -26,6 +26,28 @@ func nativeHarness(t *testing.T) string {
 	return bin
 }
 
+// nativeSandbox builds the fake sandbox of the seam tests: a stand-in for nova-sandbox that
+// records its argv and, under NOVA_FAKE_SANDBOX=hosts, reports hosts=enforceable so the
+// repo allow rule reaches the argv.
+func nativeSandbox(t *testing.T) string {
+	t.Helper()
+	bin, err := build(t, t.TempDir(), "fake-sandbox", "./cmd/nova-swarm/testdata/fakesandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+// sandboxArgv reads the argv the wall recorded into the slot directory, if any.
+func sandboxArgv(t *testing.T, slot string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(slot, "sandbox-argv"))
+	if err != nil {
+		t.Fatalf("the wall recorded no argv under %s: %v", slot, err)
+	}
+	return string(raw)
+}
+
 // aSlot returns a slot dir and the root it is under, both fresh.
 func aSlot(t *testing.T) (root, slot string) {
 	t.Helper()
@@ -218,7 +240,6 @@ func TestNativeRunRefusalsNameTheirReason(t *testing.T) {
 	}
 }
 
-// TestCmdNativeCLI verifies the native subcommand entry point via run().
 func TestCmdNativeCLI(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -259,5 +280,115 @@ func TestCmdNativeCLI(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "label=test-label") {
 		t.Fatalf("stdout must contain label=test-label, got:\n%s", stdout.String())
+	}
+}
+
+// THE WALL RULES OF THE NATIVE RUN (slice 11, lesson 11). A frozen run configuration gains
+// two lists: repos (repositories a card may clone) and recipients (bus lanes a card may
+// address, default none). The native run passes them to the sandbox layer as allow rules:
+// a repo is network to github.com only, and it is a HOST rule -- a wall that cannot express
+// it refuses rather than running unwalled -- while the recipients are never expressed, and
+// a bus send is denied by the wall by construction (no nova-bus on PATH, no bus checkout in
+// the write set).
+
+// TestNativeRunPassesRepoAllowRule: when the wall can express a hash host rule, the native
+// run's argv carries each repo the card named as a --repo allow rule, and the child still
+// runs to completion.
+func TestNativeRunPassesRepoAllowRule(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "hosts")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "a-label",
+		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		sandbox: sandbox, repos: []string{"mas-bandwidth/nova-tools"},
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("a walled run with a repo rule exits 0, got %d:\n%s", code, errOut.String())
+	}
+	argv := sandboxArgv(t, slot)
+	if !strings.Contains(argv, "--repo mas-bandwidth/nova-tools") {
+		t.Errorf("the wall argv does not carry the repo allow rule:\n%s", argv)
+	}
+}
+
+// TestNativeRunDeniesBusInsideWall: recipients are never turned into an allow rule. The
+// native run built the wall, and the wall's argv grants no bus -- no nova-bus command, no
+// --recipient flag, and no bus checkout in the write set -- so a bus send from inside the
+// wall is denied by construction.
+func TestNativeRunDeniesBusInsideWall(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "a-label",
+		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		sandbox: sandbox, recipients: []string{"adrienne", "rowan"},
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("a walled run exits 0, got %d:\n%s", code, errOut.String())
+	}
+	argv := sandboxArgv(t, slot)
+	for _, denied := range []string{"nova-bus", "--recipient"} {
+		if strings.Contains(argv, denied) {
+			t.Errorf("the wall argv grants a bus lane the wall denies (%q):\n%s", denied, argv)
+		}
+	}
+}
+
+// TestNativeRefusesWhenWallCannotExpressRule: a card that names repos but no wall, or a
+// wall that cannot express a HOST rule, is a refusal -- never an unwalled run. The one line
+// names the label and the reason.
+func TestNativeRefusesWhenWallCannotExpressRule(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+
+	// No wall at all: the card named repos there is no wall to allow.
+	t.Run("no_wall", func(t *testing.T) {
+		var errOut bytes.Buffer
+		_, code := nativeRun(nativeRunConfig{
+			binary: bin, model: "fake/fake-model", label: "lbl",
+			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
+			repos: []string{"mas-bandwidth/nova-tools"},
+		}, &errOut)
+		if code != 2 {
+			t.Fatalf("the refusal exits 2, got %d:\n%s", code, errOut.String())
+		}
+		assertRepoRefusal(t, errOut.String())
+	})
+
+	// A wall that cannot express a host rule (hosts=none).
+	t.Run("wall_without_host_rules", func(t *testing.T) {
+		t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+		sandbox := nativeSandbox(t)
+		var errOut bytes.Buffer
+		_, code := nativeRun(nativeRunConfig{
+			binary: bin, model: "fake/fake-model", label: "lbl",
+			card: []byte("a card\n"), slotDir: slot, root: root, deadline: time.Second,
+			sandbox: sandbox, repos: []string{"mas-bandwidth/nova-tools"},
+		}, &errOut)
+		if code != 2 {
+			t.Fatalf("the refusal exits 2, got %d:\n%s", code, errOut.String())
+		}
+		assertRepoRefusal(t, errOut.String())
+	})
+}
+
+func assertRepoRefusal(t *testing.T, out string) {
+	t.Helper()
+	if !strings.Contains(out, "NATIVE REFUSED") {
+		t.Fatalf("the refusal is one REFUSED line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "lbl wall cannot express repo rule") {
+		t.Fatalf("the refusal names the label and the reason, got:\n%s", out)
+	}
+	if got := strings.Count(strings.TrimSpace(out), "\n") + 1; got != 1 {
+		t.Fatalf("exactly one REFUSED line, got %d:\n%s", got, out)
 	}
 }
