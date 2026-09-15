@@ -40,10 +40,21 @@ func main() {
 		fmt.Fprintln(os.Stderr, "fake harness:", err)
 		os.Exit(2)
 	}
-	raw, err := os.ReadFile(os.Args[len(os.Args)-1])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "fake harness: the prompt could not be read:", err)
-		os.Exit(2)
+	// TWO WIRES IN, ONE PROMPT OUT. The legacy dispatcher hands a prompt FILE last; the
+	// native path (issue #296) hands the card text itself as the message after `--`, so
+	// the LAST argument is either a file ending in PROMPT.md or the literal card text.
+	// Nothing guesses: a PROMPT.md path is read, and anything else is the message.
+	var raw []byte
+	last := os.Args[len(os.Args)-1]
+	if strings.HasSuffix(last, "PROMPT.md") {
+		var err error
+		raw, err = os.ReadFile(last)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: the prompt could not be read:", err)
+			os.Exit(2)
+		}
+	} else {
+		raw = []byte(last)
 	}
 	prompt := string(raw)
 	job := os.Getenv("NOVA_SWARM_JOB")
@@ -392,8 +403,11 @@ func checkInvocation(args []string) error {
 		return fmt.Errorf("no --model in %q: this harness was never told which model to run", strings.Join(args, " "))
 	}
 	last := args[len(args)-1]
-	if !strings.HasSuffix(last, "PROMPT.md") {
-		return fmt.Errorf("the last argument wants the prompt FILE, got %q", last)
+	// The last argument is either the prompt FILE or, on the native path, the card text
+	// itself as the message after `--`. A bare flag with no value is the one thing that is
+	// neither, and it is refused.
+	if strings.HasPrefix(last, "-") {
+		return fmt.Errorf("the last argument wants a prompt FILE or the message text, got %q", last)
 	}
 	return nil
 }

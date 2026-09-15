@@ -62,6 +62,13 @@ var swarmAudit = audit.Config{
 		// and the two lines this binary prints whole are the two exempted verbatim sites
 		// above.
 		`"github.com/mas-bandwidth/nova-tools/internal/swarm"`,
+		// native.go (issue #296) needs these four and none of them writes a stream, so
+		// none can write past the escape. context only gives CommandContext its deadline
+		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the
+		// two recorded hashes (bytes in, a string out); encoding/json reads the auth file
+		// and writes only dataHome/auth.json, which is the child's credential, not this
+		// binary's line.
+		`"context"`, `"crypto/sha256"`, `"encoding/hex"`, `"encoding/json"`,
 	},
 	MinClassified: 40,
 }

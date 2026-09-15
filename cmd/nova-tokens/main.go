@@ -391,6 +391,26 @@ func sourceLine(token string, s *tokens.Source) string {
 		oneline.Field(s.StatField("rows")))
 }
 
+// sourceNamedDay reports whether the source fed any message for the day.
+func sourceNamedDay(s *tokens.Source, day string) bool {
+	for _, m := range s.Stream {
+		if m.Day == day {
+			return true
+		}
+	}
+	return false
+}
+
+// dayNames reports whether the day file's sources= line names the label.
+func dayNames(sources []string, label string) bool {
+	for _, s := range sources {
+		if s == label {
+			return true
+		}
+	}
+	return false
+}
+
 // noPositional refuses a verb invoked with a positional argument. Every verb's shape in
 // the usage block is flags only, and four of the five silently DROPPED the extra word:
 // `nova-tokens sum --out X --month Y extra` ran and answered about something the caller
@@ -481,6 +501,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	dayList := bounded.Capped(stdout, *max, "TOKENS", "day", maxRemedy("fold"))
 	shrankList := bounded.Capped(stderr, *max, "TOKENS", "shrank", maxRemedy("fold"))
 	partialList := bounded.Capped(stderr, *max, "TOKENS", "partial", maxRemedy("fold"))
+	quietList := bounded.Capped(stderr, *max, "TOKENS", "quiet", maxRemedy("fold"))
 
 	conflictDays := map[string]bool{}
 	// The labels this run declared: exactly what lands in a row's sources column, and so
@@ -535,7 +556,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !*all {
 		days = []string{*day}
 	}
-	daysWritten, rowsWritten := 0, 0
+	daysWritten, rowsWritten, quiet := 0, 0, 0
 	mixedLabels := "-"
 	firstPartial := ""
 	for _, d := range days {
@@ -600,6 +621,17 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 						shrank = true
 					}
 				}
+				// A declared source with zero samples for an explicitly selected existing
+				// day is quiet: the day file still names it, and the fold prints a bounded
+				// line naming it rather than letting the refusal speak only in day totals.
+				for _, s := range sources {
+					if sourceNamedDay(s, d) || !dayNames(old.Sources, s.Label) {
+						continue
+					}
+					quiet++
+					quietList.Line(fmt.Sprintf("TOKENS QUIET label=%s day=%s: a declared source has zero samples for an explicitly selected existing day",
+						oneline.Field(s.Label), oneline.Field(d)))
+				}
 			}
 			// --allow-shrink is a person's word about a day going backwards. It is NOT a
 			// word about a row this fold cannot compute, so it does not override a partial,
@@ -629,10 +661,11 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	dayList.More()
 	shrankList.More()
 	partialList.More()
+	quietList.More()
 
-	counts := fmt.Sprintf("days=%d rows=%d sources=%d unreadable=%d unparsed=%d mixed=%d conflict=%d shrank=%d partial=%d",
+	counts := fmt.Sprintf("days=%d rows=%d sources=%d unreadable=%d unparsed=%d mixed=%d conflict=%d shrank=%d partial=%d quiet=%d",
 		daysWritten, rowsWritten, len(sources), unreadable.Total(), unparsed.Total(),
-		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total())
+		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total(), quiet)
 	bad := unreadable.Total() > 0 || unparsed.Total() > 0 || mixedList.Total() > 0 ||
 		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink) || partialList.Total() > 0
 	if bad {
