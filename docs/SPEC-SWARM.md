@@ -667,6 +667,18 @@ not wait for them. The wait reads sidecars and usage files — the pool's own
 accounting, never a card's process. **Missing contact is `unknown`, not
 failure**: a card the machinery cannot reach is `unknown`, never failed.
 
+- `--idle <seconds>` (default 300) is the per-card idle timeout, held beside
+  the batch deadline, never instead of it. A card writes its own log —
+  `harness.log` under its job directory, the runner's stdout pinned to a
+  regular file — and a card whose log has not grown for `idle` seconds is
+  killed. Idle is a property of one card's own log, measured against that
+  card alone: the batch returns on its **slowest still-working card**, not on
+  the deadline, because a dead card is removed from the wait as soon as its
+  log stops growing.
+- A card killed for idleness is scored `<label>: ABSTAIN -- idle <n>s` on the
+  packet — an abstain that names *why* it stopped, never a bare missing
+  result — and the BATCH line's `idle=<n>` counts those kills.
+
 ### gather — one bounded packet, mechanically
 
 `gather` reads every card's `RESULT.md` and folds the batch into **one
@@ -696,17 +708,21 @@ are the thing the packet replaced.
 ### The packet's grammar
 
 ```
-BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum>
+BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum> idle=<n>
+<label>: ABSTAIN -- idle <n>s
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped>
 HOLD: <one bounded quoted line>
 ```
 
 `BATCH` is the packet's first line: the id, the admitted n, the cards done,
-the cards abstain, the batch usd total. One `CARD` line per card, in
-admission order: its admitted-text sha prefix, its state, its usage, and its
-disposition line — line 2 verbatim, capped at one line. `HOLD:` lines carry
-evidence a count would hide, each capped. Counts and caps bound the packet's
-bytes; a packet never lists a finding and never quotes a report body.
+the cards abstain, the batch usd total, and `idle=<n>` — how many cards the
+idle timeout killed. One `CARD` line per card, in admission order: its
+admitted-text sha prefix, its state, its usage, and its disposition line —
+line 2 verbatim, capped at one line. A card killed by the idle timeout is its
+own one-line score, `<label>: ABSTAIN -- idle <n>s`, in place of a `CARD`
+line. `HOLD:` lines carry evidence a count would hide, each capped. Counts
+and caps bound the packet's bytes; a packet never lists a finding and never
+quotes a report body.
 
 ### What this section does not do
 

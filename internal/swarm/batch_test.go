@@ -71,6 +71,16 @@ func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) 
 	return code, out.String(), errb.String()
 }
 
+func runBatchIdle(t *testing.T, cards, root, runner string, deadline, idle time.Duration) (int, string, string) {
+	t.Helper()
+	var out, errb bytes.Buffer
+	code := Batch(BatchInput{
+		ID: "B1", Deadline: deadline, Idle: idle, Cards: cards, Root: root, Runner: runner,
+		Stdout: &out, Stderr: &errb,
+	})
+	return code, out.String(), errb.String()
+}
+
 func TestBatchGathersLine2(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -157,6 +167,103 @@ func TestBatchKillsAtDeadline(t *testing.T) {
 	}
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1") {
 		t.Fatalf("a killed card is an abstain, never a hang:\n%s", out)
+	}
+}
+
+func TestBatchKillsIdleCardEarly(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A runner that writes nothing to its log and never publishes a result: its harness.log
+	// stays empty, so the idle monitor kills it long before the batch's own deadline.
+	runner := filepath.Join(dir, "idle.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("the wait ends when the idle card is killed, it does not burn the deadline")
+	}
+	if code != 1 {
+		t.Fatalf("a batch with an idle-killed card exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 usd=0.0000 idle=1") {
+		t.Fatalf("the idle kill is counted as an abstain and the idle count:\n%s", out)
+	}
+	if !strings.Contains(out, "a: ABSTAIN -- idle 1s") {
+		t.Fatalf("an idle-killed card names its idle reason:\n%s", out)
+	}
+}
+
+func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A runner whose log grows the whole time: it writes to stdout every tick, then publishes
+	// its result. The idle monitor must leave it alone because its log never sits still.
+	runner := filepath.Join(dir, "writing.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"path=\"$root/$slot/jobs/$label/RESULT.md\"\n" +
+		"mkdir -p \"$(dirname \"$path\")\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"i=0\n" +
+		"while [ $i -lt 6 ]; do echo \"working $i\"; sleep 0.15; i=$((i+1)); done\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$path\"\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, 2*time.Second)
+	if code != 0 {
+		t.Fatalf("a batch over a card that keeps writing exits 0, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 usd=0.0000 idle=0") {
+		t.Fatalf("a writing card is done, never idle-killed:\n%s", out)
+	}
+	if !strings.Contains(out, "a all green") {
+		t.Fatalf("the writing card's line 2 is gathered verbatim:\n%s", out)
+	}
+}
+
+func TestBatchLineCountsIdle(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\ndone and clean"},
+	})
+	// One runner that idles card a (writes nothing) and finishes card b (writes then publishes).
+	runner := filepath.Join(dir, "mixed.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"path=\"$root/$slot/jobs/$label/RESULT.md\"\n" +
+		"mkdir -p \"$(dirname \"$path\")\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"if [ \"$label\" = \"a\" ]; then sleep 30; fi\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$path\"\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch with one idle kill exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 usd=0.0000 idle=1") {
+		t.Fatalf("the BATCH line counts the idle kill in its own idle=<n> field:\n%s", out)
+	}
+	if !strings.Contains(out, "a: ABSTAIN -- idle 1s") || !strings.Contains(out, "b done and clean") {
+		t.Fatalf("the idle card is named with its reason and the done card is folded:\n%s", out)
 	}
 }
 

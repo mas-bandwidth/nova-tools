@@ -14,6 +14,7 @@ package swarm
 // carries: one line, capped, one per card.
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,15 +24,29 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
+
+// admitError is a card-shape refusal found while admitting a card. It is distinct from a
+// plain read error because it carries the label and the reason and prints its own line:
+// ADMIT REFUSED <label> card-shape: <reason>, citing docs/WORKER-CARDS.md practice 17.
+type admitError struct {
+	label  string
+	reason string
+}
+
+func (e *admitError) Error() string {
+	return fmt.Sprintf("ADMIT REFUSED %s card-shape: %s", oneline.Field(e.label), e.reason)
+}
 
 // BatchInput is everything the batch scatter/wait/gather needs, held apart from the
 // command-line parsing so a test can drive it with a fake runner script.
 type BatchInput struct {
 	ID       string        // the batch id, printed on the BATCH line
 	Deadline time.Duration // the whole batch's own deadline
+	Idle     time.Duration // per-card idle timeout: a card's log not growing this long is killed
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
 	Runner   string        // the command, one process per card
@@ -52,13 +67,23 @@ type batchCard struct {
 // spec bounds the packet at n + 12 lines: one BATCH line and at most eleven HOLD lines.
 const maxHoldLines = 11
 
+// idlePollInterval is how often the batch re-reads a card's log size while waiting, in
+// search of a card whose log has stopped growing. It is short enough that an idle kill lands
+// close to the timeout and long enough that it does not busy-spin over n files.
+const idlePollInterval = 100 * time.Millisecond
+
 // Batch runs one batch through scatter, wait and gather and returns the process exit code:
 // 0 only when every card was done and none held, 1 otherwise, 2 when the admission could
 // not even be read.
 func Batch(in BatchInput) int {
 	cards, err := readCards(in.Cards)
 	if err != nil {
-		fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
+		var ae *admitError
+		if errors.As(err, &ae) {
+			fmt.Fprintln(in.Stderr, ae.Error())
+		} else {
+			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
+		}
 		return 2
 	}
 	if len(cards) == 0 {
@@ -73,8 +98,11 @@ func Batch(in BatchInput) int {
 	// scatter: one runner process per card, in TSV order. The job directory is made before
 	// the process starts so a runner can write RESULT.md straight into place.
 	type proc struct {
-		cmd  *exec.Cmd
-		done bool // guarded by doneMu
+		cmd        *exec.Cmd
+		logPath    string
+		done       bool // guarded by doneMu
+		idleKilled bool // guarded by doneMu
+		lastGrow   time.Time
 	}
 	var doneMu sync.Mutex
 	procs := make([]proc, len(cards))
@@ -84,20 +112,33 @@ func Batch(in BatchInput) int {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 			return 2
 		}
+		// A card's log is the runner's own stdout pinned to a regular file under the job, the
+		// way the spec records a job: harness.log. Idle means this file stopped growing.
+		logPath := filepath.Join(job, "harness.log")
+		logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
+			return 2
+		}
 		cmd := exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root)
 		cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root, "NOVA_SWARM_JOB="+job)
-		cmd.Stdout = io.Discard
-		cmd.Stderr = io.Discard
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
 		if err := cmd.Start(); err != nil {
+			_ = logFile.Close()
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: runner %s could not start for %s: %s\n",
 				oneline.Field(in.Runner), oneline.Field(c.label), oneline.Err(err))
 			return 2
 		}
-		procs[i] = proc{cmd: cmd}
+		_ = logFile.Close()
+		procs[i] = proc{cmd: cmd, logPath: logPath, lastGrow: time.Now()}
 	}
 
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
-	// signal and one timer; it never waits for a card past the deadline.
+	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
+	// --idle is set, one monitor re-reads each running card's log and kills a card whose log
+	// has not grown for the idle window: a dead card is removed from the wait, so the batch
+	// returns on its slowest still-working card rather than burning the whole deadline.
 	var wg sync.WaitGroup
 	allDone := make(chan struct{})
 	for i := range procs {
@@ -111,6 +152,47 @@ func Batch(in BatchInput) int {
 		}(&procs[i])
 	}
 	go func() { wg.Wait(); close(allDone) }()
+
+	stopMonitor := make(chan struct{})
+	var monitorWG sync.WaitGroup
+	if in.Idle > 0 {
+		monitorWG.Add(1)
+		go func() {
+			defer monitorWG.Done()
+			ticker := time.NewTicker(idlePollInterval)
+			defer ticker.Stop()
+			lastSize := make([]int64, len(procs))
+			for {
+				select {
+				case <-stopMonitor:
+					return
+				case <-allDone:
+					return
+				case now := <-ticker.C:
+					doneMu.Lock()
+					for i := range procs {
+						if procs[i].done || procs[i].idleKilled {
+							continue
+						}
+						size := logSize(procs[i].logPath)
+						if size != lastSize[i] {
+							lastSize[i] = size
+							procs[i].lastGrow = now
+							continue
+						}
+						if now.Sub(procs[i].lastGrow) >= in.Idle {
+							procs[i].idleKilled = true
+							if procs[i].cmd.Process != nil {
+								_ = procs[i].cmd.Process.Kill()
+							}
+						}
+					}
+					doneMu.Unlock()
+				}
+			}
+		}()
+	}
+
 	select {
 	case <-allDone:
 	case <-time.After(in.Deadline):
@@ -122,13 +204,16 @@ func Batch(in BatchInput) int {
 		}
 		doneMu.Unlock()
 	}
+	close(stopMonitor)
+	monitorWG.Wait()
 
 	// gather: fold every card into one bounded packet. A missing or wrong-line-1 result is
 	// an ABSTAIN row; done is decided by the contract alone, never by the process's timing.
+	idleSeconds := int(in.Idle.Seconds())
 	var (
-		done, abstain int
-		holds         []string
-		total         float64
+		done, abstain, idle int
+		holds               []string
+		total               float64
 	)
 	type row struct {
 		label string
@@ -136,12 +221,22 @@ func Batch(in BatchInput) int {
 		line2 string
 		usd   float64
 		hold  bool
+		idle  bool
 	}
 	rows := make([]row, len(cards))
 	for i, c := range cards {
 		rows[i].label = c.label
 		rows[i].usd = readUSD(filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "usage"))
 		total += rows[i].usd
+		// A card the idle monitor killed is its own score, an ABSTAIN that names its reason,
+		// not a missing-result abstain: the card was not hung by its work but stopped growing.
+		if procs[i].idleKilled {
+			rows[i].state = "abstain"
+			rows[i].idle = true
+			abstain++
+			idle++
+			continue
+		}
 		path := filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "RESULT.md")
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -167,9 +262,13 @@ func Batch(in BatchInput) int {
 	// The packet's grammar. The BATCH line first, then one line per card in admission
 	// order (label, then line 2 verbatim), then HOLD lines -- at most maxHoldLines -- so
 	// the whole packet never grows past n + 12 lines whatever the batch holds.
-	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d usd=%s\n",
-		oneline.Field(in.ID), len(cards), done, abstain, formatUSD(total))
+	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d usd=%s idle=%d\n",
+		oneline.Field(in.ID), len(cards), done, abstain, formatUSD(total), idle)
 	for _, r := range rows {
+		if r.idle {
+			fmt.Fprintf(in.Stdout, "%s: ABSTAIN -- idle %ds\n", oneline.Field(r.label), idleSeconds)
+			continue
+		}
 		if r.state == "abstain" {
 			fmt.Fprintf(in.Stdout, "%s abstain\n", oneline.Field(r.label))
 			continue
@@ -215,6 +314,9 @@ func readCards(path string) ([]batchCard, error) {
 		if contract == "" {
 			return nil, fmt.Errorf("--cards line %d: %s is empty; a card admits under line 1 of its text", i+1, cardPath)
 		}
+		if reason := cardShapeFailure(parts[2], string(cardRaw)); reason != "" {
+			return nil, &admitError{label: parts[0], reason: reason}
+		}
 		cards = append(cards, batchCard{
 			label:    parts[0],
 			slot:     slot,
@@ -224,6 +326,17 @@ func readCards(path string) ([]batchCard, error) {
 		})
 	}
 	return cards, nil
+}
+
+// logSize is the byte length of a card's log file, or zero when the file is not there yet.
+// Growth is the only signal the idle monitor trusts: a card that has written nothing, or has
+// stopped writing, reads the same size twice and is on the clock.
+func logSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
 }
 
 // readUSD reads a card's usage file -- one number, dollars -- or zero when it is absent.
@@ -253,4 +366,92 @@ func second(lines []string) string {
 		return ""
 	}
 	return lines[1]
+}
+
+// cardShapeFailure checks a card's shape at admission, and only for a DeepSeek model whose
+// provider prefix is opencode/ or deepseek/. Mercury (inception/) cards are not checked.
+// It returns the reason if the card is refused, or "" if the card's shape is acceptable.
+// The refusal cites docs/WORKER-CARDS.md practice 17: a DeepSeek card wants a working
+// directory and the clone as step 1, one command per line, numbered steps, the verdict
+// vocabulary inside the step, the RESULT shape last and short, no capitalised contract
+// block and no launcher text.
+func cardShapeFailure(model, raw string) string {
+	if !isDeepSeekModel(model) {
+		return ""
+	}
+	lines := strings.Split(raw, "\n")
+	step := "docs/WORKER-CARDS.md practice 17"
+	if firstNonEmpty := firstNonEmptyLine(lines); lineIsCapitalsOnly(firstNonEmpty) {
+		return "capitalised contract block (" + step + ")"
+	}
+	if !hasStep1(lines) {
+		return "no 'STEP 1' line in the first 15 lines (" + step + ")"
+	}
+	if mentionsLauncher(lines) {
+		return "'launcher' in the first 10 lines (" + step + ")"
+	}
+	return ""
+}
+
+// isDeepSeekModel reports whether a model's provider prefix is opencode/ or deepseek/.
+func isDeepSeekModel(model string) bool {
+	prefix, _, ok := strings.Cut(model, "/")
+	if !ok {
+		return false
+	}
+	return prefix == "opencode" || prefix == "deepseek"
+}
+
+// firstNonEmptyLine is the first line whose trimmed form is not empty, or "" when every
+// line is empty.
+func firstNonEmptyLine(lines []string) string {
+	for _, ln := range lines {
+		if strings.TrimSpace(ln) != "" {
+			return ln
+		}
+	}
+	return ""
+}
+
+// lineIsCapitalsOnly reports whether a line holds at least one letter and no lowercase one:
+// a capitalised contract block.
+func lineIsCapitalsOnly(s string) bool {
+	hasLetter := false
+	for _, r := range s {
+		if unicode.IsLetter(r) {
+			hasLetter = true
+			if unicode.IsLower(r) {
+				return false
+			}
+		}
+	}
+	return hasLetter
+}
+
+// hasStep1 reports whether any of the first 15 lines begins "STEP 1".
+func hasStep1(lines []string) bool {
+	n := len(lines)
+	if n > 15 {
+		n = 15
+	}
+	for i := 0; i < n; i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "STEP 1") {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionsLauncher reports whether any of the first 10 lines mentions "launcher".
+func mentionsLauncher(lines []string) bool {
+	n := len(lines)
+	if n > 10 {
+		n = 10
+	}
+	for i := 0; i < n; i++ {
+		if strings.Contains(strings.ToLower(lines[i]), "launcher") {
+			return true
+		}
+	}
+	return false
 }
