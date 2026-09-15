@@ -981,7 +981,9 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	if len(tmp) != 1 {
 		t.Fatalf("the child has %d TMPDIR entries, want 1: %v", len(tmp), tmp)
 	}
-	if want := filepath.Join(slot, "tmp", label); tmp[0] != want {
+	// The run symlink-resolves the slot it was handed (#586), so the two spellings of one
+	// directory are compared as directories, not as strings.
+	if want := filepath.Join(slot, "tmp", label); !sameDir(tmp[0], want) {
 		t.Errorf("TMPDIR is %q, want the slot's own tmp dir %q", tmp[0], want)
 	}
 	if got := env["FAKE_KEY"]; len(got) != 1 || got[0] != "<redacted>" {
@@ -1181,9 +1183,11 @@ func TestNativeTmpDirIsOutsideAnyRepo(t *testing.T) {
 		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
 	}
 
-	// The exported TMPDIR is the slot's own tmp/<label>, not under the job directory.
+	// The exported TMPDIR is the slot's own tmp/<label>, not under the job directory. The run
+	// symlink-resolves the slot it was handed (#586), so the two spellings of one directory
+	// are compared as directories, not as strings.
 	want := filepath.Join(slot, "tmp", label)
-	if res.tmp != want {
+	if !sameDir(res.tmp, want) {
 		t.Errorf("TMPDIR is %q, want %q", res.tmp, want)
 	}
 	if st, err := os.Stat(res.tmp); err != nil || !st.IsDir() {
