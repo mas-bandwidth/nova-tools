@@ -51,6 +51,7 @@ type nativeRunResult struct {
 	cardSHA256   string  // sha256 of the card text, lowercase hex
 	binarySHA256 string  // sha256 of the harness binary, lowercase hex
 	job          string  // the job directory <slot>/jobs/<label> the child ran in
+	usageState   string  // the looked-for store path when no store answered, "" otherwise
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -186,7 +187,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 
 	// Slice 10: one usage.tsv beside the run, read from the harness's own store, so a batch
 	// can fold the card's tokens and dollars without re-reading the harness.
-	writeNativeUsage(cfg, provider, cfg.model[len(provider)+1:], start, time.Now(), res.rc, errOut)
+	res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], start, time.Now(), res.rc, errOut)
 	return res, 0
 }
 
@@ -230,11 +231,13 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome string) []strin
 }
 
 // writeNativeUsage records one card's usage row next to its RESULT.md, once the child is
-// gone and its store is complete. The token numbers come from the store; when sqlite3 is
-// missing the columns are dashes and the note is carried to the caller, and the run still
-// finishes rather than failing on a number nobody can see.
-func writeNativeUsage(cfg nativeRunConfig, provider, model string, start, end time.Time, rc int, errOut io.Writer) {
-	usage, note := swarm.ReadCardUsage(filepath.Join(cfg.slotDir, "data", "opencode", "opencode.db"))
+// gone and its store is complete. The token numbers come from the store; the data home is
+// passed here explicitly (the run chose it), and the reader looks in its standard locations.
+// When sqlite3 is missing the columns are dashes and the note is carried to the caller, and
+// the run still finishes rather than failing on a number nobody can see. When no store exists
+// the row keeps its dashes and the returned state names the looked path for the NATIVE OK line.
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc int, errOut io.Writer) string {
+	usage, note, path := swarm.ReadCardUsage(dataHome)
 	rcCol := "-"
 	if rc >= 0 {
 		rcCol = strconv.Itoa(rc)
@@ -255,6 +258,10 @@ func writeNativeUsage(cfg nativeRunConfig, provider, model string, start, end ti
 	if note != "" {
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}
+	if path == "" {
+		return filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
+	}
+	return ""
 }
 
 // providerOf splits a native model id on its single slash and reports whether it
