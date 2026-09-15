@@ -181,6 +181,7 @@ nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> 
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse width   --root <dir> --pool <pool.tsv>
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>]
+nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse version
 nova-pulse help
 ```
@@ -220,7 +221,7 @@ It prints, no model, at most 20 lines, eight line kinds, each one line, counts n
 - `QUEUE` — `pending`, `gated` (waiting on a merge or a hold), `launched`, `done`, `failed`.
 - `RATE` — `cards_per_hour`, `p50_s`, `p90_s`, `usd_per_card`, `parallelism`, from `usage.tsv`.
 - `REMAINING` — `queue` rows, `unread_prs`, `dirty_prs`, `uncarded_issues`, `hours`, in scope only.
-- `CONTRACTION` — cards `cut/done`, prs `opened/merged`, issues `filed/closed`, for the last hour and the day, counted, never from a report body.
+- `CONTRACTION` — cards `cut/done`, prs `opened/merged`, issues `filed/closed`, for the last hour and the day, counted, never from a report body, with one verdict.
 - `ADOPTION <friend>`, one per friend, coordinator included — `version`, `receipt`, `edges`, from the ADOPT files and bus receipts.
 - `OPEN` — `dogfood`, `holds`, `escalations`.
 - `TOOLS` — `merged_since_adoption` and the names, from `gh` cached per tick.
@@ -235,12 +236,80 @@ STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
 STATUS RATE cards_per_hour=<n> p50_s=<n> p90_s=<n> usd_per_card=<n> parallelism=<n>
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
-STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed>
-STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed>
+STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
+STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
 STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
 STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
 STATUS TOOLS merged_since_adoption=<n> <names>
 ```
+
+**The verdict is the health metric** (Glenn, 2026-09-15, #549, #553). Contraction is tracked
+every tick, and the `CONTRACTION` line's `verdict` is `CONVERGING`, or `EXPANDING` when any one
+stream's ratio — cards `cut/done`, prs `opened/merged`, issues `filed/closed` — has been above
+1 for two consecutive hours. `EXPANDING` means the spec work up front was not done properly or
+the engineering practice is lax, and the coordinator names which, on the record, before another
+implementation card goes out. The same verdict belongs on nova-work `check`, from the journal,
+under #500. Replay: `status-expanding-after-two-hours-above-one`.
+
+## Progress
+
+`nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]` answers "how fast, at what cost,
+how long" from records and never from a guess (Glenn, 2026-09-15, #536). It reads every job's
+`usage.tsv` under `--roots` (start, end, rc, usd) for the day and the queue's rows, no model,
+two lines:
+
+```
+PROGRESS cards=<n> rc0=<n> wall_p50_s=<n> wall_p90_s=<n> usd_per_card=<x.xxxx> span_h=<n> effective_parallelism=<n.n> cards_per_hour=<n>
+ESTIMATE remaining_cards=<n> hours=<n>
+```
+
+`effective_parallelism` is busy card-seconds over span seconds — what the benches did, not
+what they had. `remaining_cards` is pending + launched + open PRs needing a read + 2 x open
+in-scope issues; `hours` is `remaining x p90 / parallelism x 1.5`, conservative by that factor.
+The `PULSE WIDTH` line carries `hours=<n>` from the same estimate. First measurement,
+2026-09-15: 326 cards, p90 10 min, USD 0.18 per card, 44.6 cards per hour, effective
+parallelism 3.5 against 64 slots — the benches were mostly idle across the day, which is the
+number rule 3 of **Rate and convergence** answers. Replays: `progress-counts-only-the-day`,
+`progress-parallelism-is-busy-over-span`, `estimate-uses-p90-and-parallelism`.
+
+## Rate and convergence
+
+The rules measured on 2026-09-15 and 2026-09-16 (#553), each one sentence here and its
+mechanism where it lives. Rate is concurrency over wall per card; concurrency comes from pool
+depth and headroom, never from slot count alone.
+
+1. **The tick is the manager's, and it is 10 s.** The manager cycle's `wait-timeout` defaults
+   to 10 s; every other verb is clockless. A card never waits for a tick to start: a card
+   cut or requeued inside a cycle is launched in that cycle. Replay: `tick-never-delays-a-card`.
+2. **The pool has a floor and fixed refill sources.** Every cycle the manager refills the
+   queue to the policy's `floor` from the policy's `sources` (**The manager tier**, step 6,
+   #587); the coordinator writes queues ahead, so the loop is never starved by the window.
+   Replay: `pool-refills-to-floor`.
+3. **Fill the machine, never oversaturate it.** Per tick, `launch` starts at most
+   `cores x 1.25 - load` cards on a bench and never more than the bench's width, a measured
+   power of two (SPEC-SWARM, **Benches**, `bench size`, #528); a loaded or less capable bench
+   drops down by its load without changing its width. `PULSE WIDTH` gains `headroom=<n>`
+   per bench.
+4. **A gated card launches itself.** A card carrying `AFTER: PR<n> merged` stays `gated` on
+   the `QUEUE` line and is launched by the first cycle in which `gh` reports that PR merged —
+   never by a person noticing. Replay: `gated-card-launches-on-merge`.
+5. **No card pays a clone.** Where the policy names `mirror`, `launch` pre-clones the job's
+   `repo/` from that bench-local mirror, refreshed by the upgrade loop, and the card's `STEP 1`
+   tolerates an existing checkout (`git fetch` and `checkout <head>` when `.git` exists,
+   the clone otherwise). Open in #553; until it lands `STEP 1` clones as **The card** shows.
+6. **A refusal never takes neighbours down.** Admission, scoring and locks are per card, every
+   abstain names one reason token — SPEC-SWARM, **scatter** and **gather**, landed in #577.
+7. **A contraction phase is bugs only.** While the `CONTRACTION` verdict is `EXPANDING`, or a
+   pit stop is open ([PIT-STOP.md](PIT-STOP.md)), the policy's `scope-regex` admits fixes with
+   reproducing tests, reads and rebases; anything expansionary is labelled `next-push` in its
+   issue and never carded. We choose to be done. Replay: `contraction-phase-cards-bugs-only`.
+8. **The coordinator is a friend.** Every broadcast includes it; adoption is a mechanical step
+   with a receipt; `status` names it on its own `ADOPTION` line (replay 32).
+9. **Parallelism and time remaining are printed, never guessed** — `progress`, above.
+
+The exit of a pit stop is a trust batch: the fix cards of the stop rerun as one batch and every
+one scores `done` with its red line quoted, before the queue widens again
+([PIT-STOP.md](PIT-STOP.md), **The exit gate**).
 
 ## Exit codes and the output grammar
 
@@ -263,13 +332,15 @@ HARVEST PR repo=<owner/name> pr=<n> label=<label> branch=<name>
 HARVEST RETRY label=<label> card=<path>: <last permission or refusal line, escaped>
 HARVEST OK id=<id> done=<n> pushed=<n> prs=<n> abstain=<n> mismatch=<n> retry=<n> usd=<sum|-> took=<d>
 HARVEST REFUSED id=<id>: <reason> (<remedy>)
-PULSE WIDTH in-flight=<n> free=<n> pool=<n> queued=<n>
+PULSE WIDTH in-flight=<n> free=<n> pool=<n> queued=<n> headroom=<n> hours=<n>
 PULSE UNDER-WIDTH pool=<n> free=<n>: launch
 PULSE POOL EMPTY in-flight=<n>
 HANDOFF OK to=<name> inflight=<n> pending=<n> escalations=<n>
 HANDOFF REFUSED: <reason> (<remedy>)
 TAKEOVER OK from=<name> inherited=<inflight/pending/escalations>
 TAKEOVER REFUSED owner=<name> pid=<n> host=<h> (wait, or clear the stale lock)
+PROGRESS cards=<n> rc0=<n> wall_p50_s=<n> wall_p90_s=<n> usd_per_card=<x.xxxx> span_h=<n> effective_parallelism=<n.n> cards_per_hour=<n>
+ESTIMATE remaining_cards=<n> hours=<n>
 <TOKEN> MORE kind=<k> shown=<n> total=<t> <remedy>
 <TOKEN> NOTE <something true about this run that is not a finding>
 ```
@@ -318,7 +389,8 @@ after line 2. `<head>` is the repo's default-branch head at cut time, read once 
 - **No model call, no summary, no judgement.** It never reads a report body, never opens a
   transcript, never scores a finding. The swarm's packet is the whole read.
 - **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `--then`;
-  the alarm is `width`, run by nova-wake or a person.
+  the alarm is `width`, run by nova-wake or a person. The one clock is the manager tier's
+  cycle (#587), and its tick is **Rate and convergence** rule 1.
 
 ## The manager tier
 
@@ -371,7 +443,8 @@ contract sentence, in the policy's scope, leaving `AFTER: PR<n> merged` gates ga
 write one `MANAGER` line to `<queue>/MANAGER.log`. The policy is key=value lines —
 `wait-timeout`, `floor`, `scope-regex`, `sources`, `known-flakes`, `max-attempts` — and an
 unknown key is a refusal, exit 2, because a policy the tool half-understands is a policy
-nobody approved.
+nobody approved. `mirror` (rule 5 of **Rate and convergence**) is the one key proposed and
+not landed (#553).
 
 Replays: `manager-never-expands-policy`, `manager-quiet-time-makes-no-call`,
 `manager-dedups-on-contract-line`, `manager-revalidates-head-before-merge`,
@@ -490,6 +563,26 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
 33. `status-remaining-counts-in-scope-only`: `REMAINING` counts queue rows, unread PRs, dirty
     PRs and uncarded issues in scope only — a bench or friend outside `--roots <dirs>` is
     nowhere on the line.
+34. `status-expanding-after-two-hours-above-one`: a queue whose `cut/done` is above 1 for two
+    consecutive hours prints `verdict=EXPANDING`; one hour, or a ratio at 1, is `CONVERGING`;
+    the verdict is computed from the counts and not from any word in a note.
+35. `progress-counts-only-the-day`: `usage.tsv` rows from two days under `--roots` yield
+    `cards=` equal to the `--day` rows alone; `rc0` counts the rows with `rc=0`.
+36. `progress-parallelism-is-busy-over-span`: four cards of 600 s each inside one 1200 s span
+    print `effective_parallelism=2.0`; the slot count is nowhere in the arithmetic.
+37. `estimate-uses-p90-and-parallelism`: `hours` equals `remaining x p90 / parallelism x 1.5`
+    to one decimal, and `remaining_cards` counts pending, launched, unread PRs and twice the
+    in-scope open issues — an out-of-scope issue moves nothing.
+38. `tick-never-delays-a-card`: a card cut by a requeue inside a cycle appears in that cycle's
+    `nova-swarm batch` argv, not the next cycle's.
+39. `pool-refills-to-floor`: a queue at `floor - 3` with five candidates in the sources gains
+    exactly three rows in one cycle, deduplicated on PR number, issue number and contract line.
+40. `gated-card-launches-on-merge`: a card carrying `AFTER: PR7 merged` is `gated=1` while the
+    fixture `gh` reports PR 7 open and is in the batch argv of the first cycle after the
+    fixture reports it merged, with no other input.
+41. `contraction-phase-cards-bugs-only`: with `verdict=EXPANDING`, a candidate whose issue
+    carries the label `next-push` is `skipped` on the `CUT` line and never cut; a fix candidate
+    with a `red:` line is cut.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 
