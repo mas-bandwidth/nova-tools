@@ -43,6 +43,8 @@
     :pr-338 "https://github.com/mas-bandwidth/nova-tools/pull/338"
     :pr-339 "https://github.com/mas-bandwidth/nova-tools/pull/339"
     :fleet "spec/nova-work PR 339, docs/SPEC-WORK.md section The fleet"
+    :pr-337 "https://github.com/mas-bandwidth/nova-tools/pull/337"
+    :commit-248d85b "https://github.com/mas-bandwidth/nova-tools/commit/248d85b320923803a82f1f643e303bbf42d2c74a"
     :production-inventory "ec01647")
   :baseline-features 52
   :baseline-items 171
@@ -260,8 +262,8 @@
     "Exact verb and wire protocol spelling must be finalized in one schema before lock"
     "Friend participation in swarms versus model-only pools requires explicit dispositions, including Freddy's"
     "Absorption remains disabled pending independent reconciliation and authorization gates")
-  :rd-snapshot-at "2026-09-15T00:30:00Z"
-  :rd-source-main "36efe4a9d62dfd1ae7500817fa2a19163e879de4"
+  :rd-snapshot-at "2026-09-15T01:30:00Z"
+  :rd-source-main "45b44bdbaf38690fc1d6a5ff44bb883e2444ae38"
   :rd-source-spec "9c120a3b0c1b01475e13cb7bd36014ada2dfa729"
   :rd-work (
     (      :id "RD-01"
@@ -338,7 +340,7 @@
       :source "pr-325")
     (      :id "RD-13"
       :title "PR #326: propose optional native swarm batch admission receipts"
-      :status "in-review"
+      :status "merged"
       :owner "stella"
       :next-gate "encoding-crash-gates"
       :source "pr-326")
@@ -350,15 +352,15 @@
       :source "pr-330")
     (      :id "RD-15"
       :title "PR #331: start and restart tasks through kernel submit path"
-      :status "in-review"
+      :status "merged"
       :owner "stella"
-      :next-gate "freddy-review"
+      :next-gate "integrated"
       :source "pr-331")
     (      :id "RD-16"
       :title "PR #332: batch admission wire and recovery companion specification"
-      :status "in-review"
+      :status "closed"
       :owner "emma"
-      :next-gate "friend-gates"
+      :next-gate "retarget-to-main"
       :source "pr-332")
     (      :id "RD-17"
       :title "PR #333: bounded durable journal persistence and replay adapter"
@@ -395,7 +397,13 @@
       :status "in-review"
       :owner "emma"
       :next-gate "independent-review"
-      :source "pr-338"))
+      :source "pr-338")
+    (      :id "RD-23"
+      :title "E10-F06: Operational adoption and continuous efficiency review"
+      :status "open"
+      :owner "unassigned"
+      :next-gate "owner-assignment"
+      :source "commit-248d85b"))
   :epics (    (      :id "E01"
       :title "Canonical work data and restricted representation"
       :features (        (          :id "E01-F01"
