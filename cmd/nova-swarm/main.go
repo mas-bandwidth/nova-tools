@@ -974,7 +974,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm verify: the receipt could not be written: %s\n", oneline.Err(err))
 		return 2
 	}
-	fmt.Fprintln(stdout, out.Line)
+	fmt.Fprintln(stdout, oneline.Escape(out.Line))
 	if !out.OK {
 		return 1
 	}

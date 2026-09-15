@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // WriteResult writes a RESULT.md at path from the given lines.
@@ -60,8 +62,8 @@ func TestResultReturnsLine2Verbatim(t *testing.T) {
 	if got.Line2 != disposition {
 		t.Errorf("line 2 is returned verbatim; got %q want %q", got.Line2, disposition)
 	}
-	if !strings.HasSuffix(got.Line, "line2="+disposition) {
-		t.Errorf("the grammar carries line 2 verbatim: %s", got.Line)
+	if !strings.HasSuffix(got.Line, "line2="+oneline.Quote(disposition)) {
+		t.Errorf("the grammar carries line 2 quoted, verbatim inside the quotes: %s", got.Line)
 	}
 }
 
