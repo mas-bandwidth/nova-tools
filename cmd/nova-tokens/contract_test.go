@@ -75,7 +75,7 @@ func pkgText(t *testing.T, pkg string) map[string]string {
 // rule9Emptiers is the tripwire's list of calls that can empty a file. It is a package
 // variable and not a local so TestRule9EmptierListMatchesTheSpec below can pin it: a name
 // quietly deleted from this list would otherwise take its tripwire with it and go green.
-var rule9Emptiers = []string{"os.Remove", "os.RemoveAll", "os.Truncate", ".Truncate(", "os.Create(", "os.WriteFile(", "os.O_TRUNC"}
+var rule9Emptiers = []string{"os.Remove", "os.RemoveAll", "os.Truncate", ".Truncate(", "os.Create(", "os.WriteFile(", "os.O_TRUNC", "syscall.Unlink("}
 
 // Rule 9 and demanded test 8: this tool removes NOTHING. The prototype removed the old
 // month files on every real run and noted it in a list capped at six.
@@ -100,6 +100,9 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		"internal/tokens/dayfile.go": {"os.WriteFile("},
 		// The same, for the report `report` writes.
 		"cmd/nova-tokens/main.go": {"os.WriteFile("},
+		// In package staging, the publisher's own-run temporary marker batch.json.tmp
+		// unlinked via syscall.Unlink after successful atomic no-replace link to batch.json.
+		"internal/tokens/package.go": {"syscall.Unlink("},
 	}
 	used := map[string]bool{}
 	// Every package of the binary, walked from its imports and from the directories this

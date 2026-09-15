@@ -365,6 +365,45 @@ func TestTC_VAL_10_AtomicRenameCompetingMarkerRace(t *testing.T) {
 	if !bytes.Equal(haveBytes, competingBytes) {
 		t.Errorf("competing marker was corrupted or clobbered")
 	}
+
+	// Verify temporary marker was preserved and NOT unlinked on link failure
+	if _, err := os.Stat(filepath.Join(b.Dir, markerTemp)); err != nil {
+		t.Fatalf("temporary marker must be preserved on link failure, got err: %v", err)
+	}
+
+	// Discriminating witness: foreign and unrelated files cannot be targeted or unlinked
+	parentDir := filepath.Dir(b.Dir)
+	foreignFile := filepath.Join(parentDir, "foreign.tmp")
+	foreignBytes := []byte("foreign data")
+	if err := os.WriteFile(foreignFile, foreignBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(foreignFile)
+
+	// 1. Directory traversal attempt via CommitMarker is refused; foreign file is untouched
+	err = CommitMarker(b.Dir, "../foreign.tmp")
+	checkRefusal(t, err, RulePackageStrayFile)
+	if content, err := os.ReadFile(foreignFile); err != nil || !bytes.Equal(content, foreignBytes) {
+		t.Fatalf("foreign file must remain untouched, err: %v", err)
+	}
+
+	// 2. Unrelated non-.tmp file in batch dir cannot be targeted or unlinked
+	unrelatedFile := filepath.Join(b.Dir, "unrelated.txt")
+	unrelatedBytes := []byte("unrelated data")
+	if err := os.WriteFile(unrelatedFile, unrelatedBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	err = CommitMarker(b.Dir, "unrelated.txt")
+	checkRefusal(t, err, RulePackageStrayFile)
+	if content, err := os.ReadFile(unrelatedFile); err != nil || !bytes.Equal(content, unrelatedBytes) {
+		t.Fatalf("unrelated file must remain untouched, err: %v", err)
+	}
+
+	// 3. StageMarker also rejects directory traversal and non-.tmp files
+	err = StageMarker(b.Dir, "../foreign.tmp", b.CoverageBytes)
+	checkRefusal(t, err, RulePackageStrayFile)
+	err = StageMarker(b.Dir, "unrelated.txt", b.CoverageBytes)
+	checkRefusal(t, err, RulePackageStrayFile)
 }
 
 // TC-VAL-11: durability_fsync_ancestor_directories_trace
@@ -1089,4 +1128,52 @@ func TestCountEquations(t *testing.T) {
 	}
 	err = ValidateCandidateDirectory(b3.Dir, "", covBytes3)
 	checkRefusal(t, err, RuleCountEquationMismatch)
+}
+
+// TestEnvelopeMalformedRefused asserts RuleEnvelopeMalformed when envelope json is malformed
+// or envelope schema is incorrect for batch.json / candidate coverage or mappings.
+func TestEnvelopeMalformedRefused(t *testing.T) {
+	b := newTestBatch(t)
+
+	// 1. Candidate coverage bytes: malformed JSON
+	err := ValidateCandidateDirectory(b.Dir, "", []byte("{not json"))
+	checkRefusal(t, err, RuleEnvelopeMalformed)
+
+	// 2. Candidate coverage bytes: wrong schema (observation instead of coverage)
+	obsBytes := []byte(`{"schema":"nova.tokens.observation/2","data":{}}`)
+	err = ValidateCandidateDirectory(b.Dir, "", obsBytes)
+	checkRefusal(t, err, RuleEnvelopeMalformed)
+
+	// 3. Installed batch: malformed mapping envelope
+	b2 := newTestBatch(t)
+	installBatch(t, b2)
+	mappingFile := filepath.Join(b2.Dir, "mappings", b2.MappingHex+".json")
+	if err := os.WriteFile(mappingFile, []byte("invalid json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err = ValidateInstalledDirectory(b2.Dir)
+	checkRefusal(t, err, RuleEnvelopeMalformed)
+
+	// 4. Installed batch: mapping envelope with wrong schema
+	b3 := newTestBatch(t)
+	installBatch(t, b3)
+	mappingFile3 := filepath.Join(b3.Dir, "mappings", b3.MappingHex+".json")
+	if err := os.WriteFile(mappingFile3, []byte(`{"schema":"nova.tokens.coverage/2","data":{}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err = ValidateInstalledDirectory(b3.Dir)
+	checkRefusal(t, err, RuleEnvelopeMalformed)
+}
+
+// TestAtomicNoReplaceRenameLinkFailurePermissionsInvalid asserts that non-EEXIST link failures
+// map to RulePermissionsInvalid.
+func TestAtomicNoReplaceRenameLinkFailurePermissionsInvalid(t *testing.T) {
+	tmpDir := t.TempDir()
+	src := filepath.Join(tmpDir, "test.tmp")
+	if err := os.WriteFile(src, []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(tmpDir, "nonexistent-dir", "batch.json")
+	err := AtomicNoReplaceRename(src, target)
+	checkRefusal(t, err, RulePermissionsInvalid)
 }

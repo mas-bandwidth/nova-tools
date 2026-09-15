@@ -155,7 +155,7 @@ func AtomicNoReplaceRename(tmpPath, targetPath string) error {
 			}
 		}
 		return &PackageRefusal{
-			Rule:   RuleMarkerMissing,
+			Rule:   RulePermissionsInvalid,
 			Path:   targetPath,
 			Detail: fmt.Sprintf("cannot link marker: %v", err),
 		}
@@ -172,6 +172,13 @@ func AtomicNoReplaceRename(tmpPath, targetPath string) error {
 
 // StageMarker writes candidateBatchBytes to filepath.Join(dir, markerTempName), syncs and closes it.
 func StageMarker(dir string, markerTempName string, candidateBatchBytes []byte) error {
+	if filepath.Base(markerTempName) != markerTempName || !strings.HasSuffix(markerTempName, ".tmp") {
+		return &PackageRefusal{
+			Rule:   RulePackageStrayFile,
+			Path:   filepath.Join(dir, markerTempName),
+			Detail: "marker temp name must be a simple filename ending in .tmp",
+		}
+	}
 	markerPath := filepath.Join(dir, markerTempName)
 	f, err := os.OpenFile(markerPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
@@ -206,6 +213,13 @@ func StageMarker(dir string, markerTempName string, candidateBatchBytes []byte) 
 // CommitMarker atomically renames markerTempName to batch.json using atomic no-replace,
 // and syncs the directory root.
 func CommitMarker(dir string, markerTempName string) error {
+	if filepath.Base(markerTempName) != markerTempName || !strings.HasSuffix(markerTempName, ".tmp") {
+		return &PackageRefusal{
+			Rule:   RulePackageStrayFile,
+			Path:   filepath.Join(dir, markerTempName),
+			Detail: "marker temp name must be a simple filename ending in .tmp",
+		}
+	}
 	tmpPath := filepath.Join(dir, markerTempName)
 	targetPath := filepath.Join(dir, "batch.json")
 	if err := AtomicNoReplaceRename(tmpPath, targetPath); err != nil {
@@ -423,7 +437,7 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 			if ref.Rule == records.RuleShardReference {
 				return &PackageRefusal{Rule: RuleShardCountMismatch, Path: "batch.json", Detail: ref.Error()}
 			}
-			return &PackageRefusal{Rule: ref.Rule, Path: "batch.json", Detail: ref.Error()}
+			return &PackageRefusal{Rule: RuleEnvelopeMalformed, Path: "batch.json", Detail: ref.Error()}
 		}
 		return &PackageRefusal{Rule: RuleEnvelopeMalformed, Path: "batch.json", Detail: err.Error()}
 	}
@@ -449,6 +463,9 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 		if strings.HasPrefix(e.Name(), ".") {
 			return &PackageRefusal{Rule: RulePackageStrayFile, Path: mRelPath, Detail: "hidden entries forbidden in mappings"}
 		}
+		if mFi.Mode()&os.ModeSymlink != 0 {
+			return &PackageRefusal{Rule: RuleSymlinkForbidden, Path: mRelPath, Detail: "mapping file must not be a symlink"}
+		}
 		if mFi.IsDir() {
 			return &PackageRefusal{Rule: RulePackageStrayFile, Path: mRelPath, Detail: "subdirectories forbidden in mappings"}
 		}
@@ -467,7 +484,7 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 		if err != nil {
 			var ref *records.Refusal
 			if errors.As(err, &ref) {
-				return &PackageRefusal{Rule: ref.Rule, Path: mRelPath, Detail: ref.Error()}
+				return &PackageRefusal{Rule: RuleEnvelopeMalformed, Path: mRelPath, Detail: ref.Error()}
 			}
 			return &PackageRefusal{Rule: RuleEnvelopeMalformed, Path: mRelPath, Detail: err.Error()}
 		}

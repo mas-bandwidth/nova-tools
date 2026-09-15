@@ -160,7 +160,8 @@ is the day it was learned.
    never one of them, and the tripwire that enforces this searches for every
    call that can empty a file -- `os.Remove`, `os.RemoveAll`, `os.Truncate`,
    `.Truncate(`, `os.Create(`, `os.WriteFile(`, `os.O_TRUNC` (the flag that
-   empties the file an `os.OpenFile` opens) -- carving out those four by
+   empties the file an `os.OpenFile` opens), `syscall.Unlink(` (the syscall
+   that unlinks a directory entry) -- carving out those four by
    file, with the reason, and failing when a carve-out has gone stale.
    A file under `--out` that is not a day file and not the temp name is
    named by `check` and left alone.
@@ -171,10 +172,17 @@ is the day it was learned.
    private temporary directory `<git-dir>/nova-tokens-publish.<random>/` and
    the plumbing index inside it; with `--public`, the staged
    `<public>/<day>.tsv.<same random>.tmp` that lands by one rename in that
-   same directory; and the
+   same directory; the
    publish lock `<git-dir>/nova-tokens-publish.lock` with, on a platform
    with no flock, its sentinel — the same two carve-outs rule 8's `fold.lock`
-   already has, for the same reason. `<git-dir>` is what the clone itself
+   already has, for the same reason; and in package staging
+   (`internal/tokens/package.go`), the publisher's own-run temporary marker
+   `batch.json.tmp` unlinked via `syscall.Unlink` after successful atomic
+   no-replace link to `batch.json` (`AtomicNoReplaceRename`), removing the
+   temporary file this run made and leaving `batch.json` installed, with an
+   interrupted run leaving `batch.json.tmp` for crash recovery (refused by
+   `ValidateInstalledDirectory`) and no unrelated or foreign file ever
+   unlinked. `<git-dir>` is what the clone itself
    reports, never an assumed `.git`. The run releases its own temporary
    directory and staged file on ordinary exit; a crash leaves them, named by a
    suffix no other run uses, and no run removes another's. It writes **nothing** into the ledger clone's working tree: the
