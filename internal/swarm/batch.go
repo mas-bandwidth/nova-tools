@@ -54,7 +54,9 @@ type BatchInput struct {
 	Stderr   io.Writer
 }
 
-// batchCard is one admitted card, in TSV order.
+// batchCard is one admitted card, in TSV order. slot is zero while the card asked for a
+// slot allocation (its slot column was empty or '-'), and a positive number once assignSlots
+// has either kept the name the card asked for or allocated the lowest free one.
 type batchCard struct {
 	label    string
 	slot     int
@@ -96,6 +98,10 @@ func Batch(in BatchInput) int {
 	if in.Runner == "" {
 		fmt.Fprintln(in.Stderr, "nova-swarm batch: --runner is required; it wants the command one process per card runs")
 		return 2
+	}
+	if err := assignSlots(cards, in.Root); err != nil {
+		fmt.Fprintln(in.Stderr, err)
+		return 1
 	}
 
 	// scatter: one runner process per card, in TSV order. The job directory is made before
@@ -221,6 +227,7 @@ func Batch(in BatchInput) int {
 	)
 	type row struct {
 		label    string
+		slot     int
 		state    string
 		line2    string
 		in       int
@@ -234,6 +241,7 @@ func Batch(in BatchInput) int {
 	rows := make([]row, len(cards))
 	for i, c := range cards {
 		rows[i].label = c.label
+		rows[i].slot = c.slot
 		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "usage.tsv"))
 		totalIn += rows[i].in
 		totalOut += rows[i].out
@@ -280,20 +288,21 @@ func Batch(in BatchInput) int {
 	}
 
 	// The packet's grammar. The BATCH line first, then one line per card in admission
-	// order (label, then line 2 verbatim), then HOLD lines -- at most maxHoldLines -- so
-	// the whole packet never grows past n + 12 lines whatever the batch holds.
+	// order (label, its resolved slot, then line 2 verbatim), then HOLD lines -- at most
+	// maxHoldLines -- so the whole packet never grows past n + 12 lines whatever the batch
+	// holds.
 	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d\n",
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
 	for _, r := range rows {
 		switch {
 		case r.idle:
-			fmt.Fprintf(in.Stdout, "%s: ABSTAIN -- idle %ds\n", oneline.Field(r.label), idleSeconds)
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- idle %ds\n", oneline.Field(r.label), r.slot, idleSeconds)
 		case r.stalled:
-			fmt.Fprintf(in.Stdout, "%s: ABSTAIN -- stalled (no output after the wall opened)\n", oneline.Field(r.label))
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- stalled (no output after the wall opened)\n", oneline.Field(r.label), r.slot)
 		case r.state == "abstain":
-			fmt.Fprintf(in.Stdout, "%s abstain log=%d\n", oneline.Field(r.label), r.logLines)
+			fmt.Fprintf(in.Stdout, "%s slot=%d abstain log=%d\n", oneline.Field(r.label), r.slot, r.logLines)
 		default:
-			fmt.Fprintf(in.Stdout, "%s %s log=%d\n", oneline.Field(r.label), oneline.Escape(oneline.Cap(r.line2, oneline.TailBytes)), r.logLines)
+			fmt.Fprintf(in.Stdout, "%s slot=%d: %s log=%d\n", oneline.Field(r.label), r.slot, r.line2, r.logLines)
 		}
 	}
 	for i := 0; i < len(holds) && i < maxHoldLines; i++ {
@@ -322,9 +331,13 @@ func readCards(path string) ([]batchCard, error) {
 		if len(parts) != 4 {
 			return nil, fmt.Errorf("--cards line %d wants label<TAB>slot<TAB>model<TAB>card-path, got %d fields", i+1, len(parts))
 		}
-		slot, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-		if err != nil || slot < 1 {
-			return nil, fmt.Errorf("--cards line %d wants a positive slot number, got %q", i+1, parts[1])
+		slot := 0
+		if s := strings.TrimSpace(parts[1]); s != "" && s != "-" {
+			n, err := strconv.Atoi(s)
+			if err != nil || n < 1 {
+				return nil, fmt.Errorf("--cards line %d wants a positive slot number, got %q", i+1, parts[1])
+			}
+			slot = n
 		}
 		cardPath := parts[3]
 		cardRaw, err := os.ReadFile(cardPath)
@@ -399,6 +412,99 @@ func logOutputLines(path string) int {
 		n++
 	}
 	return n
+}
+
+// slotDirName is the on-disk name of slot <n> under the root.
+func slotDirName(n int) string { return strconv.Itoa(n) }
+
+// slotDir is the directory of slot <n> under the root.
+func slotDir(root string, n int) string { return filepath.Join(root, slotDirName(n)) }
+
+// slotJobDir is a card's job directory under slot <n>: <root>/<n>/jobs/<label>.
+func slotJobDir(root string, n int, label string) string {
+	return filepath.Join(slotDir(root, n), "jobs", label)
+}
+
+// slotLocked reports whether slot <n> is busy: any lock under
+// <root>/<n>/jobs/<any>/lock that carries a live pid takes the slot.
+func slotLocked(root string, n int) bool {
+	entries, err := os.ReadDir(filepath.Join(slotDir(root, n), "jobs"))
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(slotDir(root, n), "jobs", e.Name(), "lock"))
+		if err != nil {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err != nil {
+			continue
+		}
+		if Alive(pid, "") {
+			return true
+		}
+	}
+	return false
+}
+
+// busySlots collects the slot numbers that are busy on disk under the root.
+func busySlots(root string) map[int]bool {
+	out := map[int]bool{}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		n, err := strconv.Atoi(e.Name())
+		if err != nil || n < 1 {
+			continue
+		}
+		if slotLocked(root, n) {
+			out[n] = true
+		}
+	}
+	return out
+}
+
+// assignSlots resolves every card's slot before any launch. A card that named a slot keeps
+// it; a slot named by two cards is refused outright. A card that asked for allocation (slot
+// zero) takes the lowest free slot under the root -- free means neither busy on disk (a live
+// lock) nor already assigned to another card in this batch.
+func assignSlots(cards []batchCard, root string) error {
+	busy := busySlots(root)
+	assigned := map[int]string{}
+	for i := range cards {
+		label := cards[i].label
+		if cards[i].slot != 0 {
+			if prev, ok := assigned[cards[i].slot]; ok {
+				return fmt.Errorf("BATCH REFUSED slot %d named twice (%s, %s)", cards[i].slot, prev, label)
+			}
+			assigned[cards[i].slot] = label
+			continue
+		}
+		n := 1
+		for {
+			if busy[n] {
+				n++
+				continue
+			}
+			if _, ok := assigned[n]; ok {
+				n++
+				continue
+			}
+			break
+		}
+		cards[i].slot = n
+		assigned[n] = label
+	}
+	return nil
 }
 
 func first(lines []string) string {
