@@ -2063,6 +2063,11 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 		polls++
 		elapsed := time.Since(start).Round(time.Millisecond)
 		pollNow := now.Add(elapsed)
+		// Issue #328, re-landed: a wait returns the moment it sees news, an unadvanced
+		// cursor's backlog included, printing exactly what inbox prints for that state;
+		// it blocks only while there is nothing new at all, until a note arrives or the
+		// deadline. #352 blocked over the backlog instead and broke byte-identity with
+		// inbox, which is why it was reverted.
 		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) }
 		code, r, lines := waitPoll(o, polls == 1, pollNow, keep, stderr)
 		if r.Cursor != "" {
