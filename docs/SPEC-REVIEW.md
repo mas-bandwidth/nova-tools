@@ -644,7 +644,10 @@ first line, which is the sha the reader then hands to `verdict`. A sha read
 from the host is a read, not a guess. A PR entry's head is fetched as
 `pull/<n>/head` from the GitHub remote the lane's `--repo` names, never from the
 lane's `--remote` (which may be a local rehearsal with no pull refs); a branch
-entry's head is fetched from the lane remote (#449).
+entry's head is fetched from the lane remote (#449). A PR entry's base (main, or
+whatever `--base` names) is fetched from the same GitHub remote, never from the
+lane's `--remote` (which may be a local rehearsal with no `main`); a branch
+entry's base still comes from the lane remote (#493).
 
 **`verdict --head` is required and is the full 40-character sha the reader had
 open**, exactly as `nova-merge read --head`; the tool never fills it in. `VERDICT

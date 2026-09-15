@@ -765,6 +765,70 @@ func TestPacketFetchesPRHeadFromGitHubNotLaneRemote(t *testing.T) {
 	}
 }
 
+func TestPacketFetchesBaseFromGitHubNotLaneRemote(t *testing.T) {
+	dir := t.TempDir()
+	rehearsal := filepath.Join(dir, "rehearsal.git")
+	ghremote := filepath.Join(dir, "ghremote.git")
+	seed := filepath.Join(dir, "seed")
+	if e := os.MkdirAll(seed, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt := func(d string, args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	gitAt(dir, "init", "-q", "--bare", rehearsal)
+	gitAt(dir, "init", "-q", "--bare", ghremote)
+	gitAt(seed, "init", "-q", "-b", "main")
+	gitAt(seed, "config", "user.email", "t@example.invalid")
+	gitAt(seed, "config", "user.name", "t")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "base")
+	// The rehearsal remote has no `main`: a rehearsal git is a record-branch push
+	// target with no base ref, so fetching the base from it fails (#493). The real
+	// base lives only on the GitHub remote.
+	gitAt(seed, "push", "-q", ghremote, "main:refs/heads/main")
+	gitAt(ghremote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	gitAt(seed, "checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\nchanged\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "change")
+	head := gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-q", ghremote, "feature:refs/pull/1/head")
+
+	lane := filepath.Join(dir, "lane")
+	if e := os.MkdirAll(lane, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	repo := filepath.Join(lane, merge.RepoDir)
+	gitAt(dir, "clone", "-q", rehearsal, repo)
+	gitAt(repo, "config", "url."+ghremote+".insteadOf", "https://github.com/test/repo.git")
+
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: "main", LaneBranch: "lane", PRs: []*merge.Entry{{PR: 1, OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--pr", "1", "--who", "emma", "--out", filepath.Join(lane, "packet.md")}, &out, &errb); code != 0 {
+		t.Fatalf("packet for a PR on a rehearsal remote with no base code=%d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), " files=1 ") {
+		t.Fatalf("PR packet must diff one file; got %q", out.String())
+	}
+}
+
 func TestLaneRefusalNamesRemedy(t *testing.T) {
 	plain := t.TempDir()
 	var out, errb bytes.Buffer

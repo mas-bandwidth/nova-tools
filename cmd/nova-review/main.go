@@ -184,12 +184,19 @@ func packet(args []string, out, errOut io.Writer) int {
 	// every file that moved between the two (#418). Fetch the base before the range so
 	// the range's left side is the remote's current tip, never the idle local one. A base
 	// that is already a full sha names one commit and cannot go stale, so it needs no fetch.
+	// A PR entry's base lives on the same GitHub remote as its head (main is on that repo,
+	// and a local rehearsal remote has neither pull/*/head nor main), so fetch it from there
+	// (#493); a branch entry still fetches the base from the lane remote as before.
 	baseSHA := base
 	if !merge.IsSHA(base) {
-		if _, err := gitOut(ctx, repo, "fetch", "origin", base); err != nil {
-			return refuse(errOut, fmt.Sprintf("could not fetch the base %q: %v", base, err))
+		remote := "origin"
+		if *pr > 0 {
+			remote = fmt.Sprintf("https://github.com/%s.git", st.Repo)
 		}
-		fetched, err := gitOut(ctx, repo, "rev-parse", "refs/remotes/origin/"+base+"^{commit}")
+		if _, err := gitOut(ctx, repo, "fetch", remote, base); err != nil {
+			return refuse(errOut, fmt.Sprintf("could not fetch the base %q from %q: %v", base, remote, err))
+		}
+		fetched, err := gitOut(ctx, repo, "rev-parse", "FETCH_HEAD")
 		if err != nil {
 			return refuse(errOut, fmt.Sprintf("the lane does not hold the fetched base %q: %v", base, err))
 		}
