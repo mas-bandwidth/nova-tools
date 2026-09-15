@@ -40,6 +40,7 @@
     :issue-321 "https://github.com/mas-bandwidth/nova-tools/issues/321"
     :issue-321-c5672006742 "https://github.com/mas-bandwidth/nova-tools/issues/321#issuecomment-5672006742"
     :issue-336 "https://github.com/mas-bandwidth/nova-tools/issues/336"
+    :pr-338 "https://github.com/mas-bandwidth/nova-tools/pull/338"
     :production-inventory "ec01647")
   :baseline-features 52
   :baseline-items 171
@@ -252,7 +253,7 @@
     "Exact verb and wire protocol spelling must be finalized in one schema before lock"
     "Friend participation in swarms versus model-only pools requires explicit dispositions, including Freddy's"
     "Absorption remains disabled pending independent reconciliation and authorization gates")
-  :rd-snapshot-at "2026-09-15T00:15:00Z"
+  :rd-snapshot-at "2026-09-15T00:30:00Z"
   :rd-source-main "36efe4a9d62dfd1ae7500817fa2a19163e879de4"
   :rd-source-spec "9c120a3b0c1b01475e13cb7bd36014ada2dfa729"
   :rd-work (
@@ -265,7 +266,7 @@
     (      :id "RD-02"
       :title "PR #310: PR264 profile migration to eight-member config preimage, execution and control schemas"
       :status "merged"
-      :owner "gafferongames"
+      :owner "unassigned"
       :next-gate "parent-gate"
       :source "pr-310")
     (      :id "RD-03"
@@ -289,61 +290,61 @@
     (      :id "RD-06"
       :title "PR #316: Receipt recovery ordering, attribution selection and claim locking"
       :status "merged"
-      :owner "gafferongames"
+      :owner "unassigned"
       :next-gate "parent-gate"
       :source "pr-316")
     (      :id "RD-07"
       :title "PR #317: Efficiency policy, cache-aware costs and batching"
       :status "merged"
-      :owner "gafferongames"
+      :owner "unassigned"
       :next-gate "implementation-gate"
       :source "pr-317")
     (      :id "RD-08"
       :title "PR #319: Recursive project and tool-stream grouping"
       :status "merged"
-      :owner "gafferongames"
+      :owner "unassigned"
       :next-gate "implementation-gate"
       :source "pr-319")
     (      :id "RD-09"
       :title "PR #320: Refuse forbidden Lisp reader tokens before interning"
       :status "merged"
-      :owner "gafferongames"
+      :owner "unassigned"
       :next-gate "full-verification"
       :source "pr-320")
     (      :id "RD-10"
       :title "PR #322: Static required-member container cascade"
       :status "merged"
-      :owner "gafferongames"
+      :owner "unassigned"
       :next-gate "resident-cow-gate"
       :source "pr-322")
     (      :id "RD-11"
       :title "PR #323: Finite records decision packet and Rule 29"
       :status "merged"
-      :owner "gafferongames"
+      :owner "unassigned"
       :next-gate "validator-slice"
       :source "pr-323")
     (      :id "RD-12"
       :title "PR #325: Swarm migration-status and re-reservation corrections"
       :status "merged"
-      :owner "gafferongames"
+      :owner "unassigned"
       :next-gate "runtime-gate"
       :source "pr-325")
     (      :id "RD-13"
       :title "PR #326: propose optional native swarm batch admission receipts"
       :status "in-review"
-      :owner "rowan"
+      :owner "stella"
       :next-gate "encoding-crash-gates"
       :source "pr-326")
     (      :id "RD-14"
       :title "PR #330: Previous roadmap refresh through 21:57Z"
       :status "merged"
-      :owner "gafferongames"
+      :owner "unassigned"
       :next-gate "superseded"
       :source "pr-330")
     (      :id "RD-15"
       :title "PR #331: start and restart tasks through kernel submit path"
       :status "in-review"
-      :owner "rowan"
+      :owner "stella"
       :next-gate "freddy-review"
       :source "pr-331")
     (      :id "RD-16"
@@ -361,7 +362,7 @@
     (      :id "RD-18"
       :title "PR #334: Previous roadmap refresh through 23:00:18Z"
       :status "merged"
-      :owner "gafferongames"
+      :owner "unassigned"
       :next-gate "superseded"
       :source "pr-334")
     (      :id "RD-19"
@@ -381,7 +382,13 @@
       :status "proposed"
       :owner "unassigned"
       :next-gate "proposal-intake"
-      :source "issue-336"))
+      :source "issue-336")
+    (      :id "RD-22"
+      :title "PR #338: Slice C: whole-package candidate and installed validator"
+      :status "in-review"
+      :owner "emma"
+      :next-gate "independent-review"
+      :source "pr-338"))
   :epics (    (      :id "E01"
       :title "Canonical work data and restricted representation"
       :features (        (          :id "E01-F01"
