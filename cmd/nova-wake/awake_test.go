@@ -64,6 +64,68 @@ func TestAwakeClassifiesByCursorAge(t *testing.T) {
 	}
 }
 
+func TestAwakeReadsMaxAndAsFromConfig(t *testing.T) {
+	dir := awakeBus(t)
+	for _, name := range []string{"a", "b", "c"} {
+		if err := os.MkdirAll(filepath.Join(dir, "from-"+name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfgPath := filepath.Join(t.TempDir(), "config")
+	write(t, cfgPath, "bus="+dir+"\nas=rowan\nmax=2\n")
+	t.Setenv("NOVA_WAKE_CONFIG", cfgPath)
+
+	r := wakeRun(t, "awake")
+	if r.exit != 0 {
+		t.Fatalf("awake exit %d, want 0; stderr=%s", r.exit, r.stderr)
+	}
+	lines := strings.Split(strings.TrimRight(r.stdout, "\n"), "\n")
+	if len(lines) != 4 { // 2 FRIEND, 1 "... and N more", 1 AWAKE OK
+		t.Fatalf("config max not read: awake printed %d lines, want 4\nstdout=%s", len(lines), r.stdout)
+	}
+	if !strings.Contains(r.stdout, "... and 1 more\n") {
+		t.Fatalf("bounds line missing\nstdout=%s", r.stdout)
+	}
+	if !strings.Contains(r.stdout, "AWAKE OK friends=3 awake=0 asleep=0 unknown=3 window=300\n") {
+		t.Fatalf("summary line missing\nstdout=%s", r.stdout)
+	}
+}
+
+func TestAwakeReadsBusAndWindowFromConfig(t *testing.T) {
+	dir := awakeBus(t)
+	cursorCommit(t, dir, "alice", at.Add(-10*time.Second))
+	cfgPath := filepath.Join(t.TempDir(), "config")
+	write(t, cfgPath, "bus="+dir+"\nwindow=600\n")
+	t.Setenv("NOVA_WAKE_CONFIG", cfgPath)
+
+	r := wakeRun(t, "awake")
+	if r.exit != 0 {
+		t.Fatalf("awake exit %d, want 0; stderr=%s", r.exit, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "AWAKE OK friends=1 awake=1 asleep=0 unknown=0 window=600\n") {
+		t.Fatalf("config bus and window not read\nstdout=%s", r.stdout)
+	}
+}
+
+func TestFlagBeatsConfig(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config")
+	write(t, cfgPath, "bus=/nonexistent\nwindow=999\n")
+	t.Setenv("NOVA_WAKE_CONFIG", cfgPath)
+
+	dir := awakeBus(t)
+	cursorCommit(t, dir, "alice", at.Add(-400*time.Second))
+	r := wakeRun(t, "awake", "--bus", dir, "--window", "100")
+	if r.exit != 0 {
+		t.Fatalf("awake exit %d, want 0; stderr=%s", r.exit, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "FRIEND alice asleep age=400 source=bus-cursor\n") {
+		t.Fatalf("flag window did not beat config\nstdout=%s", r.stdout)
+	}
+	if !strings.Contains(r.stdout, "window=100\n") {
+		t.Fatalf("summary missing flag window\nstdout=%s", r.stdout)
+	}
+}
+
 func TestAwakeRefusesNonBus(t *testing.T) {
 	r := wakeRun(t, "awake")
 	if r.exit != 2 || !strings.Contains(r.stderr, "AWAKE REFUSED") {
@@ -104,6 +166,47 @@ func TestAwakeBoundsLines(t *testing.T) {
 	}
 	if !strings.Contains(r.stdout, "AWAKE OK friends=5 awake=0 asleep=0 unknown=5 window=300\n") {
 		t.Fatalf("summary line missing\n%s", r.stdout)
+	}
+}
+
+// THE BEAT CARRIES A LEASE, and it outruns both the cursor and the window. A line whose
+// duty process is alive but between two waits stops writing a beat while it works the note
+// it was just handed, and over a slow note that gap outruns --window, so by cursor age
+// alone it reads asleep. The exit beat wrote until=now+--beat-lease, so the friend stays
+// awake inside the lease even though both its cursor and its beat stamp are old.
+func TestAwakeHonoursBeatLease(t *testing.T) {
+	dir := awakeBus(t)
+	cursorCommit(t, dir, "rowan", at.Add(-472*time.Second)) // asleep by cursor alone
+	write(t, filepath.Join(dir, "from-rowan", "BEAT"),
+		at.Add(-500*time.Second).Format(time.RFC3339Nano)+" rowansha until="+at.Add(5*time.Minute).Format(time.RFC3339Nano)+"\n")
+
+	r := wakeRun(t, "awake", "--bus", dir)
+	if r.exit != 0 {
+		t.Fatalf("awake exit %d, want 0; stderr=%s", r.exit, r.stderr)
+	}
+	for _, want := range []string{
+		"FRIEND rowan awake age=500 source=bus-beat\n",
+		"AWAKE OK friends=1 awake=1 asleep=0 unknown=0 window=300\n",
+	} {
+		if !strings.Contains(r.stdout, want) {
+			t.Fatalf("awake output missing %q\nstdout=%s", want, r.stdout)
+		}
+	}
+
+	// A lease that has run out keeps nobody awake: the beat is old AND its until is past,
+	// so the line falls back to its cursor, which is also asleep.
+	dir = awakeBus(t)
+	cursorCommit(t, dir, "eve", at.Add(-472*time.Second))
+	write(t, filepath.Join(dir, "from-eve", "BEAT"),
+		at.Add(-500*time.Second).Format(time.RFC3339Nano)+" evesha until="+at.Add(-1*time.Minute).Format(time.RFC3339Nano)+"\n")
+	r = wakeRun(t, "awake", "--bus", dir)
+	for _, want := range []string{
+		"FRIEND eve asleep age=472 source=bus-cursor\n",
+		"AWAKE OK friends=1 awake=0 asleep=1 unknown=0 window=300\n",
+	} {
+		if !strings.Contains(r.stdout, want) {
+			t.Fatalf("expired-lease output missing %q\nstdout=%s", want, r.stdout)
+		}
 	}
 }
 

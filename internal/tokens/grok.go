@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,8 +22,10 @@ import (
 // THE MAPPING IS NOT THIS FILE'S. docs/MAPPING-TOKENS-GROK.md is the source owner's
 // decision, cell by cell, and this decoder applies it without reinterpreting one. Where the
 // mapping says a thing is owed, unsupported or unverified, the answer here is a refusal with
-// that reason named -- ErrGrokSessionAggregateOwed, ErrGrokNormalizedSpendUnsupported,
-// ErrGrokRequestGrainOutsideMapping -- and never a number produced anyway. The cells this
+// that reason named -- ErrGrokNormalizedSpendUnsupported, ErrGrokRequestGrainOutsideMapping --
+// and never a number produced anyway. The session aggregate that was owed is now a covered
+// separate mapping (GrokSessionAggregate), never a refusal and never a fill for a missing
+// turn. The cells this
 // decoder could not have decided on its own:
 //
 //   - The spend key is the ARRAY [original_session_id, turn_number_as_string]. Never a joined
@@ -47,6 +51,11 @@ const (
 	GrokSourceKind      = "grok"
 	GrokNamespace       = "nova.grok.turns"
 	GrokObservationKind = "turn"
+
+	// GrokSessionNamespace is the session aggregate mapping's own stable namespace: the
+	// session totals live beside the turns, never inside their key space.
+	GrokSessionNamespace       = "nova.grok.sessions"
+	GrokSessionObservationKind = "aggregate"
 
 	grokTimeBasisKnown   = "turn_completion"
 	grokTimeBasisUnknown = "unknown"
@@ -89,16 +98,29 @@ var grokModelUsageFields = []string{
 // carries mapping-allowlisted native locator fields and nothing else.
 var grokReceiptFields = []string{"turn_number"}
 
-// grokOwedCoverageTasks are the mappings this one does not cover, named so a coverage report
-// can say so. The session aggregate is the manifest's own owed task; the request grain is
-// owed "in the same sense" by the mapping's closing paragraph.
+// grokSessionFields are the session aggregate's own closed allowlist: the six totals the
+// session block carries. It is a subset of the turn field names, under the same number kind
+// and unit rules, but it is this mapping's own set: a field the session carries is not
+// admitted because a turn carried it.
+var grokSessionFields = []string{
+	"costUsdTicks", "inputTokens", "modelCalls", "outputTokens", "totalTokens", "turnCount",
+}
+
+// grokCountedSessionFields are the session fields a checksum compares against the summed turn
+// rows. turnCount is coverage evidence, not a counted spend field.
+var grokCountedSessionFields = []string{
+	"costUsdTicks", "inputTokens", "modelCalls", "outputTokens", "totalTokens",
+}
+
+// grokOwedCoverageTasks are the mappings this turn decoder does not cover, named so a coverage
+// report can say so. The session aggregate is provided by the separate GrokSessionAggregate
+// mapping, not by the turn decoder; the request grain is owed the same way.
 var grokOwedCoverageTasks = []string{"grok_request_grain_mapping", "grok_session_aggregate_mapping"}
 
 // The refusals that ARE the mapping's unsupported and owed cells. They are sentinel errors so
-// a caller can tell the three apart with errors.Is and report the specific gap.
+// a caller can tell them apart with errors.Is and report the specific gap.
 var (
 	ErrGrokNormalizedSpendUnsupported = errors.New("tokens: normalized spend from a Grok turn key is unsupported: resume/fork/renumber identity stability is unverified, so raw retention proceeds and the gap is reported")
-	ErrGrokSessionAggregateOwed       = errors.New("tokens: the Grok session aggregate is a separate retained mapping with its own namespace and identity contract, owed and not covered here: it never fills a missing turn and is never counted beside the turns")
 	ErrGrokRequestGrainOutsideMapping = errors.New("tokens: a request-grain Grok mapping is outside this mapping, with no literals invented: decode at the grain the source supplies")
 )
 
@@ -120,6 +142,14 @@ func GrokAllowlists() records.Allowlists {
 func GrokFieldRule(name string) (numberKind, unit string, ok bool) {
 	r, ok := grokFields[name]
 	return r.numberKind, r.unit, ok
+}
+
+// GrokSessionAllowlists is the session aggregate mapping's own closed allowlist, as a COPY:
+// the six session totals and no receipt locators, because an aggregate carries no turn.
+func GrokSessionAllowlists() records.Allowlists {
+	raw := append([]string(nil), grokSessionFields...)
+	sort.Strings(raw)
+	return records.Allowlists{RawUsageFields: raw, ReceiptFields: []string{}}
 }
 
 // GrokModelUsageFields is the eight-field split set, sorted, as a copy.
@@ -218,10 +248,169 @@ func GrokNormalizedSpend([]GrokRecord) (map[string]string, error) {
 	return nil, ErrGrokNormalizedSpendUnsupported
 }
 
-// GrokSessionAggregate is the owed mapping. The export's session totals are visible evidence
-// for it and are mapped by nothing here.
-func GrokSessionAggregate([]byte, GrokOptions) ([]GrokRecord, error) {
-	return nil, ErrGrokSessionAggregateOwed
+// GrokSessionAggregate maps one export's session totals to a single kind:aggregate observation
+// under the aggregate mapping's own namespace. It maps the session block itself, under its own
+// field allowlist, so it never fills a missing turn and is never counted beside the turns.
+func GrokSessionAggregate(raw []byte, opts GrokOptions) ([]GrokRecord, error) {
+	if !grokIsContentID(opts.MappingID) {
+		return nil, errors.New("grok: the mapping ID is a sha256 content ID of the sealed mapping manifest")
+	}
+	if err := grokCheckProducerVersion(opts.ProducerVersion); err != nil {
+		return nil, err
+	}
+	sessionID, session, err := grokParseSession(raw)
+	if err != nil {
+		return nil, err
+	}
+	v := records.NewValidator(GrokSessionAllowlists())
+	rec, err := grokSessionRecord(v, sessionID, session, opts)
+	if err != nil {
+		return nil, err
+	}
+	return []GrokRecord{rec}, nil
+}
+
+// A GrokChecksum is the result of checksumming one session aggregate observation against its
+// retained turn rows. The session totals are never counted beside the turns and are never
+// used to fill a missing turn: this compares them only, and a mismatch over complete coverage
+// is a mapping conflict, not a second spend row.
+type GrokChecksum struct {
+	// CoverageComplete reports that the aggregate's declared turnCount equals the number of
+	// retained turn records and none of them carries a completeness gap, so the session totals
+	// and the turn rows cover the same complete interval.
+	CoverageComplete bool
+	// Match reports that, over complete coverage, every counted field's session total equals
+	// the summed turn rows.
+	Match bool
+	// MismatchedFields names the counted fields whose session total disagreed with the summed
+	// turn rows, or that either side could not supply.
+	MismatchedFields []string
+}
+
+// GrokSessionChecksum compares one session aggregate record against its retained turn rows and
+// reports whether the aggregate and the turns cover the same complete interval and agree.
+func GrokSessionChecksum(aggregate GrokRecord, turns []GrokRecord) GrokChecksum {
+	c := GrokChecksum{Match: true}
+	c.CoverageComplete = grokSessionCoverageComplete(aggregate, turns)
+	for _, name := range grokCountedSessionFields {
+		if grokSessionFieldMismatch(aggregate, turns, name) {
+			c.Match = false
+			c.MismatchedFields = append(c.MismatchedFields, name)
+		}
+	}
+	if !c.CoverageComplete {
+		// A partial export cannot claim completeness: over incomplete coverage there is no
+		// checksum to trust, whatever the numbers say.
+		c.Match = false
+	}
+	return c
+}
+
+func grokSessionCoverageComplete(aggregate GrokRecord, turns []GrokRecord) bool {
+	tc := aggregate.Observation.RawUsage["turnCount"]
+	if !tc.Present() || tc.Value == nil {
+		return false
+	}
+	n, err := strconv.Atoi(*tc.Value)
+	if err != nil || n != len(turns) {
+		return false
+	}
+	for _, t := range turns {
+		if GrokHasCompletenessGap(t) {
+			return false
+		}
+	}
+	return true
+}
+
+func grokSessionFieldMismatch(aggregate GrokRecord, turns []GrokRecord, name string) bool {
+	sf := aggregate.Observation.RawUsage[name]
+	if !sf.Present() || sf.Value == nil {
+		return true
+	}
+	agg, ok := grokParseBig(*sf.Value)
+	if !ok {
+		return true
+	}
+	var sum grokBig
+	have := false
+	for _, t := range turns {
+		f := t.Observation.RawUsage[name]
+		if !f.Present() || f.Value == nil {
+			return true
+		}
+		v, ok := grokParseBig(*f.Value)
+		if !ok {
+			return true
+		}
+		if !have {
+			sum, have = v, true
+		} else {
+			sum = grokBigAdd(sum, v)
+		}
+	}
+	return !grokBigEqual(sum, agg)
+}
+
+// grokBig is an exact non-negative decimal: m * 10^exp, so a session-vs-turns checksum sums
+// token, call and cost-tick lexemes with no float and no rounding.
+type grokBig struct {
+	m   big.Int
+	exp int
+}
+
+func grokParseBig(lexeme string) (grokBig, bool) {
+	var b grokBig
+	mant, exp := lexeme, 0
+	if i := strings.IndexAny(mant, "eE"); i >= 0 {
+		e, err := strconv.Atoi(mant[i+1:])
+		if err != nil {
+			return b, false
+		}
+		exp, mant = e, mant[:i]
+	}
+	digits, frac := mant, 0
+	if i := strings.IndexByte(mant, '.'); i >= 0 {
+		digits = mant[:i] + mant[i+1:]
+		frac = len(mant) - i - 1
+	}
+	if _, ok := b.m.SetString(digits, 10); !ok {
+		return b, false
+	}
+	b.exp = exp - frac
+	return b, true
+}
+
+func grokScale(x grokBig, target int) grokBig {
+	if x.exp > target {
+		diff := x.exp - target
+		mul := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(diff)), nil)
+		x.m.Mul(&x.m, mul)
+		x.exp = target
+	}
+	return x
+}
+
+func grokBigAdd(a, b grokBig) grokBig {
+	t := a.exp
+	if b.exp < t {
+		t = b.exp
+	}
+	a = grokScale(a, t)
+	b = grokScale(b, t)
+	a.m.Add(&a.m, &b.m)
+	a.exp = t
+	return a
+}
+
+func grokBigEqual(a, b grokBig) bool {
+	t := a.exp
+	if b.exp < t {
+		t = b.exp
+	}
+	a = grokScale(a, t)
+	b = grokScale(b, t)
+	return a.m.Cmp(&b.m) == 0
 }
 
 // GrokRequestObservations is the grain that is outside this mapping. A generic request
@@ -524,6 +713,72 @@ func grokOrigin(sessionID, turnNumber string, opts GrokOptions) (records.Origin,
 	}
 	friend, bench, id := b.Friend, b.Bench, b.ID
 	return records.Origin{Friend: &friend, Bench: &bench, Basis: "owner_binding", BindingID: &id}, nil
+}
+
+// grokSessionRecord is one aggregate record. The session totals carry no single model, no turn
+// number and no completion instant: model and origin stay unknown, time basis is
+// source_aggregate with no occurred_at, and the event key is the session ID alone in its own
+// namespace.
+func grokSessionRecord(v *records.Validator, sessionID string, session map[string]interface{}, opts GrokOptions) (GrokRecord, error) {
+	rawUsage := make(map[string]records.RawField, len(grokSessionFields))
+	for _, name := range grokSessionFields {
+		rawUsage[name] = grokRawField(session, name)
+	}
+	key := []string{sessionID}
+	obs := records.Observation{
+		Schema: records.SchemaObservation,
+		Source: records.Source{
+			Kind:            GrokSourceKind,
+			ProducerVersion: grokCopyString(opts.ProducerVersion),
+			Namespace:       GrokSessionNamespace,
+			SessionID:       sessionID,
+			EventKey:        key,
+		},
+		Kind:     GrokSessionObservationKind,
+		Revision: records.Revision{Basis: "none"},
+		Time:     records.Times{Basis: "source_aggregate"},
+		Origin:   records.Origin{Basis: "unknown"},
+		Model:    records.Model{Basis: "unknown"},
+		// The aggregate carries no repository either: the source supplies no policy and no
+		// single primary model.
+		Repository: records.Repository{Basis: "unattributed"},
+		RawUsage:   rawUsage,
+		ModelUsage: nil,
+		MappingID:  opts.MappingID,
+		Receipt:    map[string]string{},
+	}
+	env, id, err := v.SealObservation(obs)
+	if err != nil {
+		return GrokRecord{}, err
+	}
+	read, err := v.ValidateEnvelope(env)
+	if err != nil {
+		return GrokRecord{}, err
+	}
+	return GrokRecord{EventKey: key, Envelope: env, ID: id, Observation: *read.Observation}, nil
+}
+
+// grokParseSession reads the aggregate's shape: the original native sessionId and the session
+// totals object. It shares the export's exact-JSON boundary and returns a fixed phrase on
+// refusal, never a source value.
+func grokParseSession(raw []byte) (string, map[string]interface{}, error) {
+	root, err := grokParseExport(raw)
+	if err != nil {
+		return "", nil, err
+	}
+	sessionID, _ := root["sessionId"].(string)
+	if sessionID == "" {
+		return "", nil, errors.New("grok: the export carries its original native sessionId; a containing session ID is never substituted")
+	}
+	sv, ok := root["session"]
+	if !ok || sv == nil {
+		return "", nil, errors.New("grok: the export carries a session aggregate object")
+	}
+	obj, ok := sv.(map[string]interface{})
+	if !ok {
+		return "", nil, errors.New("grok: the session aggregate is a JSON object of its numeric totals")
+	}
+	return sessionID, obj, nil
 }
 
 // ---------------------------------------------------------------- the export

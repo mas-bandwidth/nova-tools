@@ -28,7 +28,7 @@ BUS OK notes=4 lanes=2 receipts=1 participants=3 warn=0
 
 $ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --full --open
 INBOX SCOPE mode=full cursor=- changed=0 carrying=1
-INBOX OPEN carrying=1 heard=0
+INBOX OPEN carrying=1 heard=0 large=false remedy=inbox --advance
 INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
 INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unreadable=0
 
@@ -45,7 +45,7 @@ we were trying to close.
 Ada
 INBOX BODY END id=ada-0f1e2d3c4b5a
 INBOX BODIES printed=1 bytes=195 oversize=0 gaps=0 drained=true complete=true next=-
-INBOX OPEN carrying=1 heard=0
+INBOX OPEN carrying=1 heard=0 large=false remedy=inbox --advance
 INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
 INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unreadable=0
 
@@ -55,21 +55,21 @@ RECEIPT OK recorded=1 already=0 commit=9750ba9617d4a42a5fdedf372ec70132aa46f936 
 $ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --advance --legacy-now --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=0
 INBOX LEGACY before=2026-09-12T20:15:33Z notes=1 unreadable=0
-INBOX OPEN carrying=0 heard=0
+INBOX OPEN carrying=0 heard=0 large=false remedy=inbox --advance
 INBOX OK as=Bo carrying=0 open=0 notes=0 receipts=0 heard=0 unaddressed=0 unreadable=0
 INBOX CURSOR commit=9750ba9617d4a42a5fdedf372ec70132aa46f936 carrying=0 pushed=true attempts=1
 
 $ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
 
 $ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
-SEND OK id=bo-8405301fd99d path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md commit=57dc978d3ad645788c4236b0da99b1c59f89282d pushed=true attempts=1
+SEND OK id=bo-8405301fd99d path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md commit=57dc978d3ad645788c4236b0da99b1c59f89282d pushed=true attempts=1 wakes=1
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
 INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=3
-INBOX OPEN carrying=3 heard=1
+INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
 INBOX NOTE id=bo-8405301fd99d from=Bo addr=to at=2026-09-12T20:15:41Z path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md: gate
 INBOX HEARD id=bo-222222222222 from=Bo addr=to at=2026-09-09T14:00:00Z path=from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md: The Windows runner skips three steps
 INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-09T13:00:00Z path=from-bo/2026-09-09T1300Z-heard-111111111111.md: Heard
@@ -78,7 +78,7 @@ INBOX CURSOR commit=57dc978d3ad645788c4236b0da99b1c59f89282d carrying=3 pushed=t
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40
 INBOX SCOPE mode=since cursor=57dc978d3ad645788c4236b0da99b1c59f89282d changed=2 carrying=3
-INBOX OPEN carrying=3 heard=1
+INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
 INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
 
 $ nova-bus draft --bus ./bus --as Ada --reply-to gate --body-file reply.md --draft-dir ./drafts --remote origin --branch main
@@ -162,7 +162,7 @@ Fixture: `cmd/nova-check/testdata/example-self`.
 ```
 $ nova-check quickstart --dir ./self
 QUICKSTART OK dir=./self checks=2: links, then nocode
-LINKS OK files=4 links=3
+LINKS OK files=4 links=3 excluded=0
 NOCODE OK files=5 clean deny-list=floor\x20list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
 
@@ -343,6 +343,25 @@ STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stal
 STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
 ```
 
+## nova-pulse
+
+Fixture: `cmd/nova-pulse/testdata/example-pulse`, a pulse root the size of a first run: three cards (gate, hash, fold), all on one `pro` model, and the `cards.tsv` that names them. `launch` counts the free slots under `<root>/pool` (here empty, so every slot is free), then hands the cards that fit to `nova-swarm batch` one model at a time. The fixture ships a stub `bin/nova-swarm` that records the batch argv and exits 0, so the two `PULSE OK` lines below were produced by RUNNING launch on this fixture with that stub on PATH — no model call happens here, and no line reaches a network.
+
+A first sitting is three runs: one refusal (three cards into two slots), one whole pulse (three into three), and the queued form (three into two with `--queue`).
+
+### First run
+
+```
+$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120
+PULSE REFUSED UNDER-SLOTS cards=3 free=2 (pass --queue, or wait)
+
+$ nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
+PULSE OK id=20260915T161450Z-pulse-e33494 n=3 free-before=3 queued=0 batches=1 deadline=120
+
+$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
+PULSE OK id=20260915T161450Z-pulse-600cc3 n=3 free-before=2 queued=1 batches=1 deadline=120
+```
+
 ## nova-board
 
 Fixture: `cmd/nova-board/testdata/example-board`.
@@ -483,4 +502,19 @@ $ nova-version report --file cmd/nova-version/testdata/example.tsv
 REPORT at=2026-09-12T17:29:33Z file=cmd/nova-version/testdata/example.tsv host=- as=- entries=1 kinds=engine,harness,model,pin,tool timeout=5s budget=1m0s max=20 snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-version/testdata/example.tsv
+```
+
+## nova-pulse
+
+### First run
+
+From the nova-tools checkout, against the pool source fixture
+`cmd/nova-pulse/testdata/`: a `sources.tsv` declaring one `roadmap` source, and
+that roadmap — two cells naming a card and one naming none. `pool` reads the
+roadmap, skips the cell without a card, and writes the two candidates it found
+to `./root/pool.tsv`. No network, no model call.
+
+```text
+$ nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
+POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
 ```

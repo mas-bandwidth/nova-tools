@@ -520,6 +520,53 @@ zero. Writes nothing. Exits
 0 whenever it ran, including over a month with gaps: answering is its job,
 and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 
+`sum --swarm-root <dir> --day <d> --out <ledger.tsv>` is the one form that
+writes: it walks every card's `usage.tsv` under `<dir>/*/jobs/*/`, keeps the
+rows whose `started` stamp is on `--day`, and appends one row per model to the
+ledger in the ledger's own column order — `day`, `model`, `tokens_in`,
+`tokens_out`, `usd`, `cards` — reading the header and refusing (exit 2) when it
+differs, so a ledger filled by hand and one filled by this verb agree. A second
+run for the same day replaces that day's rows, never doubling, so the ledger can
+be filled again and again; a kept field a card did not report is `-` in the ledger, never 0,
+and the trailing `dashes` column counts how many cards left each of input, output and usd unknown.
+
+**Cost per completed task per (model, repo), the shape, filed before the
+counts land (issue #64, Rowan's MODELS.md pass, 2026-09-11).** The ledger
+carries price per token today; the routing metric every independent index in
+that pass publishes is **cost per completed task**, not price per token — a
+model at four times the per-token price that finishes in a third of the turns
+is the cheaper model, and it is the number that decides which seat a job
+goes to. Once the receipts can count completed tasks, the ledger carries it
+as a column, and this sentence fixes the shape now so it lands unargued. The
+row key becomes `(day, model, repo)`: the same model costs differently
+against a small tool repo and a large one, and per model is the routing
+decision. Three columns land on every row:
+
+- `repo`, the repo the card's receipt names, so the row is per `(model,
+  repo)` and no longer per model alone;
+- `completed`, how many of that row's cards carry a receipt with `rc=0`, a
+  task that finished, read from the receipt and never inferred from a card
+  that reported none;
+- `usd_per_task`, `usd / completed` in dollars to six decimals, and `-` when
+  `completed` is zero: there is no cost over no finished task, and the ratio
+  is never divided.
+
+The column order is `day`, `model`, `repo`, `tokens_in`, `tokens_out`, `usd`,
+`cards`, `completed`, `usd_per_task`, `dashes`: the ledger lands one row per
+`(model, repo)` pair, as `sum` prints one `SUM PAIR` line per pair. `cards` is
+unchanged
+— the count of every card that reported — and `completed` is its own column,
+not `cards` minus anything. Until the receipts land, `repo` is `unattributed`
+and `completed` and `usd_per_task` are `-` on every row, and the header is
+already the order above, so a ledger filled before and a ledger filled after
+the counts agree at the header and never rewrite a row. A receipt whose `rc`
+is `-` or empty names no completion, counts in `cards` and in the `dashes`
+column, and never in `completed`: it is read as neither failed nor finished.
+A `completed` of zero is a valid row, never a refusal; the one refusal this
+shape adds is the header mismatch, which names the wanted order, the order
+above. MODELS.md carries `usd_per_task` per model row once it can be
+computed, per repo where a model shows on more than one.
+
 ### `check`
 
 Asserts what rule 13 says. Says NO (exit 1) on any malformed file, any
@@ -805,7 +852,13 @@ its own dates with `day_basis=<zone>`, the zone taken from the export's own
 declaration and printed on `TOKENS SOURCE`, never from the bench's clock or
 a guess; an export with neither timestamps nor a declared zone is
 `TOKENS UNREADABLE` naming what it lacks. A `(day, model, repo)` fed by a
-`utc` row and a zoned row is `TOKENS MIXED` and not written.
+`utc` row and a zoned row is `TOKENS MIXED` and not written. The `xai`
+parser also reads a `grok usage` JSON export (a `sessionId` and a `turns`
+array, chosen by the file's leading `{` or `[`), folding each turn into the
+same rows: `endedAt` is the day, `primaryModelId` the model, and
+`inputTokens`/`outputTokens`/`cacheCreationTokens`/`cachedReadTokens`/
+`reasoningTokens` the five counts, with a field the turn did not carry left
+a `-`, never a zero.
 
 ### `--bus <dir>`: friends' self-reports
 
@@ -2164,6 +2217,14 @@ paragraphs are the normative text and these ten lines are the index.
     flags, including each reached through a **symlink**; and a fold that
     rewrites the day file between the lock and the push is exit 1
     `reason=changed`.
+32. A fixture ledger and a fixture swarm root of cards whose receipts carry
+    `repo` and `rc`: `sum --swarm-root` writes one ledger row per `(model,
+    repo)` pair with `repo` from the receipt, `completed` counting only the
+    `rc=0` cards, and `usd_per_task` equal to `usd / completed` to six
+    decimals; a pair with `completed=0` writes `usd_per_task=-`, never a
+    division, and a receipt whose `rc` is `-` counts in `cards` and `dashes`
+    and never in `completed`; the header is the ten columns in order, and a
+    ledger whose header differs is refused (exit 2) naming that order.
 
 ## The work list
 
