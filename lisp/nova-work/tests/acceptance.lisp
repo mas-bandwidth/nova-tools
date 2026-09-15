@@ -1620,3 +1620,184 @@ is compared against; it is never the path `query --ask size` takes."
                     (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
                (close-file-journal j-replay))))
       (ignore-errors (delete-file path)))))
+
+;;; ------------------------------------------------------------------
+;;; Acceptance replays named in docs/SPEC-WORK.md lines 1-1200 that
+;;; were not yet covered. The four whose kernel support exists in this
+;;; slice assert their sentence; the sixteen that need kernel code that
+;;; does not exist yet are named with the sentence they assert and the
+;;; kernel they are waiting on.
+;;; ------------------------------------------------------------------
+
+(deftest "absent-empty-and-null-are-three-spellings" "docs/SPEC-WORK.md:353"
+    "expected=absent!=empty!=empty-string"
+  (let ((absent (canonical-string +absent+))
+        (empty (canonical-string '()))
+        (empty-string (canonical-string "")))
+    (check-string= "(:absent)" absent "the absent spelling")
+    (check-string= "()" empty "the empty-list spelling")
+    (check-string= "\"\"" empty-string "the empty-string spelling")
+    (ok (and (string/= absent empty) (string/= absent empty-string)
+             (string/= empty empty-string))
+        "absent, empty list and empty string are three spellings, not two")))
+
+(deftest "crash-after-append-recovers-the-reply-once" "docs/SPEC-WORK.md:485,492"
+    "expected=record-durable-before-apply;retry-recovers-reply-once"
+  (let* ((path (test-journal-path "crash-after-append"))
+         (initial-hash (root-digest (make-seed-state *seed*)))
+         (j1 (open-file-journal path :initial-state-hash initial-hash))
+         (k1 (fresh :journal j1))
+         (req (close-request :request "req-crash")))
+    (unwind-protect
+         (progn
+           (let ((*before-apply-hook* (lambda (env) (declare (ignore env))
+                                        (error "crash after append, before apply"))))
+             (handler-case (submit k1 req) (error () nil)))
+           (close-file-journal j1)
+           (ok (> (file-byte-count path) 100) "record written and synced before apply")
+           (let* ((j2 (open-file-journal path :initial-state-hash initial-hash))
+                  (k2 (fresh :journal j2)))
+             (unwind-protect
+                  (progn
+                    (multiple-value-bind (replayed-k ev rec) (replay-journal j2 k2)
+                      (declare (ignore replayed-k ev))
+                      (check-equal 1 rec "one record recovered after the crash"))
+                    (multiple-value-bind (okp line code env) (submit k2 req)
+                      (declare (ignore line))
+                      (ok okp "the retry was refused")
+                      (check-equal 0 code "the retry exit code")
+                      (ok (getf env :replayed) "the retry is not marked replayed")
+                      (check-equal '() (getf env :events) "the retry applied new events")))
+               (close-file-journal j2))))
+      (ignore-errors (delete-file path)))))
+
+(deftest "torn-tail-is-diagnosed-not-truncated" "docs/SPEC-WORK.md:492"
+    "expected=torn-tail-signals-corrupt;file-bit-for-bit-preserved"
+  (let* ((path (test-journal-path "torn-tail"))
+         (initial-hash (root-digest (make-seed-state *seed*))))
+    (unwind-protect
+         (progn
+           (let ((j (open-file-journal path :initial-state-hash initial-hash)))
+             (let ((k (fresh :journal j)))
+               (submit k (doing-request :node "acme/work/f1/t1" :request "req-1")))
+             (close-file-journal j))
+           (let ((valid-bytes (file-byte-count path)))
+             (with-open-file (out path :direction :output :if-exists :append :element-type 'character)
+               (write-string "(:frame :seq 2 :len 90 :checksum \"0000\"" out)
+               (finish-output out))
+             (let ((torn-bytes (file-byte-count path)))
+               (ok (> torn-bytes valid-bytes) "torn bytes appended")
+               (let ((signaled nil))
+                 (handler-case (open-file-journal path :initial-state-hash initial-hash)
+                   (journal-corrupt-data () (setf signaled t)))
+                 (ok signaled "the torn tail was not diagnosed"))
+               (check-equal torn-bytes (file-byte-count path) "the file was truncated"))))
+      (ignore-errors (delete-file path)))))
+
+(deftest "replay-mints-nothing" "docs/SPEC-WORK.md:493"
+    "expected=root-digest-exact,next-rev-exact,no-fresh-id"
+  (let* ((path (test-journal-path "replay-mints-nothing"))
+         (seed '((:id "root" :type :work-set)
+                 (:id "root/f" :type :feature :parent "root")
+                 (:id "root/f/t" :type :task :parent "root/f" :state :todo)))
+         (initial-hash (root-digest (make-seed-state seed)))
+         (j1 (open-file-journal path :initial-state-hash initial-hash))
+         (k1 (make-kernel :state (make-seed-state seed) :journal j1)))
+    (unwind-protect
+         (progn
+           (submit k1 (doing-request :node "root/f/t" :request "start-1"))
+           (submit k1 (close-request :node "root/f/t" :request "close-1"))
+           (let ((digest (root-digest (kernel-state k1)))
+                 (rev (kernel-next-rev k1)))
+             (close-file-journal j1)
+             (let* ((j2 (open-file-journal path :initial-state-hash initial-hash))
+                    (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
+               (unwind-protect
+                    (progn
+                      (multiple-value-bind (rk ev rec) (replay-journal j2 k2)
+                        (declare (ignore rk ev))
+                        (check-equal 2 rec "two records replayed"))
+                      (check-string= digest (root-digest (kernel-state k2))
+                                     "the replay minted a different root digest")
+                      (check-equal rev (kernel-next-rev k2)
+                                   "the replay reissued a revision"))
+                 (close-file-journal j2)))))
+      (ignore-errors (delete-file path)))))
+
+;;; The remaining sixteen named replays assert kernel code this slice does not
+;;; carry (index paging, the clip, closed-history windows, day manifests and the
+;;; new friend/model/fleet verbs). Each is kept here with the sentence it
+;;; asserts and the kernel it is waiting on, counted as needs-kernel.
+
+;; NEEDS-KERNEL: dedup-page-unavailable-refuses (docs/SPEC-WORK.md:582,592)
+;;   a dedup page the predicate needs and cannot read refuses the request as
+;;   `dedup unavailable`, never answers it as new. Waits on the paged dedup
+;;   index store; slice 1 keeps only the bounded ordering-journal fake.
+
+;; NEEDS-KERNEL: history-grows-startup-does-not (docs/SPEC-WORK.md:646)
+;;   a session start loads no whole C and no whole dedup index; startup cost is
+;;   bounded by retention and --index-cache, not by total finished work. Waits
+;;   on the closed-index and startup instrumentation.
+
+;; NEEDS-KERNEL: days-merge-by-revision-never-concatenate (docs/SPEC-WORK.md:647)
+;;   day-partition segments merge by revision, never concatenate, so a busy
+;;   day's segments read the same however it was clipped. Waits on the day tree.
+
+;; NEEDS-KERNEL: page-budget-is-not-max (docs/SPEC-WORK.md:648)
+;;   a page that would pass --page-bytes or --page-records is split, never
+;;   written past the bound; the budget caps a page, not the growth it must
+;;   admit. Waits on paged index roots.
+
+;; NEEDS-KERNEL: default-window-opens-two-days (docs/SPEC-WORK.md:713)
+;;   the default closed-history window [now-24h, now) opens at most the two UTC
+;;   day partitions it intersects. Waits on the closed-history window.
+
+;; NEEDS-KERNEL: busy-day-many-segments (docs/SPEC-WORK.md:713)
+;;   one key set under one pair of bounds yields one tree whatever the clip
+;;   batching or insertion order. Waits on clip segmentation.
+
+;; NEEDS-KERNEL: one-revision-publishes-together (docs/SPEC-WORK.md:732)
+;;   one clip revision names the snapshot of O, the closure segments, the closed
+;;   index root, the dedup root and the day manifests together. Waits on clip.
+
+;; NEEDS-KERNEL: index-replayed-after-crash (docs/SPEC-WORK.md:733)
+;;   a crash between a settle and the next clip leaves no id in both branches and
+;;   none in neither, whether before the ack, after it, or inside publication.
+;;   Waits on index replay over the recovery overlay.
+
+;; NEEDS-KERNEL: overlay-is-bounded-and-rebuilt (docs/SPEC-WORK.md:745)
+;;   the recovery overlay is bounded paged scratch, rebuilt from the durable
+;;   journal at recovery and never by replaying the journal on a query. Waits on
+;;   overlay pages.
+
+;; NEEDS-KERNEL: absent-day-is-not-a-gap (docs/SPEC-WORK.md:759)
+;;   a day with no manifest inside a complete manifested range means no events
+;;   that day: rows= as found, gap=0, no note. Waits on day manifests.
+
+;; NEEDS-KERNEL: missing-segment-is-a-gap (docs/SPEC-WORK.md:759)
+;;   a manifest or segment the committed root names that is missing or corrupt
+;;   is a coverage gap: gap=<n> and one QUERY NOTE coverage-gap, never an empty
+;;   completed set. Waits on segment reads.
+
+;; NEEDS-KERNEL: as-of-refuses-unavailable-partition (docs/SPEC-WORK.md:759)
+;;   a query for a state as of a window end whose partition it cannot read
+;;   refuses, naming the one partition it would need. Waits on partitions.
+
+;; NEEDS-KERNEL: indivisible-record-refused-before-ack (docs/SPEC-WORK.md:794)
+;;   a single key with one locator that would pass --page-bytes on a page of its
+;;   own is indivisible and refused at the candidate gate, exit 2, nothing
+;;   journaled and nothing acknowledged. Waits on the indivisible-record gate.
+
+;; NEEDS-KERNEL: clip-names-the-index-that-overflowed (docs/SPEC-WORK.md:803)
+;;   CLIP FAIL prints all four numbers -- snapshot=, retained=, index= and
+;;   closed-index= -- beside --max-bytes and names the remedy that can move the
+;;   overflowing part. Waits on the clip.
+
+;; NEEDS-KERNEL: new-verbs-have-a-kind-and-a-field-order (docs/SPEC-WORK.md:1052)
+;;   each new verb (friend, model, observe, config, machine, goal, offer, ...)
+;;   has a kind, an ordered field list and a named subject. Waits on the new
+;;   verbs.
+
+;; NEEDS-KERNEL: new-verbs-retry-to-one-event (docs/SPEC-WORK.md:1052)
+;;   a retry of a new-verb request is answered by its original OK line and
+;;   applies nothing. Waits on the new verbs' journal/dedup path.
