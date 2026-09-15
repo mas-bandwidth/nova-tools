@@ -602,10 +602,16 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 		t.Fatalf("the wrapper left no record of what it staged: %v", err)
 	}
 	staged := strings.TrimSpace(string(b))
-	if !strings.Contains(staged, "observed=true") {
-		t.Fatalf("the boundary was never observed, so no death was staged: %s", staged)
-	}
-	if !strings.Contains(staged, "killed-alive=true") {
+	// A MISS, not a failure, and the two shapes of it are the same event. The kill races
+	// a local push: the wrapper can reach the boundary and find the process already gone
+	// (killed-alive=false), or the bus can finish before the boundary is reached at all
+	// (observed=false, which is what a fast runner produces). Both mean no death was
+	// staged, which is exactly what this function's contract says earns another attempt --
+	// and what stagingAttempts exists for: five misses is the UNPROVEN skip above, said
+	// out loud, never a green run and never a red one. observed=false was the one that
+	// failed the test outright instead, so a slow package on a shared runner turned a race
+	// into a red on a change that had not touched this package.
+	if !strings.Contains(staged, "observed=true") || !strings.Contains(staged, "killed-alive=true") {
 		return false
 	}
 	leftover := r.leftInTheLane(t)
