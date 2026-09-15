@@ -10,10 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // THE NATIVE OPENCODE EXECUTION PATH (issue #296, slice 2). A frozen run
@@ -172,6 +174,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	res.wallSeconds = time.Since(start).Seconds()
 	log.Close()
+
+	// Slice 10: one usage.tsv beside the run, read from the harness's own store, so a batch
+	// can fold the card's tokens and dollars without re-reading the harness.
+	writeNativeUsage(cfg, provider, cfg.model[len(provider)+1:], start, time.Now(), res.rc, errOut)
 	return res, 0
 }
 
@@ -212,6 +218,34 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome string) []strin
 	argv = append(argv, "--")
 	argv = append(argv, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
 	return argv
+}
+
+// writeNativeUsage records one card's usage row next to its RESULT.md, once the child is
+// gone and its store is complete. The token numbers come from the store; when sqlite3 is
+// missing the columns are dashes and the note is carried to the caller, and the run still
+// finishes rather than failing on a number nobody can see.
+func writeNativeUsage(cfg nativeRunConfig, provider, model string, start, end time.Time, rc int, errOut io.Writer) {
+	usage, note := swarm.ReadCardUsage(filepath.Join(cfg.slotDir, "data", "opencode", "opencode.db"))
+	rcCol := "-"
+	if rc >= 0 {
+		rcCol = strconv.Itoa(rc)
+	}
+	row := swarm.UsageRow{
+		"job": cfg.label, "attempt": "1",
+		"started": start.UTC().Format(time.RFC3339),
+		"ended":   end.UTC().Format(time.RFC3339),
+		"rc":      rcCol, "provider": provider, "model": model,
+	}
+	for _, c := range swarm.TokenColumns {
+		row[c] = dash(usage.Values[c])
+	}
+	row["usd"] = dash(usage.Values["usd"])
+	if err := swarm.WriteCardUsage(filepath.Join(cfg.slotDir, "usage.tsv"), row); err != nil {
+		fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
+	}
+	if note != "" {
+		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
+	}
 }
 
 // providerOf splits a native model id on its single slash and reports whether it
