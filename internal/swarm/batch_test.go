@@ -359,7 +359,7 @@ func TestWorkingCardCountsLogLines(t *testing.T) {
 	if !strings.Contains(out, "a all green log=3") {
 		t.Fatalf("the card line counts its log lines after the sandbox header:\n%s", out)
 	}
-	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 usd=0.0000 stalled=0") {
+	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 usd=0.0000 idle=0 stalled=0") {
 		t.Fatalf("a working card is not a stall:\n%s", out)
 	}
 }
@@ -376,7 +376,7 @@ func TestBatchLineCountsStalled(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("a batch with one stalled card exits 1, got %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 usd=0.0000 stalled=1") {
+	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 usd=0.0000 idle=0 stalled=1") {
 		t.Fatalf("the BATCH line counts the stalled cards:\n%s", out)
 	}
 	if !strings.Contains(out, "b: ABSTAIN -- stalled (no output after the wall opened)") {
