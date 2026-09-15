@@ -791,26 +791,31 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		codes := make(chan int, 2)
-		outs := make(chan string, 2)
+		// One channel, one value per run: a code and its own output travel together. Two
+		// channels let the second run's output arrive before the first run's code, and the
+		// loser's words were then read off the winner.
+		type runOut struct {
+			code int
+			out  string
+		}
+		runs := make(chan runOut, 2)
 		for _, c := range []string{first, second} {
 			go func(c string) {
 				cmd := exec.Command(bin, "draft", "--bus", c, "--as", "Ada",
 					"--reply-to", "bo-abcdef012345", "--body-file", body, "--draft-dir", dir,
 					"--remote", "origin", "--branch", "main")
 				out, _ := cmd.CombinedOutput()
-				outs <- string(out)
-				codes <- cmd.ProcessState.ExitCode()
+				runs <- runOut{code: cmd.ProcessState.ExitCode(), out: string(out)}
 			}(c)
 		}
-		a, b := <-codes, <-codes
-		outA, outB := <-outs, <-outs
+		runA, runB := <-runs, <-runs
+		a, b := runA.code, runB.code
 		if a+b != 1 {
-			t.Fatalf("round %d: exit codes %d and %d; exactly one run wins and the other is refused\n%s\n%s", round, a, b, outA, outB)
+			t.Fatalf("round %d: exit codes %d and %d; exactly one run wins and the other is refused\n%s\n%s", round, a, b, runA.out, runB.out)
 		}
-		loser := outB
+		loser := runB.out
 		if a == 1 {
-			loser = outA
+			loser = runA.out
 		}
 		if !strings.Contains(loser, "this tool never overwrites a draft") {
 			t.Errorf("round %d: the loser said %q", round, loser)
