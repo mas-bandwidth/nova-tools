@@ -125,11 +125,13 @@ type Message struct {
 	ID     string // the source's own message id, for the overlap check; not part of Key
 	Day    string // YYYY-MM-DD
 	Basis  string // UTC, or the zone a provider export declares
-	Model  string
-	Repo   string // already attributed by the reader, through repo.go's one function
-	Counts Counts
-	Rough  int  // how many `~` bus lines this message stands for
-	Turn   bool // counted into turns= (the sources that count messages)
+	Model    string
+	Repo     string // already attributed by the reader, through repo.go's one function
+	Counts   Counts
+	Rough    int   // how many `~` bus lines this message stands for
+	Turn     bool  // counted into turns= (the sources that count messages)
+	Usd      int64 // micro-dollars, from a usage `usd` column or a cost tick; 0 where absent
+	Provider string // the provider prefix for model= on an AVG line; "" where unknown
 }
 
 // Key is exactly (day, model, repo). Nobody's name is in it: the `who` of a bus line and
@@ -140,10 +142,12 @@ type Key struct{ Day, Model, Repo string }
 // Row is one line of a day file while it is still being accumulated.
 type Row struct {
 	Key
-	Counts  Counts
-	Rough   int
-	bases   map[string]bool
-	sources map[string]bool
+	Counts   Counts
+	Rough    int
+	Usd      int64 // micro-dollars summed over the messages that fed the row
+	Provider string // the provider prefix of the messages that fed the row; "" where unknown
+	bases    map[string]bool
+	sources  map[string]bool
 }
 
 // Bases is the day bases that fed this row, sorted. More than one is a row that is not
@@ -229,6 +233,10 @@ func (f *Folder) Add(label string, m Message) {
 	}
 	r.Counts.Add(m.Counts)
 	r.Rough += m.Rough
+	r.Usd += m.Usd
+	if m.Provider != "" {
+		r.Provider = m.Provider
+	}
 	r.bases[m.Basis] = true
 	r.sources[label] = true
 	f.days[m.Day] = true
@@ -523,6 +531,79 @@ func Percent(part, whole int64) string {
 		return "0.0"
 	}
 	return fmt.Sprintf("%.1f", float64(part)*100/float64(whole))
+}
+
+// ParseMicro reads a decimal dollar amount ("1.23", "0.000001", the int64 micro-dollars
+// down to six fractional digits) into micro-dollars. Any other text -- a dash, an empty
+// cell, an exponent that no usage column writes -- is the second return false, an absence
+// rather than a zero.
+func ParseMicro(s string) (int64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == Dash {
+		return 0, false
+	}
+	whole, frac := s, ""
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		whole, frac = s[:i], s[i+1:]
+	}
+	if whole != "" {
+		for _, c := range whole {
+			if c < '0' || c > '9' {
+				return 0, false
+			}
+		}
+	}
+	for _, c := range frac {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	if len(frac) > 6 {
+		frac = frac[:6]
+	}
+	for len(frac) < 6 {
+		frac += "0"
+	}
+	w, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	var f int64
+	if frac != "" {
+		if f, err = strconv.ParseInt(frac, 10, 64); err != nil {
+			return 0, false
+		}
+	}
+	return w*1_000_000 + f, true
+}
+
+// Usd renders micro-dollars as dollars, trimming trailing zeros after the point: 1234001
+// is "1.234001" and 2000000 is "2". A negative cost keeps its sign.
+func Usd(micro int64) string {
+	neg := micro < 0
+	if neg {
+		micro = -micro
+	}
+	whole := micro / 1_000_000
+	frac := micro % 1_000_000
+	s := strconv.FormatInt(whole, 10)
+	if frac != 0 {
+		f := strings.TrimRight(fmt.Sprintf("%06d", frac), "0")
+		s += "." + f
+	}
+	if neg {
+		s = "-" + s
+	}
+	return s
+}
+
+// UsdPerMtok is the average cost, in dollars per million tokens, to four decimals. Zero
+// tokens is the dash, never a division: there is no average over nothing.
+func UsdPerMtok(micro, tokens int64) string {
+	if tokens == 0 {
+		return Dash
+	}
+	return fmt.Sprintf("%.4f", float64(micro)/float64(tokens))
 }
 
 // opens counts every source file this process has opened. The fold's cost is ONE PASS over
