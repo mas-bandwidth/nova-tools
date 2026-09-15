@@ -346,8 +346,9 @@ writes every poll.
 
 **A config file for the repeated flags.** Before the flags, this tool reads
 `<cwd>/.nova-wake/config`, or the file named by `NOVA_WAKE_CONFIG`, as `key=value`
-lines: `bus=`, `window=`, `state=` and `as=` — the four the coordinator retypes
-every turn for `awake` and `quickstart`. A flag given on the command line wins,
+lines: `bus=` for every verb, `window=` and `max=` for `awake`, and `state=` and
+`as=` for `watch` and `quickstart` — the keys the coordinator retypes every
+turn. A flag given on the command line wins,
 nothing is printed for the read, and a required value named by neither the file
 nor a flag is the same refusal, now naming the config file as a second remedy.
 
