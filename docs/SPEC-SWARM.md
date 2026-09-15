@@ -210,7 +210,15 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `reclaim` of a job with no `<pool>/reports/<job>/RESULT.md`, `MALFORMED`
     or `NO-RESULT` is refused on one line, `RECLAIM REFUSED id=<id>: no report
     copy at <path>; nova-swarm finalize --pool <dir> --task <id>`, because the
-    evidence would be inside the thing about to be removed; a `reclaim` whose
+    evidence would be inside the thing about to be removed; for a profiled
+    attempt the same precondition includes its non-secret profile snapshot and
+    receipt, copied under `<pool>/reports/<job>/` and checked by
+    `snapshot_hash` before the move. The authoritative profile snapshot lives
+    under the coordinator-owned protected `<pool>/evidence/<job-id>/PROFILE.json`
+    path, where `<job-id>` is the concrete attempt id; a worker-visible
+    `<job>/PROFILE.json` is a worker-writable sanitized projection and never
+    the trust root. The catalog path is likewise outside every writable pool,
+    job, slot, scratch, worker data home and configured `read_roots`. A `reclaim` whose
     copy does not hash to `REV`, or whose `REV` is missing, is refused the
     same way, `report copy does not match REV`, because a persistence that
     cannot be verified is not a persistence; `finalize` on a
@@ -516,17 +524,17 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
 ## The verbs
 
 ```
-nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
+nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
+nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
+nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
 nova-swarm stop     --pool <dir>
-nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--max-input <bytes>]
+nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--profiles <file> --profile <id>] [--model <id>] [--max-input <bytes>]
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result>
+nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
@@ -605,10 +613,13 @@ belief about throughput that a note at the top of a log does not correct.
 into the process table and into every `ps` a bench user runs, and a task carrying
 a quoted rule carries quotes into a shell. A file or a stream, always.
 
-**`--worker <file>`** names the worker description: which provider, which model,
-which env var the provider reads, which base URL, and where the key file is. It
-is a file because it is configuration a person wrote, and it is **required**
-because this tool has no opinion about whose model runs.
+**`--worker <file>`** names the legacy/default worker description: which provider,
+which model, which env var the provider reads, which base URL, and where the key
+file is. It remains accepted unchanged. An optional `--profiles <file>` names a
+trusted profile catalog; a task's `profile` selects a complete worker profile
+from it. The default worker is used when a task has no profile, so an existing
+`--worker` invocation remains the compatibility path and this tool still has no
+implicit opinion about whose model runs.
 
 **`version`** prints the Conventions' one line — `nova-swarm <build identity>
 <goos>/<goarch> <go version>`, exit 0 — from `internal/buildinfo`, the same
@@ -646,10 +657,10 @@ ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|false> pool=<dir>
-RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path>
+RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
-RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false>
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
@@ -691,11 +702,20 @@ RECLAIM REFUSED id=<id>: <reason>
 STOP OK pool=<dir> running=<n>
 ```
 
+The [profile proposal](SPEC-SWARM-PROFILES.md) additionally specifies
+`RUN REFUSED profile=<id> reason=secrets_gate code=125` for a profiled credential-gate
+refusal. This is a proposed profile-only variant, not a replacement for the
+existing worker refusal field sequences above; its implementation and
+variant-specific grammar checks remain part of the profile work.
+
 `RUN POOL` is the first line of every dispatcher run and it says what will run
 before anything runs: the provider, the model, the pool and the effective
-automatic-retry policy. `RUN OK` repeats that policy in the terminal summary.
-**Neither line prints the key, the key file's contents, or the env var's value**
-— only the variable's name, where a name is needed at all.
+automatic-retry policy. In legacy mode it says what the default worker would
+run; profiled jobs carry their resolved profile and model on their per-job
+`RUN START`/`RUN RECLAIM` and receipt records. `RUN OK` repeats that policy in
+the terminal summary. **Neither line prints the key, the key file's contents,
+or the env var's value** — only the variable's name, where a name is needed at
+all.
 
 **Every listing is a cap and a count**, per SPEC.md. `run`, `status`, `triage`
 and `cost` take `--max <n>`, default 20, `0` for all, one MORE line naming the
@@ -1350,6 +1370,17 @@ exactly why the ownership must be durable.
 **after** the rename into `running/`, from the path it renamed to, never from the
 pending path it no longer owns.
 
+**Per-job profiles.** The legacy `--worker` contract remains the compatibility
+path. The proposed trusted catalog, explicit per-job profile/model selection,
+compact prompt prefixes, provider-capacity observations, frozen non-secret
+attempt snapshots and Go/Zen route rules are normative in
+[`SPEC-SWARM-PROFILES.md`](SPEC-SWARM-PROFILES.md). That document is the one
+owner of this amendment; it does not add a second dispatcher or ledger. Any
+Go/Zen live-route activation remains a protected `nova-secrets exec` gate
+with the approved store/command; a run without that provenance refuses before
+the first worker, and the store-shape gate refuses exit 125. It is never
+satisfied by task prose or a selector.
+
 ## What it deliberately does not do
 
 - **It does not loop a worker.** One task per worker, always. The loop, if any,
@@ -1360,8 +1391,11 @@ pending path it no longer owns.
   inside their job directories; announcing and filing are other tools' jobs.
 - **It does not judge a finding.** `red`, `green` and `not done` are the
   worker's own words, counted.
-- **It does not choose a model.** The worker description does, and it is
-  required.
+- **It does not choose a model by itself.** In legacy mode the worker
+  description chooses it. Profile mode permits only an explicit,
+  allow-listed profile/model from the trusted catalog; any optional policy
+  selector is bounded and stays inside this swarm. It invents no prices,
+  quotas, fallback route, top-up or automatic cost scheduler.
 - **It does not retry a failed task.** `requeue` with changed text is a person's
   decision. The default automatic exceptions are rule 7's one deadline re-queue
   and the rate-limit section's one true-429 retry. `run --no-auto-retry`
@@ -1735,10 +1769,13 @@ verb, and tests that pin all three by executing them.
 
 1. **`internal/swarm/pool.go`** — the pool directory: `pending/`, `running/`,
    `done/`, `failed/`, `reports/` (pages `<UTC>.md` and one `<job>/`
-   directory per finalized job), `scratch/`, `slots/`, `usage/`, the task id
+   directory per finalized job), coordinator-owned protected `evidence/`,
+   `scratch/`, `slots/`, `usage/`, the task id
    scheme (UTC stamp, label, random half, so two adds in one second cannot
    collide — `nova-bus`'s id lesson), the sidecar file with `files`,
-   `requeued`, `reaped`, `from`, `batch`, `tokens`, `launch`, `malformed`
+   `requeued`, `reaped`, `from`, `batch`, `tokens`, `launch`, `malformed`,
+   and optional profile-attempt fields (`profile`, `model_requested`,
+   `model_observed`, `snapshot_hash`, `prompt_hash`, `config_hash`, `bench`)
    and the verdict, the atomic claim by rename, the kernel lock on
    `run.lock` (dispatcher exclusion only; slot transitions take
    `slots.lock`, item 3), the default one automatic re-queue of a reaped job
@@ -1783,13 +1820,14 @@ verb, and tests that pin all three by executing them.
    `.tmp` and rename after the harness exits and before the supervisor
    exits; demanded tests 13 and 18.
 4. **`internal/swarm/worker.go`** — the worker description (strict decode: an
-   unknown field is a refusal), the slot refresh (one way, copy), the harness
-   config written with the variable's **name**, the prompt assembly, the
-   harness log read for refusal lines after the run. Tests: the generated
-   config contains the variable name and not the value; the prompt contains
-   the deadline, the job directory, the file budget, the read-or-write sandbox
-   sentence, the append-as-found sentence and the no-bus sentence; demanded
-   tests 4, 5 and 6.
+   unknown field is a refusal), the trusted profile catalog and per-job
+   allow-list resolution, the slot refresh (one way, copy), the harness config
+   written with the variable's **name**, the legacy/compact prompt assembly,
+   bounded prefixes and tool profile, and the harness log read for refusal
+   lines after the run. Tests: legacy config/prompt byte compatibility; unknown
+   profile/model and unsupported tools refuse before launch; the generated
+   config contains the variable name and not the value; compact prompts retain
+   every mandatory invariant; demanded tests 4, 5 and 6.
 5. **`internal/swarm/deadline.go`** — one watcher over every child: terminate,
    wait, kill, report `survived`. Tests: a child that ignores terminate is
    killed; the report says so; the watcher never matches a process by its command
