@@ -870,6 +870,25 @@ func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 	wantContains(t, got, "\t2000\t")
 }
 
+// A bounded line names each quiet source on an explicitly selected existing day. The
+// fold already refuses the day under rule 10 (TOKENS SHRANK); #273's repair is that the
+// source itself is named rather than only the day totals.
+func TestIssue273QuietSourceNamedOnSelectedDay(t *testing.T) {
+	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
+		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB), 0)
+
+	// Remove poolA's usage file so glenn is quiet for the selected day.
+	if err := os.Remove(filepath.Join(poolA, "usage", "j1.tsv")); err != nil {
+		t.Fatal(err)
+	}
+
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
+		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB)
+	wantExit(t, r, 1)
+	wantContains(t, r.all(), "TOKENS QUIET label=swarm:glenn day=2026-09-14")
+}
+
 // ---------------------------------------------------------------- rule 12: the tool stamps
 
 func TestRule12TheToolStampsAndNoFlagSetsIt(t *testing.T) {
