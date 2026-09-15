@@ -1339,7 +1339,7 @@ is compared against; it is never the path `query --ask size` takes."
       (ignore-errors (delete-file path)))))
 
 (deftest "durable-journal-uncertain-write-refuses-until-recovery" "docs/SPEC-WORK.md:307,3348"
-    "expected=uncertain-write-refuses-until-recovery;seq-unadvanced;file-untruncated"
+    "expected=uncertain-write-refuses-until-recovery;seq-unadvanced;record-preserved-on-reopen"
   (let* ((path (test-journal-path "uncertain-write"))
          (initial-hash (root-digest (make-seed-state *seed*)))
          (j (open-file-journal path :initial-state-hash initial-hash :fail-sync-on "req-fail"))
@@ -1352,40 +1352,90 @@ is compared against; it is never the path `query --ask size` takes."
              (ok ok1 "req-1 succeeds")
              (check-equal 1 (journal-seq j) "seq is 1 after req-1"))
            (let ((size-after-req1 (file-byte-count path)))
-             ;; 2. Submit req-fail where sync failure is injected
+             ;; 2. Submit req-fail where sync failure is injected AFTER write and flush
              (let ((signaled nil))
                (handler-case
                    (submit k (reopen-request :node "acme/work/f1/t1" :request "req-fail"))
                  (journal-uncertain-write (c)
                    (declare (ignore c))
                    (setf signaled t)))
-               (ok signaled "journal-uncertain-write signaled on injected sync failure"))
-             ;; Verify seq was NOT advanced on failure: remains 1!
+               (ok signaled "journal-uncertain-write signaled on post-flush sync failure"))
+             ;; Verify seq was NOT advanced on live instance: remains 1!
              (check-equal 1 (journal-seq j) "seq was not advanced after failed sync")
              (ok (journal-uncertain-p j) "journal marked uncertain")
              ;; 3. Subsequent submit on same instance must be refused without writing
              (multiple-value-bind (ok3 line3) (submit k (reopen-request :node "acme/work/f1/t1" :request "req-3"))
                (ok (not ok3) "subsequent submit refused while uncertain")
                (ok (search "uncertain-write state" line3) "refusal cites uncertain state"))
-             ;; 4. File was not truncated: byte count >= size-after-req1
-             (ok (>= (file-byte-count path) size-after-req1) "file not truncated")
+             ;; 4. Complete frame was flushed to disk before sync failure: byte count strictly greater than size-after-req1
+             (ok (> (file-byte-count path) size-after-req1) "frame was flushed to disk before sync failure")
              (close-file-journal j)
-             ;; 5. Recovery via clean reopen: loads validated entries (req-1), seq is 1
+             ;; 5. Recovery via clean reopen: validates complete frames including req-fail, seq is 2!
              (let* ((j2 (open-file-journal path :initial-state-hash initial-hash))
                     (k2 (fresh :journal j2)))
                (unwind-protect
                     (progn
                       (multiple-value-bind (replayed-k ev rec) (replay-journal j2 k2)
                         (declare (ignore replayed-k ev))
-                        (check-equal 1 rec "recovered 1 valid record"))
-                      (check-equal 1 (journal-seq j2) "recovered journal seq is 1")
+                        (check-equal 2 rec "recovered 2 complete records including uncertain append"))
+                      (check-equal 2 (journal-seq j2) "recovered journal seq is 2")
                       (ok (not (journal-uncertain-p j2)) "recovered journal not uncertain")
-                      ;; 6. Subsequent requests on recovered session succeed
-                      (multiple-value-bind (ok4 line4) (submit k2 (reopen-request :node "acme/work/f1/t1" :request "req-after-recovery"))
-                        (declare (ignore line4))
-                        (ok ok4 "request after recovery succeeds")
-                        (check-equal 2 (journal-seq j2) "seq advances to 2 after successful recovery submit")))
+                      ;; 6. Retry of uncertain request req-fail succeeds with original response from dedup!
+                      (multiple-value-bind (retry-ok line-ret code-ret env-ret)
+                          (submit k2 (reopen-request :node "acme/work/f1/t1" :request "req-fail"))
+                        (declare (ignore line-ret code-ret))
+                        (ok retry-ok "retry of uncertain request succeeds")
+                        (ok (getf env-ret :replayed) "retry marked replayed"))
+                      ;; 7. Subsequent new request after recovery succeeds and advances seq to 3
+                      (multiple-value-bind (ok-new line-new)
+                          (submit k2 (doing-request :node "acme/work/f1/t1" :request "req-after-recovery"))
+                        (declare (ignore line-new))
+                        (ok ok-new "request after recovery succeeds")
+                        (check-equal 3 (journal-seq j2) "seq advances to 3 after recovery submit")))
                  (close-file-journal j2)))))
+      (ignore-errors (delete-file path)))))
+
+(deftest "durable-journal-partial-write-refuses-without-truncation" "docs/SPEC-WORK.md:307,3348,3357"
+    "expected=partial-write-signals-uncertain;untruncated-on-disk;reopen-refuses-corrupt"
+  (let* ((path (test-journal-path "partial-write"))
+         (initial-hash (root-digest (make-seed-state *seed*)))
+         (j (open-file-journal path :initial-state-hash initial-hash :fail-partial-write-on "req-torn"))
+         (k (fresh :journal j)))
+    (unwind-protect
+         (progn
+           ;; 1. Submit req-1: succeeds, seq becomes 1
+           (multiple-value-bind (ok1 line1) (submit k (close-request :node "acme/work/f1/t1" :request "req-1"))
+             (declare (ignore line1))
+             (ok ok1 "req-1 succeeds")
+             (check-equal 1 (journal-seq j) "seq is 1"))
+           (let ((size-after-req1 (file-byte-count path)))
+             ;; 2. Submit req-torn where partial write occurs
+             (let ((signaled nil))
+               (handler-case
+                   (submit k (reopen-request :node "acme/work/f1/t1" :request "req-torn"))
+                 (journal-uncertain-write (c)
+                   (declare (ignore c))
+                   (setf signaled t)))
+               (ok signaled "journal-uncertain-write signaled on partial write"))
+             ;; 3. Verify sequence was NOT advanced and instance is marked uncertain
+             (check-equal 1 (journal-seq j) "seq not advanced on partial write")
+             (ok (journal-uncertain-p j) "marked uncertain")
+             ;; 4. Partial bytes were flushed to disk (strictly > size-after-req1)
+             (let ((torn-size (file-byte-count path))
+                   (torn-hash (file-sha256-hex path)))
+               (ok (> torn-size size-after-req1) "partial frame written to disk")
+               (close-file-journal j)
+               ;; 5. Reopen must signal journal-corrupt-data
+               (let ((corrupt-signaled nil))
+                 (handler-case
+                     (open-file-journal path :initial-state-hash initial-hash)
+                   (journal-corrupt-data (c)
+                     (declare (ignore c))
+                     (setf corrupt-signaled t)))
+                 (ok corrupt-signaled "reopen of partial frame signals journal-corrupt-data"))
+               ;; 6. ZERO TRUNCATION: file bytes on disk are preserved exactly as left
+               (check-equal torn-size (file-byte-count path) "file size not truncated by failed reopen")
+               (check-string= torn-hash (file-sha256-hex path) "file bytes bit-for-bit preserved"))))
       (ignore-errors (delete-file path)))))
 
 (deftest "durable-journal-capacity-boundary-refuses-new-preserves-retained" "docs/SPEC-WORK.md:517,2117,3349"
@@ -1485,6 +1535,32 @@ is compared against; it is never the path `query --ask size` takes."
                  (declare (ignore c))
                  (setf signaled t)))
              (ok signaled "sync-stream on memory stream signals journal-sync-failed")))
+      (ignore-errors (delete-file path)))))
+
+(deftest "durable-journal-creation-sync-and-cleanup" "docs/SPEC-WORK.md:307,3348"
+    "expected=creation-sync-closes-stream;preserves-file;directory-fsync-contract"
+  (let* ((path (test-journal-path "creation-sync"))
+         (initial-hash (root-digest (make-seed-state *seed*))))
+    (unwind-protect
+         (progn
+           ;; 1. Normal creation: directory entry synced via POSIX fsync, regular file synced
+           (let ((j (open-file-journal path :initial-state-hash initial-hash)))
+             (ok (probe-file path) "journal file created on disk")
+             (close-file-journal j))
+           ;; 2. Injected creation directory sync failure: closes stream, preserves file
+           (let* ((fail-path (test-journal-path "creation-fail"))
+                  (signaled nil))
+             (unwind-protect
+                  (progn
+                    (handler-case
+                        (open-file-journal fail-path :initial-state-hash initial-hash :fail-creation-sync-on t)
+                      (journal-sync-failed (c)
+                        (declare (ignore c))
+                        (setf signaled t)))
+                    (ok signaled "creation failure signaled journal-sync-failed")
+                    ;; Preserves the created file on disk for operator inspection/recovery
+                    (ok (probe-file fail-path) "file preserved on disk after creation sync failure"))
+               (ignore-errors (delete-file fail-path)))))
       (ignore-errors (delete-file path)))))
 
 (deftest "durable-journal-replay-failure-isolates-target-kernel" "docs/SPEC-WORK.md:307,3348,3353"

@@ -119,6 +119,9 @@ on the underlying file descriptor. Signals JOURNAL-SYNC-FAILED if unsupported or
 
 (defun sync-directory (dir-path)
   "Synchronize parent directory DIR-PATH to non-volatile storage.
+Uses standard POSIX fsync(dirfd), which is supported across POSIX platforms
+(including Darwin APFS and Linux). Does not issue F_FULLFSYNC on directory
+descriptors (which is reserved for regular file data barriers).
 Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
   #+sbcl
   (let ((dir-str (namestring (merge-pathnames dir-path))))
@@ -133,12 +136,11 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
              (when (or (null fd) (< fd 0))
                (error 'journal-sync-failed :path dir-str :reason "invalid directory fd"))
              (let ((ret (handler-case
-                            #+(and sbcl darwin) (sb-posix:fcntl fd 51 0)
-                            #+(and sbcl (not darwin)) (sb-posix:fsync fd)
+                            (sb-posix:fsync fd)
                           (error (c)
-                            (error 'journal-sync-failed :path dir-str :reason (format nil "directory sync error: ~A" c))))))
+                            (error 'journal-sync-failed :path dir-str :reason (format nil "directory fsync error: ~A" c))))))
                (unless (eql ret 0)
-                 (error 'journal-sync-failed :path dir-str :reason (format nil "directory sync returned ~D" ret)))
+                 (error 'journal-sync-failed :path dir-str :reason (format nil "directory fsync returned ~D" ret)))
                t))
         (when (and fd (>= fd 0))
           (ignore-errors (sb-posix:close fd))))))
@@ -156,16 +158,23 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
    (pending-envelope :initform nil :accessor journal-pending-envelope)
    (reject-on :initarg :reject-on :initform nil :accessor journal-reject-on)
    (fail-sync-on :initarg :fail-sync-on :initform nil :accessor journal-fail-sync-on)
+   (fail-pre-write-on :initarg :fail-pre-write-on :initform nil :accessor journal-fail-pre-write-on)
+   (fail-partial-write-on :initarg :fail-partial-write-on :initform nil :accessor journal-fail-partial-write-on)
+   (fail-creation-sync-on :initarg :fail-creation-sync-on :initform nil :accessor journal-fail-creation-sync-on)
    (seq :initform 0 :accessor journal-seq)
    (uncertain-p :initform nil :accessor journal-uncertain-p)))
 
-(defun make-file-journal (path &key (capacity 64) initial-state-hash reject-on fail-sync-on)
+(defun make-file-journal (path &key (capacity 64) initial-state-hash reject-on fail-sync-on
+                                fail-pre-write-on fail-partial-write-on fail-creation-sync-on)
   (make-instance 'file-journal
                  :path (namestring (merge-pathnames path))
                  :capacity capacity
                  :initial-state-hash initial-state-hash
                  :reject-on reject-on
-                 :fail-sync-on fail-sync-on))
+                 :fail-sync-on fail-sync-on
+                 :fail-pre-write-on fail-pre-write-on
+                 :fail-partial-write-on fail-partial-write-on
+                 :fail-creation-sync-on fail-creation-sync-on))
 
 (defun write-header (stream initial-state-hash capacity stamp path)
   (let* ((header (list :journal-header
@@ -238,19 +247,23 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                                       checksum actual-checksum)))
              frame)))))))
 
-(defun open-file-journal (path &key (capacity 64) initial-state-hash reject-on fail-sync-on stamp)
+(defun open-file-journal (path &key (capacity 64) initial-state-hash reject-on fail-sync-on
+                                fail-pre-write-on fail-partial-write-on fail-creation-sync-on stamp)
   (let* ((journal (make-instance 'file-journal
                                  :path (namestring (merge-pathnames path))
                                  :capacity capacity
                                  :initial-state-hash initial-state-hash
                                  :reject-on reject-on
-                                 :fail-sync-on fail-sync-on))
+                                 :fail-sync-on fail-sync-on
+                                 :fail-pre-write-on fail-pre-write-on
+                                 :fail-partial-write-on fail-partial-write-on
+                                 :fail-creation-sync-on fail-creation-sync-on))
          (full-path (journal-path journal))
          (exists (probe-file full-path)))
     (if exists
         (let ((seq 0))
           ;; 1. Read and validate entire file read-only. Failure leaves file untouched.
-          (with-open-file (in full-path :direction :input :element-type 'character)
+          (with-open-file (in full-path :direction :input :element-type 'character :external-format :utf-8)
             (let* ((header (read-header in full-path initial-state-hash))
                    (hplist (rest header)))
               (setf (journal-initial-state-hash journal) (getf hplist :initial-state))
@@ -278,18 +291,31 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
           (let ((out (open full-path :direction :output
                                      :if-exists :append
                                      :if-does-not-exist :error
-                                     :element-type 'character)))
+                                     :element-type 'character
+                                     :external-format :utf-8)))
             (setf (journal-stream journal) out)))
         ;; File does not exist: create fresh journal, sync directory, and write header
         (let ((out (open full-path :direction :output
                                    :if-exists :error
                                    :if-does-not-exist :create
-                                   :element-type 'character)))
+                                   :element-type 'character
+                                   :external-format :utf-8)))
           (setf (journal-stream journal) out)
-          ;; Synchronize parent directory to guarantee the new directory entry is durable
-          (let ((parent-dir (directory-namestring (merge-pathnames full-path))))
-            (sync-directory parent-dir))
-          (write-header out initial-state-hash capacity stamp full-path)))
+          (handler-case
+              (progn
+                ;; Optional injected creation directory sync failure
+                (when (journal-fail-creation-sync-on journal)
+                  (error 'journal-sync-failed :path full-path :reason "injected creation directory sync failure"))
+                ;; Synchronize parent directory to guarantee the new directory entry is durable
+                (let ((parent-dir (directory-namestring (merge-pathnames full-path))))
+                  (sync-directory parent-dir))
+                (write-header out initial-state-hash capacity stamp full-path))
+            (error (c)
+              ;; CRITICAL: Close the already-open stream so file descriptor is not leaked,
+              ;; while preserving the created file on disk for explicit recovery.
+              (ignore-errors (close out))
+              (setf (journal-stream journal) nil)
+              (error c)))))
     journal))
 
 (defun close-file-journal (journal)
@@ -359,12 +385,25 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
              (frame-str (canonical-string frame)))
         (handler-case
             (progn
-              (when (and (journal-fail-sync-on journal)
-                         (equal request (journal-fail-sync-on journal)))
-                (error "injected sync failure"))
-              (write-string frame-str stream)
-              (write-char #\Newline stream)
-              (sync-stream stream :path path))
+              (when (and (journal-fail-pre-write-on journal)
+                         (equal request (journal-fail-pre-write-on journal)))
+                (error "injected pre-write failure"))
+              (cond
+                ((and (journal-fail-partial-write-on journal)
+                      (equal request (journal-fail-partial-write-on journal)))
+                 ;; Partial (torn) write: write half the frame bytes and flush before failing
+                 (let ((partial-len (max 1 (floor (length frame-str) 2))))
+                   (write-string (subseq frame-str 0 partial-len) stream)
+                   (finish-output stream)
+                   (error "injected partial-write failure")))
+                (t
+                 (write-string frame-str stream)
+                 (write-char #\Newline stream)
+                 (finish-output stream)
+                 (when (and (journal-fail-sync-on journal)
+                            (equal request (journal-fail-sync-on journal)))
+                   (error "injected sync failure after write and flush"))
+                 (sync-stream stream :path path))))
           (error (c)
             (setf (journal-uncertain-p journal) t)
             (error 'journal-uncertain-write :path path
@@ -396,7 +435,7 @@ Returns (values TARGET-KERNEL total-replayed-events total-replayed-records)."
          (seq 0)
          (record-count 0)
          (event-count 0))
-    (with-open-file (in path :direction :input :element-type 'character)
+    (with-open-file (in path :direction :input :element-type 'character :external-format :utf-8)
       (let ((header (read-header in path expected-initial)))
         (declare (ignore header)))
       (loop

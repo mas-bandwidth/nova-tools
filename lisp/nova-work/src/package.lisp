@@ -87,6 +87,9 @@
    #:close-file-journal
    #:with-file-journal
    #:journal-fail-sync-on
+   #:journal-fail-pre-write-on
+   #:journal-fail-partial-write-on
+   #:journal-fail-creation-sync-on
    #:replay-journal
    #:read-header
    #:read-record-frame
