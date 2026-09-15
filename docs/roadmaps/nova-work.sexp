@@ -48,6 +48,8 @@
     :commit-248d85b "https://github.com/mas-bandwidth/nova-tools/commit/248d85b320923803a82f1f643e303bbf42d2c74a"
     :pr-340 "https://github.com/mas-bandwidth/nova-tools/pull/340"
     :pr-342 "https://github.com/mas-bandwidth/nova-tools/pull/342"
+    :pr-231 "https://github.com/mas-bandwidth/nova-tools/pull/231"
+    :ideas-780 "https://github.com/mas-bandwidth/ideas/issues/780"
     :production-inventory "ec01647")
   :baseline-features 52
   :baseline-items 171
@@ -388,11 +390,11 @@
       :next-gate "superseded"
       :source "pr-334")
     (      :id "RD-19"
-      :title "PRs #293-#295: nova-work structure/roadmap/export/priority; assignment/distributed execution; bounded history/savepoint contracts"
-      :status "in-review"
+      :title "PR #231: nova-work spec lock (spec/nova-work merged to main)"
+      :status "merged"
       :owner "rowan"
-      :next-gate "schema-gates"
-      :source "prs-293-295")
+      :next-gate "integrated"
+      :source "pr-231")
     (      :id "RD-20"
       :title "Issue #185: token ledger operational comparison, triage, and accounting"
       :status "in-progress"
@@ -401,9 +403,9 @@
       :source "issue-185")
     (      :id "RD-21"
       :title "Issue #336: evaluate Herdr as an agent runtime adapter"
-      :status "proposed"
+      :status "parked"
       :owner "unassigned"
-      :next-gate "proposal-intake"
+      :next-gate "closed-not-planned"
       :source "issue-336")
     (      :id "RD-22"
       :title "PR #338: Slice C: whole-package candidate and installed validator"
@@ -414,7 +416,7 @@
     (      :id "RD-23"
       :title "E10-F06: Operational adoption and continuous efficiency review"
       :status "open"
-      :owner "unassigned"
+      :owner "rowan"
       :next-gate "owner-assignment"
       :source "commit-248d85b")
     (      :id "RD-24"
@@ -428,7 +430,25 @@
       :status "merged"
       :owner "unassigned"
       :next-gate "implementation-gate"
-      :source "pr-340"))
+      :source "pr-340")
+    (      :id "RD-26"
+      :title "ideas#780: MCP front vs thin client protocol comparison"
+      :status "proposed"
+      :owner "unassigned"
+      :next-gate "proposal-intake"
+      :source "ideas-780")
+    (      :id "RD-27"
+      :title "ideas#780: escalation with a recorded reason"
+      :status "proposed"
+      :owner "unassigned"
+      :next-gate "proposal-intake"
+      :source "ideas-780")
+    (      :id "RD-28"
+      :title "ideas#780: fan-out width before synthesis eats the saving"
+      :status "proposed"
+      :owner "unassigned"
+      :next-gate "proposal-intake"
+      :source "ideas-780"))
   :epics (    (      :id "E01"
       :title "Canonical work data and restricted representation"
       :features (        (          :id "E01-F01"
