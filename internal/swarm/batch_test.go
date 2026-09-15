@@ -874,3 +874,48 @@ func TestBatchScoresInputLimit(t *testing.T) {
 		t.Fatalf("a card that fits still scores its line 2:\n%s", out)
 	}
 }
+
+// TestBatchScoresHarnessSilent: a card whose runner said the harness wrote nothing at all --
+// `harness=silent` on its own `NATIVE OK` line -- is `ABSTAIN reason=harness-silent`, never
+// `no-result` (issue #591). The difference is the whole point of the token: `no-result` is a
+// harness that ran and published nothing, which is the model's own doing; `harness-silent` is
+// a harness that never ran the card, which is the machinery's, and the two remedies are not
+// the same. A runner that says nothing about its harness still scores `no-result`, so the
+// pinned semantics of a silent RUNNER (as against a silent harness) are untouched.
+func TestBatchScoresHarnessSilent(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nMISSING"},
+		{"b", "RESULT: b\nMISSING"},
+	})
+	runner := filepath.Join(dir, "silent-harness.sh")
+	// The runner is the native command's stand-in: its stdout is the job's harness.log, and
+	// the NATIVE OK line it prints there is where the gather reads the harness's state. Card
+	// a's harness was silent; card b's runner prints no such line at all.
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"if [ \"$label\" = \"a\" ]; then\n" +
+		"  echo \"NATIVE OK label=$label job=$job rc=0 wall=0.42s sandbox=none-by-flag " +
+		"card_sha256=- binary_sha256=- config=- harness=silent\"\n" +
+		"fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runBatch(t, tsv, root, runner, 10*time.Second)
+	if code != 1 {
+		t.Fatalf("two abstaining cards exit 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=harness-silent log=1 job="+filepath.Join(resolvedPath(t, root), "1", "jobs", "a")) {
+		t.Fatalf("a silent harness is reason=harness-silent and names the job:\n%s", out)
+	}
+	if strings.Contains(out, "a slot=1: ABSTAIN reason=no-result") {
+		t.Fatalf("a silent harness is never no-result: it is no run at all:\n%s", out)
+	}
+	if !strings.Contains(out, "b slot=2: ABSTAIN reason=no-result log=0") {
+		t.Fatalf("a card whose runner said nothing about its harness still scores no-result:\n%s", out)
+	}
+}

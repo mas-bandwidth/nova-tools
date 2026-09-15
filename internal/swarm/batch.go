@@ -458,6 +458,12 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		if rc != 0 {
 			return "abstain", fmt.Sprintf("rc=%d", rc), "job=" + job, ""
 		}
+		// A harness that wrote nothing at all did not run this card: `harness-silent` comes
+		// before `no-result` (issue #591), because no-result is a harness that ran and the
+		// model published nothing, and the remedy for the two is not the same.
+		if cardHarnessSilent(job) {
+			return "abstain", "harness-silent", "job=" + job, ""
+		}
 		return "abstain", "no-result", "job=" + job, ""
 	}
 	lines := strings.Split(string(raw), "\n")
@@ -591,6 +597,31 @@ func cardEndsInputLimit(logPath string) bool {
 	}
 	_, ok := ReadInputLimitSignal(raw)
 	return ok
+}
+
+// cardHarnessSilent reports whether the runner's own `NATIVE OK` line said the harness left no
+// record of itself: `harness=silent`, the token `native` writes when the harness process wrote
+// neither `harness.log` nor `RESULT.md` in the job directory (issue #591). The line is read out
+// of the job's `harness.log`, which is the runner's stdout and the one place that line lands,
+// for a local card and for a remote one alike (the ssh child's stdout comes back into the same
+// file). A runner that prints no such line -- any runner but `native` -- is not silent here,
+// only unsaid, and the card keeps the score it has today.
+func cardHarnessSilent(job string) bool {
+	raw, err := readRegular(filepath.Join(job, "harness.log"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "NATIVE OK ") {
+			continue
+		}
+		for _, tok := range strings.Fields(line) {
+			if tok == "harness=silent" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }

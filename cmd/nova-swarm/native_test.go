@@ -1148,3 +1148,37 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 		t.Errorf("the wall argv does not read the slot by absolute path %s:\n%s", slot, argv)
 	}
 }
+
+// TestNativeSilentHarnessIsNotOK: a harness that exits 0 having written NOTHING under the
+// job directory -- no `harness.log` and no `RESULT.md` -- did not run the card, and the one
+// line a coordinator reads says so: `harness=silent` (issue #591). The fault it closes was a
+// local model whose tool calls the harness never parsed: the child emitted its calls as raw
+// text, no tool ran, nothing was written, the process exited 0 and `NATIVE OK` said OK. The
+// token is ALWAYS present -- `harness=ok` for a harness that wrote -- so a reader never has
+// to know which runs carry it, and `native.log` (which that run did fill, with the unparsed
+// text) is deliberately not one of the two files: the harness's own records are.
+func TestNativeSilentHarnessIsNotOK(t *testing.T) {
+	bin := nativeHarness(t)
+	for _, tc := range []struct{ name, card, want string }{
+		{"silent", "FAKE-NORESULT\n", " harness=silent"},
+		{"wrote_a_result", "a card line 1\nline 2\n", " harness=ok"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, slot := aSlot(t)
+			cardPath := filepath.Join(root, "card.md")
+			if err := os.WriteFile(cardPath, []byte(tc.card), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+				"--label", "silent-label", "--card", cardPath, "--slot", slot, "--root", root,
+				"--deadline", "30s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+			if rc != 0 {
+				t.Fatalf("the run exits 0, got %d:\n%s", rc, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), tc.want) {
+				t.Fatalf("the NATIVE OK line carries%s:\n%s", tc.want, stdout.String())
+			}
+		})
+	}
+}
