@@ -176,6 +176,16 @@ own id would not be the same counting rule one level down. Decision for review."
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (wnode-state n)))
 
+(defun node-required-count (state id)
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (wnode-required-count n)))
+
+(defun node-required-open (state id)
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (wnode-required-open n)))
+
 ;;; The root, as bytes.
 
 (defun root-form (state)

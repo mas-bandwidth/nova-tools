@@ -100,6 +100,9 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		"internal/tokens/dayfile.go": {"os.WriteFile("},
 		// The same, for the report `report` writes.
 		"cmd/nova-tokens/main.go": {"os.WriteFile("},
+		// The ledger's own `<ledger>.tsv.tmp`, written through before the one rename that
+		// lands the day's rows; the ledger the caller names is the file this verb maintains.
+		"cmd/nova-tokens/sumswarm.go": {"os.WriteFile("},
 		// In package staging, the publisher's own-run temporary marker batch.json.tmp
 		// unlinked via syscall.Unlink after successful atomic no-replace link to batch.json.
 		"internal/tokens/package.go": {"syscall.Unlink("},

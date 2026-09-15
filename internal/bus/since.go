@@ -88,6 +88,12 @@ type InboxResult struct {
 	// OPEN -- an entry records only that it is unreadable -- so it is carried out here for
 	// the run that produced it.
 	Unreadable []*Note
+	// UnreadableChanged is true when at least one of Unreadable arrived in THIS run's
+	// change set rather than being carried over from the open list: the set of files this
+	// reader cannot parse grew or moved since their cursor, so the per-file lines are news.
+	// When it is false every unreadable file is one the reader has already been shown, and
+	// a listing may collapse them to a count instead of naming them one by one again.
+	UnreadableChanged bool
 	// Unaddressed is the notes this run saw that reach no reader at all. On an incremental
 	// run it is the reader's OWN lane and nothing else -- the one place the reader can fix
 	// one -- and a full run fills it with every such note on the bus. See unaddressed.go.
@@ -375,6 +381,7 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 				continue
 			}
 			res.Unreadable = append(res.Unreadable, n)
+			res.UnreadableChanged = true
 			inOpen[path] = true
 			fresh = append(fresh, OpenEntry{Kind: OpenUnreadable, Path: path})
 			continue
@@ -859,6 +866,8 @@ func checkLaneStateFile(root, lane, name string) []Problem {
 		_, err = ReadOpen(root, lane)
 	case IndexName:
 		_, err = ReadLaneIndex(root, lane)
+	case BeatName:
+		_, err = ReadBeat(root, lane)
 	}
 	if err != nil {
 		return []Problem{{Where: lane + "/" + name, Reason: err.Error()}}
