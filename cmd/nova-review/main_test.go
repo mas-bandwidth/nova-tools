@@ -631,6 +631,75 @@ func TestPacketRefetchesMovedHead(t *testing.T) {
 	}
 }
 
+func TestPacketFetchesBaseBeforeRange(t *testing.T) {
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "remote.git")
+	seed := filepath.Join(dir, "seed")
+	if e := os.MkdirAll(seed, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt := func(d string, args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	gitAt(dir, "init", "-q", "--bare", remote)
+	gitAt(seed, "init", "-q", "-b", "main")
+	gitAt(seed, "config", "user.email", "t@example.invalid")
+	gitAt(seed, "config", "user.name", "t")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "base")
+	gitAt(seed, "push", "-q", remote, "main:refs/heads/main")
+	gitAt(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	lane := filepath.Join(dir, "lane")
+	if e := os.MkdirAll(lane, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(dir, "clone", "-q", remote, filepath.Join(lane, merge.RepoDir))
+
+	// Advance origin/main past the clone's idle local main. A range built on the
+	// stale local branch would count these unrelated files in the packet (#418).
+	for _, f := range []string{"b.txt", "c.txt"} {
+		if e := os.WriteFile(filepath.Join(seed, f), []byte(f+"\n"), 0o644); e != nil {
+			t.Fatal(e)
+		}
+		gitAt(seed, "add", f)
+	}
+	gitAt(seed, "commit", "-qm", "unrelated base moves")
+	gitAt(seed, "push", "-q", remote, "main:refs/heads/main")
+
+	// The feature branches off the advanced main and touches one file.
+	gitAt(seed, "checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(seed, "feat.txt"), []byte("one file\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "feat.txt")
+	gitAt(seed, "commit", "-qm", "feature")
+	head := gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-q", remote, "feature:refs/heads/feature")
+
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: "main", LaneBranch: "lane", Branches: []*merge.Entry{{Branch: "feature", OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", filepath.Join(lane, "packet.md")}, &out, &errb); code != 0 {
+		t.Fatalf("packet code=%d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), " files=1 ") {
+		t.Fatalf("a one-file PR with a stale base must yield files=1; got %q", out.String())
+	}
+}
+
 func TestLaneRefusalNamesRemedy(t *testing.T) {
 	plain := t.TempDir()
 	var out, errb bytes.Buffer
