@@ -211,6 +211,64 @@ const DefaultGHTimeout = 45
 // literal could not follow locked nova-wake out of its own nova-bus.
 func Version() string { return buildVersion() }
 
+// wakeConfig is the key=value file read BEFORE flags: <cwd>/.nova-wake/config
+// or the path in NOVA_WAKE_CONFIG. It holds the flags the coordinator retypes
+// every turn -- bus, window, max for awake; bus, state, as for watch -- so a
+// call that gives none of them still has an answer. A flag given on the
+// command line wins, and nothing here is printed: reading the file is not a
+// change to report.
+type wakeConfig struct {
+	path   string
+	values map[string]string
+}
+
+// configPath is the file a caller may set bus=, window=, max=, state= and as= in.
+func configPath() string {
+	if p := os.Getenv("NOVA_WAKE_CONFIG"); p != "" {
+		return p
+	}
+	return ".nova-wake/config"
+}
+
+// loadWakeConfig reads the config file, or returns an empty config when it is
+// absent or unreadable: a missing file is the normal first run, not an error.
+func loadWakeConfig() *wakeConfig {
+	cfg := &wakeConfig{path: configPath(), values: map[string]string{}}
+	data, err := os.ReadFile(cfg.path)
+	if err != nil {
+		return cfg
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		cfg.values[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	return cfg
+}
+
+// get is the value for key, empty when the file did not name it.
+func (c *wakeConfig) get(key string) string { return c.values[key] }
+
+// cfgInt is a config value read as a small whole number, falling back to def
+// when it is absent or not a number: a wrong window is a flag's problem, not
+// a reason to die before the flags parse.
+func (c *wakeConfig) cfgInt(key string, def int) int {
+	s := c.get(key)
+	if s == "" {
+		return def
+	}
+	if v, err := strconv.Atoi(s); err == nil {
+		return v
+	}
+	return def
+}
+
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -218,20 +276,21 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+	cfg := loadWakeConfig()
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; watch is the blocking call, serve is the process outside a session")
 	}
 	switch args[0] {
 	case "watch":
-		return cmdWatch(args[1:], stdout, stderr, clock, false)
+		return cmdWatch(cfg, args[1:], stdout, stderr, clock, false)
 	case "quickstart":
-		return cmdWatch(args[1:], stdout, stderr, clock, true)
+		return cmdWatch(cfg, args[1:], stdout, stderr, clock, true)
 	case "probe":
 		return cmdProbe(args[1:], stdout, stderr, clock)
 	case "serve":
 		return cmdServe(args[1:], stdout, stderr, clock)
 	case "awake":
-		return cmdAwake(args[1:], stdout, stderr, clock)
+		return cmdAwake(cfg, args[1:], stdout, stderr, clock)
 	case "version":
 		// The first question after a table misbehaves is which build each line
 		// is running, and a tool that cannot answer it costs a person the
@@ -284,16 +343,16 @@ func awakeRefused(stderr io.Writer, what string) int {
 // cmdAwake is the presence reader over bus cursors: for every lane from-<name>/
 // in the bus clone, the newest commit touching from-<name>/CURSOR is that
 // friend's last beat (docs/SPEC-WORK.md, Presence, source bus-cursor).
-func cmdAwake(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 	fs := flag.NewFlagSet("awake", flag.ContinueOnError)
-	busDir := fs.String("bus", "", "")
-	window := fs.Int("window", DefaultAwakeWindow, "")
-	maxN := fs.Int("max", DefaultAwakeMax, "")
+	busDir := fs.String("bus", cfg.get("bus"), "")
+	window := fs.Int("window", cfg.cfgInt("window", DefaultAwakeWindow), "")
+	maxN := fs.Int("max", cfg.cfgInt("max", DefaultAwakeMax), "")
 	if !parseFlags(fs, args, stderr) {
 		return 2
 	}
 	if *busDir == "" {
-		return awakeRefused(stderr, "no --bus named; refusing to guess")
+		return awakeRefused(stderr, "no --bus named; refusing to guess; set bus= in "+cfg.path+" as a second remedy")
 	}
 	if *window <= 0 {
 		return awakeRefused(stderr, "--window must be a positive number of seconds")
@@ -457,6 +516,12 @@ func (p *problems) missing(flag string) {
 	p.add("--"+flag+" is required; refusing to guess", hintFor(flag))
 }
 
+// missingCfg is missing for the flags a config file may name (bus, state,
+// as): the refusal offers the file as a second remedy after the flag.
+func (p *problems) missingCfg(flag string, cfg *wakeConfig) {
+	p.add("--"+flag+" is required; refusing to guess; set "+flag+"= in "+cfg.path+" as a second remedy", hintFor(flag))
+}
+
 func (p *problems) print(stderr io.Writer, verb string) int {
 	for i, what := range p.list {
 		fmt.Fprintf(stderr, "nova-wake %s: %s; run: nova-wake help\n", oneline.Escape(verb), oneline.Escape(what))
@@ -480,21 +545,21 @@ type polled struct {
 	due time.Time
 }
 
-func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickstart bool) int {
+func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock, quickstart bool) int {
 	verb := "watch"
 	if quickstart {
 		verb = "quickstart"
 	}
 	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	var (
-		state        = fs.String("state", "", "")
+		state        = fs.String("state", cfg.get("state"), "")
 		maxDur       = fs.String("max", "", "")
 		onDeadline   = fs.String("on-deadline", "", "")
 		interval     = fs.String("interval", "", "")
 		maxLines     = fs.Int("max-lines", DefaultMaxLines, "")
 		baseline     = fs.Bool("baseline", false, "")
-		busDir       = fs.String("bus", "", "")
-		as           = fs.String("as", "", "")
+		busDir       = fs.String("bus", cfg.get("bus"), "")
+		as           = fs.String("as", cfg.get("as"), "")
 		words        = fs.Int("receipt-max-words", 0, "")
 		refresh      = fs.Bool("refresh", false, "")
 		remote       = fs.String("remote", "", "")
@@ -530,7 +595,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 
 	var p problems
 	if *state == "" {
-		p.missing("state")
+		p.missingCfg("state", cfg)
 	}
 	if quickstart {
 		if *maxDur == "" {
@@ -645,7 +710,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 	}
 	if *busDir != "" {
 		if *as == "" {
-			p.missing("as")
+			p.missingCfg("as", cfg)
 		}
 		if *words <= 0 {
 			p.missing("receipt-max-words")
@@ -653,7 +718,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 	}
 	if *busDir == "" {
 		if *as != "" || *refresh || *advance {
-			p.missing("bus")
+			p.missingCfg("bus", cfg)
 		}
 		if len(lines) > 0 {
 			p.add("--line needs --bus; refusing to guess", "  a line's last sign is a commit on the bus checkout's branch, so there is nothing to read it from without one\n")

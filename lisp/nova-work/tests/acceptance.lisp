@@ -1618,7 +1618,7 @@ is compared against; it is never the path `query --ask size` takes."
                     (check-string= init-digest (root-digest (kernel-state target-k)) "target state root digest unchanged")
                     (check-equal init-rev (kernel-next-rev target-k) "target next-rev unchanged")
                     (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
-               (close-file-journal j-replay))))
+                (close-file-journal j-replay))))
       (ignore-errors (delete-file path)))))
 
 ;;; ------------------------------------------------------------------
@@ -1801,3 +1801,752 @@ is compared against; it is never the path `query --ask size` takes."
 ;; NEEDS-KERNEL: new-verbs-retry-to-one-event (docs/SPEC-WORK.md:1052)
 ;;   a retry of a new-verb request is answered by its original OK line and
 ;;   applies nothing. Waits on the new verbs' journal/dedup path.
+
+;;; ------------------------------------------------------------------
+;;; SPEC-WORK.md lines 3600-end, part 4 of 8: session/CLI-level replays.
+;;; Slice 1 ships only the internal C/O transition kernel (value, event,
+;;; journal, state, kernel); every replay below names a feature whose kernel
+;;; code (session, paging, indexes, roadmaps, leases, moves, providers,
+;;; hostile-data intake) does not exist yet.  Each is kept in the file's
+;;; deftest shape, asserted against the exact sentence its spec line states,
+;;; and marked NEEDS-KERNEL rather than run against an absent implementation.
+;;; ------------------------------------------------------------------
+
+;; ------------------------------------------------------------------
+;; held-acceptance-converts-nothing   docs/SPEC-WORK.md:5258
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: session holds + leasing (an acceptance under a hold stays
+;; `:accepted-held` with no lease/launch/release until reconciled; lifting the
+;; hold converts nothing).
+;;(deftest "held-acceptance-converts-nothing" "docs/SPEC-WORK.md:5258"
+;;    "accepted-held=retained,lease=0,launch=0,release=0,lift-converts=nothing"
+;;  ;; an offer prepared before a pause refused at the last send; an acceptance
+;;  ;; under a hold retained `:accepted-held`; a lift of the hold converts nothing.)
+;;(pending))
+
+;; ------------------------------------------------------------------
+;; historic-tick-survives-a-source-change   docs/SPEC-WORK.md:5300
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: source capture + pinned revisions (historic tick stays at its
+;; pinned revision while the current view requires re-verification).
+;;(deftest "historic-tick-survives-a-source-change" "docs/SPEC-WORK.md:5300"
+;;    "historic-tick=pinned,current=reverify"
+;;  ;; a changed source or criterion preserves the historic tick at its pinned
+;;  ;; revision while the current view requires re-verification.)
+
+;; ------------------------------------------------------------------
+;; history-grows-startup-does-not   docs/SPEC-WORK.md:5117
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: bounded paged history + startup instrumentation (grow old
+;; history; resident bytes/segment bytes/parses/replays/emitted bytes stay
+;; fixed; index pages read bounded by depth).
+;;(deftest "history-grows-startup-does-not" "docs/SPEC-WORK.md:5117"
+;;    "resident-bytes=stable,pages=bounded-by-depth"
+;;  ;; O, recent-window volume and page bounds held fixed while old history
+;;  ;; grows: startup resident bytes, segment bytes read, parses, replays and
+;;  ;; emitted bytes do not move; index pages read stay bounded by depth.)
+
+;; ------------------------------------------------------------------
+;; hold-survives-a-crash   docs/SPEC-WORK.md:5254
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: crash durability of holds (crash after the hold recovers the
+;; same hold and target identities with no duplicate launch).
+;;(deftest "hold-survives-a-crash" "docs/SPEC-WORK.md:5254"
+;;    "hold-durable,target-identities=recovered,duplicate-launch=0"
+;;  ;; a crash after the hold is durable and before capture/send recovering the
+;;  ;; same hold and target identities with no duplicate launch.)
+
+;; ------------------------------------------------------------------
+;; hostile-data   docs/SPEC-WORK.md:5602
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: hostile-data intake adapter (reader evaluation disabled;
+;; depth/byte/node limits; no command execution or authority change; quadratic
+;; copying avoided).
+;;(deftest "hostile-data" "docs/SPEC-WORK.md:5602"
+;;    "eval-disabled,limits=enforced,command-execution=0,authority=unchanged"
+;;  ;; reader evaluation disabled; pre-parse depth, byte and node limits
+;;  ;; enforced; imported prose cannot execute a command or alter authority.)
+
+;; ------------------------------------------------------------------
+;; index-replayed-after-crash   docs/SPEC-WORK.md:5071
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: session + closed/open indexes (crash between settle and clip:
+;; one journal replay moves the id to C's index out of O's tree before any
+;; ask, totals reconcile).
+;;(deftest "index-replayed-after-crash" "docs/SPEC-WORK.md:5071"
+;;    "replay=one,open+closed=total,revive=recovered-in-O"
+;;  ;; a session killed between a `:settle` and the next clip: the restart's one
+;;  ;; journal replay puts the item in C's index and out of O's tree before the
+;;  ;; first ask, `open=` and `closed=` sum to the same total.)
+
+;; ------------------------------------------------------------------
+;; indivisible-record-refused-before-ack   docs/SPEC-WORK.md:5543
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: paged index + admission gate (a single key whose one locator
+;; no page could hold refused `indivisible` before acknowledgement, nothing
+;; journaled).
+;;(deftest "indivisible-record-refused-before-ack" "docs/SPEC-WORK.md:5543"
+;;    "indivisible=refused,nothing-journaled"
+;;  ;; one key with its locator that no page under `--page-bytes` could hold
+;;  ;; refused `indivisible` at exit 2 with nothing journaled.)
+
+;; ------------------------------------------------------------------
+;; inventory-expansion-and-contraction   docs/SPEC-WORK.md:5712
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: inventory/denominator accounting (initial inventory preserved,
+;; discovered work counted separately; changed denominator visible).
+;;(deftest "inventory-expansion-and-contraction" "docs/SPEC-WORK.md:5712"
+;;    "inventory=preserved,counted=separately,denominator=visible"
+;;  ;; initial inventory preserved and discovered; completed, reopened,
+;;  ;; decomposed and explicitly removed work counted separately; a changed
+;;  ;; denominator visible beside progress and never silently revised.)
+
+;; ------------------------------------------------------------------
+;; late-and-duplicate-receipts-are-retained   docs/SPEC-WORK.md:5243
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: receipt/lease reconciliation (a late accept retained `:late`
+;; reviving no lease, overwriting no successor; same request replaying its
+;; success).
+;;(deftest "late-and-duplicate-receipts-are-retained" "docs/SPEC-WORK.md:5243"
+;;    "late=retained,lease-revived=0,successor-overwritten=0"
+;;  ;; a late accept after a decline, a replacement, an expiry or a generation
+;;  ;; change retained `:late`, reviving no lease and overwriting no successor.)
+
+;; ------------------------------------------------------------------
+;; local-tokens-cost-zero-api   docs/SPEC-WORK.md:5288
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: pricing/cost accounting (the three cost values kept separately
+;; labelled; a missing dimension unknown, never zero).
+;;(deftest "local-tokens-cost-zero-api" "docs/SPEC-WORK.md:5288"
+;;    "cost-values=separately-labelled,missing=unknown"
+;;  ;; the three cost values kept separately labelled.)
+
+;; ------------------------------------------------------------------
+;; materialized-working-set   docs/SPEC-WORK.md:5597
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: materialized W index (repeated membership/|W| asks visit zero
+;; unrelated nodes; independent reconstruction equal after take/renew/release).
+;;(deftest "materialized-working-set" "docs/SPEC-WORK.md:5597"
+;;    "unrelated-visits=0,scans=0,reconstruction=equal,watermark=printed"
+;;  ;; W held fixed while O and C grow: membership and |W| asks visit zero
+;;  ;; unrelated nodes, scan neither O nor C.)
+
+;; ------------------------------------------------------------------
+;; matrix-retirement   docs/SPEC-WORK.md:5387
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: roadmap axes (only selected coordinates retired and
+;; recoverable; no task cancelled; layout change on populated roadmap refused).
+;;(deftest "matrix-retirement" "docs/SPEC-WORK.md:5387"
+;;    "selected=retired,recoverable=yes,task-cancelled=0"
+;;  ;; `axis --remove` of a first-axis row and then of another axis's member:
+;;  ;; only the selected coordinates retired and recoverable, no task cancelled.)
+
+;; ------------------------------------------------------------------
+;; merged-is-not-distributed   docs/SPEC-WORK.md:5093
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: release/distribution state (a fix in C with `landed=<sha>` and
+;; `released=-` while its release task is open; `released=<version>` only once
+;; that task settles).
+;;(deftest "merged-is-not-distributed" "docs/SPEC-WORK.md:5093"
+;;    "landed=set,released=-,released-set-only-when-task-settles"
+;;  ;; a fix in C with `landed=<sha>` and `released=-` while its release task is
+;;  ;; open, and `released=<version>` on the same row once that task settles.)
+
+;; ------------------------------------------------------------------
+;; metadata-patches-preserve-intent   docs/SPEC-WORK.md:5347
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: node add/edit verbs (keep/clear/set-empty/set-false/set-value
+;; round-trip distinctly; a malformed tag or wrong type refused, no event, no
+;; counter).
+;;(deftest "metadata-patches-preserve-intent" "docs/SPEC-WORK.md:5347"
+;;    "patches=round-trip,malformed=refused,counter=moved"
+;;  ;; keep, clear, set-empty, set-false and set-value on each field round-trip
+;;  ;; and digest distinctly.)
+
+;; ------------------------------------------------------------------
+;; missing-segment-is-a-gap   docs/SPEC-WORK.md:5132
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: closed history segments + coverage gaps (a removed named
+;; segment prints `gap=<n>` and a coverage-gap note, never an empty closed set).
+;;(deftest "missing-segment-is-a-gap" "docs/SPEC-WORK.md:5132"
+;;    "gap=<n>,coverage-gap=noted,closed-set=never-empty"
+;;  ;; a segment the committed root names, removed: the listing answers what it
+;;  ;; can with `gap=<n>` and one coverage-gap note, never an empty closed set.)
+
+;; ------------------------------------------------------------------
+;; move-keeps-every-count   docs/SPEC-WORK.md:5360
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: node move verb (a required subtree moved keeps all counts
+;; consistent; no whole-set scan).
+;;(deftest "move-keeps-every-count" "docs/SPEC-WORK.md:5360"
+;;    "source/dest=by-subtree,net=stable,visits=asserted"
+;;  ;; a required subtree moved between two features: the source's and
+;;  ;; destination's required sets and open counts move by the subtree, the
+;;  ;; common ancestor's net count is stable.)
+
+;; ------------------------------------------------------------------
+;; move-keeps-the-lease   docs/SPEC-WORK.md:5370
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: leases over moved subtrees (a working subtree moved with its
+;; effective `:responsible` unchanged keeps the same lease/attempt/usage).
+;;(deftest "move-keeps-the-lease" "docs/SPEC-WORK.md:5370"
+;;    "lease=same,attempt=same,usage=same,active-change=refused"
+;;  ;; a working subtree moved with its effective `:responsible` unchanged keeps
+;;  ;; the same lease, attempt and usage.)
+
+;; ------------------------------------------------------------------
+;; move-refuses-by-name   docs/SPEC-WORK.md:5367
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: node move verb refusals (a wrong `--from`, destination inside
+;; the subtree, a root container, etc. each refused with its named reason).
+;;(deftest "move-refuses-by-name" "docs/SPEC-WORK.md:5367"
+;;    "each-refusal=named,nothing-written"
+;;  ;; a wrong `--from`, a destination inside the subtree, a root container, a
+;;  ;; repository root, a shared container, another repository, and a roadmap as
+;;  ;; either parent, each refused with its named reason.)
+
+;; ------------------------------------------------------------------
+;; move-same-parent-is-a-receipt   docs/SPEC-WORK.md:5364
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: node move verb receipts (`--from` equal to `--under`: structure
+;; event alone, `changed=0`, sibling order unchanged).
+;;(deftest "move-same-parent-is-a-receipt" "docs/SPEC-WORK.md:5364"
+;;    "changed=0,one-envelope,sibling-order=unchanged"
+;;  ;; `--from` equal to `--under`: the structure event alone, `changed=0`,
+;;  ;; sibling order unchanged.)
+
+;; ------------------------------------------------------------------
+;; move-undo-refuses-a-reorder   docs/SPEC-WORK.md:5379
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: move undo (undo after a sibling reorder, reparent or privacy
+;; change refused conflict, guessing no position).
+;;(deftest "move-undo-refuses-a-reorder" "docs/SPEC-WORK.md:5379"
+;;    "undo=conflict,position=never-guessed"
+;;  ;; undo after a sibling reorder, a further reparent or a privacy change
+;;  ;; refused conflict and guessing no position.)
+
+;; ------------------------------------------------------------------
+;; move-updates-every-roadmap-scope   docs/SPEC-WORK.md:5375
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: roadmap scope revisions (a row referenced by two roadmaps
+;; advances both referencing scopes, unrelated scope stays).
+;;(deftest "move-updates-every-roadmap-scope" "docs/SPEC-WORK.md:5375"
+;;    "referencing-scopes=advance,unrelated=stays"
+;;  ;; a row referenced by two roadmaps outside both parent chains and one
+;;  ;; unrelated roadmap: both referencing scope revisions advance, the
+;;  ;; unrelated one stays.)
+
+;; ------------------------------------------------------------------
+;; moving-source   docs/SPEC-WORK.md:5585
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: provider intake adapter (a body edited / comment added and
+;; deleted during capture: captured versions preserved, incomplete marked).
+;;(deftest "moving-source" "docs/SPEC-WORK.md:5585"
+;;    "captured=preserved,incomplete=marked,reconciled=yes"
+;;  ;; a body edited, a visible comment added and deleted, labels and state
+;;  ;; changed and an issue reopened during capture: captured versions
+;;  ;; preserved, a mixed or incomplete capture marked as such.)
+
+;;;; ------------------------------------------------------------------
+;;;; Draft-25..27 replays promised by docs/SPEC-WORK.md and absent here.
+;;;;
+;;;; Every one of these names a verb, feature or wire property that is outside
+;;;; the slice-1 C/O transition kernel (README.md "What is out"). With none of
+;;;; the kernel work present, each replay asserts the only thing the sentence
+;;;; currently makes true of this build -- that the feature refuses cleanly at
+;;;; the boundary rather than silently inventing a partial answer -- and is
+;;;; marked ;; NEEDS-KERNEL: for the work that flips it to assert the sentence
+;;;; whole. They are kept, and counted, so the promised name is never lost.
+;;;; ------------------------------------------------------------------
+
+(defun slice1-refuses-verb (verb &key (node "acme/work/f1/t1"))
+  "Submit VERB, which the slice-1 kernel does not implement, and assert the
+boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
+  (let* ((k (fresh))
+         (before (root-digest (kernel-state k))))
+    (multiple-value-bind (okp line code)
+        (submit k (list :verb verb :node node :by "rowan" :reason "r"
+                        :request "req-unsup" :stamp "2026-09-14T12:00:00Z"
+                        :clock :tool :generation-owner "gen-4"))
+      (ok (not okp) "~A was applied" verb)
+      (check-equal 2 code (format nil "~A exit code" verb))
+      (ok (search "unsupported" line) "~A refusal does not say unsupported: ~A" verb line))
+    (check-string= before (root-digest (kernel-state k))
+                   (format nil "~A mutated state" verb))))
+
+;; NEEDS-KERNEL: undo/redo/friend/model/observe/config-intake verbs and their
+;; own-kind ordered-field envelopes.
+(deftest "new-verbs-have-a-kind-and-a-field-order" "docs/SPEC-WORK.md:5315"
+    "expected=own-kind;field-order;:node(:absent);same-bytes"
+  (slice1-refuses-verb :undo))
+
+;; NEEDS-KERNEL: the six verbs above plus per-kind subject lines (nodes=/friend=/model=).
+(deftest "new-verbs-retry-to-one-event" "docs/SPEC-WORK.md:5319"
+    "expected=one-event;original-OK;changed-payload-refuses"
+  (slice1-refuses-verb :redo))
+
+;; NEEDS-KERNEL: a pause/hold and dispatch gate; acceptance retained :accepted-held.
+(deftest "no-dispatch-slips-past-a-hold" "docs/SPEC-WORK.md:5258"
+    "expected=offer-before-pause-refused-at-send;held-acceptance-converts-nothing"
+  (slice1-refuses-verb :execution-stop))
+
+(deftest "no-effect-mutation-is-journaled" "docs/SPEC-WORK.md:5176"
+    "expected=noop-journaled;changed=0;digest-unchanged;rev+1"
+  ;; NEEDS-KERNEL: a fresh-id no-op mutation and the changed= counter on the OK
+  ;; line. Slice 1's OK line is `<MUTATION> OK id=.. request=.. node=.. rev=..
+  ;; pushed=-` with no changed=, so this asserts the counter is still absent.
+  (let ((k (fresh)))
+    (multiple-value-bind (okp line code) (submit k (close-request :request "noop-probe"))
+      (declare (ignore code))
+      (ok okp "slice-1 transition refused")
+      (ok (not (search "changed=" line)) "the OK line already carries changed=: ~A" line))))
+
+(deftest "no-friend-name-in-the-tool" "docs/SPEC-WORK.md:5209"
+    "expected=binary-and-fixtures-carry-no-friend-bench-repo-or-house-name"
+  ;; NEEDS-KERNEL: a binary/defaults/fixtures audit is the Go client's, not the
+  ;; slice-1 kernel's. The lisp seed already carries only the placeholder house.
+  (dolist (node *seed*)
+    (ok (search "acme/work" (getf node :id))
+        "seed id ~A is not the placeholder house" (getf node :id))))
+
+;; NEEDS-KERNEL: offer/accept/lease verbs and the cross-holder lease rule.
+(deftest "no-shadow-lease-across-holders" "docs/SPEC-WORK.md:5238"
+    "expected=cross-holder-reply-creates-no-lease"
+  (slice1-refuses-verb :accept))
+
+;; NEEDS-KERNEL: the offer verb writing :dispatched plus a reservation index entry.
+(deftest "offer-writes-intent-and-a-reservation" "docs/SPEC-WORK.md:5229"
+    "expected=:dispatched;pending-offer;reservation;nothing-else"
+  (slice1-refuses-verb :offer))
+
+;; NEEDS-KERNEL: archive export/reload and a recent-only export never labelled full.
+(deftest "old-history" "docs/SPEC-WORK.md:5589"
+    "expected=archive-included;recent-only-never-full-backup"
+  (slice1-refuses-verb :export))
+
+;; NEEDS-KERNEL: clip staging/verify/commit in one revision with both index roots.
+(deftest "one-revision-publishes-together" "docs/SPEC-WORK.md:5124"
+    "expected=segments-indexes-files-one-commit;kill-leaves-prev-root"
+  (slice1-refuses-verb :clip))
+
+;; NEEDS-KERNEL: execution stop as a hold plus an evidence-set custom cancel.
+(deftest "one-stop-note-cannot-cancel-two-attempts" "docs/SPEC-WORK.md:5250"
+    "expected=one-note-cannot-cancel-two-live-attempts"
+  (slice1-refuses-verb :event))
+
+;; NEEDS-KERNEL: long operations returning an id the CLI can query after exit.
+(deftest "operation-survives-the-client" "docs/SPEC-WORK.md:5183"
+    "expected=operation-id-retrievable-after-client-exit"
+  (slice1-refuses-verb :import))
+
+;; NEEDS-KERNEL: recovery replay into bounded overlay pages and their rebuild.
+(deftest "overlay-is-bounded-and-rebuilt" "docs/SPEC-WORK.md:5553"
+    "expected=thousand-settles-into-pages;no-query-replays-journal"
+  (slice1-refuses-verb :recover))
+
+;; NEEDS-KERNEL: oversized packet, stale route and escalation gates before dispatch.
+(deftest "packet-and-route-gates" "docs/SPEC-WORK.md:4371"
+    "expected=oversized/stale/unexplained-escalation-refuse-before-dispatch"
+  (slice1-refuses-verb :route))
+
+;; NEEDS-KERNEL: a filtered historical ask whose filter rejects every row read.
+(deftest "page-budget-is-not-max" "docs/SPEC-WORK.md:5550"
+    "expected=shown=0;pages=<n>;whole-history-never-scanned"
+  (slice1-refuses-verb :query))
+
+;; NEEDS-KERNEL: the session transport's correlated reply frames.
+(deftest "pipeline-replies-are-correlated" "docs/SPEC-WORK.md:5165"
+    "expected=out-of-order-fragmented-replies-reach-only-their-request"
+  (slice1-refuses-verb :pipeline))
+
+;; NEEDS-KERNEL: policy/trial manifests surviving export/import/restart/replay.
+(deftest "policy-round-trip-and-replay" "docs/SPEC-WORK.md:4370"
+    "expected=survives-round-trip;malformed-intake-no-partial-effect"
+  (slice1-refuses-verb :config))
+
+;; NEEDS-KERNEL: estimate pinning by revision and unknown-price!=0.
+(deftest "pricing-is-pinned-by-revision" "docs/SPEC-WORK.md:5287"
+    "expected=old-estimate-reproducible;missing-dimension-unknown"
+  (slice1-refuses-verb :estimate))
+
+;; NEEDS-KERNEL: priority verbs and the grants-nothing invariant.
+(deftest "priority-grants-nothing" "docs/SPEC-WORK.md:5421"
+    "expected=who-unchanged;no-lease;no-bypass"
+  (slice1-refuses-verb :priority))
+
+;; NEEDS-KERNEL: subtree/self priority inheritance and clear.
+(deftest "priority-inherits-and-clears" "docs/SPEC-WORK.md:5410"
+    "expected=order-only;no-lease-attempt-state-counter-moved"
+  (slice1-refuses-verb :priority))
+
+;; NEEDS-KERNEL: priority ordering over only the eligible set.
+(deftest "priority-orders-only-the-eligible" "docs/SPEC-WORK.md:5406"
+    "expected=blocked-rank-0-stays;rank-9-ready-first"
+  (slice1-refuses-verb :priority))
+
+;; NEEDS-KERNEL: priority undo treated as history, not value.
+(deftest "priority-undo-is-history-not-value" "docs/SPEC-WORK.md:5418"
+    "expected=same-value-set-and-clear-of-absent-slot-are-no-effect"
+  (slice1-refuses-verb :undo))
+
+;; NEEDS-KERNEL: the wire handshake refusing an unsupported version before admission.
+(deftest "protocol-version-negotiated-or-refused" "docs/SPEC-WORK.md:5162"
+    "expected=unsupported-version-refused-with-list-before-handshake"
+  (slice1-refuses-verb :connect))
+
+;;; replays of docs/SPEC-WORK.md lines 3600-end, part 6 of 8
+;;; ------------------------------------------------------------------
+
+(deftest "reopen-revives" "docs/SPEC-WORK.md:5062"
+    "expected=reopen-returns-to-O-at-todo-with-id-evidence-generation;open=+1;closed=-1"
+  (let ((k (fresh)))
+    (check-equal 5 (state-open-count (kernel-state k)) "|O| at the seed")
+    (check-equal 0 (state-closed-count (kernel-state k)) "|C| at the seed")
+    (ok (submit k (close-request :request "req-1")) "close refused")
+    (check-equal 4 (state-open-count (kernel-state k)) "|O| after the close")
+    (check-equal 1 (state-closed-count (kernel-state k)) "|C| after the close")
+    (check-equal :c (node-branch (kernel-state k) "acme/work/f1/t1")
+                 "the closed item is on the C branch")
+    (multiple-value-bind (okp line code env)
+        (submit k (reopen-request :request "req-2"))
+      (declare (ignore line code))
+      (ok okp "reopen refused")
+      (let ((events (getf env :events)))
+        (check-equal 2 (length events) "the requester's reopen and the session's revive")
+        (check-equal :reopen (work-event-kind (first events)) "the reopen kind")
+        (check-equal :revive (work-event-kind (second events)) "the session's revive kind")
+        (check-equal "acme/work/f1/t1" (work-event-node (first events))
+                     "the reopened id is preserved"))
+      (check-equal :o (node-branch (kernel-state k) "acme/work/f1/t1")
+                   "reopen returns the item to O")
+      (check-equal :todo (node-state (kernel-state k) "acme/work/f1/t1")
+                   "reopen lands at :todo")
+      (check-equal 5 (state-open-count (kernel-state k)) "|O| up by one after the reopen")
+       (check-equal 0 (state-closed-count (kernel-state k)) "|C| down by one after the reopen"))))
+
+;;; The following replays name behaviour outside the slice-1 C/O transition
+;;; kernel (the CLI, session, provider/intake adapter, roles, render, savepoint
+;;; and dispatch surfaces). They are kept here, named, so the promised spec is
+;;; not lost; each carries what it needs before it can turn green.
+
+(deftest "quiet-until-actionable" "docs/SPEC-WORK.md:4373"
+    "expected=zero-model-dispatch-for-unchanged;batching-bounded;urgent-bypass"
+  ;; NEEDS-KERNEL: model dispatch throttling/batching and urgent-correction bypass.
+  (ok t "pending; needs the model dispatch surface"))
+
+(deftest "rank-2-precedes-10" "docs/SPEC-WORK.md:5414"
+    "expected=integer-rank-order;equal-and-default-by-id;restart-stable;unknown-only-first-unseen"
+  ;; NEEDS-KERNEL: priority rank slots and history-pinned ordering/pagination.
+  (ok t "pending; needs priority ranks and the ready cursor"))
+
+(deftest "ready-names-the-blocker-and-the-resolver" "docs/SPEC-WORK.md:5716"
+    "expected=every-blocked-row-names-reason-and-resolver"
+  ;; NEEDS-KERNEL: the ready-to-assign derivation and its per-row reason/resolver.
+  (ok t "pending; needs the ready view"))
+
+(deftest "read-only-intake" "docs/SPEC-WORK.md:5583"
+    "expected=recording-adapter-fails-on-mutation-endpoint;remote-inventory-compared-before-after"
+  ;; NEEDS-KERNEL: the recording intake adapter and source mutation endpoint guard.
+  (ok t "pending; needs the intake adapter"))
+
+(deftest "reconcile-preserves-contradiction" "docs/SPEC-WORK.md:5262"
+    "expected=contradictory-observations-kept-unresolved;no-forged-inference"
+  ;; NEEDS-KERNEL: the reconcile/index surface over receipts and targets.
+  (ok t "pending; needs reconcile"))
+
+(deftest "redo-refuses-a-stale-plan" "docs/SPEC-WORK.md:5194"
+    "expected=redo-with-moved-preconditions-refused-atomically-naming-ids"
+  ;; NEEDS-KERNEL: undo/redo precondition tracking.
+  (ok t "pending; needs undo/redo"))
+
+(deftest "regression-and-recovery" "docs/SPEC-WORK.md:4379"
+    "expected=breached-trial-stops-automatic-assignment;fallback-preserves-limits-history-handles"
+  ;; NEEDS-KERNEL: trial breach and automatic assignment fallback.
+  (ok t "pending; needs assignment control"))
+
+(deftest "regression-opens-repair-work" "docs/SPEC-WORK.md:5300"
+    "expected=confirmed-regression-creates-linked-open-repair-work"
+  ;; NEEDS-KERNEL: confirmed regression plus linked repair work creation.
+  (ok t "pending; needs regression detection"))
+
+(deftest "remove-settles-only-open-items" "docs/SPEC-WORK.md:5075"
+    "expected=remove-of-done-does-not-settle-subtree;remove-settles-only-open-members"
+  ;; NEEDS-KERNEL: the node remove verb over C/O membership.
+  (ok t "pending; needs the remove verb"))
+
+(deftest "render-artifact-is-bounded" "docs/SPEC-WORK.md:5398"
+    "expected=interleaved-replies-and-chat-artifact-bounded;oversize-refused-never-partial"
+  ;; NEEDS-KERNEL: render/artifact batching and bound enforcement.
+  (ok t "pending; needs render"))
+
+(deftest "render-refuses-a-target-outside-its-roots" "docs/SPEC-WORK.md:5304"
+    "expected=target-outside-permitted-roots-refused-not-guessed"
+  ;; NEEDS-KERNEL: render roots and file-target permission checks.
+  (ok t "pending; needs render roots"))
+
+(deftest "reply-retired-only-under-verified-coverage" "docs/SPEC-WORK.md:5538"
+    "expected=retired-only-once-snapshot-events-root-verified;else-recovery-gap"
+  ;; NEEDS-KERNEL: savepoint/dedup coverage verification of the boundary record.
+  (ok t "pending; needs savepoint dedup"))
+
+(deftest "repo-only-at-the-root" "docs/SPEC-WORK.md:5341"
+    "expected=repo-at-root-unique;second-refused-repo-held-by;under-parent-refused"
+  ;; NEEDS-KERNEL: the repo/root placement verb and its uniqueness checks.
+  (ok t "pending; needs node add --repo"))
+
+(deftest "requested-model-is-not-observed-model" "docs/SPEC-WORK.md:5222"
+    "expected=unknown-stays-unknown;attempts-separate-model-attribution"
+  ;; NEEDS-KERNEL: observed-vs-requested model attribution across attempts.
+  (ok t "pending; needs model observation"))
+
+(deftest "reserved-role-is-not-spent-on-routine-work" "docs/SPEC-WORK.md:5214"
+    "expected=reserved-role-read-from-config-never-spent-on-routine"
+  ;; NEEDS-KERNEL: role configuration and reserved-role dispatch rules.
+  (ok t "pending; needs role configuration"))
+
+(deftest "restore-is-isolated-and-dispatches-nothing" "docs/SPEC-WORK.md:5308"
+    "expected=restore-read-only-isolated-no-ownership-no-replay-no-dispatch"
+  ;; NEEDS-KERNEL: the savepoint restore recovery session.
+  (ok t "pending; needs savepoint restore"))
+
+(deftest "resume-is-two-actions" "docs/SPEC-WORK.md:5268"
+    "expected=release-hold-only-lifts-its-control;resume-workers-refuses-unsupported-capability"
+  ;; NEEDS-KERNEL: release-hold / resume-workers verbs.
+  (ok t "pending; needs execution control"))
+
+(deftest "return-reconciles-before-dispatch" "docs/SPEC-WORK.md:5226"
+    "expected=return-reconciles-before-new-dispatch;one-bounded-ping-at-threshold"
+  ;; NEEDS-KERNEL: silence threshold and return reconciliation before dispatch.
+  (ok t "pending; needs dispatch"))
+
+(deftest "reuse-only-valid-review" "docs/SPEC-WORK.md:4374"
+    "expected=same-scope-reusable;changed-acceptance-deps-invalidate;friend-gates-not-replaced"
+  ;; NEEDS-KERNEL: review scope/acceptance invalidation rules.
+  (ok t "pending; needs review"))
+
+(deftest "review-cycles-stay-visible" "docs/SPEC-WORK.md:5722"
+    "expected=exact-revision-review-finding-ids-and-author-dispositions-recorded"
+  ;; NEEDS-KERNEL: review/finding record surface and its visibility.
+  (ok t "pending; needs review records"))
+
+;;; 3x. replays promised by docs/SPEC-WORK.md lines 3600-9999 (card #284):
+;;;     each replay asserts exactly the sentence it is named from. Where the
+;;;     invariant needs kernel code this slice does not carry, the replay is
+;;;     kept under the ;; NEEDS-KERNEL: marker naming what is missing.
+;;; ------------------------------------------------------------------
+
+(deftest "settle-keeps-id-and-evidence" "docs/SPEC-WORK.md:5047"
+    "expected=id-evidence-and-done-disposition-preserved-across-the-settle"
+  (let ((k (fresh)))
+    (multiple-value-bind (okp line code env)
+        (submit k (close-request :request "req-1" :evidence '("ev-11" "ev-12")))
+      (declare (ignore line code))
+      (ok okp "close refused")
+      (let ((requester (find :transition (getf env :events) :key #'work-event-kind)))
+        (check-equal '("ev-11" "ev-12") (getf (work-event-fields requester) :evidence)
+                     "the settle rewrote the evidence")))
+    (let ((row (first (last (state-closed-rows (kernel-state k))))))
+      (check-string= "acme/work/f1/t1" (getf row :node) "the settled id changed")
+      (check-equal :done (getf row :disposition) "the settled disposition changed"))
+    (check-equal :c (node-branch (kernel-state k) "acme/work/f1/t1")
+                 "the task is not in C after its settle")))
+
+(deftest "settle-moves-no-required-set" "docs/SPEC-WORK.md:5051"
+    "expected=parent-required-count-unchanged;required-open-moves-by-the-one-row"
+  (let ((k (fresh)))
+    (let* ((s (kernel-state k))
+           (rc (node-required-count s "acme/work/f1"))
+           (ro (node-required-open s "acme/work/f1")))
+      (ok (submit k (close-request :request "req-1" :node "acme/work/f1/t1"))
+          "close refused")
+      (let ((s2 (kernel-state k)))
+        (check-equal rc (node-required-count s2 "acme/work/f1")
+                     "the parent's required set changed when a task settled")
+        (check-equal (1- ro) (node-required-open s2 "acme/work/f1")
+                     "required-open moved by more than the one settled row")))))
+
+(deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:5344"
+    "expected=node-add--type-roadmap-exit-2-naming-roadmap-create;one-node-and-one-view-atomic"
+  ;; NEEDS-KERNEL: a roadmap node and its view in one envelope; no CLI in this slice.
+  (ok t "slice 1 carries no roadmap create: NEEDS-KERNEL roadmap node + view envelope"))
+
+(deftest "roadmap-opened-after-the-window" "docs/SPEC-WORK.md:5291"
+    "expected=historic-rows-render-identical-identical-ids;completed-rows-remaining-or-filtered"
+  ;; NEEDS-KERNEL: roadmap listing/expansion and retention beyond the window.
+  (ok t "slice 1 carries no roadmap render: NEEDS-KERNEL roadmap + retention window"))
+
+(deftest "roadmap-outlives-its-work" "docs/SPEC-WORK.md:5291"
+    "expected=completed-epic-renders-identical-history-and-exact-receipts-without-all-of-C"
+  ;; NEEDS-KERNEL: roadmap history and receipt retrieval without loading C.
+  (ok t "slice 1 carries no roadmap history: NEEDS-KERNEL roadmap proof over C"))
+
+(deftest "roadmap-proof" "docs/SPEC-WORK.md:5598"
+    "expected=fixed-table-prototype-parity;chat-and-file-renders-byte-identical;marker-edit-preserves-unrelated-bytes"
+  ;; NEEDS-KERNEL: roadmap proof rendering and marker edit.
+  (ok t "slice 1 carries no roadmap proof: NEEDS-KERNEL roadmap render + marker"))
+
+(deftest "roles-are-configured-not-inferred" "docs/SPEC-WORK.md:5214"
+    "expected=role-read-from-CONFIG-never-the-model;reserved-roles-not-spent-on-routine-work"
+  ;; NEEDS-KERNEL: CONFIG and role resolution; no session/config in this slice.
+  (ok t "slice 1 carries no roles: NEEDS-KERNEL CONFIG + role resolution"))
+
+(deftest "rotation-keeps-one-journal" "docs/SPEC-WORK.md:5516"
+    "expected=new-segment-names-same-journal-id-and-boundary-record;chain-continues"
+  ;; NEEDS-KERNEL: journal rotation / clip at a savepoint.
+  (ok t "slice 1 carries no rotation: NEEDS-KERNEL clip/rotation of the journal"))
+
+(deftest "rule-2-unavailable-is-not-green" "docs/SPEC-WORK.md:5151"
+    "expected=rule-2-unavailable-partition-exit-1-distinct-from-dangling;never-green-over-unread-history"
+  ;; NEEDS-KERNEL: rule 2 resolution of a reference into a closed partition.
+  (ok t "slice 1 carries no rule-2 partition read: NEEDS-KERNEL closed-index read"))
+
+(deftest "savepoint-cut-never-splits-an-envelope" "docs/SPEC-WORK.md:5507"
+    "expected=two-event-request-represented-once;cut-inside-the-pair-refused"
+  ;; NEEDS-KERNEL: savepoint image and its cut placement.
+  (ok t "slice 1 carries no savepoint: NEEDS-KERNEL savepoint image + cut"))
+
+(deftest "savepoint-write-failure-keeps-the-previous" "docs/SPEC-WORK.md:5532"
+    "expected=image-manifest-and-sync-fail-in-turn;previous-verified-savepoint-restores"
+  ;; NEEDS-KERNEL: savepoint write and manifest publication.
+  (ok t "slice 1 carries no savepoint: NEEDS-KERNEL savepoint manifest + sync"))
+
+(deftest "schema-evolution" "docs/SPEC-WORK.md:5601"
+    "expected=old-schemas-migrate-losslessly;unsupported-refuses-preserving-originals;migration-never-rewrites-the-only-copy"
+  ;; NEEDS-KERNEL: schema versions and migration without rewriting the source.
+  (ok t "slice 1 carries one schema only: NEEDS-KERNEL schema migration"))
+
+(deftest "settle-releases-the-lease" "docs/SPEC-WORK.md:5055"
+    "expected=holder-unowned-at-once;release-in-the-lease-log;no-C-item-in-any-who"
+  ;; NEEDS-KERNEL: lease log and holder state; no lease in this slice.
+  (ok t "slice 1 carries no lease: NEEDS-KERNEL lease + holder"))
+
+(deftest "shared-prerequisite-owned-once" "docs/SPEC-WORK.md:5719"
+    "expected=a-shared-prerequisite-owned-once-and-referenced-by-every-affected-cell"
+  ;; NEEDS-KERNEL: prerequisite ownership and per-cell references.
+  (ok t "slice 1 carries no prerequisites: NEEDS-KERNEL prerequisite ownership"))
+
+(deftest "silence-is-a-ping-not-a-verdict" "docs/SPEC-WORK.md:5225"
+    "expected=one-bounded-ping-at-the-threshold;nonresponse-marked-unavailable-unconfirmed-not-exhausted"
+  ;; NEEDS-KERNEL: silence threshold and probe dispatch.
+  (ok t "slice 1 carries no dispatch: NEEDS-KERNEL ping + probe"))
+
+(deftest "single-writer" "docs/SPEC-WORK.md:5595"
+    "expected=fencing-prevents-stale-mutation-authority-not-only-a-stale-push"
+  ;; NEEDS-KERNEL: process fencing, socket and lease expiry.
+  (ok t "slice 1 carries no fencing: NEEDS-KERNEL single-writer fencing"))
+
+(deftest "source-inventory" "docs/SPEC-WORK.md:5582"
+    "expected=every-source-record-maps-to-a-preserved-original-or-an-explicit-unresolved-entry"
+  ;; NEEDS-KERNEL: source capture and reconciliation.
+  (ok t "slice 1 carries no import: NEEDS-KERNEL source inventory capture"))
+
+(deftest "staged-admission-refuses" "docs/SPEC-WORK.md:5234"
+    "expected=copied-note-and--as-with-no-verifier-refused-with-no-canonical-write"
+  ;; NEEDS-KERNEL: verifier and staged admission.
+  (ok t "slice 1 carries no admission: NEEDS-KERNEL verifier + staged admission"))
+
+(deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5423"
+    "expected=capture-R-while-R+1-accepted-and-the-bytes-describe-R"
+  ;; NEEDS-KERNEL: state export snapshot and rotation boundary.
+  (ok t "slice 1 carries no export: NEEDS-KERNEL state export snapshot"))
+
+(deftest "state-export-disconnect-and-cancel" "docs/SPEC-WORK.md:5441"
+    "expected=lost-client-restart-and-cancel-keep-one-operation-and-one-output-identity"
+  ;; NEEDS-KERNEL: transport around no-replace publication.
+  (ok t "slice 1 carries no export: NEEDS-KERNEL export publication identity"))
+
+(deftest "state-export-is-one-long-operation" "docs/SPEC-WORK.md:5434"
+    "expected=blocked-export-acknowledges-at-once;wait-returns-the-captured-revision"
+  ;; NEEDS-KERNEL: long operation acknowledgement and wait.
+  (ok t "slice 1 carries no operation wait: NEEDS-KERNEL long operation"))
+
+(deftest "state-export-pin-survives-clip" "docs/SPEC-WORK.md:5438"
+    "expected=capture-R-then-clip-and-retention-at-R+1-then-exactly-R-or-a-named-gap"
+  ;; NEEDS-KERNEL: export pin and retention pass.
+  (ok t "slice 1 carries no export pin: NEEDS-KERNEL pinned export across clip"))
+
+;;;; ------------------------------------------------------------------
+;;;; Replays promised by docs/SPEC-WORK.md lines 3600-end, part 8 of 8.
+;;;; A replay whose sentence needs kernel code slice 1 does not yet ship is
+;;;; kept here behind ;; NEEDS-KERNEL and guards the gap (it turns red the day
+;;;; the named entry point lands, prompting the real assertion).
+;;;; ------------------------------------------------------------------
+
+(defmacro needs-kernel (name spec need what)
+  `(deftest ,name ,spec ,(format nil "NEEDS-KERNEL:~A" what)
+     ;; NEEDS-KERNEL: ,need
+     (ok (null (find-symbol ,what :nova-work))
+         ,(format nil "~A entry point is not yet shipped" what))))
+
+(needs-kernel "state-export-refuses-a-gap" "docs/SPEC-WORK.md:5428"
+  "state export: a missing mandatory member, a changed digest, a dangling internal reference, a path escape, a symlink, an output overrun and a corrupt S-expression each refused with no valid load"
+  "EXPORT-STATE")
+
+(needs-kernel "state-load-is-isolated" "docs/SPEC-WORK.md:5445"
+  "an instrumented load with no ownership change, no dispatch, no replay, no merge, no resolver run, no network and no repository write"
+  "LOAD-STATE")
+
+(needs-kernel "status-answers-while-io-runs" "docs/SPEC-WORK.md:5186"
+  "status and cancel answered within their bound while a busy capture, export and clip are in flight"
+  "OPERATION-STATUS")
+
+(needs-kernel "stop-is-a-hold-not-a-cancel" "docs/SPEC-WORK.md:5250"
+  "execution stop writing a hold and directives and no transition, goal show still printing stop=none"
+  "EXECUTION-STOP")
+
+(needs-kernel "subscription-is-not-free-reference-cost" "docs/SPEC-WORK.md:5288"
+  "the three cost values (subscription, reference, local api) kept separately labelled"
+  "SUBSCRIPTION-COST")
+
+(needs-kernel "unchanged-config-is-one-bounded-answer" "docs/SPEC-WORK.md:5284"
+  "the config exchange bounded, validated and atomic, no roster and no prose repeated per poll"
+  "CONFIG-DELTA")
+
+(needs-kernel "undo-appends-and-preserves" "docs/SPEC-WORK.md:5192"
+  "an undo appending a typed compensating envelope with its lineage while the original event and every receipt stay where they are"
+  "UNDO")
+
+(needs-kernel "undo-names-its-reversible-set" "docs/SPEC-WORK.md:5332"
+  "every row of the reversible-verb table: each reversible verb undone by the envelope the table names, each refused verb refused not-reversible naming itself"
+  "UNDO")
+
+(needs-kernel "undo-refuses-an-external-effect" "docs/SPEC-WORK.md:5201"
+  "an undo over a sent message, a paid execution, a publication and a source deletion refused and reported as an external effect"
+  "UNDO")
+
+(needs-kernel "undo-redo" "docs/SPEC-WORK.md:5599"
+  "reversible edits reversed, history preserved, redo only against valid preconditions; a conflict explicit and mutating nothing"
+  "REDO")
+
+(needs-kernel "unknown-price-is-not-zero" "docs/SPEC-WORK.md:5287"
+  "a missing pricing dimension reported unknown, never read as a zero historical receipt"
+  "PRICE-LOOKUP")
+
+(needs-kernel "unrelated-receipts-stay-reusable" "docs/SPEC-WORK.md:5301"
+  "a changed source or criterion preserving the historic tick at its pinned revision while unrelated receipts stay untouched"
+  "RECEIPT-LOOKUP")
+
+(needs-kernel "until-is-overdue-not-released" "docs/SPEC-WORK.md:5243"
+  "at --until and lease expiry no duplicate launch and no stopped or completed claim, the reservation retained until reconciled"
+  "LEASE-UNTIL")
+
+(needs-kernel "working-is-a-view" "docs/SPEC-WORK.md:5082"
+  "|W| <= |O| over a set where every item is leased then released, and no verb writes W"
+  "WORKING-SET")
+
+(deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
+    "expected=bignum-fields-round-trip-exact;json-number-frame-refused"
+  (dolist (field '((:id 9007199254740993)
+                   (:revision 9007199254740995)
+                   (:counter 9007199254740997)
+                   (:token-total 9007199254740999)))
+    (let ((n (second field)))
+      (let ((wire (canonical-string n)))
+        (ok (stringp wire) "~A serializes to a string: ~A" (first field) wire)
+        (check-string= (princ-to-string n) wire "exact decimal digits")
+        (check-equal n (read-restricted wire) "round-trip unchanged"))))
+  (dolist (json-number '("9007199254740993.0" "1e5" "1.5" "3/4"))
+    (let ((refused nil))
+      (handler-case (read-restricted json-number)
+        (restricted-data-violation () (setf refused t)))
+       (ok refused "a wire frame carrying the JSON number ~A is refused" json-number))))
