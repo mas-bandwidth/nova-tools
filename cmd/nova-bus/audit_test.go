@@ -27,6 +27,7 @@ var messageBusAudit = audit.Config{
 		"main.go|parse|name":              "a required flag's name, a literal map key at every call site in this file",
 		"main.go|count|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|count|name":              "a required flag's name, a literal at every call site in this file",
+		"main.go|receiptMaxWords|f.verb":  "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|openBus|verb":            "the verb's own name, a literal at every call site in this file",
 		"main.go|printOpenEntries|token":  "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
 		"main.go|printBodyItem|kind":      "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned immediately above the site",
@@ -43,6 +44,10 @@ var messageBusAudit = audit.Config{
 			"fold a whole listing into one unreadable line, which is the mistake printTranscript below documents. The buffer exists because a poll " +
 			"that finds nothing must print nothing, not because anything about the text changed. TestWaitReturnsWhenANoteArrivesDuringTheWait is the " +
 			"behavioural test for this site.",
+		"main.go|waitLoop|next": "the caller's own wait command echoed back after `next=` so they can re-arm it: flag names are literals and every value " +
+			"in it has already been through the flag parser (--bus is a repo root, --as a roster name, --remote and --branch through bus.ValidGitArg, " +
+			"durations and counts are numbers), and it must stay pasteable spaces-and-all -- escaping it folds a command into one unreadable token, " +
+			"the same one-line-vs-pasteable tradeoff as printSwitchDayNote's INBOX SWITCH sentence. TestWaitEndsWithRearmLine is the behavioural test.",
 		"main.go|hiddenReason|legacy.Text": "not an event line: this function BUILDS a sentence, and both sites that print it pass the whole of it through " +
 			"oneline.Escape, so the one-line guarantee is made once over the finished sentence rather than twice over its parts. The value itself is a " +
 			"switch-day line that has been through bus.NewLegacyLine, so it is a UTC date or an RFC 3339 instant and nothing else.",

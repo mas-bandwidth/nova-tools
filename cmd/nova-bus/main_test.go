@@ -199,6 +199,20 @@ func TestUsageAndUnknownVerb(t *testing.T) {
 	invoke(t, "", "wibble").mustCode(t, 2).mustContain(t, "stderr", `unknown subcommand "wibble"`)
 }
 
+// The wait usage must say plainly that an unadvanced cursor makes wait return at once
+// -- so a caller with a backlog knows to run inbox first -- and the example loop must
+// show --advance, which is what makes the second wait a real one. (#328)
+func TestWaitUsageStatesUnadvancedCursorReturnsAtOnce(t *testing.T) {
+	t.Parallel()
+	banner := invoke(t, "", "help").mustCode(t, 0).stdout
+	if !strings.Contains(banner, "unadvanced cursor makes wait return AT ONCE") {
+		t.Fatalf("the usage text does not say plainly that an unadvanced cursor makes wait return at once:\n%s", banner)
+	}
+	if !strings.Contains(banner, "--advance --remote origin --branch main") {
+		t.Fatalf("the wait example loop does not show --advance:\n%s", banner)
+	}
+}
+
 // Every required flag, refused by name. A missing one is never a guess.
 func TestRefusingToGuess(t *testing.T) {
 	t.Parallel()
@@ -598,4 +612,46 @@ func TestCheckLegacyBefore(t *testing.T) {
 	// A line it cannot read is a bad invocation, not a guess.
 	invoke(t, "", "check", "--bus", checkout, "--full", "--legacy-before", "last Tuesday").
 		mustCode(t, 2).mustContain(t, "stderr", "neither a UTC date")
+}
+
+// When --receipt-max-words is absent, the value is read first from
+// <bus>/.nova-bus/defaults, then from NOVA_BUS_RECEIPT_MAX_WORDS, and refused only when
+// neither supplies one. The flag wins over both. Not t.Parallel: it moves the process-wide
+// environment, and the refusal must be seen by no other test.
+func TestReceiptMaxWordsDefaultsFromBusFileThenEnv(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+
+	// Neither flag, file nor env: the refusal names both default sources as the remedy.
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada").
+		mustCode(t, 2).
+		mustContain(t, "stderr", "--receipt-max-words must be given").
+		mustContain(t, "stderr", ".nova-bus/defaults").
+		mustContain(t, "stderr", "NOVA_BUS_RECEIPT_MAX_WORDS")
+
+	// The file supplies the value when the flag is absent.
+	writeFile(t, checkout, ".nova-bus/defaults", "receipt-max-words=40\n")
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "receipts=1")
+
+	// The flag wins over the file.
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full", "--receipt-max-words", "1").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "receipts=0")
+
+	// The environment supplies the value when the flag is absent and there is no file.
+	t.Setenv("NOVA_BUS_RECEIPT_MAX_WORDS", "40")
+	if err := os.Remove(filepath.Join(checkout, ".nova-bus", "defaults")); err != nil {
+		t.Fatal(err)
+	}
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "receipts=1")
+
+	// The file wins over the environment.
+	writeFile(t, checkout, ".nova-bus/defaults", "receipt-max-words=1\n")
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--full").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "receipts=0")
 }

@@ -50,6 +50,7 @@ usage:
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+                      --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
   nova-tokens check   --out <dir> [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--max <n>]
   nova-tokens version
@@ -1138,6 +1139,8 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("sum")
 	out := fs.String("out", "", "")
 	month := fs.String("month", "", "")
+	swarmRoot := fs.String("swarm-root", "", "")
+	day := fs.String("day", "", "")
 	max := fs.Int("max", bounded.Default, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -1146,6 +1149,19 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return code
 	}
 	r := &refusals{token: "SUM"}
+	if *swarmRoot != "" {
+		switch {
+		case *month != "":
+			r.add("--month and --swarm-root are two different ways to sum; give one")
+		case *day == "" && *out == "":
+			r.required("out", *out, wantsLedger)
+			r.required("day", *day, wantsDay)
+		}
+		if len(r.list) == 0 {
+			return sumSwarmRoot(*swarmRoot, *day, *out, stdout, stderr, r)
+		}
+		return r.print(stderr)
+	}
 	r.required("out", *out, wantsOut)
 	switch {
 	case *month == "":

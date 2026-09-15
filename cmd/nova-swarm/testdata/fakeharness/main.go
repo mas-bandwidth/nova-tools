@@ -120,6 +120,21 @@ func main() {
 			fmt.Printf("fake harness: cat %s: ok len=%d\n", path, len(body))
 		}
 	}
+	// FAKE-RECORD-CONFIG records the provider config the harness would resolve from its own
+	// data home -- the opencode.json a `--config` run is meant to place beside the carried
+	// auth -- into <job>/config-record so a test can assert the child sees it, its mode and
+	// its bytes, without a provider or a network.
+	if _, ok := directive(prompt, "FAKE-RECORD-CONFIG"); ok && job != "" {
+		path := filepath.Join(os.Getenv("HOME"), ".config", "opencode", "opencode.json")
+		st, err := os.Stat(path)
+		if err != nil {
+			writeRecorded(filepath.Join(job, "config-record"), []byte("absent\n"), 0o644)
+		} else {
+			body, _ := os.ReadFile(path)
+			writeRecorded(filepath.Join(job, "config-record"),
+				[]byte(fmt.Sprintf("mode=%04o\n%s", st.Mode().Perm(), string(body))), 0o644)
+		}
+	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
 			fmt.Printf("fake harness: read of /etc/somewhere: permission denied (refused)\n")
@@ -136,6 +151,25 @@ func main() {
 	// on two of forty Freddy jobs (2026-09-12): the ANSI is there because the quote a
 	// triage line carries has to be readable with it in the log. The words `rate limit`
 	// are in the sentence, which is why this death was read as a 429 and retried.
+	// THE STRUCTURED SIGNAL (issue #163): a harness adapter records the provider's refusal as
+	// a FIELD -- class, value, limit -- instead of prose, and this line is what the supervisor
+	// reads and re-emits, so no heuristic over the transcript is asked to decide the class.
+	// It is checked BEFORE the prose directive, whose name is its own prefix.
+	if arg, ok := directive(prompt, "FAKE-INPUT-LIMIT-SIGNAL"); ok {
+		fields := strings.Fields(arg)
+		class, value, limit := "token", "12345", "8192"
+		if len(fields) > 0 {
+			class = fields[0]
+		}
+		if len(fields) > 1 {
+			value = fields[1]
+		}
+		if len(fields) > 2 {
+			limit = fields[2]
+		}
+		fmt.Fprintf(os.Stderr, "INPUT LIMIT class=%s value=%s limit=%s\n", class, value, limit)
+		os.Exit(1)
+	}
 	if _, ok := directive(prompt, "FAKE-INPUT-LIMIT"); ok {
 		fmt.Fprintf(os.Stderr, "\x1b[91m\x1b[1mError: \x1b[0mRate limit reached: input token limit exceeded\n")
 		os.Exit(1)
