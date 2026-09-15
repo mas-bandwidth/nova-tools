@@ -33,20 +33,20 @@ issue tracking it.
 - **headroom** — a field in each bench's status reading; its calculation is
   **definition pending**. [SPEC-PULSE](SPEC-PULSE.md#status) · [#553](https://github.com/mas-bandwidth/nova-tools/issues/553)
 - **gate / gated card** — a gate is a condition that must pass before an action
-  proceeds. The specific admission rule for a gated card is **definition pending**
-  in the specs. [SPEC-MERGE](SPEC-MERGE.md#the-merge-condition) · [#553](https://github.com/mas-bandwidth/nova-tools/issues/553)
+  proceeds. A card with `AFTER: PR<n> merged` stays gated until that dependency
+  merges. [SPEC-MERGE](SPEC-MERGE.md#the-merge-condition) · [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
 - **TOOLS MOVED** — **definition pending** in the specs; the adoption-notification
   work is tracked in [#525](https://github.com/mas-bandwidth/nova-tools/issues/525).
 
 ## Coordination
 
 - **coordinator tier** — the middle tier between planning and work: a bounded
-  controller on the cheapest qualified model that owns the loop. **Duty** is the
-  retired name; the linked spec still uses it while the rename lands. [SPEC-PULSE](SPEC-PULSE.md#the-duty-tier)
+  controller that owns the loop. **Duty** is retired; the current spec calls this
+  the **manager tier** and names the command `nova-pulse manager`. [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
 - **policy** — the approved, finite rule set the coordinator executes without
-  expanding it. [SPEC-PULSE](SPEC-PULSE.md#the-duty-tier)
+  expanding it. [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
 - **escalation** — a decision not in the policy, carried as one line so a
-  person answers it. It carries a kind, a reference, and one line of reason. [SPEC-PULSE](SPEC-PULSE.md#the-duty-tier)
+  person answers it. It carries a kind, a reference, and one line of reason. [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
 - **handoff** — the verb that ends a coordinator shift, releases ownership and
   leaves a record and bus note for the successor. It refuses mid-harvest or when
   the successor is asleep. [SPEC-PULSE](SPEC-PULSE.md#handoff)
@@ -55,7 +55,7 @@ issue tracking it.
   note. [SPEC-PULSE](SPEC-PULSE.md#handoff)
 - **shift** — the coordinator's turn on a queue. It ends by handoff and begins
   again by takeover. [SPEC-PULSE](SPEC-PULSE.md#handoff)
-- **quiet time** — coordinator time that makes no model call and sends no status note. [SPEC-PULSE](SPEC-PULSE.md#the-duty-tier)
+- **quiet time** — coordinator time that makes no model call and sends no status note. [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
 
 ## Wake and presence
 
