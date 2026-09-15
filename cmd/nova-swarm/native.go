@@ -123,6 +123,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		"NOVA_SWARM_JOB="+cfg.slotDir,
 	)
 	cmd.Dir = cfg.slotDir
+	cmd.Stdin = strings.NewReader("")
 	log, err := os.OpenFile(filepath.Join(cfg.slotDir, "native.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the run log %s could not be opened: %s", oneline.Field(filepath.Join(cfg.slotDir, "native.log")), oneline.Escape(err.Error())))
@@ -209,6 +210,10 @@ func copyAuth(src, provider, dataHome string) string {
 	}
 	if dstSt, err := os.Stat(dst); err == nil && dstSt.Mode().Perm() != 0o600 {
 		return fmt.Sprintf("the auth copy would not be 0600: %s ended mode %04o", oneline.Field(dst), dstSt.Mode().Perm())
+	}
+	ocDir := filepath.Join(dataHome, "opencode")
+	if err := os.MkdirAll(ocDir, 0o755); err == nil {
+		_ = os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600)
 	}
 	return ""
 }
