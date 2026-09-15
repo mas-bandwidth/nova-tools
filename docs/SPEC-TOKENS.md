@@ -457,11 +457,6 @@ nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
                     [--provider <label>=<file>]...
                     [--scratch <dir>] [--timeout <seconds>] [--max <n>]
-nova-tokens publish (--batch <dir> | --v1-day <dir> --day <YYYY-MM-DD> --seat <label>)
-                    --ledger <dir> --remote <name> --branch <name> --repo <host>/<owner>/<name>
-                    [--supersede]
-                    [--public <dir> --public-repos <file>] [--public-sources]
-                    [--deadline <seconds>] [--git-timeout <seconds>] [--attempts <n>] [--max <n>]
 nova-tokens help
 nova-tokens version
 ```
@@ -525,6 +520,53 @@ zero. Writes nothing. Exits
 0 whenever it ran, including over a month with gaps: answering is its job,
 and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 
+`sum --swarm-root <dir> --day <d> --out <ledger.tsv>` is the one form that
+writes: it walks every card's `usage.tsv` under `<dir>/*/jobs/*/`, keeps the
+rows whose `started` stamp is on `--day`, and appends one row per model to the
+ledger in the ledger's own column order — `day`, `model`, `tokens_in`,
+`tokens_out`, `usd`, `cards` — reading the header and refusing (exit 2) when it
+differs, so a ledger filled by hand and one filled by this verb agree. A second
+run for the same day replaces that day's rows, never doubling, so the ledger can
+be filled again and again; a kept field a card did not report is `-` in the ledger, never 0,
+and the trailing `dashes` column counts how many cards left each of input, output and usd unknown.
+
+**Cost per completed task per (model, repo), the shape, filed before the
+counts land (issue #64, Rowan's MODELS.md pass, 2026-09-11).** The ledger
+carries price per token today; the routing metric every independent index in
+that pass publishes is **cost per completed task**, not price per token — a
+model at four times the per-token price that finishes in a third of the turns
+is the cheaper model, and it is the number that decides which seat a job
+goes to. Once the receipts can count completed tasks, the ledger carries it
+as a column, and this sentence fixes the shape now so it lands unargued. The
+row key becomes `(day, model, repo)`: the same model costs differently
+against a small tool repo and a large one, and per model is the routing
+decision. Three columns land on every row:
+
+- `repo`, the repo the card's receipt names, so the row is per `(model,
+  repo)` and no longer per model alone;
+- `completed`, how many of that row's cards carry a receipt with `rc=0`, a
+  task that finished, read from the receipt and never inferred from a card
+  that reported none;
+- `usd_per_task`, `usd / completed` in dollars to six decimals, and `-` when
+  `completed` is zero: there is no cost over no finished task, and the ratio
+  is never divided.
+
+The column order is `day`, `model`, `repo`, `tokens_in`, `tokens_out`, `usd`,
+`cards`, `completed`, `usd_per_task`, `dashes`: the ledger lands one row per
+`(model, repo)` pair, as `sum` prints one `SUM PAIR` line per pair. `cards` is
+unchanged
+— the count of every card that reported — and `completed` is its own column,
+not `cards` minus anything. Until the receipts land, `repo` is `unattributed`
+and `completed` and `usd_per_task` are `-` on every row, and the header is
+already the order above, so a ledger filled before and a ledger filled after
+the counts agree at the header and never rewrite a row. A receipt whose `rc`
+is `-` or empty names no completion, counts in `cards` and in the `dashes`
+column, and never in `completed`: it is read as neither failed nor finished.
+A `completed` of zero is a valid row, never a refusal; the one refusal this
+shape adds is the header mismatch, which names the wanted order, the order
+above. MODELS.md carries `usd_per_task` per model row once it can be
+computed, per repo where a model shows on more than one.
+
 ### `check`
 
 Asserts what rule 13 says. Says NO (exit 1) on any malformed file, any
@@ -543,25 +585,9 @@ writes.
 
 ### `publish`
 
-Asserts: the contribution exists and validates — a v1 day file under rule 13's
-row rules, a batch under its envelopes' own validators — and that, when the
-verb returns 0, every one of its files is on the ledger's named branch of the
-named remote at its own path, byte-identical for a batch's content-addressed
-paths and **identical under rule 26** for a v1 day, whose identity is
-`rows_sha256` and not the whole file. Says NO (exit 1) on `reason=differs`,
-`conflict`, `incomplete`, `malformed`, `changed`, `subset` or `unconfirmed`.
-Could not run (exit 2) on a missing or bad flag, a missing `--repo`, an
-effective fetch or push URL that does not match it, unrelated dirty work in
-the clone, an empty `user.name` or `user.email`, a held publish lock, two
-given paths that resolve to one directory, a staged path that exists, a fold
-in flight, a malformed batch directory, or a batch whose schema has no
-validator here. Deliberately does not check: whether the numbers are right
-(`check` and `sum` read them), whether other days or other benches are
-present in the ledger, whether coverage of the whole ledger is complete, or
-whether the note for that day reached the bus (rule 28). `publish` is a
-**wall**, and it is the only verb that runs `git`, the only verb that writes
-into a git clone, and it is in **Publishing to the git ledger**, rules 22 to
-31.
+Not shipped. The verb is struck from this draft: the binary has no `publish`
+case and no `PUBLISH` output lines. The design is kept in **Publishing to the
+git ledger** (rules 22 to 31) as an explicit spec gate for a future build.
 
 ## Exit codes
 
@@ -570,33 +596,6 @@ into a git clone, and it is in **Publishing to the git ledger**, rules 22 to
 | 0 | the verb ran and passed: every source read, every line parsed, every day written; a sum or a listing printed; a check with nothing to name |
 | 1 | the verb ran and said **NO**: a declared source with an unreadable file, an unparsed bus line or note, a row of two day bases, a lane-day with competing reports (`TOKENS CONFLICT`), a day that would shrink, a check finding, a `report` with nothing to show |
 | 2 | could not run: missing flag, bad flag value, `--out` not a directory, `--repos` unreadable or malformed, a duplicate label, `sqlite3` absent when `--opencode` is given, a second fold holding the lock |
-
-**Amendment, 2026-09-12 (rules 22–31).** The three meanings hold for
-`publish` and the enumerations above gain its cases, which are the only ones
-this amendment adds. **Exit 0**: the contribution is on the ledger's named
-branch at its own paths, either pushed by this run (`state=published`,
-`state=superseded`) or already there — byte-identical for a batch's immutable
-paths, identical under rule 26's `rows_sha256` for a v1 day
-(`state=already-published`). **Exit 1**, the verb ran and said NO:
-`reason=differs` (a v1 day's path holds different rows and `--supersede` was
-not given), `reason=conflict` (a content-addressed path holds bytes other
-than its own digest's), `reason=incomplete` (a published coverage envelope
-whose referenced closure is missing a member or holds different bytes),
-`reason=malformed` (a v1 day file `check` would name, or a batch whose
-envelopes do not validate), `reason=changed` (an input's digest moved under
-the publication), `reason=subset` (a public subset would carry a row not on
-its allowlist), `reason=unconfirmed` (the push could not be confirmed inside
-`--attempts` and `--deadline`). **Exit 2**, could not run: a missing or bad
-flag, `--repo` missing, both contribution kinds or neither, `--supersede` with
-`--batch`, a source flag on `publish`, two given paths that resolve to one
-directory, a staged path or a temporary directory that already exists,
-`--ledger` that is not a git checkout, an effective fetch or push URL that
-does not match `--repo` or whose shape the parser does not know, more than one
-effective push URL where they do not all match, an empty `user.name` or
-`user.email` in the clone, unrelated dirty or staged work in the clone, a
-second publisher holding the lock, a `git` absent from `PATH`, a fold in
-flight under `--v1-day`, a batch that is not exactly its own named files, and
-a batch naming a schema this build has no validator for.
 
 **Exit 1 still writes.** A fold with one unreadable file writes every day it
 could compute and exits 1. The exit code is about the claim (rule 3), not
@@ -611,13 +610,7 @@ One machine-scannable line per event; first token names the verb's event
 class, second is `OK`, `FAIL` or one of the informational tokens listed here.
 `OK` and informational lines go to stdout; `FAIL`, `UNREADABLE`, `UNPARSED`,
 `MIXED`, `SHRANK`, `QUIET`, `MISSING` and refusals go to stderr.
-**Amendment, 2026-09-12 (rules 22, 24).** The rule above is unchanged and
-`publish`'s lines obey it as written: `PUBLISH PLAN`, `FILE`, `SUBSET`,
-`EXCLUDED`, `OK` and `NOTE` are informational or `OK` and go to stdout,
-`PUBLISH DIRTY`, `FAIL` and `REFUSED` go to stderr, and a `PUBLISH MORE`
-goes to the stream of the kind it caps — the MORE for `EXCLUDED` to stdout,
-the MORE for `DIRTY` to stderr — so neither stream ever shows a list without
-its MORE or a MORE without its list. `report` is the one
+`report` is the one
 exception, stated in rule 20: its stdout is exactly rule 6's body lines, and
 `REPORT OK`, `REPORT FAIL` and its `TOKENS UNREADABLE` lines go to stderr. Every path, label, model name,
 repo name, note id and reason renders through `internal/oneline`; every
@@ -667,16 +660,6 @@ SOURCES UNREADABLE label=<label> path=<path>: <why>
 SOURCES UNPARSED label=<kind>:<name> note=<id> line=<n>: <text>
 SOURCES MORE kind=<source|unreadable|unparsed> shown=<n> total=<t> nova-tokens sources … --max 0
 SOURCES OK sources=<n> files=<n> messages=<n> unreadable=<n> unparsed=<n> rows=<n>
-PUBLISH PLAN at=<stamp> build=<id> kind=<batch|v1-day> ledger=<dir> repo=<host>/<owner>/<name> remote=<name> branch=<name> seat=<label|-> day=<d|-> contribution=<hex> files=<n> bytes=<n> deadline=<seconds> public=<dir|->
-PUBLISH DIRTY path=<path>: <modified|staged|untracked>
-PUBLISH FILE path=<path> sha256=<hex> rows_sha256=<hex|-> state=<new|present|identical|superseded|conflict|missing> supersedes=<hex|->
-PUBLISH SUBSET path=<path> rows=<n> excluded=<n> repos=<list> sha256=<hex>
-PUBLISH EXCLUDED day=<d> model=<model> repo=<repo>: not on --public-repos
-PUBLISH MORE kind=<dirty|file|excluded> shown=<n> total=<t> <remedy>
-PUBLISH OK contribution=<hex> commit=<sha> pushed=<true|false> state=<published|already-published|superseded> attempts=<n> files=<n> at=<stamp> build=<id>
-PUBLISH FAIL contribution=<hex> reason=<differs|conflict|incomplete|malformed|changed|subset|unconfirmed> pushed=<true|false|->
-PUBLISH NOTE <the one remedy line>
-PUBLISH REFUSED: <reason>
 SOURCES REFUSED: <reason>
 ```
 
@@ -869,7 +852,13 @@ its own dates with `day_basis=<zone>`, the zone taken from the export's own
 declaration and printed on `TOKENS SOURCE`, never from the bench's clock or
 a guess; an export with neither timestamps nor a declared zone is
 `TOKENS UNREADABLE` naming what it lacks. A `(day, model, repo)` fed by a
-`utc` row and a zoned row is `TOKENS MIXED` and not written.
+`utc` row and a zoned row is `TOKENS MIXED` and not written. The `xai`
+parser also reads a `grok usage` JSON export (a `sessionId` and a `turns`
+array, chosen by the file's leading `{` or `[`), folding each turn into the
+same rows: `endedAt` is the day, `primaryModelId` the model, and
+`inputTokens`/`outputTokens`/`cacheCreationTokens`/`cachedReadTokens`/
+`reasoningTokens` the five counts, with a field the turn did not carry left
+a `-`, never a zero.
 
 ### `--bus <dir>`: friends' self-reports
 
@@ -1040,7 +1029,6 @@ sources. Ninety days under `--all`.
 | `sum --month` | 1 MONTH + 20 PAIR + 1 MORE + 20 MODEL + 1 MORE + 1 TOTAL + 1 OK = 45 | under 10 KB |
 | `check` | 20 FAIL + 1 MORE + 20 MISSING + 1 MORE + 20 STRAY + 1 MORE + 1 count line = 64 | under 8 KB |
 | `sources --all` | 10 SOURCE + 20 UNREADABLE + 1 MORE + 20 UNPARSED + 1 MORE + 1 OK = 53 | under 8 KB |
-| `publish` (2026-09-12, rules 22–31) | 1 PLAN + 20 FILE + 1 MORE + 1 SUBSET + 20 EXCLUDED + 1 MORE + 1 OK + 1 NOTE = 46 at a batch of 20 files; a refusal is at most 20 DIRTY + 1 MORE + 20 FILE + 1 MORE + 1 FAIL + 1 NOTE + one `REFUSED` per independent problem, that list being finite and enumerated by the exit-code table's amendment (eighteen), so 20 + 1 + 20 + 1 + 1 + 1 + 18 = 62 | under 12 KB |
 
 These are ceilings that do not grow with the state. A test builds that state
 in `t.TempDir()`, runs every verb, and asserts the line and byte counts
@@ -1797,6 +1785,8 @@ remedy line. The rules are numbered on from rule 21.
 
 ## What it deliberately does not do
 
+- **It does not publish.** The `publish` verb and the `PUBLISH` output lines
+  are struck from this draft: the shipped binary has no `publish` case.
 - **It does not price anything.** Tokens, by type, per model. Dollars are a
   rate card times a count, the rate card changes, and a tool that carried
   one would carry a stale one.
@@ -2227,6 +2217,14 @@ paragraphs are the normative text and these ten lines are the index.
     flags, including each reached through a **symlink**; and a fold that
     rewrites the day file between the lock and the push is exit 1
     `reason=changed`.
+32. A fixture ledger and a fixture swarm root of cards whose receipts carry
+    `repo` and `rc`: `sum --swarm-root` writes one ledger row per `(model,
+    repo)` pair with `repo` from the receipt, `completed` counting only the
+    `rc=0` cards, and `usd_per_task` equal to `usd / completed` to six
+    decimals; a pair with `completed=0` writes `usd_per_task=-`, never a
+    division, and a receipt whose `rc` is `-` counts in `cards` and `dashes`
+    and never in `completed`; the header is the ten columns in order, and a
+    ledger whose header differs is refused (exit 2) naming that order.
 
 ## The work list
 

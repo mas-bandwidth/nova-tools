@@ -337,11 +337,14 @@ func ValidGitArg(what, s string) error {
 const (
 	// TrailerKey is the trailer's key.
 	TrailerKey = "Nova-Bus"
-	// TrailerSend, TrailerReceipt and TrailerCursor are the three things this tool commits.
-	// A send carries the note's id after the word, so the log says which note.
+	// TrailerSend, TrailerReceipt, TrailerCursor and TrailerClose are the things this tool
+	// commits. A send carries the note's id after the word, so the log says which note.
 	TrailerSend    = "send"
 	TrailerReceipt = "receipt"
 	TrailerCursor  = "cursor"
+	TrailerClose   = "close"
+	// TrailerBeat is a wait's liveness beat commit, "beat <name>".
+	TrailerBeat = "beat"
 	// TrailerCommit is what stageAndCommit stamps a message that arrived without one, so
 	// that no commit this tool makes can be mistaken for a person's.
 	TrailerCommit = "commit"
@@ -658,6 +661,24 @@ func EnsureClean(dir string, allow []string) error {
 		return fmt.Errorf("the bus's checkout holds changes that are not this note: %s", strings.Join(dirty, ", "))
 	}
 	return nil
+}
+
+// PathDirty reports whether one path holds a change git has not recorded -- modified,
+// staged or untracked.
+//
+// It is EnsureClean's question asked about a single file rather than about the whole
+// checkout, and `wait` is what needs it: the wait's own BEAT is written every tick and is
+// committed either by a cursor advance that folds it in or by the wait itself on the way
+// out, and asking git to commit a path holding no change is "nothing to commit" reported
+// as a failure of the beat. So the beat is landed when there IS one to land, and the
+// question is about that path and no other -- a foreign file somewhere else in the tree is
+// not this call's business and is still the refusal it always was everywhere else.
+func PathDirty(dir, path string) (bool, error) {
+	out, err := git(dir, "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
 }
 
 // CommitOnly stages and commits without pushing. The note is NOT on the bus until it is

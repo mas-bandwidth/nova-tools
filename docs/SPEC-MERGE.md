@@ -443,6 +443,7 @@ the day it was learned.
 
 ```
 nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
+nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>] [--max <n>]
 nova-merge add        --lane <dir> --pr <n> [--needs-read]
 nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
 nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>]
@@ -516,6 +517,12 @@ under this run the one it started with", which a stamped identity cannot give,
 because two builds of one tag are two files. Before this verb printed the four,
 it printed the file hash ALONE, standing where every other binary puts its
 identity.
+
+**`quickstart` is `init` followed by `status`** — the natural first run: it creates a
+lane then reports it, so a stranger's first line sees the lane it just made. It shares
+`init`'s one-creation rule and flags (rule 20), plus `--max <n>` for the status that
+follows, and prints `INIT OK` then the `STATUS` lines. `docs/CLI.md`'s `### First run`
+is written around it.
 
 `status`, `dry-run` and `packet` **report** and exit 0 whatever the lane holds. `run` is
 the verb that acts, and `run`'s exit code is about the pass, not about the lane:

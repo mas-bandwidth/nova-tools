@@ -52,7 +52,10 @@ func (w *probeResponseWriter) Write([]byte) (int, error) {
 }
 func (w *probeResponseWriter) WriteHeader(code int) { w.status = code }
 
-func admitCard(t *testing.T, body string) (string, error) {
+// admitCard admits one card and returns its label and its refusal line -- ADMIT REFUSED
+// <label> <why> -- which is empty when the card was admitted. A refusal is the card's own
+// (issue #529): readCards refuses the card, never the batch.
+func admitCard(t *testing.T, body string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	card := writeCard(t, dir, "a.card", body)
@@ -62,12 +65,15 @@ func admitCard(t *testing.T, body string) (string, error) {
 	}
 	cards, err := readCards(tsv)
 	if err != nil {
-		return "", err
+		t.Fatalf("the TSV is readable, got %v", err)
 	}
 	if len(cards) != 1 {
 		t.Fatalf("one card admitted, got %d", len(cards))
 	}
-	return cards[0].label, nil
+	if cards[0].admitWhy == "" {
+		return cards[0].label, ""
+	}
+	return cards[0].label, admitRefusalLine(cards[0].label, cards[0].admitWhy)
 }
 
 func TestAdmitAcceptsPublicRepo(t *testing.T) {
@@ -81,8 +87,8 @@ func TestAdmitAcceptsPublicRepo(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	if _, err := admitCard(t, "RESULT: a\nREPOS: owner/public\nall green"); err != nil {
-		t.Fatalf("a public repository is admitted, got: %v", err)
+	if _, why := admitCard(t, "RESULT: a\nREPOS: owner/public\nall green"); why != "" {
+		t.Fatalf("a public repository is admitted, got: %s", why)
 	}
 }
 
@@ -93,13 +99,13 @@ func TestAdmitRefusesPrivateRepo(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	})
 
-	_, err := admitCard(t, "RESULT: a\nREPOS: owner/secret\nall green")
-	if err == nil {
-		t.Fatal("a private repository is refused at admission, got no error")
+	_, why := admitCard(t, "RESULT: a\nREPOS: owner/secret\nall green")
+	if why == "" {
+		t.Fatal("a private repository is refused at admission, got no refusal")
 	}
 	want := "ADMIT REFUSED a private-repo: owner/secret unreachable without auth"
-	if !strings.Contains(err.Error(), want) {
-		t.Fatalf("the refusal names the card, the kind and the repository:\nwant %q\ngot  %q", want, err.Error())
+	if !strings.Contains(why, want) {
+		t.Fatalf("the refusal names the card, the kind and the repository:\nwant %q\ngot  %q", want, why)
 	}
 }
 
@@ -113,11 +119,11 @@ func TestAdmitRefusesWhenProbeFails(t *testing.T) {
 	probeClient = &http.Client{Timeout: probeTimeout, Transport: rec}
 	t.Cleanup(func() { probeClient = old })
 
-	_, err := admitCard(t, "RESULT: a\nhttps://github.com/owner/public\nall green")
-	if err == nil {
-		t.Fatal("a failed probe refuses the card, got no error")
+	_, why := admitCard(t, "RESULT: a\nhttps://github.com/owner/public\nall green")
+	if why == "" {
+		t.Fatal("a failed probe refuses the card, got no refusal")
 	}
-	if !strings.Contains(err.Error(), "ADMIT REFUSED a probe:") {
-		t.Fatalf("a probe failure is refused as probe:, never folded: %q", err.Error())
+	if !strings.Contains(why, "ADMIT REFUSED a probe:") {
+		t.Fatalf("a probe failure is refused as probe:, never folded: %q", why)
 	}
 }

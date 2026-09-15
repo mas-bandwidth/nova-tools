@@ -440,7 +440,10 @@ ignored there, so one caller has one script for three platforms.
 
 `check` reports what this machine can enforce — the backend, its version or
 ABI, and whether an enforced network denial is available — and exits 0 whether
-or not a sandbox is available, because it is a question, not an attempt.
+or not a sandbox is available, because it is a question, not an attempt. The
+`hosts=none` field is a fixed fixture: this tool has no per-host wall rule, so
+the token is always `none` and is printed only to keep the check line's shape
+beside the swarm's.
 
 The binary is `nova-sandbox`, and that is its only name (Glenn: "I like
 nova-sandbox").
@@ -521,7 +524,7 @@ PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>
 POLICY OK backend=<name> read=<n> write=<n> bytes=<n>
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
-CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> note=<one clause|->
+CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> hosts=none note=<one clause|->
 SANDBOX VERSION tool=nova-sandbox version=<n> backend=<name> platform=<os>
 ```
 

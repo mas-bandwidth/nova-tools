@@ -1,7 +1,7 @@
 exit=0
 --- stdout
 INBOX SCOPE mode=full cursor=- changed=0 carrying=602
-INBOX OPEN carrying=602 heard=0
+INBOX OPEN carrying=602 heard=0 large=true remedy=reply or receipt each note, or close --before <instant> as an explicit bulk cutoff
 INBOX NOTE id=bo-abcdef012345 from=Bo addr=to at=2026-09-07T00:01:00Z path=from-bo/2026-09-07T0001Z-a-question-abcdef012345.md: A question about the gate
 INBOX NOTE id=bo-b00000000599 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-599.md: big 599
 INBOX NOTE id=bo-b00000000598 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-598.md: big 598
@@ -23,6 +23,5 @@ INBOX NOTE id=bo-b00000000583 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-
 INBOX NOTE id=bo-b00000000582 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-582.md: big 582
 INBOX NOTE id=bo-b00000000581 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-581.md: big 581
 INBOX OPEN listed=20 and 582 more (--open-max to widen)
-INBOX OPEN carrying=602 is large; answer with Re: <id>, receipt --note <id>, or start over: nova-bus inbox --bus "<bus>" --as "Ada" --receipt-max-words 40 --full --legacy-now --advance --remote "<remote>" --branch "<branch>"
 INBOX OK as=Ada carrying=602 open=602 notes=601 receipts=1 heard=0 unaddressed=0 unreadable=0
 --- stderr

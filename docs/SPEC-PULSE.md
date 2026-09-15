@@ -52,7 +52,11 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    command, verbatim output, expected, smallest fix), `audits` (`owner/repo` — open issues
    whose body has a `MISSING:` or `DRIFT` line, one candidate per such line), `bus` (a
    nova-bus checkout — open notes whose body has a `slices:` block, one candidate per slice),
-   `roadmap` (a lisp file under `docs/roadmaps/` — every cell whose `:card` names a template).
+   `roadmap` (a lisp file under `docs/roadmaps/` — every cell whose `:card` names a template),
+   `work` (a nova-work checkout — bug nodes and item nodes that are open, unleased and
+   unblocked, one candidate per node). A `work` node is unleased when no `launch` currently
+   holds it and unblocked when it is not waiting on a merge; the node id rides on the card's
+   line 1 (rule 5) so `harvest` can record the attempt on the node (rule 11).
    A missing `--sources` is `refusing to guess`, exit 2. A source that cannot be read — a
    `gh` non-zero, a bus checkout that is not one, a roadmap file that does not parse — is one
    `POOL REFUSED` line naming the source and the remedy, exit 2, and no `pool.tsv` is written:
@@ -60,7 +64,8 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    rule 7: a dead source is never green).
 2. **`pool.tsv` is five fields, one candidate per line, in source order.** `source`, `id`,
    `kind`, `title`, `template`. `id` is the issue number, the audit line's `<issue>#<n>`,
-   the note id and slice ordinal, or the roadmap cell name. `template` is the source's unless
+   the note id and slice ordinal, the roadmap cell name, or the work node id. `template` is
+   the source's unless
    the item names one: an issue body line `template: <name>`, a slice's `template:` word, or
    the cell's `:card`. A candidate whose (`source`,`id`) is already in `<root>/seen.tsv` with
    state `carded`, `running` or `pr` is not re-pooled; a `retry` state is, so a rewritten
@@ -171,11 +176,15 @@ The loop ends only when the pool and the queue are both empty, and then it says 
 ## The verbs
 
 ```
-nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
+nova-pulse pool    --sources <file> --work <nova-work root> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--timeout <s>] [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--timeout <s>] [--max <n>]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--timeout <s>] [--max-body-bytes <n>] [--max <n>]
+nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--timeout <s>] [--max <n>]
+nova-pulse handoff --to <name> --root <dir>
+nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--max <n>]
+nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse width   --root <dir> --pool <pool.tsv>
+nova-pulse status  --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse version
 nova-pulse help
 ```
@@ -186,6 +195,58 @@ Those lines are the string `nova-pulse help` prints, byte for byte. `--timeout <
 (SPEC-MERGE.md:458). `harvest` takes `--sources` and `--templates` because its last act is
 `pool` and `cut` again (rule 15). There is no `--model`, no `--priority`, no `--retry`.
 
+## Handoff
+
+The manager shift is the coordinator's turn on a queue, and it ends by handoff and begins again
+by takeover. `handoff --to <name>` ends the shift: it writes the `SHIFT END` line, stops the
+loop, releases the `OWNER` lock (name, host, pid, since), writes a `HANDOFF` record (last
+`WIDTH`, in-flight cards by bench, pending, escalations open, benches and state) and posts
+one bus note to the successor carrying the record. It refuses mid-harvest — it finishes the
+harvest first — and refuses when the successor is asleep by `nova-wake awake`, and then
+prints `HANDOFF OK`. `takeover --as <name>` refuses when `OWNER` names a live process on a
+reachable host (`TAKEOVER REFUSED owner=<name> pid=<n> host=<h>`); a stale lock is taken with
+one `NOTE` line, then the loop and a manager shift start on the same queue and it prints
+`TAKEOVER OK`. When nova-work is open, `handoff` also moves the coordinator ownership record
+in the tree — generation, token, fencing, the `:handoff` event SPEC-WORK names.
+
+The `OWNER` lock and the `HANDOFF` record live under `<root>/queue/` as files, both
+tab-separated. `OWNER` is `name`, `host`, `pid`, `since`. `HANDOFF` is `to`, `from`,
+`width` (the last `PULSE WIDTH` line), `in-flight` (cards by bench), `pending`, `escalations`,
+`benches` and `state`.
+
+## Status
+
+`nova-pulse status --queue <dir> --roots <dirs> [--day <d>]` is the one-verb answer to the
+all-day questions — what runs where, how wide, at max throughput, what landed and who adopted
+it, what is in flight and what remains and how long, what new work appeared, are we converging.
+It prints, no model, at most 20 lines, eight line kinds, each one line, counts not lists:
+
+- `WIDTH <bench>`, one per bench in scope — `running` jobs, `slots`, `load`, `headroom`.
+- `QUEUE` — `pending`, `gated` (waiting on a merge or a hold), `launched`, `done`, `failed`.
+- `RATE` — `cards_per_hour`, `p50_s`, `p90_s`, `usd_per_card`, `parallelism`, from `usage.tsv`.
+- `REMAINING` — `queue` rows, `unread_prs`, `dirty_prs`, `uncarded_issues`, `hours`, in scope only.
+- `CONTRACTION` — cards `cut/done`, prs `opened/merged`, issues `filed/closed`, for the last hour and the day, counted, never from a report body.
+- `ADOPTION <friend>`, one per friend, coordinator included — `version`, `receipt`, `edges`, from the ADOPT files and bus receipts.
+- `OPEN` — `dogfood`, `holds`, `escalations`.
+- `TOOLS` — `merged_since_adoption` and the names, from `gh` cached per tick.
+
+Sources: the queue, `usage.tsv`, the ADOPT files, bus receipts, `gh` (cached per tick). In
+nova-work, `check` carries the same lines from the tree and the journal (nodes minted per node
+closed, remaining by depth, completion by epic) once the tree is the pool (#500). Prototype:
+`bin/status.sh`. The grammar, one line each, counts not lists:
+
+```
+STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
+STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
+STATUS RATE cards_per_hour=<n> p50_s=<n> p90_s=<n> usd_per_card=<n> parallelism=<n>
+STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
+STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed>
+STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed>
+STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
+STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
+STATUS TOOLS merged_since_adoption=<n> <names>
+```
+
 ## Exit codes and the output grammar
 
 Per SPEC.md: **0** the verb ran and the state it reports is consistent — a pool written, cards
@@ -195,7 +256,7 @@ a harvest with `mismatch > 0` or `abstain > 0`, a cut with `skipped > 0`; **2** 
 state the coordinator must act on, and it exits like a refusal so a wake fires on it).
 
 ```
-POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
+POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> work=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
 POOL REFUSED source=<kind>:<locator>: <reason> (<remedy>)
 CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
 CUT SKIPPED source=<kind> id=<id> template=<name>: no template
@@ -210,15 +271,20 @@ HARVEST REFUSED id=<id>: <reason> (<remedy>)
 PULSE WIDTH in-flight=<n> free=<n> pool=<n> queued=<n>
 PULSE UNDER-WIDTH pool=<n> free=<n>: launch
 PULSE POOL EMPTY in-flight=<n>
+HANDOFF OK to=<name> inflight=<n> pending=<n> escalations=<n>
+HANDOFF REFUSED: <reason> (<remedy>)
+TAKEOVER OK from=<name> inherited=<inflight/pending/escalations>
+TAKEOVER REFUSED owner=<name> pid=<n> host=<h> (wait, or clear the stale lock)
 <TOKEN> MORE kind=<k> shown=<n> total=<t> <remedy>
 <TOKEN> NOTE <something true about this run that is not a finding>
 ```
 
-`POOL`, `CUT`, `PULSE` and `HARVEST` are the first tokens; `OK`, `REFUSED`, `WIDTH`,
-`UNDER-WIDTH` and `POOL EMPTY` the verdicts and the **last** line of a verb; `harvest`'s last
-line is the `PULSE` line of the pulse it launched, or `PULSE POOL EMPTY`. `OK` and `WIDTH`
-lines go to stdout, `REFUSED` and `UNDER-WIDTH` to stderr. Every line is one line; a count
-stands where a list would be; every refusal carries one remedy in parentheses.
+`POOL`, `CUT`, `PULSE`, `HARVEST`, `HANDOFF` and `TAKEOVER` are the first tokens; `OK`,
+`REFUSED`, `WIDTH`, `UNDER-WIDTH` and `POOL EMPTY` the verdicts and the **last** line of a
+verb; `harvest`'s last line is the `PULSE` line of the pulse it launched, or
+`PULSE POOL EMPTY`. `OK` and `WIDTH` lines go to stdout, `REFUSED` and `UNDER-WIDTH` to
+stderr. Every line is one line; a count stands where a list would be; every refusal carries
+one remedy in parentheses.
 
 ## The card, as `cut` writes it
 
@@ -258,6 +324,64 @@ after line 2. `<head>` is the repo's default-branch head at cut time, read once 
   transcript, never scores a finding. The swarm's packet is the whole read.
 - **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `--then`;
   the alarm is `width`, run by nova-wake or a person.
+
+## The manager tier
+
+Stella's answer to Glenn's *"I want the intelligence; I don't want to spend it sending out jobs
+and reading results"* is a third tier between planning and work. **Planning** is a person and
+the strong model: decisions, specs, rules; its output is cards and notes. **Manager** is a bounded
+controller on the cheapest qualified model: it owns the bus wait, harvests, triages abstains
+and HOLD reads by rewriting cards from templates, files dogfood issues, cuts fix cards, merges
+non-draft PRs on an approving read plus green CI, and escalates a decision as one line.
+**Work** is swarms and local models. Manager is where the intelligence is spent once and the
+scatter-gather is spent never.
+
+Manager executes an approved finite policy and never expands it; it is the single owner of the bus
+wait; it keeps one card per work item, deduplicated on the contract line; it revalidates the PR
+head before any side effect; it runs an explicit shift length and ends with a handoff line; quiet
+time makes no model call and sends no status note; state is published mechanically (the `WIDTH`
+line); a note goes out only on a meaningful change; and it never merges a draft spec, never edits
+a spec, never addresses the person. Measurement is cost per accepted decision across all tiers
+(provider-priced input, output, cache, plus review and retry), with wrong or missed decisions
+and recovery latency as gates.
+
+The escalation line, one line, one decision not in the policy:
+
+```
+ESCALATE <stamp> <kind> <ref>: <one line>
+```
+
+The handoff at the end of a shift:
+
+```
+SHIFT END cycles=<n> decisions=<n> escalations=<n>
+```
+
+The tier is a verb, and the verb makes no model call:
+
+```
+nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
+```
+
+One cycle is: `nova-bus wait` in the foreground with the policy's timeout (the one call a
+quiet cycle makes); receipt every `START` and `DONE` note and append every other note to
+`<queue>/ESCALATE` as one line, composing no reply; harvest every card whose job holds a
+`RESULT.md` — push its branch by explicit refspec, open or update its PR, cut its read card
+from `<queue>/templates`, and refuse a fix PR carrying neither a `red:` line nor a test file
+in its diff; triage each abstain by its reason token, requeueing it once under a new number
+on the other bench and escalating the second; merge a non-draft PR whose read said `APPROVE`
+once the head revalidates and every check is `SUCCESS`, never on `HOLD`; refill the queue
+from the policy's sources to its floor, deduplicated on PR number, issue number and the
+contract sentence, in the policy's scope, leaving `AFTER: PR<n> merged` gates gated; and
+write one `MANAGER` line to `<queue>/MANAGER.log`. The policy is key=value lines —
+`wait-timeout`, `floor`, `scope-regex`, `sources`, `known-flakes`, `max-attempts` — and an
+unknown key is a refusal, exit 2, because a policy the tool half-understands is a policy
+nobody approved.
+
+Replays: `manager-never-expands-policy`, `manager-quiet-time-makes-no-call`,
+`manager-dedups-on-contract-line`, `manager-revalidates-head-before-merge`,
+`manager-never-merges-draft`, `manager-shift-ends-with-handoff`,
+`manager-requeues-once-then-escalates`, `manager-refuses-fix-pr-without-test`.
 
 ## Tests this spec demands
 
@@ -337,6 +461,41 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
     value is one token; `--max 0` prints all; `--max -1` is exit 2.
 22. `every-refusal-names-its-remedy`: every refusal in the package lives in one table the
     test walks; each ends in a parenthesised remedy, and removing one turns the test red.
+23. `pool-reads-work-nodes`: a `work` source with one open, unleased, unblocked bug node and
+    one open, unleased, unblocked item node yields `work=2`, two `pool.tsv` rows whose `id` is
+    the node id, and `candidates=2`; a node that is leased or blocked is nowhere; the id is
+    carried on the card's line 1 so `harvest` records the attempt on the node.
+24. `handoff-writes-record-and-note`: `handoff --to <name>` ends the shift — `SHIFT END` on
+    stdout, the loop stopped — writes `<root>/queue/OWNER` freed and `<root>/queue/HANDOFF`
+    with the last width, in-flight by bench, pending, escalations, benches and state, and the
+    fixture bus records one note to the successor carrying the record; `HANDOFF OK
+    to=<name> inflight=<n> pending=<n> escalations=<n>`.
+25. `handoff-refuses-asleep-successor`: the fixture `nova-wake awake <name>` exits non-zero —
+    `HANDOFF REFUSED` naming the remedy, exit 2, no record, no note, `OWNER` unchanged.
+26. `handoff-finishes-harvest-first`: a harvest in progress is finished before the handoff
+    proceeds; a fixture mid-harvest is refused with the remedy and the harvest's line is
+    still printed.
+27. `takeover-refuses-live-owner`: `OWNER` names a live process on a reachable host —
+    `TAKEOVER REFUSED owner=<name> pid=<n> host=<h>`, exit 2, nothing taken.
+28. `takeover-takes-stale-lock-with-note`: `OWNER` names a dead process or an unreachable
+    host — the lock is taken, one `NOTE` line says so, and the loop and a manager shift start on
+    the same queue.
+29. `takeover-inherits-queue`: the taken `HANDOFF` record's inflight, pending and
+    escalations are inherited and printed as `TAKEOVER OK from=<name>
+    inherited=<inflight/pending/escalations>`.
+30. `status-is-bounded`: at the largest plausible state — every bench and every friend in
+    scope — `status` prints at most `--max` lines over both streams with one `MORE` line per
+    capped kind; every value is one `internal/oneline` token.
+31. `status-contraction-from-counts`: the `CONTRACTION` hour and day lines equal the counted
+    cards `cut/done`, prs `opened/merged` and issues `filed/closed` from the queue,
+    `usage.tsv` and `gh`; a line built from a list or a report body is the mutation that
+    matters.
+32. `status-adoption-includes-coordinator`: the `ADOPTION` lines name every friend, the
+    coordinator included, one line each with `version`, `receipt` and `edges`; a missing
+    coordinator line is red.
+33. `status-remaining-counts-in-scope-only`: `REMAINING` counts queue rows, unread PRs, dirty
+    PRs and uncarded issues in scope only — a bench or friend outside `--roots <dirs>` is
+    nowhere on the line.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 

@@ -26,6 +26,8 @@ reads the counts in the morning; the tool has no clock of its own — no daemon,
 no `--watch`, no state file of its own (rule 25's snapshot is the caller's, named by flag)
 — nothing reacts to its exit code, no verdict starts an `apply`.
 
+`nova-version snapshot --bin <dir> --out <file> [--owner <name>]` writes the rule-2 manifest a report needs as a hand-editable draft (card 306): it scans the directory for `nova-*` executables, runs each with a single `version` argument (bounded, 5s each, rule 4's read of its first line), and writes one tab-separated line per tool with `kind=binary`, `installed=<version>`, `latest=-` and `apply=-` — unknown, never guessed — and `owner` from `--owner` or `-`. A tool whose version cannot be read is counted in `unreadable=` on the single `SNAPSHOT OK tools=<n> unreadable=<n> out=<path>` line and never written, so no line pretends a version it could not read; the first line is rule 2's header, byte for byte, for a person to promote `kind` by hand.
+
 ## The rules, numbered
 
 1. **One file, named by a flag, kept in git.** Every entry comes from the file
