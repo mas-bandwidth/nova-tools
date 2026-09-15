@@ -259,6 +259,42 @@ after line 2. `<head>` is the repo's default-branch head at cut time, read once 
 - **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `--then`;
   the alarm is `width`, run by nova-wake or a person.
 
+## The duty tier
+
+Stella's answer to Glenn's *"I want the intelligence; I don't want to spend it sending out jobs
+and reading results"* is a third tier between planning and work. **Planning** is a person and
+the strong model: decisions, specs, rules; its output is cards and notes. **Duty** is a bounded
+controller on the cheapest qualified model: it owns the bus wait, harvests, triages abstains
+and HOLD reads by rewriting cards from templates, files dogfood issues, cuts fix cards, merges
+non-draft PRs on an approving read plus green CI, and escalates a decision as one line.
+**Work** is swarms and local models. Duty is where the intelligence is spent once and the
+scatter-gather is spent never.
+
+Duty executes an approved finite policy and never expands it; it is the single owner of the bus
+wait; it keeps one card per work item, deduplicated on the contract line; it revalidates the PR
+head before any side effect; it runs an explicit shift length and ends with a handoff line; quiet
+time makes no model call and sends no status note; state is published mechanically (the `WIDTH`
+line); a note goes out only on a meaningful change; and it never merges a draft spec, never edits
+a spec, never addresses the person. Measurement is cost per accepted decision across all tiers
+(provider-priced input, output, cache, plus review and retry), with wrong or missed decisions
+and recovery latency as gates.
+
+The escalation line, one line, one decision not in the policy:
+
+```
+ESCALATE <stamp> <kind> <ref>: <one line>
+```
+
+The handoff at the end of a shift:
+
+```
+SHIFT END cycles=<n> decisions=<n> escalations=<n>
+```
+
+Replays: `duty-never-expands-policy`, `duty-quiet-time-makes-no-call`,
+`duty-dedups-on-contract-line`, `duty-revalidates-head-before-merge`,
+`duty-never-merges-draft`, `duty-shift-ends-with-handoff`.
+
 ## Tests this spec demands
 
 Acceptance replays, one per rule that can be made red, each proven able to fail by a mutation
