@@ -117,10 +117,10 @@ jobs:
 
   test-packages:
     # The list the CL tier's test shards run on, READ OUT OF THE SOURCE rather
-    # than written down: one job per ./cmd/<tool>, plus ./internal/... grouped
-    # round-robin into at most eight groups, and every group is scheduled on
-    # BOTH a Linux space runner and a macOS studio runner so the 4+4 self-hosted
-    # runners stay busy in parallel.
+    # than written down: ./cmd/* and ./internal/... dealt round-robin into at
+    # most eight groups, and every group scheduled on BOTH a Linux space runner
+    # and a macOS studio runner so the 4+4 self-hosted runners stay busy in
+    # parallel.
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
@@ -201,13 +201,13 @@ jobs:
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
 
   test:
-    # THE UNIT TESTS, SHARDED, no race detector, one job per ./cmd/<tool> plus
-    # ./internal/... in at most eight groups, fanned out across the self-hosted
-    # Linux space runners and the self-hosted macOS studio runners in parallel
-    # with fail-fast off, so a red leg does not cancel its siblings. Each leg
-    # builds, vets and tests only its own group; the slowest single shard — not
-    # the sum — is what a change waits on. The whole-tree `-race` run is the
-    # certification tier's `test` job.
+    # THE UNIT TESTS, SHARDED, no race detector: ./cmd/* and ./internal/... in
+    # at most eight groups, each group fanned out onto the self-hosted Linux
+    # space runners and the self-hosted macOS studio runners in parallel with
+    # fail-fast off, so a red leg does not cancel its siblings. Each leg vets
+    # and tests only its own group. Measured green end to end in run
+    # 35021822106: sixteen legs from 14 s to 251 s, whole run 5 m 57 s. The
+    # whole-tree `-race` run is the certification tier's `test` job.
     name: test (${{ matrix.entry.name }})
     needs: test-packages
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
