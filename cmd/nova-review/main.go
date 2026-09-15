@@ -138,7 +138,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	}
 	repo := filepath.Join(*lane, merge.RepoDir)
 	oldHead := entry.OID
-	current, err := fetchEntryHead(ctx, repo, *pr, *branch)
+	current, err := fetchEntryHead(ctx, repo, *pr, *branch, st.Repo)
 	if err != nil {
 		return refuse(errOut, fmt.Sprintf("could not fetch the entry head: %v", err))
 	}
@@ -369,13 +369,20 @@ func gitOut(ctx context.Context, repo string, args ...string) (string, error) {
 // `pull/<n>/head` for a PR, the branch itself for a branch, then reads the fetched commit
 // back out of FETCH_HEAD. The fetch is the verb's one way to learn a head the remote moved
 // (a force-push) without trusting a local ref that has not been updated.
-func fetchEntryHead(ctx context.Context, repo string, pr int, branch string) (string, error) {
+//
+// A PR head comes from the GitHub remote the lane's --repo names (https://github.com/<owner>/<name>.git),
+// never from the lane's --remote: --remote is the record-branch push target, and a local
+// rehearsal remote has no pull/*/head refs (#449). A branch entry still fetches from the
+// lane remote as before.
+func fetchEntryHead(ctx context.Context, repo string, pr int, branch, hostRepo string) (string, error) {
 	refspec := branch
+	remote := "origin"
 	if pr > 0 {
 		refspec = fmt.Sprintf("pull/%d/head", pr)
+		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
 	}
-	if _, err := gitOut(ctx, repo, "fetch", "origin", refspec); err != nil {
-		return "", err
+	if _, err := gitOut(ctx, repo, "fetch", remote, refspec); err != nil {
+		return "", fmt.Errorf("fetching %q from %q: %w", refspec, remote, err)
 	}
 	return gitOut(ctx, repo, "rev-parse", "FETCH_HEAD")
 }
