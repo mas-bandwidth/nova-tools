@@ -41,6 +41,7 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
+  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir>
   nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
   nova-swarm status    --pool <dir> [--max <n>]
@@ -56,6 +57,7 @@ usage:
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher
 that exited with tasks pending and nothing running, a reclaim with no usage file
@@ -172,6 +174,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdReclaim(rest, stdout, stderr)
 	case "quickstart":
 		return cmdQuickstart(rest, stdout, stderr)
+	case "native":
+		return cmdNative(rest, stdout, stderr)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
 }
@@ -1234,6 +1238,67 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "QUICKSTART NOTE a task is a file: nova-swarm add --pool %s --task <file> --files <n> --tokens <n>\n", oneline.Escape(p.Dir))
 	fmt.Fprintf(stdout, "QUICKSTART NOTE a worker description says whose model runs: nova-swarm run --pool %s --workers <n> --hours <h> --worker <file>\n", oneline.Escape(p.Dir))
 	fmt.Fprintf(stdout, "QUICKSTART NOTE the conditions are worth more than the model: nova-swarm template --name read-pr\n")
+	return 0
+}
+
+func cmdNative(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("native")
+	harness := f.fs.String("harness", "", "")
+	model := f.fs.String("model", "", "")
+	cardPath := f.fs.String("card", "", "")
+	slot := f.fs.String("slot", "", "")
+	root := f.fs.String("root", "", "")
+	deadline := f.fs.String("deadline", "", "")
+	label := f.fs.String("label", "", "")
+	auth := f.fs.String("auth", "", "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*harness, "harness", "the harness binary path, checked for existence and execution")
+	f.want(*model, "model", "the model to run: provider/model, one slash, both sides nonempty")
+	f.want(*cardPath, "card", "the path to the card file")
+	f.want(*slot, "slot", "the slot directory this run executes in")
+	f.want(*root, "root", "the configured root the slot directory must sit under")
+	f.want(*deadline, "deadline", "the wall duration that kills the child (e.g. 60s, 5m)")
+	if f.refused(stderr) {
+		return 2
+	}
+	d, err := time.ParseDuration(*deadline)
+	if err != nil || d <= 0 {
+		fmt.Fprintf(stderr, "nova-swarm native: --deadline wants a positive duration: %s\n", oneline.Err(err))
+		return 2
+	}
+	cardRaw, err := os.ReadFile(*cardPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-swarm native: --card wants a readable file: %s\n", oneline.Err(err))
+		return 2
+	}
+	lbl := *label
+	if lbl == "" {
+		lbl = strings.TrimSuffix(filepath.Base(*cardPath), filepath.Ext(*cardPath))
+	}
+	cfg := nativeRunConfig{
+		binary:   *harness,
+		model:    *model,
+		label:    lbl,
+		card:     cardRaw,
+		slotDir:  *slot,
+		root:     *root,
+		authFile: *auth,
+		deadline: d,
+	}
+	res, code := nativeRun(cfg, stderr)
+	if code != 0 {
+		return code
+	}
+	fmt.Fprintf(stdout, "NATIVE OK label=%s rc=%d wall=%.2fs card_sha256=%s binary_sha256=%s\n",
+		oneline.Field(cfg.label), res.rc, res.wallSeconds, oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256))
+	if res.rc != 0 {
+		if res.rc > 0 {
+			return res.rc
+		}
+		return 1
+	}
 	return 0
 }
 

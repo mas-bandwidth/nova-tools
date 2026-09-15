@@ -217,3 +217,47 @@ func TestNativeRunRefusalsNameTheirReason(t *testing.T) {
 		})
 	}
 }
+
+// TestCmdNativeCLI verifies the native subcommand entry point via run().
+func TestCmdNativeCLI(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	cardPath := filepath.Join(root, "card.md")
+	if err := os.WriteFile(cardPath, []byte("test card line 1\nline 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Missing flags -> exit 2 with refusal
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{"native"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+	if rc != 2 {
+		t.Fatalf("missing flags must exit 2, got %d", rc)
+	}
+	if !strings.Contains(stderr.String(), "--harness is required") {
+		t.Fatalf("expected --harness is required, got:\n%s", stderr.String())
+	}
+
+	// Success run -> exit 0 with NATIVE OK
+	stdout.Reset()
+	stderr.Reset()
+	args := []string{
+		"native",
+		"--harness", bin,
+		"--model", "fake/fake-model",
+		"--label", "test-label",
+		"--card", cardPath,
+		"--slot", slot,
+		"--root", root,
+		"--deadline", "10s",
+	}
+	rc = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	if rc != 0 {
+		t.Fatalf("native run must exit 0, got %d:\nstdout: %s\nstderr: %s", rc, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "NATIVE OK") {
+		t.Fatalf("stdout must contain NATIVE OK, got:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "label=test-label") {
+		t.Fatalf("stdout must contain label=test-label, got:\n%s", stdout.String())
+	}
+}
