@@ -310,6 +310,35 @@ func (p *Pool) Free(n int) error {
 	return os.Remove(gone)
 }
 
+// FreeIf releases a slot only when the file still carries the launch nonce that
+// selected it. Recovery must never free a newer reservation that reused the number.
+func (p *Pool) FreeIf(n int, nonce string) error {
+	release, err := p.TakeLock(SlotsLock, SlotsWait)
+	if err != nil {
+		return err
+	}
+	defer release()
+	path := p.slotPath(n)
+	sf, err := p.ReadSlot(n)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if sf.Nonce != nonce {
+		return fmt.Errorf("slot %d nonce changed under recovery", n)
+	}
+	gone := path + ".freed"
+	if err := renameSteady(path, gone); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return os.Remove(gone)
+}
+
 func writeSlot(path string, sf SlotFile) error {
 	raw, err := json.MarshalIndent(sf, "", "  ")
 	if err != nil {

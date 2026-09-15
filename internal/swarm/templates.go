@@ -38,7 +38,19 @@ const templateReadPR = `read-pr — read one pull request against the rules
    the top, before the work; the findings are the work. A finished read that
    found nothing is NOT a failed task: write the ` + "`## Head`" + ` with ` + "`findings: 0`" + `.
    Never report a finding to have something to report.
-6. Check the board before reporting: a card that already names this is a ` + "`dup:`" + `.
+6. If a board was supplied, check it before reporting: a card that already names
+   this is a ` + "`dup:`" + `. Do not search for an unspecified board.
+
+Keep RESULT.md concise: omit progress narration, praise, repeated task text, and a
+separate summary. Each finding keeps its proof in compact form: severity, ` + "`file:line`" + `,
+the exact quoted rule, the fix, and ` + "`dup:`" + ` status when applicable. Retain every valid
+finding, its context and evidence, and any coverage limitation; do not drop context or
+evidence by default. Brevity is a soft target: never hard-truncate findings or proof; if
+the report overflows, preserve the proof and say so. Preserve the complete RESULT.md
+shape and its mandatory ` + "`## Head`" + `, ` + "`## Findings`" + `, ` + "`## Per item`" + `, ` + "`## Gates`" + `,
+` + "`## Left owed`" + `, and ` + "`## One line`" + ` sections.
+In Gates, distinguish source checks from tests and report-writing commands.
+Mark only checks actually performed as pass; no tests run does not mean no commands run.
 `
 
 const templateProbeRow = `probe-row — make one claim true or false

@@ -2975,6 +2975,19 @@ trigger. `the gate` and `The Gate` are two notes on a busy lane and a tool that
 folded them would close the wrong one and say it had closed the right one; a
 `RE:` in a subject is worth one line a reader can ignore.
 
+**The three above close the gap for a line that is already drafting with this
+tool. The turns spent GETTING to the draft are a separate cost**, and they are
+not small: finding the id, pulling so that the id resolves against something
+current, typing the header keys from memory, and being refused — correctly, and
+after the work — for having saved the draft inside the bus checkout. A proposed
+`draft --reply-to` that refreshes from a named remote, resolves the target
+against what the fetch left, writes every header mechanically and puts the draft
+outside the protected checkout is specified in
+**[docs/SPEC-BUS-REPLY.md](SPEC-BUS-REPLY.md)**, the first bounded slice of
+issue #246. It is **proposed and not implemented**: no verb or flag in this
+section changes, `--reply-to` does not exist yet, and everything above is the
+behaviour the released tool has today.
+
 ### The receipt rule
 
 `receipt` appends one line to `from-<me>/RECEIPTS` and pushes it the same way a
@@ -4213,6 +4226,19 @@ Verbs: `add`, `batch`, `run`, `supervise`, `status`, `stop`, `requeue`,
 `reclaim`, `quickstart`, `version`.
 
 Its governing text is **[docs/SPEC-SWARM.md](SPEC-SWARM.md)**, which is
+normative; the Conventions above apply to it unchanged and are not restated
+there, and nothing it says is restated here.
+
+## nova-secrets — credentials for seats, pools and services
+
+One binary at the **credential layer**. It manages credentials sealed in a git
+store via age and sops — linking no direct cryptography, opening no sockets,
+storing no state of its own, and replacing its process under `RLIMIT_CORE = 0`
+to pass selected secrets into the child environment.
+
+Verbs: `version`, `exec`, `names`, `check`, `keygen`, `help`.
+
+Its governing text is **[docs/SPEC-SECRETS.md](SPEC-SECRETS.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 

@@ -92,6 +92,23 @@ func ReadFile(entry, who, head string, s Submission) string {
 	return path.Join(ReadsDir, entry, safeName(who)+"-"+Short(head)+"-"+s.ID()+".json")
 }
 
+// ReadItem constructs the one immutable read record. entry is already EntryDirName(id):
+// callers pass the record directory, never a raw pull request number or branch name.
+// Keeping the record's path and bytes here makes every writer use the same read format.
+func ReadItem(entry, who, head, verdict, note string, s Submission) (Item, error) {
+	file := ReadFile(entry, who, head, s)
+	rec := Read{Who: who, Verdict: verdict, Note: note, At: s.At, Head: head, File: file}
+	if err := ValidRead(rec); err != nil {
+		return Item{}, err
+	}
+	body, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return Item{}, err
+	}
+	body = append(body, '\n')
+	return Item{Path: file, Body: body}, nil
+}
+
 // GateFile is where one gate record lives: gates/<entry>/<head12>-<base12>-<at>-<rand6>.json
 func GateFile(entry, head, base string, s Submission) string {
 	return path.Join(GatesDir, entry, Short(head)+"-"+Short(base)+"-"+s.ID()+".json")
@@ -117,6 +134,10 @@ func safeName(who string) string {
 	}
 	return b.String()
 }
+
+// RecordName is the stable filename component for a record's actor. Record formats outside
+// this package use it instead of duplicating the path codec beside the writer that owns it.
+func RecordName(who string) string { return safeName(who) }
 
 // EntryDirName is the directory one entry's records live in: the pull request's number or
 // the branch's name with its slashes flattened, so that reads/<entry>/ is one level and
@@ -480,6 +501,114 @@ func (r *Records) FetchTip() (string, error) {
 	return r.Git.Out("rev-parse", "FETCH_HEAD")
 }
 
+const reportFetchedRefPrefix = "refs/nova-review/fetched/"
+
+var newReportFetchNonce = func() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// WithFetchedReportTip acquires the lane branch under a private, temporary ref and keeps
+// that ref reachable for every Git read the callback makes. Report verbs call
+// FoldFetchedTip and their later immutable-tree readers inside callback; returning a SHA
+// after its ref was removed would let a concurrent GC turn a report into a stale fallback.
+//
+// It neither takes the checkout lock nor reads FETCH_HEAD. The private ref is an
+// acquisition effect, not lane state: normal report operations get distinct cryptographic
+// names. That namespace is not a defence against somebody who deliberately writes a
+// private ref, so cleanup deletes only the exact OID this invocation installed.
+func (r *Records) WithFetchedReportTip(callback func(fullSHA string) error) (err error) {
+	if callback == nil {
+		return errors.New("fetched report tip needs a callback")
+	}
+	source, err := reportSourceRef(r.Branch)
+	if err != nil {
+		return err
+	}
+	nonce, err := newReportFetchNonce()
+	if err != nil {
+		return fmt.Errorf("could not draw a private report-fetch name: %w", err)
+	}
+	ref, err := reportFetchedRef(nonce)
+	if err != nil {
+		return err
+	}
+	marker, err := r.Git.Out("rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return fmt.Errorf("could not reserve a private report-fetch ref without a local commit: %w", err)
+	}
+	if !IsSHA(marker) {
+		return fmt.Errorf("could not reserve a private report-fetch ref: HEAD resolved to %q, not a full commit sha", marker)
+	}
+	const nullSHA = "0000000000000000000000000000000000000000"
+	if _, err := r.Git.Run("update-ref", "--no-deref", ref, marker, nullSHA); err != nil {
+		return fmt.Errorf("could not reserve private report-fetch ref %s: %w", ref, err)
+	}
+
+	// Before fetch succeeds, marker is the only OID this invocation can prove it owns. A
+	// failed fetch may have changed the ref, but adopting that new value would let cleanup
+	// delete another operation's replacement. The expected-old delete below preserves it.
+	expected := marker
+	defer func() {
+		if _, cleanupErr := r.Git.Run("update-ref", "--no-deref", "-d", ref, expected); cleanupErr != nil {
+			cleanupErr = fmt.Errorf("could not remove private report-fetch ref %s at owned %s: %w", ref, expected, cleanupErr)
+			if err == nil {
+				err = cleanupErr
+			} else {
+				err = fmt.Errorf("%w; %v", err, cleanupErr)
+			}
+		}
+	}()
+
+	if _, err := r.Git.Run(
+		"-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "fetch.writeCommitGraph=false",
+		"fetch", "--no-write-fetch-head", "--no-tags", "--no-recurse-submodules", "--refmap=",
+		// The plus is not expected-old CAS: the random private namespace and successful
+		// reservation cover normal concurrent report calls, not a deliberate writer of
+		// that reserved ref. --refmap= keeps shared remote-tracking refs out.
+		"--", r.Remote, "+"+source+":"+ref,
+	); err != nil {
+		return fmt.Errorf("could not fetch report tip: %w", err)
+	}
+	tip, err := r.Git.Out("rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	if err != nil {
+		return fmt.Errorf("could not resolve private report-fetch ref %s: %w", ref, err)
+	}
+	if !IsSHA(tip) {
+		return fmt.Errorf("private report-fetch ref %s resolved to %q, not a full commit sha", ref, tip)
+	}
+	expected = tip
+	if err := callback(tip); err != nil {
+		return fmt.Errorf("could not use fetched report tip %s: %w", tip, err)
+	}
+	return nil
+}
+
+func reportSourceRef(branch string) (string, error) {
+	if err := ValidRefName(branch); err != nil {
+		return "", fmt.Errorf("report fetch has invalid lane branch: %w", err)
+	}
+	if strings.HasPrefix(branch, "refs/") {
+		return "", fmt.Errorf("report fetch lane branch must be a short branch name, got %q", branch)
+	}
+	return "refs/heads/" + branch, nil
+}
+
+func reportFetchedRef(nonce string) (string, error) {
+	if len(nonce) != 32 {
+		return "", fmt.Errorf("private report-fetch nonce has %d characters, want 32", len(nonce))
+	}
+	for _, c := range nonce {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return "", fmt.Errorf("private report-fetch nonce %q is not lowercase hexadecimal", nonce)
+		}
+	}
+	return reportFetchedRefPrefix + nonce, nil
+}
+
 // FoldProblem is a record file the fold REFUSED. It is never skipped and never repaired:
 // the unreadable file may be the hold or the newer red, so the entry whose directory
 // holds it is blocked for the pass, and a file whose path names no entry stops the pass
@@ -538,6 +667,13 @@ func (r *Records) Fold() (*Folded, error) {
 // the rest are surfaced by Packet (rule 23) exactly as Run surfaces them.
 func (r *Records) FoldReadOnly() (*Folded, error) {
 	list := func(dir string) ([]foldFile, error) { return readDirFiles(r.Lane, dir) }
+	return foldWithOneReread(list)
+}
+
+// foldWithOneReread is the checkout report-fold policy. The first read may have caught a
+// checkout restore in progress; one later parse is authoritative for a path that then
+// decodes. A problem that remains after both reads is retained by mergeFolds.
+func foldWithOneReread(list func(string) ([]foldFile, error)) (*Folded, error) {
 	first, err := foldFiles(list)
 	if err != nil {
 		return nil, err
@@ -610,34 +746,65 @@ func mergeFolds(a, b *Folded) *Folded {
 	return out
 }
 
-// FoldTip folds the record files of the FETCHED tip in memory, writing neither the state
-// nor the checkout. It is dry-run's fold.
+// FoldTip folds a Git tree-ish in memory, writing neither the state nor the checkout. It
+// keeps its legacy locked behavior; FetchTip is a separate operation with its own lock.
 func (r *Records) FoldTip(tip string) (*Folded, error) {
 	release, err := r.LockCheckout()
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	out, err := r.Git.Out("ls-tree", "-r", "--name-only", tip)
+	return r.foldTipTree(tip)
+}
+
+// FoldFetchedTip folds one already acquired immutable commit without taking the checkout
+// lock. It accepts only a full commit sha: mutable names such as HEAD and FETCH_HEAD would
+// make the two tree reads different snapshots, and state.json or the work tree is never a
+// fallback. Fetch acquisition itself remains a separate locked integration step.
+func (r *Records) FoldFetchedTip(tip string) (*Folded, error) {
+	if !IsSHA(tip) {
+		return nil, fmt.Errorf("fetched tip must be a full 40-character sha, got %q", tip)
+	}
+	kind, err := r.Git.Out("cat-file", "-t", tip)
+	if err != nil {
+		return nil, fmt.Errorf("could not inspect fetched tip %s: %w", tip, err)
+	}
+	if kind != "commit" {
+		return nil, fmt.Errorf("fetched tip %s is a %s, not a commit", tip, oneLineOf(kind))
+	}
+	paths, err := r.tipRecordPaths(tip)
 	if err != nil {
 		return nil, err
 	}
-	byDir := map[string][]string{}
-	for _, p := range strings.Split(out, "\n") {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(p, ReadsDir+"/"):
-			byDir[ReadsDir] = append(byDir[ReadsDir], p)
-		case strings.HasPrefix(p, GatesDir+"/"):
-			byDir[GatesDir] = append(byDir[GatesDir], p)
-		}
+	first, err := r.foldTipPaths(tip, paths)
+	if err != nil || len(first.Problems) == 0 {
+		return first, err
 	}
+	// The commit is immutable, so the tree listing remains one snapshot. Match the
+	// lock-free report policy without charging healthy records twice: only paths that
+	// first refused are shown once more at this same full SHA.
+	Sleep(reReadPause)
+	second, err := r.foldTipPaths(tip, foldProblemPaths(first.Problems))
+	if err != nil {
+		return nil, err
+	}
+	return mergeFolds(first, second), nil
+}
+
+// foldTipTree is the common immutable-object walk. FoldTip decides locking for its legacy
+// tree-ish API; FoldFetchedTip decides the full-SHA commit admission for report readers.
+func (r *Records) foldTipTree(tip string) (*Folded, error) {
+	paths, err := r.tipRecordPaths(tip)
+	if err != nil {
+		return nil, err
+	}
+	return r.foldTipPaths(tip, paths)
+}
+
+func (r *Records) foldTipPaths(tip string, paths map[string][]string) (*Folded, error) {
 	return foldFiles(func(dir string) ([]foldFile, error) {
 		var out []foldFile
-		for _, p := range byDir[dir] {
+		for _, p := range paths[dir] {
 			if !strings.HasSuffix(p, ".json") {
 				continue
 			}
@@ -649,6 +816,47 @@ func (r *Records) FoldTip(tip string) (*Folded, error) {
 		}
 		return out, nil
 	})
+}
+
+func foldProblemPaths(problems []FoldProblem) map[string][]string {
+	out := map[string][]string{}
+	seen := map[string]bool{}
+	for _, problem := range problems {
+		if seen[problem.File] {
+			continue
+		}
+		seen[problem.File] = true
+		switch {
+		case strings.HasPrefix(problem.File, ReadsDir+"/"):
+			out[ReadsDir] = append(out[ReadsDir], problem.File)
+		case strings.HasPrefix(problem.File, GatesDir+"/"):
+			out[GatesDir] = append(out[GatesDir], problem.File)
+		}
+	}
+	return out
+}
+
+// tipRecordPaths uses Git's NUL-delimited tree form. A newline-delimited list followed by
+// TrimSpace turns legal leading/trailing whitespace in a record path into another path;
+// these bytes stay exact through the show and the named fold problem.
+func (r *Records) tipRecordPaths(tip string) (map[string][]string, error) {
+	out, err := r.Git.Run("ls-tree", "-r", "-z", "--name-only", tip)
+	if err != nil {
+		return nil, err
+	}
+	byDir := map[string][]string{}
+	for _, p := range strings.Split(out, "\x00") {
+		if p == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(p, ReadsDir+"/"):
+			byDir[ReadsDir] = append(byDir[ReadsDir], p)
+		case strings.HasPrefix(p, GatesDir+"/"):
+			byDir[GatesDir] = append(byDir[GatesDir], p)
+		}
+	}
+	return byDir, nil
 }
 
 type foldFile struct {

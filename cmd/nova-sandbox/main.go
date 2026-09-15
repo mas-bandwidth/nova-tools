@@ -54,7 +54,7 @@ usage:
   --cwd <dir>     the command's working directory; must be inside a --write.
                   Default: the first --write. A cwd outside the wall denies
                   getcwd(3) and every git command dies before it reads anything.
-  --tmp <dir>     TMPDIR/TMP/TEMP for the child; must be inside a --write.
+  --tmp <dir>     TMPDIR/TMP/TEMP and zsh TMPPREFIX for the child; must be inside a --write.
                   Default: <first --write>/.nova-sandbox-tmp, the one directory
                   this tool creates.
   --net-deny      an ENFORCED network denial, or a refusal. Without it the tool

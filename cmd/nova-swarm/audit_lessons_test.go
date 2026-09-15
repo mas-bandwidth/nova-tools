@@ -3,10 +3,13 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // THE NEW-USER AUDIT (2026-09-11). Each test below is one footgun or one stumble a person
@@ -34,6 +37,141 @@ func TestARelativeWorkerDirWorksFromTheSlot(t *testing.T) {
 	mustContain(t, "the run", stdout, "dest=done")
 	if _, err := os.Stat(filepath.Join(b.pool, "reports", id, "RESULT.md")); err != nil {
 		t.Errorf("the worker's report belongs beside the pool: %v", err)
+	}
+}
+
+func TestMissingWorkerDirRefusesBeforeTaskAdmission(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a task must remain recoverable when preparation cannot start\nFAKE-FINDINGS 1\n")
+	missing := filepath.Join(b.dir, "worker-home-missing")
+	b.rewriteWorker(func(d map[string]any) { d["worker_dir"] = missing })
+
+	exit, stdout, stderr := b.run()
+	if exit != 2 {
+		t.Fatalf("missing worker_dir exits %d, want refusal:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "preparation refusal", stderr, "RUN REFUSED reason=prepare")
+	mustContain(t, "preparation refusal", stderr, "worker_dir")
+	if _, err := os.Stat(filepath.Join(b.pool, "pending", id+".task")); err != nil {
+		t.Fatalf("task remains pending after preparation refusal: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "running", id+".task")); err == nil {
+		t.Fatal("preparation refusal stranded the task in running/")
+	}
+	if entries, err := os.ReadDir(filepath.Join(b.pool, "slots")); err != nil {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Fatalf("preparation refusal left slot ownership behind: %d files", len(entries))
+	}
+
+	if err := os.MkdirAll(missing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(missing, "AGENTS.md"), "the worker's own self\n")
+	exit, stdout, stderr = b.run()
+	if exit != 0 {
+		t.Fatalf("the corrected worker_dir did not recover the pending task, exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "recovered run", stdout, "RUN DONE id="+id)
+}
+
+func TestPreparationFailureRollsTaskBackBeforeSupervisor(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a task must roll back when slot preparation fails\nFAKE-FINDINGS 1\n")
+	// worker_dir exists and passes the preflight, but the destination slot path is a file.
+	// RefreshSlot therefore fails deterministically before any supervisor can start.
+	blocker := filepath.Join(b.dir, "worker-home-1")
+	write(t, blocker, "not a directory\n")
+
+	exit, stdout, stderr := b.run()
+	if exit != 1 {
+		t.Fatalf("post-preflight preparation failure exits %d, want launch failure:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "launch failure", stdout, "RUN LAUNCH-FAILED id="+id)
+	mustContain(t, "launch failure", stdout, "preparation failed")
+	if _, err := os.Stat(filepath.Join(b.pool, "pending", id+".task")); err != nil {
+		t.Fatalf("task was not rolled back to pending: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "running", id+".task")); err == nil {
+		t.Fatal("post-preflight preparation failure stranded the task in running/")
+	}
+	raw, err := os.ReadFile(filepath.Join(b.pool, "pending", id+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sc struct {
+		Launch string `json:"launch"`
+		End    string `json:"end"`
+	}
+	if err := json.Unmarshal(raw, &sc); err != nil {
+		t.Fatal(err)
+	}
+	if sc.Launch != "failed" || sc.End != "launch-failed" {
+		t.Fatalf("pending sidecar lost preparation evidence: launch=%q end=%q", sc.Launch, sc.End)
+	}
+	if entries, err := os.ReadDir(filepath.Join(b.pool, "slots")); err != nil {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Fatalf("preparation failure left slot ownership behind: %d files", len(entries))
+	}
+
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr = b.run()
+	if exit != 0 {
+		t.Fatalf("the corrected slot preparation did not recover the task, exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "recovered run", stdout, "RUN DONE id="+id)
+}
+
+func TestPreparationRefusalStillMonitorsAdoptedJob(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	p, err := swarm.OpenPool(b.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveID := "adopted-preparation-test"
+	liveJob := filepath.Join(b.dir, "worker-home-1", "jobs", liveID)
+	if err := os.MkdirAll(liveJob, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Add([]byte("an adopted task"), swarm.Sidecar{ID: liveID, Files: 5, Tokens: 100000, Deadline: "30s", RC: -1, Job: liveJob, Slot: 1, Started: swarm.Stamp(time.Now().UTC())}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Claim(liveID, swarm.Pending, swarm.Running); err != nil {
+		t.Fatal(err)
+	}
+	liveCmd := exec.Command("sleep", "1")
+	if err := liveCmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = liveCmd.Wait() }()
+	if err := swarm.WriteJSON(filepath.Join(b.pool, "slots", "1.json"), swarm.SlotFile{
+		Job: liveID, JobDir: liveJob, State: swarm.SlotLaunched, Pid: liveCmd.Process.Pid,
+		PidStarted: swarm.StartStamp(liveCmd.Process.Pid), RunnerPid: 0, Nonce: "adopted-nonce",
+		LaunchedAt: swarm.Stamp(time.Now().UTC()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pendingID := b.add("a pending task waits for preparation\nFAKE-FINDINGS 1\n")
+	missing := filepath.Join(b.dir, "worker-home-missing")
+	b.rewriteWorker(func(d map[string]any) { d["worker_dir"] = missing })
+
+	exit, stdout, stderr := b.run()
+	if exit == 0 {
+		t.Fatalf("a preparation refusal with an adopted job must be nonzero:\n%s%s", stdout, stderr)
+	}
+	mustContain(t, "adoption", stdout, "RUN ADOPT id="+liveID)
+	mustContain(t, "preparation refusal", stderr, "RUN REFUSED reason=prepare")
+	if _, err := os.Stat(filepath.Join(b.pool, "pending", pendingID+".task")); err != nil {
+		t.Fatalf("pending task was lost while monitoring adopted work: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "running", liveID+".task")); err == nil {
+		t.Fatal("adopted task was abandoned in running/")
 	}
 }
 

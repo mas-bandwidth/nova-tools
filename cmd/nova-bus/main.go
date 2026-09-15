@@ -41,10 +41,12 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,12 +58,15 @@ const usage = `nova-bus: the bus, with the races taken out (see docs/SPEC.md)
 
 usage:
   nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>]
+  nova-bus draft --bus <dir> --as <name> --reply-to <id-or-path-or-subject> --body-file <path> --draft-dir <dir> --remote <name> --branch <name>
+        [--to <names>] [--cc <names>] [--subject <text>] [--max-body-bytes <n>]
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
   nova-bus send --bus <dir> (--file <path>|--stdin | --prepared <path>|--prepared-stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
-  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open [--open-max <n>]] [--open-warn <n>]
+  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]] [--full] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
+        [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]]
         [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
@@ -104,6 +109,29 @@ opening a note, capped at --open-max (default 20) with one line saying how many
 it did not print. Past --open-warn carried (default 40), every return adds one
 line saying the list is large and the three ways out of it -- answer a note by
 naming it, receipt it, or draw the switch-day line now and start over.
+
+--bodies puts each NEW note's TEXT in that same return, so a reader answering a
+note has it from the call that said it arrived. Each note's line is followed by
+one INBOX BODY id=<id> bytes=<n> line, exactly n bytes of body -- no escaping, no
+re-wrapping, no trailing-newline normalisation -- one separator newline IF AND
+ONLY IF n is 0 or the body does not end in one, and one INBOX BODY END id=<id>.
+The COUNT is the frame, never the closing line, so nothing a body holds can be
+read as an event line. It is also the only flag that BOUNDS the NEW half, which
+is otherwise unbounded: --max-notes (default 20, ceiling 1000) is how many NEW
+items print AT ALL -- summary line and frame together -- and --max-bytes (default
+65536, ceiling 1048576) is the body bytes. Both are checked before a frame is
+opened, so a note is never printed half: an item past either limit is left for
+the next call, whole, and the return says complete=false. Zero is not unlimited
+and over-ceiling is not as much as you can: either one is INBOX REFUSED and exit
+2. One INBOX BODIES printed= bytes= oversize= gaps= drained= complete= next= line
+ends the return; next= is an opaque token you hand back as --after <token> to
+continue the SAME snapshot, and a chain drains while next= is present -- never
+loop on complete=false. A body no --max-bytes on this run carries is named on an
+INBOX BODY OVERSIZE line and left whole where it is, and a chain that ends
+holding one prints an INBOX BODIES GAP line saying which --max-bytes would carry
+it, or that none under the ceiling does. Without --advance nothing moves; with
+it the cursor stops at the last WHOLE commit printed before the first gap, and
+never past it. Without --bodies, inbox and wait are exactly what they are today.
 
 A note is closed by a Re: line naming it, and a Re: line is not a thing anybody
 writes from memory: a line that answered every note by hand carried all 74 of
@@ -219,7 +247,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "draft":
-		return cmdDraft(rest, stdout, stderr)
+		return cmdDraft(rest, stdout, stderr, now)
 	case "prepare":
 		return cmdPrepare(rest, stdin, stdout, stderr, now)
 	case "send":
@@ -352,19 +380,31 @@ func (f *flags) attempts(value int, stderr io.Writer) bool {
 // hung fetch is a tool that has stopped saying anything, which is indistinguishable from a
 // tool that is working.
 func (f *flags) gitTimeoutFlag(seconds int, stderr io.Writer) bool {
-	if seconds < 1 {
-		fmt.Fprintf(stderr, "nova-bus %s: --git-timeout is a whole number of seconds and at least 1, got %d\n", f.verb, seconds)
-		return false
-	}
-	if err := bus.SetGitTimeout(time.Duration(seconds) * time.Second); err != nil {
+	if err := gitTimeoutProblem(seconds); err != nil {
 		fmt.Fprintf(stderr, "nova-bus %s: %s\n", f.verb, oneline.Err(err))
 		return false
 	}
 	return true
 }
 
+// gitTimeoutProblem is the same check with its answer RETURNED rather than printed, for the
+// one verb that collects every problem in an invocation before it prints any of them. One
+// spelling, two callers: a check that printed for one caller and returned for the other
+// would be two rules wearing one name.
+func gitTimeoutProblem(seconds int) error {
+	if seconds < 1 {
+		return fmt.Errorf("--git-timeout is a whole number of seconds and at least 1, got %d", seconds)
+	}
+	return bus.SetGitTimeout(time.Duration(seconds) * time.Second)
+}
+
 // defaultGitTimeoutSeconds is DefaultGitTimeout as the flag spells it.
 const defaultGitTimeoutSeconds = 60
+
+// refreshCheckout is the reply form's refresh, and it is `wait`'s poll: one implementation
+// and not a second that could drift. It is a var so a test can take the fetch out at the
+// seam and prove the fetch is load-bearing; nothing else replaces it.
+var refreshCheckout = bus.FetchAndFastForward
 
 // checkoutLockWait is how long a second run on one checkout waits for the first. It is a
 // var so a test can shorten it; nothing else replaces it.
@@ -447,7 +487,7 @@ func openBus(verb, busDir string, stderr io.Writer) (*bus.Bus, bool) {
 // Its standard output is a FILE: the skeleton, alone, with no OK line under it, so
 // `nova-bus draft ... > draft.md` is a draft. Refusals go to stderr like every other
 // verb's, and every one of them is printed rather than the first.
-func cmdDraft(args []string, stdout, stderr io.Writer) int {
+func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("draft")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required: the roster lives in it)")
 	as := f.fs.String("as", "", "which participant you are (required)")
@@ -456,8 +496,47 @@ func cmdDraft(args []string, stdout, stderr io.Writer) int {
 	subject := f.fs.String("subject", "", "the subject line (default: a placeholder you must replace)")
 	var re stringList
 	f.fs.Var(&re, "re", "an id, a path, or the SUBJECT of a note on your open list that this note answers, or `new` to start a thread (repeatable)")
-	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "to": to}) {
+	// The reply form's flags. Every one of them is inert without --reply-to, which is what
+	// keeps the released form byte-identical: see cmd/nova-bus/reply.go.
+	replyTo := f.fs.String("reply-to", "", "an id, a path, or the SUBJECT of a note on your live listing to ANSWER: the reply form, which refreshes the bus and writes the whole header for you")
+	bodyFile := f.fs.String("body-file", "", "the reply's body, as a file: body text and never a header (--reply-to only)")
+	draftDir := f.fs.String("draft-dir", "", "where the reply is written, OUTSIDE the bus checkout (--reply-to only)")
+	remote := f.fs.String("remote", "", "the remote the reply is resolved against, after a fetch (--reply-to only)")
+	branch := f.fs.String("branch", "", "the branch the reply is resolved against, after a fetch (--reply-to only)")
+	maxBodyBytes := f.fs.Int("max-body-bytes", defaultMaxBodyBytes, "the budget --body-file is read under")
+	gitTimeout := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long the reply form's fetch may take (--reply-to only)")
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
+	}
+	given := map[string]bool{}
+	f.fs.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
+	if !given["reply-to"] {
+		// A reply-only flag without the flag that means the reply form: this form runs no
+		// git and writes no file, so there is nothing for it to do. Exit 2, which is what
+		// an undefined flag already costs, with a sentence in place of `not defined`.
+		refused := false
+		for _, name := range replyOnlyFlags {
+			if given[name] {
+				fmt.Fprintf(stderr, "DRAFT REFUSED: --%s belongs to --reply-to; without it draft runs no git and writes no file\n", name)
+				refused = true
+			}
+		}
+		if refused {
+			return 2
+		}
+		if strings.TrimSpace(*to) == "" {
+			fmt.Fprintf(stderr, "nova-bus draft: --to is required; refusing to guess\n")
+			return 2
+		}
+	} else {
+		return cmdDraftReply(replyOpts{
+			busDir: *busDir, as: *as, to: *to, cc: *cc, subject: *subject,
+			replyTo: *replyTo, bodyFile: *bodyFile, draftDir: *draftDir,
+			remote: *remote, branch: *branch, maxBodyBytes: *maxBodyBytes,
+			gitTimeout: *gitTimeout,
+			reGiven:    len(re) > 0, toGiven: given["to"], ccGiven: given["cc"],
+			subjectGiven: given["subject"],
+		}, f, stdout, stderr, now)
 	}
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
@@ -894,6 +973,10 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	openList := f.fs.Bool("open", false, "list every open note, not only what is new; the default prints one INBOX OPEN line for them")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
+	bodies := f.fs.Bool("bodies", false, "print bodies for NEW notes, bounded by --max-notes and --max-bytes")
+	maxNotes := f.fs.Int("max-notes", defaultBodiesNotes, "with --bodies, maximum NEW items to print")
+	maxBytes := f.fs.Int64("max-bytes", defaultBodiesBytes, "with --bodies, maximum body bytes to print")
+	after := f.fs.String("after", "", "continue a bounded --bodies snapshot")
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it, the way a receipt is pushed")
 	remote := f.fs.String("remote", "", "the git remote to push the cursor to (required with --advance)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required with --advance)")
@@ -948,6 +1031,16 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.atLeastZero("open-warn", *openWarn, stderr) {
 		return 2
 	}
+	if *after != "" && !*bodies {
+		fmt.Fprintln(stderr, "nova-bus inbox: --after requires --bodies")
+		return 2
+	}
+	if *bodies && !bodyLimit(stderr, "--max-notes", int64(*maxNotes), maxBodiesNotesCeiling) {
+		return 2
+	}
+	if *bodies && !bodyLimit(stderr, "--max-bytes", *maxBytes, maxBodiesBytesCeiling) {
+		return 2
+	}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
 		return 2
 	}
@@ -971,6 +1064,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		full: *full, openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
+		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
 	}
 	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --bus at a
 	// subdirectory of a bigger repository and the run refused with "participants.json: no
@@ -990,8 +1084,11 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		defer release()
 	}
 	code, r := inboxListing(o, stdout, stderr, now)
-	if code != 0 || !o.advance {
+	if code != 0 || !o.advance || (o.bodies && r.AdvanceTo == "") {
 		return code
+	}
+	if o.bodies {
+		return advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, now, stdout, stderr)
 	}
 	return advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, stdout, stderr)
 }
@@ -1020,6 +1117,10 @@ type inboxOpts struct {
 	// What a run actually reads under is effectiveLegacy of this and the cursor's own.
 	legacy       bus.LegacyLine
 	carryHistory bool
+	bodies       bool
+	maxNotes     int
+	maxBytes     int64
+	after        string
 }
 
 // inboxReading is what one listing found, for the caller that has to act on it: `inbox`
@@ -1045,7 +1146,12 @@ type inboxReading struct {
 	// who has been shown nothing yet -- the whole open list. It is what `wait` returns on,
 	// and it is deliberately not the size of the open list on an incremental run: a reader
 	// carrying five hundred settled notes is not a reader with news.
-	New int
+	New         int
+	Next        string
+	BodyBytes   int64
+	BodyPrinted int
+	BodyGaps    int
+	AdvanceTo   string
 }
 
 // inboxListing is the whole of an inbox report: what to read, what it found, and every
@@ -1072,6 +1178,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	scope := bus.Scope{Full: o.full}
 	var res bus.InboxResult
 	var cursor bus.Cursor
+	var priorOpen []bus.OpenEntry
 	// held is the cursor as it stands on the bus, read for the SWITCH-DAY LINE it carries
 	// as well as for the commit. A full run reads it too, and ignores a cursor it cannot
 	// read: `--full --advance` is the documented repair for a broken cursor, and a repair
@@ -1080,6 +1187,11 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	held := bus.Cursor{}
 	if o.full {
 		held, _ = bus.ReadCursor(o.busDir, me.Lane)
+		// A full read rebuilds the current listing, but an existing valid OPEN file is
+		// still the bookkeeping that distinguishes carried work from NEW bodies.  Keep
+		// its survivors when a bounded full page advances; only newly eligible bodies
+		// wait for their own emitted prefix.
+		priorOpen, _ = bus.ReadOpen(o.busDir, me.Lane)
 	}
 	// The line this run reads under, whichever mode it is in.
 	var legacy bus.LegacyLine
@@ -1137,6 +1249,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 				return 1, r
 			}
+			priorOpen = open
 			scope.From, scope.Changed = cursor.Commit, len(changed)
 			legacy = effectiveLegacy(o.legacy, held)
 			res, err = bus.InboxSince(o.busDir, c, me, changed, open, o.maxWords, legacy)
@@ -1272,8 +1385,82 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// full read -- because the new entries are in that list and printing them twice is the
 	// same noise from the other end.
 	listCarried := o.openList || scope.Full
-	if !listCarried {
-		printOpenEntries(stdout, res.Fresh, len(res.Fresh))
+	if o.bodies || !listCarried {
+		if o.bodies {
+			head, headErr := bus.HeadCommit(o.busDir)
+			if headErr != nil {
+				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(headErr))
+				return 1, r
+			}
+			base, expected := cursor.Commit, cursor.Commit
+			if scope.Full {
+				base, expected = held.Commit, held.Commit
+			}
+			snapshot := bus.BodySnapshot{Base: base, Head: head, Reader: me.Name, Selector: "inbox-new"}
+			if o.after != "" {
+				snapshot, _, headErr = bus.BodyContinuation(o.after)
+				if headErr != nil {
+					return refuseContinuation(stderr, headErr), r
+				}
+				if snapshot.Reader != me.Name || snapshot.Selector != "inbox-new" {
+					return refuseContinuation(stderr, errors.New("it belongs to another reader or selector")), r
+				}
+			}
+			// Rebuild C0..H directly. Current OPEN is deliberately not an input: a note
+			// after H may have answered an older item, while that older token still owes
+			// the body from its immutable snapshot.
+			items, pageErr := bus.BodyNewItemsAtSnapshot(o.busDir, snapshot, c, me, o.maxWords, legacy)
+			if pageErr != nil {
+				if o.after != "" {
+					return refuseContinuation(stderr, pageErr), r
+				}
+				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(pageErr))
+				return 2, r
+			}
+			page, pageErr := bus.BodyPageFor(items, bus.BodyPageRequest{Snapshot: snapshot, ExpectedCursor: expected, Advance: o.advance, Token: o.after, MaxNotes: o.maxNotes, MaxBytes: o.maxBytes})
+			if pageErr != nil {
+				if o.after != "" {
+					return refuseContinuation(stderr, pageErr), r
+				}
+				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(pageErr))
+				return 2, r
+			}
+			if err := printBodyPage(stdout, page, o.maxBytes); err != nil {
+				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+				return 1, r
+			}
+			r.BodyPrinted, r.BodyBytes, r.BodyGaps, r.Next = page.Frames, page.PrintedBytes, page.GapCount, page.Next
+			// Only the NEW entries fully emitted on this page become carried.  Keeping
+			// every entry from the current listing here would move CURSOR past B while
+			// silently placing B in OPEN, so its body would never get its own NEW turn.
+			r.Open = openAfterBodies(res.Open, res.Fresh, priorOpen, items, page, scope.Full)
+			if page.SafeFrontier != expected {
+				r.AdvanceTo = page.SafeFrontier
+			}
+			// THE REMEDY STANDS IMMEDIATELY BEFORE THE RECEIPT AND NOWHERE ELSE. A chain
+			// holding many gaps names the earliest one and prints no list, so this is one
+			// line at every state -- and it is on stdout, beside the receipt it explains,
+			// because a caller reconciling `complete=false` reads one stream.
+			if page.Drained && !page.Complete && page.EarliestGap != nil {
+				gap := page.EarliestGap
+				kind, retry := "over-budget", strconv.FormatInt(gap.Bytes, 10)
+				if gap.Bytes > maxBodiesBytesCeiling {
+					// No value under the hard ceiling carries it, so there is no number to
+					// name: the door is the file, and path= is what opens it.
+					kind, retry = "over-ceiling", "-"
+				}
+				if _, err := fmt.Fprintf(stdout, "INBOX BODIES GAP id=%s kind=%s retry-max-bytes=%s path=%s\n", oneline.Field(dash(gap.ID)), oneline.Field(kind), oneline.Field(retry), oneline.Field(gap.Path)); err != nil {
+					fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+					return 1, inboxReading{}
+				}
+			}
+			if _, err := fmt.Fprintf(stdout, "INBOX BODIES printed=%d bytes=%d oversize=%d gaps=%d drained=%t complete=%t next=%s\n", r.BodyPrinted, r.BodyBytes, len(page.Gaps), r.BodyGaps, page.Drained, page.Complete, oneline.Field(dash(r.Next))); err != nil {
+				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+				return 1, inboxReading{}
+			}
+		} else {
+			printOpenEntries(stdout, res.Fresh, len(res.Fresh))
+		}
 	}
 	// THEN ONE LINE FOR THE BACKLOG, whichever way the run was asked. It was printed only on
 	// the runs that did NOT list, which meant the two shapes of return had no line in common
@@ -1326,13 +1513,66 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// BOTH, under the same names, beside the decomposition that makes them add up.
 	fmt.Fprintf(stdout, "INBOX OK as=%s carrying=%d open=%d notes=%d receipts=%d heard=%d unaddressed=%d unreadable=%d\n",
 		oneline.Field(me.Name), len(res.Open), notes+receipts, notes, receipts, heard, len(res.Unaddressed), len(res.Unreadable))
-	r.Me, r.Open, r.Legacy, r.Cursor, r.Full = me, res.Open, legacy, cursor.Commit, scope.Full
+	r.Me, r.Legacy, r.Cursor, r.Full = me, legacy, cursor.Commit, scope.Full
+	if !o.bodies {
+		r.Open = res.Open
+	}
 	// What this run would show a reader as news; see inboxReading.New.
 	r.New = res.New
 	if scope.Full {
 		r.New = len(res.Open)
 	}
 	return 0, r
+}
+
+func openAfterBodies(current, fresh, prior []bus.OpenEntry, items []bus.BodyItem, page bus.BodyPage, full bool) []bus.OpenEntry {
+	freshPath := make(map[string]bool, len(fresh))
+	for _, entry := range fresh {
+		freshPath[entry.Path] = true
+	}
+	// A full read derives OPEN anew.  Its listing may contain every outstanding note
+	// while a bodies page has emitted only one, so retaining current here would move a
+	// cursor past unprinted bodies.  Incremental reads retain only their prior carry;
+	// current-fresh rows are rebuilt below from the immutable emitted prefix.
+	out := make([]bus.OpenEntry, 0, len(current)+len(items))
+	if full {
+		currentByPath := make(map[string]bus.OpenEntry, len(current))
+		for _, entry := range current {
+			currentByPath[entry.Path] = entry
+		}
+		for _, entry := range prior {
+			if survivor, ok := currentByPath[entry.Path]; ok {
+				out = append(out, survivor)
+			}
+		}
+	} else {
+		for _, entry := range current {
+			if !freshPath[entry.Path] {
+				out = append(out, entry)
+			}
+		}
+	}
+	inOut := make(map[string]bool, len(out))
+	for _, entry := range out {
+		inOut[entry.Path] = true
+	}
+	// SafeFrontier is precisely the greatest complete emitted prefix.  Re-add every
+	// eligible item through it, rather than only this page's Items: the final page of a
+	// two-note commit must persist both A and B, and a later page must not replace A.
+	frontier := -1
+	for i, item := range items {
+		if item.Commit == page.SafeFrontier {
+			frontier = i
+		}
+	}
+	for i := 0; i <= frontier; i++ {
+		item := items[i]
+		if !inOut[item.Entry.Path] {
+			out = append(out, item.Entry)
+			inOut[item.Entry.Path] = true
+		}
+	}
+	return out
 }
 
 // effectiveLegacy is the line a run reads under: the flag when it is given, and otherwise
@@ -1371,12 +1611,7 @@ func legacyToken(l bus.LegacyLine) string {
 // The cursor also records the SWITCH-DAY LINE this run read under, so the next run honours
 // it without the flag and everybody on the bus can see which notes this reader has taken
 // as read.
-func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, legacy string, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
-	head, err := bus.HeadCommit(busDir)
-	if err != nil {
-		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
-		return 1
-	}
+func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
 	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane)}
 	if err := checkoutReady(busDir, branch, paths); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
@@ -1414,6 +1649,17 @@ func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, lega
 	fmt.Fprintf(stdout, "INBOX CURSOR commit=%s carrying=%d pushed=%t attempts=%d\n",
 		oneline.Field(head), len(open), res.Pushed, res.Attempts)
 	return 0
+}
+
+// advanceCursor preserves the released full-head behaviour for listings without bodies.
+// Bodies mode calls advanceCursorTo with the paginator's whole-commit safe frontier.
+func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
+	head, err := bus.HeadCommit(busDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
+		return 1
+	}
+	return advanceCursorTo(busDir, me, open, legacy, head, remote, branch, attempts, noPush, now, stdout, stderr)
 }
 
 // defaultOpenMax is how many carried entries `--open` prints before it says how many it
@@ -1471,6 +1717,124 @@ func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) int {
 	return shown
 }
 
+// bodyLimit checks one of the two --bodies budgets. Zero is not "unlimited" and
+// over-ceiling is not "as much as you can": either one names the flag, the value given and
+// the ceiling, in the INBOX REFUSED shape the rest of this listing's refusals use, and is
+// exit 2 -- a bad invocation, like every other pair of numbers this tool will not guess.
+func bodyLimit(stderr io.Writer, name string, value, ceiling int64) bool {
+	if value < 1 {
+		fmt.Fprintf(stderr, "INBOX REFUSED: %s %d is not unlimited; give 1 to %d\n", oneline.Field(name), value, ceiling)
+		return false
+	}
+	if value > ceiling {
+		fmt.Fprintf(stderr, "INBOX REFUSED: %s %d is over the ceiling %d\n", oneline.Field(name), value, ceiling)
+		return false
+	}
+	return true
+}
+
+// refuseContinuation is the ONE shape a --after refusal takes, and it always carries the
+// same remedy: the same command without --after. Two of the reasons have their own
+// sentence because their remedy needs one -- a token that names no item in this range, and
+// a cursor another read moved under an open chain -- and everything else says what did not
+// match. None of them moves a cursor, writes a file, or leaves a half-listing behind.
+func refuseContinuation(stderr io.Writer, err error) int {
+	var moved *bus.BodyCursorMismatchError
+	switch {
+	case errors.As(err, &moved):
+		fmt.Fprintf(stderr, "INBOX REFUSED: --after names cursor %s and this reader's cursor is %s; rerun without --after\n",
+			oneline.Field(dash(moved.Token)), oneline.Field(dash(moved.Persisted)))
+	case errors.Is(err, bus.ErrBodyTokenNoItem):
+		fmt.Fprintln(stderr, "INBOX REFUSED: --after <token> names no item in this range; rerun without --after")
+	default:
+		fmt.Fprintf(stderr, "INBOX REFUSED: --after <token> is not a continuation for this read: %s; rerun without --after\n", oneline.Err(err))
+	}
+	return 2
+}
+
+const (
+	defaultBodiesNotes          = 20
+	defaultBodiesBytes    int64 = 65536
+	maxBodiesNotesCeiling       = 1000
+	maxBodiesBytesCeiling int64 = 1048576
+)
+
+func printBodyPage(stdout io.Writer, page bus.BodyPage, maxBytes int64) error {
+	// Selection, continuation identities, and safe-frontier accounting stay in canonical
+	// snapshot order. Display follows the inbox's established NOTE, HEARD, RECEIPT groups;
+	// an earlier receipt must not push a later note below the summary groups on this page.
+	for _, group := range []string{"NOTE", "HEARD", "RECEIPT"} {
+		for _, emission := range page.Emissions {
+			if emission.Gap != nil {
+				continue
+			}
+			if emission.Item == nil {
+				return fmt.Errorf("body page has an empty emission")
+			}
+			if bodyDisplayGroup(*emission.Item) != group {
+				continue
+			}
+			if err := printBodyItem(stdout, *emission.Item); err != nil {
+				return err
+			}
+		}
+	}
+	// Gaps are accounting events rather than listing groups. Preserve every selected gap
+	// in canonical order after the grouped listing rows, and retain the same write-error
+	// path that prevents a cursor advance when stdout breaks.
+	for _, emission := range page.Emissions {
+		if emission.Gap == nil {
+			continue
+		}
+		gap := emission.Gap
+		if _, err := fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=%d max-bytes=%d path=%s\n", oneline.Field(dash(gap.ID)), gap.Bytes, maxBytes, oneline.Field(gap.Path)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func bodyDisplayGroup(item bus.BodyItem) string {
+	e := item.Entry
+	if e.Heard {
+		return "HEARD"
+	}
+	if e.Kind == bus.OpenReceipt {
+		return "RECEIPT"
+	}
+	return "NOTE"
+}
+
+func printBodyItem(stdout io.Writer, item bus.BodyItem) error {
+	e := item.Entry
+	kind := bodyDisplayGroup(item)
+	if kind != "NOTE" {
+		if _, err := fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n", kind, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+			return err
+		}
+		return nil
+	}
+	bodyBytes := item.Body
+	if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "INBOX BODY id=%s bytes=%d\n", oneline.Field(dash(e.ID)), len(item.Body)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "%s", bodyBytes); err != nil {
+		return err
+	}
+	if len(item.Body) == 0 || item.Body[len(item.Body)-1] != '\n' {
+		if _, err := fmt.Fprint(stdout, "\n"); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(stdout, "INBOX BODY END id=%s\n", oneline.Field(dash(e.ID))); err != nil {
+		return err
+	}
+	return nil
+}
+
 // countListable is how many entries printOpenEntries would print with no cap: the whole
 // list bar the unreadable entries, which have no header to print a line from and are named
 // on their own INBOX UNREADABLE lines instead.
@@ -1520,6 +1884,10 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
+	bodies := f.fs.Bool("bodies", false, "print bodies for NEW notes, bounded by --max-notes and --max-bytes")
+	maxNotes := f.fs.Int("max-notes", defaultBodiesNotes, "with --bodies, maximum NEW items to print")
+	maxBytes := f.fs.Int64("max-bytes", defaultBodiesBytes, "with --bodies, maximum body bytes to print")
+	after := f.fs.String("after", "", "continue a bounded --bodies snapshot")
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it when this wait returns, the way inbox --advance does")
 	remote := f.fs.String("remote", "", "the git remote to fetch the bus from (required: a wait that cannot fetch cannot notice anything)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required)")
@@ -1550,6 +1918,16 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if !f.atLeastZero("open-warn", *openWarn, stderr) {
+		return 2
+	}
+	if *after != "" && !*bodies {
+		fmt.Fprintln(stderr, "nova-bus wait: --after requires --bodies")
+		return 2
+	}
+	if *bodies && !bodyLimit(stderr, "--max-notes", int64(*maxNotes), maxBodiesNotesCeiling) {
+		return 2
+	}
+	if *bodies && !bodyLimit(stderr, "--max-bytes", *maxBytes, maxBodiesBytesCeiling) {
 		return 2
 	}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
@@ -1605,6 +1983,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
+		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
@@ -1746,7 +2125,9 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	if !keep(r) {
 		return 0, r, ""
 	}
-	if o.advance {
+	if o.advance && o.bodies && r.AdvanceTo != "" {
+		code = advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
+	} else if o.advance && !o.bodies {
 		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
 	}
 	return code, r, buf.String()

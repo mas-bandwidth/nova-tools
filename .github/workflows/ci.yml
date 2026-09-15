@@ -48,6 +48,8 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
 
       - name: cache go build and module cache
         # go.mod carries no dependencies today, so the module cache is nearly
@@ -99,6 +101,8 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
       - id: list
         shell: bash
         run: |
@@ -166,6 +170,8 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
 
       - name: cache go build and module cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -180,6 +186,23 @@ jobs:
       - name: test
         run: go test -count=1 ${{ matrix.entry.packages }}
 
+  lisp:
+    # THE LISP TIER, and it is one job because it is one system. `lisp/nova-work`
+    # is the engine's own tree (docs/SPEC-WORK.md:290 fixes the language); its
+    # acceptance suite runs under SBCL non-interactively and exits non-zero on
+    # any failing case, so the exit code is the product here. It is in the CL
+    # tier because it finishes in seconds, well inside the two-minute budget.
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: install sbcl
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends sbcl
+
+      - name: nova-work acceptance
+        run: ./lisp/nova-work/run-tests.sh
+
   ci-ok:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
     # in a branch ruleset. It aggregates EXACTLY the jobs of this file and nothing else —
@@ -188,7 +211,7 @@ jobs:
     # existence shows up here as a missing success and not as silence. The certification
     # tier has its own aggregate, certification-ok; a red certification is a blocker for
     # the next release, never for a CL.
-    needs: [lint, test]
+    needs: [lint, test, lisp]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 1
@@ -200,7 +223,8 @@ jobs:
           bad=0
           for pair in \
             "lint:${{ needs.lint.result }}" \
-            "test:${{ needs.test.result }}"
+            "test:${{ needs.test.result }}" \
+            "lisp:${{ needs.lisp.result }}"
           do
             job="${pair%:*}"; result="${pair##*:}"
             echo "$result	$job"

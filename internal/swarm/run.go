@@ -25,15 +25,18 @@ import (
 
 // RunInput is one dispatcher run.
 type RunInput struct {
-	Pool           *Pool
-	Worker         Worker
-	Key            string
-	Workers        int
-	Hours          float64
-	Max            int
-	LaunchTimeout  time.Duration
-	UsageInterval  time.Duration
-	Backoff        time.Duration // the wait before retrying a 429; zero takes the default
+	Pool          *Pool
+	Worker        Worker
+	Key           string
+	Workers       int
+	Hours         float64
+	Max           int
+	LaunchTimeout time.Duration
+	UsageInterval time.Duration
+	Backoff       time.Duration // the wait before retrying a 429; zero takes the default
+	// NoAutoRetry finalizes deadline and true-429 outcomes without creating a
+	// descendant. It is a dispatcher-invocation policy; false preserves automatic retries.
+	NoAutoRetry    bool
 	Stdout, Stderr io.Writer
 	Now            func() time.Time
 	Supervisor     string // this binary, re-invoked as `supervise`
@@ -84,8 +87,8 @@ func Run(in RunInput) int {
 	out, errOut := in.Stdout, in.Stderr
 	now := in.Now
 
-	fmt.Fprintf(out, "RUN POOL workers=%d hours=%s worker=%s model=%s pool=%s\n",
-		in.Workers, trimFloat(in.Hours), oneline.Field(in.Worker.Name), oneline.Field(in.Worker.Model), oneline.Field(p.Dir))
+	fmt.Fprintf(out, "RUN POOL workers=%d hours=%s worker=%s model=%s auto_retry=%t pool=%s\n",
+		in.Workers, trimFloat(in.Hours), oneline.Field(in.Worker.Name), oneline.Field(in.Worker.Model), !in.NoAutoRetry, oneline.Field(p.Dir))
 
 	// THE PROBE, ONCE, BEFORE THE FIRST WORKER (SPEC-SANDBOX rule 10 and test 23). It
 	// costs a process and it answers a question about the MACHINE, not about a job, so it
@@ -115,6 +118,7 @@ func Run(in RunInput) int {
 	started, done, failed, killed := 0, 0, 0, 0
 	recovered := 0
 	launchFailed := 0
+	haltAdmissions := false
 
 	// The start-up pass, before a single pending task is claimed.
 	slots, bad, err := p.SlotNumbers()
@@ -200,7 +204,7 @@ func Run(in RunInput) int {
 			dest := destinationFor(end, fin.Class, rec.RC)
 			_ = p.WriteSidecar(Running, sc)
 			requeued := false
-			if end == EndKilled {
+			if end == EndKilled && !in.NoAutoRetry {
 				requeued = in.requeue(sc, now())
 			}
 			_ = p.Claim(sc.ID, Running, dest)
@@ -234,19 +238,52 @@ func Run(in RunInput) int {
 				quarantined[n] = true
 			}
 		case DecideUnlaunched:
-			sc, _ := p.ReadSidecar(Running, d.File.Job)
-			if sc.ID != "" {
-				sc.Launch = "unlaunched"
-				_ = p.WriteSidecar(Running, sc)
-				_ = p.Claim(sc.ID, Running, Pending)
+			// This is a confirmed pre-launch failure. Every write and move must
+			// succeed before the reservation is released; otherwise the next run
+			// would inherit an ownerless task or could free a newer reservation.
+			id := d.File.Job
+			var sc Sidecar
+			var recoverErr error
+			if _, err := os.Stat(p.taskFile(Running, id)); err == nil {
+				sc, recoverErr = p.ReadSidecar(Running, id)
+				if recoverErr == nil {
+					sc.Launch = "unlaunched"
+					recoverErr = p.WriteSidecar(Running, sc)
+				}
+				if recoverErr == nil {
+					recoverErr = p.Claim(id, Running, Pending)
+				}
+				if recoverErr == nil {
+					sc, recoverErr = p.ReadSidecar(Pending, id)
+				}
+				if recoverErr == nil {
+					sc.Launch = "unlaunched"
+					recoverErr = p.WriteSidecar(Pending, sc)
+				}
+			} else if _, err := os.Stat(p.taskFile(Pending, id)); err == nil {
+				sc, recoverErr = p.ReadSidecar(Pending, id)
+				if recoverErr == nil {
+					sc.Launch = "unlaunched"
+					recoverErr = p.WriteSidecar(Pending, sc)
+				}
+			} else {
+				recoverErr = fmt.Errorf("task %s is missing from running and pending", id)
 			}
-			_ = p.Free(n)
+			if recoverErr == nil {
+				recoverErr = p.FreeIf(n, d.File.Nonce)
+			}
+			if recoverErr != nil {
+				said = true
+				quarantined[n] = true
+				fmt.Fprintf(out, "RUN QUARANTINE slot=%d id=%s: unlaunched recovery failed: %s\n", n, oneline.Field(id), oneline.Escape(redactedReason(recoverErr)))
+				continue
+			}
 			// ONE GRAMMAR LINE HAS ONE SHAPE (SPEC-SWARM.md:566): `RUN RECLAIM … end=<…>
 			// dest=<done|failed|-> usage=<path|->`. The reclaim above prints `dest=`; this
 			// one did not, so the same line came out two ways and a reader parsing it by
 			// field found the field missing. An unlaunched task goes back to pending/,
 			// which is neither done nor failed: the dash the grammar names for exactly that.
-			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=unlaunched dest=%s usage=- requeued=false\n", n, oneline.Field(d.File.Job), Dash)
+			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=unlaunched dest=%s usage=- requeued=false\n", n, oneline.Field(id), Dash)
 		default:
 			// A reservation whose launch is unproven is rewritten to `orphaned` with its
 			// nonce KEPT -- under slots.lock, after a recheck that it still reads reserved
@@ -278,13 +315,31 @@ func Run(in RunInput) int {
 			fmt.Fprintf(out, "RUN QUARANTINE slot=%d id=%s: %s\n", n, oneline.Field(dashOr(d.File.Job)), oneline.Escape(d.Reason))
 		}
 	}
+	// PREPARATION IS BEFORE ADMISSION. RefreshSlot copies the worker directory before a
+	// job directory or supervisor exists; checking it here keeps a missing worker home from
+	// stranding the task in running/ with no owner. This follows startup recovery, so an
+	// existing job can still be adopted or reclaimed even when the next worker cannot start.
+	var preparationRefusal error
+	if pending, err := p.List(Pending); err != nil {
+		preparationRefusal = fmt.Errorf("pending tasks could not be read: %s", redactedReason(err))
+	} else if len(pending) > 0 {
+		preparationRefusal = workerDirReady(in.Worker.WorkerDir)
+	}
+	if preparationRefusal != nil {
+		fmt.Fprintf(errOut, "RUN REFUSED reason=prepare: %s\n", oneline.Escape(preparationRefusal.Error()))
+		said = true
+		haltAdmissions = true
+		if len(watching) == 0 {
+			return 2
+		}
+	}
 
 	deadline := now().Add(time.Duration(in.Hours * float64(time.Hour)))
 	tasks := bounded.Capped(out, in.Max, "RUN", "task", "nova-swarm status --pool "+p.Dir+" --max 0")
 
 	for {
 		// Start what can be started, while the dispatcher's own deadline is ahead of us.
-		for !now().After(deadline) && !p.Stopped() && len(watching) < in.Workers {
+		for !haltAdmissions && !now().After(deadline) && !p.Stopped() && len(watching) < in.Workers {
 			slot, ok := freeSlot(p, in.Workers, quarantined, retired, watching)
 			if !ok {
 				break
@@ -316,6 +371,7 @@ func Run(in RunInput) int {
 			default:
 				said = true
 				launchFailed++
+				haltAdmissions = true
 				tasks.Line(line)
 			}
 		}
@@ -380,8 +436,8 @@ func Run(in RunInput) int {
 	tasks.More()
 
 	pending, _ := p.List(Pending)
-	fmt.Fprintf(out, "RUN OK started=%d done=%d failed=%d killed=%d pending=%d recovered=%d after=%s\n",
-		started, done, failed, killed, len(pending), recovered, trimDuration(now().Sub(deadline.Add(-time.Duration(in.Hours*float64(time.Hour))))))
+	fmt.Fprintf(out, "RUN OK started=%d done=%d failed=%d killed=%d pending=%d recovered=%d auto_retry=%t after=%s\n",
+		started, done, failed, killed, len(pending), recovered, !in.NoAutoRetry, trimDuration(now().Sub(deadline.Add(-time.Duration(in.Hours*float64(time.Hour))))))
 	fmt.Fprintf(out, "RUN NOTE %s\n", oneline.Escape(remedy(p, failed+launchFailed, killed, len(pending), len(quarantined)+len(retired))))
 	if len(pending) > 0 && started == 0 && len(watching) == 0 {
 		said = true
@@ -397,6 +453,37 @@ func Run(in RunInput) int {
 		return 1
 	}
 	return 0
+}
+
+func workerDirReady(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("worker_dir %s is unavailable: %s", oneline.Field(path), redactedReason(err))
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("worker_dir %s is not a directory", oneline.Field(path))
+	}
+	return nil
+}
+
+func (in RunInput) retainFailedPreparation(sc Sidecar, slot int, jobDir, nonce string, prepErr, rollbackErr error) (string, int) {
+	// A rollback failure leaves the task and reservation deliberately together. Establish
+	// the confirmed no-launch with nonce-bound aborted.json so the next dispatcher can move
+	// it back to pending without guessing that a supervisor never existed.
+	abortErr := error(nil)
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		abortErr = err
+	} else if err := WriteJSON(AbortedPath(jobDir), AbortedRecord{
+		Nonce: nonce, Reason: "preparation failed: " + redactedReason(prepErr), At: Stamp(in.Now()), Survivors: 0,
+	}); err != nil {
+		abortErr = err
+	}
+	if abortErr == nil {
+		return fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: preparation failed: %s; rollback retained nonce-bound reservation: %s",
+			oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(prepErr)), oneline.Escape(redactedReason(rollbackErr))), launchBroken
+	}
+	return fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: preparation failed: %s; rollback incomplete and slot retained: %s (%s)",
+		oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(prepErr)), oneline.Escape(redactedReason(rollbackErr)), oneline.Escape(redactedReason(abortErr))), launchBroken
 }
 
 // freeSlot is the allocation, and it asks ONE authority: the slot files. Never a directory
@@ -444,9 +531,31 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	slot, jobDir := got, jobDirFor(got)
 	CheckKillPoint("after-reserve")
 	if err := in.prepare(sc, text, slot, jobDir); err != nil {
-		_ = p.Free(slot)
-		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), launchBroken
+		sc.Launch, sc.End, sc.Ended, sc.RC = "failed", EndLaunchFailed, Stamp(in.Now()), -1
+		// Preparation is a confirmed no-launch: retain the task and its diagnostic in
+		// pending/ so the next run can retry it. The slot is freed only after the task
+		// leaves running/, and no supervisor or worker process exists to make this uncertain.
+		if writeErr := p.WriteSidecar(Running, sc); writeErr != nil {
+			line, code := in.retainFailedPreparation(sc, slot, jobDir, nonce, err, writeErr)
+			return nil, line, code
+		}
+		if moveErr := p.Claim(sc.ID, Running, Pending); moveErr != nil {
+			line, code := in.retainFailedPreparation(sc, slot, jobDir, nonce, err, moveErr)
+			return nil, line, code
+		}
+		if writeErr := p.WriteSidecar(Pending, sc); writeErr != nil {
+			line, code := in.retainFailedPreparation(sc, slot, jobDir, nonce, err, writeErr)
+			return nil, line, code
+		}
+		if freeErr := p.Free(slot); freeErr != nil {
+			line, code := in.retainFailedPreparation(sc, slot, jobDir, nonce, err, freeErr)
+			return nil, line, code
+		}
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: preparation failed: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), launchBroken
 	}
+	// A prior confirmed preparation failure is diagnostic history, not this successful
+	// attempt's outcome. Clear it before the sidecar is written for the new launch.
+	sc.Launch, sc.End, sc.Ended = "", "", ""
 	// THE TASK BUDGET NAMES THE WINDOW IT FITS, AND IT IS CHECKED BEFORE THE LAUNCH (#103).
 	// Two Freddy reads of whole specs spent 215 seconds each to be told by the provider that
 	// they did not fit; a task that says how big its window is can be told that here, for

@@ -10,6 +10,8 @@ Two AI friends share it. Ada has already written; Bo is arriving. The sitting be
 
 The `> draft.md` line is a redirect: `draft` prints a skeleton on standard output and nothing else, so its stdout is a file. The transcript test does what the shell does with it, and then does what the writer does — replaces the `<the note goes here>` placeholder with a body — before the `send` line runs.
 
+The last line is the other form of the same verb. `draft --reply-to` ANSWERS a note on your live listing: it fetches first, so the id it writes is the id of the note you are answering and not of whatever your checkout last saw; it writes every header line for you from the target and the roster; it puts the file OUTSIDE the bus, because `send` needs the bus's tree clean; and it returns one line. `reply.md` there is body text and nothing else — a line in it reading `To: somebody` is prose in the note that goes out — and `./drafts` is a scratch directory of yours, which the tool will not create and will not guess.
+
 ### First run
 
 ```
@@ -26,6 +28,23 @@ BUS OK notes=4 lanes=2 receipts=1 participants=3 warn=0
 
 $ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --full --open
 INBOX SCOPE mode=full cursor=- changed=0 carrying=1
+INBOX OPEN carrying=1 heard=0
+INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
+INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unreadable=0
+
+$ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --full --bodies
+INBOX SCOPE mode=full cursor=- changed=0 carrying=1
+INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
+INBOX BODY id=ada-0f1e2d3c4b5a bytes=195
+Bo,
+
+Yes, on the merge queue too. A gate that only runs on the pull request passes a
+branch that was green against a base that has since moved, which is the failure
+we were trying to close.
+
+Ada
+INBOX BODY END id=ada-0f1e2d3c4b5a
+INBOX BODIES printed=1 bytes=195 oversize=0 gaps=0 drained=true complete=true next=-
 INBOX OPEN carrying=1 heard=0
 INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
 INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unreadable=0
@@ -61,9 +80,15 @@ $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40
 INBOX SCOPE mode=since cursor=57dc978d3ad645788c4236b0da99b1c59f89282d changed=2 carrying=3
 INBOX OPEN carrying=3 heard=1
 INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
+
+$ nova-bus draft --bus ./bus --as Ada --reply-to gate --body-file reply.md --draft-dir ./drafts --remote origin --branch main
+DRAFT NOTE the bus had nothing new; this id was resolved against 36e7270d2e96325b3588828d17fb81a1aa918730
+DRAFT OK path=./drafts/2026-09-12T2015Z-re-bo-ce10834fbfea.md re=bo-ce10834fbfea from=Ada to="Bo" cc=- at=36e7270d2e96325b3588828d17fb81a1aa918730 moved=false bytes=86
 ```
 
 **Identity is the roster, not the shell.** `names` is the whole of it: a participant with a `lane` can send, one without a lane (Dana) can be written to and cannot write, and `--as` takes a name or any alias on that line — `--as "the archivist"` is Ada. There is no default `--as`, and a name the roster does not know is a refusal rather than a new participant.
+
+**`--bodies` is the note's text in the call that reported it.** Without it, `inbox` and `wait` print what a note IS -- id, sender, address, date, path and subject -- and a reader who wants to answer opens the file. With it, each NEW note's body follows its line inside a counted frame: `INBOX BODY id=<id> bytes=<n>`, exactly `n` bytes, the one newline the framing supplies when the body does not end in one, and `INBOX BODY END id=<id>`. The count is the frame, so nothing a body holds can be read as an event line. It is also the one flag that BOUNDS the NEW half -- `--max-notes` (20, ceiling 1000) and `--max-bytes` (65536, ceiling 1048576) -- and the `INBOX BODIES` line says what printed, whether the snapshot is drained, whether anything was left behind, and the opaque `next=` token that continues it as `--after <token>`. Drain while `next=` is present; never loop on `complete=false`.
 
 **`heard` and `closed` are different answers.** Bo's `receipt` says she read Ada's note without answering it: one line in her lane's `RECEIPTS`, pushed, and the note leaves her carried list. A note is *closed* instead by a `Re:` line naming it, which is what `draft --re` and `send` write for you.
 
@@ -103,6 +128,30 @@ cat: /Users/me/.config/anthropic/env: Operation not permitted
 ```
 
 The last run is the whole tool in three lines: the job's own write landed, and the same command could not read the key that was in neither list. Its exit status is the wrapped command's, which is 1 here because `cat` failed.
+
+## nova-secrets
+
+Fixture: a throwaway secrets store git working copy and age private key, as in [SPEC-SECRETS.md](SPEC-SECRETS.md).
+
+### First run
+
+```
+$ nova-secrets keygen --as rowan --key /Users/me/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen --store ./secrets
+SECRETS KEYGEN OK as=rowan key=/Users/me/.config/nova-secrets/rowan.key mode=0600 pub=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
+SECRETS RULE   creation_rules:
+SECRETS RULE     - path_regex: ^rowan\.yaml$
+SECRETS RULE       age: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk,age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata
+
+$ nova-secrets check --store ./secrets --as other --key /Users/me/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops
+SECRETS CHECK OK  as=other recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=9750ba9
+
+$ nova-secrets names --store ./secrets --as other
+SECRETS NAME key=GH_TOKEN clear=false
+SECRETS NAMES OK as=other keys=1 shown=1 sealed=1 clear=0
+
+$ nova-secrets exec --store ./secrets --as other --key /Users/me/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
+SECRETS EXEC OK as=other keys=1 only=1 required=1 file=/Users/me/secrets/other.yaml head=9750ba9 cmd=gh
+```
 
 ## nova-check
 
@@ -325,11 +374,11 @@ Every contract test in `cmd/nova-swarm` runs its jobs **inside the real wall** o
 
 ```
 $ nova-swarm run --pool ./pool --workers 1 --hours 0.25 --worker ./worker.json
-RUN POOL workers=1 hours=0.25 worker=fake-1 model=fake-model pool=./pool
+RUN POOL workers=1 hours=0.25 worker=fake-1 model=fake-model auto_retry=true pool=./pool
 RUN REFUSED reason=sandbox_probe: the wall did not prove itself on this machine, so no worker started: PROBE REFUSED reason=check: write_outside expected deny and got allow
 
 $ nova-swarm run --pool ./pool --workers 1 --hours 0.25 --worker ./worker.json --no-sandbox
-RUN POOL workers=1 hours=0.25 worker=fake-1 model=fake-model pool=./pool
+RUN POOL workers=1 hours=0.25 worker=fake-1 model=fake-model auto_retry=true pool=./pool
 RUN UNSANDBOXED id=20260912T0146Z-task-c44c5e slot=1: no OS containment; every read and write this job makes is yours
 RUN START id=20260912T0146Z-task-c44c5e slot=1 pid=31027 pgid=31027 started=2026-09-12T01:46:02Z deadline=30s tokens=100000 job=./worker-home-1/jobs/20260912T0146Z-task-c44c5e
 ```
@@ -370,7 +419,7 @@ TOKENS SOURCE label=bus:emma kind=bus path=bus/from-emma reports=input,output da
 TOKENS SOURCE label=bus:rowan kind=bus path=bus/from-rowan reports=- day_basis=utc files=0 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=0 redated=0 superseded=0 rows=0
 TOKENS TOUCHED label=bus:emma day=2026-09-11 repos=schema,serialize
 TOKENS DAY date=2026-09-11 rows=3 models=2 repos=2 turns=3 unknown=0.0% other=0.0% rough=0 dashes=6 nonutc=0 sources=bus:emma,claude:bench written=true
-TOKENS OK days=1 rows=3 sources=3 unreadable=0 unparsed=0 mixed=0 conflict=0 shrank=0
+TOKENS OK days=1 rows=3 sources=3 unreadable=0 unparsed=0 mixed=0 conflict=0 shrank=0 partial=0
 TOKENS NOTE nothing was wrong; nova-tokens check --out ./out is the gate
 
 $ nova-tokens check --out ./out

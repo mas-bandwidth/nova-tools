@@ -1,8 +1,10 @@
 package swarm
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -215,27 +217,58 @@ func TestThePromptCarriesEverySentenceTheRecordBought(t *testing.T) {
 		NoteFile: "/j/note", Result: "/j/RESULT.md", ResultTmp: "/j/RESULT.md.tmp",
 	}))
 	for _, want := range []string{
-		"/j",                        // the job directory
-		"1200 SECONDS",              // the deadline, in seconds, held by machinery
-		"7 FILES",                   // the file budget
-		"REFUSED READ OR WRITE",     // the sandbox sentence, reads AND writes
-		"DOES NOT END THIS RUN",     // ... and what a refusal means
-		"THE MOMENT IT EXISTS",      // append as found
-		"RESULT.md.tmp",             // publication by rename, with the command
-		"mv /j/RESULT.md.tmp",       // ... spelled out
-		"findings: 0",               // 0 is a complete answer
-		"THERE IS NO BUS",           // no bus
-		"Do not loop, poll or wait", // no polling
-		"ONE PROCESS",               // one job is one process
-		"/j/note",                   // the note file
-		"notes read:",               // and the count that is mandatory
-		"mas-bandwidth/schema#876",  // the board, and dup: before filing
-		"100000",                    // the token budget
-		"the task",                  // and the task itself
+		"/j",                         // the job directory
+		"1200 SECONDS",               // the deadline, in seconds, held by machinery
+		"7 FILES",                    // the file budget
+		"REFUSED READ OR WRITE",      // the sandbox sentence, reads AND writes
+		"DOES NOT END THIS RUN",      // ... and what a refusal means
+		"THE MOMENT IT EXISTS",       // append as found
+		"RESULT.md.tmp",              // publication by rename, with the command
+		"mv RESULT.md.tmp RESULT.md", // ... spelled out
+		"findings: 0",                // 0 is a complete answer
+		"THERE IS NO BUS",            // no bus
+		"Do not loop, poll or wait",  // no polling
+		"ONE PROCESS",                // one job is one process
+		"NOTE FILE note",             // the note file, relative to the job cwd
+		"notes read:",                // and the count that is mandatory
+		"mas-bandwidth/schema#876",   // the board, and dup: before filing
+		"100000",                     // the token budget
+		"the task",                   // and the task itself
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the prompt does not contain %q", want)
 		}
+	}
+}
+
+func TestThePromptUsesJobRelativeWorkerPaths(t *testing.T) {
+	jobDir := "/Users/glenn/Documents/ChatGPT/stella 2/jobs/job;$(touch SHOULD_NOT_RUN)"
+	prompt := string(Prompt(PromptInput{
+		ID: "job-paths", JobDir: jobDir, Deadline: time.Minute, Files: 1, Tokens: "10",
+		NoteFile: jobDir + "/note", Result: jobDir + "/RESULT.md", ResultTmp: jobDir + "/RESULT.md.tmp",
+	}))
+	for _, want := range []string{
+		"cat > RESULT.md.tmp <<'EOF'",
+		"mv RESULT.md.tmp RESULT.md",
+		"READ THE NOTE FILE note in your working directory",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the prompt does not use the job-relative target %q", want)
+		}
+	}
+	for _, unsafe := range []string{jobDir + "/RESULT.md.tmp", jobDir + "/RESULT.md", jobDir + "/note"} {
+		if strings.Contains(prompt, unsafe) {
+			t.Errorf("the prompt copied an unsafe absolute worker path %q", unsafe)
+		}
+	}
+}
+
+func TestHarnessArgsUseJobRelativePromptFile(t *testing.T) {
+	w := Worker{Model: "model", HarnessArgs: []string{"run", "--model", "{model}", "--", "{prompt}"}}
+	got := harnessArgs(w, "/tmp/job with spaces;$(touch SHOULD_NOT_RUN)")
+	want := []string{"run", "--model", "model", "--", "PROMPT.md"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("harness args use the stable job-relative prompt path: got %#v, want %#v", got, want)
 	}
 }
 
@@ -265,9 +298,14 @@ func TestTemplatesCarryTheirConditions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"OWED LIST FIRST", "QUOTE EVERY RULE VERBATIM", "THE MOMENT IT EXISTS", "12 files", "read PR #42"} {
+	for _, want := range []string{"OWED LIST FIRST", "QUOTE EVERY RULE VERBATIM", "THE MOMENT IT EXISTS", "12 files", "read PR #42", "omit progress narration", "severity", "every valid", "never hard-truncate", "## Head", "## Gates", "## One line"} {
 		if !strings.Contains(string(wrapped), want) {
 			t.Errorf("the wrapped task does not contain %q", want)
+		}
+	}
+	for n := 1; n <= 6; n++ {
+		if !strings.Contains(string(wrapped), fmt.Sprintf("%d.", n)) {
+			t.Errorf("the wrapped read-pr task lost rule %d", n)
 		}
 	}
 	if _, err := WrapTemplate("result", 3, nil); err == nil {
