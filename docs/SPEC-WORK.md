@@ -419,7 +419,7 @@ rewritten (the CAS push above only fast-forwards) and nothing is reconciled. A s
 same flags, so a stop is bounded by the same timeout and budget. **A session whose clip is
 refused by divergence is fenced**: it is fenced exactly as in rule 2 — every write and every
 read refused `fenced` at exit 1, except the `session status` and `session export` that rule
-names — keeps
+names and the `operation status|wait|cancel` that rule 2 admits on an id resolving to its own `session.export` operation — keeps
 its journal, and `session export --session <path> --into <path>` writes its accepted events since its base as a
 request bundle — each event with its request id, expected revision and payload — which the
 owning coordinator applies with `session replay --from <path>`, one request at a time,
@@ -4309,7 +4309,9 @@ intake that creates it.
 At load the session builds six indexes — id to node, containment adjacency, reverse dependency,
 repository, category (5654164074), and **reverse roadmap reference: from a node id to every
 roadmap that has it as a first-axis member, and to every cell whose `:ref` names it** — and every
-walk goes through them. **A seventh is opened rather than built or loaded: C's closed index**, which the
+read walk goes through the five read-path indexes — id to node, containment adjacency, reverse
+dependency, repository and category, the reverse roadmap reference being the sixth and on the
+write path only. **A seventh is opened rather than built or loaded: C's closed index, additional to the six**, which the
 clip publishes beside the snapshot in bounded pages and which no walk over O has to rebuild —
 keyed by `:id` and by `<event-rev>:<id>`, partitioned by event day, ordered by event revision, and
 grouped by repository, so a rollup reads a settled member's newest row in one bounded lookup, a
@@ -4589,7 +4591,7 @@ from the snapshot's structure thereafter, the live snapshot bounded by `--retain
 a snapshot loaded as retention boundary plus retained events equalling a clean
 reconstruction, and `--at` before the boundary refused naming the retention archive;
 **a session started on a snapshot whose archive file is absent answering every ask of the
-query table and running every rule of the validator**, with rule 11 and rule 14 green, and
+query table that does not reach for an archived body and running every rule of the validator**, with rule 11 and rule 14 green, and
 `baseline-rows=`, `since-baseline=`, `stale=`, `freshest=`, `pointers=`, `unverified=` and
 every `done-unverified=` equal to the same load with the retention archive present, **including
 a `verify` over an evidence event no `:to :done` names**, whose `VERIFY ROW` carries the same
