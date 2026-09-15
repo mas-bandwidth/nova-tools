@@ -376,6 +376,16 @@ func stamp(now time.Time) string { return now.UTC().Format(time.RFC3339) }
 // A cap with no remedy is censorship; a cap with one is an index.
 func maxRemedy(verb string) string { return "nova-tokens " + verb + " ... --max 0" }
 
+// avgRate is a model-day's dollars per million tokens (usdMicro / tokens), for sorting the
+// AVG listing highest first. A zero-token model has no average and sorts below every real
+// rate, which is never negative.
+func avgRate(usdMicro, tokens int64) float64 {
+	if tokens == 0 {
+		return -1
+	}
+	return float64(usdMicro) / float64(tokens)
+}
+
 // sourceLine is the line where a number becomes traceable: what each declared source
 // opened, refused, counted and fed. A field that is not a measurement for the kind prints
 // a dash, because a dash is an absence where a zero is a measurement.
@@ -389,6 +399,26 @@ func sourceLine(token string, s *tokens.Source) string {
 		oneline.Field(s.StatField("unparsed")), oneline.Field(s.StatField("comments")),
 		oneline.Field(s.StatField("redated")), oneline.Field(s.StatField("superseded")),
 		oneline.Field(s.StatField("rows")))
+}
+
+// sourceNamedDay reports whether the source fed any message for the day.
+func sourceNamedDay(s *tokens.Source, day string) bool {
+	for _, m := range s.Stream {
+		if m.Day == day {
+			return true
+		}
+	}
+	return false
+}
+
+// dayNames reports whether the day file's sources= line names the label.
+func dayNames(sources []string, label string) bool {
+	for _, s := range sources {
+		if s == label {
+			return true
+		}
+	}
+	return false
 }
 
 // noPositional refuses a verb invoked with a positional argument. Every verb's shape in
@@ -481,6 +511,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	dayList := bounded.Capped(stdout, *max, "TOKENS", "day", maxRemedy("fold"))
 	shrankList := bounded.Capped(stderr, *max, "TOKENS", "shrank", maxRemedy("fold"))
 	partialList := bounded.Capped(stderr, *max, "TOKENS", "partial", maxRemedy("fold"))
+	quietList := bounded.Capped(stderr, *max, "TOKENS", "quiet", maxRemedy("fold"))
 
 	conflictDays := map[string]bool{}
 	// The labels this run declared: exactly what lands in a row's sources column, and so
@@ -535,7 +566,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !*all {
 		days = []string{*day}
 	}
-	daysWritten, rowsWritten := 0, 0
+	daysWritten, rowsWritten, quiet := 0, 0, 0
 	mixedLabels := "-"
 	firstPartial := ""
 	for _, d := range days {
@@ -600,6 +631,17 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 						shrank = true
 					}
 				}
+				// A declared source with zero samples for an explicitly selected existing
+				// day is quiet: the day file still names it, and the fold prints a bounded
+				// line naming it rather than letting the refusal speak only in day totals.
+				for _, s := range sources {
+					if sourceNamedDay(s, d) || !dayNames(old.Sources, s.Label) {
+						continue
+					}
+					quiet++
+					quietList.Line(fmt.Sprintf("TOKENS QUIET label=%s day=%s: a declared source has zero samples for an explicitly selected existing day",
+						oneline.Field(s.Label), oneline.Field(d)))
+				}
 			}
 			// --allow-shrink is a person's word about a day going backwards. It is NOT a
 			// word about a row this fold cannot compute, so it does not override a partial,
@@ -629,10 +671,11 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	dayList.More()
 	shrankList.More()
 	partialList.More()
+	quietList.More()
 
-	counts := fmt.Sprintf("days=%d rows=%d sources=%d unreadable=%d unparsed=%d mixed=%d conflict=%d shrank=%d partial=%d",
+	counts := fmt.Sprintf("days=%d rows=%d sources=%d unreadable=%d unparsed=%d mixed=%d conflict=%d shrank=%d partial=%d quiet=%d",
 		daysWritten, rowsWritten, len(sources), unreadable.Total(), unparsed.Total(),
-		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total())
+		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total(), quiet)
 	bad := unreadable.Total() > 0 || unparsed.Total() > 0 || mixedList.Total() > 0 ||
 		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink) || partialList.Total() > 0
 	if bad {
@@ -895,8 +938,9 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	notePath := fs.String("note", "", "")
 	var supersedes stringList
 	fs.Var(&supersedes, "supersedes", "")
+	max := fs.Int("max", bounded.Default, "")
 	var sf sourceFlags
-	sf.declare(fs, false)
+	sf.declare(fs, true)
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " report", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -912,6 +956,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--day is not a day: " + *day + "; it wants " + wantsDay)
 	}
 	sf.check(r)
+	checkMax(r, *max)
 	seen := map[string]bool{}
 	for _, id := range supersedes {
 		switch {
@@ -1016,6 +1061,57 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return r.print(stderr)
 		}
 	}
+	// One TOKENS AVG line per model, after the body lines: the daily blended cost per
+	// token, summed over every repo the model wrote that day. Four types count toward
+	// tokens (input, output, cache write, cache read); reasoning is its own column and
+	// is not in the denominator the blended-cost ratio is over. A zero-token model still
+	// prints one line, with usd_per_mtok=-: there is no average over nothing.
+	type modelAvg struct {
+		name   string // provider/model, or model where no source named a provider
+		tokens int64
+		usd    int64
+	}
+	avgs := map[string]*modelAvg{}
+	for _, row := range rows {
+		name := row.Model
+		if row.Provider != "" {
+			name = row.Provider + "/" + row.Model
+		}
+		a, ok := avgs[name]
+		if !ok {
+			a = &modelAvg{name: name}
+			avgs[name] = a
+		}
+		for _, t := range []tokens.Type{tokens.Input, tokens.Output, tokens.CacheWrite, tokens.CacheRead} {
+			if v, has := row.Counts.Get(t); has {
+				a.tokens += v
+			}
+		}
+		a.usd += row.Usd
+	}
+	sortedAvg := make([]*modelAvg, 0, len(avgs))
+	for _, a := range avgs {
+		sortedAvg = append(sortedAvg, a)
+	}
+	sort.Slice(sortedAvg, func(i, j int) bool {
+		pi := avgRate(sortedAvg[i].usd, sortedAvg[i].tokens)
+		pj := avgRate(sortedAvg[j].usd, sortedAvg[j].tokens)
+		if pi != pj {
+			return pi > pj
+		}
+		return sortedAvg[i].name < sortedAvg[j].name
+	})
+	avgList := bounded.Capped(stderr, *max, "TOKENS", "avg", maxRemedy("report"))
+	var allTokens, allUsd int64
+	for _, a := range sortedAvg {
+		allTokens += a.tokens
+		allUsd += a.usd
+		avgList.Line(fmt.Sprintf("TOKENS AVG day=%s model=%s tokens=%d usd=%s usd_per_mtok=%s",
+			oneline.Field(*day), oneline.Field(a.name), a.tokens, oneline.Field(tokens.Usd(a.usd)), oneline.Field(tokens.UsdPerMtok(a.usd, a.tokens))))
+	}
+	avgList.More()
+	fmt.Fprintf(stderr, "TOKENS AVG-ALL day=%s tokens=%d usd=%s usd_per_mtok=%s\n",
+		oneline.Field(*day), allTokens, oneline.Field(tokens.Usd(allUsd)), oneline.Field(tokens.UsdPerMtok(allUsd, allTokens)))
 	// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
 	// it carries no unreadable= and no unparsed=, so what says the day is short is the
 	// TOKENS UNREADABLE / TOKENS UNPARSED lines above it, the TOKENS NOTE, and exit 1.

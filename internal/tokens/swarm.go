@@ -132,6 +132,14 @@ func ReadSwarm(label, pool string, rules *Rules) *Source {
 				}
 				m.Counts.Set(t, v)
 			}
+			if p := cells[cols["provider"]]; p != "" && p != Dash {
+				m.Provider = p
+			}
+			if u := cells[cols["usd"]]; u != "" && u != Dash {
+				if micro, ok := ParseMicro(u); ok {
+					m.Usd = micro
+				}
+			}
 			s.Stream = append(s.Stream, m)
 			s.Stat.Messages++
 		}

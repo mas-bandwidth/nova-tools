@@ -29,7 +29,7 @@ var wakeAudit = audit.Config{
 		`main.go|cmdProbe|wake.HereLine(clock.Now(), wake.ReadBench(), *quietLoad)`: "the line is composed through oneline.Field inside internal/wake and carries only numbers the kernel gave",
 	},
 	Imports: []string{
-		`"context"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"strconv"`, `"strings"`, `"time"`,
+		`"context"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
 		// runtime, for the version verb's os/arch/toolchain, which are
 		// constants of the build and are printed through oneline.Field like
 		// everything else: it writes nothing and shadows nothing.

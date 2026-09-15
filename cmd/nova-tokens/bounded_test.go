@@ -329,8 +329,8 @@ func TestReportIsUncappedBecauseTheBodyIsTheArtifact(t *testing.T) {
 	if n := len(r.stdout); n > 64*1024 {
 		t.Errorf("%d bytes, want under 64 KB", n)
 	}
-	if n := len(lines(r.stderr)); n != 1 {
-		t.Errorf("%d lines on stderr, want the one REPORT OK", n)
+	if n := len(lines(r.stderr)); n != 22 {
+		t.Errorf("%d lines on stderr, want 22 (20 TOKENS AVG + the one TOKENS AVG-ALL + the one REPORT OK)", n)
 	}
 	t.Logf("measured: %d lines, %d bytes", len(lines(r.stdout)), len(r.stdout))
 }

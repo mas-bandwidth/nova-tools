@@ -83,6 +83,7 @@ All active engineering and research items outside the v1 product feature denomin
 | RD-26 | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780): MCP front vs thin client protocol comparison | `proposed` | unassigned | proposal-intake | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780) (ADAPT 1 / RD-26); evaluate token cost of MCP verb exposition vs CLI thin client across 10 sessions; falsifier: per-session schema injection exceeds bytes saved over CLI, or refusal loses reason |
 | RD-27 | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780): escalation with a recorded reason | `proposed` | unassigned | proposal-intake | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780) (ADAPT 2 / RD-27); 20 frozen cards on cheap model with :escalate verb vs strong model shadow run; falsifier: missed plus spurious escalations exceed 25%, or escalated set costs more than shadow run |
 | RD-28 | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780): fan-out width before synthesis eats the saving | `proposed` | unassigned | proposal-intake | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780) (ADAPT 2 / RD-28); objective tested at widths 1, 3, 6, 10 with coordinator synthesis tokens allocated separately; falsifier: total tokens per accepted unit fall monotonically to width 10 |
+| RD-29 | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780): a bounded sideways channel between sibling cards in flight | `proposed` | unassigned | experiment | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780) (crumb dual-ring addendum / RD-29); question: does one bounded note per sibling per attempt reduce wasted attempts; falsifier: no fewer wasted attempts, or coordinator tokens rise more than the saving |
 
 ## Feature inventory
 
@@ -686,8 +687,9 @@ Prerequisites: E08-F03, E02-F04.
 - [ ] After the team-configured silence threshold use one bounded availability probe; nonresponse is unconfirmed capacity, never proof of exhausted credits
 - [ ] quiet-until-actionable: keep unchanged traffic mechanical, batch actionable deltas within bounds and let corrections, stops, lease loss and deadlines bypass delay
 - [ ] regression-and-recovery: suspend new automatic routing on a breached trial, retain uncertain live handles and use only eligible role-preserving fallback
+- [ ] presence-and-recovery: derive one presence per friend from the newest of the four beat sources (bus cursor, wake probe, harness hook, manual), read asleep at 300 s and unacknowledged at 600 s, refuse assignment to an asleep or unknown friend, and recover only by a coordinator's recorded reassign that cites the reading and fences the prior lease
 
-Source sections: Observed availability; Friends and assignments are resident indexes too; Efficiency policy (SPEC-WORK.md@685b7c2).
+Source sections: Observed availability; Friends and assignments are resident indexes too; Efficiency policy (SPEC-WORK.md@685b7c2); Presence: who is awake and who is asleep.
 
 **E08-F05 — Bounded config/pricing exchange and model suitability**
 

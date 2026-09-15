@@ -398,37 +398,37 @@ func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
 	}
 }
 
-// Issue #328: nova-bus wait returns instantly when the cursor is unadvanced; never blocks on a busy bus.
-// Without --advance, wait should block until a note NEWER than the moment the wait started arrives,
-// rather than returning instantly on an unadvanced backlog.
+// Issue #328, re-landed: without --advance, wait blocks while there is nothing new,
+// rather than spinning in a zero-delay loop, and returns only when a note arrives or
+// the deadline passes. A settled reader with nothing new sits out the whole timeout.
 func TestWaitWithoutAdvanceBlocksWhenCursorIsUnadvanced(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
-	// In busDir(t), Bo has already pushed 2 notes, and Ada has NO cursor.
-	// So Ada has an unadvanced backlog of 2 notes.
+	settled(t, checkout) // Ada is up to date: nothing new to wake on.
 
-	// A wait without --advance should block until the timeout expires, not return instantly on poll 1.
 	const timeout = 1 * time.Second
 	start := time.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)
 	took := time.Since(start)
 
 	if took < timeout {
-		t.Fatalf("wait returned after %s, before its %s deadline over an unadvanced cursor:\n%s", took, timeout, r.stdout)
+		t.Fatalf("wait returned after %s, before its %s deadline, with nothing new:\n%s", took, timeout, r.stdout)
 	}
 	r.mustContain(t, "stdout", "WAIT TIMEOUT after=")
 	if strings.Contains(r.stdout, "WAIT OK") {
-		t.Fatalf("wait without --advance returned WAIT OK on unadvanced backlog:\n%s", r.stdout)
+		t.Fatalf("wait without --advance returned WAIT OK with nothing new:\n%s", r.stdout)
 	}
 }
 
-// A note arriving mid-wait ends the wait even when the caller had an unadvanced backlog.
+// A note arriving mid-wait wakes a wait that had nothing new, without --advance. The
+// news is what ends the wait; an unadvanced backlog is returned on poll 1 exactly as
+// inbox returns it, so the wait that must block is the one over a quiet bus.
 func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
-	// Ada has unadvanced backlog of 2 notes.
+	settled(t, checkout) // Ada is up to date: nothing new to wake on.
 
 	other := bench(t, bare)
 	note(t, other, "bo-555555555555", "new note during wait")
@@ -449,6 +449,6 @@ func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(
 	if took < 200*time.Millisecond {
 		t.Fatalf("wait returned after %s before the note was pushed at 250ms:\n%s", took, r.stdout)
 	}
-	r.mustContain(t, "stdout", "WAIT OK new=3").
+	r.mustContain(t, "stdout", "WAIT OK new=1").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-555555555555")
 }

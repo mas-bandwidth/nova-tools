@@ -391,6 +391,8 @@ nova-sandbox fence   --out <file> [--webfetch allow|deny]
 nova-sandbox grant   --name <container> [--read <dir>]... [--write <dir>]...
 nova-sandbox release --name <container> [--read <dir>]... [--write <dir>]...
 nova-sandbox check   [--max <n>]
+nova-sandbox version
+nova-sandbox help
 ```
 
 `probe` is rule 10 and is the verb a caller runs **once before the first task**,
@@ -507,7 +509,7 @@ and said NO, **2** could not run (a missing flag, an unreadable path,
 
 ## Output grammar
 
-Every line below goes to **stderr** except the body of `policy` and `fence`,
+Every line below goes to **stderr** except the body of `policy`,
 which is the thing asked for and goes to stdout.
 
 ```
@@ -519,9 +521,8 @@ PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>
 POLICY OK backend=<name> read=<n> write=<n> bytes=<n>
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
-FENCE OK out=<path> keys=<n>
-FENCE REFUSED: <reason>
 CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> note=<one clause|->
+SANDBOX VERSION tool=nova-sandbox version=<n> backend=<name> platform=<os>
 ```
 
 `SANDBOX OK` is printed **before** the command starts, so a log that ends in a

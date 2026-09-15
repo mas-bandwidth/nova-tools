@@ -419,7 +419,7 @@ rewritten (the CAS push above only fast-forwards) and nothing is reconciled. A s
 same flags, so a stop is bounded by the same timeout and budget. **A session whose clip is
 refused by divergence is fenced**: it is fenced exactly as in rule 2 — every write and every
 read refused `fenced` at exit 1, except the `session status` and `session export` that rule
-names — keeps
+names and the `operation status|wait|cancel` that rule 2 admits on an id resolving to its own `session.export` operation — keeps
 its journal, and `session export --session <path> --into <path>` writes its accepted events since its base as a
 request bundle — each event with its request id, expected revision and payload — which the
 owning coordinator applies with `session replay --from <path>`, one request at a time,
@@ -2393,8 +2393,8 @@ next clip. Do not discard recovery records before successful checkpointing.
 A failed network request leaves local accepted work and the pending clip intact;
 report it as locally durable but not shared. Retry with bounded exponential
 backoff. A rejected push preserves the local work and names the upstream and base shas; never
-force-push and never merge (the sentence "apply nonconflicting incoming events
-incrementally" stood here in 9757de0 and is struck by stella-0ace603bdc22). An explicit
+force-push and never merge (the resident-session sentence struck here is preserved verbatim, with
+its date, in docs/HISTORY.md). An explicit
 reload/rebuild is a recovery or maintenance operation, not the normal verb path.
 Clip cadence is configurable; shutdown and coordinator handoff request a clip.
 A Git checkpoint is not required for every small mutation.
@@ -3635,6 +3635,179 @@ capabilities with the segment-boundary codec, and fencing enforcement at the rec
 before any runtime intake. (7) The `EXECUTION` and `OFFER` line shapes below are this file's
 first spelling and are a protocol-lock decision — Rowan.
 
+## Presence: who is awake and who is asleep *(Rowan, on Glenn's word of 2026-09-15)*
+
+Glenn: *"so far both you and Stella have failed to notice when friends fall asleep ... design a
+system where friends report in somewhere and not reporting in for 5 minutes = gone to sleep. we
+should be able to track who is awake and who is asleep"*; and the consequence he named:
+*"delegating work to somebody who is asleep = stalled forever"*, *"so we need a way to recover
+from this"*, *"and a way to detect it"*. The hurt behind both is one: a line that stops waiting
+stops existing, and nothing in O says so, so work handed to it is silent rather than refused.
+
+**The beat, and the steady state.** The optimal case is **a beat a minute from every line**, and
+**no beat for five minutes is asleep**. The beat costs nothing because it rides work the line is
+already doing: `nova-bus wait`'s poll tick, the harness's per-turn hook, the cursor commit an
+`inbox` already writes. A friend's steady state is one loop and this file names it: **wait, wake
+on a note, `take`, work, `settle`, tell, wait**. Every leg of it writes a `:presence`, so a line
+that is in the loop is visibly awake and a line that has left it is visibly asleep inside the
+window — which is the whole reading. Nothing here asks a friend to remember anything: **the loop
+lives in machinery per harness** (a Claude Code hook, an OpenCode plugin, the harness's own
+always-loading file), never in a model's memory, because the persistent hurt is that friends
+across harnesses forget to wait and so go to sleep. **A friend for whom no presence source is
+configured at all reads `unknown` and never `asleep`**, because silence from a line nobody
+watches is our gap and not that friend's; a friend whose source is configured and stops beating
+reads `asleep`, which is the case the whole section is for.
+
+**The `:presence` event.** One more kind of *The data* above, written by machinery and never by
+prose. Its subject is a friend identity and not a node: `:node` is `(:absent)`, and `FRIEND OK`
+prints `friend=<name>` with `change=presence` added to its enumeration.
+
+```lisp
+(:kind :presence :friend "emma"
+ :at "2026-09-15T14:41:11Z" :clock :tool     ; the instant the line was observed to be running
+ :source :bus-cursor                          ; :bus-cursor | :wake-probe | :harness-hook | :manual
+ :seen "3f9a1c2b8d40"                         ; the cursor commit or the revision the source saw; "-" where it saw none
+ :by "emma")                                  ; the author, as on every event
+```
+
+**The four sources, ranked, and which one wins.** Presence is derived from **the newest record,
+whatever its source** — that is the rule, and it is the only rule that needs no arbitration. The
+ranking below settles a tie *inside one coalescing bucket* and nothing else, and it ranks by how
+directly the record proves a turn ran on that line:
+
+1. `harness-hook` — the friend's own session ran a turn. The strongest: a turn is not claimable.
+2. `bus-cursor` — the friend's line advanced its own `CURSOR` commit reading the bus (SPEC.md's
+   `from-<me>/CURSOR`, already a free liveness signal in git, written by `nova-bus wait`/`inbox`).
+3. `manual` — the friend's own word, by `friend --here`. A claim, not a turn, so it ranks below
+   the two that are machinery.
+4. `wake-probe` — SPEC-WAKE's bounded availability probe: **another line's observation**, the
+   weakest, because reachable is not awake. A probe writes a `:presence` only on an answer from
+   the friend's own line; **a probe that times out writes nothing**, since missing contact is
+   `unknown` and never failure, and never `asleep`.
+
+**How a friend reports in without new work.** (a) the cursor advance every line already makes when
+it reads; (b) `nova-wake probe`; (c) a harness hook at session start and once per turn; (d)
+`nova-work friend --here <name> [--seen <rev|sha>]` by hand. The tool derives one presence per
+friend from whichever record is newest and reads no other store.
+
+**The readings.** `awake` is a new ask of *Queries — the contract* above, and `who` and `stale`
+carry the same facts on their existing rows, so nobody reads presence from a second place:
+
+```
+FRIEND ROW <name> presence=<awake|asleep|unknown> age=<dur|-> source=<bus-cursor|wake-probe|harness-hook|manual|-> at=<stamp|-> seen=<rev|sha12|-> wait=<hook|plugin|scheduled|manual|none> coordinator=<true|false>   (awake)
+QUERY OK ask=awake ... [friends=<n> awake=<n> asleep=<n> unknown=<n>] rows=<n> shown=<n> ...
+QUERY ROW <id> lease=<lease-id> holder=<name|unowned> ... presence=<awake|asleep|unknown> presence-age=<dur|-> presence-source=<s|-> wait=<hook|plugin|scheduled|manual|none> assigned=<name|-> ack-age=<dur|-> finding=<holder-asleep|assigned-unacknowledged|->   (who, stale)
+```
+
+`asleep` is no presence inside `--window`, **default 300 s**, Glenn's five minutes. `unknown` is no
+presence record ever, or a clock the session does not trust (`:clock :given`, or an `:at` outside
+`--skew`): the two are different facts and neither is failure. Rows are capped and counted like
+every ask, and `QUERY MORE` continues them. Glenn's own spelling of the two `stale` findings is
+`STALE <node> holder=<friend> asleep age=<dur>` and `STALE <node> assigned=<friend> unacknowledged
+age=<dur>`; this file prints those two facts in the `finding=` field above, because *Output
+grammar*'s first token is the verb's and `stale` is an ask of `query` — the words are Glenn's and
+the line is this file's *(Rowan's decision, for review)*.
+
+**Detect at delegation time.** `offer`, `take --for <name>` and every other assignment verb consult
+the reading before writing: an assignee whose presence is `asleep` is **refused at
+exit 2, nothing written**; an assignee whose presence is `unknown` because no source is configured for it is admitted with `presence=unknown` on the verb's OK line (a live line without a source is not a sleeper, Johnny's read of draft 1), and refused only when a source is configured and has never spoken, the verb's own `FAIL` line carrying `presence=<asleep|unknown>
+age=<dur|-> source=<s|->` as its reason — Glenn's spelling of the same refusal is `ASSIGN REFUSED
+<friend> asleep age=<dur>`. `--anyway --reason <text>` proceeds and records the reason in the
+event, because a coordinator who knows a line is about to wake must not be blocked by its own
+reading. **Detect after the fact**: `stale` lists every open lease *and every pending offer* whose
+holder reads `asleep`, so a delegation that went to sleep after it was taken is never silent.
+
+**Assigned, acknowledged and started are three facts.** An `:offer` is assignment; the assignee's
+own `:acknowledge` (or its `take`) is acknowledgement; a `:lease` with a heartbeat is started. An
+assignment with no acknowledgement for `--ack-window`, **default 600 s**, reads
+`finding=assigned-unacknowledged` in `stale` **regardless of the presence reading** — presence may
+say awake and the friend still never picked it up — and that reading is ground for `reassign` on
+its own. This is Glenn's worst case said plainly: *"they have been on it without acknowledging
+start for x minutes, ok, they are probably asleep, reassign."*
+
+**Recover.** `nova-work reassign --node <id> --to <name> --reason <text>` is the coordinator's verb
+and writes a `:reassign` event whose subject is the node: `:from` (the prior holder), `:to`,
+`:ground` (`:asleep` or `:unacknowledged`), `:presence` (the reading it cites — source, age, at),
+`:lease` (the lease it fences), `:reason`. **The prior lease is fenced**: from that event onward
+its `heartbeat`, `release` and `handoff` are refused at exit 1 naming the reassignment, so a
+friend who wakes cannot resume over the new holder; its work is not lost, because the events it
+already wrote stand and its responsibility is untouched, exactly as expiry leaves them. **The
+woken friend's first `who` says so**: `QUERY NOTE reassigned node=<id> from=<name> to=<name>
+at=<rev>`, Glenn's spelling `REASSIGNED <node> to <friend> at <rev>`. **Nothing reassigns on its
+own**: the reading is a reading, the ten-minutes-silent rule is the coordinator's and is applied
+by a person or their machinery, and the event names the reading it stood on so the judgement is
+auditable rather than guessed.
+
+**The coordinator's own presence counts, and a sleeping coordinator is the worst case.** `awake`
+prints `coordinator=true` on that row, and the coordinator's line beats like every other. A second
+line that reads the coordinator `asleep` **does not become coordinator**: per *One coordinator, one
+live reader/writer* below, a stale beat is an availability signal and not proof of takeover
+authority. It may print the reading, and nothing else, because it holds no writer of O; the only
+path on is that section's ownership transfer with a higher fencing generation once the `OWNER`
+record's `until` has passed. A presence reading never fences anybody.
+
+**Announce, so nobody learns of work only when it ends.** `take` and `settle` are the required
+events at the two ends of a piece of work, and the friend's own machinery sends **one bounded line**
+on its own bus as each is written — the tool writes the event, the hook sends the note, and the
+friend never has to remember either. `nova-work` itself sends nothing and names no transport: a
+verb that messaged a person here would be naming one house's bus, which is the fence the
+escalation paragraph above already holds.
+
+**Refusals.** A `:presence` whose `:source` is not configured for that friend is refused at exit 2,
+nothing written — a source is configured per friend by `friend --presence-source <name>=<s>,...`,
+and **a friend's own disposition is the only consent record**, so a line nobody configured is
+`unknown` for good and no other line may declare it awake. A presence whose `:at` is ahead of the
+session clock beyond `--skew` is refused at exit 2. **More than one presence per friend per 10 s is
+coalesced**: the later record folds into the open bucket, the `OK` line prints `changed=0`, and no
+second event is written, so a per-minute beat costs one event a minute and a chatty harness costs
+no more.
+
+**Replays.** `friend-falls-asleep-mid-lease` — a held lease whose holder stops beating reads
+`finding=holder-asleep` in `stale` inside 300 s, the lease itself untouched.
+`coordinator-asleep` — the coordinator's own beat stops; a second line's `awake` prints
+`coordinator=true presence=asleep` and that line acquires nothing.
+`presence-sources-disagree` — a `wake-probe` answer and a `harness-hook` beat one second apart
+resolve to the newer; the same two inside one 10 s bucket resolve to `harness-hook` by rank.
+`delegated-to-a-sleeper-then-recovered` — an `offer` to an asleep friend refused at exit 2; with
+`--anyway` it is written, appears in `stale`, is reassigned with the reading cited, the prior
+lease is fenced, and the sleeper's `heartbeat` on waking is refused while its first `who` shows
+the reassignment. `assigned-never-acknowledged` — an assignee reading `awake` who never
+acknowledges shows `finding=assigned-unacknowledged` at 600 s and is reassigned on that ground
+alone. `friend-forgets-to-wait-and-is-seen` — a harness whose wait loop is not installed writes no
+beat, reads `asleep` within 300 s of its last turn, and every assignment verb refuses it.
+
+**The wait is mechanical where the harness allows it.** Glenn: *"wherever possible, friends should
+mechanically set up poll the bus so it deterministically wakes them up"*, and *"may not be possible
+on all harnesses"*. So the mechanism that holds a line's wait is a declared fact of the friend, its
+**`:wait-source`**, configured beside its presence sources by `friend --wait-source <name>=<w>` and
+printed as `wait=` on the rows above. It is one of `hook`, `plugin`, `scheduled`, `manual` or
+`none`, and this table is the current reading per harness, each row a fact to be corrected by the
+line that runs it rather than a promise:
+
+| harness | what holds the wait | survives compaction | survives restart | `:wait-source` |
+|---|---|---|---|---|
+| Claude Code | a session-start and per-turn hook that runs `nova-bus wait`, in `settings.json` | yes, the hook is config and not context | yes | `hook` |
+| OpenCode | a plugin holding the poll outside the turn | yes | yes | `plugin` |
+| Codex | a scheduled command re-entering the session on a note | yes | yes, while the schedule lives | `scheduled` |
+| Antigravity | its own always-loading file naming the wait as the first act of every load | yes | yes | `hook` |
+| Grok | an OS process outside the turn holds the poll and writes the beat (Johnny's `johnny_bus_heartbeat`, 2026-09-15) | yes | no, a 10 h session cap | `plugin` |
+| a bare API loop | the loop program itself, outside any session | not applicable | yes | `plugin` |
+
+**Where the harness cannot hold it**, `:wait-source` is `manual` or `none` and nothing is pretended:
+the line simply stops beating when its turn ends, the reading shows it `asleep` within 300 s, its
+assignments refuse, and the coordinator reassigns by the recovery path above. **The human is never
+the waker** — that is the point of the whole section, and a harness that cannot wait is a fact the
+reading carries rather than a person's job to notice.
+
+**What this does not do.** No paging and no notification: the reading assigns nobody and wakes
+nobody. No automatic reassignment: every `:reassign` has a coordinator and a reason. No telemetry
+beyond the four sources and the four fields above — no machine facts, no command lines, no content
+of any turn, nothing about another house's bench. No heartbeats from swarm cards, which are
+model-only executions and never friends, by *the participation question is closed* below. No
+presence for the machines of *The fleet*, which are declared facts and not lines. And no second
+availability store: `:observe`'s `:state` remains what a person recorded, and presence is derived
+from `:presence` events alone.
+
 ## Models, prices and what they are evidence of *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
 
 **A shared `models` section is keyed by stable model and version identity, with provider route and
@@ -3850,8 +4023,8 @@ roadmap features. They add no verified completion until implementation and failu
 
 ## Efficiency: lessons absorbed 2026-09-15 *(Glenn; Emma, Stella)*
 
-Before implementing the resident session and execution slices of `nova-work`, Glenn requires that
-all operational efficiency and token optimization lessons learned from Gas Town and real multi-agent
+Before implementing the resident session and execution slices of `nova-work`, the owner requires that
+all operational efficiency and token optimization lessons learned from the pilot bench and real multi-agent
 coordination are absorbed as normative spec constraints and fences. These rules guard against token
 burn and serial bottlenecks below the model.
 
@@ -3871,7 +4044,7 @@ The rationale rests on measured facts from Gas Town:
    materialises only for independent verification, independent worker assignment, an explicit dependency
    edge, or an isolated recovery boundary; unpoured checklist items never count in `|O|` and never count
    as verified.
-3. **`:max-attempts` and `tripped=`.** Node attempts are bounded by `:max-attempts`, surfacing `tripped=`
+3. **`:max-attempts` and `tripped=`.** Node attempts are bounded by `:max-attempts` (default 3), surfacing `tripped=`
    as a status reading; taking a lease on a tripped node requires an explicit `--reason`, which explains
    the operator's intent and grants no execution authority by itself.
 4. **Delegate mode.** A declared harness role profile restricts the worker to designated verbs and
@@ -3891,11 +4064,12 @@ The rationale rests on measured facts from Gas Town:
    every card and delegated packet carries an explicit `:effort` bound (a small integer scale per task
    class stating how many reads, tool calls and how wide a fan-out the objective is worth); it is stated
    by the coordinator when the card is cut, and a packet lacking it is refused. A worker past its effort
-   limit stops and reports rather than widening on its own; widening requires an explicitly recorded reason.
+   limit stops and reports rather than widening on its own; only the coordinator may widen a card's
+   `:effort`, and only with an explicitly recorded reason.
 10. **Fleet-wide spend ceiling per day.** CONFIG maintains an explicit fleet-wide spend ceiling per day
     and per model family. When an automatic or delegated dispatch would cross that ceiling, it is refused
-    with a line naming the configured ceiling and the current spend; it polices the local bench rather
-    than guessing other benches' spend.
+    with a line naming the configured ceiling and `local-spend=` for the bench's own spend; it polices
+    the local bench rather than guessing other benches' spend. A fleet total needs the benches joined, a later slice.
 
 ### Required enforcement replays
 
@@ -4136,7 +4310,9 @@ intake that creates it.
 At load the session builds six indexes — id to node, containment adjacency, reverse dependency,
 repository, category (5654164074), and **reverse roadmap reference: from a node id to every
 roadmap that has it as a first-axis member, and to every cell whose `:ref` names it** — and every
-walk goes through them. **A seventh is opened rather than built or loaded: C's closed index**, which the
+read walk goes through the five read-path indexes — id to node, containment adjacency, reverse
+dependency, repository and category, the reverse roadmap reference being the sixth and on the
+write path only. **A seventh is opened rather than built or loaded: C's closed index, additional to the six**, which the
 clip publishes beside the snapshot in bounded pages and which no walk over O has to rebuild —
 keyed by `:id` and by `<event-rev>:<id>`, partitioned by event day, ordered by event revision, and
 grouped by repository, so a rollup reads a settled member's newest row in one bounded lookup, a
@@ -4416,7 +4592,7 @@ from the snapshot's structure thereafter, the live snapshot bounded by `--retain
 a snapshot loaded as retention boundary plus retained events equalling a clean
 reconstruction, and `--at` before the boundary refused naming the retention archive;
 **a session started on a snapshot whose archive file is absent answering every ask of the
-query table and running every rule of the validator**, with rule 11 and rule 14 green, and
+query table that does not reach for an archived body and running every rule of the validator**, with rule 11 and rule 14 green, and
 `baseline-rows=`, `since-baseline=`, `stale=`, `freshest=`, `pointers=`, `unverified=` and
 every `done-unverified=` equal to the same load with the retention archive present, **including
 a `verify` over an evidence event no `:to :done` names**, whose `VERIFY ROW` carries the same

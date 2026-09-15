@@ -41,6 +41,7 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
+  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir>
   nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
   nova-swarm status    --pool <dir> [--max <n>]
@@ -49,12 +50,14 @@ usage:
   nova-swarm verdict   --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
   nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>]
   nova-swarm result    --pool <dir> --id <job>
+  nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker
   nova-swarm cost      --pool <dir> [--since <stamp>] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher
 that exited with tasks pending and nothing running, a reclaim with no usage file
@@ -157,6 +160,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdTriage(rest, stdout, stderr, now)
 	case "result":
 		return cmdResult(rest, stdout, stderr)
+	case "verify":
+		return cmdVerify(rest, stdout, stderr)
 	case "template":
 		return cmdTemplate(rest, stdout, stderr)
 	case "cost":
@@ -169,6 +174,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdReclaim(rest, stdout, stderr)
 	case "quickstart":
 		return cmdQuickstart(rest, stdout, stderr)
+	case "native":
+		return cmdNative(rest, stdout, stderr)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
 }
@@ -372,8 +379,17 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	template := f.fs.String("template", "", "")
 	deadline := f.fs.String("deadline", "", "")
 	maxInput := f.fs.Int("max-input", 0, "")
+	// The scatter/wait/gather half (SPEC-SWARM.md "Batch: scatter, wait, gather"): one id,
+	// one deadline held by the machinery, one runner process per card, one bounded packet.
+	cards := f.fs.String("cards", "", "")
+	runner := f.fs.String("runner", "", "")
+	id := f.fs.String("id", "", "")
+	root := f.fs.String("root", "", "")
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	if *cards != "" {
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, stdout, stderr)
 	}
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	f.want(*tasks, "tasks", "a directory holding one task file per job")
@@ -438,6 +454,35 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	pending, _ := p.List(swarm.Pending)
 	fmt.Fprintf(stdout, "BATCH OK id=%s tasks=%d pending=%d\n", oneline.Field(batchID), len(all), len(pending))
 	return 0
+}
+
+// cmdBatchGather is the scatter/wait/gather half of `batch`, entered when --cards names a
+// TSV. It has no pool and no admission queue: it starts one runner process per card, waits
+// until they all end or the batch's deadline, and folds every card's RESULT.md into one
+// bounded packet.
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, stdout, stderr io.Writer) int {
+	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
+	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
+	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
+	f.want(runner, "runner", "the command to start once per card, given label slot model card-path root as arguments")
+	f.want(root, "root", "the directory a card's RESULT.md hangs under (<root>/<slot>/jobs/<label>/RESULT.md)")
+	seconds := 0
+	if deadline != "" {
+		n, err := parseInt(deadline)
+		if err != nil || n < 1 {
+			f.add(fmt.Sprintf("--deadline wants a whole number of seconds, got %q; a batch whose deadline is not a wait is a typo", deadline))
+		} else {
+			seconds = n
+		}
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return swarm.Batch(swarm.BatchInput{
+		ID: id, Deadline: time.Duration(seconds) * time.Second,
+		Cards: cards, Root: root, Runner: runner,
+		Stdout: stdout, Stderr: stderr,
+	})
 }
 
 func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
@@ -895,6 +940,89 @@ func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
 	})
 }
 
+func cmdVerify(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("verify")
+	result := f.fs.String("result", "", "")
+	contract := f.fs.String("contract", "", "")
+	label := f.fs.String("label", "", "")
+	card := f.fs.String("card", "", "")
+	runRecord := f.fs.String("run-record", "", "")
+	usageFile := f.fs.String("usage", "", "")
+	max := f.fs.Int("max", swarm.DefaultContractLines, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*result, "result", "the path to the job's RESULT.md whose line 1 is to be checked")
+	f.want(*contract, "contract", "the card's contract line, which line 1 of RESULT.md must equal exactly")
+	f.want(*label, "label", "the job's label, carried on the result line and in the receipt")
+	if *max < 1 {
+		f.add(fmt.Sprintf("--max is at least 1, got %d; it bounds the evidence lines past the disposition", *max))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+
+	c := swarm.Contract{Label: *label, ContractLine: *contract, MaxLines: *max, WallSeconds: -1, ExitCode: -1}
+	if *card != "" {
+		raw, err := os.ReadFile(*card)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm verify: --card wants a readable file of the card text: %s\n", oneline.Err(err))
+			return 2
+		}
+		c.Card = raw
+	}
+	if *runRecord != "" {
+		var rec swarm.ExitRecord
+		if err := swarm.ReadJSON(*runRecord, &rec); err != nil {
+			fmt.Fprintf(stderr, "nova-swarm verify: --run-record wants a readable exit.json: %s\n", oneline.Err(err))
+			return 2
+		}
+		c.HaveRun, c.ExitCode = true, rec.RC
+	}
+	if *usageFile != "" {
+		raw, err := os.ReadFile(*usageFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm verify: --usage wants a readable usage file: %s\n", oneline.Err(err))
+			return 2
+		}
+		row := swarm.UsageRow{}
+		lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+		if len(lines) >= 2 {
+			head := strings.Split(lines[0], "\t")
+			values := strings.Split(lines[1], "\t")
+			for i, name := range head {
+				if i < len(values) {
+					row[name] = values[i]
+				}
+			}
+		}
+		c.HaveUsage = true
+		c.TokensIn, _ = row.Int("tokens_in")
+		c.TokensOut, _ = row.Int("tokens_out")
+		c.USD = dash(row["usd"])
+		if started, err := time.Parse(time.RFC3339, dash(row["started"])); err == nil {
+			if ended, err := time.Parse(time.RFC3339, dash(row["ended"])); err == nil {
+				c.WallSeconds = int(ended.Sub(started).Seconds())
+			}
+		}
+	}
+
+	out, err := swarm.CheckResult(*result, c)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-swarm verify: --result wants a readable RESULT.md: %s\n", oneline.Err(err))
+		return 2
+	}
+	if err := swarm.WriteReceipt(*result+".receipt", out, c); err != nil {
+		fmt.Fprintf(stderr, "nova-swarm verify: the receipt could not be written: %s\n", oneline.Err(err))
+		return 2
+	}
+	fmt.Fprintln(stdout, oneline.Escape(out.Line))
+	if !out.OK {
+		return 1
+	}
+	return 0
+}
+
 func cmdResult(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("result")
 	pool := f.fs.String("pool", "", "")
@@ -1110,6 +1238,67 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "QUICKSTART NOTE a task is a file: nova-swarm add --pool %s --task <file> --files <n> --tokens <n>\n", oneline.Escape(p.Dir))
 	fmt.Fprintf(stdout, "QUICKSTART NOTE a worker description says whose model runs: nova-swarm run --pool %s --workers <n> --hours <h> --worker <file>\n", oneline.Escape(p.Dir))
 	fmt.Fprintf(stdout, "QUICKSTART NOTE the conditions are worth more than the model: nova-swarm template --name read-pr\n")
+	return 0
+}
+
+func cmdNative(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("native")
+	harness := f.fs.String("harness", "", "")
+	model := f.fs.String("model", "", "")
+	cardPath := f.fs.String("card", "", "")
+	slot := f.fs.String("slot", "", "")
+	root := f.fs.String("root", "", "")
+	deadline := f.fs.String("deadline", "", "")
+	label := f.fs.String("label", "", "")
+	auth := f.fs.String("auth", "", "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*harness, "harness", "the harness binary path, checked for existence and execution")
+	f.want(*model, "model", "the model to run: provider/model, one slash, both sides nonempty")
+	f.want(*cardPath, "card", "the path to the card file")
+	f.want(*slot, "slot", "the slot directory this run executes in")
+	f.want(*root, "root", "the configured root the slot directory must sit under")
+	f.want(*deadline, "deadline", "the wall duration that kills the child (e.g. 60s, 5m)")
+	if f.refused(stderr) {
+		return 2
+	}
+	d, err := time.ParseDuration(*deadline)
+	if err != nil || d <= 0 {
+		fmt.Fprintf(stderr, "nova-swarm native: --deadline wants a positive duration: %s\n", oneline.Err(err))
+		return 2
+	}
+	cardRaw, err := os.ReadFile(*cardPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-swarm native: --card wants a readable file: %s\n", oneline.Err(err))
+		return 2
+	}
+	lbl := *label
+	if lbl == "" {
+		lbl = strings.TrimSuffix(filepath.Base(*cardPath), filepath.Ext(*cardPath))
+	}
+	cfg := nativeRunConfig{
+		binary:   *harness,
+		model:    *model,
+		label:    lbl,
+		card:     cardRaw,
+		slotDir:  *slot,
+		root:     *root,
+		authFile: *auth,
+		deadline: d,
+	}
+	res, code := nativeRun(cfg, stderr)
+	if code != 0 {
+		return code
+	}
+	fmt.Fprintf(stdout, "NATIVE OK label=%s rc=%d wall=%.2fs card_sha256=%s binary_sha256=%s\n",
+		oneline.Field(cfg.label), res.rc, res.wallSeconds, oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256))
+	if res.rc != 0 {
+		if res.rc > 0 {
+			return res.rc
+		}
+		return 1
+	}
 	return 0
 }
 

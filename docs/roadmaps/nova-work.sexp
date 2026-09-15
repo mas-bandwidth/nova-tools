@@ -55,7 +55,7 @@
   :baseline-items 171
   :discovered-features 6
   :current-features 57
-  :current-acceptance-items 203
+  :current-acceptance-items 204
   :events (    (      :kind "baseline"
       :feature-count 52
       :reason "Full initial nova-work source survey; implementation not started")
@@ -448,6 +448,12 @@
       :status "proposed"
       :owner "unassigned"
       :next-gate "proposal-intake"
+      :source "ideas-780")
+    (      :id "RD-29"
+      :title "ideas#780: a bounded sideways channel between sibling cards in flight"
+      :status "proposed"
+      :owner "unassigned"
+      :next-gate "experiment"
       :source "ideas-780"))
   :epics (    (      :id "E01"
       :title "Canonical work data and restricted representation"
@@ -973,12 +979,14 @@
             "Reconcile uncertain prior attempts before relaunch or reassignment"
             "After the team-configured silence threshold use one bounded availability probe; nonresponse is unconfirmed capacity, never proof of exhausted credits"
             "quiet-until-actionable: keep unchanged traffic mechanical, batch actionable deltas within bounds and let corrections, stops, lease loss and deadlines bypass delay"
-            "regression-and-recovery: suspend new automatic routing on a breached trial, retain uncertain live handles and use only eligible role-preserving fallback")
+            "regression-and-recovery: suspend new automatic routing on a breached trial, retain uncertain live handles and use only eligible role-preserving fallback"
+            "presence-and-recovery: derive one presence per friend from the newest of the four beat sources (bus cursor, wake probe, harness hook, manual), read asleep at 300 s and unacknowledged at 600 s, refuse assignment to an asleep or unknown friend, and recover only by a coordinator's recorded reassign that cites the reading and fences the prior lease")
           :depends-on (            "E08-F03"
             "E02-F04")
           :source-sections (            "Observed availability"
             "Friends and assignments are resident indexes too"
-            "Efficiency policy (SPEC-WORK.md@685b7c2)")
+            "Efficiency policy (SPEC-WORK.md@685b7c2)"
+            "Presence: who is awake and who is asleep")
           :state "missing"
           :evidence ())
         (          :id "E08-F05"
