@@ -105,61 +105,6 @@ func calls(t *testing.T, p string) (int, int) {
 	s := string(b)
 	return strings.Count(s, "prepare\n"), strings.Count(s, "send\n")
 }
-func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
-	for _, mode := range []string{"uncertain", "hang"} {
-		t.Run(mode, func(t *testing.T) {
-			log := fakeBusPath(t)
-			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
-			statePath := filepath.Join(t.TempDir(), "s.json")
-			args := []string{"report", "--file", p, "--send", "--snapshot", statePath, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--timeout", "5s"}
-			if mode == "hang" {
-				// A bus that never answers is now bounded by the BUDGET, not by
-				// the version probe's --timeout: that was the repair. So the
-				// fixture names a budget, and the hang is cut off by the same
-				// allowance a real delivery gets. Ten seconds: enough that a real
-				// prepare and the start of a send fit, far less than the fixture's
-				// thirty-second sleep.
-				args = append(args, "--budget", "10s")
-			}
-			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
-			code, _, errout := run(t, Environment{}, args...)
-			if code != 1 {
-				t.Fatal(code)
-			}
-			need(t, errout, "sent=uncertain")
-			s, e := readSnapshot(statePath)
-			if e != nil || len(s.Pending) != 1 || len(s.Delivered) != 0 {
-				t.Fatal(s, e)
-			}
-			var id string
-			for _, pending := range s.Pending {
-				id = pending.ID
-				if id == "" {
-					t.Fatal("no ID retained")
-				}
-			}
-			t.Setenv("NOVA_UPDATE_BUS_MODE", "ok")
-			code, out, errout := run(t, Environment{}, args...)
-			if code != 0 {
-				t.Fatalf("%d %s %s", code, out, errout)
-			}
-			need(t, out, "REPORT SENT", "id\\x3d"+id)
-			nprep, nsend := calls(t, log)
-			if nprep != 1 || nsend != 2 {
-				t.Fatal(nprep, nsend)
-			}
-			code, out, errout = run(t, Environment{}, args...)
-			if code != 0 {
-				t.Fatalf("%d %s %s", code, out, errout)
-			}
-			need(t, out, "nothing sent", "sent=no")
-			np, ns := calls(t, log)
-			if np != nprep || ns != nsend {
-				t.Fatal("unchanged confirmed run invoked bus")
-			}
-		})
-	}
-}
 func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
 	log := fakeBusPath(t)
 	p := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))

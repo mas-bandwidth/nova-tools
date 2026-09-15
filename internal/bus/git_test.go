@@ -53,6 +53,9 @@ func TestMain(m *testing.M) {
 		os.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
 		os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 		os.Setenv("GIT_TERMINAL_PROMPT", "0")
+		// The seeded bare bus bareBus copies is made under this directory too, so it
+		// is removed with it.
+		barebusRoot = dir
 		return m.Run()
 	}())
 }
@@ -83,23 +86,64 @@ var testIdentity = map[string]Identity{
 	"Bo":  {Name: "Bo", Email: "bo@example.com"},
 }
 
-// bareTable builds a bare repository holding a bus with a roster on branch main, and
-// returns its path. It is the remote every clone below pushes to.
+// bareBus hands a test a bare repository holding a bus with a roster on branch main.
+// It is the remote every clone below pushes to, and each test gets its own.
+//
+// The repository is SEEDED ONCE for the process and COPIED here. Seeding it is an
+// init, a clone, a commit and a push -- four git subprocesses, which 36 callers turned
+// into most of this package's 70 s (#516, Glenn's two-minute rule). The copy holds the
+// same bytes and the same roster commit, and a test then owns its copy outright.
 func bareBus(t *testing.T) string {
 	t.Helper()
+	barebusOnce.Do(func() { barebusDir, barebusErr = seedBareBus() })
+	if barebusErr != nil {
+		t.Fatalf("the bus fixture: %v", barebusErr)
+	}
 	bare := filepath.Join(t.TempDir(), "bus.git")
-	if err := os.MkdirAll(bare, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := git(bare, "init", "--bare", "--initial-branch=main"); err != nil {
-		t.Fatalf("init --bare: %v %s", err, out)
-	}
-	seed := cloneBus(t, bare)
-	write(t, seed, ConfigName, rosterJSON)
-	if _, err := CommitAndPush(seed, testIdentity["Ada"], []string{ConfigName}, "the roster", "origin", "main", 3); err != nil {
-		t.Fatalf("seeding the bus: %v", err)
+	if err := os.CopyFS(bare, os.DirFS(barebusDir)); err != nil {
+		t.Fatalf("copying the bus fixture: %v", err)
 	}
 	return bare
+}
+
+// The process-wide seeded bare repository bareBus copies. Made under TestMain's
+// directory and removed with it.
+var (
+	barebusOnce sync.Once
+	barebusDir  string
+	barebusErr  error
+	barebusRoot string // set by TestMain, the parent the fixture is seeded under
+)
+
+// seedBareBus seeds that repository with the same calls bareBus used to make per test.
+// It takes no *testing.T: it runs under sync.Once, where the caller that loses the race
+// is not the test whose failure it would be.
+func seedBareBus() (string, error) {
+	dir, err := os.MkdirTemp(barebusRoot, "bare-bus-")
+	if err != nil {
+		return "", err
+	}
+	bare := filepath.Join(dir, "bus.git")
+	if err := os.MkdirAll(bare, 0o755); err != nil {
+		return "", err
+	}
+	if out, err := git(bare, "init", "--bare", "--initial-branch=main"); err != nil {
+		return "", fmt.Errorf("init --bare: %v %s", err, out)
+	}
+	seed := filepath.Join(dir, "seed")
+	if out, err := git(dir, "clone", "--quiet", bare, seed); err != nil {
+		return "", fmt.Errorf("clone: %v %s", err, out)
+	}
+	if out, err := git(seed, "checkout", "-q", "-B", "main"); err != nil {
+		return "", fmt.Errorf("checkout main: %v %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(seed, ConfigName), []byte(rosterJSON), 0o644); err != nil {
+		return "", err
+	}
+	if _, err := CommitAndPush(seed, testIdentity["Ada"], []string{ConfigName}, "the roster", "origin", "main", 3); err != nil {
+		return "", fmt.Errorf("seeding the bus: %v", err)
+	}
+	return bare, nil
 }
 
 func cloneBus(t *testing.T, bare string) string {
