@@ -50,6 +50,7 @@ type nativeRunResult struct {
 	wallSeconds  float64 // the wall the run took
 	cardSHA256   string  // sha256 of the card text, lowercase hex
 	binarySHA256 string  // sha256 of the harness binary, lowercase hex
+	job          string  // the job directory <slot>/jobs/<label> the child ran in
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -96,8 +97,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		return nativeRunResult{}, 2
 	}
 
-	// HOME is a data directory under the slot directory; the child is pointed at it
-	// and nothing above it.
+	// The job directory is where the child runs and writes: <slot>/jobs/<label>, made here
+	// before the child starts, so the card's cwd exists and the card is told its place by
+	// that cwd (SPEC-SWARM rule 13). HOME is a data directory under the slot directory; the
+	// child is pointed at it and nothing above it.
+	jobDir := filepath.Join(cfg.slotDir, "jobs", cfg.label)
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		refuseNative(errOut, fmt.Sprintf("the job directory %s could not be made: %s", oneline.Field(jobDir), oneline.Escape(err.Error())))
+		return nativeRunResult{}, 2
+	}
 	dataHome := filepath.Join(cfg.slotDir, "data")
 	if err := os.MkdirAll(dataHome, 0o755); err != nil {
 		refuseNative(errOut, fmt.Sprintf("the data directory %s could not be made: %s", oneline.Field(dataHome), oneline.Escape(err.Error())))
@@ -148,9 +156,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	cmd.Env = append(os.Environ(),
 		"HOME="+dataHome,
 		"XDG_DATA_HOME="+dataHome,
-		"NOVA_SWARM_JOB="+cfg.slotDir,
+		"NOVA_SWARM_JOB="+jobDir,
 	)
-	cmd.Dir = cfg.slotDir
+	cmd.Dir = jobDir
 	cmd.Stdin = strings.NewReader("")
 	log, err := os.OpenFile(filepath.Join(cfg.slotDir, "native.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
@@ -163,6 +171,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		rc:           -1,
 		cardSHA256:   hex.EncodeToString(cardHash[:]),
 		binarySHA256: binaryHash,
+		job:          jobDir,
 	}
 	start := time.Now()
 	if err := cmd.Run(); err != nil {

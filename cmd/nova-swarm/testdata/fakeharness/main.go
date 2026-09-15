@@ -196,6 +196,19 @@ func main() {
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
 	}
+	// FAKE-PWD writes the child's own working directory into RESULT.md and exits clean: it
+	// is how the native run proves the child's cwd is the job directory and not the caller's.
+	if _, ok := directive(prompt, "FAKE-PWD"); ok {
+		dir, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: pwd:", err)
+			os.Exit(2)
+		}
+		if job != "" {
+			writeRecorded(filepath.Join(job, "RESULT.md"), []byte("pwd="+dir+"\n"), 0o644)
+		}
+		os.Exit(0)
+	}
 	findings, _ := number(prompt, "FAKE-FINDINGS")
 	if !published {
 		// The notes are read HERE, after the work and before the report: a worker reads its

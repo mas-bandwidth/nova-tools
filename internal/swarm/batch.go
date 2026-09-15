@@ -111,6 +111,7 @@ func Batch(in BatchInput) int {
 		logPath    string
 		done       bool // guarded by doneMu
 		idleKilled bool // guarded by doneMu
+		rc         int  // the child's exit code; guarded by doneMu
 		lastGrow   time.Time
 	}
 	var doneMu sync.Mutex
@@ -154,9 +155,16 @@ func Batch(in BatchInput) int {
 		wg.Add(1)
 		go func(p *proc) {
 			defer wg.Done()
-			_ = p.cmd.Wait()
+			err := p.cmd.Wait()
 			doneMu.Lock()
 			p.done = true
+			if ee, ok := err.(*exec.ExitError); ok {
+				p.rc = ee.ExitCode()
+			} else if err == nil {
+				p.rc = 0
+			} else {
+				p.rc = -1
+			}
 			doneMu.Unlock()
 		}(&procs[i])
 	}
@@ -215,6 +223,9 @@ func Batch(in BatchInput) int {
 	}
 	close(stopMonitor)
 	monitorWG.Wait()
+	// Reap every child before gather reads their exit codes: a killed card's rc must be
+	// settled before the gather decides whether a missing RESULT.md is a clean exit.
+	wg.Wait()
 
 	// gather: fold every card into one bounded packet. A missing or wrong-line-1 result is
 	// an ABSTAIN row; done is decided by the contract alone, never by the process's timing.
@@ -237,6 +248,9 @@ func Batch(in BatchInput) int {
 		idle     bool
 		logLines int
 		stalled  bool
+		missing  bool   // RESULT.md was not there at all
+		jobDir   string // the job directory, for the missing-result reason
+		noResult bool   // missing RESULT.md on a clean exit (rc==0)
 	}
 	rows := make([]row, len(cards))
 	for i, c := range cards {
@@ -260,6 +274,8 @@ func Batch(in BatchInput) int {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			rows[i].state = "abstain"
+			rows[i].missing = true
+			rows[i].jobDir = filepath.Dir(path)
 			abstain++
 			continue
 		}
@@ -279,11 +295,21 @@ func Batch(in BatchInput) int {
 	}
 
 	// A card that ended -- killed, abstained or refused -- with no output after the wall
-	// opened is a prompt or harness defect, not a slow model: it is named stalled.
+	// opened is a prompt or harness defect, not a slow model: it is named stalled. But a
+	// card that ran to a clean exit (rc 0) and still has no RESULT.md is not a stall: the
+	// model finished its run and named its own reason, so the abstain says so rather than
+	// blaming a wall that opened on nothing.
 	for i := range rows {
-		if rows[i].state != "done" && rows[i].logLines == 0 {
+		if rows[i].state == "done" {
+			continue
+		}
+		if rows[i].logLines == 0 {
 			rows[i].stalled = true
 			stalled++
+			continue
+		}
+		if rows[i].missing && procs[i].rc == 0 {
+			rows[i].noResult = true
 		}
 	}
 
@@ -299,6 +325,8 @@ func Batch(in BatchInput) int {
 			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- idle %ds\n", oneline.Field(r.label), r.slot, idleSeconds)
 		case r.stalled:
 			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- stalled (no output after the wall opened)\n", oneline.Field(r.label), r.slot)
+		case r.noResult:
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- no RESULT.md in %s (rc=0)\n", oneline.Field(r.label), r.slot, r.jobDir)
 		case r.state == "abstain":
 			fmt.Fprintf(in.Stdout, "%s slot=%d abstain log=%d\n", oneline.Field(r.label), r.slot, r.logLines)
 		default:
