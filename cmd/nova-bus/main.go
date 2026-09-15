@@ -46,6 +46,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ import (
 const usage = `nova-bus: the bus, with the races taken out (see docs/SPEC.md)
 
 usage:
-  nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>]
+  nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>] [--file <path> | > <file>]
   nova-bus draft --bus <dir> --as <name> --reply-to <id-or-path-or-subject> --body-file <path> --draft-dir <dir> --remote <name> --branch <name>
         [--to <names>] [--cc <names>] [--subject <text>] [--max-body-bytes <n>]
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
@@ -496,6 +497,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	subject := f.fs.String("subject", "", "the subject line (default: a placeholder you must replace)")
 	var re stringList
 	f.fs.Var(&re, "re", "an id, a path, or the SUBJECT of a note on your open list that this note answers, or `new` to start a thread (repeatable)")
+	file := f.fs.String("file", "", "write the draft skeleton to this file instead of standard output")
 	// The reply form's flags. Every one of them is inert without --reply-to, which is what
 	// keeps the released form byte-identical: see cmd/nova-bus/reply.go.
 	replyTo := f.fs.String("reply-to", "", "an id, a path, or the SUBJECT of a note on your live listing to ANSWER: the reply form, which refreshes the bus and writes the whole header for you")
@@ -546,6 +548,24 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// Collected, like send's: a draft asked for with a misspelled name and a Re that is
 	// not on the bus is two mistakes and one run.
 	var problems []error
+	if *file != "" {
+		cur := filepath.Dir(*file)
+		for {
+			if fi, err := os.Stat(cur); err == nil && fi.IsDir() {
+				break
+			}
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				break
+			}
+			cur = parent
+		}
+		curResolved := resolveForCompare(cur)
+		root := resolveForCompare(*busDir)
+		if curResolved == root || strings.HasPrefix(curResolved, root+string(filepath.Separator)) {
+			problems = append(problems, fmt.Errorf("--file %s is inside the bus checkout at %s; drafts go outside the bus, because send needs its tree clean", *file, root))
+		}
+	}
 	if err := bus.OneLine("--subject", *subject); err != nil {
 		problems = append(problems, err)
 	}
@@ -619,6 +639,14 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	skeleton := bus.Skeleton{From: me.Name, To: *to, Cc: *cc, Re: re, Subject: *subject}.Render()
+	if *file != "" {
+		if err := os.WriteFile(*file, []byte(skeleton), 0o644); err != nil {
+			fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(*file), oneline.Err(err))
+			return 2
+		}
+		fmt.Fprintf(stdout, "DRAFT OK path=%s\n", oneline.Field(*file))
+		return 0
+	}
 	fmt.Fprint(stdout, skeleton)
 	return 0
 }
