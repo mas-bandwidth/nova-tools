@@ -1,6 +1,6 @@
 ; Proposed recursive roadmap data; not an implemented nova-work interchange schema.
 (  :schema "nova-work-roadmap-baseline-1"
-  :scope-revision 8
+  :scope-revision 9
   :inventory-status "proposed baseline; awaiting friend review"
   :sources (    :main-spec "SPEC-WORK.md@f36b85850620504a74e1229043c7cee2c14ea594"
     :companion "SPEC-WORK-PILOT.md@6e3413f"
@@ -41,12 +41,14 @@
     :issue-321-c5672006742 "https://github.com/mas-bandwidth/nova-tools/issues/321#issuecomment-5672006742"
     :issue-336 "https://github.com/mas-bandwidth/nova-tools/issues/336"
     :pr-338 "https://github.com/mas-bandwidth/nova-tools/pull/338"
+    :pr-339 "https://github.com/mas-bandwidth/nova-tools/pull/339"
+    :fleet "spec/nova-work PR 339, docs/SPEC-WORK.md section The fleet"
     :production-inventory "ec01647")
   :baseline-features 52
   :baseline-items 171
   :discovered-features 6
   :current-features 57
-  :current-acceptance-items 200
+  :current-acceptance-items 201
   :events (    (      :kind "baseline"
       :feature-count 52
       :reason "Full initial nova-work source survey; implementation not started")
@@ -126,6 +128,11 @@
       :acceptance "recursive-container-settle-reopen"
       :item-count 1
       :reason "Proposed PR 319 requires settle and reopen behavior through required-member ancestors at every grouping depth")
+    (      :kind "acceptance-discovery"
+      :feature "E08-F03"
+      :acceptance "fleet-is-static-config"
+      :item-count 1
+      :reason "Proposed PR 339 adds the fleet to CONFIG as static instance data with one verb and two asks; a recommendation is never a lease")
     (      :kind "organization"
       :feature-count 0
       :reason "Organize active work outside v1 denominator into explicit R&D register; preserve 57 features and 200 items")
@@ -896,12 +903,14 @@
             "Include coordinator identity and attribute model, bench, attempt and usage"
             "Store agreed specialist roles per friend; keep model strengths/weaknesses in the shared model catalog"
             "Represent children, swarm capabilities, local runs and one-shots separately from friend identity; agreed concurrency limits apply"
-            "bounds-are-not-prompts: refuse automatic dispatch when an adapter cannot enforce the configured execution limit; distinguish wait deadline from observed stop or unresolved outcome")
+            "bounds-are-not-prompts: refuse automatic dispatch when an adapter cannot enforce the configured execution limit; distinguish wait deadline from observed stop or unresolved outcome"
+            "fleet-is-static-config: hold the fleet as :machine records in CONFIG with stable id, owner, connection-profile reference, roles, limits, permits, exclusions and dated declared facts, all instance data; list it and recommend members for a workload kind from declared facts, never a lease; refuse a record without owner or id, a held connection profile, a credential, an unknown owner or role, and a choice of a member for a workload it excludes")
           :depends-on (            "E04-F04"
             "E03-F04")
           :source-sections (            "Friends and assignments are resident indexes too"
             "CONFIG and ACTIVE are different sections"
-            "Efficiency policy (SPEC-WORK.md@685b7c2)")
+            "Efficiency policy (SPEC-WORK.md@685b7c2)"
+            "The fleet (spec/nova-work PR 339)")
           :state "missing"
           :evidence ())
         (          :id "E08-F04"
