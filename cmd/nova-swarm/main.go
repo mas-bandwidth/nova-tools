@@ -57,7 +57,7 @@ usage:
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>]
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>]
   nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher
@@ -1271,6 +1271,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	deadline := f.fs.String("deadline", "", "")
 	label := f.fs.String("label", "", "")
 	auth := f.fs.String("auth", "", "")
+	config := f.fs.String("config", "", "")
 	sandbox := f.fs.String("sandbox", "", "")
 	noWall := f.fs.Bool("no-wall", false, "")
 	var repos, recipients []string
@@ -1313,6 +1314,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		slotDir:    *slot,
 		root:       *root,
 		authFile:   *auth,
+		configFile: *config,
 		deadline:   d,
 		repos:      repos,
 		recipients: recipients,
@@ -1323,8 +1325,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
-	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s%s\n",
-		oneline.Field(cfg.label), oneline.Field(res.job), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), usageSuffix(res.usageReason, res.usageState))
+	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s%s\n",
+		oneline.Field(cfg.label), oneline.Field(res.job), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), usageSuffix(res.usageReason, res.usageState))
 	if res.rc != 0 {
 		if res.rc > 0 {
 			return res.rc
