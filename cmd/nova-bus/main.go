@@ -664,7 +664,14 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if strings.TrimSpace(line.value) == "" {
 			continue
 		}
-		names, unknown := c.ResolveList(line.value)
+		var names, unknown []string
+		if line.flag == "--to" {
+			// A To line may name the broadcast aliases "all" and "table"; they are
+			// vouched for here, unexpanded, and resolved from the roster at send time.
+			names, unknown = c.ResolveBroadcast(line.value, me)
+		} else {
+			names, unknown = c.ResolveList(line.value)
+		}
 		if len(unknown) > 0 {
 			problems = append(problems, fmt.Errorf("%s: %s names no one on this bus (known: %s)", line.flag, strings.Join(bus.UnknownNames(unknown), ", "), strings.Join(c.KnownNames(), "; ")))
 			continue
@@ -893,8 +900,9 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 			printTranscript(stderr, err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d state=%s\n",
-			oneline.Field(art.ID), oneline.Field(art.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, oneline.Field(res.State))
+		to, _ := p.Note.Header.Recipients(c)
+		fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d state=%s wakes=%d\n",
+			oneline.Field(art.ID), oneline.Field(art.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, oneline.Field(res.State), len(to))
 		return 0
 	}
 
@@ -989,8 +997,9 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		printTranscript(stderr, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d\n",
-		oneline.Field(prepared.Note.Header.ID), oneline.Field(prepared.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts)
+	to, _ := prepared.Note.Header.Recipients(t.Config)
+	fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d wakes=%d\n",
+		oneline.Field(prepared.Note.Header.ID), oneline.Field(prepared.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, len(to))
 	return 0
 }
 
