@@ -859,6 +859,8 @@ func checkLaneStateFile(root, lane, name string) []Problem {
 		_, err = ReadOpen(root, lane)
 	case IndexName:
 		_, err = ReadLaneIndex(root, lane)
+	case BeatName:
+		_, err = ReadBeat(root, lane)
 	}
 	if err != nil {
 		return []Problem{{Where: lane + "/" + name, Reason: err.Error()}}

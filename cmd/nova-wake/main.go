@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -318,7 +319,25 @@ func cmdAwake(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 	for i, name := range names {
 		state := "unknown"
 		ageText := "-"
-		if ct, ok := cursorTime(*busDir, name); ok {
+		source := "bus-cursor"
+		ct, haveCursor := cursorTime(*busDir, name)
+		bt, haveBeat := beatTime(*busDir, name)
+		switch {
+		case haveBeat && (!haveCursor || bt > ct):
+			// The beat is newer than the cursor (or there is no cursor at all), so it is
+			// the friend's last sign of life: a line whose cursor has not moved but whose
+			// BEAT file keeps advancing is still awake.
+			source = "bus-beat"
+			age := now - bt
+			ageText = strconv.FormatInt(age, 10)
+			if age < int64(*window) {
+				state = "awake"
+				awake++
+			} else {
+				state = "asleep"
+				asleep++
+			}
+		case haveCursor:
 			age := now - ct
 			ageText = strconv.FormatInt(age, 10)
 			if age < int64(*window) {
@@ -328,12 +347,12 @@ func cmdAwake(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 				state = "asleep"
 				asleep++
 			}
-		} else {
+		default:
 			unknown++
 		}
 		if i < *maxN {
-			fmt.Fprintf(stdout, "FRIEND %s %s age=%s source=bus-cursor\n",
-				oneline.Field(name), oneline.Field(state), oneline.Field(ageText))
+			fmt.Fprintf(stdout, "FRIEND %s %s age=%s source=%s\n",
+				oneline.Field(name), oneline.Field(state), oneline.Field(ageText), oneline.Field(source))
 		}
 	}
 	if total > *maxN {
@@ -387,6 +406,26 @@ func cursorTime(dir, name string) (int64, bool) {
 		return 0, false
 	}
 	return v, true
+}
+
+// beatTime is the stamp carried INSIDE from-<name>/BEAT, parsed from the file's own
+// content rather than any commit time, and false when no such file exists or it does not
+// parse. A waiting line's cursor does not move, so the beat is the liveness signal that
+// moves while the line merely waits; see docs/SPEC-WORK.md, Presence, source bus-beat.
+func beatTime(dir, name string) (int64, bool) {
+	raw, err := os.ReadFile(filepath.Join(dir, "from-"+name, "BEAT"))
+	if err != nil {
+		return 0, false
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) < 1 {
+		return 0, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, fields[0])
+	if err != nil {
+		return 0, false
+	}
+	return t.Unix(), true
 }
 
 // repeated is a flag that may be given more than once: --entry, --reports,

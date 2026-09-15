@@ -1149,6 +1149,11 @@ type inboxOpts struct {
 	maxNotes     int
 	maxBytes     int64
 	after        string
+	// me is the reader resolved against the roster, carried so `wait` can write their beat
+	// without resolving the roster twice; and beat is how often a wait pushes its BEAT file
+	// as its own commit. Both are `wait`'s only; `inbox` leaves them zero.
+	me   bus.Participant
+	beat time.Duration
 }
 
 // inboxReading is what one listing found, for the caller that has to act on it: `inbox`
@@ -1640,7 +1645,7 @@ func legacyToken(l bus.LegacyLine) string {
 // it without the flag and everybody on the bus can see which notes this reader has taken
 // as read.
 func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
-	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane)}
+	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane), bus.BeatPath(me.Lane)}
 	if err := checkoutReady(busDir, branch, paths); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
@@ -1909,6 +1914,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	maxWords := f.fs.Int("receipt-max-words", 0, "a body under this many words may be a receipt (required, at least 1)")
 	timeout := f.fs.Duration("timeout", 0, "how long to wait before returning WAIT TIMEOUT (required; a duration like 25m, at most "+maxWaitTimeout.String()+")")
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
+	beat := f.fs.Duration("beat", defaultBeatInterval, "how often to push your BEAT liveness file as its own commit")
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
@@ -1986,6 +1992,10 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(interval.String()), oneline.Field(minWaitInterval.String()))
 		return 2
 	}
+	if *beat <= 0 {
+		fmt.Fprint(stderr, "nova-bus wait: --beat must be a positive duration like 60s\n")
+		return 2
+	}
 	// A wait always runs git, so the root check is unconditional -- see the same check, and
 	// the same reason for the order it is in, in cmdInbox.
 	if err := bus.IsRepoRoot(*busDir); err != nil {
@@ -2012,6 +2022,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
+		me: me, beat: *beat,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
@@ -2036,6 +2047,12 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 // the round trip is what the number should be chosen for.
 const defaultWaitInterval = 10 * time.Second
 
+// defaultBeatInterval is how often a wait pushes its BEAT file as its own commit when the
+// reader names no --beat. It is Glenn's "a beat a minute" from docs/SPEC-WORK.md:
+// presence is a beat a minute, and no beat for five minutes is asleep. Sixty seconds is
+// the beat the whole Presence design is built on.
+const defaultBeatInterval = 60 * time.Second
+
 // maxWaitTimeout is as long as `wait` will block, and it is a fact about HARNESSES rather
 // than about buses; see the refusal above.
 const maxWaitTimeout = 60 * time.Minute
@@ -2059,6 +2076,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 	horizon := now.Add(timeout)
 	polls := 0
 	cursor := ""
+	lastBeat := start
 	for {
 		polls++
 		elapsed := time.Since(start).Round(time.Millisecond)
@@ -2079,6 +2097,23 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 			// it, whatever happened after.
 			fmt.Fprint(stdout, lines)
 			return code
+		}
+		// THE BEAT. A waiting line's cursor does not move -- there was nothing to read, so
+		// nothing was recorded -- and a line whose cursor does not move reads asleep to
+		// `nova-wake awake`. So every poll rewrites the lane's BEAT file, and at most once
+		// per --beat the BEAT is committed and pushed on its own as "beat <name>", so the
+		// line's liveness lands on the bus even while it is simply waiting. The write is to
+		// the working tree on every tick; the push is the only part bounded, because it is
+		// the only part that costs somebody's server.
+		if err := bus.WriteBeat(o.busDir, o.me.Lane, cursor, time.Now()); err != nil {
+			fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+		}
+		if time.Since(lastBeat) >= o.beat {
+			lastBeat = time.Now()
+			if _, err := commit(o.busDir, o.me, []string{bus.BeatPath(o.me.Lane)},
+				bus.WithTrailer("beat "+o.me.Slug(), bus.TrailerBeat), o.remote, o.branch, o.attempts, false); err != nil {
+				fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
+			}
 		}
 		if keep(r) {
 			// Why this wait is not waiting, when the answer is not "a note arrived": the

@@ -106,3 +106,28 @@ func TestAwakeBoundsLines(t *testing.T) {
 		t.Fatalf("summary line missing\n%s", r.stdout)
 	}
 }
+
+// THE BEAT WINS OVER THE CURSOR. A waiting line's cursor does not move, so by the cursor
+// commit alone it reads asleep -- but its BEAT file keeps advancing every poll, and where
+// the beat is newer than the cursor commit the friend reads awake, source=bus-beat. The
+// beat is read from the file's own content, not from any commit, so it is written straight
+// into the working tree here and nothing is committed.
+func TestAwakeReadsBeatOverCursor(t *testing.T) {
+	dir := awakeBus(t)
+	cursorCommit(t, dir, "dave", at.Add(-600*time.Second)) // old: past --window, asleep by cursor
+	write(t, filepath.Join(dir, "from-dave", "BEAT"),
+		at.Add(-5*time.Second).Format(time.RFC3339Nano)+" davesha\n")
+
+	r := wakeRun(t, "awake", "--bus", dir)
+	if r.exit != 0 {
+		t.Fatalf("awake exit %d, want 0; stderr=%s", r.exit, r.stderr)
+	}
+	for _, want := range []string{
+		"FRIEND dave awake age=5 source=bus-beat\n",
+		"AWAKE OK friends=1 awake=1 asleep=0 unknown=0 window=300\n",
+	} {
+		if !strings.Contains(r.stdout, want) {
+			t.Fatalf("awake output missing %q\nstdout=%s", want, r.stdout)
+		}
+	}
+}
