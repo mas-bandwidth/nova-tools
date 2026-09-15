@@ -52,6 +52,12 @@ func packetLab(t *testing.T) (lane, head string) {
 	return lane, head
 }
 
+func TestPacketOutUsageStatesRelativeToCwd(t *testing.T) {
+	if !strings.Contains(usage, "relative to the cwd") {
+		t.Fatalf("--out usage does not state it is relative to the cwd:\n%s", usage)
+	}
+}
+
 func TestPacketWritesTheSelectedDiffAndHonestBound(t *testing.T) {
 	lane, head := packetLab(t)
 	old, _ := os.Getwd()
