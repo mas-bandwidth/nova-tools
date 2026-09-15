@@ -432,6 +432,12 @@ func underDir(root, path string) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
+	if resolved, err := filepath.EvalSymlinks(rootAbs); err == nil {
+		rootAbs = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(pathAbs); err == nil {
+		pathAbs = resolved
+	}
 	rel, err := filepath.Rel(rootAbs, pathAbs)
 	if err != nil {
 		return false
