@@ -677,6 +677,11 @@ no new `run` verb, and the receipts stay exactly as the proposals define them.
   refused at gather;
 - one deadline for the whole batch — the batch's own `--deadline`, never a
   deadline any single card sets.
+- one `BATCH` lock file per local slot the batch takes — `<root>/<slot>/BATCH`
+  holding `id=<batch> pid=<n> at=<stamp>`, written at allocation and removed at
+  slot end. Slots are unique across batches by the tool, never by the
+  coordinator counting (issue #457); the paragraphs below say what a live and a
+  stale lock each do.
 
 **Admission is per card, never per batch.** A card refused at admission — a
 shape refused under `docs/WORKER-CARDS.md` practice 17, or a repository it
@@ -699,7 +704,10 @@ skips it, and a card that *named* it is refused with
 `reason=admission`. A **stale** lock, whose pid no process holds, is taken over
 once and said out loud: `BATCH NOTE slot=<n> stale-lock id=<id> taken`. Two
 batches that allocated at the same moment once took slot 1 twice and both cards
-were lost.
+were lost. **A batch removes only the locks it took**, never the live lock of
+the batch that refused it. This is per card, and it supersedes the whole-batch
+refusal that landed with the lock in #568: an admission refusal is one card's,
+the slot's as much as the shape's (issue #529).
 
 ### wait — all end, or the deadline
 
