@@ -1059,6 +1059,12 @@ clone of a git ledger the caller names. It is the only verb that runs `git`,
 the only verb that writes into a git clone, and it runs on an explicit
 invocation, never on a timer.
 
+**Build status.** The shipped binary has not implemented this verb: the
+publication boundary (`cmd/nova-tokens/boundary_test.go`) still holds rule 16
+for the shipped build, so a git publisher cannot land until that tripwire
+falls. This section is the verb's spec; the verb itself is an explicit spec
+gate, not shipped behaviour.
+
 **A contribution is one of two typed kinds, and they never mix.** The
 retained batch is the endpoint; the aggregate exists so a bench with day files
 today is not blocked, and neither it nor the public subset may delay the
