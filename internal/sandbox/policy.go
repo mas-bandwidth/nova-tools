@@ -9,6 +9,7 @@ package sandbox
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
@@ -68,6 +69,7 @@ type Input struct {
 	Name      string // windows container name; accepted and ignored elsewhere
 	NetDeny   bool
 	NetListen bool
+	NetAllow  []string // host:port the profile opens back up by name (issue #591)
 	GPU       string   // --gpu none|metal; empty means none (issue #230)
 	Argv      []string // the command and its arguments, everything after --
 	Home      string   // the caller's HOME as the child will see it (rule 9)
@@ -87,6 +89,7 @@ type Policy struct {
 	Name      string
 	NetDeny   bool
 	NetListen bool
+	NetAllow  []string // host:port the profile opens back up by name (issue #591)
 	GPUMode   GPUMode
 	Command   string   // the resolved absolute path of the executable
 	Argv      []string // Command followed by its arguments, verbatim
@@ -448,6 +451,22 @@ func Build(in Input) (*Policy, []Refusal) {
 	// would be deciding which of the two the caller meant.
 	if in.NetDeny && in.NetListen {
 		bad = append(bad, refuse("bad_net", "--net-deny and --net-listen together: one asks for an enforced denial and the other for an inbound grant; pass at most one"))
+	}
+
+	// --net-allow names one host:port the wall opens back up (issue #591). An entry that
+	// does not split into host and port is refused rather than carried into a profile that
+	// sandbox-exec would reject at exit 65.
+	for _, hp := range in.NetAllow {
+		host, port, err := net.SplitHostPort(hp)
+		if err != nil || host == "" || port == "" {
+			bad = append(bad, refuse("bad_net", "--net-allow wants host:port and got %s: --net-allow <host:port>", hp))
+			continue
+		}
+		if badPathText(host) != "" || badPathText(port) != "" {
+			bad = append(bad, refuse("bad_net", "--net-allow host:port %s carries a character the generated policy cannot", hp))
+			continue
+		}
+		p.NetAllow = append(p.NetAllow, net.JoinHostPort(host, port))
 	}
 
 	if len(in.Argv) == 0 {
