@@ -3,7 +3,7 @@
 Glenn, 2026-09-12: *"there are probably new versions we should check for everything
 for updates regularly."* And the name: *"nova-update"*. Card #89.
 
-One tool, three verbs.
+One tool, four verbs.
 
 - `nova-update check --file <path>` reads one versions file kept in git and asks of every
   dependency it names what is INSTALLED on this box and what is the LATEST its own source
@@ -16,6 +16,9 @@ One tool, three verbs.
   `installed` side only, the whole identity of each tool beside its key — with no network,
   no recipients and no bus; `--draft` and `--send` hand that report to nova-bus, on the
   caller's word (rules 20–26; #121, the reporting surface the lines settled).
+- `nova-update watch --adopt <checks.tsv>` runs the coordinator's own adoption pass after
+  a rebuild — the mechanical step Rowan forgot on 2026-09-15 (rule 27). It is the one
+  `--watch` in the tool, and it is a bounded pass the rebuild loop calls, never a clock.
 
 `check` is this estate's first tool that reads somebody else's server on a clock, so
 every rule below is about a bound: a bounded read, a bounded budget, a bounded listing,
@@ -23,8 +26,9 @@ and a failure never allowed to read as *up to date*. SPEC.md's **Conventions** g
 exit codes, the one-line grammar, the field law, `internal/oneline`, `internal/bounded`,
 no guessed paths — and this file says only what is more. The estate runs it nightly and
 reads the counts in the morning; the tool has no clock of its own — no daemon, no timer,
-no `--watch`, no state file of its own (rule 25's snapshot is the caller's, named by flag)
-— nothing reacts to its exit code, no verdict starts an `apply`.
+no state file of its own (rule 25's snapshot is the caller's, named by flag; `watch
+--adopt`, rule 27, is the one `--watch`, a bounded pass the rebuild loop calls, never a
+clock) — nothing reacts to its exit code, no verdict starts an `apply`.
 
 `nova-version snapshot --bin <dir> --out <file> [--owner <name>]` writes the rule-2 manifest a report needs as a hand-editable draft (card 306): it scans the directory for `nova-*` executables, runs each with a single `version` argument (bounded, 5s each, rule 4's read of its first line), and writes one tab-separated line per tool with `kind=binary`, `installed=<version>`, `latest=-` and `apply=-` — unknown, never guessed — and `owner` from `--owner` or `-`. A tool whose version cannot be read is counted in `unreadable=` on the single `SNAPSHOT OK tools=<n> unreadable=<n> out=<path>` line and never written, so no line pretends a version it could not read; the first line is rule 2's header, byte for byte, for a person to promote `kind` by hand.
 
@@ -319,6 +323,31 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     budget. It installs nothing, pulls nothing, and no report line is a name for `apply`
     (rules 9, 10). It sends only under `--send`; `--draft` never sends; a plain `report`
     with `--as` and `--to` given still sends nothing — the send is a flag the caller typed.
+27. **`watch --adopt` is the coordinator's own adoption pass, a mechanical step of the
+    upgrade cycle, run after a rebuild.** The pass Rowan forgot on 2026-09-15: the TOOLS
+    MOVED note asked friends to adopt, but the coordinator's own adoption lived in memory
+    and did not happen. Permanent fix: adoption is a mechanical step. `nova-update watch
+    ... --adopt <checks.tsv>` runs, after a rebuild, the adoption checks the file names,
+    one check per line — versions agree (`check` over the versions file, every entry
+    current); a bus inbox round trip with the bus defaults (`nova-bus` read then post on
+    the defaults, the note comes back); nova-wake awake from config (`nova-wake` starts
+    and answers from its config); one known-answer card per route through nova-swarm
+    native — flat, local, remote bench (a bounded card per route, the answer matches);
+    snapshot then report (`nova-version snapshot --bin <dir> --out <file>`, then `report
+    --file` on it, the identities agree); tokens sum from jobs (the batch's tokens equal
+    the sum of its jobs). Each check prints one `ADOPT <OK|REFUSED> <check> <detail>`
+    line, then one `ADOPT DONE sha=<rebuild sha> ok=<n> refused=<n>` line — every output
+    line one line with counts, and a REFUSED names its remedy. The receipt — the OK and
+    REFUSED lines, `ADOPT DONE` last — is posted to the bus as the coordinator's own
+    (rule 24's prepared delivery). Every REFUSED line is handed to the duty tier
+    (SPEC-PULSE, *The duty tier*): one `ESCALATE <stamp> adopt <check>: <detail>`
+    line, then an issue in the dogfood shape and a fix card. Prototype:
+    `bin/adopt.sh` on the Studio, wired into the bash upgrade loop
+    (2026-09-15 19:40Z); first run: `ok=4 refused=3` — #523 keyless/unused provider
+    config, #372 snapshot kind, a probe-card line-1 check. An item already done is
+    reported, not redone.
+    Replays: `adopt-runs-after-rebuild`, `adopt-refusal-escalates`,
+    `adopt-receipt-posted`, `adopt-known-answer-per-route`.
 
 ## The versions file
 
@@ -343,10 +372,11 @@ DIFFERENT line, so the morning names a person, not only a number.
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update watch --adopt <checks.tsv> [--rebuild <sha>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>]
 nova-update help
 ```
 
-Those three usage lines are the string `nova-update help` prints, byte for byte: one string
+Those four usage lines are the string `nova-update help` prints, byte for byte: one string
 in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
@@ -384,11 +414,19 @@ REPORT SENT to=<who,who> via=<nova-bus argv, escaped> line=<nova-bus's SEND OK l
 REPORT <OK|FAIL> checked=<n> known=<n> unknown=<n> changed=<yes|no|-> sent=<yes|no|uncertain|-> took=<d> file=<path>
 REPORT NOTE <something true about this run that is not a finding>
 REPORT REFUSED: <reason> (<remedy>)
+ADOPT at=<stamp> rebuild=<sha|-> file=<checks.tsv> checks=<n> timeout=<d> budget=<d>
+ADOPT <OK|REFUSED> <check> <detail> (<remedy on a REFUSED>)
+ADOPT DONE sha=<rebuild sha> ok=<n> refused=<n> took=<d>
+ADOPT ESCALATE <stamp> adopt <check>: <detail>
+ADOPT REFUSED: <reason> (<remedy>)
 ```
 
 `UPDATE`, `APPLY` and `REPORT` are the first tokens, `OK` and `FAIL` the verdicts and the
 **last** line; the rest are informational second tokens, declared here as SPEC.md requires,
 on stdout, `REFUSED` and `FAIL` on stderr; every value is one `internal/oneline` token.
+`ADOPT` lines follow the same law, `ADOPT DONE` the last, `ADOPT REFUSED` on stderr; a
+`REFUSED` check names its remedy (rule 18), and every REFUSED is handed to the duty tier —
+one `ADOPT ESCALATE` line, then an issue in the dogfood shape and a fix card (rule 27).
 
 ## First run — meet your installed tools
 
@@ -579,6 +617,17 @@ install` or `npm install`.
     `apply` argv and none of `brew`, `npm`, `go install` or `ollama pull` starts; a plain
     `report` and a `--draft`, each with `--as` and `--to` given, make zero `nova-bus` runs;
     a fixture whose every argv hangs still exits inside `--budget`.
+27. `TestWatchAdoptRunsTheCoordinatorsOwnAdoptionPass`: a `watch --adopt` over a fixture
+    `checks.tsv` whose six checks each pass prints six `ADOPT OK <check> <detail>` lines and
+    `ADOPT DONE sha=<sha> ok=6 refused=0`, posts the receipt to the bus as the coordinator's
+    own (a fake `nova-bus` on `PATH` counts the prepared send, the note body carrying the
+    `ADOPT` lines with `ADOPT DONE` last) and escalates nothing; a fixture with three
+    REFUSED — #523 keyless/unused provider config, #372 snapshot kind, a probe-card line-1
+    check — prints `ok=4 refused=3`, each `ADOPT REFUSED` naming its remedy, and hands each
+    to the duty tier: one `ADOPT ESCALATE` line per REFUSED, then an issue in the dogfood
+    shape and a fix card; the replays `adopt-runs-after-rebuild`,
+    `adopt-refusal-escalates`, `adopt-receipt-posted` and `adopt-known-answer-per-route`
+    (one known-answer card per route: flat, local, remote bench) each end green.
 
 Beside those: the first-run block runs against the fixture, compared by shape per
 ONBOARDING.md 5(c); `nova-update help` prints the verbs block on stdout, exit 0; a
