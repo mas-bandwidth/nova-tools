@@ -674,6 +674,7 @@ func TestPacketFetchesBaseBeforeRange(t *testing.T) {
 		gitAt(seed, "add", f)
 	}
 	gitAt(seed, "commit", "-qm", "unrelated base moves")
+	advancedBase := gitAt(seed, "rev-parse", "HEAD")
 	gitAt(seed, "push", "-q", remote, "main:refs/heads/main")
 
 	// The feature branches off the advanced main and touches one file.
@@ -697,6 +698,9 @@ func TestPacketFetchesBaseBeforeRange(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), " files=1 ") {
 		t.Fatalf("a one-file PR with a stale base must yield files=1; got %q", out.String())
+	}
+	if want := "base=main@" + advancedBase[:8]; !strings.Contains(out.String(), want) {
+		t.Fatalf("packet must pin the freshly fetched base %s so a stale base is visible; got %q", want, out.String())
 	}
 }
 
