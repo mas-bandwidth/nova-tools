@@ -869,7 +869,8 @@ than overwriting the history*).
  :deps ("schema/shared/lock-rules")          ; REFERENCE: needed, not owned, not counted here
  :responsible "emma"                         ; durable accountability, set by a person's word (an event records who set it)
  :category "feature"                         ; free label; taxonomy TBD (5654164074)
- :links ("https://github.com/mas-bandwidth/schema/issues/898"))   ; an issue is a link, never a type
+ :links ("https://github.com/mas-bandwidth/schema/issues/898")   ; an issue is a link, never a type
+ :priority (:self (:absent) :subtree (:absent)))               ; ordering intent only; see `prioritise` below
 ```
 
 **Containment and reference are two different edges, and the difference is the whole cost
@@ -898,7 +899,8 @@ they are distinct kinds:
   `:feature` under it, and the counting unit of every rollup stays the one `unit=` names.
 - `:roadmap` — a typed view over its cells: `:axes` (ordered, named members), `:cells` mapping
   a coordinate to a `:ref`, `:scope-revision`, `:completion-policy` (`:all-required-features` is the only policy — **default by Rowan,
-  unobjected 2026-09-15**). A cell references a node; it never contains state of its own. An unknown axis member and a
+  unobjected 2026-09-15**), and — from `roadmap create` below — `:members` (the ordered rows of an axisless
+  roadmap), `:permitted-roots` and `:projections`, the stored targets. A cell references a node; it never contains state of its own. An unknown axis member and a
   duplicate coordinate are refusals; **a missing cell is not**, and an omitted cell is never
   complete (5653990830). A cell may be marked `:out-of-scope` by a recorded scope event, which
   is distinct from unstarted and from unknown, and **an out-of-scope cell leaves that axis
@@ -960,8 +962,21 @@ they are distinct kinds:
   - `:structure` — the structural half of a structure verb's envelope. Its first field is
     `:verb`, the verb that wrote it, and the rest are the fields that verb changed, **in this
     order per verb, which is also the order the payload digest above serializes them in**:
-    `node add` — `:verb`, `:node-type`, `:title`, `:under`, `:category`, `:required`,
-    `:acceptance` (the criteria in the order given), `:reason`;
+    `node add` — `:verb`, `:node-type`, `:title`, `:under` (`(:node "<id>")` or `(:open-root)`),
+    `:category`, `:required`, `:acceptance` (the criteria in the order given), `:repo`, `:links`,
+    `:private`, `:version`, `:reason` (completed by the #293 fold below);
+    `node edit` (`:verb :node-edit`, wire `node.edit`) — `:verb`, `:title-patch`, `:category-patch`, `:links-patch`, `:private-patch`,
+    `:version-patch`, `:reason`, each patch `(:keep)`, `(:clear)` or `(:set V)`;
+    `node move` (`:node-move`, wire `node.move`) — `:verb`, `:from`, `:under`, `:reason`;
+    `roadmap create` (`:roadmap-create`, wire `roadmap.create`) — `:verb`, `:node-type`, `:title`, `:under`, `:row-kind`, `:aggregation`,
+    `:completion-policy`, `:axes`, `:members`, `:permitted-roots`, `:reason`;
+    `roadmap configure` (`:roadmap-configure`, wire `roadmap.configure`) — `:verb`, `:row-kind-patch`, `:aggregation-patch`,
+    `:completion-policy-patch`, `:axes-patch`, `:permitted-roots-patch`, `:reason`;
+    `roadmap row` (`:roadmap-row-add` or `:roadmap-row-remove`, wire `roadmap.row.add|remove`) —
+    `:verb`, `:roadmap`, `:member`, `:reason`;
+    `roadmap projection --add` (`:roadmap-projection-add`, wire `roadmap.projection.add`) —
+    `:verb`, `:projection`, `:reason`; `--remove` (`:roadmap-projection-remove`, wire
+    `roadmap.projection.remove`) — `:verb`, `:projection-id`, `:reason`;
     `node remove` — `:verb`, `:under` (the parent it detaches from), `:reason`;
     `node require` — `:verb`, `:to` (`true` or `false`), `:reason`;
     `decompose` — `:verb`, `:children` (in the order `--into` gave them), `:acceptance` (per
@@ -970,7 +985,9 @@ they are distinct kinds:
     did not give is written `(:absent)`, as every absent field is, and never `()`, which is an
     empty list);
     `dep` — `:verb`, `:add`, `:remove`, `:reason`;
-    `axis` — `:verb`, `:roadmap`, `:axis`, `:add`, `:reason`;
+    `axis` — `:verb`, `:roadmap`, `:axis`, `:add`, `:remove`, `:reason` (the one not given
+    `(:absent)`; one verb and one wire op `axis` for both forms, where the draft spelled
+    `axis.remove` — *(Rowan's decision, for review)*);
     `cell` — `:verb`, `:roadmap`, `:coord`, `:ref`, `:out-of-scope`, `:in-scope`, `:reason`.
     `responsible` and `source` write no `:structure` event: their own kinds below are their
     whole record.
@@ -989,6 +1006,9 @@ they are distinct kinds:
     carries `:pointer` = its `:result` and is what a `:to :done` names for an `:attested`
     criterion, under the same generation rule as every other evidence event.
   - `:responsible` — `:to <name>` on a work-set or feature, on a person's word, `:reason`.
+  - `:prioritise` — `:change` (`:set` or `:clear`), `:context` (`:self` or `:subtree`), `:rank`,
+    `:reason`: a recorded ordering act on a node's `:priority`, **neither structure nor scope**, by
+    the #293 fold below; its `:before` and `:after` are the engine's, outside the digest.
   - `:lease`, `:heartbeat`, `:release`, `:handoff` (carrying the new holder's `:deadline` and
     `:default`, so a handed lease is a whole lease) — the lease log, below.
   - `:undo` — `:request-of`, `:reason`; and `:redo` — `:request-of`, `:reason`. **The six verbs
@@ -1061,7 +1081,7 @@ they are distinct kinds:
     in the same envelope under one request id, so a retry cannot bump a generation twice.
   - `:baseline`, `:discovery`, `:remove`, `:require`, `:defer`, `:cancel` (carrying
     `:evidence` that the worker stopped), `:reopen`, `:split`, `:supersede`, `:scope`, `:axis`,
-    `:source`, `:settle`, `:revive` — the scope log: a baseline records the required set of its node **as the tool
+    `:source`, `:reparent`, `:view`, `:roadmap-row`, `:axis-remove`, `:settle`, `:revive` — the scope log: a baseline records the required set of its node **as the tool
     computed it at that moment**, member by member; a split names the new children; a
     supersede names `:superseded-by`; every one of them increments the node's scope revision,
     because the revision is the count of scope events, and each changes the required set by
@@ -1072,7 +1092,9 @@ they are distinct kinds:
     `:require` — `:to`, `:reason`; `:defer` — `:reason`; `:cancel` — `:evidence`, `:reason`;
     `:reopen` — `:reason`; `:split` — `:children`, `:reason`; `:supersede` — `:superseded-by`,
     `:reason`; `:scope` — `:coord`, `:in-scope` (`true` or `false`), `:reason`; `:axis` —
-    `:axis`, `:member`, `:reason`; `:source` — `:to`, `:reason`; `:settle` — `:disposition`
+    `:axis`, `:member`, `:reason`; `:source` — `:to`, `:reason`; `:reparent` — `:from`,
+    `:under`, `:reason`; `:view` — `:change`, `:reason`; `:roadmap-row` — `:change`, `:member`,
+    `:reason`; `:axis-remove` — `:axis`, `:member`, `:reason`; `:settle` — `:disposition`
     (`done`, `cancelled`, `superseded` or `removed`), `:reason`, `:already-closed` (the ids
     beneath a removed node that were already in C, empty on every other settle, by the removal
     paragraph below); `:revive` — `:reason`.
@@ -1118,6 +1140,10 @@ no cell while its cancel is still the roadmap's event (Fable and Opus at 7472e54
 | `:scope` | **none** — it takes a cell's coordinate out of (`--out-of-scope`) or back into (`--in-scope`) the named axis member's applicable rows, which is `percent`'s denominator and not a required set | none — the roadmap's revision moves, its set does not | `cell` only |
 | `:axis` | **none** — a member of an axis that is not the first is a column, and its applicable rows begin at its cells | none — the roadmap's revision moves, its set does not | `axis` only |
 | `:source` | **none** — it moves the node's source revision, which stales evidence, not membership | none | `source` only |
+| `:reparent` | removes the event's node from `:from`'s set where it was in it, and adds it at the bottom of `:under`'s listing where its unchanged `:required` is true; **its own set is unchanged** | both named parents' own, and every roadmap that has it as a row (a revision each, no set of theirs) | `node move` only |
+| `:view` | **none** — a create, configure or projection change of the view record | none — the roadmap's revision moves, its set does not | `roadmap create`, `roadmap configure` and `roadmap projection` inside their envelopes |
+| `:roadmap-row` | with `:change :add` adds the member at the bottom of the listing; with `:remove` removes it | the roadmap's own view-required set, never a containment parent's | `roadmap row` only, on an axisless roadmap |
+| `:axis-remove` | on the first axis removes the row from the set while it is live; on any other axis **none** | the roadmap's own view-required set | `axis --remove` only |
 | `:settle` | **none** — it moves the item from O to C, and a member that has finished is still a member: what takes one out of a set is the `:remove`, `:cancel` or `:supersede` in the same envelope, by its own row above | none — the node's revision moves, no set does | `state --to done`, `event --kind cancel`, `event --kind supersede` and `node remove`, each inside its envelope, and never `event --kind settle`, which is exit 2 |
 | `:revive` | **none** — it moves the item from C back to O, at `:todo` by the transition table | none — the node's revision moves, no set does | `event --kind reopen` inside its envelope, and never `event --kind revive`, which is exit 2 |
 
@@ -1126,9 +1152,11 @@ meaning not removed, not cancelled and not superseded — **and the axis list is
 Each row is the node of the roadmap's declared `:row-kind` whose completion that row counts; a row enters the set with the
 `:discovery` an `axis --add` on the first axis writes; and it leaves the set, **while staying on
 the axis**, with the `:remove`, `:cancel` or `:supersede` of its feature, by the delta table
-above. **The two differ by exactly the rows that have left, and that is the design**: `axis`
-has only `--add`, nothing takes a member off an axis, and `node remove` keeps the member on the
-first axis (the removal paragraph below says so). **And the set is derivable with the retention
+above. **The two differ by exactly the rows that have left, and that is the design**: a row
+leaves the set by its node's closure while staying on the axis, and `node remove` keeps the
+member on the first axis (the removal paragraph below says so); the one act that takes a member
+off an axis is `axis --remove` of the #293 fold below, a `:axis-remove` scope event of the
+roadmap's own, which on the first axis retires the row and on any other axis moves no set. **And the set is derivable with the retention
 archive absent**, which is what makes rule 2's treatment of a departed member safe: the
 retention boundary carries each container's required set as the tool computed it at the
 boundary, and the retained scope events move it forward, so a row that left before the boundary
@@ -2134,9 +2162,11 @@ re-authors it. `--now <stamp>` is optional on every verb and records `:clock
 nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --cache <path> --repo <path> --remote <name> --branch <name>
                          --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --skew <duration> --clip-every <duration> --clip-after <n> --retain <duration>
                          --savepoint-every <duration> --savepoint-after <n> --max-frame-bytes <n> --silence-ping <duration>
-                         --index-cache <n> --page-bytes <n> --page-records <n> [--closed-window <duration>]
+                         --index-cache <n> --page-bytes <n> --page-records <n> [--closed-window <duration>] [--render-root <root-id>=<owner/name>:<directory> ...]
                          [--resolver <scheme>=<command> ...] --git-timeout <seconds> [--attempts <n>] [--repair] [--foreground] [--max <n>] [--now <stamp>]
 nova-work session export (--session <path> | --journal <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) --into <path>
+nova-work session export (--session <path> | --snapshot <path> --cache <path>) --state --at <revision> --closed-history <none|all|range> [--from <stamp> --to <stamp>] --into <new-directory> --max-bytes <n> --max-depth <n> --max-nodes <n> --max-output-bytes <n>   (a long operation under --session; one finite process under --snapshot)
+nova-work state load     --from <export-directory> --into <new-readonly-session> --max-bytes <n> --max-depth <n> --max-nodes <n>   (isolated and read-only: starts no daemon, takes no ownership)
 nova-work session replay --session <path> --from <path> --as <name> [--max <n>]
 nova-work session status --session <path>
 nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
@@ -2177,20 +2207,28 @@ nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-t
 nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
                          (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet)
                          [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>]
-                         [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--page-budget <n>] [--max <n>]
-                         (who and stale: --window <duration>, required; percent: --axis <member>, required;
+                         [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--page-budget <n>] [--max <n>] [--order <discovery|priority>]
+                         (who and stale: --window <duration>, required; percent: --axis <member>, required on a matrix and refused on a zero- or one-axis roadmap;
+                          ready: --order, optional, discovery by default; --order priority on any other ask is exit 2;
                           --branch closed and --branch root: --from and --to, required, and refused under --branch open;
                           who, stale and handoffs: --branch open only, the other two exit 2;
                           fleet: --for optional, --node names a machine id, and --for with --node on a member that excludes the kind is refused)
-nova-work render         --session <path> --view <roadmap-id> --into <path> --start <marker> --end <marker> [--at <revision>] [--check]
-nova-work node add       --session <path> <write flags> --id <id> --type <kind> --under <parent-id> [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id:kind:subject:predicate> ...] --reason <text>
+nova-work render         --session <path> --view <roadmap-id> (--chat [--projection <id> | --row-axis <id> --column-axis <id> --fixed <axis-id>=<member-id> ...] | --projection <id> (--file | --check)) [--at <revision>]
+nova-work node add       --session <path> <write flags> --id <id> --type <work-set|epic|feature|task> (--under <parent-id> | --under-root open --repo <owner/name>) [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id:kind:subject:predicate> ...] [--link <text> ... | --links-empty | --clear-links] [--private <true|false>] [--version <text>] --reason <text>   (--type roadmap is exit 2 naming `roadmap create`)
+nova-work node edit      --session <path> <write flags> --node <id> (--title <text> | --clear-title | --category <label> | --clear-category | --link <text> ... | --links-empty | --clear-links | --private <true|false> | --clear-private | --version <text> | --clear-version) ... --reason <text>
+nova-work node move      --session <path> <write flags> --node <id> --from <parent-id> --under <parent-id> --reason <text>
 nova-work node remove    --session <path> <write flags> --node <id> --reason <text>
 nova-work node require   --session <path> <write flags> --node <id> --to <true|false> --reason <text>
 nova-work decompose      --session <path> <write flags> --node <id> --into <id,...> --acceptance <child-id:id:kind:subject:predicate> ... --reason <text>
 nova-work accept         --session <path> <write flags> --node <id> (--add <id:kind:subject:predicate> | --remove <id>) --reason <text>
 nova-work source         --session <path> <write flags> --node <id> --to <sha> --reason <text>
 nova-work dep            --session <path> <write flags> --node <id> (--add <id> | --remove <id>) --reason <text>
-nova-work axis           --session <path> <write flags> --roadmap <id> --axis <id> --add <member> --reason <text>
+nova-work axis           --session <path> <write flags> --roadmap <id> --axis <id> (--add <member> | --remove <member>) --reason <text>
+nova-work roadmap create --session <path> <write flags> --id <id> --under <parent-id> [--title <text>] --row-kind <feature|epic|work-set> --aggregation <required-members|all-members|leaves> --completion-policy all-required-features (--axes-none | --axis-id <id> ...) [--permit-root <root-id> ...] --reason <text>
+nova-work roadmap configure --session <path> <write flags> --roadmap <id> [--row-kind <kind>] [--aggregation <policy>] [--completion-policy all-required-features] [--axes-none | --axis-id <id> ...] [--permit-root <root-id> ... | --roots-empty] --reason <text>
+nova-work roadmap row    --session <path> <write flags> --roadmap <id> (--add <member> | --remove <member>) --reason <text>   (axisless roadmaps only)
+nova-work roadmap projection --session <path> <write flags> --roadmap <id> (--add <id> --root <root-id> --repo <owner/name> --path <relative-path> --start <marker> --end <marker> --policy markdown-table [--row-axis <id> --column-axis <id> --fixed <axis-id>=<member-id> ...] | --remove <id>) --reason <text>
+nova-work prioritise     --session <path> <write flags> --node <id> (--set <rank> | --clear) [--context <self|subtree>] --reason <text>
 nova-work cell           --session <path> <write flags> --roadmap <id> --coord <member,member> (--ref <id|-> | --out-of-scope | --in-scope) --reason <text>   (--ref - clears the mapping)
 nova-work responsible    --session <path> <write flags> --node <id> --to <name> --reason <text>
 nova-work take           --session <path> <write flags> --node <id> --by <duration|stamp> --default <release|extend-once|escalate:<name>>
@@ -2217,8 +2255,8 @@ execution control* below with one change: `acknowledge --stage accepted` spells 
 `--by` and `--default`, as `take` does, in place of the draft's `--lease-by` and
 `--lease-default`, by the no-parallel-aliases rule **(Rowan's decision, for review)**.
 
-**What a mutation does, stated exactly.** `node add`, `node remove`, `node require`,
-`decompose`, `accept`, `dep`, `axis`, `cell`, `responsible` and `source` are structure verbs: each appends one structure event and, where it changes a
+**What a mutation does, stated exactly.** `node add`, `node edit`, `node move`, `node remove`, `node require`,
+`decompose`, `accept`, `dep`, `axis`, `cell`, `roadmap`, `responsible` and `source` are structure verbs: each appends one structure event and, where it changes a
 required set, one scope event, **as one request envelope**: one journal record holding both,
 written all-or-none, replayed all-or-none, answered with one `OK` line, and answered again
 with the same line on a retry of the same request id, so a crash between the two can never
@@ -2643,7 +2681,12 @@ new work with a `:dep` on the closed id, which is a record of the decision and n
 | `decompose` | a `node remove` envelope for each child it created | any child has since taken work of its own |
 | `accept` | `accept --remove` of an added criterion, `accept --add` of the removed preimage | the node is derived `:done`, by rule 5 at the candidate gate |
 | `dep` | `dep --remove` of an added edge, `dep --add` of a removed one | — |
-| `axis` | — | always, until the missing `axis --remove` below exists |
+| `axis` | `axis --remove` of an added member, `axis --add` of a removed one restoring its position and its cells | a removed member's node has since been removed, or the restored coordinates now hold other references |
+| `node edit` | the compensating `node edit` restoring `:before` | the node is closed, or its current metadata is not this event's postimage |
+| `node move` | a `node move` back to `:from`, restoring the preimage order and required sets in one envelope | the node is closed, either parent's children, required set or scope revision is not this event's postimage, or a context guard now fails |
+| `roadmap create` | a `node remove` envelope on the roadmap | a member, cell or projection outside its preimage survives |
+| `roadmap configure`, `roadmap row`, `roadmap projection` | the same verb in its preimage form | the current view record is not this event's postimage |
+| `prioritise` | `prioritise` restoring the preimage slot | the slot's latest-change identity is not this event's `:after` |
 | `cell` | `cell` back to the preimage `:ref`, `:out-of-scope` or `:in-scope` | the preimage `:ref` names a node since removed |
 | `responsible` | `responsible --to` the preimage name | — |
 | `source` | `source --to` the preimage sha | — |
@@ -2718,33 +2761,366 @@ Stella's table above asking for something the grammar has not got)*. Until each 
 or action it owns is unreachable by any recorded act, which is the coverage requirement unmet and
 not a second way in:
 
-- **`node edit`** — `:title`, `:category`, `:links`, `:private` and `:version` can be set by
-  `node add` and changed by nothing. One verb over exactly those permitted metadata fields, each
-  a `:structure` event with its preimage, and **no generic set-field escape hatch**.
-- **`node add --repo`** — a top-level work set is `(:type :work-set :repo "<owner>/<name>")`, and
-  `node add` takes no `--repo`, so `:repo` is unreachable. The flag belongs on `node add` and
-  nowhere else, since a work set's repository is not editable metadata.
-- **`node move`** — *move/reparent* in the table above. It changes two required sets in one
-  envelope and is the one structural change this draft has thought least about; it is named
-  missing rather than sketched.
-- **`axis --remove`** — `axis` adds a member and removes none, which is why an `axis` is
-  irreversible in the undo table above.
-- **`roadmap`** — a roadmap's `:axes`, `:row-kind`, `:aggregation`, `:completion-policy`, its
-  projection targets and its permitted target roots have no owning verb. **`render --into
-  --start --end` is the command line and is not the stored view metadata** the render section
-  requires; until `roadmap` stores them, `render`'s flags are what a caller types each time and
-  the stored-metadata sentence describes the design and not this grammar, and where the two
-  disagree the stored metadata is the requirement and `render`'s flags are the gap.
-- **`prioritise`** — a recorded ordering act. No field of *The data* holds a priority either, so
-  this is a noun and a verb both.
-- **`session export --at <revision>`** — `full-round-trip` asks for the **export of a captured
-  revision**, and `session export` exports requests, not a revision's state. The export the
-  acceptance suite names is a verb this draft does not have.
+- **`node edit`** — *filled by the #293 fold below*: one verb over exactly the five permitted
+  metadata fields, each a tagged patch, a `:structure` event with its preimage, and **no generic
+  set-field escape hatch**.
+- **`node add --repo`** — *filled by the #293 fold below*: the flag is on `node add` with
+  `--under-root open` and nowhere else, since a work set's repository is not editable metadata.
+- **`node move`** — *filled by the #293 fold below*: *move/reparent* in the table above, two
+  required sets in one envelope with its `:reparent` scope event.
+- **`axis --remove`** — *filled by the #293 fold below*, and `axis` is reversible in the undo
+  table above from there.
+- **`roadmap`** — *filled by the #293 fold below*: `roadmap create|configure|row|projection`
+  own the view record, and `render` reads the stored projection, so the command-line gap the
+  stored-metadata sentence named is closed.
+- **`prioritise`** — *filled by the #293 fold below*: a recorded ordering act, `:priority` on
+  the node and `:prioritise` in the log, a noun and a verb both.
+- **`session export --at <revision>`** — *filled by the #293 fold below* as `session export
+  --state --at`, a second product beside the request bundle, with `state load` to read it.
 
 **And the reverse: no verb of this grammar lacks a noun any more.** The six `<MUTATION>` verbs
 draft 26 added had no `:event` kind and no subject; the kinds above give each one, and
 `every-field-has-an-owning-verb` reads both ways from here — every field to its verb, and every
 mutation verb to its event kind, its ordered field list and its subject.
+
+## The structural verbs, the roadmap's verbs, priority and the captured-state export *(Stella's draft on #293 at `47c3f9a3`, folded; the contracts are the draft's, each spelling below is Rowan's where marked)*
+
+Seven rows of the missing-verb list above are filled here, from the five drafts #293 carried,
+read and approved at `47c3f9a3`: `node add --repo` and the completed `node add`, `node edit`,
+`node move`, `axis --remove`, `roadmap`, `prioritise` and `session export --at`. Each is folded
+into the grammar block, the `:structure` field orders, the scope-kind registry and its delta
+table, the reversible-verb table, *Output grammar* and the named replays above and below, so a
+reader finds the verb where every other verb is and not in a draft. Two things the drafts
+proposed are already this document's and are cited rather than re-decided: `--dry-run` is in
+`<write flags>` of *The verbs*, and **the no-effect receipt** — an accepted typed event with a
+real id, `changed=0`, the event revision advanced and no scope, membership, counter or index
+moved — is the rule the removal paragraph and replay `no-effect-mutation-is-journaled` already
+state, and every verb here wears it as written there.
+
+**`node add`, completed** *(Rowan's decision, for review: the draft's order, kept)*. Its
+`:structure` field order is the twelve fields the `:structure` registry above lists for it,
+every field serialized —
+absent `(:absent)`, an empty list `()`, an empty text `""`, `false` a value — and that order is
+the payload digest. **There is no legacy path for the shorter order**: no production stream
+exists to keep it for, so a loader that meets a fixture or event in the pre-fold add shape
+refuses `schema revision unsupported` rather than reading it as the new one, and fixtures are
+regenerated; a migration, if one is ever wanted, names its input revision and its exact
+re-encoding and is approved on its own. **The parent is typed, never spelled**: `--under <id>` is
+`:under (:node "<id>")` and the wire's `{"kind":"node","id":"<id>"}`; the top of O, which the
+grammar could not name, is `--under-root open`, `:under (:open-root)`, wire `{"kind":"open-root"}`;
+an unknown kind or key refuses, and no id is read as a root by its spelling. **`--repo` is
+required with `--under-root open` and refused anywhere else** (`repo outside root`, exit 2;
+`root needs a repo` where the root form omits it), and the root form admits `--type work-set`
+alone (`root needs a work set`, exit 2); it is a nonempty `<owner>/<name>`, unique in the repository index
+(`repo held by <id>`), and **immutable**: no edit and no move changes a work set's repository.
+`--type roadmap` is refused at exit 2 naming `roadmap create`, below; `:event` and `:lease` stay
+unaddable; a direct add under a roadmap stays exit 2 naming `axis --add`, by the delta table. A
+link is nonempty UTF-8 reference text under the session's string bounds, NUL and ASCII control
+characters refused (`bad link`); it need not be a URL, its bytes and order are kept, **it is
+never fetched, executed, normalised or given any access**, and it is not a dependency edge.
+`--link` repeated sets the whole ordered list, `--links-empty` writes `()`, `--clear-links`
+writes `(:absent)`, and the three are exclusive.
+
+**`node edit`** is the one verb over exactly the five permitted metadata fields — `:title`,
+`:category`, `:links`, `:private`, `:version` — **and each field is a tagged patch, present on
+every request**: `(:keep)`, `(:clear)` or `(:set V)`, the wire's `{"op":"keep"}`,
+`{"op":"clear"}` and `{"op":"set","value":V}`, so keep, clear, set-empty and set-value digest
+to four values. Its `:structure` order is `:verb`, `:title-patch`, `:category-patch`,
+`:links-patch`, `:private-patch`, `:version-patch`, `:reason`; **its `:before` is the engine's**,
+a five-field map in that field order outside the payload digest and kept for undo, absent
+written `(:absent)` and an explicit empty or `false` kept as the value. A missing, `null`,
+unknown or duplicate key, an `op` with the wrong value shape, a `set` of the wrong type, or a
+request that keeps all five is refused at exit 2 (`all keep`: it has no CLI spelling); `:version`
+set or clear is admitted on a `:task` only (`version on a <kind>`), its keep legal on every kind
+because it changes nothing. **It changes no `:id`, `:type`, containment, `:deps`, `:acceptance`,
+`:required`, `:responsible`, `:repo`, source, state or view record.** It writes its `:structure`
+event and no scope event, moves no required set, no scope revision and no counter, updates the
+category index where the category moved, invalidates the render projections that reach the
+node, and keeps the privacy floor: a private node and its descendants leave every public
+render and `private=<n>` is all that is printed of them; a refusal names the field and never
+prints a private value. `changed=` counts the fields that differ, `0` the no-effect receipt above. `NODE OK … change=edit
+changed=<n>`. Its undo is the compensating edit restoring `:before`, admitted only while the
+node is open and its current metadata still equals this event's postimage; an intervening edit
+is a conflict, never overwritten (replays `metadata-patches-preserve-intent`,
+`edit-is-atomic-and-replayable`, `edit-undo-preserves-later-work`, `edit-never-fetches-a-link`,
+`repo-only-at-the-root`, `roadmap-has-one-creator`).
+
+**`node move`** is *move/reparent* of the table above, and it is one envelope: a `:node-move`
+`:structure` event — `:verb`, `:from`, `:under`, `:reason`, both parents `(:node "<id>")` and
+never `(:open-root)` — and a paired **`:reparent` scope event on the moved node** — `:from`,
+`:under`, `:reason` — serialized in that order, the structure event first. `--from` is the
+caller's stated parent and is checked, not inferred afresh on a retry; the id is opaque and is
+never renamed to match the new place; the node is appended at the destination's end — **this is
+reparenting and never sibling reordering**. **By the sentence above the delta table, the
+`:reparent` counts in the source parent's, the destination parent's, the moved node's own, and
+every scope revision of a roadmap that has the node as a row**, the last found through the
+reverse roadmap reference index and never by walking descendants; its delta is in the table. A
+required node leaves `:from`'s set and enters `:under`'s at the bottom of the listing under its
+own unchanged `:required`; **|O|, |C| and W are unchanged**, no state, acceptance, generation,
+source revision, `:responsible`, lease, attempt or usage pointer moves, nothing settles and
+nothing revives, and closed descendants stay closed under their ids. Parent-local reporting
+records the transfer out and the transfer in as such, so a coordinator can tell redistribution
+from new work; a common ancestor is updated once with the net delta. **The refusals, `NODE FAIL
+node=<id>: <reason>`, nothing written**: `parent conflict` (`--from` is not the actual parent),
+`cycle` (a destination inside the subtree), `not movable` (a root container, a repository root
+or a validator-owned shared container), `repository change` (a destination under another
+repository — a move is not a source, issue or attribution migration, and the cross-repository
+transfer is named unsolved below), `roadmap operation required` (a roadmap as source or
+destination: rows are `axis`'s and `roadmap row`'s), `active context change` (the move would
+change the effective `:responsible` of any node in the reached subtree that holds a live lease
+or an unreconciled attempt, the affected ids named; silence never proves an execution ended),
+`privacy reduction` (a node whose effective privacy — its own marker or any containment
+ancestor's — would fall; raising privacy is admitted and invalidates the public projections),
+and `unavailable` (a guard whose history this read cannot reach is refused, never guessed
+public or idle). A request whose `--from` equals `--under` and names the actual parent is the
+no-effect receipt: the structure event alone, `changed=0`, sibling order untouched. **Its
+`:before` and `:after` are the engine's, outside the digest**: `:from-children`,
+`:under-children` (ordered direct ids), `:from-required`, `:under-required` (ordered direct
+required sets), `:from-scope`, `:under-scope` (revisions), `:roadmap-scopes` (ordered `(:roadmap
+<id> :scope <rev>)` rows for the complete affected set), then `:context` rows sorted by id, each
+`(:node <id> :private <bool> :responsible <name|absent> :execution-refs (<id> ...))`; the
+direct lists are bounded by the envelope bounds and an oversize set refuses before it is
+accepted; no transitive descendant set is stored. `NODE OK … change=move changed=<0|1>
+from=<id> under=<id>`. Undo compares the current ordered children, required sets and scope
+revisions of both parents and every affected roadmap with the stored `:after`, re-evaluates the
+two context guards against the live lease indexes, and then restores containment alone in one
+validated envelope, appending fresh scope revisions — **an old scope number is a guard and
+never a value written back** — refusing conflict on an intervening reorder, reparent or privacy
+change and never guessing an insertion point (replays `move-keeps-every-count`,
+`move-same-parent-is-a-receipt`, `move-refuses-by-name`, `move-keeps-the-lease`,
+`move-updates-every-roadmap-scope`, `move-undo-refuses-a-reorder`).
+
+**A roadmap is a node plus a view record, and `roadmap create` is its one creator** *(Rowan's
+decision, for review: the draft's owner, adopted; `node add --type roadmap` refuses naming it,
+so there is no second spelling)*. It writes the node and its initial view atomically, as one
+`:roadmap-create` `:structure` event: `:verb`, `:node-type` (`:roadmap`), `:title`, `:under`,
+`:row-kind`, `:aggregation`, `:completion-policy`, `:axes`, `:members`, `:permitted-roots`,
+`:reason`, its `:under` `(:node "<id>")` only, never the open root; every create starts with
+`:members ()`, `--axes-none` writes `:axes ()`, and axis ids are distinct. Zero or one axis is rows with no cells; two or more are a matrix. **The view
+record gains three fields**: `:members`, the ordered rows of an axisless roadmap;
+`:permitted-roots`, opaque root ids; and `:projections`, each `(:id <id> :root <root-id> :repo
+<owner/name> :path <relative> :start <marker> :end <marker> :policy :markdown-table :row-axis
+<id|absent> :column-axis <id|absent> :fixed ((<axis-id> <member-id>) ...))`, ids unique per
+roadmap, the path clean, relative and contained, the markers distinct nonempty text, and for a
+matrix the row and column axes distinct declared axes with `:fixed` naming exactly one member
+of every other axis; for zero or one axis the two are `(:absent)` and `:fixed` is `()`. **Four
+verbs own the record after creation.** `roadmap configure` patches `:row-kind`, `:aggregation`,
+`:completion-policy`, `:axes` and `:permitted-roots` with `(:keep)` or `(:set V)` — the three
+policies admit no clear, `()` is explicit empty axes or roots — in the order `:verb`,
+`:row-kind-patch`, `:aggregation-patch`, `:completion-policy-patch`, `:axes-patch`,
+`:permitted-roots-patch`, `:reason`, `:before` engine-derived as `node edit`'s is; **the axis
+layout changes only while every axis is empty, `:members` is empty and no cell exists**
+(`layout populated`), a missing, `null`, unknown or duplicate key, a wrong type or an all-keep
+request is refused at exit 2 as `node edit`'s is (`bad patch`; `all keep`), a row-kind change
+requires every retained row to match (`row kind mismatch`), and an aggregation change changes how a row qualifies green and never how many rows
+apply. `roadmap row --add|--remove` — `:verb`, `:roadmap`, `:member`, `:reason` — is admitted on an
+axisless roadmap only (`has axes`, naming `axis`), its member an existing node of the declared
+`:row-kind`; add appends to `:members`, remove retires the row from the view alone and touches
+no containment, state, evidence, lease or repository. `roadmap projection --add|--remove` — `:verb`,
+`:projection`, `:reason` and `:verb`, `:projection-id`, `:reason` — own the targets; only
+`:markdown-table` is a policy; a second projection under a held id with a different payload
+refuses `duplicate projection`, a remove of an id the roadmap has not got refuses `no such
+projection`, and a matrix selection naming an unknown, missing or duplicate axis or member
+refuses `bad selection`. **`axis --remove <member>` exists, on any declared axis, and
+amends the two sentences that said nothing takes a member off an axis**: it removes the member
+from its ordered axis and from every current cell coordinate holding it, records the position
+and the removed cells as its `:before`, and **on the first axis retires the row from the
+view's required set while the row is live** (done included: only removed, cancelled and
+superseded are not live); on another axis it moves no set. It never calls `node remove`,
+`cancel` or any terminal verb; the node, its evidence and its state stand. An absent member
+refuses. **Three scope kinds carry these, each after its structure event and each a scope
+revision of the roadmap**: `:view` — `:change` (`:create`, `:configure`, `:projection-add` or
+`:projection-remove`), `:reason` — for an effective create, configure or projection change; `:roadmap-row` — `:change`, `:member`, `:reason`; `:axis-remove` —
+`:axis`, `:member`, `:reason`; the last two move the roadmap's view-required set and never a
+containment parent's. A container settle or revive that a membership change implies follows the
+ordinary cascade — an empty required set is still not done — and reopens or cancels no row;
+metadata and projection changes may address a settled roadmap without reviving it. An equal-value configure and an identical projection re-add are the no-effect receipt,
+no scope event.
+**`percent --node R` on a zero- or one-axis roadmap takes no `--axis`**, its applicable rows
+being its live ordered rows and green by its aggregation, while a matrix still requires one and
+a non-matrix given one refuses at exit 2, which amends the grammar's *required*. Undo of
+configure, row, projection and axis removal compares the current postimage, cell and member
+order and scope revision with the stored `:after` and appends a typed compensation or refuses
+conflict; undo of a create is admitted only with no surviving member, cell or projection
+outside its preimage. A settled roadmap keeps its whole current head — axes, members, cells,
+configuration, projections and receipt identities — and opens from it plus bounded closed
+reads. `ROADMAP OK … change=<create|configure|row-add|row-remove|projection-add|projection-remove>
+changed=<n>`; `AXIS OK … change=<add|remove>` (replays `axisless-history`, `matrix-retirement`,
+`configure-no-effect-and-undo-conflict`, `completed-view-mutation`, and the existing
+`chat-and-file-render-are-byte-identical` and `render-refuses-a-target-outside-its-roots`).
+
+**`render` reads the stored projection and no longer a remembered command line** *(Rowan's
+decision, for review: the `--into --start --end` spelling is retired, because the stored target
+was already the requirement and those flags were the gap the missing-verb list named)*.
+`render --view <id> --chat [--projection <id> | --row-axis <id> --column-axis <id> --fixed
+<axis-id>=<member-id> ...] [--at <revision>]` needs no filesystem mapping: with a projection it
+reads that projection's display selection and not its file, without one a matrix names its
+selection and a zero- or one-axis view needs none, and the two forms are exclusive. `render
+--view <id> --projection <id> (--file | --check) [--at <revision>]` reads the stored target,
+resolves its root through the session's mapping, captures the file's SHA-256 and marker
+offsets, and replaces its region atomically after a hash recheck, `--check` writing nothing;
+the receipt records the target identity, the old and new hashes and the render revision;
+missing, duplicate or reversed markers, a path outside the effective root, a symlink escape, a
+target whose hash moved, or **a mapping whose repository identity is not the projection's stored
+`:repo`** (`target identity`: remapping a root never redirects a projection to another
+repository) refuse and leave the file untouched. **A stored root id grants no
+access**: `session start --render-root <root-id>=<owner/name>:<directory>` maps it to a bench
+path, file mode needs both the stored permission and that mapping, and no mutation grants
+filesystem access. The per-target renderer lock is advisory among cooperating renderers; an
+external editor can still race the final replace, and this document claims no more than that.
+**One wire exception, for review**: a successful `--chat` render carries no `lines` and exactly
+one bounded `artifact` object beside the response's request and revision fields,
+`{"encoding":"utf8","body":"…","sha256":"<hex>","bytes":"<n>"}`; the client verifies the count
+and the hash and writes `body` to stdout unchanged with no `RENDER OK` prefix, because a prefix
+cannot be raw identical Markdown; a refusal is ordinary stderr `lines`; an artifact past the
+frame or output bound refuses and is never truncated; file and check keep their status lines
+(replays `render-artifact-is-bounded`, `a-root-id-grants-nothing`).
+
+**`prioritise` is a noun and a verb, and it steers ordering and nothing else.** Every node
+carries one fixed field, `:priority (:self <rank|absent> :subtree <rank|absent>)`, a rank an
+unsigned integer atom of at most eighteen digits — checked before conversion, so a bignum
+runtime allocates nothing for a longer one — absent written `(:absent)`, and on the wire a
+decimal string as every integer is; **rank 2 precedes 10**. There is no stored default; the two
+slots are the only canonical data and effective rank, ordering and latest-change lookup are
+derived. **A node snapshot without the field is the pre-fold shape and is refused `schema
+revision unsupported` at load, as the shorter `node add` order is**; no draft data is reread as
+a priority. `prioritise --node <id> (--set <rank> | --clear) [--context <self|subtree>] --reason`,
+context defaulting to `self`, `--clear` with a rank refused at exit 2, addresses O; a settled
+node keeps its slots into C and a reopen restores them. Its event kind is **`:prioritise`** —
+`:change` (`:set` or `:clear`), `:context`, `:rank`, `:reason` — **neither structure nor
+scope**: it moves no containment, dependency, acceptance, state, generation, baseline, required
+set, O or C membership, W, lease, capacity, count or percentage, and never reorders baseline or
+discovery rows or roadmap rows, which the scope paragraph above already forbids. Its `:before
+(:value V :change <event-id|absent>)` and `:after (:value V :change <this-id>)` are the
+engine's, outside the digest. **Effective rank is the nearest context**: the node's own `:self`,
+else the deepest `:subtree` on its containment path, else the default; a clear reveals the
+next; a move re-reads the new path and clones no event. **`query --ask ready --order
+<discovery|priority>`** is the one reader, `discovery` the default and `--order priority`
+refused at exit 2 on every other ask; it sorts only rows `ready` already admits by its
+predicates — **it grants no capacity, bypasses no approval, takes no lease, changes no
+responsibility, selects no worker and starts or interrupts no work** — explicit ranks
+ascending, then defaults, then bytewise stable id, independent of clocks and arrival; blocked
+rows are not dropped: they follow the eligible rows in discovery order with their blocker and
+resolver fields, under the ordinary cursor. A ready row prints `priority=<rank|default>
+priority-source=<id|default> priority-context=<self|subtree|default>`. The derived order index
+is keyed by captured revision, scope, filter and readiness watermark; a first unseen filter
+costs `O(k log k)` in its k eligible candidates and later pages read the pinned order; no
+descendant carries a copied rank and no second priority table exists; a cursor names its
+revision and watermark, and eligibility is never reused across a watermark because ranks stayed
+fixed. A same-value set or a clear of an absent slot is the no-effect receipt, `changed=0`, its
+before and after identical. **Undo restores the preimage only while the slot's latest-change
+identity equals this event's `:after`**: set 2, set 9, set 2 refuses undo of the first, because
+the same value is not the same history. `PRIORITY OK … change=<set|clear> context=<self|subtree>
+rank=<n|-> changed=<n>` *(Rowan's decision, for review: the draft named no line)* (replays
+`priority-orders-only-the-eligible`, `priority-inherits-and-clears`, `rank-2-precedes-10`,
+`priority-undo-is-history-not-value`, `priority-grants-nothing`).
+
+**`session export --state --at <revision>` is the export of a captured revision that
+`full-round-trip` asks for, and it is a second product, not a change to the request bundle.**
+`session export (--session <path> | --snapshot <path> --cache <path>) --state --at <revision>
+--closed-history <none|all|range> [--from <stamp> --to <stamp>] --into <new-directory>
+--max-bytes <n> --max-depth <n> --max-nodes <n> --max-output-bytes <n>`: `--state` is required
+with `--at` and the request export refuses `--at`; `range` requires both stamps and the other
+two refuse them; the range is half-open, `[from, to)`, in the query stamp grammar, so adjacent
+ranges do not overlap. **The resident form is one long operation**, by *The engine and its
+client*: the request is acknowledged at once with `OPERATION OK id=<id> op=export
+state=<queued|running>`, the terminal `EXPORT OK` or `EXPORT FAIL` is what `operation wait`
+prints, and the wire op is `session.export`; it captures and pins the revision under the owning
+engine, stages the traversal and the output I/O outside the mutation loop, takes no ownership
+and writes no canonical event or index; an atomic batch refuses it by entry id (B4 above); a
+fenced session runs it and reaches its terminal line through the `operation status|wait|cancel`
+that rule 2 above already admits for its own export id and nothing else — that amendment landed
+from #293 ahead of this fold and is cited, not re-made. `--at` is one accepted local
+revision, resolved to a savepoint plus an exact journal prefix and pinned until the operation
+ends, so a concurrent clip or retention pass reclaims nothing under it; a revision outside
+recoverable retention refuses naming the revision and the member, never approximated by a later
+snapshot. The `--snapshot` form is the offline counterpart: `--at` must equal that snapshot's
+captured revision, it reads the supplied verified closure and cache and no session or
+repository, runs as one finite process, and prints the same terminal line with `operation=-`.
+Cancellation acknowledges, then reconciles whether publication happened, and never promises to
+unpublish; a disconnect cancels nothing; recovery resolves the operation's id, captured sources
+and output identity before any retry. **Open state at the capture is always primary; closed
+history is what `--closed-history` selects, and the manifest declares what it left out, so no
+scoped artifact claims to be a full backup.**
+
+The output directory is immutable and publishes `MANIFEST.sexp` in the restricted
+S-expression format — JSON is the wire and never the store — whose v1 shape is:
+
+```lisp
+;; EXAMPLE DATA, NOT PRODUCT CONSTANTS: one captured-state manifest, values invented.
+(:version "nova-work-state-export-v1"
+ :kind :captured-state
+ :captured (:revision 42
+            :snapshot (:sha256 "<64-lower-hex>" :revision 40 :journal "<journal-id>"
+                       :replay-cut (:sequence 25 :sha256 "<record-hash>"))
+            :journal-end (:sequence 27 :sha256 "<record-hash>")
+            :verification-cache "<64-lower-hex>")
+ :schema (:id "work-v1" :sha256 "<64-lower-hex>")
+ :scope (:open :all :closed-history (:range :from "2026-09-14T00:00:00Z" :to "2026-09-15T00:00:00Z"))
+ :members ((:path "state/root.sexp" :kind :state-root :bytes 8123 :sha256 "<64-lower-hex>"))
+ :omissions ((:kind :primary-closed-history :identity "2026-09-13" :reason :outside-selected-range)))
+```
+
+Integers are canonical unsigned decimal atoms, stamps RFC 3339 UTC ending `Z`, absent values
+`(:absent)`, members sorted bytewise by path and the manifest not listing itself; the artifact's
+identity is the hash of its exact manifest bytes. **The snapshot reference binds the base image
+at revision B and the journal interval that reaches R**: B never exceeds R; `:journal-end
+(:absent)` is legal only when B equals R and the image is the exact capture; when B is below R
+the end is required and names one complete envelope by sequence and hash in the same logical
+journal, R never splitting an envelope; the members cover the base image and every complete
+record after the base cut through that end, clip markers included, as one unbroken sequence
+and hash chain that physical rotation cannot alter; **load verifies that coverage and the
+revision chain before exposing any state and applies that interval and never a later tail**;
+a missing cut, a gap, a wrong end, a split envelope or an absent end below R refuses. Paths are
+clean relative slash paths — no absolute path, dot segment, NUL, duplicate, case-fold alias,
+symlink, special file or escape — each with an exact byte count and lower-case SHA-256.
+**Closure is not selection**: whatever the primary selection, every canonical internal
+dependency of a selected record is added — structure, scope and lease events, index and counter
+provenance, roadmaps, evidence references, CONFIG and ACTIVE observations, model, rate and
+accounting records, the schema bytes, and any record an internal id needs to resolve — and a
+missing, corrupt or redacted mandatory closure member is an export refusal and never a
+queryable, valid-looking empty load; omission entries name only unselected primary history,
+rebuildable derived caches and declared external references. **A full export includes private
+work**, the render audience filter not applying; stored non-secret CONFIG, profile,
+resolver-command and cache-provenance text travels as inert data, literal empty and absent
+kept apart; **credential values and secret-store content are excluded, and a record that
+cannot be represented losslessly without redaction refuses rather than calling the artifact
+full**; export and load read no path that text names, execute no profile and touch no
+resolver, network or repository. Raw resolver observations and the captured verification-cache
+identity are included where they are the only proof; a historical export uses the observations
+of its captured revision and refuses with a named proof gap rather than substituting current
+ones — a cache that recorded unknown is valid, a fact once recorded and now missing is not.
+Reads stream under `--max-bytes`, the reader checking depth and node bounds before it
+descends; `--max-output-bytes` is an exact running sum of member and manifest bytes; any bound
+breach, changed identity, malformed data or cycle refuses, and no truncation marker ever
+stands for a member. **Publication is no-replace**: an owned private staging sibling, members
+created exclusively, hashed and counted during the copy, synced, the manifest written and
+synced last, then one no-replace directory commit into `--into` and a sync of its parent, and
+success reported only after that barrier; an existing destination refuses; a filesystem that
+cannot promise the commit refuses rather than pretending check-then-rename is CAS; a crash
+before the commit leaves owned staging that recovery may inspect or clean by its nonce and
+never auto-publishes.
+
+**`state load --from <export-directory> --into <new-readonly-session> --max-bytes <n>
+--max-depth <n> --max-nodes <n>` is the isolated read-only load**, a finite process and never a
+request to a session: it verifies the manifest version, every count and digest, the member set,
+the closure and the schema under its bounds, materialises one exclusively created directory in
+the existing snapshot and cache schemas, prints `LOAD OK` naming the captured revision, the
+manifest hash and the two paths — *(Rowan's decision, for review: the draft's `STATE` token is
+the `state` verb's, so this verb prints `LOAD`)* — and exits, starting no daemon, keeping no
+socket, creating no writable journal and no `OWNER`; an incomplete load is staging and never a
+success. The loaded snapshot is read by the existing `query --snapshot <path> --cache <path>`,
+and the export's own `--snapshot` source re-exports it through a fresh reader that rebuilds the
+model rather than copying an unchecked archive; neither starts a coordinator, and no
+mutation, replay, clip, handoff or execution verb accepts it as a `--session`. Live `--session`
+reads still reload nothing; only an explicit offline read pays a parse. Savepoint meanings are
+unchanged (replays `state-export-describes-exactly-r`, `state-export-is-one-long-operation`,
+`state-export-pin-survives-clip`, `state-export-disconnect-and-cancel`,
+`state-export-refuses-a-gap`, `state-load-is-isolated`, `fenced-export-can-finish`, and the
+existing `full-round-trip` and `old-history`).
+
+**What #293 left open is listed once, with its owners, in *What this draft does not do*
+below, and this fold closes none of it.**
 
 ## Friends, CONFIG and ACTIVE *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
 
@@ -3758,8 +4134,8 @@ chain, high fan-out, and on one multi-command session.
 
 Every line's first token is the verb's (`SESSION`, `EXPORT`, `REPLAY`, `HANDOFF`, `CLIP`,
 `OPERATION`, `SAVEPOINT`, `UNDO`, `REDO`, `FRIEND`, `CONFIG`, `MODEL`, `OBSERVE`, `GOAL`, `MACHINE`,
-`OFFER`, `ACKNOWLEDGE`, `DECLINE`, `EXECUTION`, `WORK`, `VERIFY`, `QUERY`, `RENDER`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
-`RESPONSIBLE`, `ACCEPT`, `SOURCE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`,
+`OFFER`, `ACKNOWLEDGE`, `DECLINE`, `EXECUTION`, `WORK`, `VERIFY`, `QUERY`, `RENDER`, `LOAD`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
+`ROADMAP`, `PRIORITY`, `RESPONSIBLE`, `ACCEPT`, `SOURCE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`,
 `ATTESTED`, `STATE`, `CORRECT`, `EVENT`), the second is `OK` or `FAIL`, `RACED` for a push the base predicate
 refused (SPEC-MERGE rule 21's shape, exit 1, nothing pushed), or one of the informational
 tokens `ROW`, `NOTE` and `MORE`. `OK`, `ROW`, `NOTE` and `MORE` go to stdout; `FAIL`, `RACED`
@@ -3781,6 +4157,10 @@ SESSION FAIL session=<path> owner=<name> generation=<n>: <reason>
 SESSION RACED session=<path> generation=<n> expected=<sha12> found=<sha12>   (printed by the session's own reconfirm, on its stderr; the fence that follows is read by `session status`)
 EXPORT OK session=<path> into=<path> requests=<n> base=<sha> pushed=<rev|-> emitted=<bytes>
 EXPORT FAIL session=<path> into=<path> requests=<n> base=<sha> pushed=<rev|->: <reason>
+EXPORT OK state=true session=<path> operation=<id|-> at=<rev> manifest=<sha256> members=<n> bytes=<n> complete=<true|false> into=<path> pushed=<rev|-> emitted=<bytes>   (--state: printed by `operation wait --id <id>` under --session, the export itself printing OPERATION OK; operation=- under --snapshot; complete=false names a declared omission, never a gap)
+EXPORT FAIL state=true session=<path> operation=<id|-> at=<rev> into=<path> pushed=<rev|->: <reason>   (--state: a revision outside retention, a missing closure member, a proof gap, an existing destination, a bound breached: nothing published)
+LOAD OK from=<path> at=<rev> manifest=<sha256> snapshot=<path> cache=<path> members=<n> emitted=<bytes>   (state load: no session, no rev=, no pushed=)
+LOAD FAIL from=<path> at=<rev|-> manifest=<sha256|->: <reason>   (a manifest, digest, member-set, closure or schema failure: nothing materialised)
 REPLAY OK from=<path> requests=<n> applied=<n> refused=<n> pushed=<rev|-> shown=<n> emitted=<bytes>   (refused=0, exit 0)
 REPLAY FAIL from=<path> requests=<n> applied=<n> refused=<n> pushed=<rev|-> shown=<n> emitted=<bytes>   (refused > 0, exit 1, the same fields on stderr)
 REPLAY ROW request=<id> verdict=<applied|refused> rev=<n>: <reason>
@@ -3799,6 +4179,7 @@ VERIFY ROW <event-id> pointer=<p> verdict=<verified|unverified|stale> at=<stamp>
 VERIFY FAIL pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> pushed=<rev|-> shown=<n>
 QUERY OK ask=<kind> scope=<rev> membership=<rule> branch=<open|closed|root> unit=<unit> source=<sha|-> freshest=<stamp|-> done=<n> done-unverified=<n> unknown=<n> deferred=<n> cancelled=<n> superseded=<n> stale=<n> required=<n> since-baseline=<n> private=<n> open=<n> closed=<n> gap=<n> [from=<stamp> to=<stamp> closed-in=<n> settles-in=<n> revives-in=<n> items-in=<n>] [green=<k> applicable=<n> baseline-rows=<n0> row-kind=<kind>] [held-not-worked=<n> unowned=<n>] [leases=<n>] [responsible=<name|->] pushed=<rev|-> rows=<n> shown=<n> pages=<n> parses=<n> replays=<n> emitted=<bytes>
 QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> escalated-to=<name|-> blocked-by=<id|->
+QUERY ROW <id> kind=<k> state=<s> ready=<true|false> reason=<text|-> resolver=<name|-> priority=<rank|default> priority-source=<id|default> priority-context=<self|subtree|default> responsible=<name|-> holder=<name|unowned>   (ready; the three priority fields read the same under either --order)
 QUERY ROW <id> lease=<lease-id> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|-> escalated-to=<name|-> responsible=<name|->   (who, stale)
 QUERY ROW <id> branch=<open|closed> disposition=<pending|working|deferred|done|cancelled|superseded|removed> repo=<o/n|-> kind=<k> state=<s> landed=<sha|-> released=<version|-> holder=<name|unowned> settled=<stamp|-> evidence=<n> verified=<n> responsible=<name|->   (done, remaining and under, under --branch closed or --branch root)
 QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows whose bodies the retention archive holds, or whose day partition or manifest the committed root names, and this read could not reach; an absent day inside a complete manifested range is no events and prints no note)
@@ -3846,8 +4227,14 @@ EXECUTION OK control=<id> change=<c> selected=<n> pending-delivery=<n> acknowled
 EXECUTION ROW control=<id> node=<id> offer=<id> attempt=<id> generation=<n> disposition=<pending-delivery|acknowledged|confirmed|unsupported|unresolved> observed=<running|paused|stopped|completed|not-started|unsupported|unknown|-> at=<stamp|->
 EXECUTION FAIL control=<id> change=<c>: <reason>   (unknown selector; capture pin unrepresentable; instructions unverified; stale generation; unsupported before send; no such control — exit 1, nothing written, no hold installed)
 CORRECT FAIL node=<id>: execution live, use execution correct   (an attempt of the node live or uncertain: the bare verb bypasses no barrier)
-RENDER OK view=<id> cells=<n> private=<n> bytes=<n> into=<path> pushed=<rev|-> emitted=<bytes>
-RENDER FAIL view=<id> cells=<n> private=<n> drifted=<n> into=<path>: <reason>
+RENDER OK view=<id> projection=<id|-> scope=<rev> cells=<n> private=<n> bytes=<n> target=<owner/name:path|-> was=<sha256|-> now=<sha256|-> pushed=<rev|-> emitted=<bytes>   (--file and --check; a --chat success prints no line and carries its bytes as the wire's one `artifact`, by the #293 fold)
+RENDER FAIL view=<id> projection=<id|-> cells=<n> private=<n> drifted=<n> target=<owner/name:path|->: <reason>   (no mapping, target identity, a path outside its root, a marker missing, duplicated or reversed, a hash moved, an artifact past its bound: the target untouched)
+NODE OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=<add|edit|move> changed=<n> [from=<id> under=<id>] emitted=<bytes>   (from= and under= on a move alone)
+NODE FAIL node=<id>: <reason>   (node move: parent conflict, cycle, not movable, repository change, roadmap operation required, active context change, privacy reduction, unavailable; node add: repo outside root, root needs a repo, root needs a work set, repo held by <id>, bad link; node edit: all keep, version on a <kind>: nothing written, no private value printed)
+ROADMAP OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=<create|configure|row-add|row-remove|projection-add|projection-remove> changed=<n> emitted=<bytes>
+ROADMAP FAIL node=<id>: <reason>   (layout populated, bad patch, all keep, row kind mismatch, has axes, unknown member, duplicate projection, no such projection, bad selection: nothing written)
+AXIS OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=<add|remove> member=<id> cells=<n> emitted=<bytes>   (cells= the coordinates a remove retired, 0 on an add)
+PRIORITY OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=<set|clear> context=<self|subtree> rank=<n|-> changed=<n> emitted=<bytes>
 NODE NOTE already-closed node=<id> disposition=<d> settled=<stamp>   (a same-id retry returns its prior disposition and writes nothing; a fresh-id repeat while still closed appends one typed no-effect receipt with changed=0)
 <MUTATION> OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> changed=<n> ... emitted=<bytes>
 <MUTATION> OK id=- request=<id> node=<id> rev=- pushed=<rev|-> changed=<n> dry-run=true ... emitted=<bytes>
@@ -3866,7 +4253,7 @@ nova-work <build identity> <goos>/<goarch> <go version>
 ```
 
 where `<MUTATION>` is one of `NODE`, `DECOMPOSE`, `ACCEPT`, `SOURCE`, `DEP`, `AXIS`, `CELL`,
-`RESPONSIBLE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`, `ATTESTED`, `STATE`,
+`ROADMAP`, `PRIORITY`, `RESPONSIBLE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`, `ATTESTED`, `STATE`,
 `CORRECT`, `EVENT`, `UNDO`, `REDO`, `FRIEND`, `MODEL`, `OBSERVE`, `MACHINE`, `OFFER`, `ACKNOWLEDGE`,
 `DECLINE`, `EXECUTION` and `CONFIG` (its `--intake`
 form alone), `GOAL` (its `set` and `update` forms). **Nine of them name no node, and their lines are written out above rather than left
@@ -3879,8 +4266,9 @@ add the fields their section names (`LEASE OK … holder= deadline= default= liv
 against=`, `CORRECT OK … generation=`, `EVENT OK … kind= scope=`, and `DECOMPOSE OK …
 children=<n> unit=leaves leaves-before=<n> leaves-after=<n> unit=features features-before=<n>
 features-after=<n>`, which is the both-units promise of the scope section printed).
-**Every token is its verb uppercased but three, named here so no reader infers them**: `take`
-prints `LEASE`, `attest` prints `ATTESTED`, and **a `release` refused because its `--as` is not
+**Every token is its verb uppercased but four, named here so no reader infers them**: `take`
+prints `LEASE`, `attest` prints `ATTESTED`, `state load` prints `LOAD` (the `state` verb owns
+`STATE`), and **a `release` refused because its `--as` is not
 the lease's holder prints `LEASE FAIL`** — that refusal is about the lease it could not end —
 while every `release` that runs prints `RELEASE OK` like any other verb's (Fable at 7472e545,
 2026-09-13). **`pushed=<rev|->` is on every scope line** —
@@ -4344,6 +4732,124 @@ of this list and are not repeated here):
   `not reversible here` naming itself, an undo over `event --kind cancel` and over `node remove`
   refused because both dispositions are terminal, and no undo reaching a terminal state by any
   path.
+- **`add-field-order-is-complete`** — a `node add` with every one of the twelve fields given,
+  one with each absent, one with `--links-empty` and one with `--clear-links`, digested by two
+  serializers to one value each and to four distinct values; a fixture in the pre-fold order
+  refused `schema revision unsupported` at load, never read as the new shape.
+- **`repo-only-at-the-root`** — `--repo` with `--under-root open --type work-set` accepted and
+  unique; the same `--repo` again refused `repo held by <id>`; `--repo` under a parent refused
+  `repo outside root`; `node edit` and `node move` unable to change it.
+- **`roadmap-has-one-creator`** — `node add --type roadmap` exit 2 naming `roadmap create`;
+  `roadmap create` writing one node and one view in one envelope, a crash between them
+  replaying all-or-none; no second alias.
+- **`metadata-patches-preserve-intent`** — keep, clear, set-empty, set-false and set-value on
+  each of the five fields round-tripping and digesting distinctly; an all-keep, a malformed tag
+  and a wrong type refused with no event and no counter moved; `--version` set on a `:feature`
+  refused `version on a feature` and its keep accepted.
+- **`edit-is-atomic-and-replayable`** — a bad one-of-five patch writing nothing; an accepted
+  mixed edit moving only its named fields and the category index; the same request id retried
+  answered by its original `NODE OK`; a changed payload refused; an equal-value edit the
+  no-effect receipt, `changed=0`, rev up by one.
+- **`edit-undo-preserves-later-work`** — an edit undone restores `:before`; the same undo after
+  an intervening edit refused conflict, both events standing.
+- **`edit-never-fetches-a-link`** — a link that is a live URL to a counting endpoint added,
+  edited and rendered with zero requests observed; a link holding NUL refused `bad link`; a
+  refusal on a private node printing no value.
+- **`move-keeps-every-count`** — a required subtree moved between two features: the source's
+  and destination's required sets and open counts move by the subtree, the common ancestor's
+  net count is stable, `|O|`, `|C|`, W and every task state unchanged, rule 11 green on the
+  walk, and no whole-set scan (visits asserted).
+- **`move-same-parent-is-a-receipt`** — `--from` equal to `--under` and true: the structure
+  event alone, `changed=0`, sibling order unchanged; a lost reply retried yields one envelope;
+  a different payload under the id refused; every refusal leaves both parents unchanged.
+- **`move-refuses-by-name`** — a wrong `--from`, a destination inside the subtree, a root
+  container, a repository root, a shared container, another repository, and a roadmap as either
+  parent, each refused with its named reason and the identity, nothing written.
+- **`move-keeps-the-lease`** — a working subtree moved with its effective `:responsible`
+  unchanged keeps the same lease, attempt and usage; a move that would change it over an
+  unreconciled attempt refused `active context change` naming the ids; a move under a public
+  parent from a private one refused `privacy reduction`, the reverse admitted and the public
+  render losing the rows.
+- **`move-updates-every-roadmap-scope`** — a row referenced by two roadmaps outside both
+  parent chains and one unrelated roadmap: both referencing scope revisions advance in the
+  envelope, the unrelated one stays, a failed acceptance moves none, historical renders keep
+  the old captured scope, and an intervening affected-roadmap mutation makes undo conflict.
+- **`move-undo-refuses-a-reorder`** — undo after a sibling reorder, a further reparent or a
+  privacy change refused conflict and guessing no position; undo otherwise restoring the exact
+  before order and required sets with fresh scope revisions, the old numbers unwritten; a kill
+  around acceptance and during clip exposing neither two parents nor none.
+- **`axisless-history`** — two ordered rows added by `roadmap row`, one finished, the state
+  exported and loaded, the view reopened past the default window: both rows and their evidence
+  present, the denominator not reduced by completion; a row retired records a scope movement,
+  keeps its node, and the prior view reconstructs at its captured revision.
+- **`matrix-retirement`** — `axis --remove` of a first-axis row and then of another axis's
+  member: only the selected coordinates retired and recoverable, no task cancelled, an unknown
+  member refused, a layout change on a populated roadmap refused `layout populated` with no
+  partial write, and a matrix never flattened without explicit selections.
+- **`configure-no-effect-and-undo-conflict`** — an equal-value configure, its reply lost, a
+  later edit, then the retry: the original receipt returned and the later value kept; undo
+  restoring an ordered preimage only while its guards match.
+- **`completed-view-mutation`** — metadata, projection and render on a settled roadmap
+  reviving nothing; an outstanding member added applying the atomic revival rule so no settled
+  container silently holds open required work; counts and indexes checked by the reference
+  fold after each step.
+- **`render-artifact-is-bounded`** — ordinary replies and a `--chat` artifact interleaved in one
+  correlated batch, request ids, byte length and hash verified; a corrupt or oversized artifact
+  a bounded refusal and never partial Markdown; `--check` creating no target, no receipt claiming
+  a write, no commit and no push.
+- **`a-root-id-grants-nothing`** — a stored permitted root with no `--render-root` mapping
+  refusing file mode while `--chat` renders; an escaping path, a symlink escape and a target
+  identity other than the mapping's refused; the cooperative lock exercised and its
+  external-editor limit retained.
+- **`priority-orders-only-the-eligible`** — a blocked rank-0 task stays blocked with its reason
+  and resolver while a rank-9 ready sibling is first among the eligible; `--order priority`
+  under `done` exit 2; capacity loss, approval withdrawal, a dependency change or a hold
+  rechecked before ranking and starting or interrupting nothing.
+- **`priority-inherits-and-clears`** — a root `:subtree` rank changing ready order with no
+  lease, attempt, state, O, C, W, counter, baseline or roadmap moved; a child's `:self`
+  overriding it; a clear revealing the parent; settle and reopen keeping the slots; a move
+  re-reading inheritance with no cloned event.
+- **`rank-2-precedes-10`** — ranks compared as integers, and equal and default rows ordered by
+  id across a restart, a handoff, a cursor continuation and skewed clocks; a first unseen filter
+  `O(k log k)`, later pages from the pinned order, a subtree invalidation touching no unrelated
+  scope and no C.
+- **`priority-undo-is-history-not-value`** — a same-value set and a clear of an absent slot each
+  the no-effect receipt; set 2, set 9, set 2, then undo of the first refused although the value
+  matches.
+- **`priority-grants-nothing`** — with priority set on every node, `who` unchanged, no lease
+  written, no worker selected, no approval bypassed.
+- **`state-export-describes-exactly-r`** — capture R while R+1 is accepted and the bytes
+  describe R; an exact-snapshot export with B equal to R and an absent end, and one with B below
+  R over a multi-record prefix across a rotation; an absent end below R, a missing or swapped
+  record, a wrong end hash or revision and a cut inside an envelope each refused, and a present
+  later tail never replayed.
+- **`state-export-refuses-a-gap`** — a missing mandatory member, a changed digest, a dangling
+  internal reference, a path escape, a symlink, an output overrun and a corrupt S-expression
+  each refused with no valid load; a historical export whose resolver observations are gone
+  refused with a named proof gap and never given current ones; `--closed-history range` over
+  `[from, to)` declaring its omissions while keeping closure, `all` reaching C past the resident
+  window and a fresh load reproducing its proof.
+- **`state-export-is-one-long-operation`** — an export blocked on archive I/O acknowledging its
+  operation at once, status, cancel and an unrelated mutation responsive under it, and `wait`
+  returning the same operation and captured revision after publication or refusal; an export
+  inside an atomic batch refused by entry id.
+- **`state-export-pin-survives-clip`** — capture R, a clip and a retention pass at R+1 during
+  the copy, then exactly R completed or a recovery gap named; no pinned member reclaimed, no
+  current bytes substituted.
+- **`state-export-disconnect-and-cancel`** — a lost client, a restart and a cancellation around
+  the no-replace publication keeping one operation and one output identity, no duplicate
+  directory, no claim to reverse a published one; an existing destination refused; a staged
+  manifest before the commit not published.
+- **`state-load-is-isolated`** — an instrumented export and load with no ownership change, no
+  dispatch, no replay, no merge, no resolver run, no network and no repository write, only the
+  declared exclusive paths written; the loaded snapshot answering `query --snapshot` and refused
+  as a `--session` by every mutation, replay, clip and handoff verb; a re-export of it comparing
+  equal in every field, id, Unicode, empty and absent value, role, CONFIG, ACTIVE, O, C, roadmap
+  and accounting record.
+- **`fenced-export-can-finish`** — in a fenced session an export started, its status and
+  terminal line read by its id, and separately an unfinished one cancelled with publication
+  reconciled; an unknown id, a non-export id, `operation list` and every canonical write refused
+  `fenced`; no second owner and no mutation authority created.
 
 - **`goal-crosses-harness`** — G a `:doing` leaf at revision r; harness A, as coordinator C,
   `goal set --goal G --expect r`, `GOAL OK … rev=r+1`;
@@ -4692,6 +5198,19 @@ authorized, working, scheduled or public by being in O.
 worker (decided by Glenn, 2026-09-15; *Friends, CONFIG and ACTIVE* above holds the rule), and no
 historical actor is renamed (Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`).
 
+**The #293 fold leaves these open, each with its owner, and closes none of them by folding**:
+the link-text grammar and the JSON spelling of the tagged patches; the same-repository
+boundary of `node move` and the cross-repository transfer, the inherited-context guard's exact
+predicates, the parent-local transfer accounting and the undo preimage codec (Rowan and Emma,
+whom the draft names); adding a dimension to a populated roadmap, the one-axis row-only
+reading, the `--render-root` mapping's ownership, the permitted-root mutation policy, the
+historical view-pointer index, projection receipt retention and the cooperative renderer-lock
+boundary; the rank range and policy, the default rows' position and priority on other
+projections (each of these the friend review the draft asks for); the export's member-path
+taxonomy and record codecs, the journal-reference identity scheme its `:replay-cut` rests on,
+no-replace platform support and recovery, and signing and audience policy (the draft's author,
+before its codec lock). Until each is closed the sentence it would settle is a proposal.
+
 **Nothing here is implemented, and the lock gate says what would have to be true before it is.**
 This document is integrated with both of Stella's companions into one revision, which is her first
 condition. The rest of her gate stands unmet and is named so it cannot be skipped: **each requested
@@ -4809,6 +5328,14 @@ decision, for review)* where made**: `--by` and `--default` on `acknowledge` in 
 `OFFER`, `ACKNOWLEDGE`, `DECLINE` and `EXECUTION` line shapes and `op=execution`; the
 cancellation request and `execution stop` kept as two acts that imply nothing of each other;
 the six reversible-verb rows over eight verbs;
+**and the #293 fold's decisions, each marked *(Rowan's decision, for review)* where it is
+made**: the completed `node add` order with no legacy path, `roadmap create` as the one creator,
+the retired `render --into --start --end`, the `PRIORITY OK` line, `LOAD` as `state load`'s
+token, `change=`/`changed=` unifying the drafts' two receipt spellings on `NODE OK`, `roadmap
+row` and `roadmap projection` taking `--add|--remove` flags where the drafts spelled
+subcommands, one `axis` wire op for both forms, `NODE FAIL node=<id>: <reason>` with spaced
+reason words where the draft printed `code=<hyphenated>`, and `EXPORT OK state=true` carrying
+`session=`, `into=`, `pushed=` and `emitted=` like every other scope line;
 the exact list of refused reader syntax beyond `#.` (every dispatch macro,
 `#'`, quote, backquote, package-prefixed symbols, ratios, floats, characters); `;` comments
 discarded by the reader; the three bound flags and their no-default rule; unknown keys
