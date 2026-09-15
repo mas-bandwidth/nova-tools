@@ -3,6 +3,7 @@ package swarm
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,27 @@ func strconvQuote(s string) string {
 	return "\"" + s + "\""
 }
 
+// coreIn returns the taskset core a run argv pins: the number that follows "taskset -c ".
+func coreIn(run string) int {
+	i := strings.Index(run, "taskset -c ")
+	if i < 0 {
+		return -1
+	}
+	rest := run[i+len("taskset -c "):]
+	j := strings.IndexAny(rest, " \t")
+	if j < 0 {
+		j = len(rest)
+	}
+	n := 0
+	for _, c := range rest[:j] {
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
+}
+
 func readLines(t *testing.T, path string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -105,6 +127,13 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 	if len(runs) == 0 {
 		t.Fatalf("the fake ssh saw no run; the remote card never ran")
 	}
+	// The two remote cards' ssh writes land in ssh.log in whichever order the scheduler
+	// ran them, so the RUN lines are not ordered by slot on return. The pins they carry
+	// order them deterministically (-c 3 before -c 4), which is the sync point that keeps
+	// the slot->core assertions below order-independent rather than a scheduling coin flip.
+	sort.Slice(runs, func(i, j int) bool {
+		return coreIn(runs[i]) < coreIn(runs[j])
+	})
 	for _, l := range runs {
 		if !strings.Contains(l, "taskset") {
 			t.Fatalf("every remote run argv carries taskset, got %q", l)
