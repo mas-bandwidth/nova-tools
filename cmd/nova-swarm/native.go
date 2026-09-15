@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -48,6 +49,7 @@ type nativeRunConfig struct {
 type nativeRunResult struct {
 	rc           int     // the child's exit code; -1 when the deadline killed it
 	wallSeconds  float64 // the wall the run took
+	wall         string  // the wall's own name from its SANDBOX OK line, or "none"
 	cardSHA256   string  // sha256 of the card text, lowercase hex
 	binarySHA256 string  // sha256 of the harness binary, lowercase hex
 	job          string  // the job directory <slot>/jobs/<label> the child ran in
@@ -143,7 +145,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			return nativeRunResult{}, 2
 		}
 		runPath = cfg.sandbox
-		runArgv = nativeSandboxArgv(bin, cfg, dataHome)
+		runArgv = nativeSandboxArgv(bin, cfg, dataHome, jobDir)
 	} else if len(cfg.repos) > 0 {
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
@@ -166,13 +168,19 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		refuseNative(errOut, fmt.Sprintf("the run log %s could not be opened: %s", oneline.Field(filepath.Join(cfg.slotDir, "native.log")), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
-	cmd.Stdout, cmd.Stderr = log, log
+	// The wall's own stderr is split out of the log: the SANDBOX OK line the wall prints
+	// is where the tool learns the wall's name and the cwd it actually applied, and neither
+	// is guessed. The log still carries every byte; the buffer holds stderr for the parse.
+	var wallOut bytes.Buffer
+	cmd.Stdout = log
+	cmd.Stderr = io.MultiWriter(log, &wallOut)
 
 	res := nativeRunResult{
 		rc:           -1,
 		cardSHA256:   hex.EncodeToString(cardHash[:]),
 		binarySHA256: binaryHash,
 		job:          jobDir,
+		wall:         "none",
 	}
 	start := time.Now()
 	if err := cmd.Run(); err != nil {
@@ -184,6 +192,19 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	res.wallSeconds = time.Since(start).Seconds()
 	log.Close()
+
+	if cfg.sandbox != "" {
+		backend, cwd, ok := wallNamed(wallOut.String())
+		if !ok {
+			refuseNative(errOut, fmt.Sprintf("%s wall ran without a SANDBOX OK line naming its backend; the run is refused rather than silently unwalled", oneline.Field(cfg.label)))
+			return nativeRunResult{}, 2
+		}
+		res.wall = backend
+		if !sameDir(cwd, jobDir) {
+			refuseNative(errOut, fmt.Sprintf("%s wall ran the child in %s, not the job directory %s; --cwd was not applied", oneline.Field(cfg.label), oneline.Field(cwd), oneline.Field(jobDir)))
+			return nativeRunResult{}, 2
+		}
+	}
 
 	// Slice 10: one usage.tsv beside the run, read from the harness's own store, so a batch
 	// can fold the card's tokens and dollars without re-reading the harness.
@@ -215,12 +236,12 @@ func sandboxHostRules(sandbox string) bool {
 // slot directory is the read set. Each repo the card named is a --repo allow rule, and a
 // recipient never appears: a bus send is denied by the wall itself, not granted by the
 // caller, so no allow rule is ever built for one.
-func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome string) []string {
+func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir string) []string {
 	argv := []string{
 		"--read", cfg.slotDir,
-		"--write", cfg.slotDir,
+		"--write", jobDir,
 		"--write", dataHome,
-		"--cwd", cfg.slotDir,
+		"--cwd", jobDir,
 	}
 	for _, r := range cfg.repos {
 		argv = append(argv, "--repo", r)
@@ -228,6 +249,44 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome string) []strin
 	argv = append(argv, "--")
 	argv = append(argv, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
 	return argv
+}
+
+// wallNamed reads the SANDBOX OK line out of the wall's captured stderr and returns the
+// backend it named and the cwd it applied. A wall that printed no SANDBOX OK line -- one
+// that refused, or a stand-in that says nothing -- is a run this tool cannot trust to name
+// its own containment, and the second return is false (SPEC-SANDBOX rules 1 and 11: never
+// silently degraded, and a wall that cannot say what it is is no wall).
+func wallNamed(out string) (backend, cwd string, ok bool) {
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "SANDBOX OK ") {
+			continue
+		}
+		for _, tok := range strings.Fields(line) {
+			switch {
+			case strings.HasPrefix(tok, "backend="):
+				backend = strings.TrimPrefix(tok, "backend=")
+			case strings.HasPrefix(tok, "cwd="):
+				cwd = strings.TrimPrefix(tok, "cwd=")
+			}
+		}
+		if backend != "" {
+			return backend, cwd, true
+		}
+	}
+	return "", "", false
+}
+
+// sameDir asks whether two paths name the same directory once symlinks are resolved, so a
+// wall that reports the job directory spelled through a symlinked parent still matches the
+// path the caller built it from. When either path will not resolve, the raw strings are
+// compared.
+func sameDir(a, b string) bool {
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	if errA == nil && errB == nil {
+		return ra == rb
+	}
+	return a == b
 }
 
 // writeNativeUsage records one card's usage row next to its RESULT.md, once the child is
