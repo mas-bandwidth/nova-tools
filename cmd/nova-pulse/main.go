@@ -71,8 +71,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
-		fmt.Fprintln(stdout, "nova-pulse dev")
-		return 0
+		return cmdVersion(rest, stdout, stderr)
 	case "pool":
 		return cmdPool(rest, stdout, stderr)
 	case "launch":
