@@ -14,6 +14,20 @@
    #:restricted-data-violation
    #:unsupported-input
    #:not-implemented
+   #:journal-error
+   #:journal-corrupt-data
+   #:journal-corrupt-data-path
+   #:journal-corrupt-data-offset
+   #:journal-corrupt-data-reason
+   #:journal-mismatch
+   #:journal-mismatch-path
+   #:journal-mismatch-what
+   #:journal-sync-failed
+   #:journal-sync-failed-path
+   #:journal-sync-failed-reason
+   #:journal-uncertain-write
+   #:journal-uncertain-write-path
+   #:journal-uncertain-write-reason
    ;; restricted data and canonical serialization
    #:+absent+
    #:absentp
@@ -66,10 +80,29 @@
    #:journal-order
    #:rejecting-journal
    #:make-rejecting-journal
+   #:journal-reject-on
+   #:file-journal
+   #:make-file-journal
+   #:open-file-journal
+   #:close-file-journal
+   #:with-file-journal
+   #:journal-fail-sync-on
+   #:journal-fail-pre-write-on
+   #:journal-fail-partial-write-on
+   #:journal-fail-creation-sync-on
+   #:replay-journal
+   #:read-header
+   #:read-record-frame
+   #:journal-path
+   #:journal-seq
+   #:journal-uncertain-p
+   #:sync-stream
+   #:sync-directory
    ;; kernel
    #:make-kernel
    #:kernel-state
    #:kernel-journal
+   #:kernel-next-rev
    #:submit
    #:ask-size
    #:open-issue-count
