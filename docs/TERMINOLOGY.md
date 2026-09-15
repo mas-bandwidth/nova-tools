@@ -40,22 +40,24 @@ issue tracking it.
 
 ## Coordination
 
-- **coordinator tier** — the middle tier between planning and work: a bounded
-  controller that owns the loop. **Duty** is retired; the current spec calls this
-  the **manager tier** and names the command `nova-pulse manager`. [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
-- **policy** — the approved, finite rule set the coordinator executes without
+- **coordinator** — the planning role that makes decisions and sets the work's
+  direction, producing cards, specifications and policy for the manager. [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
+- **manager tier** — the middle tier between planning and work: a bounded
+  controller on the cheapest qualified model that runs the policy. **Duty** is
+  retired; the command is `nova-pulse manager`. [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
+- **policy** — the approved, finite rule set the manager executes without
   expanding it. [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
 - **escalation** — a decision not in the policy, carried as one line so a
   person answers it. It carries a kind, a reference, and one line of reason. [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
-- **handoff** — the verb that ends a coordinator shift, releases ownership and
+- **handoff** — the verb that ends a manager shift, releases ownership and
   leaves a record and bus note for the successor. It refuses mid-harvest or when
   the successor is asleep. [SPEC-PULSE](SPEC-PULSE.md#handoff)
-- **takeover** — the verb that begins a coordinator shift. It refuses when `OWNER`
+- **takeover** — the verb that begins a manager shift. It refuses when `OWNER`
   names a live process on a reachable host; a stale lock is taken with one
   note. [SPEC-PULSE](SPEC-PULSE.md#handoff)
-- **shift** — the coordinator's turn on a queue. It ends by handoff and begins
+- **shift** — the manager's turn on a queue. It ends by handoff and begins
   again by takeover. [SPEC-PULSE](SPEC-PULSE.md#handoff)
-- **quiet time** — coordinator time that makes no model call and sends no status note. [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
+- **quiet time** — manager time that makes no model call and sends no status note. [SPEC-PULSE](SPEC-PULSE.md#the-manager-tier)
 
 ## Wake and presence
 
