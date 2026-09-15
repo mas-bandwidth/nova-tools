@@ -1376,7 +1376,12 @@ type inboxReading struct {
 	// who has been shown nothing yet -- the whole open list. It is what `wait` returns on,
 	// and it is deliberately not the size of the open list on an incremental run: a reader
 	// carrying five hundred settled notes is not a reader with news.
-	New         int
+	New int
+	// HeardNew is how many of the notes this run would show as NEWS are already heard by
+	// this reader -- receipted with `receipt --note` since the cursor, not answered. They
+	// are still new to the open list (heard is not answered), but they are news the reader
+	// has already taken; `wait --advance` skips them rather than returning on them.
+	HeardNew    int
 	Next        string
 	BodyBytes   int64
 	BodyPrinted int
@@ -1760,6 +1765,11 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	r.New = res.New
 	if scope.Full {
 		r.New = len(res.Open)
+	}
+	for _, e := range res.Fresh {
+		if e.Heard {
+			r.HeardNew++
+		}
 	}
 	return 0, r
 }
@@ -2326,7 +2336,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		// deadline. #352 blocked over the backlog instead and broke byte-identity with
 		// inbox, which is why it was reverted.
 		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) }
-		code, r, lines := waitPoll(o, polls == 1, pollNow, keep, stderr)
+		code, r, lines, skipped := waitPoll(o, polls == 1, pollNow, keep, stderr)
 		if r.Cursor != "" {
 			cursor = r.Cursor
 		}
@@ -2360,6 +2370,15 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 				bus.WithTrailer("beat "+o.me.Slug(), bus.TrailerBeat), o.remote, o.branch, o.attempts, false); err != nil {
 				fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
 			}
+		}
+		if skipped {
+			// The cursor moved over heard notes without returning, so the timeout line at
+			// the end of the wait names where the reader now stands, and the clock goes on.
+			fmt.Fprint(stdout, lines)
+			if head, err := bus.HeadCommit(o.busDir); err == nil {
+				cursor = head
+			}
+			continue
 		}
 		if keep(r) {
 			// Why this wait is not waiting, when the answer is not "a note arrived": the
@@ -2415,10 +2434,10 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 // twenty listings.
 //
 // The lock is taken and released here rather than around the loop; see lockCheckout.
-func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bool, stderr io.Writer) (int, inboxReading, string) {
+func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bool, stderr io.Writer) (int, inboxReading, string, bool) {
 	release, code := lockCheckout("WAIT", o.busDir, stderr)
 	if code != 0 {
-		return code, inboxReading{}, ""
+		return code, inboxReading{}, "", false
 	}
 	defer release()
 	// THE FETCH IS THE POLL. Every read in this tool reads the working tree, so a poll that
@@ -2430,7 +2449,7 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 			// is not there, a branch nobody has, a checkout that has diverged -- and the
 			// caller should hear that now rather than in an hour.
 			fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
-			return 1, inboxReading{}, ""
+			return 1, inboxReading{}, "", false
 		}
 		// A later one is the network, or somebody's server, and it is not this reader's to
 		// fix. It is said out loud and the wait goes on: the deadline still bounds the
@@ -2441,17 +2460,38 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	var buf bytes.Buffer
 	code, r := inboxListing(o, &buf, stderr, now)
 	if code != 0 {
-		return code, r, buf.String()
+		return code, r, buf.String(), false
 	}
 	if !keep(r) {
-		return 0, r, ""
+		return 0, r, "", false
+	}
+	// Issue #328: `wait --advance` skips notes already heard before it blocks. A reader who
+	// receipted a note and then waits has already taken that note -- heard is not answered,
+	// so the note is still news to the open list -- and a wait that returns on it pays a
+	// turn for nothing. When every new note is already heard, the cursor is moved to the
+	// head instead, one WAIT ADVANCED line names the move, and the wait keeps blocking for a
+	// genuinely new note. Addressed-elsewhere notes never reach this listing at all, so
+	// "every new note is heard" is exactly "no note between the cursor and the head owes
+	// this reader an answer".
+	if o.advance && !o.bodies && r.New > 0 && r.HeardNew == r.New {
+		head, err := bus.HeadCommit(o.busDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
+			return 1, r, "", false
+		}
+		var quiet bytes.Buffer
+		if code := advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, &quiet, stderr); code != 0 {
+			return code, r, "", false
+		}
+		skip := fmt.Sprintf("WAIT ADVANCED from=%s to=%s heard=%d\n", oneline.Field(sha8(r.Cursor)), oneline.Field(sha8(head)), r.HeardNew)
+		return 0, r, skip, true
 	}
 	if o.advance && o.bodies && r.AdvanceTo != "" {
 		code = advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
 	} else if o.advance && !o.bodies {
 		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
 	}
-	return code, r, buf.String()
+	return code, r, buf.String(), false
 }
 
 // hiddenWholeWait reports whether a switch-day line is drawn after every moment this call
@@ -2506,6 +2546,19 @@ func dash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// sha8 renders a commit the way the WAIT ADVANCED line names its two ends: eight
+// characters, enough to tell one commit from another on a transcript, rendered as "-"
+// rather than a panic for an empty one.
+func sha8(s string) string {
+	if len(s) < 8 {
+		if s == "" {
+			return "-"
+		}
+		return s
+	}
+	return s[:8]
 }
 
 // printSwitchDayNote prints the ONE line this whole change exists to print, and prints
