@@ -147,6 +147,42 @@ func TestBatchAbstainsMissingResult(t *testing.T) {
 	}
 }
 
+// TestBatchNamesMissingResultOnCleanExit: a run that ended with exit 0 but published no
+// RESULT.md is named "no RESULT.md in <job dir> (rc=0)", not a stall -- the model finished
+// its run, so the missing report is named for what it is rather than blamed on a wall that
+// opened on nothing. The runner writes output to its log (so it is not a silent stall) and
+// exits clean without publishing.
+func TestBatchNamesMissingResultOnCleanExit(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nMISSING"},
+	})
+	runner := filepath.Join(dir, "clean-no-result.sh")
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"echo \"line one\" > \"$job/native.log\"\n" +
+		"exit 0\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 1 {
+		t.Fatalf("a clean exit with no RESULT.md is an abstain, exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1") || !strings.Contains(out, "stalled=0") {
+		t.Fatalf("a clean exit is an abstain, never a stall:\n%s", out)
+	}
+	if !strings.Contains(out, "a slot=1: ABSTAIN -- no RESULT.md in "+filepath.Join(root, "1", "jobs", "a")+" (rc=0)") {
+		t.Fatalf("a clean exit with no RESULT.md names its reason, not a stall:\n%s", out)
+	}
+	if strings.Contains(out, "stalled (no output after the wall opened)") {
+		t.Fatalf("a clean exit is not named stalled:\n%s", out)
+	}
+}
+
 func TestBatchAbstainsWrongLine1(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")

@@ -283,6 +283,37 @@ func TestCmdNativeCLI(t *testing.T) {
 	}
 }
 
+// TestNativeRunChildDirIsJobDir: the child runs in its job directory <slot>/jobs/<label>,
+// told its place by its cwd, not the caller's. The fake harness writes its own working
+// directory into RESULT.md, and the test asserts it is exactly the job directory.
+func TestNativeRunChildDirIsJobDir(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "a-label"
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+	}
+	jobDir := filepath.Join(slot, "jobs", label)
+	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+	if err != nil {
+		t.Fatalf("the child did not write pwd into RESULT.md under the job directory: %v", err)
+	}
+	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
+	want, err := filepath.EvalSymlinks(jobDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("the child's cwd is %q, want the job directory %q", got, want)
+	}
+}
+
 // THE WALL RULES OF THE NATIVE RUN (slice 11, lesson 11). A frozen run configuration gains
 // two lists: repos (repositories a card may clone) and recipients (bus lanes a card may
 // address, default none). The native run passes them to the sandbox layer as allow rules:
