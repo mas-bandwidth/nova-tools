@@ -797,35 +797,22 @@ func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("a clean batch exits 0, got %d; stderr: %s:\n%s", code, errs, out)
 	}
-	// The absolutized root is compared symlink-resolved on both sides. What is
-	// under test is that the runner is handed an ABSOLUTE root, not which of a
-	// directory's two names it is spelled with: the batch absolutizes a relative
-	// root through os.Getwd(), and on darwin the per-user temp tree sits under
-	// /var, a symlink to /private/var, so Getwd() returns the resolved spelling
-	// while t.TempDir() returns the unresolved one. Comparing them raw fails on
-	// macOS for a root that is correct.
-	wantRoot := resolved(t, root)
-	arg5 := resolved(t, strings.TrimSpace(readTestFile(t, filepath.Join(root, ".arg5"))))
-	if arg5 != wantRoot {
-		t.Errorf("the runner's $5 is %q, want the absolute root %q; a relative root reached the runner", arg5, wantRoot)
+	arg5 := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".arg5")))
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolving the root %q: %v", root, err)
 	}
-	envRoot := resolved(t, strings.TrimSpace(readTestFile(t, filepath.Join(root, ".envroot"))))
-	if envRoot != wantRoot {
-		t.Errorf("NOVA_SWARM_ROOT is %q, want the absolute root %q; a relative root reached the environment", envRoot, wantRoot)
+	if got, err := filepath.EvalSymlinks(arg5); err != nil {
+		t.Errorf("the runner's $5 %q does not resolve: %v", arg5, err)
+	} else if got != want {
+		t.Errorf("the runner's $5 is %q, want the absolute root %q; a relative root reached the runner", arg5, root)
 	}
-}
-
-// resolved is filepath.EvalSymlinks for an assertion: it folds the two names a
-// directory can have on darwin (/var and /private/var) into one so a test can
-// compare a path the product absolutized with a path the test built. A path it
-// cannot resolve is returned as given, so the assertion still fails on a real
-// difference rather than passing silently.
-func resolved(t *testing.T, path string) string {
-	t.Helper()
-	if real, err := filepath.EvalSymlinks(path); err == nil {
-		return real
+	envRoot := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".envroot")))
+	if got, err := filepath.EvalSymlinks(envRoot); err != nil {
+		t.Errorf("NOVA_SWARM_ROOT %q does not resolve: %v", envRoot, err)
+	} else if got != want {
+		t.Errorf("NOVA_SWARM_ROOT is %q, want the absolute root %q; a relative root reached the environment", envRoot, root)
 	}
-	return path
 }
 
 func readTestFile(t *testing.T, path string) string {

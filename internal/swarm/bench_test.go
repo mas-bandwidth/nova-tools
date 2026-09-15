@@ -3,6 +3,7 @@ package swarm
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,27 @@ func strconvQuote(s string) string {
 	return "\"" + s + "\""
 }
 
+// coreIn returns the taskset core a run argv pins: the number that follows "taskset -c ".
+func coreIn(run string) int {
+	i := strings.Index(run, "taskset -c ")
+	if i < 0 {
+		return -1
+	}
+	rest := run[i+len("taskset -c "):]
+	j := strings.IndexAny(rest, " \t")
+	if j < 0 {
+		j = len(rest)
+	}
+	n := 0
+	for _, c := range rest[:j] {
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
+}
+
 func readLines(t *testing.T, path string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -105,28 +127,23 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 	if len(runs) == 0 {
 		t.Fatalf("the fake ssh saw no run; the remote card never ran")
 	}
+	// The two remote cards' ssh writes land in ssh.log in whichever order the scheduler
+	// ran them, so the RUN lines are not ordered by slot on return. The pins they carry
+	// order them deterministically (-c 3 before -c 4), which is the sync point that keeps
+	// the slot->core assertions below order-independent rather than a scheduling coin flip.
+	sort.Slice(runs, func(i, j int) bool {
+		return coreIn(runs[i]) < coreIn(runs[j])
+	})
 	for _, l := range runs {
 		if !strings.Contains(l, "taskset") {
 			t.Fatalf("every remote run argv carries taskset, got %q", l)
 		}
 	}
-	// Matched against the SET of run argvs, not against runs[0] and runs[1]. The
-	// two cards run concurrently and both append to one log, so which lands
-	// first is a race the slots do not control: on a loaded runner slot 4 won it
-	// and the test reported "slot 3 pins to core 4" about an argv that was
-	// correct (run 35019905236, test (3/8 studio)). What is under test is that
-	// each slot carries ITS OWN core, which the order never spoke for.
-	for _, want := range []string{"taskset -c 3", "taskset -c 4"} {
-		found := false
-		for _, l := range runs {
-			if strings.Contains(l, want) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("no remote run argv carries %q; slot 3 pins to core 3 and slot 4 to core 4:\n%s", want, strings.Join(runs, "\n"))
-		}
+	if !strings.Contains(runs[0], "taskset -c 3") {
+		t.Fatalf("slot 3 on 1-15 runs under taskset -c 3, got %q", runs[0])
+	}
+	if !strings.Contains(runs[1], "taskset -c 4") {
+		t.Fatalf("slot 4 on 1-15 runs under taskset -c 4, got %q", runs[1])
 	}
 }
 

@@ -94,6 +94,20 @@ func hasFlagPair(argv []string, flag, val string) bool {
 	return false
 }
 
+// hasFlagPairResolved is hasFlagPair with the value compared by symlink-resolved path: on
+// macOS t.TempDir() lands under /var -> /private/var, so the wall argv carries the resolved
+// spelling while the test holds the unresolved one.
+func hasFlagPairResolved(argv []string, flag, want string) bool {
+	for i, a := range argv {
+		if a == flag && i+1 < len(argv) {
+			if got, err := filepath.EvalSymlinks(argv[i+1]); err == nil && got == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // aSlot returns a slot dir and the root it is under, both fresh.
 func aSlot(t *testing.T) (root, slot string) {
 	t.Helper()
@@ -1072,17 +1086,12 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
 	}
-	// Compared symlink-resolved: what is under test is that the wall is handed an
-	// ABSOLUTE slot, not which of a directory's two names it carries. The run
-	// absolutizes the relative slot through os.Getwd(), and on darwin the
-	// per-user temp tree sits under /var, a symlink to /private/var, so Getwd()
-	// returns the resolved spelling and t.TempDir() the unresolved one.
-	wantSlot := slot
-	if real, err := filepath.EvalSymlinks(slot); err == nil {
-		wantSlot = real
-	}
 	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
-	if !hasFlagPair(strings.Fields(argv), "--read", wantSlot) {
-		t.Errorf("the wall argv does not read the slot by absolute path %s:\n%s", wantSlot, argv)
+	want, err := filepath.EvalSymlinks(slot)
+	if err != nil {
+		t.Fatalf("resolving the slot %q: %v", slot, err)
+	}
+	if !hasFlagPairResolved(strings.Fields(argv), "--read", want) {
+		t.Errorf("the wall argv does not read the slot by absolute path %s:\n%s", slot, argv)
 	}
 }
