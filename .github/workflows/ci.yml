@@ -316,6 +316,48 @@ jobs:
       - name: test
         run: go test -count=1 ./...
 
+  e2e:
+    # THE SEQUENCES A FRIEND RUNS, end to end, one job. The sharded `test` job above runs
+    # these too -- they are ordinary Go tests in ordinary packages -- and this job exists
+    # so that the class has a name on the checks list: every breakage of 2026-09-15 was a
+    # verb passing its own tests and leaving state the NEXT verb refused, which no
+    # single-verb test looks at. A red here says the tools do not compose, not that one of
+    # them is wrong.
+    #
+    # `-run TestFriendSequence` is the whole selector, and docs/WORKER-CARDS.md practice 21
+    # is what keeps it populated: a card that changes a verb names the sequence a friend
+    # runs through it and adds the test. On a pull_request this is a self-hosted Linux job
+    # using the machine's own Go, guarded as every self-hosted job is.
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        shell: bash
+        run: |
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v go >/dev/null 2>&1; then
+            for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
+              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+            done
+          fi
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+
+      - name: friend sequences
+        run: go test -count=1 -run TestFriendSequence ./cmd/...
+
   lisp:
     # THE LISP TIER, and it is one job because it is one system. `lisp/nova-work`
     # is the engine's own tree (docs/SPEC-WORK.md:290 fixes the language); its
@@ -366,7 +408,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, lisp, test-hosted]
+    needs: [lint, test, e2e, lisp, test-hosted]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -381,7 +423,8 @@ jobs:
           for pair in \
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
-            "lisp:${{ needs.lisp.result }}"
+            "lisp:${{ needs.lisp.result }}" \
+            "e2e:${{ needs.e2e.result }}"
           do
             job="${pair%:*}"; result="${pair##*:}"
             echo "$result	$job"
@@ -397,6 +440,7 @@ jobs:
           for pair in \
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
+            "e2e:${{ needs.e2e.result }}" \
             "lisp:${{ needs.lisp.result }}" \
             "test-hosted:${{ needs.test-hosted.result }}"
           do

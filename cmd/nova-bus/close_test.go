@@ -26,13 +26,39 @@ func TestInboxOpenIsOneLine(t *testing.T) {
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 
 	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0 large=true remedy=inbox --advance")
+		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0 large=true remedy=reply or receipt each note, or close --before <instant> as an explicit bulk cutoff")
 	if n := strings.Count(r.stdout, "INBOX OPEN carrying=62 heard="); n != 1 {
 		t.Fatalf("the backlog counts were not on exactly one line:\n%s", r.stdout)
 	}
 	if strings.Contains(r.stdout, "is large") {
 		t.Fatalf("the large-list sentence still sits on its own line:\n%s", r.stdout)
 	}
+}
+
+// A large carrying set names reply/receipt as the normal path, not `--advance` alone: plain
+// `inbox --advance` moves the read cursor while the OPEN entries stay carried, so it loops
+// without resolving anything. `close --before` is named only as the explicit opt-in cutoff.
+func TestInboxLargeRemedyNamesReplyOrReceiptNotAdvance(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	for i := 0; i < 60; i++ {
+		id := fmt.Sprintf("bo-r%011d", i)
+		writeFile(t, checkout, fmt.Sprintf("from-bo/2026-09-09T12%02dZ-many-%s.md", i, id),
+			fmt.Sprintf("From: Bo\nTo: Ada\nDate: Wed Sep  9 12:%02d:00 UTC 2026\nId: %s\nSubject: One of many %d\n\nOpen.\n", i, id, i))
+	}
+	gitIn(t, checkout, "add", "-A")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "many notes")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+
+	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0 large=true")
+	if strings.Contains(r.stdout, "remedy=inbox --advance") {
+		t.Fatalf("a large carrying set names '--advance' alone as its remedy, which loops without resolving:\n%s", r.stdout)
+	}
+	r.mustContain(t, "stdout", "reply or receipt each note").
+		mustContain(t, "stdout", "close --before <instant>").
+		mustContain(t, "stdout", "explicit bulk cutoff")
 }
 
 // close --before receipts every open note dated before the stamp, one receipt note per note,

@@ -9,9 +9,19 @@ package swarm
 //
 // A card's result is RESULT.md under <root>/<slot>/jobs/<label>/RESULT.md. Line 1 must be
 // the contract line the card was admitted under -- line 1 of the card's own text file --
-// or the card is an ABSTAIN row, never folded. A missing result is an ABSTAIN row too.
-// Line 2 is the card's disposition and is the only finding-adjacent text the packet ever
-// carries: one line, capped, one per card.
+// and a result carrying it is done whatever the harness exit code was. A card that abstains
+// in its own words, a wrong line 1 and a missing result are each an ABSTAIN row, and every
+// ABSTAIN row names ONE reason token, so a coordinator never reads a RESULT to learn why
+// (issue #461). Line 2 is the card's disposition and is the only finding-adjacent text the
+// packet ever carries: one line, capped, one per card.
+//
+// Admission is per card (issue #529): a card refused at admission is one ABSTAIN row with
+// reason=admission and the other cards run. A batch is never lost to one card's shape.
+//
+// A slot is held by one batch at a time (issue #457): <root>/<slot>/BATCH carries
+// id=<batch> pid=<n> at=<stamp> from allocation to slot end, a live lock refuses that slot
+// for the card that named it, and a stale lock -- the holder's pid is dead -- is taken over
+// once, out loud.
 
 import (
 	"errors"
@@ -29,16 +39,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// admitError is a card-shape refusal found while admitting a card. It is distinct from a
-// plain read error because it carries the label and the reason and prints its own line:
-// ADMIT REFUSED <label> card-shape: <reason>, citing docs/WORKER-CARDS.md practice 17.
-type admitError struct {
-	label  string
-	reason string
-}
-
-func (e *admitError) Error() string {
-	return fmt.Sprintf("ADMIT REFUSED %s card-shape: %s", oneline.Field(e.label), e.reason)
+// admitRefusalLine is the one place a card's admission refusal is written: ADMIT REFUSED
+// <label> <why>, where <why> is the reason the card alone was refused -- a card shape
+// against docs/WORKER-CARDS.md practice 17, or a repository it could not reach.
+func admitRefusalLine(label, why string) string {
+	return fmt.Sprintf("ADMIT REFUSED %s %s", oneline.Field(label), why)
 }
 
 // BatchInput is everything the batch scatter/wait/gather needs, held apart from the
@@ -50,8 +55,13 @@ type BatchInput struct {
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
 	Runner   string        // the command, one process per card
-	Benches  string        // path to the benches table; empty means no table is read
-	Bench    string        // comma-separated bench names to allocate the cards across; empty means local only
+	// PullWait and PullPoll bound the pull that brings a remote card's files back: how
+	// long to wait for RESULT.md to exist on the bench, and how often to ask. Zero takes
+	// the spec's own numbers (30 s, one second), and the tests take short ones.
+	PullWait time.Duration
+	PullPoll time.Duration
+	Benches  string // path to the benches table; empty means no table is read
+	Bench    string // comma-separated bench names to allocate the cards across; empty means local only
 	Stdout   io.Writer
 	Stderr   io.Writer
 }
@@ -66,6 +76,7 @@ type batchCard struct {
 	model    string
 	cardPath string
 	contract string // line 1 of the card's text, the line by which it was admitted
+	admitWhy string // non-empty when this card alone was refused at admission; the reason
 }
 
 // maxHoldLines is the HOLD ceiling. A packet is BATCH + n card lines + HOLD lines, and the
@@ -89,15 +100,7 @@ func Batch(in BatchInput) int {
 	in.Root = absroot
 	cards, err := readCards(in.Cards)
 	if err != nil {
-		var ae *admitError
-		var ar *admitRefusal
-		if errors.As(err, &ae) {
-			fmt.Fprintln(in.Stderr, ae.Error())
-		} else if errors.As(err, &ar) {
-			fmt.Fprintln(in.Stderr, ar.Error())
-		} else {
-			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
-		}
+		fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 		return 2
 	}
 	if len(cards) == 0 {
@@ -107,6 +110,13 @@ func Batch(in BatchInput) int {
 	if in.Runner == "" && in.Bench == "" && !anyCardNamesBench(cards) {
 		fmt.Fprintln(in.Stderr, "nova-swarm batch: --runner is required; it wants the command one process per card runs")
 		return 2
+	}
+	// Admission is per card: every refusal is said once, by name, and the card is scored
+	// ABSTAIN reason=admission on the packet rather than taking the batch down with it.
+	for _, c := range cards {
+		if c.admitWhy != "" {
+			fmt.Fprintln(in.Stderr, admitRefusalLine(c.label, c.admitWhy))
+		}
 	}
 	benches := map[string]Bench{}
 	if in.Bench != "" || anyCardNamesBench(cards) {
@@ -120,22 +130,42 @@ func Batch(in BatchInput) int {
 		fmt.Fprintln(in.Stderr, err)
 		return 1
 	}
+	// Issue #457: a batch writes its own lock on every local slot it takes, so a slot already
+	// in use is refused -- for the card that named it, per issue #529, never for the batch --
+	// and a slot whose previous batch is dead is taken over, not left to collide.
+	taken, err := takeSlots(in.Root, in.ID, cards, in.Stderr)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
+		return 2
+	}
+	defer releaseSlots(in.Root, taken)
 
 	// scatter: one runner process per card, in TSV order. The job directory is made before
 	// the process starts so a runner can write RESULT.md straight into place.
 	type proc struct {
-		cmd        *exec.Cmd
-		slot       int
+		cmd  *exec.Cmd
+		slot int
+		// scratch is the directory under the local root this card's files are read from:
+		// <bench>-<n> for a remote card, whose files the pull below brings back, and the
+		// bare <n> for a local one.
+		scratch    string
+		bench      string
 		label      string
 		idleLog    string // the file the idle monitor watched; set only on an idle kill
 		done       bool   // guarded by doneMu
 		idleKilled bool   // guarded by doneMu
+		deadKilled bool   // killed at the batch deadline; guarded by doneMu
 		rc         int    // the child's exit code; guarded by doneMu
 		lastGrow   time.Time
 	}
 	var doneMu sync.Mutex
 	procs := make([]proc, len(cards))
 	for i, c := range cards {
+		// A card refused at admission never starts: it is already its own ABSTAIN row.
+		if c.admitWhy != "" {
+			procs[i] = proc{slot: c.slot, label: c.label, done: true}
+			continue
+		}
 		// A remote card's job directory sits under <root>/<bench>-<n>/jobs/<label>; a local
 		// card's under <root>/<n>/jobs/<label>, as today.
 		job := filepath.Join(in.Root, scratchName(c), "jobs", c.label)
@@ -174,7 +204,7 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 		_ = logFile.Close()
-		procs[i] = proc{cmd: cmd, slot: c.slot, label: c.label, lastGrow: time.Now()}
+		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label, lastGrow: time.Now()}
 	}
 
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
@@ -186,6 +216,9 @@ func Batch(in BatchInput) int {
 	var wg sync.WaitGroup
 	allDone := make(chan struct{})
 	for i := range procs {
+		if procs[i].cmd == nil {
+			continue
+		}
 		wg.Add(1)
 		go func(p *proc) {
 			defer wg.Done()
@@ -225,7 +258,7 @@ func Batch(in BatchInput) int {
 						if procs[i].done || procs[i].idleKilled {
 							continue
 						}
-						size := logSize(cardLogPath(in.Root, procs[i].slot, procs[i].label))
+						size := logSize(cardLogPath(in.Root, procs[i].scratch, procs[i].label))
 						if size != lastSize[i] {
 							lastSize[i] = size
 							procs[i].lastGrow = now
@@ -233,7 +266,7 @@ func Batch(in BatchInput) int {
 						}
 						if now.Sub(procs[i].lastGrow) >= in.Idle {
 							procs[i].idleKilled = true
-							procs[i].idleLog = cardLogPath(in.Root, procs[i].slot, procs[i].label)
+							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
 							if procs[i].cmd.Process != nil {
 								_ = procs[i].cmd.Process.Kill()
 							}
@@ -250,7 +283,11 @@ func Batch(in BatchInput) int {
 	case <-time.After(in.Deadline):
 		doneMu.Lock()
 		for i := range procs {
-			if !procs[i].done && procs[i].cmd.Process != nil {
+			if procs[i].done || procs[i].cmd == nil {
+				continue
+			}
+			procs[i].deadKilled = true
+			if procs[i].cmd.Process != nil {
 				_ = procs[i].cmd.Process.Kill()
 			}
 		}
@@ -262,8 +299,36 @@ func Batch(in BatchInput) int {
 	// settled before the gather decides whether a missing RESULT.md is a clean exit.
 	wg.Wait()
 
-	// gather: fold every card into one bounded packet. A missing or wrong-line-1 result is
-	// an ABSTAIN row; done is decided by the contract alone, never by the process's timing.
+	// THE PULL. A remote slot's files are on the bench, and the gather below reads the
+	// local root: nothing is scored until what the card wrote has come back. It runs after
+	// every child has been reaped, one card at a time, and a bench that could not be
+	// reached marks its cards rather than failing the batch -- the other benches' cards are
+	// still theirs to score.
+	unreachable := make([]bool, len(cards))
+	for i, c := range cards {
+		// A card refused at admission never reached a bench: there is nothing to pull back.
+		if c.bench == "" || c.admitWhy != "" {
+			continue
+		}
+		b := benches[c.bench]
+		err := pullFromBench(benchPull{
+			host:      b.Host,
+			remoteJob: b.Root + "/" + strconv.Itoa(c.slot) + "/jobs/" + c.label,
+			localJob:  filepath.Join(in.Root, scratchName(c), "jobs", c.label),
+			wait:      in.PullWait,
+			poll:      in.PullPoll,
+			notes:     in.Stderr,
+		})
+		if err != nil {
+			unreachable[i] = isUnreachable(err)
+			fmt.Fprintf(in.Stderr, "BATCH NOTE pull %s from bench %s: %s\n",
+				oneline.Field(c.label), oneline.Field(c.bench), oneline.Err(err))
+		}
+	}
+
+	// gather: fold every card into one bounded packet. A result whose line 1 is the card's
+	// own line 1 is done, whatever the harness exit code was; every other card is an ABSTAIN
+	// row that names ONE reason token (issue #461), so the packet is the whole read.
 	idleSeconds := int(in.Idle.Seconds())
 	var (
 		done, abstain, idle, stalled int
@@ -274,116 +339,82 @@ func Batch(in BatchInput) int {
 	type row struct {
 		label    string
 		slot     int
-		state    string
+		state    string // "done" or "abstain"
 		line2    string
 		in       int
 		out      int
 		usd      float64
 		hold     bool
-		idle     bool
-		idleLog  string // the file the idle monitor watched, for an idle-killed card
+		reason   string // the abstain's one reason token, with its own fields
+		tail     string // one bounded field after log=<n>: the file watched, or the job directory
 		logLines int
-		stalled  bool
-		missing  bool   // RESULT.md was not there at all
-		jobDir   string // the job directory, for the missing-result reason
-		noResult bool   // missing RESULT.md on a clean exit (rc==0)
-		inLimit  bool   // the card's own usage row named end=input-limit
 	}
 	rows := make([]row, len(cards))
 	for i, c := range cards {
 		rows[i].label = c.label
 		rows[i].slot = c.slot
-		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(cardUsagePath(in.Root, c.slot, c.label))
+		// A card refused at admission never ran: no slot to read, and its reason is the
+		// refusal itself.
+		if c.admitWhy != "" {
+			rows[i].state = "abstain"
+			rows[i].reason = "admission " + c.admitWhy
+			abstain++
+			continue
+		}
+		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(cardUsagePath(in.Root, scratchName(c), c.label))
 		totalIn += rows[i].in
 		totalOut += rows[i].out
 		total += rows[i].usd
-		rows[i].logLines = logOutputLines(cardLogPath(in.Root, c.slot, c.label))
-		// A card whose job was refused for size is its own score, `reason=input-limit`: the
-		// class is the provider's own structured signal, and the batch names it rather than
-		// reading a missing result as a plain abstain (issue #163).
-		rows[i].inLimit = cardEndsInputLimit(cardLogPath(in.Root, c.slot, c.label))
-		// A card the idle monitor killed is its own score, an ABSTAIN that names its reason,
-		// not a missing-result abstain: the card was not hung by its work but stopped growing.
-		if procs[i].idleKilled {
+		logPath := cardLogPath(in.Root, scratchName(c), c.label)
+		rows[i].logLines = logOutputLines(logPath)
+		// A card whose bench could not be reached is its own score, and the reason token
+		// says which of the two it is: the bench never answered the pull, so nothing about
+		// what the card did on it is known here (SPEC-SWARM, "Benches").
+		if unreachable[i] {
 			rows[i].state = "abstain"
-			rows[i].idle = true
-			rows[i].idleLog = procs[i].idleLog
+			rows[i].reason = "bench-unreachable"
 			abstain++
+			continue
+		}
+		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
+		rows[i].state, rows[i].reason, rows[i].tail, rows[i].line2 = state, reason, tail, line2
+		if state == "done" {
+			done++
+			if strings.Contains(rows[i].line2, "HOLD") {
+				rows[i].hold = true
+				holds = append(holds, rows[i].line2)
+			}
+			continue
+		}
+		abstain++
+		if strings.HasPrefix(reason, "idle=") {
 			idle++
-			continue
 		}
-		if rows[i].inLimit {
-			rows[i].state = "abstain"
-			abstain++
-			continue
-		}
-		path := filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "RESULT.md")
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			rows[i].state = "abstain"
-			rows[i].missing = true
-			rows[i].jobDir = filepath.Dir(path)
-			abstain++
-			continue
-		}
-		lines := strings.Split(string(raw), "\n")
-		if !strings.EqualFold(strings.TrimSpace(first(lines)), strings.TrimSpace(c.contract)) {
-			rows[i].state = "abstain"
-			abstain++
-			continue
-		}
-		rows[i].state = "done"
-		done++
-		rows[i].line2 = strings.TrimRight(second(lines), "\r\n")
-		if strings.Contains(rows[i].line2, "HOLD") {
-			rows[i].hold = true
-			holds = append(holds, rows[i].line2)
-		}
-	}
-
-	// A card that ended -- killed, abstained or refused -- with no output after the wall
-	// opened is a prompt or harness defect, not a slow model: it is named stalled. But a
-	// card that ran to a clean exit (rc 0) and still has no RESULT.md is not a stall: the
-	// model finished its run and named its own reason, so the abstain says so rather than
-	// blaming a wall that opened on nothing.
-	for i := range rows {
-		if rows[i].state == "done" {
-			continue
-		}
-		if rows[i].inLimit {
-			continue
-		}
-		if rows[i].logLines == 0 {
-			rows[i].stalled = true
+		// A card that ended -- killed or abstained -- with no output after the wall opened is
+		// a prompt or harness defect, not a slow model: it is named stalled by its own
+		// log=0, and the BATCH line counts it. A card refused at admission never opened a
+		// wall, and a job refused for size named its own class, so neither is a stall.
+		if rows[i].logLines == 0 && reason != "input-limit" {
 			stalled++
-			continue
-		}
-		if rows[i].missing && procs[i].rc == 0 {
-			rows[i].noResult = true
 		}
 	}
 
 	// The packet's grammar. The BATCH line first, then one line per card in admission
-	// order (label, its resolved slot, then line 2 verbatim), then HOLD lines -- at most
-	// maxHoldLines -- so the whole packet never grows past n + 12 lines whatever the batch
-	// holds.
+	// order (label, its resolved slot, then line 2 verbatim, or ABSTAIN with its one reason
+	// token), then HOLD lines -- at most maxHoldLines -- so the whole packet never grows
+	// past n + 12 lines whatever the batch holds.
 	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d\n",
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
 	for _, r := range rows {
-		switch {
-		case r.inLimit:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN reason=input-limit\n", oneline.Field(r.label), r.slot)
-		case r.idle:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- idle %ds (%s)\n", oneline.Field(r.label), r.slot, idleSeconds, r.idleLog)
-		case r.stalled:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- stalled (no output after the wall opened)\n", oneline.Field(r.label), r.slot)
-		case r.noResult:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- no RESULT.md in %s (rc=0)\n", oneline.Field(r.label), r.slot, r.jobDir)
-		case r.state == "abstain":
-			fmt.Fprintf(in.Stdout, "%s slot=%d abstain log=%d\n", oneline.Field(r.label), r.slot, r.logLines)
-		default:
+		if r.state == "done" {
 			fmt.Fprintf(in.Stdout, "%s slot=%d: %s log=%d\n", oneline.Field(r.label), r.slot, r.line2, r.logLines)
+			continue
 		}
+		line := fmt.Sprintf("%s slot=%d: ABSTAIN reason=%s log=%d", oneline.Field(r.label), r.slot, r.reason, r.logLines)
+		if r.tail != "" {
+			line += " " + r.tail
+		}
+		fmt.Fprintln(in.Stdout, line)
 	}
 	for i := 0; i < len(holds) && i < maxHoldLines; i++ {
 		fmt.Fprintf(in.Stdout, "HOLD: %s\n", oneline.Escape(oneline.Cap(holds[i], oneline.TailBytes)))
@@ -393,6 +424,53 @@ func Batch(in BatchInput) int {
 		return 0
 	}
 	return 1
+}
+
+// scoreCard decides one card's state and, when it abstains, its ONE reason token
+// (issue #461): line1-mismatch, no-result, rc=<n>, idle=<s>, deadline, card-abstain,
+// admission -- plus input-limit, the provider's own structured class (issue #163). A result
+// whose line 1 is the card's own line 1 is done WHATEVER the harness exit code was: the
+// contract decides, never the child's timing or its rc. The tail is one bounded field the
+// remedy needs -- the log the idle monitor watched, or the job directory that holds no
+// result -- printed after log=<n>, never in place of the token.
+func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSeconds int, logPath, idleLog string) (state, reason, tail, line2 string) {
+	switch {
+	case idleKilled:
+		watched := idleLog
+		if watched == "" {
+			watched = logPath
+		}
+		return "abstain", fmt.Sprintf("idle=%d", idleSeconds), "watched=" + watched, ""
+	case deadKilled:
+		return "abstain", "deadline", "", ""
+	case cardEndsInputLimit(logPath):
+		return "abstain", "input-limit", "", ""
+	}
+	// A remote card's job came back under <root>/<bench>-<n>/jobs/<label>; a local card's
+	// sits under <root>/<n>/jobs/<label>.
+	job := filepath.Join(root, scratchName(c), "jobs", c.label)
+	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	if err != nil {
+		// A card that ran to a clean exit and published nothing named no result; a card that
+		// ended non-zero names the code it ended with, which is the thing to go and read.
+		if rc != 0 {
+			return "abstain", fmt.Sprintf("rc=%d", rc), "job=" + job, ""
+		}
+		return "abstain", "no-result", "job=" + job, ""
+	}
+	lines := strings.Split(string(raw), "\n")
+	one := strings.TrimSpace(first(lines))
+	two := strings.TrimRight(second(lines), "\r\n")
+	if strings.HasPrefix(one, "ABSTAIN") {
+		return "abstain", "card-abstain", "", ""
+	}
+	if !strings.EqualFold(one, strings.TrimSpace(c.contract)) {
+		return "abstain", "line1-mismatch", "", ""
+	}
+	if strings.HasPrefix(strings.TrimSpace(two), "ABSTAIN") {
+		return "abstain", "card-abstain", "", ""
+	}
+	return "done", "", "", two
 }
 
 // readCards reads the TSV and admits every card or none: one line that does not parse
@@ -439,13 +517,19 @@ func readCards(path string) ([]batchCard, error) {
 		if contract == "" {
 			return nil, fmt.Errorf("--cards line %d: %s is empty; a card admits under line 1 of its text", i+1, cardPath)
 		}
+		// Admission is PER CARD (issue #529). A card whose shape is refused under practice
+		// 17, or whose repositories are not reachable without credentials (lesson 7), carries
+		// its own refusal and is scored ABSTAIN reason=admission; the batch's other cards run.
+		// A batch of 35 cards once lost 34 of them to one card's quoted word.
+		why := ""
 		if reason := cardShapeFailure(parts[2], string(cardRaw)); reason != "" {
-			return nil, &admitError{label: parts[0], reason: reason}
-		}
-		// A card whose repositories are not reachable without credentials is refused at
-		// admission, before any runner starts: lesson 7 (private repositories).
-		if err := checkRepos(parts[0], string(cardRaw)); err != nil {
-			return nil, err
+			why = "card-shape: " + reason
+		} else if err := checkRepos(parts[0], string(cardRaw)); err != nil {
+			var ar *admitRefusal
+			if !errors.As(err, &ar) {
+				return nil, err
+			}
+			why = ar.why
 		}
 		cards = append(cards, batchCard{
 			label:    parts[0],
@@ -454,6 +538,7 @@ func readCards(path string) ([]batchCard, error) {
 			model:    parts[2],
 			cardPath: cardPath,
 			contract: contract,
+			admitWhy: why,
 		})
 	}
 	return cards, nil
@@ -472,12 +557,12 @@ func logSize(path string) int64 {
 
 // cardUsagePath resolves one card's usage.tsv: the job directory beside RESULT.md first,
 // then the slot directory fallback (lesson 24: the BATCH line sums in/out/usd from the usage rows).
-func cardUsagePath(root string, slot int, label string) string {
-	jobPath := filepath.Join(root, strconv.Itoa(slot), "jobs", label, "usage.tsv")
+func cardUsagePath(root, scratch, label string) string {
+	jobPath := filepath.Join(root, scratch, "jobs", label, "usage.tsv")
 	if _, err := os.Stat(jobPath); err == nil {
 		return jobPath
 	}
-	return filepath.Join(root, strconv.Itoa(slot), "usage.tsv")
+	return filepath.Join(root, scratch, "usage.tsv")
 }
 
 // readCardUsage reads one card's usage.tsv -- the native run's header-plus-row -- and
@@ -513,12 +598,22 @@ func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }
 // NATIVE OK line). Run 10's defect was counting a log the child never wrote: a card with a
 // valid RESULT.md looked stalled because the gather counted a non-existent native.log under
 // the job directory instead of the child's real log under the slot.
-func cardLogPath(root string, slot int, label string) string {
-	native := filepath.Join(root, strconv.Itoa(slot), "native.log")
+func cardLogPath(root, scratch, label string) string {
+	native := filepath.Join(root, scratch, "native.log")
 	if _, err := os.Stat(native); err == nil {
 		return native
 	}
-	return filepath.Join(root, strconv.Itoa(slot), "jobs", label, "harness.log")
+	// A remote card's own log comes back from the bench as the job's native.log; a local
+	// card that wrote none leaves the runner's harness.log, as today.
+	if job := filepath.Join(root, scratch, "jobs", label, "native.log"); fileExists(job) {
+		return job
+	}
+	return filepath.Join(root, scratch, "jobs", label, "harness.log")
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // logOutputLines counts a card's own output lines: everything in the run log after the
@@ -553,9 +648,12 @@ func slotJobDir(root string, n int, label string) string {
 	return filepath.Join(slotDir(root, n), "jobs", label)
 }
 
-// slotLocked reports whether slot <n> is busy: any lock under
-// <root>/<n>/jobs/<any>/lock that carries a live pid takes the slot.
+// slotLocked reports whether slot <n> is busy: a <root>/<n>/BATCH lock held by a live
+// batch (issue #457), or any lock under <root>/<n>/jobs/<any>/lock that carries a live pid.
 func slotLocked(root string, n int) bool {
+	if _, pid, ok := readBatchLock(root, n); ok && Alive(pid, "") {
+		return true
+	}
 	entries, err := os.ReadDir(filepath.Join(slotDir(root, n), "jobs"))
 	if err != nil {
 		return false
@@ -633,6 +731,82 @@ func assignSlots(cards []batchCard, root string) error {
 		assigned[n] = label
 	}
 	return nil
+}
+
+// batchLockPath is the lock a batch writes on a slot it takes: <root>/<slot>/BATCH, one line
+// `id=<batch> pid=<n> at=<stamp>`, written at allocation and removed at slot end. The batch
+// name travels in the lock so a later batch can say who held the slot it is refusing.
+func batchLockPath(root string, slot int) string {
+	return filepath.Join(slotDir(root, slot), "BATCH")
+}
+
+// readBatchLock reads one batch lock into its id and pid. ok is false when there is no lock.
+func readBatchLock(root string, slot int) (id string, pid int, ok bool) {
+	raw, err := os.ReadFile(batchLockPath(root, slot))
+	if err != nil {
+		return "", 0, false
+	}
+	for _, f := range strings.Fields(string(raw)) {
+		k, v, ok := strings.Cut(f, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "id":
+			id = v
+		case "pid":
+			pid, _ = strconv.Atoi(v)
+		}
+	}
+	return id, pid, true
+}
+
+// takeSlots admits every local slot the batch was assigned and returns the slots it took.
+// A slot whose BATCH lock carries a live pid is refused for THE CARD THAT NAMED IT -- ADMIT
+// REFUSED slot=<n> held-by=<id> pid=<n>, that card alone abstaining with reason=admission
+// (issue #529) -- and every other card runs; a slot whose lock pid is dead is taken over with
+// one BATCH NOTE line. Each slot the batch cleared then carries this batch's own lock until
+// slot end. An error is the filesystem refusing, which is the batch's own exit 2.
+//
+// Slots are distinct within a batch (assignSlots refused any named twice), so each card's
+// slot is taken once.
+func takeSlots(root, id string, cards []batchCard, note io.Writer) ([]int, error) {
+	pid := os.Getpid()
+	at := Stamp(time.Now())
+	var taken []int
+	for i := range cards {
+		c := &cards[i]
+		if c.admitWhy != "" || c.bench != "" || c.slot <= 0 {
+			continue
+		}
+		heldBy, heldPid, ok := readBatchLock(root, c.slot)
+		if ok && Alive(heldPid, "") {
+			// The holder is alive: this card abstains and the lock is left exactly as it is.
+			c.admitWhy = fmt.Sprintf("slot=%d held-by=%s pid=%d", c.slot, oneline.Field(heldBy), heldPid)
+			fmt.Fprintln(note, "ADMIT REFUSED "+c.admitWhy)
+			continue
+		}
+		if ok {
+			fmt.Fprintf(note, "BATCH NOTE slot=%d stale-lock id=%s taken\n", c.slot, oneline.Field(heldBy))
+		}
+		if err := os.MkdirAll(slotDir(root, c.slot), 0o755); err != nil {
+			return taken, err
+		}
+		line := fmt.Sprintf("id=%s pid=%d at=%s\n", oneline.Field(id), pid, at)
+		if err := os.WriteFile(batchLockPath(root, c.slot), []byte(line), 0o644); err != nil {
+			return taken, err
+		}
+		taken = append(taken, c.slot)
+	}
+	return taken, nil
+}
+
+// releaseSlots removes the BATCH lock this batch wrote, at slot end, on the slots it took
+// and on no others: the live lock of a batch that refused one of our cards is never ours.
+func releaseSlots(root string, taken []int) {
+	for _, slot := range taken {
+		_ = os.Remove(batchLockPath(root, slot))
+	}
 }
 
 func first(lines []string) string {
@@ -787,7 +961,7 @@ func cardShapeFailure(model, raw string) string {
 		return "no 'STEP 1' line in the first 15 lines (" + step + ")"
 	}
 	if mentionsLauncher(lines) {
-		return "'launcher' in the first 10 lines (" + step + ")"
+		return "'launcher' in the contract lines (lines 1-3) (" + step + ")"
 	}
 	return ""
 }
@@ -841,11 +1015,15 @@ func hasStep1(lines []string) bool {
 	return false
 }
 
-// mentionsLauncher reports whether any of the first 10 lines mentions "launcher".
+// mentionsLauncher reports whether the card's CONTRACT LINES -- lines 1-3: the contract
+// line, the role line and STEP 1 -- mention "launcher". The check is the card's own
+// instructions to the worker, never the text it quotes further down: a card quoting an
+// issue that says "launcher" is a card about a launcher, not a card run by one, and
+// refusing it cost a batch 34 cards (issue #529).
 func mentionsLauncher(lines []string) bool {
 	n := len(lines)
-	if n > 10 {
-		n = 10
+	if n > 3 {
+		n = 3
 	}
 	for i := 0; i < n; i++ {
 		if strings.Contains(strings.ToLower(lines[i]), "launcher") {

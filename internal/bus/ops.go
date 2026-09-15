@@ -313,9 +313,9 @@ func (plan ReceiptPlan) Message(me Participant) string {
 
 // ClosePlan is what a `close --before` run will record: one receipt note per open note
 // dated before the stamp, each carrying a Re line that closes the original and a body that
-// says why. `close` is the whole backlog at once -- the one-command way out that the
-// INBOX OPEN line's `remedy=inbox --advance` names, but as a real hand rather than a line
-// drawn past the history.
+// says why. `close` is the whole backlog at once -- the explicit opt-in bulk cutoff that
+// the INBOX OPEN line's large-list remedy names beside the normal reply-or-receipt path,
+// but as a real hand rather than the cursor advance that leaves the notes carried.
 type ClosePlan struct {
 	// Prepared is the receipt notes to write, one per open note older than Before.
 	Prepared []Prepared

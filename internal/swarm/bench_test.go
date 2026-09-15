@@ -92,31 +92,40 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 	if code == 2 {
 		t.Fatalf("the batch refused admission: %s", errb.String())
 	}
-	lines := readLines(t, sshLog)
-	if len(lines) == 0 {
-		t.Fatalf("the fake ssh saw nothing; the remote card never ran")
-	}
-	for _, l := range lines {
-		if !strings.Contains(l, "taskset") {
-			t.Fatalf("every remote argv carries taskset, got %q", l)
+	// The RUN argv lines, which are the ones that pin: an ssh that asks the bench a
+	// question -- the pull's `test -f`, the idle watch's `stat` -- runs no card and pins
+	// nothing. Selecting them by the command they carry is what keeps this assertion about
+	// pinning rather than about how many other things a batch asks a bench.
+	var runs []string
+	for _, l := range readLines(t, sshLog) {
+		if strings.Contains(l, "nova-swarm native") {
+			runs = append(runs, l)
 		}
 	}
-	// Matched against the SET of recorded argvs, not against lines[0] and
-	// lines[1]. The two cards run concurrently and both append to one log, so
-	// which lands first is a race the slots do not control: on a loaded runner
-	// slot 4 won it and the test read "slot 3 pins to core 4" out of an argv
-	// that was correct (run 35019905236, test (3/8 studio)). What is under test
-	// is that each slot carries ITS OWN core, which the order never spoke for.
+	if len(runs) == 0 {
+		t.Fatalf("the fake ssh saw no run; the remote card never ran")
+	}
+	for _, l := range runs {
+		if !strings.Contains(l, "taskset") {
+			t.Fatalf("every remote run argv carries taskset, got %q", l)
+		}
+	}
+	// Matched against the SET of run argvs, not against runs[0] and runs[1]. The
+	// two cards run concurrently and both append to one log, so which lands
+	// first is a race the slots do not control: on a loaded runner slot 4 won it
+	// and the test reported "slot 3 pins to core 4" about an argv that was
+	// correct (run 35019905236, test (3/8 studio)). What is under test is that
+	// each slot carries ITS OWN core, which the order never spoke for.
 	for _, want := range []string{"taskset -c 3", "taskset -c 4"} {
 		found := false
-		for _, l := range lines {
+		for _, l := range runs {
 			if strings.Contains(l, want) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Fatalf("no remote argv runs under %q; slot 3 pins to core 3 and slot 4 to core 4:\n%s", want, strings.Join(lines, "\n"))
+			t.Fatalf("no remote run argv carries %q; slot 3 pins to core 3 and slot 4 to core 4:\n%s", want, strings.Join(runs, "\n"))
 		}
 	}
 }
