@@ -211,23 +211,26 @@ func Batch(in BatchInput) int {
 	// an ABSTAIN row; done is decided by the contract alone, never by the process's timing.
 	idleSeconds := int(in.Idle.Seconds())
 	var (
-		done, abstain, idle int
-		holds               []string
-		total               float64
+		done, abstain, idle, stalled int
+		holds                        []string
+		total                        float64
 	)
 	type row struct {
-		label string
-		state string
-		line2 string
-		usd   float64
-		hold  bool
-		idle  bool
+		label    string
+		state    string
+		line2    string
+		usd      float64
+		hold     bool
+		idle     bool
+		logLines int
+		stalled  bool
 	}
 	rows := make([]row, len(cards))
 	for i, c := range cards {
 		rows[i].label = c.label
 		rows[i].usd = readUSD(filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "usage"))
 		total += rows[i].usd
+		rows[i].logLines = logOutputLines(filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "native.log"))
 		// A card the idle monitor killed is its own score, an ABSTAIN that names its reason,
 		// not a missing-result abstain: the card was not hung by its work but stopped growing.
 		if procs[i].idleKilled {
@@ -259,21 +262,31 @@ func Batch(in BatchInput) int {
 		}
 	}
 
+	// A card that ended -- killed, abstained or refused -- with no output after the wall
+	// opened is a prompt or harness defect, not a slow model: it is named stalled.
+	for i := range rows {
+		if rows[i].state != "done" && rows[i].logLines == 0 {
+			rows[i].stalled = true
+			stalled++
+		}
+	}
+
 	// The packet's grammar. The BATCH line first, then one line per card in admission
 	// order (label, then line 2 verbatim), then HOLD lines -- at most maxHoldLines -- so
 	// the whole packet never grows past n + 12 lines whatever the batch holds.
-	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d usd=%s idle=%d\n",
-		oneline.Field(in.ID), len(cards), done, abstain, formatUSD(total), idle)
+	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d usd=%s idle=%d stalled=%d\n",
+		oneline.Field(in.ID), len(cards), done, abstain, formatUSD(total), idle, stalled)
 	for _, r := range rows {
-		if r.idle {
+		switch {
+		case r.idle:
 			fmt.Fprintf(in.Stdout, "%s: ABSTAIN -- idle %ds\n", oneline.Field(r.label), idleSeconds)
-			continue
+		case r.stalled:
+			fmt.Fprintf(in.Stdout, "%s: ABSTAIN -- stalled (no output after the wall opened)\n", oneline.Field(r.label))
+		case r.state == "abstain":
+			fmt.Fprintf(in.Stdout, "%s abstain log=%d\n", oneline.Field(r.label), r.logLines)
+		default:
+			fmt.Fprintf(in.Stdout, "%s %s log=%d\n", oneline.Field(r.label), oneline.Escape(oneline.Cap(r.line2, oneline.TailBytes)), r.logLines)
 		}
-		if r.state == "abstain" {
-			fmt.Fprintf(in.Stdout, "%s abstain\n", oneline.Field(r.label))
-			continue
-		}
-		fmt.Fprintf(in.Stdout, "%s %s\n", oneline.Field(r.label), oneline.Escape(oneline.Cap(r.line2, oneline.TailBytes)))
 	}
 	for i := 0; i < len(holds) && i < maxHoldLines; i++ {
 		fmt.Fprintf(in.Stdout, "HOLD: %s\n", oneline.Escape(oneline.Cap(holds[i], oneline.TailBytes)))
@@ -353,6 +366,27 @@ func readUSD(path string) float64 {
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }
+
+// logOutputLines counts a card's own output lines: everything in the run log after the
+// sandbox's own header lines, each beginning "SANDBOX ", is what the model wrote once the
+// wall opened. A card that ends with none of them is a stall, so a missing log is zero too.
+func logOutputLines(path string) int {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "SANDBOX ") {
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		n++
+	}
+	return n
+}
 
 func first(lines []string) string {
 	if len(lines) == 0 {
