@@ -146,6 +146,12 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		fmt.Fprintln(out, buildinfo.Line(name, stamp))
 		return 0
 	}
+	if verb == "snapshot" {
+		if name != "nova-version" {
+			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
+		}
+		return snapshotVerb(name, args, out, errs)
+	}
 	impliedSend := name == "nova-version" && verb == "send"
 	if impliedSend {
 		verb = "report"

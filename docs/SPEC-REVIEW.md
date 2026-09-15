@@ -641,7 +641,14 @@ STALE … current=<sha12>`, when they differ: a packet for a head nobody has is
 work nobody can use, because a verdict for it authorizes nothing (SPEC-MERGE
 rule 19). Absent, the head is read from the host and written on the packet's
 first line, which is the sha the reader then hands to `verdict`. A sha read
-from the host is a read, not a guess.
+from the host is a read, not a guess. A PR entry's head is fetched as
+`pull/<n>/head` from the GitHub remote the lane's `--repo` names, never from the
+lane's `--remote` (which may be a local rehearsal with no pull refs); a branch
+entry's head is fetched from the lane remote (#449). The merge base (`main`,
+or whatever `--base` names) is fetched from the same GitHub remote as the PR
+head, never from the lane's `--remote` when that remote is a local rehearsal
+with no `main` (#493); a branch entry keeps fetching its base from the lane
+remote.
 
 **`verdict --head` is required and is the full 40-character sha the reader had
 open**, exactly as `nova-merge read --head`; the tool never fills it in. `VERDICT
@@ -746,9 +753,10 @@ them apart — `entry=` here against `entries=` there, and disjoint `kind=` sets
 — so no line is ambiguous about which tool wrote it. (draft 3, polished)
 
 ```
-PACKET OK entry=<n-or-name> id=<hex12> head=<sha12> base=<sha12> range=<r> files=<n> hunks=<n> rules=<n> prior=<n> open=<n> bytes=<n> cut=<n> reused=<true|false> out=<path>
+PACKET OK entry=<n-or-name> id=<hex12> head=<sha12> base=<name>@<sha8> range=<r> files=<n> hunks=<n> rules=<n> prior=<n> open=<n> bytes=<n> cut=<n> reused=<true|false> out=<path>
 PACKET MORE kind=<prior|fold> shown=<n> total=<t> nova-review packet --lane <dir> … --max 0
 PACKET STALE entry=<n-or-name> asked=<sha12> current=<sha12>: the head moved; build the packet for the current head
+PACKET REFUSED: the lane does not hold this entry; add it with nova-merge add --lane <dir> --pr <n> --needs-read (or add-branch --branch <name>)
 PACKET REUSE asked=<hex12> found=<hex12> file=<path>: that packet was built for another (entry, head, range); build this reader's own
 PACKET FOLD file=<path>: <reason>
 PACKET REFUSED: <reason>
@@ -800,7 +808,12 @@ COST OK entries=<n> reads=<n> rounds=<n> evidence_rounds=<n> receipts=<n> reused
 `PACKET OK cut=<n>` is the number of files whose diff was replaced by a hunk
 list because the byte bound was reached; `0` means the packet is whole. The
 remedy is inside the packet, per file, as the exact `git diff <range> --
-<path>` that prints what was cut. `COST HEAD latency=` is the seconds from the
+<path>` that prints what was cut. `PACKET OK base=<name>@<sha8>` pins the
+recorded base: `name` is the branch the lane recorded, and `sha8` the commit
+the range's left side was fetched to before the diff, so a stale lane clone's
+base never inflates the range with files the base has moved since (#418). A
+base recorded as a full sha (a prior read's head) prints its own twelve-char
+form and no `@`. `COST HEAD latency=` is the seconds from the
 head commit's committer time to the last `line` verdict recorded at that head,
 and `-` when that head has none; it is that and nothing else, because `cost`
 is given no `--readers` and cannot know whether a named reader is still

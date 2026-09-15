@@ -134,16 +134,21 @@ func packet(args []string, out, errOut io.Writer) int {
 	}
 	entry := st.Find(id)
 	if entry == nil {
-		return refuse(errOut, "the lane does not hold this entry")
+		return refuse(errOut, "the lane does not hold this entry; add it with nova-merge add --lane <dir> --pr <n> --needs-read (or add-branch --branch <name>)")
 	}
 	repo := filepath.Join(*lane, merge.RepoDir)
 	oldHead := entry.OID
-	current, err := fetchEntryHead(ctx, repo, *pr, *branch)
+	current, err := fetchEntryHead(ctx, repo, *pr, *branch, st.Repo)
 	if err != nil {
-		return refuse(errOut, fmt.Sprintf("could not fetch the entry head: %v", err))
+		if *asked != "" && merge.IsSHA(*asked) {
+			current = *asked
+			fmt.Fprintf(errOut, "PACKET NOTE fetch failed, using --head\n")
+		} else {
+			return refuse(errOut, fmt.Sprintf("could not fetch the entry head: %v", err))
+		}
 	}
 	current = strings.TrimSpace(current)
-	if oldHead != "" && current != oldHead {
+	if err == nil && oldHead != "" && current != oldHead {
 		fmt.Fprintf(errOut, "PACKET NOTE head moved %s -> %s\n", merge.Short(oldHead), merge.Short(current))
 		if uerr := merge.Update(*lane, time.Duration(*timeout)*time.Second, func(s *merge.State) error {
 			e := s.Find(id)
@@ -176,20 +181,33 @@ func packet(args []string, out, errOut io.Writer) int {
 		}
 	}
 	base := st.Base
+	if base == "" {
+		return refuse(errOut, "the lane has no recorded base; the packet cannot guess its range")
+	}
+	// The lane clone's local base branch goes stale: origin advances past a checked-out
+	// ref that has not been fetched, and a range built against the stale branch drags in
+	// every file that moved between the two (#418). Fetch the base before the range so
+	// the range's left side is the remote's current tip, never the idle local one. A base
+	// that is already a full sha names one commit and cannot go stale, so it needs no fetch.
+	baseSHA := base
+	if !merge.IsSHA(base) {
+		baseSHA, err = fetchBase(ctx, repo, *pr, base, st.Repo)
+		if err != nil {
+			return refuse(errOut, err.Error())
+		}
+	}
 	rangeText := ""
 	var fullRange string
 	var diffBase string
 	if priorRead != nil && priorRead.Head != "" {
 		base = priorRead.Head
+		baseSHA = base
 		rangeText = merge.Short(base) + ".." + merge.Short(current)
 		fullRange = base + ".." + current
 		diffBase = base
 	} else {
 		rangeText = merge.Short(base) + "..." + merge.Short(current)
-		fullRange = base + "..." + current
-	}
-	if base == "" {
-		return refuse(errOut, "the lane has no recorded base; the packet cannot guess its range")
+		fullRange = baseSHA + "..." + current
 	}
 	packetID := packetID(id, current, base, rangeText)
 	if *reuse != "" {
@@ -237,18 +255,18 @@ func packet(args []string, out, errOut io.Writer) int {
 		cutFiles, cutHunks := notIncludedCounts(sections.notIncluded)
 		files := diffFiles + cutFiles
 		hunks := diffHunks + cutHunks
-		return writePacket(*dest, newBody, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(newBody), hdr.Cut, true)
+		return writePacket(*dest, newBody, out, id, packetID, current, base, baseSHA, rangeText, files, hunks, ruleCount, priorCount, openCount, len(newBody), hdr.Cut, true)
 	}
 
 	if diffBase == "" {
-		mb, err := gitOut(ctx, repo, "merge-base", base, current)
+		mb, err := gitOut(ctx, repo, "merge-base", baseSHA, current)
 		if err != nil {
 			return refuse(errOut, "could not determine merge-base for triple-dot range")
 		}
 		diffBase = strings.TrimSpace(mb)
 	}
 
-	if _, err := gitOut(ctx, repo, "rev-parse", base+"^{commit}"); err != nil {
+	if _, err := gitOut(ctx, repo, "rev-parse", baseSHA+"^{commit}"); err != nil {
 		return refuse(errOut, "the lane does not hold the recorded base commit")
 	}
 	diff, err := gitOut(ctx, repo, "diff", "--no-ext-diff", "--unified=3", fullRange)
@@ -314,7 +332,7 @@ func packet(args []string, out, errOut io.Writer) int {
 		}
 		fmt.Fprintf(out, "PACKET MORE kind=prior shown=%d total=%d nova-review packet --lane %s %s --max 0\n", *maxFlag, priorCount, shellQuote(*lane), entryFlag)
 	}
-	return writePacket(*dest, body, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(body), cut, false)
+	return writePacket(*dest, body, out, id, packetID, current, base, baseSHA, rangeText, files, hunks, ruleCount, priorCount, openCount, len(body), cut, false)
 }
 
 func gitOut(ctx context.Context, repo string, args ...string) (string, error) {
@@ -352,15 +370,43 @@ func gitOut(ctx context.Context, repo string, args ...string) (string, error) {
 // `pull/<n>/head` for a PR, the branch itself for a branch, then reads the fetched commit
 // back out of FETCH_HEAD. The fetch is the verb's one way to learn a head the remote moved
 // (a force-push) without trusting a local ref that has not been updated.
-func fetchEntryHead(ctx context.Context, repo string, pr int, branch string) (string, error) {
+//
+// A PR head comes from the GitHub remote the lane's --repo names (https://github.com/<owner>/<name>.git),
+// never from the lane's --remote: --remote is the record-branch push target, and a local
+// rehearsal remote has no pull/*/head refs (#449). A branch entry still fetches from the
+// lane remote as before.
+func fetchEntryHead(ctx context.Context, repo string, pr int, branch, hostRepo string) (string, error) {
 	refspec := branch
+	remote := "origin"
 	if pr > 0 {
 		refspec = fmt.Sprintf("pull/%d/head", pr)
+		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
 	}
-	if _, err := gitOut(ctx, repo, "fetch", "origin", refspec); err != nil {
-		return "", err
+	if _, err := gitOut(ctx, repo, "fetch", remote, refspec); err != nil {
+		return "", fmt.Errorf("fetching %q from %q: %w", refspec, remote, err)
 	}
 	return gitOut(ctx, repo, "rev-parse", "FETCH_HEAD")
+}
+
+// fetchBase fetches the merge base into the lane's clone and returns its sha.
+// A PR's base lives on the GitHub remote the lane's --repo names, never on the
+// lane's --remote: a local rehearsal remote has no main branch (#493). A branch
+// entry still fetches its base from the lane remote as before.
+func fetchBase(ctx context.Context, repo string, pr int, base, hostRepo string) (string, error) {
+	remote := "origin"
+	refOut := "refs/remotes/origin/" + base + "^{commit}"
+	if pr > 0 {
+		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
+		refOut = "FETCH_HEAD"
+	}
+	if _, err := gitOut(ctx, repo, "fetch", remote, base); err != nil {
+		return "", fmt.Errorf("could not fetch the base %q from %q: %v", base, remote, err)
+	}
+	fetched, err := gitOut(ctx, repo, "rev-parse", refOut)
+	if err != nil {
+		return "", fmt.Errorf("the lane does not hold the fetched base %q: %v", base, err)
+	}
+	return strings.TrimSpace(fetched), nil
 }
 
 // outEscapes reports whether --out, resolved against the current directory, lies outside
@@ -1446,13 +1492,24 @@ func buildDiffAndNotIncluded(files []fileDiff, rangeText string, maxBytes int, a
 	return finalDiffSec, finalNotIncSec, cutCount, finalCand, nil
 }
 
-func writePacket(dest, body string, out io.Writer, entry, id, head, base, rng string, files, hunks, rules, prior, open, bytesN, cut int, reused bool) int {
+func short8(sha string) string {
+	if len(sha) <= 8 {
+		return sha
+	}
+	return sha[:8]
+}
+
+func writePacket(dest, body string, out io.Writer, entry, id, head, base, baseSHA, rng string, files, hunks, rules, prior, open, bytesN, cut int, reused bool) int {
 	if err := writeExclusive(dest, []byte(body)); err != nil {
 		fmt.Fprintf(os.Stderr, "PACKET REFUSED: could not exclusively create --out: %s\n", oneline.Escape(err.Error()))
 		return 2
 	}
+	baseField := merge.Short(base)
+	if base != baseSHA {
+		baseField += "@" + short8(baseSHA)
+	}
 	_, err := fmt.Fprintf(out, "PACKET OK entry=%s id=%s head=%s base=%s range=%s files=%d hunks=%d rules=%d prior=%d open=%d bytes=%d cut=%d reused=%t out=%s\n",
-		oneline.Field(entry), id, merge.Short(head), merge.Short(base), oneline.Field(rng), files, hunks, rules, prior, open, bytesN, cut, reused, oneline.Field(dest))
+		oneline.Field(entry), id, merge.Short(head), baseField, oneline.Field(rng), files, hunks, rules, prior, open, bytesN, cut, reused, oneline.Field(dest))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "PACKET REFUSED: could not write receipt: %s\n", oneline.Escape(err.Error()))
 		return 2
