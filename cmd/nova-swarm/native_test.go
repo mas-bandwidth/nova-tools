@@ -1072,8 +1072,17 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
 	}
+	// Compared symlink-resolved: what is under test is that the wall is handed an
+	// ABSOLUTE slot, not which of a directory's two names it carries. The run
+	// absolutizes the relative slot through os.Getwd(), and on darwin the
+	// per-user temp tree sits under /var, a symlink to /private/var, so Getwd()
+	// returns the resolved spelling and t.TempDir() the unresolved one.
+	wantSlot := slot
+	if real, err := filepath.EvalSymlinks(slot); err == nil {
+		wantSlot = real
+	}
 	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
-	if !hasFlagPair(strings.Fields(argv), "--read", slot) {
-		t.Errorf("the wall argv does not read the slot by absolute path %s:\n%s", slot, argv)
+	if !hasFlagPair(strings.Fields(argv), "--read", wantSlot) {
+		t.Errorf("the wall argv does not read the slot by absolute path %s:\n%s", wantSlot, argv)
 	}
 }

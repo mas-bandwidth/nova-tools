@@ -219,7 +219,23 @@ jobs:
     # must resolve to a string, not to an array, so the matrix cannot hand over a
     # label list as one value.
     runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
-    timeout-minutes: 2
+    # SIX, and the two minutes did not move — what a ceiling MEANS moved. The
+    # two-minute law is about the CL feedback path: how long a change waits.
+    # Until now that path ran on GitHub-hosted runners, where 48 legs start at
+    # once and a per-job ceiling and the run's wall clock are the same number.
+    # On 4+4 fixed machines they stop being the same number: the legs queue, so
+    # the run is the sum over the waves and no per-job ceiling can see it.
+    # Measured in run 35019905236 with this exact fan-out: every studio leg and
+    # three space legs were CANCELLED at 2:00 having done nothing wrong, while
+    # five space legs passed at 80-118 s. Space is the binding constraint and it
+    # is a ONE-CORE machine hosting four runners (nproc=1), so four concurrent
+    # legs share one core; the studio is a 32-core M3 Ultra where the darwin
+    # tests are simply slower. A ceiling that cancels honest work is not a
+    # budget, it is a coin flip. Six is a hang detector for a leg measured at
+    # one to two minutes; the budget itself is the run, and the run is what to
+    # hold to the law. The fast jobs — lint, test-packages, lisp at 32, 11 and
+    # 12 s — keep the 2 they always had.
+    timeout-minutes: 6
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -244,19 +260,15 @@ jobs:
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
 
-      - name: cache go build and module cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+      # No actions/cache here. These runners are PERSISTENT: ~/.cache/go-build
+      # survives between jobs on the machine itself, so the action spends 6 s
+      # restoring and 4 s re-uploading a cache the disk already had — a tenth of
+      # the leg's budget, on the one-core space box, to move a cache one hop.
+      # test-hosted keeps it: a GitHub-hosted runner is a fresh machine.
 
-      - name: build
-        run: go build ${{ matrix.entry.packages }}
-
+      # No separate `build` step either: `go vet` and `go test` both compile
+      # what they are given, so building first was a third compile of the same
+      # packages. The whole-tree `go build ./...` still runs once, in lint.
       - name: vet
         run: go vet ${{ matrix.entry.packages }}
 

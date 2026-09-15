@@ -79,17 +79,13 @@ func TestCLTierJobsStayWithinTheBudget(t *testing.T) {
 		}
 		// This pins the per-job CAP only. timeout-minutes is a ceiling on one
 		// job, not a proof that the whole required path fits two minutes: the
-		// path is the CI run, measured as a present total of 80 s in run
-		// 34725991419, and no per-job ceiling can see that sum. The aggregate
-		// ci-ok is capped at 1; every other CL-tier job at 2.
-		if name == "ci-ok" {
-			if mins > 1 {
-				t.Errorf("the ci-ok aggregate has timeout-minutes %d, want a cap <= 1", mins)
-			}
-			continue
+		// path is the CI run, and no per-job ceiling can see that sum.
+		want, ok := clTierCeilings[name]
+		if !ok {
+			want = defaultCLCeiling
 		}
-		if mins > 2 {
-			t.Errorf("CL-tier job %q has timeout-minutes %d, want a cap <= 2", name, mins)
+		if mins > want {
+			t.Errorf("CL-tier job %q has timeout-minutes %d, want a cap <= %d", name, mins, want)
 		}
 	}
 }
@@ -130,6 +126,30 @@ func TestEveryActionIsPinnedBySHA(t *testing.T) {
 			}
 		}
 	}
+}
+
+// defaultCLCeiling is the two-minute law: a CL-tier job caps at 2 minutes.
+const defaultCLCeiling = 2
+
+// clTierCeilings is where a job that does NOT cap at two minutes says so, and
+// says why. A number here is a claim about the machine the job runs on, so it
+// belongs in the repository beside the law rather than in a commit message.
+var clTierCeilings = map[string]int{
+	// The aggregate reads results and checks nothing out.
+	"ci-ok": 1,
+
+	// The sharded test matrix, and the one number the move to self-hosted
+	// runners actually changed. The two minutes are the CL FEEDBACK PATH: how
+	// long a change waits. On GitHub-hosted runners every leg starts at once,
+	// so a leg's ceiling and the run's wall clock are one number. On 4+4 fixed
+	// machines they are not: the legs queue, the run is the sum over the waves,
+	// and a per-job ceiling cannot see it. Measured in run 35019905236: every
+	// studio leg and three of eight space legs were CANCELLED at 2:00 having
+	// done nothing wrong, while five space legs passed at 80-118 s. Space binds
+	// — it is a one-core machine hosting four runners, so four concurrent legs
+	// share one core. Six is a hang detector for a leg measured at one to two
+	// minutes. The budget is the run's wall clock; hold the law there.
+	"test": 6,
 }
 
 func jobNames(src string) []string {

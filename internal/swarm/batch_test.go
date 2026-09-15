@@ -97,6 +97,25 @@ func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) 
 	return code, out.String(), errb.String()
 }
 
+// testIdleBudget is the --idle every test in the idle family passes, and the
+// margin is the point. These tests drive a /bin/sh runner that writes every 150
+// to 200 ms and then assert either that it was left alone or that a silent one
+// was killed. A one-second budget makes the nominal margin 5x, which is not a
+// margin on a SHARED runner: `sleep 0.2` in a shell loop is 200 ms of sleeping
+// plus however long the machine takes to schedule the process again, and the
+// space runner is a one-core box hosting four of them. Run 35019905236 caught
+// it both ways at once — in test (3/8 studio) a card that kept writing was
+// idle-killed, and in an earlier local run a card that publishes immediately
+// was killed before it could. Four seconds is a 20-27x margin on the same tick,
+// so a failure means the monitor watched the wrong file, not that the runner
+// was slow. It costs the three tests that DO expect a kill their budget each,
+// about nine seconds, and buys a test that means what it says.
+const testIdleBudget = 4 * time.Second
+
+// idleReason is the ABSTAIN text the batch prints for an idle kill, derived from
+// the budget so the two cannot drift apart.
+var idleReason = "ABSTAIN -- idle " + testIdleBudget.String()
+
 func runBatchIdle(t *testing.T, cards, root, runner string, deadline, idle time.Duration) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
@@ -247,7 +266,7 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if time.Since(start) > 10*time.Second {
 		t.Fatalf("the wait ends when the idle card is killed, it does not burn the deadline")
 	}
@@ -257,7 +276,7 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the idle kill is counted as an abstain and the idle count:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s") {
+	if !strings.Contains(out, "a slot=1: "+idleReason) {
 		t.Fatalf("an idle-killed card names its idle reason:\n%s", out)
 	}
 }
@@ -285,7 +304,7 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, 2*time.Second)
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
 	if code != 0 {
 		t.Fatalf("a batch over a card that keeps writing exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -317,14 +336,14 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if code != 1 {
 		t.Fatalf("a batch with one idle kill exits 1, got %d:\n%s", code, out)
 	}
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the BATCH line counts the idle kill in its own idle=<n> field:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s") || !strings.Contains(out, "b slot=2: done and clean") {
+	if !strings.Contains(out, "a slot=1: "+idleReason) || !strings.Contains(out, "b slot=2: done and clean") {
 		t.Fatalf("the idle card is named with its reason and the done card is folded:\n%s", out)
 	}
 }
@@ -353,7 +372,7 @@ func TestIdleWatchesNativeLog(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, 1*time.Second)
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
 	if code != 0 {
 		t.Fatalf("a card writing native.log is never idle-killed, exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -385,14 +404,14 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if code != 1 {
 		t.Fatalf("a card whose native.log stops growing is idle-killed, exits 1, got %d:\n%s", code, out)
 	}
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the stopped native.log card is counted idle:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s ("+filepath.Join(root, "1", "native.log")+")") {
+	if !strings.Contains(out, "a slot=1: "+idleReason+" ("+filepath.Join(root, "1", "native.log")+")") {
 		t.Fatalf("the ABSTAIN reason names the child's log it watched:\n%s", out)
 	}
 }
@@ -771,14 +790,35 @@ func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("a clean batch exits 0, got %d; stderr: %s:\n%s", code, errs, out)
 	}
-	arg5 := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".arg5")))
-	if arg5 != root {
-		t.Errorf("the runner's $5 is %q, want the absolute root %q; a relative root reached the runner", arg5, root)
+	// The absolutized root is compared symlink-resolved on both sides. What is
+	// under test is that the runner is handed an ABSOLUTE root, not which of a
+	// directory's two names it is spelled with: the batch absolutizes a relative
+	// root through os.Getwd(), and on darwin the per-user temp tree sits under
+	// /var, a symlink to /private/var, so Getwd() returns the resolved spelling
+	// while t.TempDir() returns the unresolved one. Comparing them raw fails on
+	// macOS for a root that is correct.
+	wantRoot := resolved(t, root)
+	arg5 := resolved(t, strings.TrimSpace(readTestFile(t, filepath.Join(root, ".arg5"))))
+	if arg5 != wantRoot {
+		t.Errorf("the runner's $5 is %q, want the absolute root %q; a relative root reached the runner", arg5, wantRoot)
 	}
-	envRoot := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".envroot")))
-	if envRoot != root {
-		t.Errorf("NOVA_SWARM_ROOT is %q, want the absolute root %q; a relative root reached the environment", envRoot, root)
+	envRoot := resolved(t, strings.TrimSpace(readTestFile(t, filepath.Join(root, ".envroot"))))
+	if envRoot != wantRoot {
+		t.Errorf("NOVA_SWARM_ROOT is %q, want the absolute root %q; a relative root reached the environment", envRoot, wantRoot)
 	}
+}
+
+// resolved is filepath.EvalSymlinks for an assertion: it folds the two names a
+// directory can have on darwin (/var and /private/var) into one so a test can
+// compare a path the product absolutized with a path the test built. A path it
+// cannot resolve is returned as given, so the assertion still fails on a real
+// difference rather than passing silently.
+func resolved(t *testing.T, path string) string {
+	t.Helper()
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	return path
 }
 
 func readTestFile(t *testing.T, path string) string {

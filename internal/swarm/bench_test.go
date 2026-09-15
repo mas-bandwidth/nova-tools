@@ -101,11 +101,23 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 			t.Fatalf("every remote argv carries taskset, got %q", l)
 		}
 	}
-	if !strings.Contains(lines[0], "taskset -c 3") {
-		t.Fatalf("slot 3 on 1-15 runs under taskset -c 3, got %q", lines[0])
-	}
-	if !strings.Contains(lines[1], "taskset -c 4") {
-		t.Fatalf("slot 4 on 1-15 runs under taskset -c 4, got %q", lines[1])
+	// Matched against the SET of recorded argvs, not against lines[0] and
+	// lines[1]. The two cards run concurrently and both append to one log, so
+	// which lands first is a race the slots do not control: on a loaded runner
+	// slot 4 won it and the test read "slot 3 pins to core 4" out of an argv
+	// that was correct (run 35019905236, test (3/8 studio)). What is under test
+	// is that each slot carries ITS OWN core, which the order never spoke for.
+	for _, want := range []string{"taskset -c 3", "taskset -c 4"} {
+		found := false
+		for _, l := range lines {
+			if strings.Contains(l, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("no remote argv runs under %q; slot 3 pins to core 3 and slot 4 to core 4:\n%s", want, strings.Join(lines, "\n"))
+		}
 	}
 }
 
