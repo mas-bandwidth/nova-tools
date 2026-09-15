@@ -419,9 +419,11 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		row[c] = dash(usage.Values[c])
 	}
 	row["usd"] = dash(usage.Values["usd"])
-	if err := swarm.WriteCardUsage(filepath.Join(cfg.slotDir, "usage.tsv"), row); err != nil {
+	jobDir := filepath.Join(cfg.slotDir, "jobs", cfg.label)
+	if err := swarm.WriteCardUsage(filepath.Join(jobDir, "usage.tsv"), row); err != nil {
 		fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 	}
+	_ = swarm.WriteCardUsage(filepath.Join(cfg.slotDir, "usage.tsv"), row)
 	if note != "" {
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}

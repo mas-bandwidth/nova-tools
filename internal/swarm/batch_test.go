@@ -463,6 +463,46 @@ func TestBatchSumsUsage(t *testing.T) {
 	}
 }
 
+// Lesson 24: when usage.tsv is in <root>/<slot>/usage.tsv rather than <root>/<slot>/jobs/<label>/usage.tsv,
+// the batch gather still reads the slot fallback and sums in/out/usd onto the BATCH line.
+func TestBatchSumsUsageFromSlotFallback(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\na second card"},
+	})
+	for i, spec := range []struct {
+		label, in, out, usd string
+	}{
+		{"a", "100", "50", "0.2500"},
+		{"b", "8", "5", "0.7500"},
+	} {
+		slot := filepath.Join(root, itoa(i+1))
+		if err := os.MkdirAll(slot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		row := UsageRow{
+			"job": spec.label, "attempt": "1", "started": "2026-09-13T00:00:00Z",
+			"ended": "2026-09-13T00:01:00Z", "rc": "0",
+			"provider": "deepseek", "model": "deepseek-chat",
+			"tokens_in": spec.in, "tokens_out": spec.out,
+			"cache_write": "-", "cache_read": "-", "reasoning": "-", "usd": spec.usd,
+		}
+		if err := WriteCardUsage(filepath.Join(slot, "usage.tsv"), row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := fakeRunner(t, dir)
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 0 {
+		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "BATCH B1 n=2 done=2 abstain=0 in=108 out=55 usd=1.0000") {
+		t.Fatalf("the BATCH line sums tokens and dollars from slot fallback usage.tsv:\n%s", out)
+	}
+}
+
 func TestBatchAllocatesFreeSlots(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")

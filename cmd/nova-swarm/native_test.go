@@ -397,12 +397,8 @@ func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
 		t.Fatalf("the child did not write pwd into RESULT.md under the job directory: %v", err)
 	}
 	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
-	want, err := filepath.EvalSymlinks(jobDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Errorf("from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, want)
+	if !sameDir(got, jobDir) {
+		t.Errorf("from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, jobDir)
 	}
 }
 
@@ -789,13 +785,35 @@ func TestNativeChildCwdIsJobDirUnwalled(t *testing.T) {
 				t.Fatalf("the child did not write pwd into RESULT.md under the job directory: %v", err)
 			}
 			got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
-			want, err := filepath.EvalSymlinks(jobDir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != want {
-				t.Errorf("from cwd %s the %s child's cwd is %q, want the job directory %q", foreign, tc.name, got, want)
+			if !sameDir(got, jobDir) {
+				t.Errorf("from cwd %s the %s child's cwd is %q, want the job directory %q", foreign, tc.name, got, jobDir)
 			}
 		})
+	}
+}
+
+// TestNativeRunWritesUsageInJobDirectory: the native run writes usage.tsv beside RESULT.md
+// in <slot>/jobs/<label>/usage.tsv (and slotDir fallback), so the batch gather reads it.
+func TestNativeRunWritesUsageInJobDirectory(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "usage-loc"
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
+	}
+	jobUsage := filepath.Join(slot, "jobs", label, "usage.tsv")
+	if _, err := os.Stat(jobUsage); err != nil {
+		t.Fatalf("usage.tsv not found beside RESULT.md in %s: %v", jobUsage, err)
+	}
+	slotUsage := filepath.Join(slot, "usage.tsv")
+	if _, err := os.Stat(slotUsage); err != nil {
+		t.Fatalf("usage.tsv not found in slot directory %s: %v", slotUsage, err)
 	}
 }
