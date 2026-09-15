@@ -1088,9 +1088,9 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 // cmdClose is `close --before`, the whole backlog at once: every open note dated before the
 // stamp is closed by one receipt note each, batched in one commit. It is the other end of
-// the INBOX OPEN `remedy=inbox --advance` line -- `--advance` draws a line past the history
-// and leaves the notes behind it; `close` answers them, each with a Re line that removes it
-// from the reader's open list for good.
+// the INBOX OPEN `remedy=reply --re <id> or receipt --note <id>; close --before <cutoff> to
+// bulk-close` line -- the normal path is one note at a time and `close` is the bulk opt-in
+// that answers each note with a Re line and removes it from the reader's open list for good.
 func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("close")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
@@ -1730,9 +1730,11 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// under one name. The large-list sentence used to be a SECOND line, past a size, with a
 	// whole command pasted into it; a reader parsing OPEN could not tell small from large
 	// without knowing the threshold, and the command duplicated every run's own flags. One
-	// line carries both now: `large=` is the sentence, and `remedy=` names the one whole-
-	// backlog way out without spelling a command the caller already built.
-	fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d large=%t remedy=inbox --advance\n",
+	// line carries both now: `large=` is the sentence, and `remedy=` names the normal
+	// path out -- reply or receipt, one note at a time -- with the bulk `close --before`
+	// named only as an explicit opt-in, so that advancing the cursor alone is never
+	// advertised as resolving a carried backlog it preserves by design.
+	fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d large=%t remedy=reply --re <id> or receipt --note <id>; close --before <cutoff> to bulk-close\n",
 		len(res.Open), heard, len(res.Open) > o.openWarn)
 	// LISTING THE CARRIED NOTES IS A CHOICE, and the default is not to. A reader carrying five
 	// hundred notes gets five hundred lines on every run, and the one new note is in the

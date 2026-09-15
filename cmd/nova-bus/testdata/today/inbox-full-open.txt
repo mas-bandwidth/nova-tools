@@ -1,7 +1,7 @@
 exit=0
 --- stdout
 INBOX SCOPE mode=full cursor=- changed=0 carrying=2
-INBOX OPEN carrying=2 heard=0 large=false remedy=inbox --advance
+INBOX OPEN carrying=2 heard=0 large=false remedy=reply --re <id> or receipt --note <id>; close --before <cutoff> to bulk-close
 INBOX NOTE id=bo-abcdef012345 from=Bo addr=to at=2026-09-07T00:01:00Z path=from-bo/2026-09-07T0001Z-a-question-abcdef012345.md: A question about the gate
 INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-07T00:02:00Z path=from-bo/2026-09-07T0002Z-heard-111111111111.md: Heard
 INBOX OK as=Ada carrying=2 open=2 notes=1 receipts=1 heard=0 unaddressed=0 unreadable=0

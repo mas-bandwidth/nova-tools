@@ -26,13 +26,59 @@ func TestInboxOpenIsOneLine(t *testing.T) {
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 
 	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0 large=true remedy=inbox --advance")
+		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0 large=true remedy=reply --re <id> or receipt --note <id>; close --before <cutoff> to bulk-close")
 	if n := strings.Count(r.stdout, "INBOX OPEN carrying=62 heard="); n != 1 {
 		t.Fatalf("the backlog counts were not on exactly one line:\n%s", r.stdout)
 	}
 	if strings.Contains(r.stdout, "is large") {
 		t.Fatalf("the large-list sentence still sits on its own line:\n%s", r.stdout)
 	}
+}
+
+// A large carrying set must not be told that advancing the cursor alone resolves it: --advance
+// moves the cursor past the history and preserves the unresolved OPEN entries, so the remedy
+// names reply/receipt as the normal path and close --before only as an explicit opt-in.
+func TestInboxLargeRemedyNamesReplyOrReceiptNotAdvance(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	for i := 0; i < 60; i++ {
+		id := fmt.Sprintf("bo-d%011d", i)
+		writeFile(t, checkout, fmt.Sprintf("from-bo/2026-09-10T12%02dZ-many-%s.md", i, id),
+			fmt.Sprintf("From: Bo\nTo: Ada\nDate: Thu Sep 10 12:%02d:00 UTC 2026\nId: %s\nSubject: One of many %d\n\nOpen.\n", i, id, i))
+	}
+	gitIn(t, checkout, "add", "-A")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "many notes")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+
+	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
+	if !strings.Contains(r.stdout, "large=true") {
+		t.Fatalf("large carrying set did not print large=true:\n%s", r.stdout)
+	}
+	if got := remedyField(t, r.stdout); got == "inbox --advance" {
+		t.Fatalf("remedy still advertises --advance alone:\n%s", r.stdout)
+	}
+	if !strings.Contains(r.stdout, "reply") || !strings.Contains(r.stdout, "receipt") {
+		t.Fatalf("remedy does not name reply/receipt as the normal path:\n%s", r.stdout)
+	}
+	if !strings.Contains(r.stdout, "close --before") {
+		t.Fatalf("remedy does not name close --before as the bulk opt-in:\n%s", r.stdout)
+	}
+}
+
+func remedyField(t *testing.T, out string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "INBOX OPEN ") {
+			for _, part := range strings.Fields(line) {
+				if strings.HasPrefix(part, "remedy=") {
+					return strings.TrimPrefix(part, "remedy=")
+				}
+			}
+		}
+	}
+	t.Fatalf("no remedy field found:\n%s", out)
+	return ""
 }
 
 // close --before receipts every open note dated before the stamp, one receipt note per note,
