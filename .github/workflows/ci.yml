@@ -1,24 +1,22 @@
 # CI for nova-tools: the CL tier.
 #
-# Why this exists: until now, local `go test` on one machine was the whole
-# evidence behind a release — including for four rounds of fail-open fixes in a
-# check other people are told to run against their own repos. A claim that a
-# released tool is tested is exactly what stops anyone checking whether it was
-# tested anywhere but the releasing machine.
+# Where CI runs changed (2026-09-15). The rules, in one sentence each:
 #
-# This file is the FAST TIER: the checks a change is required to pass in two
-# minutes, ideally one. It runs gofmt, build, vet, and the unit tests sharded
-# across parallel jobs, without the race detector. Everything that cannot fit
-# that budget — the whole-tree `-race` run, Windows build/vet and per-package
-# tests, the three-OS smoke, the release dry-run, and the nightly perf wall
-# clock — lives in .github/workflows/certification.yml, under the same job
-# names, so a red certification is a blocker for the next release and never for
-# a CL. Nothing is deleted by splitting; the slow tier still runs every test.
+#   * Pull requests run ONLY on the self-hosted runners -- the Linux x64 `space`
+#     box and the macOS arm64 `studio` box, four each -- in a package matrix
+#     fanned out in parallel so all eight runners stay busy, never serial.
+#   * The self-hosted jobs carry a fork guard (`head.repo.full_name ==
+#     github.repository`): we never run fork code on our own machines.
+#   * The GitHub-hosted runners (ubuntu/macos/windows) run ONLY on push to main
+#     and on the nightly schedule, with the full (race) suite. Hosted compute is
+#     expensive; it is not spent on branch work, because branch work is checked
+#     locally and is re-checked when it merges to main.
+#   * `ci-ok` stays the single required check: it aggregates the self-hosted
+#     matrix on a pull request, and adds the hosted matrix on push to main.
+#   * `lint` (gofmt, whole-tree build and vet) and `lisp` stay on a
+#     self-hosted Linux job.
 #
-# The race detector is the one trade-off that matters to name: it stays, in the
-# certification tier's `test` and `test-windows` jobs. The CL tier's sharded
-# tests are the same tests without `-race`, so a data race on a CL is caught by
-# certification rather than by the CL itself. That is the budget, not a skip.
+# See docs/TESTS.md, "Who runs CI", for the statement this file encodes.
 
 name: ci
 
@@ -26,23 +24,32 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "41 6 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name }}
+  # One group per pull request (or branch), so a new push cancels the still-running
+  # previous attempt rather than queueing behind it.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  lint:
-    # gofmt, `go build ./...`, `go vet ./...` on one runner. Formatting is a
-    # property of the source, not of the platform, so gofmt is checked once;
-    # build and vet run here on Linux, and their macOS/Windows coverage is the
-    # certification tier's `test` and `build-windows` jobs.
-    runs-on: ubuntu-latest
+  plan:
+    # The self-hosted matrix's group list, READ OUT OF THE SOURCE rather than written
+    # down. `go list ./...` names every package; the four packages whose tests are
+    # mostly git subprocesses -- timed locally, no race detector -- get a group each so
+    # no shared group serializes behind them, and the rest are spread round-robin across
+    # the remaining groups. There are at most eight groups so the 4+4 self-hosted runners
+    # stay busy in parallel rather than queueing in one long tail.
+    runs-on: [self-hosted, linux, space]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 2
+    outputs:
+      groups: ${{ steps.list.outputs.groups }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -51,18 +58,68 @@ jobs:
           # This workflow manages caching explicitly; do not probe for a missing go.sum.
           cache: false
 
-      - name: cache go build and module cache
-        # go.mod carries no dependencies today, so the module cache is nearly
-        # empty; the build cache is what pays for itself across the shards
-        # below, which compile the same tree.
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          # SLOW is the only hand-written map, and it is a TUNING number rather than a
+          # coverage one. These four packages' tests are mostly git subprocesses, so a
+          # shared group would serialize behind them.
+          declare -A SLOW=(
+            [cmd/nova-wake]=1
+            [cmd/nova-merge]=1
+            [cmd/nova-swarm]=1
+            [cmd/nova-bus]=1
+          )
+
+          slow=()
+          rest=()
+          while read -r pkg; do
+            [ -n "$pkg" ] || continue
+            if [ "${SLOW[$pkg]:-0}" = "1" ]; then slow+=("$pkg"); else rest+=("$pkg"); fi
+          done < <(go list ./... | sed 's#^github.com/mas-bandwidth/nova-tools/##')
+
+          NGROUPS=8
+          entries=()
+          g=1
+          for p in "${slow[@]}"; do
+            entries+=("{\"name\":\"$p\",\"packages\":\"./$p\"}")
+            g=$((g + 1))
+          done
+          remaining=$(( NGROUPS - g + 1 ))
+          if [ "$remaining" -gt 0 ]; then
+            for ((i=0; i<remaining; i++)); do
+              acc=()
+              for ((j=i; j<${#rest[@]}; j+=remaining)); do
+                acc+=("./${rest[j]}")
+              done
+              if [ "${#acc[@]}" -gt 0 ]; then
+                entries+=("{\"name\":\"shared $((g-4))\",\"packages\":\"${acc[*]}\"}")
+                g=$((g + 1))
+              fi
+            done
+          fi
+
+          groups=$(printf '%s\n' "${entries[@]}" | jq -s -c '.')
+          echo "$groups"
+          [ "$(echo "$groups" | jq 'length')" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
+          echo "groups=$groups" >> "$GITHUB_OUTPUT"
+
+  lint:
+    # gofmt, `go build ./...`, `go vet ./...` on one self-hosted Linux job. Formatting is a
+    # property of the source, not of the platform, so gofmt is checked once; build and vet
+    # run here on the whole tree (their per-package coverage is the `test` matrix below, and
+    # macOS/Windows coverage is the hosted suite on main).
+    runs-on: [self-hosted, linux, space]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
 
       - name: gofmt
         # gofmt -l prints unformatted files and exits 0 either way, so the exit
@@ -82,89 +139,23 @@ jobs:
       - name: vet
         run: go vet ./...
 
-  test-packages:
-    # The list the CL tier's test shards run on, READ OUT OF THE SOURCE rather
-    # than written down. It is `go list` filtered to packages that have tests,
-    # printed as JSON for the matrix below.
-    #
-    # This job exists so that there is no second list to keep in step with the
-    # certification tier's. The four slow packages -- timed locally with
-    # `go test -count=1` and no race detector -- get a runner each, and the rest
-    # are spread across shared shards. A package added tomorrow lands in a shard
-    # the moment it has a test file.
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    outputs:
-      packages: ${{ steps.list.outputs.packages }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          # This workflow manages caching explicitly; do not probe for a missing go.sum.
-          cache: false
-      - id: list
-        shell: bash
-        run: |
-          set -euo pipefail
-          # SLOW is the only hand-written map here, and it is a TUNING number rather than a
-          # coverage one: a package absent from it runs in a shared shard, which costs speed
-          # and never coverage. These four were timed locally with `go test -count=1` and no
-          # race detector (see RESULT.md of the change that split the tiers):
-          # cmd/nova-wake 62s, cmd/nova-merge 39s, cmd/nova-swarm 38s, cmd/nova-bus 36s.
-          # They are the packages whose tests are mostly git subprocesses, so a shared shard
-          # would serialize behind them.
-          declare -A SLOW=(
-            [cmd/nova-wake]=1
-            [cmd/nova-merge]=1
-            [cmd/nova-swarm]=1
-            [cmd/nova-bus]=1
-          )
-          # The remaining packages are spread across this many shared shards. `go test` runs
-          # a shard's packages in parallel, so a shard costs its slowest package, not their
-          # sum. Also a tuning number.
-          REST_SHARDS=2
-
-          slow=()
-          rest=()
-          while read -r pkg; do
-            [ -n "$pkg" ] || continue
-            short=${pkg#github.com/mas-bandwidth/nova-tools/}
-            if [ "${SLOW[$short]:-0}" = "1" ]; then slow+=("$short"); else rest+=("$short"); fi
-          done < <(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)
-
-          entries=()
-          for pkg in "${slow[@]}"; do
-            entries+=("{\"name\":\"$pkg\",\"packages\":\"./$pkg\"}")
-          done
-          for ((g=1; g<=REST_SHARDS; g++)); do
-            pkgs=()
-            for ((i=g-1; i<${#rest[@]}; i+=REST_SHARDS)); do
-              pkgs+=("./${rest[i]}")
-            done
-            if [ "${#pkgs[@]}" -gt 0 ]; then
-              joined=$(printf '%s ' "${pkgs[@]}")
-              entries+=("{\"name\":\"rest $g/$REST_SHARDS\",\"packages\":\"${joined% }\"}")
-            fi
-          done
-
-          packages=$(printf '%s\n' "${entries[@]}" | jq -s -c '.')
-          echo "$packages"
-          [ "$(echo "$packages" | jq 'length')" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
-          echo "packages=$packages" >> "$GITHUB_OUTPUT"
-
   test:
-    # THE UNIT TESTS, SHARDED, no race detector. The whole-tree `-race` run is the
-    # certification tier's `test` job; these are the same tests split across runners so the
-    # slowest single shard — not the sum — is what a change waits on.
-    name: test (${{ matrix.entry.name }})
-    needs: test-packages
+    # The unit tests, split into the `plan` groups and run on BOTH self-hosted platforms in
+    # parallel -- no race detector (that is the hosted `test-hosted` suite's `-race` run on
+    # main). Each leg builds, vets and tests its own group only, so the slowest single group
+    # -- not the sum -- is what a change waits on.
+    name: test (${{ matrix.entry.name }}, ${{ matrix.runner[1] }})
+    needs: plan
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       fail-fast: false
       matrix:
-        entry: ${{ fromJSON(needs.test-packages.outputs.packages) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
+        runner:
+          - [self-hosted, linux, space]
+          - [self-hosted, macos, studio]
+        entry: ${{ fromJSON(needs.plan.outputs.groups) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -173,27 +164,22 @@ jobs:
           # This workflow manages caching explicitly; do not probe for a missing go.sum.
           cache: false
 
-      - name: cache go build and module cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+      - name: build
+        run: go build ${{ matrix.entry.packages }}
+
+      - name: vet
+        run: go vet ${{ matrix.entry.packages }}
 
       - name: test
         run: go test -count=1 ${{ matrix.entry.packages }}
 
   lisp:
-    # THE LISP TIER, and it is one job because it is one system. `lisp/nova-work`
-    # is the engine's own tree (docs/SPEC-WORK.md:290 fixes the language); its
-    # acceptance suite runs under SBCL non-interactively and exits non-zero on
-    # any failing case, so the exit code is the product here. It is in the CL
-    # tier because it finishes in seconds, well inside the two-minute budget.
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
+    # THE LISP TIER, one job because it is one system. `lisp/nova-work` is the engine's own
+    # tree; its acceptance suite runs under SBCL non-interactively and exits non-zero on any
+    # failing case, so the exit code is the product here. It stays on self-hosted Linux.
+    runs-on: [self-hosted, linux, space]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -203,15 +189,47 @@ jobs:
       - name: nova-work acceptance
         run: ./lisp/nova-work/run-tests.sh
 
+  test-hosted:
+    # THE FULL HOSTED SUITE, only on push to main and the nightly schedule. GitHub-hosted
+    # compute is the expensive tier, so it is not spent on branch work: a branch is checked
+    # locally and re-checked here when it merges. This is the whole-tree `-race` run on all
+    # three hosted platforms -- Ubuntu, macOS, Windows -- standing in for certification's
+    # `test`/`build-windows` jobs at the main gate.
+    name: test-hosted (${{ matrix.os }})
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test -race ./...
+
   ci-ok:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
-    # in a branch ruleset. It aggregates EXACTLY the jobs of this file and nothing else —
-    # the CL tier: what a change is required to pass in two minutes, ideally one. `needs`
-    # on a matrix job is success only when EVERY leg succeeded, so a leg renamed out of
-    # existence shows up here as a missing success and not as silence. The certification
-    # tier has its own aggregate, certification-ok; a red certification is a blocker for
-    # the next release, never for a CL.
-    needs: [lint, test, lisp]
+    # in a branch ruleset. It aggregates EXACTLY the jobs of this file and nothing else.
+    # `needs` on a matrix job is success only when EVERY leg succeeded, so a leg renamed out
+    # of existence shows up here as a missing success and not as silence.
+    #
+    # On a pull request it needs the self-hosted matrix (lint, lisp, test); `test-hosted`
+    # is legitimately skipped there. On push to main (and the schedule) it needs the hosted
+    # matrix too.
+    needs: [lint, test, lisp, test-hosted]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 1
@@ -224,10 +242,15 @@ jobs:
           for pair in \
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
-            "lisp:${{ needs.lisp.result }}"
+            "lisp:${{ needs.lisp.result }}" \
+            "test-hosted:${{ needs.test-hosted.result }}"
           do
             job="${pair%:*}"; result="${pair##*:}"
             echo "$result	$job"
-            [ "$result" = "success" ] || bad=$((bad + 1))
+            case "$result" in
+              success) ;;
+              skipped) [ "$job" = "test-hosted" ] || bad=$((bad + 1)) ;;
+              *) bad=$((bad + 1)) ;;
+            esac
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }

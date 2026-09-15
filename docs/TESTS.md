@@ -2,6 +2,10 @@
 
 Every `$` line under a `### First run` heading below is run by a test against the fixture named beside it, and what the tool prints is compared with what is written here by SHAPE: the two-token event prefix and the field names in order, per [docs/ONBOARDING.md](ONBOARDING.md) point 5(c). The values are deliberately not compared, so that this file stays a document instead of becoming a fixture -- but every block below was produced by RUNNING the tool, so the values are a run's own and not anybody's memory of one. [docs/CLI.md](CLI.md) explains the tools; this file is what they do today. Change a tool, change this file in the same commit, or the test says so.
 
+## Who runs CI
+
+Pull requests run only on the self-hosted runners -- the Linux x64 `space` box and the macOS arm64 `studio` box, four each -- across a package matrix fanned out in parallel so all eight stay busy and nothing runs serially. Those self-hosted jobs carry a fork guard and never run fork code on our machines. The GitHub-hosted runners (Ubuntu, macOS, Windows) run only on push to `main` and the nightly schedule, with the full race suite; branch work is checked locally and is re-checked when it merges. `ci-ok` is the one required check, and it aggregates the self-hosted matrix on a pull request and adds the hosted matrix on `main`.
+
 ## nova-bus
 
 Fixture: `cmd/nova-bus/testdata/example-bus`, copied out and given a repository of its own, with a bare repository beside it as `origin`. That is what the example's own README tells a reader to do and what the tool requires — every git-reading verb refuses a `--bus` that is not its repository's root, because git reports changed paths from the root and a bus one directory down would report an empty change set over unread notes. `cmd/nova-bus/firstrun_test.go` builds both in `t.TempDir()`, so every push below lands in a bare repository on this disk and no line here reaches a network. A real bus is a **private** repository; this one is three participants and four notes, small enough to read in a sitting.
