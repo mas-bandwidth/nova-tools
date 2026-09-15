@@ -20,9 +20,12 @@ import (
 // lines, exactly as strict as the shape they assert and nothing more.
 //
 // Three invariants:
-//   (a) every job in ci.yml declares timeout-minutes, and none exceeds 2 — the
-//       aggregate ci-ok may be 1 — so the CL tier cannot silently exceed the
-//       budget;
+//   (a) every job in ci.yml declares timeout-minutes, and no job ON THE CL PATH
+//       exceeds 2 — the aggregate ci-ok may be 1 — so the CL tier cannot
+//       silently exceed the budget. A job whose `if:` runs it only on push to
+//       main and on the nightly schedule is not on the CL path: no pull request
+//       waits on it to merge, so the two-minute law does not reach it. It must
+//       still declare a ceiling, which is what (a) checks for every job;
 //   (b) every job name that left ci.yml in the split is present in the
 //       certification workflow by the same name, and certification-ok needs
 //       every one of them, so the split deleted nothing;
@@ -34,6 +37,14 @@ var jobKeyRe = regexp.MustCompile(`^  ([a-zA-Z0-9_-]+):$`)
 
 // timeoutRe matches a timeout-minutes line at four spaces.
 var timeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*(\d+)$`)
+
+// offCLPathRe matches the `if:` guard that runs a job ONLY on push to main and
+// on the nightly schedule. Such a job cannot run on a pull_request, so nothing
+// waits on it to merge and the two-minute CL budget does not apply: it is the
+// expensive tier — the GitHub-hosted full suite — deliberately off the fast
+// path. Every other job in ci.yml is on the CL path by default; the exemption
+// has to be written into the workflow as that guard, not assumed here.
+var offCLPathRe = regexp.MustCompile(`github\.event_name == 'push' \|\| github\.event_name == 'schedule'`)
 
 // usesRe matches an action reference pinned by its 40-hex commit SHA.
 var usesRe = regexp.MustCompile(`uses:\s*([^/\s]+/[^@\s]+)@([0-9a-fA-F]{40})`)
@@ -53,10 +64,17 @@ func TestCLTierJobsStayWithinTheBudget(t *testing.T) {
 		t.Fatal("no jobs parsed from ci.yml; the parser is looking in the wrong place")
 	}
 	timeouts := jobTimeouts(src)
+	offPath := jobsOffTheCLPath(src)
 	for _, name := range names {
 		mins, ok := timeouts[name]
 		if !ok {
-			t.Errorf("CL-tier job %q has no timeout-minutes; the per-job cap cannot be guarded on a job that does not declare one", name)
+			t.Errorf("job %q has no timeout-minutes; the per-job cap cannot be guarded on a job that does not declare one", name)
+			continue
+		}
+		if offPath[name] {
+			// Guarded to push-to-main and the nightly schedule, so no pull
+			// request waits on it and it is not in the CL budget. It did
+			// declare a ceiling, which is the part checked just above.
 			continue
 		}
 		// This pins the per-job CAP only. timeout-minutes is a ceiling on one
@@ -155,6 +173,29 @@ func jobTimeouts(src string) map[string]int {
 			if err == nil {
 				out[cur] = n
 			}
+		}
+	}
+	return out
+}
+
+// jobsOffTheCLPath returns the jobs whose `if:` guard runs them only on push to
+// main and on the nightly schedule. It reads the workflow as text, like the rest
+// of this file: the guard is matched by its exact shape, so a job that wants out
+// of the two-minute budget has to carry that guard verbatim and mention no
+// pull_request of its own.
+func jobsOffTheCLPath(src string) map[string]bool {
+	out := make(map[string]bool)
+	cur := ""
+	for _, line := range strings.Split(src, "\n") {
+		if m := jobKeyRe.FindStringSubmatch(line); m != nil {
+			cur = m[1]
+			continue
+		}
+		if cur == "" || !strings.HasPrefix(line, "    if:") {
+			continue
+		}
+		if offCLPathRe.MatchString(line) && !strings.Contains(line, "pull_request") {
+			out[cur] = true
 		}
 	}
 	return out

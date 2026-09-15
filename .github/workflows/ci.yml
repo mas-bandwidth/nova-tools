@@ -59,7 +59,7 @@ jobs:
     # this is a self-hosted Linux job, guarded so fork code never runs here.
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, space]
-    timeout-minutes: 10
+    timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -123,7 +123,7 @@ jobs:
     # runners stay busy in parallel.
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, space]
-    timeout-minutes: 10
+    timeout-minutes: 2
     outputs:
       packages: ${{ steps.list.outputs.packages }}
     steps:
@@ -158,40 +158,41 @@ jobs:
           # as a label array: a runs-on expression must resolve to a string, so the
           # test job composes its label list per leg.
 
-          # One entry per ./cmd/<tool>: a tool is a job of its own, so the
-          # slowest tool is the whole of its leg.
-          cmds=()
-          for d in cmd/*/; do
-            cmds+=("${d%/}")
-          done
+          # EIGHT GROUPS, and eight is the whole of the tuning. ./cmd/* and
+          # ./internal/... go into one list and are dealt round-robin into at
+          # most NGROUPS groups; each group is then scheduled on BOTH a space
+          # runner and a studio runner. That is 2*NGROUPS legs for 4+4 machines
+          # — one wave per platform — and it is the reason the cap exists. A
+          # leg per package instead reads like more parallelism and is not: 38
+          # packages is 76 legs queueing on 8 machines, a serial queue wearing a
+          # matrix's clothes, measured at over eleven minutes in run
+          # 35018437149 for a tier whose budget is two.
+          NGROUPS=8
 
-          # ./internal/... grouped round-robin into at most eight groups. A
-          # group is a leg, so this is a TUNING number: it caps the fan-out so
-          # the 4+4 runners stay busy, and a package added tomorrow lands in a
-          # group the moment it exists.
-          internal=()
+          all=()
           while read -r pkg; do
             [ -n "$pkg" ] || continue
-            internal+=("${pkg#github.com/mas-bandwidth/nova-tools/}")
-          done < <(go list ./internal/...)
+            all+=("./${pkg#github.com/mas-bandwidth/nova-tools/}")
+          done < <(go list ./cmd/... ./internal/...)
 
-          NGROUPS=8
+          [ "${#all[@]}" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
+
           declare -a grp
-          for ((i=0; i<${#internal[@]}; i++)); do
+          for ((i=0; i<${#all[@]}; i++)); do
             g=$(( i % NGROUPS ))
-            grp[$g]+=" ./${internal[$i]}"
+            grp[$g]+=" ${all[$i]}"
           done
 
+          # The leg name carries its platform. Two legs sharing one name is two
+          # checks GitHub reports under the same title, which is a green and a
+          # red that cannot be told apart on the PR.
           entries=()
-          for cmd in "${cmds[@]}"; do
-            entries+=("{\"name\":\"$cmd\",\"packages\":\"./$cmd\",\"os\":\"linux\",\"arch\":\"x64\",\"group\":\"space\"}")
-            entries+=("{\"name\":\"$cmd\",\"packages\":\"./$cmd\",\"os\":\"macos\",\"arch\":\"arm64\",\"group\":\"studio\"}")
-          done
           for ((g=0; g<NGROUPS; g++)); do
             [ -n "${grp[$g]:-}" ] || continue
             packages="${grp[$g]# }"
-            entries+=("{\"name\":\"internal $((g+1))/$NGROUPS\",\"packages\":\"$packages\",\"os\":\"linux\",\"arch\":\"x64\",\"group\":\"space\"}")
-            entries+=("{\"name\":\"internal $((g+1))/$NGROUPS\",\"packages\":\"$packages\",\"os\":\"macos\",\"arch\":\"arm64\",\"group\":\"studio\"}")
+            n=$((g + 1))
+            entries+=("{\"name\":\"$n/$NGROUPS space\",\"packages\":\"$packages\",\"os\":\"linux\",\"arch\":\"x64\",\"group\":\"space\"}")
+            entries+=("{\"name\":\"$n/$NGROUPS studio\",\"packages\":\"$packages\",\"os\":\"macos\",\"arch\":\"arm64\",\"group\":\"studio\"}")
           done
 
           [ "${#entries[@]}" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
@@ -218,7 +219,7 @@ jobs:
     # must resolve to a string, not to an array, so the matrix cannot hand over a
     # label list as one value.
     runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
-    timeout-minutes: 10
+    timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -313,7 +314,7 @@ jobs:
     # self-hosted job is.
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, space]
-    timeout-minutes: 10
+    timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -357,7 +358,7 @@ jobs:
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
-    timeout-minutes: 5
+    timeout-minutes: 1
     steps:
       - name: every CL-tier job succeeded (pull request or manual)
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
