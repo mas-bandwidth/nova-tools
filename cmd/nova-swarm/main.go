@@ -372,8 +372,17 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	template := f.fs.String("template", "", "")
 	deadline := f.fs.String("deadline", "", "")
 	maxInput := f.fs.Int("max-input", 0, "")
+	// The scatter/wait/gather half (SPEC-SWARM.md "Batch: scatter, wait, gather"): one id,
+	// one deadline held by the machinery, one runner process per card, one bounded packet.
+	cards := f.fs.String("cards", "", "")
+	runner := f.fs.String("runner", "", "")
+	id := f.fs.String("id", "", "")
+	root := f.fs.String("root", "", "")
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	if *cards != "" {
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, stdout, stderr)
 	}
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	f.want(*tasks, "tasks", "a directory holding one task file per job")
@@ -438,6 +447,35 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	pending, _ := p.List(swarm.Pending)
 	fmt.Fprintf(stdout, "BATCH OK id=%s tasks=%d pending=%d\n", oneline.Field(batchID), len(all), len(pending))
 	return 0
+}
+
+// cmdBatchGather is the scatter/wait/gather half of `batch`, entered when --cards names a
+// TSV. It has no pool and no admission queue: it starts one runner process per card, waits
+// until they all end or the batch's deadline, and folds every card's RESULT.md into one
+// bounded packet.
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, stdout, stderr io.Writer) int {
+	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
+	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
+	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
+	f.want(runner, "runner", "the command to start once per card, given label slot model card-path root as arguments")
+	f.want(root, "root", "the directory a card's RESULT.md hangs under (<root>/<slot>/jobs/<label>/RESULT.md)")
+	seconds := 0
+	if deadline != "" {
+		n, err := parseInt(deadline)
+		if err != nil || n < 1 {
+			f.add(fmt.Sprintf("--deadline wants a whole number of seconds, got %q; a batch whose deadline is not a wait is a typo", deadline))
+		} else {
+			seconds = n
+		}
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return swarm.Batch(swarm.BatchInput{
+		ID: id, Deadline: time.Duration(seconds) * time.Second,
+		Cards: cards, Root: root, Runner: runner,
+		Stdout: stdout, Stderr: stderr,
+	})
 }
 
 func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
