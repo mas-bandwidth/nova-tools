@@ -63,6 +63,9 @@ card-smoke-mc	1	inception/mercury-2.5	/path/to/cards/card-mercury.md
 card-smoke-ds	2	opencode/deepseek-v4-flash	/path/to/cards/card-deepseek.md
 ```
 
+**Card convention**: Line 1 of the card file is the RESULT contract line and `RESULT.md` line 1 must equal it byte-for-byte; cards for DeepSeek models must use numbered STEPs (practice 17) or admission refuses them.
+
+
 ### Runner Script (`batch-runner.sh`)
 
 The runner executable receives five positional arguments:
@@ -146,7 +149,7 @@ card-smoke-ds PASS: pwd verified and model is opencode/deepseek-v4-flash
 
 ### The RESULT.md Contract
 
-1. **Line 1**: Must match the card's contract line byte-for-byte (typically line 1 of the card text).
+1. **Line 1**: Line 1 of the card file is the RESULT contract line and `RESULT.md` line 1 must equal it byte-for-byte; admission and gather refuse any mismatch.
 2. **Line 2**: The disposition line (e.g. `PASS: ...`, `CLEAR: ...`, `HOLD: ...`).
 3. **Lines 3+**: Evidence lines, bounded by `--max` (default 20 lines).
 

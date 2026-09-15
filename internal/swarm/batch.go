@@ -256,7 +256,7 @@ func Batch(in BatchInput) int {
 	for i, c := range cards {
 		rows[i].label = c.label
 		rows[i].slot = c.slot
-		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "usage.tsv"))
+		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(cardUsagePath(in.Root, c.slot, c.label))
 		totalIn += rows[i].in
 		totalOut += rows[i].out
 		total += rows[i].usd
@@ -404,6 +404,16 @@ func logSize(path string) int64 {
 		return 0
 	}
 	return fi.Size()
+}
+
+// cardUsagePath resolves one card's usage.tsv: the job directory beside RESULT.md first,
+// then the slot directory fallback (lesson 24: the BATCH line sums in/out/usd from the usage rows).
+func cardUsagePath(root string, slot int, label string) string {
+	jobPath := filepath.Join(root, strconv.Itoa(slot), "jobs", label, "usage.tsv")
+	if _, err := os.Stat(jobPath); err == nil {
+		return jobPath
+	}
+	return filepath.Join(root, strconv.Itoa(slot), "usage.tsv")
 }
 
 // readCardUsage reads one card's usage.tsv -- the native run's header-plus-row -- and
