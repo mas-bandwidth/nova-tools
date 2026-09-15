@@ -1,0 +1,196 @@
+package swarm
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// The batch tests drive scatter/wait/gather with a fake runner: a shell script the test
+// writes into a temp directory, one process per card, exactly what a real harness stands in
+// for. The runner is handed label, slot, model, card path and root as arguments, and it
+// publishes RESULT.md under <root>/<slot>/jobs/<label>/RESULT.md the way a worker does:
+// line 1 is the contract (line 1 of the card's text) and line 2 is the disposition.
+
+// fakeRunner writes a runner script that publishes the first two lines of a card as
+// RESULT.md, unless the card's second line is the word MISSING -- which stands for a worker
+// that produced no result at all.
+func fakeRunner(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "runner.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"path=\"$root/$slot/jobs/$label/RESULT.md\"\n" +
+		"mkdir -p \"$(dirname \"$path\")\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"if [ \"$line2\" = \"MISSING\" ]; then exit 0; fi\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$path\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeCard(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeCards(t *testing.T, dir string, cards [][2]string) string {
+	t.Helper()
+	var b strings.Builder
+	for i, c := range cards {
+		path := writeCard(t, dir, c[0]+".card", c[1])
+		b.WriteString(c[0] + "\t" + itoa(i+1) + "\tmodel\t" + path + "\n")
+	}
+	path := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) (int, string, string) {
+	t.Helper()
+	var out, errb bytes.Buffer
+	code := Batch(BatchInput{
+		ID: "B1", Deadline: deadline, Cards: cards, Root: root, Runner: runner,
+		Stdout: &out, Stderr: &errb,
+	})
+	return code, out.String(), errb.String()
+}
+
+func TestBatchGathersLine2(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\ndone and clean"},
+	})
+	runner := fakeRunner(t, dir)
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 0 {
+		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "BATCH B1 n=2 done=2 abstain=0 usd=0.0000") {
+		t.Fatalf("the packet's first line folds the counts:\n%s", out)
+	}
+	if !strings.Contains(out, "a all green") || !strings.Contains(out, "b done and clean") {
+		t.Fatalf("line 2 of each card is gathered verbatim:\n%s", out)
+	}
+}
+
+func TestBatchAbstainsMissingResult(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\nMISSING"},
+	})
+	runner := fakeRunner(t, dir)
+	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch with an abstain exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1") {
+		t.Fatalf("the missing result is an abstain row:\n%s", out)
+	}
+	if !strings.Contains(out, "b abstain") {
+		t.Fatalf("an abstained card is named, never folded:\n%s", out)
+	}
+}
+
+func TestBatchAbstainsWrongLine1(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A runner that writes a result whose line 1 is NOT the contract line: a stranger's card.
+	runner := filepath.Join(dir, "wrong.sh")
+	body := "#!/bin/sh\nmkdir -p \"$5/$2/jobs/$1\"\nprintf '%s\\n%s\\n' \"RESULT: someone-else\" \"all green\" > \"$5/$2/jobs/$1/RESULT.md\"\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 1 {
+		t.Fatalf("a wrong line 1 exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1") {
+		t.Fatalf("a differing contract line is refused, not folded:\n%s", out)
+	}
+}
+
+func TestBatchKillsAtDeadline(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A runner that sleeps past the deadline and publishes nothing.
+	runner := filepath.Join(dir, "slow.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	code, out, _ := runBatch(t, tsv, root, runner, 1*time.Second)
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("the wait ends at the deadline, it does not wait for the straggler")
+	}
+	if code != 1 {
+		t.Fatalf("a batch whose only card is killed at the deadline exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1") {
+		t.Fatalf("a killed card is an abstain, never a hang:\n%s", out)
+	}
+}
+
+func TestBatchOutputBounded(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	cards := make([][2]string, 20)
+	for i := range cards {
+		label := string(rune('a' + i))
+		cards[i] = [2]string{label, "RESULT: " + label + "\nHOLD evidence " + label}
+	}
+	tsv := writeCards(t, dir, cards)
+	runner := fakeRunner(t, dir)
+	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch that holds exits 1, got %d", code)
+	}
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(lines) > len(cards)+12 {
+		t.Fatalf("the packet is bounded at n+12 lines: got %d lines for n=%d:\n%s", len(lines), len(cards), out)
+	}
+	if !strings.Contains(out, "HOLD:") {
+		t.Fatalf("a line 2 holding HOLD produces a HOLD line:\n%s", out)
+	}
+	holds := 0
+	for _, l := range lines {
+		if strings.HasPrefix(l, "HOLD:") {
+			holds++
+		}
+	}
+	if holds > 11 {
+		t.Fatalf("HOLD lines are capped: got %d", holds)
+	}
+	if !strings.HasPrefix(out, "BATCH B1 n=20 done=20 abstain=0") {
+		t.Fatalf("the BATCH line names the counts:\n%s", out)
+	}
+}
