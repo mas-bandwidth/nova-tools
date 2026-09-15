@@ -135,14 +135,17 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     `read`, `<title>`, `read`) to `<root>/next.tsv`, which the next `pool` reads after
     `queue.tsv` and before the sources. Reads go by verb, through cards, like everything
     else; a PR nobody is asked to read is a PR that waits.
-14. **An abstain is a prompt defect; it is written down and never retried as is.** For every
-    `ABSTAIN` row and every card with no `RESULT.md`, `harvest` files nothing, counts it
-    in `abstain=<n>`, and appends to `<root>/retry.tsv`: `label`, `card path`, and the last
-    line of `<job>/harness.log` that carries `permission`, `denied`, `refused` or `REFUSED`
-    (else the log's last line), bounded to one line. `retry.tsv` is a person's inbox: the
-    card is rewritten, the row's `seen.tsv` state becomes `retry`, and only then does `pool`
-    pick the item up again (rule 2). No automatic requeue, no backoff, no second try of the
-    same bytes ([WORKER-CARDS.md](WORKER-CARDS.md), practice 17's holder: *fix the prompt*).
+14. **An abstain is requeued at most once, under a new card number, then escalated.** For
+    every `ABSTAIN` row and every card with no `RESULT.md`, `harvest` counts it in
+    `abstain=<n>` and triages it by its reason token as the manager does (#587): a first
+    abstain is requeued once under a new number on the other bench, the attempt riding on
+    the card; a second abstain of the same item is one escalation and a row in
+    `<root>/retry.tsv` — `label`, `card path`, and the last line of `<job>/harness.log` that
+    carries `permission`, `denied`, `refused` or `REFUSED` (else the log's last line),
+    bounded to one line — never a third send. `retry.tsv` is a person's inbox: the card is
+    rewritten, the row's `seen.tsv` state becomes `retry`, and only then does `pool` pick
+    the item up again (rule 2). An abstain is a prompt defect
+    ([WORKER-CARDS.md](WORKER-CARDS.md), practice 17's holder: *fix the prompt*).
 15. **Harvest pulses again, queue first.** After the counts, `harvest` runs `pool`, `cut`
     and `launch --queue` in that order, with `queue.tsv` rows first, then `next.tsv`, then
     the sources, and prints the next `PULSE` line as its own last line. When the pool and the
@@ -286,9 +289,10 @@ depth and headroom, never from slot count alone.
    #587); the coordinator writes queues ahead, so the loop is never starved by the window.
    Replay: `pool-refills-to-floor`.
 3. **Fill the machine, never oversaturate it.** Per tick, `launch` starts at most
-   `cores x 1.25 - load` cards on a bench and never more than the bench's width, a measured
-   power of two (SPEC-SWARM, **Benches**, `bench size`, #528); a loaded or less capable bench
-   drops down by its load without changing its width. `PULSE WIDTH` gains `headroom=<n>`
+   `cores x 1.5 - load` cards on a bench, never more than `cores` in one tick and never more
+   than the bench's width, a measured power of two (SPEC-SWARM, **Benches**, `bench size`,
+   #528; 1.25 was the first setting, Glenn raised it: be aggressive); a loaded or less
+   capable bench drops down by its load without changing its width. `PULSE WIDTH` gains `headroom=<n>`
    per bench.
 4. **A gated card launches itself.** A card carrying `AFTER: PR<n> merged` stays `gated` on
    the `QUEUE` line and is launched by the first cycle in which `gh` reports that PR merged —
@@ -383,9 +387,9 @@ after line 2. `<head>` is the repo's default-branch head at cut time, read once 
 - **No cross-repo dependency graph.** Every card is one bounded item on one repo at one head;
   a card that needs another card's PR merged first is a card that is not bounded yet, and it
   waits in an issue until it is.
-- **No retry without a rewritten card.** A stalled or abstained card is a prompt defect
-  (rule 14): `retry.tsv` names it and the harness's last refusal, a person rewrites it, and
-  the rewritten card is a new candidate. The same bytes never go out twice.
+- **No third try.** A card abstains, is requeued once under a new number (rule 14, #587),
+  and a second abstain is a person's: `retry.tsv` names it and the harness's last refusal, a
+  person rewrites it, and the rewritten card is a new candidate.
 - **No model call, no summary, no judgement.** It never reads a report body, never opens a
   transcript, never scores a finding. The swarm's packet is the whole read.
 - **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `--then`;
@@ -501,10 +505,11 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
     <branch>:<branch>`, open exactly one draft PR whose body is the `RESULT.md` lines, and
     print `pushed=1 prs=1 mismatch=2`, exit 1; a bare `git push` in the fixture's argv log is
     the mutation that matters.
-14. `harvest-abstain-goes-to-retry`: one `ABSTAIN -- idle 300s` row and one card with no
-    `RESULT.md` yield `abstain=2 retry=2`, two `retry.tsv` rows each carrying the card path
-    and the harness log's last `permission`/`refused` line, no push, no PR, no
-    `nova-swarm requeue` in the argv log, `seen.tsv` rows `retry`.
+14. `harvest-abstain-goes-to-retry`: one `ABSTAIN reason=idle=300` row and one card with no
+    `RESULT.md`, each on its first attempt, yield `abstain=2` and two requeues under new
+    numbers on the other bench; the same two abstaining again yield `retry=2`, two
+    `retry.tsv` rows each carrying the card path and the harness log's last
+    `permission`/`refused` line, no push, no PR, no third batch argv, `seen.tsv` rows `retry`.
 15. `harvest-cuts-read-card-per-pr`: every PR opened yields one row in `next.tsv` with
     template `read`, and the next `pool` counts it in `next=<n>` after `queue.tsv` rows.
 16. `harvest-relaunches-queue-first`: `queue.tsv` with three rows, `next.tsv` with one, a

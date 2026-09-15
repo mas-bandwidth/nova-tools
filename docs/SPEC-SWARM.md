@@ -969,10 +969,12 @@ is absent from the job but present under `repo/`, or one directory below it, it
 is **copied up into the job** and the batch prints
 
 ```
-SPACE NOTE RESULT.md copied up from <path>
+BATCH NOTE <label> RESULT.md copied up from <path>
 ```
 
-so the card's mistake is on the record and its work is not lost to it. A pull
+so the card's mistake is on the record and its work is not lost to it (#581
+landed this line as `SPACE NOTE …`; a host word in an output token is wrong,
+and it is renamed by #602). A pull
 that cannot reach the bench at all — `ssh`'s own exit 255, not a remote command
 saying no — scores the card `ABSTAIN reason=bench-unreachable`; a bench that
 answers and holds no result is the ordinary missing-result abstain and not that.
@@ -1027,9 +1029,10 @@ scales — cards per minute at `W` is at least `1.5 x` cards per minute at
 columns — `width`, `measured` (a stamp), `version` (the tool's sha8) — a row
 without them is unmeasured and fills by cores as today; the adopt step
 re-measures whenever the tool version or the machine changes. A batch fills a
-bench up to its width and, per tick, launches at most `cores x 1.25 - load`
-cards — the bench's **headroom** — so a loaded or less capable bench drops
-down without changing its width. `bench size` ends with one line:
+bench up to its width and, per tick, launches at most `cores x 1.5 - load`
+cards, never more than `cores` in one tick — the bench's **headroom** (1.25 was
+the first setting; Glenn raised it: be aggressive) — so a loaded or less
+capable bench drops down without changing its width. `bench size` ends with one line:
 
 ```
 BENCH WIDTH bench=<name> width=<W> cores=<n> rows=<n>
@@ -1106,8 +1109,8 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
     waits, then copies, and each of the three files is its own `scp` naming one file, with no
     filter and no pattern on any argv (`TestPullWaitsForResult`).
 17. `pull-copies-result-up-from-repo` — a card that wrote `RESULT.md` under `repo/` one level
-    down has it copied up into the job, pulled back, and `SPACE NOTE RESULT.md copied up from
-    <path>` printed (`TestPullCopiesResultUpFromRepo`).
+    down has it copied up into the job, pulled back, and `BATCH NOTE <label> RESULT.md copied
+    up from <path>` printed (`TestPullCopiesResultUpFromRepo`; #602 renames #581's line).
 18. `pull-scores-bench-unreachable` — a bench whose `ssh` exits 255 scores its card `ABSTAIN
     reason=bench-unreachable`, not a plain abstain and not a stall
     (`TestPullScoresBenchUnreachable`).
@@ -1118,8 +1121,9 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
     a `version` unequal to the running tool's is re-measured by the adopt step.
 21. `launch-fills-to-width` — a bench with `width=8`, 16 cores and no load is given eight
     cards from a batch of twelve, and the four wait in the queue rather than a ninth slot.
-22. `launch-drops-down-under-load` — the same bench at load 6 is given `16 x 1.25 - 6 = 14`
-    capped at its width 8; at load 18 it is given none, its width unchanged on the row.
+22. `launch-drops-down-under-load` — the same bench at load 6 is given `16 x 1.5 - 6 = 18`,
+    capped at `cores` 16 and then at its width 8; at load 20 it is given four; at load 24 it
+    is given none, its width unchanged on the row.
 
 ## Exit codes
 
