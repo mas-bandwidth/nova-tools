@@ -63,6 +63,8 @@
    #:node-open-count
    #:node-branch
    #:node-state
+   #:node-required-count
+   #:node-required-open
    #:root-digest
    #:state-canonical-form
    #:reconstruct-state
