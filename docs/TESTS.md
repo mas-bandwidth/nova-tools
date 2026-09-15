@@ -503,3 +503,18 @@ REPORT at=2026-09-12T17:29:33Z file=cmd/nova-version/testdata/example.tsv host=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-version/testdata/example.tsv
 ```
+
+## nova-pulse
+
+### First run
+
+From the nova-tools checkout, against the pool source fixture
+`cmd/nova-pulse/testdata/`: a `sources.tsv` declaring one `roadmap` source, and
+that roadmap — two cells naming a card and one naming none. `pool` reads the
+roadmap, skips the cell without a card, and writes the two candidates it found
+to `./root/pool.tsv`. No network, no model call.
+
+```text
+$ nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
+POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
+```

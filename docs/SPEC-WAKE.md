@@ -344,6 +344,14 @@ rather than its commit time, and where its stamp is newer than the cursor commit
 the friend reads `source=bus-beat` — the signal a merely-waiting line still
 writes every poll.
 
+**A config file for the repeated flags.** Before the flags, this tool reads
+`<cwd>/.nova-wake/config`, or the file named by `NOVA_WAKE_CONFIG`, as `key=value`
+lines: `bus=` for every verb, `window=` and `max=` for `awake`, and `state=` and
+`as=` for `watch` and `quickstart` — the keys the coordinator retypes every
+turn. A flag given on the command line wins,
+nothing is printed for the read, and a required value named by neither the file
+nor a flag is the same refusal, now naming the config file as a second remedy.
+
 **At least one source, named.** A `watch` with no `--bus`, no `--entry`, no
 `--reports`, no `--pr`, no `--owned-prs`, no `--run`, no `--ref` and no
 `--lock` (amended 2026-09-13, draft 2) is exit 2 and `refusing to guess`: a watcher with nothing to watch is

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -15,9 +16,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
-var version string
+const usage = `nova-pulse — one tool, five verbs, no model call
 
-const usage = `nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
+nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
@@ -38,6 +39,16 @@ example:
 ./cards.tsv and . there are a pulse root of your own; cmd/nova-pulse/testdata/example-pulse
 in this repo is a fixture the size of a first run, and every line above is run
 against it by the tests.
+
+example:
+  nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
+
+cmd/nova-pulse/testdata/sources.tsv there is a one-line source: a roadmap file
+with two cells that name a card and one that names none, declared to the pool.
+The line above runs "nova-pulse pool" from the repo root — it reads the roadmap,
+skips the cell without a card, and writes the two candidates to ./root/pool.tsv.
+That is a whole first run of the pool verb, no network and no model call, and
+docs/TESTS.md carries the transcript it prints.
 `
 
 // refuse is what an unusable invocation costs: one line naming what was wrong and the door
@@ -51,29 +62,57 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) 
 
 func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given")
+		fmt.Fprintf(stderr, "nova-pulse: no verb given; run: nova-pulse help\n")
+		return 2
 	}
-	switch args[0] {
+	cmd, rest := args[0], args[1:]
+	switch cmd {
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
-		fmt.Fprintln(stdout, oneline.Field(version))
+		fmt.Fprintln(stdout, "nova-pulse dev")
 		return 0
+	case "pool":
+		return cmdPool(rest, stdout, stderr)
 	case "launch":
-		return cmdLaunch(args[1:], stdout, stderr, now)
+		return cmdLaunch(rest, stdout, stderr, now)
+	case "cut", "harvest", "width":
+		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
+		return 2
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
+	fmt.Fprintf(stderr, "nova-pulse: unknown subcommand %q\n", cmd)
+	return 2
 }
 
-// flags is launch's flag set with package flag's two mouths closed, matching the house shape.
+// flags is one verb's flag set with its usage dump discarded.
 type flags struct {
+	verb     string
 	fs       *flag.FlagSet
 	problems []string
 }
 
+func newFlags(verb string) *flags {
+	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	return &flags{verb: verb, fs: fs}
+}
+
+func (f *flags) parse(args []string, stderr io.Writer) bool {
+	if err := f.fs.Parse(args); err != nil {
+		fmt.Fprintf(stderr, "nova-pulse %s: %s\n", f.verb, err)
+		return false
+	}
+	if n := f.fs.NArg(); n > 0 {
+		fmt.Fprintf(stderr, "nova-pulse %s: takes no positional arguments, got %d (flags come before arguments)\n", f.verb, n)
+		return false
+	}
+	return true
+}
+
 func (f *flags) want(value, name, wants string) {
-	if value == "" {
+	if strings.TrimSpace(value) == "" {
 		f.problems = append(f.problems, fmt.Sprintf("--%s is required; it wants %s; refusing to guess", name, wants))
 	}
 }
@@ -82,15 +121,40 @@ func (f *flags) add(problem string) { f.problems = append(f.problems, problem) }
 
 func (f *flags) refused(stderr io.Writer) bool {
 	for _, p := range f.problems {
-		fmt.Fprintf(stderr, "nova-pulse launch: %s\n", oneline.Escape(p))
+		fmt.Fprintf(stderr, "nova-pulse %s: %s\n", f.verb, p)
 	}
 	return len(f.problems) > 0
 }
 
+func cmdPool(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("pool")
+	sources := f.fs.String("sources", "", "")
+	root := f.fs.String("root", "", "")
+	out := f.fs.String("out", "", "")
+	timeout := f.fs.Int("timeout", 120, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*sources, "sources", "the declared sources file: kind, locator, template, one per line")
+	f.want(*root, "root", "the directory holding seen.tsv and the pool state")
+	if *timeout < 1 {
+		f.problems = append(f.problems, fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.Pool(pulse.PoolInput{
+		Sources: *sources,
+		Root:    *root,
+		Out:     *out,
+		Timeout: time.Duration(*timeout) * time.Second,
+		Stdout:  stdout,
+		Stderr:  stderr,
+	})
+}
+
 func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := &flags{fs: flag.NewFlagSet("launch", flag.ContinueOnError)}
-	f.fs.SetOutput(io.Discard)
-	f.fs.Usage = func() {}
+	f := newFlags("launch")
 	cards := f.fs.String("cards", "", "")
 	root := f.fs.String("root", "", "")
 	slots := f.fs.Int("slots", 0, "")
@@ -98,11 +162,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	queue := f.fs.Bool("queue", false, "")
 	max := f.fs.Int("max", bounded.Default, "")
 
-	if err := f.fs.Parse(args); err != nil {
-		return refuse(stderr, " launch", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	if f.fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "nova-pulse launch: takes no positional arguments, got %d (flags come before arguments)\n", f.fs.NArg())
+	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.want(*cards, "cards", "a cards.tsv of label, slot, model, card path")
