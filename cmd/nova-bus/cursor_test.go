@@ -1610,7 +1610,7 @@ func TestTheLargeListLineFiresPastTheWarnThresholdAndNotAtIt(t *testing.T) {
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 	r = invoke(t, "", append(append([]string{}, plain...), "--advance", "--remote", "origin", "--branch", "main", "--attempts", "3")...).
 		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OPEN carrying=41 heard=0 large=true remedy=inbox --advance")
+		mustContain(t, "stdout", "INBOX OPEN carrying=41 heard=0 large=true remedy=reply or receipt each note, or close --before <instant> as an explicit bulk cutoff")
 	if n := strings.Count(r.stdout, "INBOX OPEN carrying=41 heard="); n != 1 {
 		t.Fatalf("the OPEN line was printed %d times, want 1:\n%s", n, r.stdout)
 	}
@@ -1621,7 +1621,7 @@ func TestTheLargeListLineFiresPastTheWarnThresholdAndNotAtIt(t *testing.T) {
 	invoke(t, "", append(append([]string{}, plain...), "--open-warn", "41")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OPEN carrying=41 heard=0 large=false remedy=inbox --advance")
 	invoke(t, "", append(append([]string{}, plain...), "--open-warn", "0")...).
-		mustCode(t, 0).mustContain(t, "stdout", "INBOX OPEN carrying=41 heard=0 large=true remedy=inbox --advance")
+		mustCode(t, 0).mustContain(t, "stdout", "INBOX OPEN carrying=41 heard=0 large=true remedy=reply or receipt each note, or close --before <instant> as an explicit bulk cutoff")
 	invoke(t, "", append(append([]string{}, plain...), "--open-warn", "-1")...).
 		mustCode(t, 2).mustContain(t, "stderr", "--open-warn counts entries, so it is 0 or more")
 }

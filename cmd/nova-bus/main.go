@@ -1073,9 +1073,10 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 // cmdClose is `close --before`, the whole backlog at once: every open note dated before the
 // stamp is closed by one receipt note each, batched in one commit. It is the other end of
-// the INBOX OPEN `remedy=inbox --advance` line -- `--advance` draws a line past the history
-// and leaves the notes behind it; `close` answers them, each with a Re line that removes it
-// from the reader's open list for good.
+// the INBOX OPEN large-list remedy line -- the normal answer is reply or receipt per note,
+// and `close --before` is the explicit opt-in bulk cutoff: `--advance` draws a line past the
+// history and leaves the notes behind it; `close` answers them, each with a Re line that
+// removes it from the reader's open list for good.
 func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("close")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
@@ -1716,9 +1717,17 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// whole command pasted into it; a reader parsing OPEN could not tell small from large
 	// without knowing the threshold, and the command duplicated every run's own flags. One
 	// line carries both now: `large=` is the sentence, and `remedy=` names the one whole-
-	// backlog way out without spelling a command the caller already built.
-	fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d large=%t remedy=inbox --advance\n",
-		len(res.Open), heard, len(res.Open) > o.openWarn)
+	// backlog way out without spelling a command the caller already built. A large set's
+	// remedy is not `inbox --advance`: that moves the read cursor while the OPEN entries
+	// stay carried, so it loops without resolving anything. Reply or receipt each note is
+	// the normal answer, and `close --before` is the explicit opt-in bulk cutoff.
+	if len(res.Open) > o.openWarn {
+		fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d large=true remedy=%s\n",
+			len(res.Open), heard, remedyLarge)
+	} else {
+		fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d large=false remedy=%s\n",
+			len(res.Open), heard, remedyAdvance)
+	}
 	// LISTING THE CARRIED NOTES IS A CHOICE, and the default is not to. A reader carrying five
 	// hundred notes gets five hundred lines on every run, and the one new note is in the
 	// middle of them -- which is the listing-nobody-reads failure the switch-day line exists
@@ -1744,8 +1753,9 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// growing: `carrying=74` is a number, and a number is not a sentence. The line that
 	// carried 74 was answering every one of those notes by hand -- and none of the answers
 	// carried a Re line, so none of them closed anything, and nothing anywhere said so.
-	// The word for it is now `large=` on the one OPEN line above, and the remedy is a verb:
-	// `nova-bus close --before` receipts a whole backlog in one commit.
+	// The word for it is now `large=` on the one OPEN line above, and the remedy names the
+	// normal answer (reply or receipt each carried note) with `close --before` as the
+	// explicit opt-in bulk cutoff, never `--advance` alone.
 	// THE TWO NUMBERS, and why they are both here under the names they are printed under
 	// elsewhere. `carrying=` on the SCOPE and OPEN lines is the size of the OPEN LIST -- every
 	// entry on it, the heard and the unreadable included -- and `open=` is what is still
@@ -1923,6 +1933,17 @@ const defaultOpenMax = 20
 // what a working line carries between reads and below the seventy-four that broke one, so
 // the line fires while a backlog is still answerable and not after it is hopeless.
 const defaultOpenWarn = 40
+
+// remedyAdvance is the INBOX OPEN `remedy=` for a small list: moving the read cursor past
+// what is already heard is the normal small-list action. It never claims to close carried
+// entries.
+const remedyAdvance = "inbox --advance"
+
+// remedyLarge is the INBOX OPEN `remedy=` for a large carrying set. Reply or receipt is
+// the normal path that actually resolves the carried notes, and `close --before` is named
+// only as the explicit opt-in bulk cutoff -- never `--advance` alone, which loops without
+// resolving anything.
+const remedyLarge = "reply or receipt each note, or close --before <instant> as an explicit bulk cutoff"
 
 // printOpenEntries prints an open list in the order it is listed in -- the notes that carry
 // something, then what has been heard and still owes an answer, then the bare
