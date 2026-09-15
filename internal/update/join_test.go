@@ -456,8 +456,19 @@ func joinWrapper() {
 			b, _ := os.ReadFile(filepath.Join(lane, "INDEX"))
 			return a.ID != "" && bytes.Contains(b, []byte(a.ID))
 		case killAfterAttrs:
+			// The boundary this name marks is the attributes change STAGED, and it is
+			// reached in the instant after `git add` releases .git/index.lock and before
+			// the commit re-locks it to write its own transaction. Observing the staged
+			// file while the tuple lock is absent is the sync point that pins the kill to
+			// that instant: a kill that waited for the staged file alone can instead land
+			// mid-`git commit -- <paths>`, whose partial commit can hold HEAD.lock,
+			// index.lock and next-index-* all at once, and the recovery below is only
+			// guaranteed a staged-but-uncommitted index, never a HEAD the commit
+			// half-advanced. Requiring the lock to be gone keeps the dangerous tail of
+			// that transaction out of the kill window rather than racing it.
+			_, locked := os.Stat(filepath.Join(checkout, ".git", "index.lock"))
 			out, err := exec.Command("git", "-C", checkout, "diff", "--cached", "--name-only").Output()
-			return err == nil && bytes.Contains(out, []byte(".gitattributes"))
+			return err == nil && locked != nil && bytes.Contains(out, []byte(".gitattributes"))
 		case killAfterCmt:
 			h := headOf(checkout)
 			return h != "" && h != baseHead
