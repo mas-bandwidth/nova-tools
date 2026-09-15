@@ -177,6 +177,8 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>
+nova-pulse handoff  --to <name> --root <dir> [--work <nova-work root>] [--max <n>]
+nova-pulse takeover --as <name> --root <dir> [--work <nova-work root>] [--max <n>]
 nova-pulse version
 nova-pulse help
 ```
@@ -185,6 +187,23 @@ Those lines are the string `nova-pulse help` prints, byte for byte. `--timeout <
 120) bounds every `gh`, `git` and `nova-swarm` child, for SPEC-MERGE's reason
 (SPEC-MERGE.md:458). `harvest` takes `--sources` and `--templates` because its last act is
 `pool` and `cut` again (rule 15). There is no `--model`, no `--priority`, no `--retry`.
+
+## Handoff
+
+`handoff --to <name>` and `takeover --as <name>` move the coordinator, not the work. `handoff`
+ends the duty shift (`SHIFT END` line), stops the loop, releases `<root>/queue/OWNER`, and
+writes `<root>/queue/HANDOFF`. It waits out an in-flight harvest — the pulse finishes first —
+and refuses when `nova-wake awake` says the successor is asleep, with that remedy: wake the
+successor, then handoff. It posts one bus note to the successor carrying the record and prints
+`HANDOFF OK`. `takeover --as <name>` refuses when `OWNER` names a live process on a reachable
+host, and takes a stale `OWNER` with one NOTE line; it starts the loop and a duty shift on the
+same queue and prints `TAKEOVER OK`.
+
+Two files under `<root>/queue/` hold the hand. `OWNER`, the lock, has fields `name`, `host`,
+`pid`, `since` while held, and is cleared on release. `HANDOFF`, the record, has fields `to`,
+`width` (the last), `inflight`, `pending`, `escalations`, `benches` (bench→cards rows), `state`.
+When `--work` names a nova-work checkout, `handoff` also moves the coordinator ownership record
+in the tree — generation, token, fencing, the `:handoff` event SPEC-WORK names.
 
 ## Exit codes and the output grammar
 
@@ -207,6 +226,10 @@ HARVEST PR repo=<owner/name> pr=<n> label=<label> branch=<name>
 HARVEST RETRY label=<label> card=<path>: <last permission or refusal line, escaped>
 HARVEST OK id=<id> done=<n> pushed=<n> prs=<n> abstain=<n> mismatch=<n> retry=<n> usd=<sum|-> took=<d>
 HARVEST REFUSED id=<id>: <reason> (<remedy>)
+HANDOFF OK to=<name> inflight=<n> pending=<n> escalations=<n>
+HANDOFF REFUSED: <reason> (<remedy>)
+TAKEOVER OK from=<name> inherited=<inflight>/<pending>/<escalations>
+TAKEOVER REFUSED owner=<name> pid=<n> host=<h> (<remedy>)
 PULSE WIDTH in-flight=<n> free=<n> pool=<n> queued=<n>
 PULSE UNDER-WIDTH pool=<n> free=<n>: launch
 PULSE POOL EMPTY in-flight=<n>
@@ -340,6 +363,19 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
     one open, unleased, unblocked item node yields `work=2`, two `pool.tsv` rows whose `id` is
     the node id, and `candidates=2`; a node that is leased or blocked is nowhere; the id is
     carried on the card's line 1 so `harvest` records the attempt on the node.
+24. `handoff-writes-record-and-note`: `handoff --to stella` with a live shift, a `queue.tsv` of
+    three and one escalation open writes a `HANDOFF` carrying `width`, `inflight`, `pending`,
+    `escalations`, and one bus note to `stella`; `OWNER` is cleared and the loop is stopped.
+25. `handoff-refuses-asleep-successor`: `nova-wake awake` reports `stella` asleep —
+    `HANDOFF REFUSED` naming the successor and the remedy, no record, no note, `OWNER` still held.
+26. `handoff-finishes-harvest-first`: `handoff` called mid-harvest does not interrupt it; it
+    waits, folds the pulse, then writes `HANDOFF` and the `SHIFT END` line.
+27. `takeover-refuses-live-owner`: `OWNER` names a live pid on a reachable host —
+    `TAKEOVER REFUSED owner=<name> pid=<n> host=<h>`, exit 2, nothing started.
+28. `takeover-takes-stale-lock-with-note`: `OWNER` names a dead pid or unreachable host — taken
+    with one NOTE line, then the loop and a duty shift start on the same queue.
+29. `takeover-inherits-queue`: a stale `HANDOFF` with `inflight=2 pending=3 escalations=1`
+    yields `TAKEOVER OK from=<name> inherited=2/3/1` and the queue resumed.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 
