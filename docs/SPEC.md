@@ -2474,6 +2474,7 @@ INBOX OPEN carrying=<n> heard=<m>
 INBOX OPEN listed=<n> and <k> more (--open-max to widen)
 INBOX OPEN carrying=<n> is large; answer with Re: <id>, receipt --note <id>, or start over: <command>
 INBOX UNREADABLE path=<path>: <reason>
+INBOX UNREADABLE count=<n> unchanged=<true|false> first=<path>
 INBOX UNADDRESSED path=<path>: <reason>
 INBOX SWITCH your switch-day line is the date <date>, which hides every note dated <date-1> or earlier; draw it at an instant, once: <command>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
@@ -2625,6 +2626,19 @@ The one file it does not name per run is one dated BEHIND the switch-day line on
 an incremental read: that is history, and it is counted on `INBOX LEGACY`
 instead. A file dated on or after the line, or with no readable date at all, is
 named on every run, and `--full` lists every unreadable file whatever its date.
+`INBOX UNREADABLE count=<n> unchanged=<true|false> first=<path>` is the one
+line an earlier run's unreadable files collapse to on an incremental read that
+found nothing new among them: a carried file nobody can read is not news and
+naming all of them on every poll buries the inbox above them, so the default
+counts them once and names only the first. The per-file `path=` lines still
+print when any of the set is NEW since the cursor -- which is information the
+reader has not been shown -- on a `--full` read, and with `--diagnostics`,
+which asks for the whole picture whatever the default is. `count=` is the
+number of files the collapse covers, `unchanged=true` says none of them moved
+since the cursor, and `first=` names one path so a reader still holding an
+unreadable file has a place to start. `unchanged=` is a boolean in the grammar
+and `false` is the shape a changed set would print, though a changed set prints
+per-file lines instead.
 `INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
 above.
 
