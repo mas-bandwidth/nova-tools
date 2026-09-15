@@ -20,6 +20,16 @@ nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <di
 nova-pulse width   --root <dir> --pool <pool.tsv>
 nova-pulse version
 nova-pulse help
+
+example:
+  nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
+
+cmd/nova-pulse/testdata/sources.tsv there is a one-line source: a roadmap file
+with two cells that name a card and one that names none, declared to the pool.
+The line above runs "nova-pulse pool" from the repo root — it reads the roadmap,
+skips the cell without a card, and writes the two candidates to ./root/pool.tsv.
+That is a whole first run of the pool verb, no network and no model call, and
+docs/TESTS.md carries the transcript it prints.
 `
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) }
