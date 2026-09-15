@@ -134,7 +134,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	}
 	entry := st.Find(id)
 	if entry == nil {
-		return refuse(errOut, "the lane does not hold this entry")
+		return refuse(errOut, "the lane does not hold this entry; add it with nova-merge add --lane <dir> --pr <n> --needs-read (or add-branch --branch <name>)")
 	}
 	repo := filepath.Join(*lane, merge.RepoDir)
 	oldHead := entry.OID

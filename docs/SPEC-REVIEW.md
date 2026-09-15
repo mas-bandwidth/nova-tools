@@ -749,6 +749,7 @@ them apart — `entry=` here against `entries=` there, and disjoint `kind=` sets
 PACKET OK entry=<n-or-name> id=<hex12> head=<sha12> base=<sha12> range=<r> files=<n> hunks=<n> rules=<n> prior=<n> open=<n> bytes=<n> cut=<n> reused=<true|false> out=<path>
 PACKET MORE kind=<prior|fold> shown=<n> total=<t> nova-review packet --lane <dir> … --max 0
 PACKET STALE entry=<n-or-name> asked=<sha12> current=<sha12>: the head moved; build the packet for the current head
+PACKET REFUSED: the lane does not hold this entry; add it with nova-merge add --lane <dir> --pr <n> --needs-read (or add-branch --branch <name>)
 PACKET REUSE asked=<hex12> found=<hex12> file=<path>: that packet was built for another (entry, head, range); build this reader's own
 PACKET FOLD file=<path>: <reason>
 PACKET REFUSED: <reason>
