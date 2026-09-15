@@ -18,7 +18,7 @@ digest and supersession is one atomic envelope through SPEC-WORK.md's own writer
 in-place edit of a shared file; (2) every example is restricted-Lisp data; (3) storage and
 evaluation are bounded by named limits and `applicable` evaluates the whole active set before
 it prints a verdict; (4) the current goal is specified — set, retrieve, update — with its
-witnesses; (5) the incident paragraph is corrected against the bus record.
+witnesses (since folded into SPEC-WORK.md; the section below points); (5) the incident paragraph is corrected against the bus record.
 
 What draft 3 changed, keyed to Stella's review of draft 2 (5673066509): (1) `goal update
 --stop` requests cancellation through the existing `:cancel-requested` transition and never
@@ -361,120 +361,21 @@ restating the arithmetic.
 
 ## The current goal
 
-Glenn (5672006742, *Shared current goal across models*): *"It should be somewhere we could
-store the current goal, like /goal is here, but cross model."* The required operations are
-his and explicit: **set** and **retrieve** the current goal, **update** it as work proceeds,
-across models and harnesses; a model switch loads the same current revision and preserves
-outstanding ownership; status and evidence updates stay distinguishable from objective and
-constraint edits; an old harness state cannot silently overwrite a newer goal, restart
-completed work or discard a stop.
-
-**The goal is a node of the work set, and the current goal is a reference to it.** No new
-record kind holds the objective: the objective, its completion criteria, its constraints, its
-priority and budget, its progress, blockers, ownership, linked work and evidence are what a
-node of O already carries (SPEC-WORK.md, *The data*: `:title`, `:acceptance`, `:deps`,
-`:responsible`, `:links`, its `:lease`, its `:attempt` and `:evidence` events, its derived
-state) — *"reuse the existing work/attempt/accounting records"* (5672006742). What this draft
-adds is the reference: one per coordinator and one for the node, keyed like a note's scope,
-held in the resident set as an index beside `friends` and `models`, written by one event kind,
-`:goal` — `:change` (`:set` or `:clear`), `:scope`, `:goal` (the node id), `:reason`; subject a
-scope, `:node` `(:absent)`, `GOAL OK` prints `goal=<id>` **(Rowan's decision, for review)**.
-A delegated goal keeps its parent/child mapping because it is a node under its parent node:
-the mapping is `:children`, and nothing is copied.
-
-```
-nova-work goal set     --as <name> [--scope <scope>] --goal <node-id> --reason <text> --request <id> --expect <rev>
-nova-work goal show    --as <name> [--scope <scope>] [--snapshot <path>] --max <n>
-nova-work goal update  --as <name> [--scope <scope>] --request <id> --expect <rev> ( --progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text> )
-                       ;; every form writes on the current goal node of the scope and on no other node
-```
-
-**`set`** writes the reference. Refused when the node does not exist; when its disposition is
-closed (done, cancelled, superseded, removed) — an old harness cannot restart completed work
-by pointing at it, and reviving is `event --kind reopen` on a person's word, its own verb and
-its own event; when `--as` is not a configured writer of the scope; and when `--expect` is
-stale. `set` takes no lease and starts nothing: *"ownership and actual execution handles
-remain distinct from the goal record"* (5672006742).
-
-**`show`** is what a newly selected model or harness loads, and it is the whole of what it
-needs: the `GOAL OK` line — `scope=`, `goal=<id>`, `rev=<n>` (the revision the answer is
-evaluated at), `generation=<n>` and `scope-revision=<n>` of the node, `state=`, `owner=<lease
-holder|->`, `stop=<none|requested|cancelled|deferred>`, `constraints=<n>`, `notes=<n>`,
-`outstanding=<n>` — then `GOAL ROW` lines: the objective (`:title` and each `:acceptance`
-criterion with its current verdict), every constraint line and note id `applicable` would
-carry for this coordinator, the progress (evidence events, done and remaining required work
-under the node, by kind, counted), the blockers, the live leases and attempts under it with
-their holders, and the linked work. Rows are capped by `--max` and counted, `GOAL MORE` when
-cut; **the `GOAL OK` fields, the stop, and the constraint rows are never cut** — they print
-before the capped rows, as `applicable`'s verdicts do. A reader with no live session reads the
-published snapshot at its revision and gets the same answer for that revision. Nothing in the
-answer is the conversation it came from (5672006742: *"must not require copying the
-accumulated conversation or guessing whether earlier work stopped"* — the stop is a field).
-
-**`update`** is a thin verb: it names the current goal node so a harness need not know the
-id, and writes the existing event kinds on it — `--progress` a `:transition` or `:evidence`
-event, `--blocked-by` a `:transition :to :blocked`, `--stop` a `:transition :to
-:cancel-requested` with `--reason` — under the same `--expect`. **A stop request is not
-stopped-worker evidence.** `--stop` takes no evidence and observes nothing; it is SPEC-WORK.md's
-own permitted request transition (from `:todo`, `:doing` or `:blocked` to `:cancel-requested`),
-and confirmed cancellation remains SPEC-WORK.md's `event --kind cancel --evidence <pointer>`
-on the node, the one evidence-bearing operation, admitted only from `:cancel-requested`; there
-is no second cancellation mechanism (Stella, 5673066509; SPEC-WORK.md, *States and
-transitions*). While the request is pending, `show` prints `stop=requested` on every harness
-and every build, and a harness that reads it does not resume the work: the only road out of
-`:cancel-requested` other than the confirmed `:cancel` is the explicit withdrawal to `:doing`
-with a reason, by SPEC-WORK.md's table, never a progress update. `update` targets the current
-goal node of the scope and no other; to act on a child, the coordinator either `set`s the
-goal reference to that child first or uses SPEC-WORK.md's `state` and `event` on the child by
-id. **Objective and constraint edits are not `update`**: changing what the goal is, is `accept` (criteria), `dep`, `node` and `correct` on
-the node, each bumping its scope revision or generation by SPEC-WORK.md's own rules, and a
-note supersede for a routing constraint; so a status update and an objective edit are
-different event kinds with different revision effects, and a reader tells them apart from the
-log, never from wording.
-
-**Revision and conflict.** Every `set` and `update` carries `--expect <rev>`, the revision the
-caller read at; a stale expectation is refused `GOAL FAIL …: stale expected=<n> current=<m>`,
-exit 1, nothing written, and the caller re-reads with `show` — which is the *"explicit
-conflict handling"* Glenn asked for and is SPEC-WORK.md's existing rule, not a new one. A
-progress update from a harness that read before a stop is stale by construction, because the
-stop moved the revision; a `set` back to a node that finished is refused by disposition
-whatever the expectation; and there is one writer, so two harnesses never merge. A native
-harness goal feature (a `/goal`) is an adapter: on load it calls `show` and keeps `rev=`; on
-write it calls `set` or `update` with that revision; an adapter that holds no revision writes
-nothing (5672006742: *"native harness goal features may serve as views/adapters"*). A completed
-goal requires evidence against its criteria — the node's `:to :done` names evidence events —
-*"not merely a worker's success claim"* (5672006742), which is SPEC-WORK.md's rule already.
-
-**Three witnesses**, replays in SPEC-WORK.md's list, stated so a test can be written from the
-text and nothing else (Stella, stella-a8da9cb0e0a4):
-
-- `goal-crosses-harness` — harness A, as coordinator C, sets goal G at revision r, writes a
-  `(:coordinator "C")` note with a `:deny` on a made-up model for `:coding`, and requests a
-  stop of G with `update --stop --reason`; harness B, another build, calls `show --as C`
-  against the live session and against the clipped snapshot. Both answers print `goal=G`, a
-  `rev=` at or after every write of A's, `stop=requested` — not `cancelled`: no evidence of a
-  stopped worker has been written — and the same note id and constraint line A wrote, byte for
-  byte; a B `update --progress` that would move G out of `:cancel-requested` is refused by
-  the transition table. A then writes `event --kind cancel --evidence <pointer>` on G, and
-  B's next `show` prints `stop=cancelled`. B copied no conversation.
-- `goal-stale-update-refuses` — A and B both `show` at revision r. A writes progress, r+1;
-  B's `update --progress --expect r` is refused `stale`, the snapshot is unchanged, and B's
-  next `show` prints A's progress. A then `update --stop --reason`, r+2; B's `update
-  --progress --expect r+1` is refused `stale` and B's next `show` prints `stop=requested`; a
-  `--progress` transition at r+2 is refused by the transition table, and `stop=requested` stands until a
-  `:cancel` with evidence or an explicit withdrawal. A `set` to a node in C is refused whatever
-  `--expect` says, and the node stays in C.
-- `applicable-cap-never-hides-a-deny` — N active notes, N > `--max`, the only `:deny` in the
-  note that sorts last; `applicable --max 1 --candidate <role>/<model>` prints `excluded
-  <that id>` and `NOTES MORE`; `show --max 1` prints the same constraint row before any cut
-  row; with the notes index unloadable, both print `FAIL` and neither prints `eligible`.
-
-**Next draft and owner.** This section folds into SPEC-WORK.md as its own *The current goal*
-subsection under *The data*, with the `:goal` and `:note` event kinds added to `:event` and
-`GOAL` and `NOTES` to *Output grammar*; the fold is Rowan's to draft on PR #231's head, with
-reads owed from Stella and Emma on the exact revision. **Until that fold lands and the three
-replays are in SPEC-WORK.md's list, the combined request of 5672006742 — notes and goal — is
-incomplete**, and this file says so rather than pointing.
+**The goal is specified in SPEC-WORK.md, *The current goal* under *The data*, and this file
+points at it rather than restating it** (the fold Rowan drafted from this section's draft 3 on
+Stella's clearance, stella-1858e1eeef8d; PR `rowan/spec-work-goal` against `spec/nova-work`).
+There: the goal is a node of O and the current goal a scope-keyed reference in a `goal` index
+beside `friends` and `models`, written by the `:goal` event kind; the verbs `goal set`, `goal
+show` and `goal update` beside the other verbs, with `--expect` required on the two writes;
+`--stop` as the transition table's own edge to `:cancel-requested` with no evidence, confirmed
+cancellation staying `event --kind cancel --evidence`; the `GOAL` lines in *Output grammar*;
+and the witnesses in *Acceptance replays* — `goal-crosses-harness`,
+`goal-stale-update-refuses`, `goal-stop-is-a-request-not-evidence`,
+`goal-update-writes-only-existing-kinds`, `goal-expect-is-required` and
+`applicable-cap-never-hides-a-deny`. What the goal needs from this file is the note scope its
+reference is keyed by and the constraint rows `goal show` prints through `applicable`, both
+above; the `:note` event kind and the `NOTES` grammar still fold into SPEC-WORK.md with the
+notes, which is the remaining half of 5672006742 and is not claimed here.
 
 ## What this draft does not do
 
