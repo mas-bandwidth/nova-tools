@@ -3790,7 +3790,7 @@ line that runs it rather than a promise:
 | OpenCode | a plugin holding the poll outside the turn | yes | yes | `plugin` |
 | Codex | a scheduled command re-entering the session on a note | yes | yes, while the schedule lives | `scheduled` |
 | Antigravity | its own always-loading file naming the wait as the first act of every load | yes | yes | `hook` |
-| Grok | an OS process outside the turn holds the poll and writes the beat (Johnny's `johnny_bus_heartbeat`, 2026-09-15) | yes | no, a 10 h session cap | `plugin` |
+| Grok | an OS process outside the turn holds the poll and writes the beat (Johnny's `johnny_bus_heartbeat`, 2026-09-15) | yes | no, a 10 h session cap | `plugin` (SPEC-WAKE's third shape) |
 | a bare API loop | the loop program itself, outside any session | not applicable | yes | `plugin` |
 
 **Where the harness cannot hold it**, `:wait-source` is `manual` or `none` and nothing is pretended:
@@ -4670,9 +4670,9 @@ intake that creates it.
 At load the session builds six indexes — id to node, containment adjacency, reverse dependency,
 repository, category (5654164074), and **reverse roadmap reference: from a node id to every
 roadmap that has it as a first-axis member, and to every cell whose `:ref` names it** — and every
-read walk goes through the five read-path indexes — id to node, containment adjacency, reverse
-dependency, repository and category, the reverse roadmap reference being the sixth and on the
-write path only. **A seventh is opened rather than built or loaded: C's closed index, additional to the six**, which the
+read walk goes through the five read-path indexes (all but the reverse roadmap, which serves the
+roadmap walk) — id to node, containment adjacency, reverse dependency, repository and category.
+**A seventh is opened rather than built or loaded: C's closed index, additional to the six**, which the
 clip publishes beside the snapshot in bounded pages and which no walk over O has to rebuild —
 keyed by `:id` and by `<event-rev>:<id>`, partitioned by event day, ordered by event revision, and
 grouped by repository, so a rollup reads a settled member's newest row in one bounded lookup, a
@@ -4739,8 +4739,6 @@ success. Every `OK` line ends `emitted=<bytes>`. Every mutation's `OK` line carr
 event's id, its request id, the session's local revision after it (`rev=<n>`), and
 `pushed=<rev|->`, the clipped revision, the same number as the last `CLIP OK`'s `pushed=`;
 `changed=<n>` records how many effective mutations the event produced.
-A projected receipt adds `dry-run=true` to distinguish preview from committed receipt, using the
-same shape with event id and revision spelled `-`.
 `SESSION OK` is one shape, printed by `session start`, `session status` and `session stop`
 alike, and its `state=` reads `live`, `fenced` or `red`: lowercase *active* is W's word in the
 root section above, `ACTIVE` in capitals is the per-friend live-data node, and neither names a
@@ -4777,12 +4775,12 @@ QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> h
 QUERY ROW <id> kind=<k> state=<s> ready=<true|false> reason=<text|-> resolver=<name|-> priority=<rank|default> priority-source=<id|default> priority-context=<self|subtree|default> responsible=<name|-> holder=<name|unowned>   (ready; the three priority fields read the same under either --order)
 QUERY ROW <id> lease=<lease-id> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|-> escalated-to=<name|-> responsible=<name|->   (who, stale)
 QUERY ROW <id> branch=<open|closed> disposition=<pending|working|deferred|done|cancelled|superseded|removed> repo=<o/n|-> kind=<k> state=<s> landed=<sha|-> released=<version|-> holder=<name|unowned> settled=<stamp|-> evidence=<n> verified=<n> responsible=<name|->   (done, remaining and under, under --branch closed or --branch root)
-QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows whose bodies the retention archive holds, or whose day partition or manifest the committed root names, and this read could not reach; an absent day inside a complete manifested range is no events and prints no note)
+QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows whose bodies the retention archive holds, or whose day partition or manifest the committed root names, and this read could not reach)
 QUERY ROW <lease-id> node=<id> kind=<lease|heartbeat|release|handoff> rev=<n> at=<stamp> from=<name|-> to=<name|-> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|->   (handoffs)
 QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
 QUERY ROW <machine-id> kind=machine name=<text> owner=<name> roles=<build,test,profile> admits=<kind|-> concurrent=<n|-> arch=<text|-> os=<text|-> declared-by=<name> declared-at=<stamp>   (fleet)
 QUERY FAIL ask=fleet rows=0 shown=0: <id> excludes <kind>   (--for with --node on a member that excludes the kind: a refusal, never an empty answer)
-QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable   (a state-as-of ask whose day partition the committed root names and this read could not open; never answered from a later row)
+QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable
 QUERY FAIL ask=<kind> after=<cursor> pinned=<rev> current=<rev>: page expired   (a continuation whose captured revision the session can no longer serve; never a drifted page)
 QUERY MORE rows=<n> shown=<n> pages=<n> after=<cursor>   (a page budget met: shown=0 is permitted when no row could yet be emitted; the continuation is the one cursor rule and never a second)
 OPERATION OK id=<id> op=<capture|stage|export|clip|execution> state=<queued|running|done|cancelling|cancelled|failed> started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>
@@ -4940,8 +4938,7 @@ socket paths naming one journal, the second refused `journal held`; an owner tha
 starts as a taker with a fresh generation and never as a resume; a reconfirm callback
 delayed past `until` admits no write; a `:defer` moving the scope revision and no denominator, and a `:reopen` the same; `event
 --kind split` and `--kind remove` refused at exit 2 naming `decompose` and `node remove`; a
-`node remove` leaving its subtree in O as provenance and out of every count, and one refused
-for a live lease; a re-baseline restating the derived set accepted and one differing from it
+`node remove` leaving its subtree in O as provenance and out of every count; a re-baseline restating the derived set accepted and one differing from it
 refused by rule 14; **an empty work-set — a `<repo>/shared` in a repository with no shared work,
 and a container whose last member was cancelled — accepted, clipped, reloaded and clipped again
 with no finding, counting `unknown` and never done and never green in any rollup**; a
@@ -4952,8 +4949,7 @@ unreachable and never guessed; one cached raw fact yielding two verdicts for two
 a `correct` event changing a verdict with no fetch; a `source` bump staling evidence and a
 later `source` clearing it; a `QUERY OK` carrying exactly the fields its ask names; a lease
 whose default is `(:escalate "<name>")` reading `escalated-to=` at expiry with responsibility
-untouched; a clip refused because its retained events would pass `--max-bytes`, with
-`lower --retain` named as the remedy and a lower `--retain` then passing; a removed subtree
+untouched; a removed subtree
 written into the archive by the clip that carries its `:remove` past the boundary and absent
 from the snapshot's structure thereafter, the live snapshot bounded by `--retain` across it;
 a snapshot loaded as retention boundary plus retained events equalling a clean
@@ -4997,14 +4993,10 @@ uncelled coordinates counting as not complete; **a `:reopen` from `:done` and on
 `:supersede` of a `:cancelled` node refused the same way**; **one `run:<o/r>#<id>@<sha>` pointer
 used for the criterion whose subject is its job and again for a criterion naming another job,
 and again at another sha: only the matching criterion qualifies, the cache holds three keys, and
-the answer is the same under `--offline`**; **a request id retried after the clip that carried
-its event past the retention boundary, and again against a successor after a handoff, refused
-`already applied` with the revision named and applying nothing, and the same id with a different
-payload refused `reused with a different payload`**; **a request id whose event is newer than the
+the answer is the same under `--offline`**; **a request id whose event is newer than the
 retention boundary and still in the snapshot's retained events retried against a successor after
 a handoff, refused `already applied` and applying nothing** (the window the index alone did not
-cover); **a retry inside the owner's own journal with the same payload answered with the original
-`OK` line, and one with a different payload refused `reused with a different payload`**; **one
+cover); **one
 request digested to one value by two independent serializers, over a `node add` envelope holding
 a structure event and a scope event, with two `:stamp`s and two `:request` ids and the same
 digest, and with an absent optional field written `(:absent)` by both**; **a clip whose snapshot passes `--max-bytes` refused with all four
@@ -5038,8 +5030,7 @@ journal is free; structure
 verbs produce a reproducible `ROADMAP.md` with no hand edit.
 
 **The root's replays carry names, one for every rule the COW refinement adds, so a reader can
-say which test holds which sentence** (the list above is prose because it grew that way; these
-are named because they were asked for by name):
+say which test holds which sentence**:
 
 - **`cow-root-partition`** — one id is in C or in O and never in both; `open=` plus `closed=`
   equals the scope's counted total on every ask; an event hand-written to put one id in both is

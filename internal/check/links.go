@@ -27,25 +27,47 @@ var (
 	schemeRE = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.\-]*:`)
 )
 
+// LinksResult is the full accounting of a links walk: the markdown files
+// scanned, the relative links checked, the whole files skipped under an
+// explicit --exclude prefix, and every broken link found.
+type LinksResult struct {
+	MDFiles  int
+	Checked  int
+	Excluded int
+	Broken   []BrokenLink
+}
+
 // Links walks dir for .md files (skipping .git) and verifies that every
 // relative inline link target resolves to an existing file or directory
 // inside the tree. It returns the number of markdown files seen, the number
 // of relative links checked, and every broken link found.
 func Links(dir string) (mdFiles, checked int, broken []BrokenLink, err error) {
+	res, err := LinksExcluding(dir, nil)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	return res.MDFiles, res.Checked, res.Broken, nil
+}
+
+// LinksExcluding is Links with an explicit set of path prefixes to leave
+// unscanned: a file under an excluded prefix is not opened, and a link that
+// resolves into an excluded prefix is skipped rather than checked or reported.
+// The Excluded count is the number of .md files under those prefixes.
+func LinksExcluding(dir string, exclude []string) (res LinksResult, err error) {
 	// Resolve the root before walking. os.Stat FOLLOWS a symlink, so a --dir
 	// naming a link to the repo passed the directory check and then handed
 	// WalkDir a root it saw as a single non-directory entry — a clean pass
 	// over a tree never opened. On this platform /var is such a link.
 	root, statErr := filepath.EvalSymlinks(dir)
 	if statErr != nil {
-		return 0, 0, nil, fmt.Errorf("dir %q: %w", dir, statErr)
+		return res, fmt.Errorf("dir %q: %w", dir, statErr)
 	}
 	info, statErr := os.Stat(root)
 	if statErr != nil {
-		return 0, 0, nil, fmt.Errorf("dir %q: %w", dir, statErr)
+		return res, fmt.Errorf("dir %q: %w", dir, statErr)
 	}
 	if !info.IsDir() {
-		return 0, 0, nil, fmt.Errorf("dir %q is not a directory", dir)
+		return res, fmt.Errorf("dir %q is not a directory", dir)
 	}
 	dir = root
 
@@ -62,16 +84,43 @@ func Links(dir string) (mdFiles, checked int, broken []BrokenLink, err error) {
 		if !strings.EqualFold(filepath.Ext(d.Name()), ".md") {
 			return nil
 		}
-		mdFiles++
-		n, b := checkFileLinks(dir, path)
-		checked += n
-		broken = append(broken, b...)
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			rel = path
+		}
+		if underExclude(rel, exclude) {
+			res.Excluded++
+			return nil
+		}
+		res.MDFiles++
+		n, b := checkFileLinks(dir, path, exclude)
+		res.Checked += n
+		res.Broken = append(res.Broken, b...)
 		return nil
 	})
 	if err != nil {
-		return 0, 0, nil, err
+		return res, err
 	}
-	return mdFiles, checked, broken, nil
+	return res, nil
+}
+
+// underExclude reports whether a tree-relative path (forward-slashed) is at or
+// below any of the given exclude prefixes. A prefix is matched as a path:
+// "testdata" excludes "testdata" and everything under it, never a sibling like
+// "testdata-set".
+func underExclude(rel string, exclude []string) bool {
+	rel = filepath.ToSlash(rel)
+	for _, ex := range exclude {
+		ex = filepath.ToSlash(ex)
+		ex = strings.TrimSuffix(ex, "/")
+		if ex == "" {
+			continue
+		}
+		if rel == ex || strings.HasPrefix(rel, ex+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // checkFileLinks extracts and resolves the relative links in one markdown
@@ -85,7 +134,7 @@ func Links(dir string) (mdFiles, checked int, broken []BrokenLink, err error) {
 // walk continues, so one unreadable file cannot discard the findings from the
 // rest of the tree; before this, it converted the whole run to exit 2 and
 // threw the accumulated broken links away.
-func checkFileLinks(root, mdPath string) (checked int, broken []BrokenLink) {
+func checkFileLinks(root, mdPath string, exclude []string) (checked int, broken []BrokenLink) {
 	relFile, relErr := filepath.Rel(root, mdPath)
 	if relErr != nil {
 		relFile = mdPath
@@ -124,7 +173,7 @@ func checkFileLinks(root, mdPath string) (checked int, broken []BrokenLink) {
 		}
 		line = codeSpanRE.ReplaceAllString(line, "")
 		for _, target := range extractLinkTargets(line) {
-			resolved, skip, reason := resolveTarget(root, mdPath, target)
+			resolved, skip, reason := resolveTarget(root, mdPath, target, exclude)
 			if skip {
 				continue
 			}
@@ -262,7 +311,7 @@ func skipSpaces(s string, i int) int {
 // resolveTarget classifies a link target. skip means the target is out of
 // scope (external, fragment-only). A non-empty reason means it is broken
 // before ever touching the disk (it escapes the tree).
-func resolveTarget(root, mdPath, target string) (resolved string, skip bool, reason string) {
+func resolveTarget(root, mdPath, target string, exclude []string) (resolved string, skip bool, reason string) {
 	if strings.HasPrefix(target, "#") || strings.HasPrefix(target, "//") || schemeRE.MatchString(target) {
 		return "", true, ""
 	}
@@ -284,6 +333,9 @@ func resolveTarget(root, mdPath, target string) (resolved string, skip bool, rea
 	rel, err := filepath.Rel(root, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", false, "escapes the tree; cannot survive the repo travelling alone"
+	}
+	if rel != "." && underExclude(rel, exclude) {
+		return "", true, ""
 	}
 	return resolved, false, ""
 }

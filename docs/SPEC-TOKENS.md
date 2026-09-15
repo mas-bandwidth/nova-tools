@@ -815,7 +815,13 @@ its own dates with `day_basis=<zone>`, the zone taken from the export's own
 declaration and printed on `TOKENS SOURCE`, never from the bench's clock or
 a guess; an export with neither timestamps nor a declared zone is
 `TOKENS UNREADABLE` naming what it lacks. A `(day, model, repo)` fed by a
-`utc` row and a zoned row is `TOKENS MIXED` and not written.
+`utc` row and a zoned row is `TOKENS MIXED` and not written. The `xai`
+parser also reads a `grok usage` JSON export (a `sessionId` and a `turns`
+array, chosen by the file's leading `{` or `[`), folding each turn into the
+same rows: `endedAt` is the day, `primaryModelId` the model, and
+`inputTokens`/`outputTokens`/`cacheCreationTokens`/`cachedReadTokens`/
+`reasoningTokens` the five counts, with a field the turn did not carry left
+a `-`, never a zero.
 
 ### `--bus <dir>`: friends' self-reports
 
