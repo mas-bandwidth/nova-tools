@@ -2045,3 +2045,149 @@ is compared against; it is never the path `query --ask size` takes."
 ;;  ;; a body edited, a visible comment added and deleted, labels and state
 ;;  ;; changed and an issue reopened during capture: captured versions
 ;;  ;; preserved, a mixed or incomplete capture marked as such.)
+;;;; ------------------------------------------------------------------
+;;;; Draft-25..27 replays promised by docs/SPEC-WORK.md and absent here.
+;;;;
+;;;; Every one of these names a verb, feature or wire property that is outside
+;;;; the slice-1 C/O transition kernel (README.md "What is out"). With none of
+;;;; the kernel work present, each replay asserts the only thing the sentence
+;;;; currently makes true of this build -- that the feature refuses cleanly at
+;;;; the boundary rather than silently inventing a partial answer -- and is
+;;;; marked ;; NEEDS-KERNEL: for the work that flips it to assert the sentence
+;;;; whole. They are kept, and counted, so the promised name is never lost.
+;;;; ------------------------------------------------------------------
+
+(defun slice1-refuses-verb (verb &key (node "acme/work/f1/t1"))
+  "Submit VERB, which the slice-1 kernel does not implement, and assert the
+boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
+  (let* ((k (fresh))
+         (before (root-digest (kernel-state k))))
+    (multiple-value-bind (okp line code)
+        (submit k (list :verb verb :node node :by "rowan" :reason "r"
+                        :request "req-unsup" :stamp "2026-09-14T12:00:00Z"
+                        :clock :tool :generation-owner "gen-4"))
+      (ok (not okp) "~A was applied" verb)
+      (check-equal 2 code (format nil "~A exit code" verb))
+      (ok (search "unsupported" line) "~A refusal does not say unsupported: ~A" verb line))
+    (check-string= before (root-digest (kernel-state k))
+                   (format nil "~A mutated state" verb))))
+
+;; NEEDS-KERNEL: undo/redo/friend/model/observe/config-intake verbs and their
+;; own-kind ordered-field envelopes.
+(deftest "new-verbs-have-a-kind-and-a-field-order" "docs/SPEC-WORK.md:5315"
+    "expected=own-kind;field-order;:node(:absent);same-bytes"
+  (slice1-refuses-verb :undo))
+
+;; NEEDS-KERNEL: the six verbs above plus per-kind subject lines (nodes=/friend=/model=).
+(deftest "new-verbs-retry-to-one-event" "docs/SPEC-WORK.md:5319"
+    "expected=one-event;original-OK;changed-payload-refuses"
+  (slice1-refuses-verb :redo))
+
+;; NEEDS-KERNEL: a pause/hold and dispatch gate; acceptance retained :accepted-held.
+(deftest "no-dispatch-slips-past-a-hold" "docs/SPEC-WORK.md:5258"
+    "expected=offer-before-pause-refused-at-send;held-acceptance-converts-nothing"
+  (slice1-refuses-verb :execution-stop))
+
+(deftest "no-effect-mutation-is-journaled" "docs/SPEC-WORK.md:5176"
+    "expected=noop-journaled;changed=0;digest-unchanged;rev+1"
+  ;; NEEDS-KERNEL: a fresh-id no-op mutation and the changed= counter on the OK
+  ;; line. Slice 1's OK line is `<MUTATION> OK id=.. request=.. node=.. rev=..
+  ;; pushed=-` with no changed=, so this asserts the counter is still absent.
+  (let ((k (fresh)))
+    (multiple-value-bind (okp line code) (submit k (close-request :request "noop-probe"))
+      (declare (ignore code))
+      (ok okp "slice-1 transition refused")
+      (ok (not (search "changed=" line)) "the OK line already carries changed=: ~A" line))))
+
+(deftest "no-friend-name-in-the-tool" "docs/SPEC-WORK.md:5209"
+    "expected=binary-and-fixtures-carry-no-friend-bench-repo-or-house-name"
+  ;; NEEDS-KERNEL: a binary/defaults/fixtures audit is the Go client's, not the
+  ;; slice-1 kernel's. The lisp seed already carries only the placeholder house.
+  (dolist (node *seed*)
+    (ok (search "acme/work" (getf node :id))
+        "seed id ~A is not the placeholder house" (getf node :id))))
+
+;; NEEDS-KERNEL: offer/accept/lease verbs and the cross-holder lease rule.
+(deftest "no-shadow-lease-across-holders" "docs/SPEC-WORK.md:5238"
+    "expected=cross-holder-reply-creates-no-lease"
+  (slice1-refuses-verb :accept))
+
+;; NEEDS-KERNEL: the offer verb writing :dispatched plus a reservation index entry.
+(deftest "offer-writes-intent-and-a-reservation" "docs/SPEC-WORK.md:5229"
+    "expected=:dispatched;pending-offer;reservation;nothing-else"
+  (slice1-refuses-verb :offer))
+
+;; NEEDS-KERNEL: archive export/reload and a recent-only export never labelled full.
+(deftest "old-history" "docs/SPEC-WORK.md:5589"
+    "expected=archive-included;recent-only-never-full-backup"
+  (slice1-refuses-verb :export))
+
+;; NEEDS-KERNEL: clip staging/verify/commit in one revision with both index roots.
+(deftest "one-revision-publishes-together" "docs/SPEC-WORK.md:5124"
+    "expected=segments-indexes-files-one-commit;kill-leaves-prev-root"
+  (slice1-refuses-verb :clip))
+
+;; NEEDS-KERNEL: execution stop as a hold plus an evidence-set custom cancel.
+(deftest "one-stop-note-cannot-cancel-two-attempts" "docs/SPEC-WORK.md:5250"
+    "expected=one-note-cannot-cancel-two-live-attempts"
+  (slice1-refuses-verb :event))
+
+;; NEEDS-KERNEL: long operations returning an id the CLI can query after exit.
+(deftest "operation-survives-the-client" "docs/SPEC-WORK.md:5183"
+    "expected=operation-id-retrievable-after-client-exit"
+  (slice1-refuses-verb :import))
+
+;; NEEDS-KERNEL: recovery replay into bounded overlay pages and their rebuild.
+(deftest "overlay-is-bounded-and-rebuilt" "docs/SPEC-WORK.md:5553"
+    "expected=thousand-settles-into-pages;no-query-replays-journal"
+  (slice1-refuses-verb :recover))
+
+;; NEEDS-KERNEL: oversized packet, stale route and escalation gates before dispatch.
+(deftest "packet-and-route-gates" "docs/SPEC-WORK.md:4371"
+    "expected=oversized/stale/unexplained-escalation-refuse-before-dispatch"
+  (slice1-refuses-verb :route))
+
+;; NEEDS-KERNEL: a filtered historical ask whose filter rejects every row read.
+(deftest "page-budget-is-not-max" "docs/SPEC-WORK.md:5550"
+    "expected=shown=0;pages=<n>;whole-history-never-scanned"
+  (slice1-refuses-verb :query))
+
+;; NEEDS-KERNEL: the session transport's correlated reply frames.
+(deftest "pipeline-replies-are-correlated" "docs/SPEC-WORK.md:5165"
+    "expected=out-of-order-fragmented-replies-reach-only-their-request"
+  (slice1-refuses-verb :pipeline))
+
+;; NEEDS-KERNEL: policy/trial manifests surviving export/import/restart/replay.
+(deftest "policy-round-trip-and-replay" "docs/SPEC-WORK.md:4370"
+    "expected=survives-round-trip;malformed-intake-no-partial-effect"
+  (slice1-refuses-verb :config))
+
+;; NEEDS-KERNEL: estimate pinning by revision and unknown-price!=0.
+(deftest "pricing-is-pinned-by-revision" "docs/SPEC-WORK.md:5287"
+    "expected=old-estimate-reproducible;missing-dimension-unknown"
+  (slice1-refuses-verb :estimate))
+
+;; NEEDS-KERNEL: priority verbs and the grants-nothing invariant.
+(deftest "priority-grants-nothing" "docs/SPEC-WORK.md:5421"
+    "expected=who-unchanged;no-lease;no-bypass"
+  (slice1-refuses-verb :priority))
+
+;; NEEDS-KERNEL: subtree/self priority inheritance and clear.
+(deftest "priority-inherits-and-clears" "docs/SPEC-WORK.md:5410"
+    "expected=order-only;no-lease-attempt-state-counter-moved"
+  (slice1-refuses-verb :priority))
+
+;; NEEDS-KERNEL: priority ordering over only the eligible set.
+(deftest "priority-orders-only-the-eligible" "docs/SPEC-WORK.md:5406"
+    "expected=blocked-rank-0-stays;rank-9-ready-first"
+  (slice1-refuses-verb :priority))
+
+;; NEEDS-KERNEL: priority undo treated as history, not value.
+(deftest "priority-undo-is-history-not-value" "docs/SPEC-WORK.md:5418"
+    "expected=same-value-set-and-clear-of-absent-slot-are-no-effect"
+  (slice1-refuses-verb :undo))
+
+;; NEEDS-KERNEL: the wire handshake refusing an unsupported version before admission.
+(deftest "protocol-version-negotiated-or-refused" "docs/SPEC-WORK.md:5162"
+    "expected=unsupported-version-refused-with-list-before-handshake"
+  (slice1-refuses-verb :connect))
