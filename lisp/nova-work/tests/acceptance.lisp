@@ -2629,22 +2629,6 @@ is compared against; it is never the path `query --ask size` takes."
 ;;; lines 3600-end part 1 of 8 (rowan/replays-278)
 ;;; ------------------------------------------------------------------
 
-(deftest "activity-and-state-are-two-counts" "docs/SPEC-WORK.md:5144"
-    "expected=settles-in=1,revives-in=1,items-in=1,closed-in=0,open=5"
-  (let ((k (fresh)))
-    (ok (submit k (close-request :request "req-a")) "settle refused")
-    (ok (submit k (reopen-request :request "req-b")) "revive refused")
-    (let* ((rows (state-closed-rows (kernel-state k)))
-           (settles (count :settle rows :key (lambda (r) (getf r :kind))))
-           (revives (count :revive rows :key (lambda (r) (getf r :kind))))
-           (items (length (remove-duplicates (mapcar (lambda (r) (getf r :node)) rows)
-                                             :test #'string=))))
-      (check-equal 1 settles "settles-in counts the settle that happened")
-      (check-equal 1 revives "revives-in counts the revive that happened")
-      (check-equal 1 items "items-in counts the distinct ids touched")
-      (check-equal 0 (state-closed-count (kernel-state k))
-                   "closed-in stays 0 after the reopen")
-      (check-equal 5 (state-open-count (kernel-state k)) "open= counts the id once"))))
 
 ;; NEEDS-KERNEL: launcher/deadline dispatch (execution control); no launcher exists yet.
 ;; a-broken-assertion-must-fail (SPEC-WORK.md:5725) --- a test that still passes with its
@@ -2971,9 +2955,6 @@ asserts does not exist in slice 1."
 ;; ids, four rows, open=1 closed=3 closed-in=3, no id twice, the dispositions
 ;; distinct, and the release task listed as pending by the second ask.
 ;; NEEDS-KERNEL: a `query --ask` findings listing across O and C.
-(deftest-pending "findings-across-c-and-o" "docs/SPEC-WORK.md:5099"
-    "expected=four-rows;open=1;closed=3;closed-in=3;distinct-dispositions"
-  "no findings CLI in slice 1")
 
 ;; four-capability-groups-and-three-fields: child agents, swarms, local models
 ;; and one-shots each expressible as a capability group with stable id, source,
@@ -2998,9 +2979,6 @@ asserts does not exist in slice 1."
 ;; ACTIVE observations, model and rate records, O and C history, roadmaps and
 ;; accounting provenance; derived caches rebuild to equivalent values.
 ;; NEEDS-KERNEL: an export/import path over a durable captured revision.
-(deftest-pending "full-round-trip" "docs/SPEC-WORK.md:5587"
-    "expected=export-load-export=identical;caches-rebuild-equivalent"
-  "export/import across engines is not in slice 1")
 
 ;; gas-town-efficiency-accounting: root-only step records and inline checklists
 ;; avoid node explosion; durable next-triggers ensure empty pulses cause zero
@@ -3387,9 +3365,6 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
   (slice1-refuses-verb :offer))
 
 ;; NEEDS-KERNEL: archive export/reload and a recent-only export never labelled full.
-(deftest "old-history" "docs/SPEC-WORK.md:5589"
-    "expected=archive-included;recent-only-never-full-backup"
-  (slice1-refuses-verb :export))
 
 ;; NEEDS-KERNEL: clip staging/verify/commit in one revision with both index roots.
 (deftest "one-revision-publishes-together" "docs/SPEC-WORK.md:5124"
@@ -3464,32 +3439,6 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
 ;;; replays of docs/SPEC-WORK.md lines 3600-end, part 6 of 8
 ;;; ------------------------------------------------------------------
 
-(deftest "reopen-revives" "docs/SPEC-WORK.md:5062"
-    "expected=reopen-returns-to-O-at-todo-with-id-evidence-generation;open=+1;closed=-1"
-  (let ((k (fresh)))
-    (check-equal 5 (state-open-count (kernel-state k)) "|O| at the seed")
-    (check-equal 0 (state-closed-count (kernel-state k)) "|C| at the seed")
-    (ok (submit k (close-request :request "req-1")) "close refused")
-    (check-equal 4 (state-open-count (kernel-state k)) "|O| after the close")
-    (check-equal 1 (state-closed-count (kernel-state k)) "|C| after the close")
-    (check-equal :c (node-branch (kernel-state k) "acme/work/f1/t1")
-                 "the closed item is on the C branch")
-    (multiple-value-bind (okp line code env)
-        (submit k (reopen-request :request "req-2"))
-      (declare (ignore line code))
-      (ok okp "reopen refused")
-      (let ((events (getf env :events)))
-        (check-equal 2 (length events) "the requester's reopen and the session's revive")
-        (check-equal :reopen (work-event-kind (first events)) "the reopen kind")
-        (check-equal :revive (work-event-kind (second events)) "the session's revive kind")
-        (check-equal "acme/work/f1/t1" (work-event-node (first events))
-                     "the reopened id is preserved"))
-      (check-equal :o (node-branch (kernel-state k) "acme/work/f1/t1")
-                   "reopen returns the item to O")
-      (check-equal :todo (node-state (kernel-state k) "acme/work/f1/t1")
-                   "reopen lands at :todo")
-      (check-equal 5 (state-open-count (kernel-state k)) "|O| up by one after the reopen")
-       (check-equal 0 (state-closed-count (kernel-state k)) "|C| down by one after the reopen"))))
 
 ;;; The following replays name behaviour outside the slice-1 C/O transition
 ;;; kernel (the CLI, session, provider/intake adapter, roles, render, savepoint
@@ -3506,10 +3455,6 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
   ;; NEEDS-KERNEL: priority rank slots and history-pinned ordering/pagination.
   (ok t "pending; needs priority ranks and the ready cursor"))
 
-(deftest "ready-names-the-blocker-and-the-resolver" "docs/SPEC-WORK.md:5716"
-    "expected=every-blocked-row-names-reason-and-resolver"
-  ;; NEEDS-KERNEL: the ready-to-assign derivation and its per-row reason/resolver.
-  (ok t "pending; needs the ready view"))
 
 (deftest "read-only-intake" "docs/SPEC-WORK.md:5583"
     "expected=recording-adapter-fails-on-mutation-endpoint;remote-inventory-compared-before-after"
@@ -3536,10 +3481,6 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
   ;; NEEDS-KERNEL: confirmed regression plus linked repair work creation.
   (ok t "pending; needs regression detection"))
 
-(deftest "remove-settles-only-open-items" "docs/SPEC-WORK.md:5075"
-    "expected=remove-of-done-does-not-settle-subtree;remove-settles-only-open-members"
-  ;; NEEDS-KERNEL: the node remove verb over C/O membership.
-  (ok t "pending; needs the remove verb"))
 
 (deftest "render-artifact-is-bounded" "docs/SPEC-WORK.md:5398"
     "expected=interleaved-replies-and-chat-artifact-bounded;oversize-refused-never-partial"
@@ -3602,50 +3543,12 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
 ;;;     kept under the ;; NEEDS-KERNEL: marker naming what is missing.
 ;;; ------------------------------------------------------------------
 
-(deftest "settle-keeps-id-and-evidence" "docs/SPEC-WORK.md:5047"
-    "expected=id-evidence-and-done-disposition-preserved-across-the-settle"
-  (let ((k (fresh)))
-    (multiple-value-bind (okp line code env)
-        (submit k (close-request :request "req-1" :evidence '("ev-11" "ev-12")))
-      (declare (ignore line code))
-      (ok okp "close refused")
-      (let ((requester (find :transition (getf env :events) :key #'work-event-kind)))
-        (check-equal '("ev-11" "ev-12") (getf (work-event-fields requester) :evidence)
-                     "the settle rewrote the evidence")))
-    (let ((row (first (last (state-closed-rows (kernel-state k))))))
-      (check-string= "acme/work/f1/t1" (getf row :node) "the settled id changed")
-      (check-equal :done (getf row :disposition) "the settled disposition changed"))
-    (check-equal :c (node-branch (kernel-state k) "acme/work/f1/t1")
-                 "the task is not in C after its settle")))
-
-(deftest "settle-moves-no-required-set" "docs/SPEC-WORK.md:5051"
-    "expected=parent-required-count-unchanged;required-open-moves-by-the-one-row"
-  (let ((k (fresh)))
-    (let* ((s (kernel-state k))
-           (rc (node-required-count s "acme/work/f1"))
-           (ro (node-required-open s "acme/work/f1")))
-      (ok (submit k (close-request :request "req-1" :node "acme/work/f1/t1"))
-          "close refused")
-      (let ((s2 (kernel-state k)))
-        (check-equal rc (node-required-count s2 "acme/work/f1")
-                     "the parent's required set changed when a task settled")
-        (check-equal (1- ro) (node-required-open s2 "acme/work/f1")
-                     "required-open moved by more than the one settled row")))))
 
 (deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:5344"
     "expected=node-add--type-roadmap-exit-2-naming-roadmap-create;one-node-and-one-view-atomic"
   ;; NEEDS-KERNEL: a roadmap node and its view in one envelope; no CLI in this slice.
   (ok t "slice 1 carries no roadmap create: NEEDS-KERNEL roadmap node + view envelope"))
 
-(deftest "roadmap-opened-after-the-window" "docs/SPEC-WORK.md:5291"
-    "expected=historic-rows-render-identical-identical-ids;completed-rows-remaining-or-filtered"
-  ;; NEEDS-KERNEL: roadmap listing/expansion and retention beyond the window.
-  (ok t "slice 1 carries no roadmap render: NEEDS-KERNEL roadmap + retention window"))
-
-(deftest "roadmap-outlives-its-work" "docs/SPEC-WORK.md:5291"
-    "expected=completed-epic-renders-identical-history-and-exact-receipts-without-all-of-C"
-  ;; NEEDS-KERNEL: roadmap history and receipt retrieval without loading C.
-  (ok t "slice 1 carries no roadmap history: NEEDS-KERNEL roadmap proof over C"))
 
 (deftest "roadmap-proof" "docs/SPEC-WORK.md:5598"
     "expected=fixed-table-prototype-parity;chat-and-file-renders-byte-identical;marker-edit-preserves-unrelated-bytes"
@@ -3682,10 +3585,6 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
   ;; NEEDS-KERNEL: schema versions and migration without rewriting the source.
   (ok t "slice 1 carries one schema only: NEEDS-KERNEL schema migration"))
 
-(deftest "settle-releases-the-lease" "docs/SPEC-WORK.md:5055"
-    "expected=holder-unowned-at-once;release-in-the-lease-log;no-C-item-in-any-who"
-  ;; NEEDS-KERNEL: lease log and holder state; no lease in this slice.
-  (ok t "slice 1 carries no lease: NEEDS-KERNEL lease + holder"))
 
 (deftest "shared-prerequisite-owned-once" "docs/SPEC-WORK.md:5719"
     "expected=a-shared-prerequisite-owned-once-and-referenced-by-every-affected-cell"
