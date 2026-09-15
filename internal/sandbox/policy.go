@@ -57,6 +57,22 @@ func refuse(reason, format string, a ...any) Refusal {
 	return Refusal{Reason: reason, Text: fmt.Sprintf(format, a...)}
 }
 
+// backendNameFor names the backend the spec assigns each platform, so that a refusal
+// says which thing is missing rather than only that something is. It is here rather
+// than beside any one body so a test on one platform can ask what the tool would say
+// on another, the same shape as badPathTextFor.
+func backendNameFor(goos string) string {
+	switch goos {
+	case "darwin":
+		return "sandbox-exec"
+	case "linux":
+		return "unshare"
+	case "windows":
+		return "appcontainer"
+	}
+	return "no backend this spec names"
+}
+
 // Input is the argv as the caller typed it, before any resolution. Everything here is a
 // claim about this job; Build turns it into a Policy or into refusals.
 type Input struct {

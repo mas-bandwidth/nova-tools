@@ -116,6 +116,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return probeVerb(args[1:], stdout, stderr, env)
 	case probeStepVerbName:
 		return probeStepVerb(args[1:], stderr, env)
+	case sandbox.LinuxChildVerb:
+		return sandbox.LinuxChild(args[1:], stdout, stderr, env)
 	}
 	return execVerb(args, stdin, stdout, stderr, env)
 }

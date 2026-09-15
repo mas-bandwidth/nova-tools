@@ -446,7 +446,10 @@ func TestCheckAndVersion(t *testing.T) {
 	if runtime.GOOS == "darwin" && !strings.Contains(out, "backend=sandbox-exec") {
 		t.Fatalf("check did not name the backend on darwin: %q", out)
 	}
-	if runtime.GOOS != "darwin" && !strings.Contains(out, "backend=none") {
+	if runtime.GOOS == "linux" && !strings.Contains(out, "backend=unshare") {
+		t.Fatalf("check did not name the backend on linux: %q", out)
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && !strings.Contains(out, "backend=none") {
 		t.Fatalf("check named a backend on %s, where this build has none: %q", runtime.GOOS, out)
 	}
 	code, out, _ = j.tool(t, j.env(), "version")
@@ -471,8 +474,8 @@ func TestUsageCarriesTheReadRemedy(t *testing.T) {
 // Rule 1 on every platform whose body is not built: the refusal names the platform and
 // the command does NOT run.
 func TestUnbuiltPlatformsRefuse(t *testing.T) {
-	if runtime.GOOS == "darwin" {
-		t.Skip("skipped on darwin: the darwin body is built, and its refusals are tested above")
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		t.Skipf("skipped on %s: the %s body is built, and its refusals are tested elsewhere", runtime.GOOS, runtime.GOOS)
 	}
 	j := newJob(t)
 	marker := filepath.Join(j.write, "ran")

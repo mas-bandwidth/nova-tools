@@ -65,11 +65,12 @@ near the end.
 
 1. **OS-enforced or refused.** There is one Go function,
    `sandbox.Run`, with three
-   bodies behind build tags: `sandbox-exec` on `darwin`, Landlock on `linux`,
+   bodies behind build tags: `sandbox-exec` on `darwin`, `unshare` on `linux`,
    AppContainer on `windows`. The bodies differ in whether the tool survives
    the command: on `darwin` and `windows` the tool waits and returns the
    command's status; on `linux` the function does not return on success,
-   because the tool restricts itself and then `exec`s the command in place
+   because the tool re-execs itself into the namespaces and then `exec`s the
+   command in place
    (rule 12). If the platform's backend is not available at run time — no
    Landlock in the running kernel, no `sandbox-exec` on `PATH` and none at
    `/usr/bin/sandbox-exec`, an AppContainer
@@ -516,9 +517,9 @@ Every line below goes to **stderr** except the body of `policy`,
 which is the thing asked for and goes to stdout.
 
 ```
-SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> read=<n> write=<n> net=<denied|nopromise> cwd=<dir> ancestors=<n> cmd=<name>
+SANDBOX OK backend=<sandbox-exec|unshare|appcontainer> abi=<n|-> read=<n> write=<n> net=<denied|nopromise> cwd=<dir> ancestors=<n> cmd=<name>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
-SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
+SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|bad_read|bad_write|bad_cwd|bad_net|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
 PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
 PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>
@@ -757,14 +758,16 @@ write set and there is nothing to remove when the command ends. The darwin body
 waits rather than `exec`s in order to forward signals and return the command's
 status, not to clean anything up.
 
-## Linux — Landlock, no root
+## Linux — unshare, no root
 
-> **Unimplemented proposal (2026-09-12).** The Linux (Landlock) backend
-> described in this section is not implemented: the linux body of `nova-sandbox`
-> is not built today (`cmd/nova-sandbox/parent_linux.go` carries only the
-> probe's parent-executable guard), so no Landlock wall is applied on linux. Its
-> requirements are preserved below, word for word, as the owed work for when the
-> body is built; nothing below is a promise the current binary keeps.
+> **Built (2026-09-15).** The linux body of `nova-sandbox` is the `unshare`
+> backend: user, mount and (on `--net-deny`) network namespaces, with the
+> `--read` directories bind-mounted read-only and the `--write` directories
+> bind-mounted read-write at their own paths inside a fresh root the command is
+> `chroot(2)`ed into. `nova-sandbox check` reports `backend=unshare` on linux.
+> The earlier Landlock design below is preserved as the alternative it was;
+> the backend that ships is `unshare`, so `landlock_abi_unknown` is no longer a
+> reason the tool prints.
 
 Landlock is an LSM available from kernel **5.13**, usable by an unprivileged
 process, and inherited across `execve(2)` so that the child cannot lift it. The

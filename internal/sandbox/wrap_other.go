@@ -1,11 +1,11 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 // Every platform whose body is not built yet REFUSES, and this file is that refusal.
 // Rule 1 is "OS-enforced or refused": a stub that proceeded would be the silent sandbox
-// the whole tool exists to prevent, so the linux (Landlock) and windows (AppContainer)
-// bodies named in docs/SPEC-SANDBOX.md are not stubbed as pass-throughs — they are
-// stubbed as NO, and the refusal names the platform so that a reader knows which body
-// is missing rather than that "the sandbox failed".
+// the whole tool exists to prevent, so the windows (AppContainer) body named in
+// docs/SPEC-SANDBOX.md is not stubbed as a pass-through — it is stubbed as NO, and the
+// refusal names the platform so that a reader knows which body is missing rather than
+// that "the sandbox failed".
 package sandbox
 
 import (
@@ -35,16 +35,4 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	return ExitRefused, refuse("no_sandbox",
 		"this build has no %s body: the darwin body is built and the %s one (%s) is not, so there is nothing to contain this command with. Run it on darwin, or build the %s body first — there is no fallback and no degraded mode",
 		runtime.GOOS, runtime.GOOS, backendNameFor(runtime.GOOS), runtime.GOOS)
-}
-
-// backendNameFor names the backend the spec assigns each platform, so that the refusal
-// says which thing is missing rather than only that something is.
-func backendNameFor(goos string) string {
-	switch goos {
-	case "linux":
-		return "landlock"
-	case "windows":
-		return "appcontainer"
-	}
-	return "no backend this spec names"
 }
