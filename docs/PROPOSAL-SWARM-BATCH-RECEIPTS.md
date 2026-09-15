@@ -149,7 +149,7 @@ Missing per-job usage is unavailable, not zero; an empty cost aggregate cannot f
 | Response lost after task publication, job moved or reclaimed | Recover accepted from sufficient matching evidence, otherwise unresolved; no duplicate admission. |
 | Second-card write failure | First mapping survives; failed card refused only if nonpublication proved, otherwise unresolved; later cards unattempted. |
 | Sidecar-only / task-only / conflicting orphan | Complete only proven-owned, unpublished staging; task-only/conflict unresolved; no overwrite. |
-| Dispatcher observes publication | Never sees this mode's task without its complete intended sidecar. |
+| Dispatcher observes publication | At initial pending publication, the task becomes discoverable only after its complete intended sidecar is published and synchronized. Later legacy Claim moves are outside this guarantee; split, moving or otherwise insufficient evidence remains unresolved and never authorizes resubmission. |
 | Directory sync failure / stale lock / unsupported no-replace | Refused or unresolved per actual publication point; no durability claim or forced unlock. |
 | Pending/no report/quarantine/changed report/unknown usage | Every receipt job remains named; current full hashes and gaps preserved; no fabricated usage or completion. |
 | Retry/rework, overlapping usage sources | Separate existing job identities and one accounting contribution per scope. |

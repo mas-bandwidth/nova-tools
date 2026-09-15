@@ -115,7 +115,7 @@ For the targeted Darwin/APFS durability gate, require the planned Darwin primiti
 
 ## Finite remaining decisions
 
-1. Accept the narrow historical-admission/conservative-recovery interpretation, or require the explicitly separate opt-in dispatcher transition repair. This decides the implementation boundary.
+1. Scope choice selected for review: narrow historical admission with conservative recovery (the original proposal explicitly excludes dispatcher changes; admitting a receipt establishes durable named-card/job correlation and safe replay, not certification of subsequent legacy Claim transitions or completed work; split, moving or insufficient evidence remains unresolved and never authorizes resubmission). Opt-in dispatcher transition repair remains documented as a separate, unapproved follow-up.
 2. Review darwin-apfs-v1 path/dev/inode representation and the proposed directory-fsync/F_FULLFSYNC sequence against the actual intended Darwin benches. Decide whether the focused evidence satisfies the existing durability gate; if not, name only its missing concrete witness. A Mac build or Linux-only test success does not satisfy that gate.
 3. Review the exact v1 member/transition contract above, including completed=closed, retryable pre-task witness and canonical bytes. Then pin the resulting proposal revision for maintainer and independent reviewer dispositions, plus the required crash/durability evidence before build approval.
 
