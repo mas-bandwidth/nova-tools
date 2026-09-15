@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -432,6 +433,98 @@ func PromptSize(jobDir string) (int, bool) {
 		return int(maxInt), true
 	}
 	return int(fi.Size()), true
+}
+
+// ISSUE #163: A STRUCTURED SIGNAL, NOT A HEURISTIC OVER THE TRANSCRIPT. The class above is
+// real -- a job that died because the request did not fit is named, never retried, in one
+// line -- but #150 established it by READING prose, and five rounds of review each narrowed
+// or widened the text rule only to find the door beside it. The rule is not wrong; the
+// INPUT is unbounded. The durable shape is a harness adapter recording the provider's
+// refusal as STRUCTURED DATA -- its error kind, its HTTP status, the token counts if it gave
+// any -- written by the one process that watched the harness exit, so that finish, the
+// recovery pass and triage read a FIELD and no mark, bare-word bound, list marker or
+// event-prefix exclusion is load-bearing.
+//
+// The adapter writes ONE line, and the supervisor reads and re-emits that one line:
+//
+//	INPUT LIMIT class=<token|bytes|files> value=<n> limit=<n>
+//
+// `class` says which ceiling was hit -- the provider's own token window (`token`), the
+// prompt byte budget this tool checked before launch (`bytes`), or a `--files` budget
+// (`files`). `value` is the measured size that did not fit, and `limit` the ceiling it hit.
+// The prose heuristic above stays as the fallback for a harness with no adapter, bounded to
+// what it can honestly claim.
+
+// InputLimitClass is a refusal's class, in the words the structured line carries.
+type InputLimitClass string
+
+// The three ways a request is too big.
+const (
+	LimitToken InputLimitClass = "token"
+	LimitBytes InputLimitClass = "bytes"
+	LimitFiles InputLimitClass = "files"
+)
+
+// InputLimitSignal is the structured refusal a harness adapter records: the class, the size
+// that did not fit and the limit it hit, as named fields.
+type InputLimitSignal struct {
+	Class InputLimitClass
+	Value int
+	Limit int
+}
+
+// validInputLimitClass reports whether c is one of the three classes, so a stray word on the
+// line cannot mint a class a reader was told to trust.
+func validInputLimitClass(c InputLimitClass) bool {
+	return c == LimitToken || c == LimitBytes || c == LimitFiles
+}
+
+// ReadInputLimitSignal reads the adapter's structured line from the harness log. It is the
+// field issue #163 asks a reader to trust: the class, value and limit are named, so no prose
+// rule is asked to decide them. It reports the signal and whether one was there at all.
+func ReadInputLimitSignal(log []byte) (InputLimitSignal, bool) {
+	for _, raw := range strings.Split(string(log), "\n") {
+		line := strings.TrimSpace(stripPaint(raw))
+		rest, ok := strings.CutPrefix(line, "INPUT LIMIT ")
+		if !ok {
+			continue
+		}
+		var sig InputLimitSignal
+		for _, f := range strings.Fields(rest) {
+			k, v, ok := strings.Cut(f, "=")
+			if !ok {
+				continue
+			}
+			switch k {
+			case "class":
+				sig.Class = InputLimitClass(v)
+			case "value":
+				sig.Value, _ = strconv.Atoi(v)
+			case "limit":
+				sig.Limit, _ = strconv.Atoi(v)
+			}
+		}
+		if validInputLimitClass(sig.Class) {
+			return sig, true
+		}
+	}
+	return InputLimitSignal{}, false
+}
+
+// InputLimitSignalLine is the structured line the supervisor emits from a signal it read: the
+// one line the next reader trusts, `class`, the measured `value` and the `limit` it hit.
+func InputLimitSignalLine(sig InputLimitSignal) string {
+	return fmt.Sprintf("INPUT LIMIT class=%s value=%d limit=%d", sig.Class, sig.Value, sig.Limit)
+}
+
+// inputLimitSignalFromJob reads the adapter's structured line from the harness log, if there
+// is a log to read.
+func inputLimitSignalFromJob(jobDir string) (InputLimitSignal, bool) {
+	raw, err := readRegular(filepath.Join(jobDir, "harness.log"))
+	if err != nil {
+		return InputLimitSignal{}, false
+	}
+	return ReadInputLimitSignal(raw)
 }
 
 // stripPaint removes the ANSI escape sequences a harness writes to a terminal, so the
