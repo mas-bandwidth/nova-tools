@@ -1,9 +1,9 @@
-# nova-work DELEGATION — coordinator notes and the current goal (DRAFT 2, 2026-09-15)
+# nova-work DELEGATION — coordinator notes and the current goal (DRAFT 3, 2026-09-15)
 
 **Status: a draft, Rowan's, on Stella's ask of 2026-09-14 (stella-cc8561e3fde4), repaired on
-her review of draft 1 (nova-tools#335, comment 5672078177, and stella-a8da9cb0e0a4). Nothing
-here is built.** It is planning inside the v2 recursive-node boundary of nova-tools#321 and
-changes no v1 completion count. Every requirement that is Glenn's cites its source by comment
+her review of draft 1 (nova-tools#335, comment 5672078177, and stella-a8da9cb0e0a4) and of
+draft 2 (comment 5673066509). Nothing here is built.** It is planning inside the v2
+recursive-node boundary of nova-tools#321 and changes no v1 completion count. Every requirement that is Glenn's cites its source by comment
 id so a reader can check the words: **5671991172** (the DELEGATION section itself, 23:03Z) and
 **5672006742** (the coordinator notes and the shared current goal inside it, 23:05Z), both on
 nova-tools#321. Where this draft decides something Glenn did not say, the sentence is marked
@@ -19,6 +19,16 @@ in-place edit of a shared file; (2) every example is restricted-Lisp data; (3) s
 evaluation are bounded by named limits and `applicable` evaluates the whole active set before
 it prints a verdict; (4) the current goal is specified — set, retrieve, update — with its
 witnesses; (5) the incident paragraph is corrected against the bus record.
+
+What draft 3 changed, keyed to Stella's review of draft 2 (5673066509): (1) `goal update
+--stop` requests cancellation through the existing `:cancel-requested` transition and never
+asserts a stopped worker; the pending stop is a value of `show`'s `stop=` field, so no harness
+resumes work while confirmation is pending; both goal witnesses are repaired to say so; (2)
+`notes supersede` constructs its replacement with the old note's `:kind`, inherited; (3) the
+snapshot decision is closed by her selection: a route is eligible only on a live evaluation of
+the current revision, a snapshot answer is planning only, and the false claim about the example
+config is removed; (4) the example ids are labelled abbreviated, and verdict rows are under the
+total response bound and refuse rather than print a partial answer.
 
 The reason this exists, in Glenn's words (5672006742): a place *"where you write your own
 notes to, as informed by our conversations"*, so that *"what I just told you about how and what
@@ -210,27 +220,37 @@ pages. **A superseded note is never printed as active**, by any verb, with or wi
 decision"*).
 
 **`supersede`** is **one mutation, one envelope, two events**: a `:note :write` of the
-replacement, carrying the old note's scope, and a `:note :supersede` on the old id naming
-`:superseded-by` the new id. The envelope is validated whole against the resident set at
-`--expect`, journaled whole, applied whole; a failed validation writes neither event (SPEC-
+replacement and a `:note :supersede` on the old id naming `:superseded-by` the new id. **The
+replacement is constructed in full before anything is hashed**: its `:scope` and its `:kind`
+are the old note's, inherited — `supersede` has no `--kind`, and this is the smallest choice
+consistent with the rule below (Stella, 5673066509) — its `:author` is `--as`, and `:source`,
+`:date`, `:text`, `:constraint` and `:uncertain` are the flags given, absent ones `(:absent)`;
+its id is the digest of that complete list, and it is validated as `write` validates a note.
+A note of another kind is a new `write`, not a supersede. The envelope is validated whole
+against the resident set at `--expect`, journaled whole, applied whole; a failed validation writes neither event (SPEC-
 WORK.md: *a failed validation changes neither O nor the journal*), and a multi-event envelope
 never partly publishes. Refused when the old id is not active — so of two competing
 supersedes of one note, the second is refused `not active: superseded-by <first>` and its
 replacement is never written, and at no revision are an obsolete instruction and its
 replacement both active, or either lost; when the new note has no source or date; and when
-the new note's `:kind` is weaker than the old one's — a `:heuristic` or an `:observation`
-cannot supersede an `:instruction` (5672006742: *"inferred heuristics cannot silently override
-explicit instructions"*). To change an instruction, the human must have said something, and
-the new `:source` shows where. The old note's list is not touched; its `:state` is derived.
+the replacement's `:kind` would be weaker than the old one's — a `:heuristic` or an
+`:observation` cannot supersede an `:instruction` (5672006742: *"inferred heuristics cannot
+silently override explicit instructions"*), which inheritance makes true by construction and
+the validator still checks on the whole envelope. To change an instruction, the human must have
+said something, and the new `:source` shows where. The old note's list is not touched; its
+`:state` is derived.
 
 **`applicable`** is the read before the route. Given a task class and, optionally, the
 candidate routes the caller is choosing among, it loads **every** active note whose scope
 covers `--as` (the coordinator's own scope, every group `--as` belongs to, and `(:node)`),
 evaluates every constraint among them against every candidate, and only then prints: one
-`NOTES ROW` per candidate, `eligible` or `excluded <note-id>` — never capped, one line per
-candidate the caller named — followed by the applicable notes as `NOTES ROW` lines under
-`--max`, `NOTES MORE` when cut. **The cap is on the prose rows and never on the evaluation**:
-the verdict for a candidate is computed from the complete active set, which `:max-active`
+`NOTES ROW` per candidate, `eligible` or `excluded <note-id>` — never cut by `--max`, one line
+per candidate the caller named — followed by the applicable notes as `NOTES ROW` lines under
+`--max`, `NOTES MORE` when cut. The whole answer is under the session's total response bound
+(`--max-bytes`, SPEC-WORK.md); when the verdict rows alone would not fit it, the verb refuses
+`NOTES FAIL …: past --max-bytes` and prints no verdict at all — never a partial list of
+`eligible` rows (Stella, 5673066509). **The cap is on the prose rows and never on the
+evaluation**: the verdict for a candidate is computed from the complete active set, which `:max-active`
 bounds and which the session holds whole, before any row is printed, so a deny in a note the
 display cut still excludes (replay `applicable-cap-never-hides-a-deny`, below). Where the
 complete set cannot be loaded — the session is not live and no `--snapshot` is given, a
@@ -246,11 +266,22 @@ carries into the brief is the constraint lines and the note ids, not the convers
 notes came from (5672006742: *"without copying accumulated conversation history"*).
 
 `applicable` answers from the live session, or from a published snapshot with `--snapshot`,
-and every answer prints the revision it was evaluated at, `rev=<n>`. **(open decision)** what
-staleness a card builder accepts from a snapshot answer: (a) live session only, refuse a
-snapshot; (b) a snapshot no older than a configured `:notes :max-snapshot-age`; (c) any
-snapshot, the revision printed and the caller responsible. Draft 2 writes (b) into the example
-config and takes no side until a read says which.
+and every answer prints the revision it was evaluated at, `rev=<n>`, and where it came from,
+`from=live` or `from=snapshot`. **Display and eligibility are separate.** A snapshot answer is
+read-only planning: it shows what the constraints were at its revision, and no row of it makes
+a route eligible, because the age of a snapshot alone cannot establish that a stop or a deny
+has not been written since (Stella's decision, 5673066509, closing draft 2's open decision).
+**The check boundary**: before a route is treated as currently eligible — before the route
+selector prices it and before a card builder writes a brief for it — the caller evaluates the
+complete current constraints against the owning session at its current revision, by the
+existing owning-session and revision discipline: the eligible verdict carries `rev=<n>
+from=live`, and the write that admits the route carries `--expect` that revision, so a stop or
+a deny written between the check and the admission refuses it as `stale`. Where that live
+evaluation is stale or unavailable, the policy state is unknown and the route is refused, as
+above. A brief built from a snapshot answer is a draft until that check passes. This adds no
+lease and no scheduler, and it promises nothing about an instruction that changes after
+admission: that reaches the running work by a stop, not by this check. There is no
+`:max-snapshot-age` in the example config and no age bound anywhere in this draft.
 
 Where the route selection of duty 1 is built (on #175 and PROPOSAL-SCHEDULING-COST.md), it
 calls `applicable` first and prices only the routes that came back `eligible`; SPEC-WORK.md's
@@ -293,11 +324,13 @@ The current instruction, as Glenn gave it on 2026-09-14 (5672006742, and the sam
 relayed in stella-1a9783ed1ccf: *"Astra default is for coordination and thinking. Not for
 coding."*). Every name in it is configuration of this node and appears in this document only
 as the worked example; a test uses other names. Both forms below are valid restricted Lisp
-as SPEC-WORK.md's reader defines it; the ids are what the digest above yields for these
-exact fields, and a test recomputes them rather than trusting the page.
+as SPEC-WORK.md's reader defines it. **The ids shown are abbreviated illustrative ids, not
+SHA-256 results**: the complete vectors — the full canonical preimage and its full 64-hex
+digest — are generated by the test from these exact fields, and nothing on this page is a
+digest to be trusted (Stella, 5673066509).
 
 ```lisp
-(:id "note:3f1c…" ; sha256 of the canonical serialization of the fields below
+(:id "note:3f1c…" ; abbreviated, illustrative; the test computes the full sha256 of the fields below
  :scope (:coordinator "Stella") :author "Stella" :date "2026-09-14T23:05Z"
  :source "nova-tools#321 comment 5672006742; Glenn, live, 22:38Z: 'Astra default is for coordination and thinking. Not for coding.'"
  :kind :instruction
@@ -308,7 +341,7 @@ exact fields, and a test recomputes them rather than trusting the page.
  :uncertain (:absent))
 ;; derived, printed by the reader, never in the record: :state :active
 
-(:id "note:9b40…"
+(:id "note:9b40…" ; abbreviated, illustrative
  :scope (:node) :author "Stella" :date "2026-09-14T23:05Z"
  :source "nova-tools#321 comment 5672006742"
  :kind :instruction
@@ -353,6 +386,7 @@ the mapping is `:children`, and nothing is copied.
 nova-work goal set     --as <name> [--scope <scope>] --goal <node-id> --reason <text> --request <id> --expect <rev>
 nova-work goal show    --as <name> [--scope <scope>] [--snapshot <path>] --max <n>
 nova-work goal update  --as <name> [--scope <scope>] --request <id> --expect <rev> ( --progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text> )
+                       ;; every form writes on the current goal node of the scope and on no other node
 ```
 
 **`set`** writes the reference. Refused when the node does not exist; when its disposition is
@@ -365,7 +399,7 @@ remain distinct from the goal record"* (5672006742).
 **`show`** is what a newly selected model or harness loads, and it is the whole of what it
 needs: the `GOAL OK` line — `scope=`, `goal=<id>`, `rev=<n>` (the revision the answer is
 evaluated at), `generation=<n>` and `scope-revision=<n>` of the node, `state=`, `owner=<lease
-holder|->`, `stop=<none|cancelled|deferred>`, `constraints=<n>`, `notes=<n>`,
+holder|->`, `stop=<none|requested|cancelled|deferred>`, `constraints=<n>`, `notes=<n>`,
 `outstanding=<n>` — then `GOAL ROW` lines: the objective (`:title` and each `:acceptance`
 criterion with its current verdict), every constraint line and note id `applicable` would
 carry for this coordinator, the progress (evidence events, done and remaining required work
@@ -379,9 +413,20 @@ accumulated conversation or guessing whether earlier work stopped"* — the stop
 
 **`update`** is a thin verb: it names the current goal node so a harness need not know the
 id, and writes the existing event kinds on it — `--progress` a `:transition` or `:evidence`
-event, `--blocked-by` a `:transition :to :blocked`, `--stop` a `:cancel` carrying `:evidence`
-that the worker stopped — under the same `--expect`. **Objective and constraint edits are not
-`update`**: changing what the goal is, is `accept` (criteria), `dep`, `node` and `correct` on
+event, `--blocked-by` a `:transition :to :blocked`, `--stop` a `:transition :to
+:cancel-requested` with `--reason` — under the same `--expect`. **A stop request is not
+stopped-worker evidence.** `--stop` takes no evidence and observes nothing; it is SPEC-WORK.md's
+own permitted request transition (from `:todo`, `:doing` or `:blocked` to `:cancel-requested`),
+and confirmed cancellation remains SPEC-WORK.md's `event --kind cancel --evidence <pointer>`
+on the node, the one evidence-bearing operation, admitted only from `:cancel-requested`; there
+is no second cancellation mechanism (Stella, 5673066509; SPEC-WORK.md, *States and
+transitions*). While the request is pending, `show` prints `stop=requested` on every harness
+and every build, and a harness that reads it does not resume the work: the only road out of
+`:cancel-requested` other than the confirmed `:cancel` is the explicit withdrawal to `:doing`
+with a reason, by SPEC-WORK.md's table, never a progress update. `update` targets the current
+goal node of the scope and no other; to act on a child, the coordinator either `set`s the
+goal reference to that child first or uses SPEC-WORK.md's `state` and `event` on the child by
+id. **Objective and constraint edits are not `update`**: changing what the goal is, is `accept` (criteria), `dep`, `node` and `correct` on
 the node, each bumping its scope revision or generation by SPEC-WORK.md's own rules, and a
 note supersede for a routing constraint; so a status update and an objective edit are
 different event kinds with different revision effects, and a reader tells them apart from the
@@ -404,16 +449,21 @@ goal requires evidence against its criteria — the node's `:to :done` names evi
 text and nothing else (Stella, stella-a8da9cb0e0a4):
 
 - `goal-crosses-harness` — harness A, as coordinator C, sets goal G at revision r, writes a
-  `(:coordinator "C")` note with a `:deny` on a made-up model for `:coding`, and stops one
-  child of G with `update --stop`; harness B, another build, calls `show --as C` against the
-  live session and against the clipped snapshot. Both answers print `goal=G`, a `rev=` at or
-  after every write of A's, `stop=cancelled` on that child's row, and the same note id and
-  constraint line A wrote, byte for byte. B copied no conversation.
+  `(:coordinator "C")` note with a `:deny` on a made-up model for `:coding`, and requests a
+  stop of G with `update --stop --reason`; harness B, another build, calls `show --as C`
+  against the live session and against the clipped snapshot. Both answers print `goal=G`, a
+  `rev=` at or after every write of A's, `stop=requested` — not `cancelled`: no evidence of a
+  stopped worker has been written — and the same note id and constraint line A wrote, byte for
+  byte; a B `update --progress` that would move G out of `:cancel-requested` is refused by
+  the transition table. A then writes `event --kind cancel --evidence <pointer>` on G, and
+  B's next `show` prints `stop=cancelled`. B copied no conversation.
 - `goal-stale-update-refuses` — A and B both `show` at revision r. A writes progress, r+1;
   B's `update --progress --expect r` is refused `stale`, the snapshot is unchanged, and B's
-  next `show` prints A's progress. A then `update --stop`, r+2; B's `update --progress
-  --expect r+1` is refused `stale` and B's next `show` prints `stop=cancelled`. A `set` to a
-  node in C is refused whatever `--expect` says, and the node stays in C.
+  next `show` prints A's progress. A then `update --stop --reason`, r+2; B's `update
+  --progress --expect r+1` is refused `stale` and B's next `show` prints `stop=requested`; a
+  `--progress` transition at r+2 is refused by the transition table, and `stop=requested` stands until a
+  `:cancel` with evidence or an explicit withdrawal. A `set` to a node in C is refused whatever
+  `--expect` says, and the node stays in C.
 - `applicable-cap-never-hides-a-deny` — N active notes, N > `--max`, the only `:deny` in the
   note that sorts last; `applicable --max 1 --candidate <role>/<model>` prints `excluded
   <that id>` and `NOTES MORE`; `show --max 1` prints the same constraint row before any cut
@@ -444,9 +494,9 @@ incomplete**, and this file says so rather than pointing.
 
 ## Open decisions and Rowan's decisions, for review
 
-**Open decision** (one): the staleness a card builder accepts from a snapshot-served
-`applicable` — live only; a configured `:max-snapshot-age`; or any snapshot with the revision
-printed. The example config writes the second; the text takes no side.
+**Open decisions**: none. Draft 2's one — the staleness a card builder accepts from a
+snapshot-served `applicable` — is closed by Stella (5673066509): eligibility is a live
+evaluation of the current revision; a snapshot answer is planning only, its revision shown.
 
 **Rowan's decisions**, collected so a reader can strike any of them without touching a
 requirement of Glenn's: the content-digest id and its preimage order; notes and the goal
@@ -455,5 +505,7 @@ orders; group membership taken from `friend --group`; the three bounds under `:n
 archive road for superseded notes; the verb names and flags; the source check as a shape
 check; the `:deny`/`:prefer`/no-`:allow` constraint form and its every-axis match; task
 classes reused from `:model` events; deny-over-prefer when two constraints disagree;
-`unknown` for an unregistered model; `update` as a thin verb over existing event kinds; the
-fold location. Reads are owed from Stella, Emma and Freddy on the exact head.
+`unknown` for an unregistered model; `update` as a thin verb over existing event kinds, its
+`--stop` the request transition and never the confirmed cancel; the replacement's kind
+inherited on `supersede`; the fold location. Reads are owed from Stella, Emma and Freddy on
+the exact head.
