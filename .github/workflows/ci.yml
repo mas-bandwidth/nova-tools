@@ -260,6 +260,29 @@ jobs:
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
 
+      - name: take a quarter of the machine, not all of it
+        # FOUR runners share each of these machines, and `go test` defaults
+        # GOMAXPROCS to every core it can see -- so four concurrent legs ask for
+        # four times the machine and spend the difference context-switching.
+        # Measured: the same studio legs ran 208 and 251 s in run 35021822106
+        # and 386 and 379 s in run 35023183602, the second pair cancelled at the
+        # ceiling, on identical work. A leg takes its FAIR SHARE instead: cores
+        # divided by the four runners, never below 1. `go test -p` follows
+        # GOMAXPROCS, so this bounds both the package-level and the in-package
+        # parallelism with one number.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(uname -s)" = "Darwin" ]; then
+            cores=$(sysctl -n hw.ncpu)
+          else
+            cores=$(nproc)
+          fi
+          share=$(( cores / 4 ))
+          [ "$share" -ge 1 ] || share=1
+          echo "$cores cores on this machine, 4 runners, this leg takes $share"
+          echo "GOMAXPROCS=$share" >> "$GITHUB_ENV"
+
       # No actions/cache here. These runners are PERSISTENT: ~/.cache/go-build
       # survives between jobs on the machine itself, so the action spends 6 s
       # restoring and 4 s re-uploading a cache the disk already had — a tenth of
