@@ -503,6 +503,65 @@ func TestFriendSequenceLocalModelCard(t *testing.T) {
 	}
 }
 
+// TestNativeAllowsProviderLoopback: a keyless provider (baseURL, no apiKey) whose baseURL
+// names a loopback host:port is carried into the wall as --net-allow <host:port>, so the
+// harness can reach the local model. The wall's nopromise grant (allow network-outbound
+// (remote ip)) does NOT cover 127.0.0.1, so a local-model card died silently without this
+// named grant (issue #591).
+func TestNativeAllowsProviderLoopback(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://127.0.0.1:11434/v1"}}}}` + "\n"
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	label := "a-label"
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "ollama/north-mini-code-32k", label: label,
+		card: []byte("a card\n"), slotDir: slot, root: root,
+		configFile: cfgPath, deadline: 30 * time.Second, sandbox: sandbox,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the keyless loopback provider runs walled, got exit %d:\n%s", code, errOut.String())
+	}
+	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
+	if !strings.Contains(argv, "--net-allow 127.0.0.1:11434") {
+		t.Errorf("the wall argv does not carry the loopback allow rule:\n%s", argv)
+	}
+}
+
+// TestNativeSilentHarnessIsNotOK: a harness that exits clean (rc 0) without writing its
+// report -- no RESULT.md -- is never scored OK. It is a harness that was blocked before it
+// could answer (a keyless provider on a loopback the wall did not open exits 0 silently),
+// and the run says so with reason=harness-silent rather than a NATIVE OK line (issue #591).
+func TestNativeSilentHarnessIsNotOK(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	cardPath := filepath.Join(root, "card.md")
+	if err := os.WriteFile(cardPath, []byte("FAKE-NORESULT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
+		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+	if rc == 0 {
+		t.Fatalf("a silent harness is not OK and must exit non-zero, got 0:\nstdout: %s\nstderr: %s", stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), "NATIVE OK") {
+		t.Fatalf("a silent harness must not print NATIVE OK:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "reason=harness-silent") {
+		t.Fatalf("the run names the silent harness with reason=harness-silent:\n%s", stdout.String())
+	}
+}
+
 // TestNativeRunRefusalsNameTheirReason drives the remaining three refusals -- a model with
 // no provider prefix, an auth file looser than 0600, and a slot outside its root -- so each
 // prints its one REFUSED line.

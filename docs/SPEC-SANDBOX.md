@@ -149,6 +149,15 @@ near the end.
    nothing wider; a job that does not listen cannot be listened to.
    (`profiles/darwin-check.sh`, checks `unix_socket_outside`,
    `unix_socket_outside_control` and `unix_socket_inside`.)
+   **The loopback is opened by name with `--net-allow <host:port>`.** The
+   no-promise grant `(allow network-outbound (remote ip))` reaches remote IP
+   only, not `127.0.0.1`, so a job that must reach a keyless local provider
+   (ollama on `localhost`) dies silently without its host:port named.
+   `--net-allow` emits one
+   `(allow network-outbound (local ip (host "<h>") (port "<p>")))` per entry —
+   the one address, nothing wider — and an entry that will not split into host
+   and port is `reason=bad_net` at exit 125 rather than a profile
+   `sandbox-exec` rejects at exit 65.
    **One unix socket is granted by literal, and it is DNS.** macOS does not
    resolve names over IP from the process: it asks `mDNSResponder` over the
    unix socket `/private/var/run/mDNSResponder`, so IP-only outbound is a wall
@@ -384,9 +393,9 @@ near the end.
 ## The verbs
 
 ```
-nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
+nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--net-allow <host:port>]... [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
 nova-sandbox probe   --write <dir>... [--read <dir>...] --secret <path> [--net-deny] [--max <n>]
-nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] [-- <command> <args...>]
+nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--net-allow <host:port>]... [--cwd <dir>] [-- <command> <args...>]
 nova-sandbox fence   --out <file> [--webfetch allow|deny]
 nova-sandbox grant   --name <container> [--read <dir>]... [--write <dir>]...
 nova-sandbox release --name <container> [--read <dir>]... [--write <dir>]...

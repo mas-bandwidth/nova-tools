@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +47,7 @@ type nativeRunConfig struct {
 	sandbox    string // the nova-sandbox binary naming the wall; "" = resolve on PATH
 	noWall     bool   // the caller typed --no-wall: run with no containment, named by its OK line
 	configFile string // optional: an opencode.json provider config copied beside the auth copy
+	netAllow   string // the provider's loopback host:port, passed to the wall as --net-allow
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -58,6 +61,7 @@ type nativeRunResult struct {
 	usageState   string  // the store path the NATIVE OK line names when no store answered, "" otherwise
 	usageReason  string  // no-rows | no-store | no-sqlite3, "" when the store answered
 	configSHA    string  // sha8 of the carried provider config, "" when --config named none
+	reason       string  // harness-silent when the child exited 0 but wrote no report, "" otherwise
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -167,6 +171,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			return nativeRunResult{}, 2
 		}
 		configSHA = sha8
+		// The keyless provider's loopback host:port travels to the wall as --net-allow
+		// (issue #591): (allow network-outbound (remote ip)) does not reach 127.0.0.1, so a
+		// local-model card runs and dies silently without the named grant.
+		cfg.netAllow = providerLoopback(cfg.configFile, provider)
 	}
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
@@ -267,6 +275,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 	}
 
+	// (6) THE SILENT HARNESS (issue #591). A harness that exits clean without writing its
+	// report -- the RESULT.md a card's answer lands in -- is not a pass. It is a harness that
+	// was blocked before it could answer: a keyless provider on a loopback the wall did not
+	// open exits 0 silently, leaving no report and no log. The run records that as a
+	// harness-silent note, never a NATIVE OK.
+	if res.rc == 0 {
+		if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err != nil {
+			res.reason = "harness-silent"
+		}
+	}
+
 	// Slice 10: one usage.tsv beside the run, read from the harness's own store, so a batch
 	// can fold the card's tokens and dollars without re-reading the harness.
 	res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], start, time.Now(), res.rc, errOut)
@@ -303,6 +322,11 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir string)
 		"--write", jobDir,
 		"--write", dataHome,
 		"--cwd", jobDir,
+	}
+	// The keyless provider's loopback address is opened back up by name, never by widening
+	// the wall's network promise (issue #591).
+	if cfg.netAllow != "" {
+		argv = append(argv, "--net-allow", cfg.netAllow)
 	}
 	// The shell launcher read the harness's own directory and /opt/homebrew so git and the
 	// harness's libraries resolve inside the wall; the native path does the same (run 7).
@@ -625,6 +649,53 @@ func keylessProvider(v any) bool {
 	}
 	_, hasKey := opts["apiKey"]
 	return !hasKey
+}
+
+// providerLoopback reads the carried config and returns the loopback host:port the model's
+// provider's baseURL names, or "" when the provider carries no baseURL, names no loopback,
+// or the config cannot be read. The wall's --net-allow opens exactly that address back up
+// after a keyless provider on localhost (issue #591).
+func providerLoopback(cfgPath, provider string) string {
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return ""
+	}
+	var cfg map[string]any
+	if json.Unmarshal(raw, &cfg) != nil {
+		return ""
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	entry, ok := providers[provider]
+	if !ok {
+		return ""
+	}
+	m, _ := entry.(map[string]any)
+	opts, _ := m["options"].(map[string]any)
+	base, _ := opts["baseURL"].(string)
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := u.Hostname()
+	if !loopbackHost(host) {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		return ""
+	}
+	return net.JoinHostPort(host, port)
+}
+
+// loopbackHost reports whether a host names the machine's own loopback: localhost, an
+// IPv4 loopback (127/8) or IPv6's ::1. A keyless provider on such an address is not reached
+// by the wall's (allow network-outbound (remote ip)) and needs its own --net-allow grant.
+func loopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // fileSHA256 returns the lowercase hex sha256 of a file's bytes.

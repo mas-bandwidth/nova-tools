@@ -562,9 +562,15 @@ the job's data home, mode 0600. Only the provider named by `--model` is checked:
 a config whose entry for THAT provider has no key in `--auth` is refused before
 anything runs, naming the provider and never the key; a provider whose options
 carry a `baseURL` and no `apiKey` (ollama on localhost) needs no key and is
-admitted without one, so its card runs walled on the local model. Every other
-provider in the file — a person's config names all of them — is copied verbatim
-and not checked, because this run never calls it.
+admitted without one, so its card runs walled on the local model. Its loopback
+`baseURL` host:port is carried into the wall as `--net-allow <host:port>`, so
+the local model stays reachable (the wall's no-promise grant,
+`(allow network-outbound (remote ip))`, does not reach `127.0.0.1`); a wall that
+cannot open that address is refused with one line naming it, never a silent
+`NATIVE OK`. Every other provider in the file — a person's config names all of
+them — is copied verbatim and not checked, because this run never calls it, and
+a harness that exits without its own report is scored `harness-silent`, never
+`OK`.
 
 `--tokens <n>` is the token budget (rule 13). It has no default and `0` is
 refused, on `add` and on `batch` alike, for the reason `--files` has none.
@@ -1107,6 +1113,7 @@ RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
 ADMIT REFUSED benchmark window open until <stamp>
 NATIVE OK label=<id> job=<id> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> [usage=none reason=<r> path=<p>]
+NATIVE SILENT label=<id> job=<id> rc=<n> reason=harness-silent wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> [usage=none reason=<r> path=<p>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
