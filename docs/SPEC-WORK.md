@@ -2393,8 +2393,8 @@ next clip. Do not discard recovery records before successful checkpointing.
 A failed network request leaves local accepted work and the pending clip intact;
 report it as locally durable but not shared. Retry with bounded exponential
 backoff. A rejected push preserves the local work and names the upstream and base shas; never
-force-push and never merge (the sentence "apply nonconflicting incoming events
-incrementally" stood here in 9757de0 and is struck by stella-0ace603bdc22). An explicit
+force-push and never merge (the resident-session sentence struck here is preserved verbatim, with
+its date, in docs/HISTORY.md). An explicit
 reload/rebuild is a recovery or maintenance operation, not the normal verb path.
 Clip cadence is configurable; shutdown and coordinator handoff request a clip.
 A Git checkpoint is not required for every small mutation.
@@ -4067,8 +4067,8 @@ The rationale rests on measured facts from Gas Town:
    limit stops and reports rather than widening on its own; widening requires an explicitly recorded reason.
 10. **Fleet-wide spend ceiling per day.** CONFIG maintains an explicit fleet-wide spend ceiling per day
     and per model family. When an automatic or delegated dispatch would cross that ceiling, it is refused
-    with a line naming the configured ceiling and the current spend; it polices the local bench rather
-    than guessing other benches' spend.
+    with a line naming the configured ceiling and `local-spend=` for the bench's own spend; it polices
+    the local bench rather than guessing other benches' spend. A fleet total needs the benches joined, a later slice.
 
 ### Required enforcement replays
 
