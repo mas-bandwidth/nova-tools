@@ -145,10 +145,10 @@ var clTierCeilings = map[string]int{
 	// machines they are not: the legs queue, the run is the sum over the waves,
 	// and a per-job ceiling cannot see it. Measured in run 35019905236: every
 	// studio leg and three of eight space legs were CANCELLED at 2:00 having
-	// done nothing wrong, while five space legs passed at 80-118 s. Space binds
-	// — it is a one-core machine hosting four runners, so four concurrent legs
-	// share one core. Six is a hang detector for a leg measured at one to two
-	// minutes. The budget is the run's wall clock; hold the law there.
+	// done nothing wrong, while five space legs passed at 80-118 s. Six is a
+	// hang detector for a leg measured, once the legs stopped oversubscribing
+	// their machines, at 12 to 126 s over a 233 s run (35025207396). The budget
+	// is the run's wall clock; hold the law there.
 	"test": 6,
 }
 

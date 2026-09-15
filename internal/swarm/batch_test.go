@@ -102,8 +102,8 @@ func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) 
 // to 200 ms and then assert either that it was left alone or that a silent one
 // was killed. A one-second budget makes the nominal margin 5x, which is not a
 // margin on a SHARED runner: `sleep 0.2` in a shell loop is 200 ms of sleeping
-// plus however long the machine takes to schedule the process again, and the
-// space runner is a one-core box hosting four of them. Run 35019905236 caught
+// plus however long the machine takes to schedule the process again, and four
+// runners share each of these machines. Run 35019905236 caught
 // it both ways at once — in test (3/8 studio) a card that kept writing was
 // idle-killed, and in an earlier local run a card that publishes immediately
 // was killed before it could. Four seconds is a 20-27x margin on the same tick,

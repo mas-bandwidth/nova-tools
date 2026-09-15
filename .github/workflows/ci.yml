@@ -227,10 +227,10 @@ jobs:
     # the run is the sum over the waves and no per-job ceiling can see it.
     # Measured in run 35019905236 with this exact fan-out: every studio leg and
     # three space legs were CANCELLED at 2:00 having done nothing wrong, while
-    # five space legs passed at 80-118 s. Space is the binding constraint and it
-    # is a ONE-CORE machine hosting four runners (nproc=1), so four concurrent
-    # legs share one core; the studio is a 32-core M3 Ultra where the darwin
-    # tests are simply slower. A ceiling that cancels honest work is not a
+    # five space legs passed at 80-118 s. The cause was oversubscription, since
+    # fixed: four runners share each machine (15 cores on space, 32 on the studio
+    # M3 Ultra) and each leg sized itself to the whole of it. A leg now takes a
+    # quarter. A ceiling that cancels honest work is not a
     # budget, it is a coin flip. Six is a hang detector for a leg measured at
     # one to two minutes; the budget itself is the run, and the run is what to
     # hold to the law. The fast jobs — lint, test-packages, lisp at 32, 11 and
@@ -286,7 +286,7 @@ jobs:
       # No actions/cache here. These runners are PERSISTENT: ~/.cache/go-build
       # survives between jobs on the machine itself, so the action spends 6 s
       # restoring and 4 s re-uploading a cache the disk already had — a tenth of
-      # the leg's budget, on the one-core space box, to move a cache one hop.
+      # the leg's budget, to move a cache one hop it never left.
       # test-hosted keeps it: a GitHub-hosted runner is a fresh machine.
 
       # No separate `build` step either: `go vet` and `go test` both compile
