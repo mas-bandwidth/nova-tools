@@ -773,11 +773,19 @@ func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
 		t.Fatalf("a clean batch exits 0, got %d; stderr: %s:\n%s", code, errs, out)
 	}
 	arg5 := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".arg5")))
-	if arg5 != root {
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolving the root %q: %v", root, err)
+	}
+	if got, err := filepath.EvalSymlinks(arg5); err != nil {
+		t.Errorf("the runner's $5 %q does not resolve: %v", arg5, err)
+	} else if got != want {
 		t.Errorf("the runner's $5 is %q, want the absolute root %q; a relative root reached the runner", arg5, root)
 	}
 	envRoot := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".envroot")))
-	if envRoot != root {
+	if got, err := filepath.EvalSymlinks(envRoot); err != nil {
+		t.Errorf("NOVA_SWARM_ROOT %q does not resolve: %v", envRoot, err)
+	} else if got != want {
 		t.Errorf("NOVA_SWARM_ROOT is %q, want the absolute root %q; a relative root reached the environment", envRoot, root)
 	}
 }
