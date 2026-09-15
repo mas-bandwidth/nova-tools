@@ -522,6 +522,10 @@ WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n> queued=<n> cc=<n> f
 FRIEND <name> awake|asleep|unknown age=<seconds|-> source=bus-cursor
 AWAKE OK friends=<n> awake=<n> asleep=<n> unknown=<n> window=<n>
 AWAKE REFUSED <reason>
+FACT process=<proven|unproven>
+FACT beat=<proven|unproven>
+FACT delivery=<proven|unproven>
+FACT wake=<proven|unproven>
 ```
 
 The last five are `serve`'s (rule 10); `WAKE HERE` and `WAKE PROBE` are
@@ -530,7 +534,20 @@ The last five are `serve`'s (rule 10); `WAKE HERE` and `WAKE PROBE` are
 the verdict line that ends the listing, and `AWAKE REFUSED` the shape for the
 things wrong about the world rather than the invocation (no `--bus`, a `--bus`
 that is not a git repository, a `--window` that is not positive, a negative
-`--max`).
+`--max`). The four `FACT` lines are the awake grammar's presence record: four
+facts a harness must prove separately — **process** alive; **beat** (the bus
+heartbeat) written; **delivery** handled (the note was receipted); **wake**
+(the parent was notified, the model woke) — each `proven` or `unproven`.
+
+The wake drill: a note sent after the parent's turn ended must produce a wake
+within `--window`. Replay: `wake-drill-note-after-turn-wakes-parent`. The
+per-harness table carries one row per harness and one column per presence fact
+plus the drill — a harness that cannot wake on a late note has `cannot` in the
+drill column:
+
+| harness | process | beat | delivery | wake | wake-drill |
+|---|---|---|---|---|---|
+| <name> | proven/unproven | proven/unproven | proven/unproven | proven/unproven | can/cannot |
 
 `WAKE CHANGE`, `WAKE QUIET`, `WAKE BROKEN` and, since 2026-09-13, `WAKE STOPPED`
 are the **last** line and the four possible verdicts. **`sources-failing=<n>`
@@ -3776,6 +3793,11 @@ left without what it pins.
     answer-within=2m` (draft 3, the grammar's new field); a `probe --line` over a
     `--state` a `watch` holds is `WAKE REFUSED` exit 2 naming the holder, and a
     `PRESENT` or `SILENT` probe leaves the state file byte-identical.
+20. `wake-drill-note-after-turn-wakes-parent`: a note sent after the parent's
+    turn ended wakes the parent's session within `--window`, so the harness row
+    in the per-harness table says `can`; a harness whose session does not wake
+    within the window says `cannot` on that row, and the drill asserts the
+    difference rather than a single passing row.
 
 ## Known limits
 
