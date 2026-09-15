@@ -76,8 +76,9 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    own) is counted in `plan=<n>` on the `POOL` line and not pooled — a plan is the bus's, and
    its slices arrive by the `bus` source.
 4. **Six typed templates, in one directory, named by a flag.** `--templates <dir>` holds
-   `read.md`, `fix.md`, `text.md`, `replay.md`, `drift.md`, `tone.md` and `models.tsv`
-   (two lines: `flash <model id>`, `pro <model id>`). A candidate whose template is not a
+   `read.md`, `fix.md`, `text.md`, `replay.md`, `drift.md`, `tone.md` and the cost table
+   rule 7 reads (`benches.tsv`, or `routes.tsv`, whichever is there). A candidate whose
+   template is not a
    file there is `skipped`, counted on the `CUT` line, and its (`source`,`id`) goes to
    `skipped.tsv` with `no template <name>`; `cut` never falls back to another template.
 5. **Every card is the practice-17 shape, and the template guarantees it.** Line 1 is the
@@ -106,8 +107,9 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    `CUT ROUTE` line, `class` the cost class. A retry after an abstain (rule 14) moves the pick
    one capability class up (`read` → `text` → `code` → `replay`), so a rewritten card routes
    to a stronger class. There is no `--model` flag on any verb: the table is the whole
-   policy, in git, edited once. `cards.tsv` is four fields per line: `label`, `slot`, `model`,
-   `card`; `slot` is `-` until `launch` allocates.
+   policy, in git, edited once. `cards.tsv` is five fields per line: `label`, `slot`, `model`,
+   `tokens`, `card` (the card's path); `slot` is `-` until `launch` allocates, and `tokens` is
+   the card's admission token bound, which rule 10 sums for the batch's `--tokens`.
 8. **A slot is free when the swarm's slot lock files say so.** `launch` reads the swarm pool
    under `--root`: a slot is free when its slot lock file `<pool>/slots/<n>.json` is absent
    or `state=free` — the swarm's own lock files (issue #457), never a log age and never a
@@ -190,21 +192,22 @@ nova-pulse pool    --sources <file> --work <nova-work root> --root <dir> [--out 
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--benches <benches.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--timeout <s>] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--timeout <s>] [--max <n>]
-nova-pulse handoff --to <name> --root <dir>
-nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--max <n>]
+nova-pulse handoff --to <name> --root <dir> [--timeout <s>]
+nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--timeout <s>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse width   --root <dir> --pool <pool.tsv>
-nova-pulse status  --queue <dir> --roots <dirs> [--day <d>]
+nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>]
 nova-pulse version
 nova-pulse help
 ```
 
 Those lines are the string `nova-pulse help` prints, byte for byte. `--timeout <s>` (default
-120) bounds every `gh`, `git` and `nova-swarm` child, for SPEC-MERGE's reason
-(SPEC-MERGE.md:458), and every verb that spawns one carries the flag — `pool`, `cut`,
-`launch` and `harvest`; `width` spawns none and carries none. `harvest` takes `--sources` and
-`--templates` because its last act is `pool` and `cut` again (rule 15). There is no `--model`,
-no `--priority`, no `--retry`.
+120) bounds every `gh`, `git`, `nova-bus`, `nova-wake` and `nova-swarm` child, for
+SPEC-MERGE's reason (SPEC-MERGE.md:458), and every verb that spawns one carries the flag —
+`pool`, `cut`, `launch`, `harvest`, `handoff`, `takeover` and `status`. `width` spawns
+nothing and carries none; `manager` takes its bound from the policy's `wait-timeout` and
+carries none either. `harvest` takes `--sources` and `--templates` because its last act is
+`pool` and `cut` again (rule 15). There is no `--model`, no `--priority`, no `--retry`.
 
 ## Handoff
 
@@ -269,7 +272,7 @@ state the coordinator must act on, and it exits like a refusal so a wake fires o
 ```
 POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> work=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
 POOL REFUSED source=<kind>:<locator>: <reason> (<remedy>)
-CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
+CUT OK cards=<n> skipped=<n> zero=<n> flat=<n> metered=<n> out=<dir>
 CUT ROUTE route=<model> reason=<class>
 CUT SKIPPED source=<kind> id=<id> template=<name>: no template
 CUT REFUSED template=<name>: <which rule> (<remedy>)
@@ -317,8 +320,9 @@ after line 2. `<head>` is the repo's default-branch head at cut time, read once 
 
 ## What this draft does not do
 
-- **No model routing beyond the kind→model table.** Two routes, six kinds, one file in git.
-  No cost-aware choice, no fallback provider, no per-card override; `models.tsv` is the
+- **No model routing beyond the cost table.** One table in git, read by `cut`: the capable
+  model with the lowest average cost per token, and one capability class up after an
+  abstain. No fallback provider, no per-card override, no hand on a route; the table is the
   whole policy, and changing it is a diff somebody read.
 - **No merging.** It opens draft PRs and cuts read cards. `nova-merge` and a person hold the
   lane, the gate and the read condition; this tool never runs `nova-merge`, never labels,
@@ -424,9 +428,11 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
 7. `cut-text-template-forbids-build`: `read`, `text` and `tone` cards each carry the no-build
    line; a `text.md` fixture lacking it is `CUT REFUSED template=text`; `fix`, `replay` and
    `drift` cards carry the red-then-green row rule; no template mentions `../scratch`.
-8. `cut-model-by-kind`: six candidates, one per kind, yield `cards.tsv` with `flash` on
-   `read`, `text`, `tone` and `pro` on `fix`, `replay`, `drift`, ids from `models.tsv`;
-   `flash=3 pro=3`; a candidate with template `probe` is `skipped=1`, one `CUT SKIPPED` line,
+8. `cut-routes-by-capability-and-cost`: six candidates, one per kind, against a cost table
+   whose zero-cost local covers `read|text`, whose flat route covers `code` and whose metered
+   route covers `replay`, yield `cards.tsv` rows naming those models — the cheapest capable
+   one per kind, never a route chosen by kind alone — and `zero=3 flat=2 metered=1` on
+   `CUT OK`; a candidate with template `probe` is `skipped=1`, one `CUT SKIPPED` line,
    a `skipped.tsv` row, and exit 1.
 9. `launch-refuses-under-slots`: eight cards, four free slots, no `--queue`: `PULSE REFUSED
    UNDER-SLOTS cards=8 free=4`, exit 2, the fixture `nova-swarm` recording zero runs.
@@ -438,7 +444,9 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
     no `native.log` age or 120 s rule appears anywhere — the mutation that matters: a slot
     freed by a log age instead of the swarm's lock file.
 12. `launch-every-card-through-batch`: two model routes present run exactly two `nova-swarm
-    batch` invocations and zero `nova-swarm add`, each with `--label pulse-<id>` and a
+    batch` invocations and zero `nova-swarm add`, each with `--label pulse-<id>`, a `--files`
+    equal to that route's card count, a `--tokens` equal to the sum of that route's `tokens`
+    column in `cards.tsv`, and a
     `--then` whose argv begins `nova-pulse harvest --id <id>`; a `BATCH REFUSED` fixture
     reply is `PULSE REFUSED` with that reason, `queue.tsv` unchanged.
 13. `harvest-pushes-only-on-line1-match`: three done cards — line 1 equal, line 1 differing
