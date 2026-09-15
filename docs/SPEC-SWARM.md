@@ -731,11 +731,21 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
 - `--idle <seconds>` (default 300) is the per-card idle timeout, held beside
   the batch deadline, never instead of it. A card writes its own log —
   `harness.log` under its job directory, the runner's stdout pinned to a
-  regular file — and a card whose log has not grown for `idle` seconds is
-  killed. Idle is a property of one card's own log, measured against that
-  card alone: the batch returns on its **slowest still-working card**, not on
-  the deadline, because a dead card is removed from the wait as soon as its
-  log stops growing.
+  regular file — and the batch also reads the **CPU time of the card's whole
+  process tree**, the runner's children and their children with it. **Idle
+  means no child activity**: a card is alive while either its log grows or its
+  tree's CPU time advances, and it is killed only when *neither* moved for
+  `idle` seconds. On **2026-09-15** cards 664-670 were killed `idle 300s`
+  inside a `go test` that prints nothing for minutes, and the loop raised
+  `--idle` to 900 s, which only delays the same kill (issue #593): a busy
+  silent harness is working, and a sleeping one is not. Idle is measured
+  against that card alone: the batch returns on its **slowest still-working
+  card**, not on the deadline, because a dead card is removed from the wait as
+  soon as it stops moving. The tree is read once per poll for the whole batch,
+  at most once per `idle/4` seconds and never faster than twice a second, by
+  the kernel's own process table — never by matching a command line and never
+  by running `ps`. A platform whose process table this repo cannot read
+  watches the log alone, as it did before.
 - A card killed for idleness is scored
   `<label> slot=<n>: ABSTAIN reason=idle=<s> log=<n> watched=<path>` on the
   packet — an abstain that names *why* it stopped and the log it watched, never
@@ -744,7 +754,16 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
 ### gather — one bounded packet, mechanically
 
 `gather` reads every card's `RESULT.md` and folds the batch into **one
-bounded packet**:
+bounded packet**. **A result written inside the clone is the card's result.**
+`STEP 1` makes `repo/` the model's cwd, so a model publishes `RESULT.md`
+there; gather read only the job root, scored the card `no-result`, and the
+work was lost (issue #594). Gather takes `RESULT.md` at the job root, else at
+`repo/RESULT.md`, else one directory further down — `repo/<clone>/RESULT.md` —
+copies it up to the job root and says so once on stderr,
+`BATCH NOTE <label> RESULT.md copied up from <path>`. A job root that holds a
+result of its own keeps it: nothing is ever overwritten, and **the `RESULT`
+contract is unchanged** — line 1 is still the card's contract line, and the
+rules below still decide. The fold itself is:
 
 - the batch id and n;
 - per-card disposition lines, **line 2 of each `RESULT.md`, verbatim**;
@@ -777,9 +796,9 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | token | the card |
 |-------|----------|
 | `line1-mismatch` | published a result whose line 1 is not its contract line |
-| `no-result` | ended with rc 0 and published no `RESULT.md` |
-| `rc=<n>` | ended non-zero and published no `RESULT.md` |
-| `idle=<s>` | was killed because its own log stopped growing for `<s>` seconds |
+| `no-result` | ended with rc 0 and published no `RESULT.md`, at the job root or below it |
+| `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it |
+| `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
 | `deadline` | was killed at the batch's deadline |
 | `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
 | `admission` | was refused at admission; the reason follows the token |
@@ -813,6 +832,7 @@ ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
 ADMIT REFUSED bench=<name>: <reason>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
+BATCH NOTE <label> RESULT.md copied up from <path>
 HOLD: <one bounded quoted line>
 ```
 
@@ -963,8 +983,10 @@ one `rsync` at the end, one `ssh stat` per `--idle/3` while it runs, and
 nothing per poll beyond the idle watch the batch already keeps.
 
 **The wall on a bench** is whatever `nova-sandbox check` reports there: on
-darwin `sandbox-exec`, on linux today `none`, because the Landlock body is not
-built (SPEC-SANDBOX, "Linux"). A bench runs unwalled only when **both** the
+darwin `sandbox-exec`, and on linux `landlock` with the kernel's Landlock ABI
+wherever that kernel has it — the Landlock body is built (SPEC-SANDBOX,
+"Linux"), so a linux bench is `wall=sandbox` like any other and needs no
+`--no-wall`. A linux kernel without Landlock still reports `none`. A bench runs unwalled only when **both** the
 table says `wall=none` and the batch was typed with `--no-wall`, passed
 through to `native` on the bench; the `--no-sandbox` paragraph above is the
 rule here, unchanged — argv, never a default, never implied by a missing
@@ -1082,6 +1104,7 @@ BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=
 BATCH THEN rc=<n>
 BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
+BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
 <label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>]
@@ -1114,7 +1137,7 @@ RUN REFUSED: <reason>
 RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
 ADMIT REFUSED benchmark window open until <stamp>
-NATIVE OK label=<id> job=<id> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> [usage=none reason=<r> path=<p>]
+NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> [usage=none reason=<r> path=<p>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
