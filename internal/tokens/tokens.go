@@ -122,15 +122,15 @@ const UTC = "utc"
 
 // Message is the one unit every source hands the fold.
 type Message struct {
-	ID     string // the source's own message id, for the overlap check; not part of Key
-	Day    string // YYYY-MM-DD
-	Basis  string // UTC, or the zone a provider export declares
+	ID       string // the source's own message id, for the overlap check; not part of Key
+	Day      string // YYYY-MM-DD
+	Basis    string // UTC, or the zone a provider export declares
 	Model    string
 	Repo     string // already attributed by the reader, through repo.go's one function
 	Counts   Counts
-	Rough    int   // how many `~` bus lines this message stands for
-	Turn     bool  // counted into turns= (the sources that count messages)
-	Usd      int64 // micro-dollars, from a usage `usd` column or a cost tick; 0 where absent
+	Rough    int    // how many `~` bus lines this message stands for
+	Turn     bool   // counted into turns= (the sources that count messages)
+	Usd      int64  // micro-dollars, from a usage `usd` column or a cost tick; 0 where absent
 	Provider string // the provider prefix for model= on an AVG line; "" where unknown
 }
 
@@ -144,7 +144,7 @@ type Row struct {
 	Key
 	Counts   Counts
 	Rough    int
-	Usd      int64 // micro-dollars summed over the messages that fed the row
+	Usd      int64  // micro-dollars summed over the messages that fed the row
 	Provider string // the provider prefix of the messages that fed the row; "" where unknown
 	bases    map[string]bool
 	sources  map[string]bool
