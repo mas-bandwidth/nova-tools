@@ -1009,3 +1009,114 @@ is compared against; it is never the path `query --ask size` takes."
                        (:settle "root" 4))
                      (cascade-record-identities (state-closed-rows (kernel-state k)))
                      "exact rows after retry")))))
+
+;;; State-to-doing closes the live-kernel lifecycle gap named in README.md.
+;;; SPEC-WORK.md@7db3b95c:994-1005; unchanged in spec head 9c120a3b.
+(defun doing-request (&key (node "t") (reason "starting") (request "start-1")
+                          (evidence +absent+))
+  (list :verb :state-to-doing :node node :by "stella" :reason reason
+        :evidence evidence :request request :stamp "2026-09-14T22:00:00Z"
+        :clock :tool :generation-owner "gen-1"))
+
+(deftest "doing-admits-only-the-reviewed-incoming-edges" "SPEC-WORK.md:994-1005"
+    "expected=allowed-edges-only;refusal-no-state-or-journal-change"
+  (dolist (from '(:todo :blocked :review :cancel-requested :unknown
+                 :doing :done :deferred :cancelled :superseded))
+    (let* ((k (make-kernel :state (make-seed-state
+                                 (list (list :id "t" :type :task :state from)))))
+           (before (root-digest (kernel-state k)))
+           (allowed (member from '(:todo :blocked :review :cancel-requested :unknown))))
+      (multiple-value-bind (yes line code envelope) (submit k (doing-request))
+        (if allowed
+            (progn
+              (ok yes "~A -> doing should pass: ~A" from line)
+              (check-equal 0 code "accepted exit")
+              (check-equal :doing (node-state (kernel-state k) "t") "state")
+              (check-equal 1 (length (getf envelope :events)) "one requester event")
+              (ok (null (getf envelope :settle)) "nonterminal transition has no settle")
+              (check-equal 1 (state-open-count (kernel-state k)) "open unchanged")
+              (check-equal 0 (state-closed-count (kernel-state k)) "closed unchanged"))
+            (progn
+              (ok (not yes) "~A -> doing must refuse" from)
+              (check-equal 1 code "invalid edge exit")
+              (check-string= before (root-digest (kernel-state k)) "refusal state")
+              (check-equal nil (journal-order (kernel-journal k)) "refusal journal")))))))
+
+(deftest "doing-from-unknown-needs-reason-or-evidence" "SPEC-WORK.md:994-1005"
+    "expected=unknown-never-silently-initialized"
+  (dolist (proof (list (list +absent+ +absent+ nil)
+                      (list "" nil nil)
+                      (list "observed started" +absent+ t)
+                      (list +absent+ '("ev-start") t)
+                      (list +absent+ '("") nil)))
+    (destructuring-bind (reason evidence expected) proof
+      (let ((k (make-kernel :state (make-seed-state '((:id "t" :type :task))))))
+        (multiple-value-bind (yes line) (submit k (doing-request :reason reason :evidence evidence))
+          (check-equal expected yes (format nil "unknown proof ~S: ~A" proof line)))))))
+
+(deftest "doing-retry-and-journal-refusal-use-the-existing-boundary" "SPEC-WORK.md:315,3348-3349"
+    "expected=one-event-on-retry;zero-events-on-journal-refusal"
+  (let* ((k (make-kernel :state (make-seed-state '((:id "t" :type :task :state :todo)))))
+         (request (doing-request)))
+    (multiple-value-bind (yes line) (submit k request)
+      (ok yes "first start")
+      (let ((before (root-digest (kernel-state k))))
+        (multiple-value-bind (again replay) (submit k request)
+          (ok again "retry precedes now-invalid doing->doing validation")
+          (check-string= line replay "original response"))
+        (check-string= before (root-digest (kernel-state k)) "retry no mutation")
+        (check-equal '("start-1") (journal-order (kernel-journal k)) "one journal entry")
+        (multiple-value-bind (changed) (submit k (doing-request :reason "different"))
+          (ok (not changed) "same ID with changed payload refuses")))))
+  (let* ((k (make-kernel :state (make-seed-state '((:id "t" :type :task :state :todo)))
+                         :journal (make-rejecting-journal :reject-on "start-1")))
+         (before (root-digest (kernel-state k))))
+    (multiple-value-bind (yes) (submit k (doing-request))
+      (ok (not yes) "journal rejection"))
+    (check-string= before (root-digest (kernel-state k)) "rejection no mutation")
+    (check-equal nil (journal-order (kernel-journal k)) "rejection no journal entry")))
+
+(deftest "doing-keeps-field-ownership-and-container-boundaries" "SPEC-WORK.md:3227"
+    "expected=no-generic-field-or-container-state-escape"
+  (dolist (request (list (append (doing-request) '(:blocked-by "other"))
+                         (append (doing-request) '(:to :done))
+                         (doing-request :node "root")))
+    (let* ((k (make-kernel :state (make-seed-state
+                                 '((:id "root" :type :work-set)
+                                   (:id "t" :type :task :parent "root" :state :todo)))))
+           (before (root-digest (kernel-state k))))
+      (multiple-value-bind (yes line code) (submit k request)
+        (declare (ignore line))
+        (ok (not yes) "unsupported field/container refuses")
+        (check-equal 2 code "unsupported exit"))
+      (check-string= before (root-digest (kernel-state k)) "unsupported no mutation")
+      (check-equal nil (journal-order (kernel-journal k)) "unsupported no journal"))))
+
+(deftest "second-settle-through-submit-keeps-container-history" "SPEC-WORK.md:3103-3106,1272-1283"
+    "expected=todo-doing-done-reopen-doing-done;settles=2;reconstruction-equal"
+  (let ((k (make-kernel :state (make-seed-state
+                              '((:id "root" :type :work-set)
+                                (:id "root/f" :type :feature :parent "root")
+                                (:id "root/f/t" :type :task :parent "root/f" :state :todo))))))
+    (flet ((admit (request)
+             (multiple-value-bind (yes line) (submit k request)
+               (ok yes "cycle mutation: ~A" line))))
+      (admit (doing-request :node "root/f/t" :request "start-first"))
+      (admit (close-request :node "root/f/t" :request "finish-first"))
+      (check-equal 0 (state-open-count (kernel-state k)) "first cascade closes all")
+      (admit (reopen-request :node "root/f/t" :request "reopen-cycle"))
+      (check-equal 3 (state-open-count (kernel-state k)) "revival opens all")
+      (admit (doing-request :node "root/f/t" :request "start-second"))
+      (check-equal 3 (state-open-count (kernel-state k)) "doing does not change O")
+      (admit (close-request :node "root/f/t" :request "finish-second")))
+    (check-equal 0 (state-open-count (kernel-state k)) "second cascade closes all")
+    (check-equal 3 (state-closed-count (kernel-state k)) "three canonical closed IDs")
+    (check-equal 9 (length (state-closed-rows (kernel-state k))) "two settles and one revive per ID")
+    (dolist (id '("root" "root/f" "root/f/t"))
+      (let ((rows (remove-if-not (lambda (r) (equal id (getf r :node)))
+                                 (state-closed-rows (kernel-state k)))))
+        (check-equal '(1 1 2) (mapcar (lambda (r) (getf r :settles)) rows) "settle history")))
+    (let ((reconstructed (reconstruct-state (canonical-string (state-canonical-form (kernel-state k))))))
+      (check-string= (root-digest (kernel-state k)) (root-digest reconstructed) "reconstruction")
+      (check-equal (state-history (kernel-state k)) (state-history reconstructed) "history retained")
+      (check-equal (state-closed-rows (kernel-state k)) (state-closed-rows reconstructed) "closed rows retained"))))

@@ -1,7 +1,8 @@
 ;;;; kernel.lisp --- the C/O transition kernel.
 ;;;;
-;;;; Two transitions of docs/SPEC-WORK.md are supported here and no others:
+;;;; Three transition requests of docs/SPEC-WORK.md are supported here:
 ;;;;
+;;;;   state --to doing       one nonterminal :transition (SPEC-WORK.md:994-1005)
 ;;;;   state --to done        a :transition event and, in the same envelope, the
 ;;;;                          session's own :settle (SPEC-WORK.md:1202-1209)
 ;;;;   event --kind reopen    a :reopen scope event and, in the same envelope,
@@ -51,6 +52,8 @@ below the state's revision is refused rather than silently reissued."
 (defparameter *request-keys*
   '((:state-to-done :verb :node :by :reason :evidence
      :request :stamp :clock :generation-owner)
+    (:state-to-doing :verb :node :by :reason :evidence
+     :request :stamp :clock :generation-owner)
     (:event-reopen :verb :node :by :reason
      :request :stamp :clock :generation-owner)))
 
@@ -78,9 +81,13 @@ on a :to :done is the case, and it must never be quietly overwritten with
   "from :doing to ... :done; from :review to ... :done. No other state reaches
 :done, so a :todo item closing is rule 10 and not a silent success.")
 
+(defparameter *doing-edges* '(:todo :blocked :review :cancel-requested :unknown)
+  "The reviewed incoming edges to :doing. Unknown additionally requires a
+reason or evidence; done/deferred leave only via reopen, never state.")
+
 (defun %word (verb)
   (ecase verb
-    (:state-to-done "STATE")
+    ((:state-to-done :state-to-doing) "STATE")
     (:event-reopen "EVENT")))
 
 (defun %require (request key)
@@ -100,11 +107,11 @@ on a :to :done is the case, and it must never be quietly overwritten with
         (clock (%require request :clock))
         (owner (%require request :generation-owner)))
     (make-work-event
-     :kind (ecase verb (:state-to-done :transition) (:event-reopen :reopen))
+     :kind (ecase verb ((:state-to-done :state-to-doing) :transition) (:event-reopen :reopen))
      :node node :by by
      :fields (ecase verb
-               (:state-to-done
-                (list :to :done
+               ((:state-to-done :state-to-doing)
+                (list :to (if (eq verb :state-to-done) :done :doing)
                       :reason (getf request :reason +absent+)
                       :blocked-by +absent+
                       :evidence (getf request :evidence +absent+)))
@@ -122,9 +129,30 @@ on a :to :done is the case, and it must never be quietly overwritten with
       (return-from %validate (values 2 (format nil "no such node ~A" id))))
     (unless (eq :task (wnode-type node))
       (error 'unsupported-input
-             :what (format nil "unsupported: ~A is a ~A; a container settles with its members and that cascade is not in slice 1"
+             :what (format nil "unsupported: ~A is a ~A; slice 1 containers change branch with their members, not through direct task-state requests"
                            id (string-downcase (symbol-name (wnode-type node))))))
     (ecase verb
+      (:state-to-doing
+       (unless (and (eq :o (wnode-branch node))
+                    (member (wnode-state node) *doing-edges*))
+         (return-from %validate
+           (values 10 (format nil "no edge from ~A to doing"
+                              (string-downcase (symbol-name (wnode-state node)))))))
+       (let ((reason (getf (work-event-fields event) :reason))
+             (evidence (getf (work-event-fields event) :evidence)))
+         (unless (or (absentp reason) (stringp reason))
+           (return-from %validate (values 10 "reason is not a string")))
+         ;; As in this kernel's done boundary, these are evidence ID shapes,
+         ;; not resolution against an evidence store that does not exist yet.
+         (unless (or (absentp evidence)
+                     (and (listp evidence)
+                          (every (lambda (id) (and (stringp id) (plusp (length id))))
+                                 evidence)))
+           (return-from %validate (values 10 "evidence is not a list of non-empty event ids")))
+         (when (and (eq :unknown (wnode-state node))
+                    (not (and (stringp reason) (plusp (length reason))))
+                    (or (absentp evidence) (null evidence)))
+           (return-from %validate (values 10 "unknown to doing requires evidence or a reason")))))
       (:state-to-done
        (unless (eq :o (wnode-branch node))
          (return-from %validate (values 10 (format nil "~A is in C" id))))
@@ -243,7 +271,7 @@ whole envelope is applied."
 
 (defun %submit (kernel request)
   (let ((verb (getf request :verb)))
-    (unless (member verb '(:state-to-done :event-reopen))
+    (unless (member verb '(:state-to-done :state-to-doing :event-reopen))
       (error 'unsupported-input
              :what (format nil "unsupported: verb ~A is not in slice 1"
                            (if verb (string-downcase (princ-to-string verb)) "-"))))
@@ -277,8 +305,12 @@ whole envelope is applied."
             (values nil (format nil "~A FAIL node=~A: rule ~D: ~A"
                                 word (work-event-node requester) rule reason)
                     1 nil))))
-      (let* ((session (%session-event kernel verb requester))
-             (events (%cascade-events (kernel-state kernel) verb requester session))
+      (let* ((session (unless (eq verb :state-to-doing)
+                        (%session-event kernel verb requester)))
+             ;; Doing stays inside O: one event, no branch change or cascade.
+             (events (if session
+                         (%cascade-events (kernel-state kernel) verb requester session)
+                         (list requester)))
              (last-event (car (last events)))
              (envelope (list :request rid :digest digest
                              :events events
