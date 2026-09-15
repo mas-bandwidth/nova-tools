@@ -514,7 +514,15 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	}
 	// The cursor moved over the heard note: its commit is the one this run read to, which
 	// is the parent of the cursor commit the advance itself made.
-	readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD~1"))
+	//
+	// The cursor commit is found by the FILE it wrote rather than as HEAD~1. Both name the
+	// same commit and the claim is the same one; HEAD~1 additionally assumed that the
+	// advance's commit is the last thing the wait commits, and it is not: this wait goes on
+	// polling for the rest of its second after the advance, and a wait lands its own beat
+	// on the way out so that the friend's next verb gets a clean checkout (#488). Asserting
+	// through the file says what this test is about and nothing about what follows it.
+	cursorCommit := strings.TrimSpace(gitIn(t, checkout, "log", "-1", "--format=%H", "--", "from-ada/CURSOR"))
+	readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", cursorCommit+"~1"))
 	if onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR")); len(onLane) == 0 || onLane[0] != readTo {
 		t.Fatalf("the cursor was not advanced to head over the heard note (read to %s):\n%s", readTo, read(t, checkout, "from-ada/CURSOR"))
 	}

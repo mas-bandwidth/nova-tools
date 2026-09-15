@@ -954,7 +954,15 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	for _, notice := range prepared.Notices {
 		fmt.Fprintf(stdout, "SEND NOTE %s\n", oneline.Escape(notice))
 	}
-	if err := checkoutReady(*busDir, *branch, nil); err != nil {
+	// THE SENDER'S OWN BEAT IS NOT SOMEBODY ELSE'S WORK (#488). `wait` writes
+	// from-<me>/BEAT, and a wait killed between its tick and its commit leaves it in the
+	// tree. Refusing over it told the writer their checkout held "changes that are not
+	// this note" and named a file they had never touched, and their answer did not go out.
+	// It is the caller's own machinery: it is allowed past the clean guard here and folded
+	// into this note's commit below, so the send carries it out rather than stopping on it.
+	// Every other path in the tree is still the refusal it always was.
+	beat := bus.BeatPath(prepared.Sender.Lane)
+	if err := checkoutReady(*busDir, *branch, []string{beat}); err != nil {
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
@@ -988,6 +996,14 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	}
 	if wroteAttrs {
 		paths = append(paths, bus.AttributesName)
+	}
+	// The beat is folded in only when there is one: StagePaths drops a path that is
+	// neither on disk nor in the index, because asking git to stage one that is neither is
+	// exit 128, and a sender who has never run `wait` has no BEAT at all.
+	paths, err = bus.StagePaths(*busDir, append(paths, beat))
+	if err != nil {
+		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		return 1
 	}
 	res, err := commit(*busDir, prepared.Sender, paths,
 		bus.WithTrailer(prepared.Message, bus.TrailerSend+" "+prepared.Note.Header.ID),
@@ -1061,7 +1077,10 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stdout, "RECEIPT OK recorded=0 already=%d commit=- pushed=false attempts=0\n", len(plan.Already))
 		return 0
 	}
-	if err := checkoutReady(*busDir, *branch, []string{plan.Path}); err != nil {
+	// The reader's own BEAT, as in send: `wait` wrote it, so it is this run's own
+	// machinery and not a change that is "not this receipt" (#488).
+	beat := bus.BeatPath(me.Lane)
+	if err := checkoutReady(*busDir, *branch, []string{plan.Path, beat}); err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
@@ -1073,7 +1092,12 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
-	res, err := commit(*busDir, me, []string{plan.Path},
+	paths, err := bus.StagePaths(*busDir, []string{plan.Path, beat})
+	if err != nil {
+		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
+		return 1
+	}
+	res, err := commit(*busDir, me, paths,
 		bus.WithTrailer(plan.Message(me), bus.TrailerReceipt),
 		*remote, *branch, *attempts, *noPush)
 	if err != nil {
@@ -2403,6 +2427,61 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 	polls := 0
 	cursor := ""
 	lastBeat := start
+	// The cursor this call starts from, so the beat the first tick writes carries the
+	// commit the line is standing at rather than a dash: the entry beat in cmdWait already
+	// wrote that cursor, and a tick that overwrote it with "-" would take presence
+	// backwards for the sake of a file it rewrites a moment later.
+	if held, err := bus.ReadCursor(o.busDir, o.me.Lane); err == nil {
+		cursor = held.Commit
+	}
+	// The beat write: one line into the working tree, cheap, every tick.
+	writeBeat := func() {
+		if err := writeBeatLease(o, cursor); err != nil {
+			fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+		}
+	}
+	// THE BEAT A WAIT LEAVES BEHIND (#488). landBeat commits the lane's BEAT and pushes it
+	// on its own as "beat <name>" -- WHEN THERE IS ONE TO LAND.
+	//
+	// The bug it closes: the beat was written to the working tree on every tick and
+	// committed only once per --beat, so a wait that returned inside one --beat -- which is
+	// every wait that returns because a note arrived -- handed the next verb a checkout
+	// holding a modified BEAT, and the friend's `send` refused with "the bus's checkout
+	// holds changes that are not this note", naming a file they had never touched. Every
+	// friend on the bus hit it in one day. So every exit lands the beat, and a wait leaves
+	// the checkout clean.
+	//
+	// THE DIRTY CHECK IS THE WHOLE OF WHY THIS IS NOT ONE MORE COMMIT PER WAIT. The beat is
+	// written BEFORE the poll, so a poll that advances the cursor folds BEAT into its own
+	// cursor commit -- advanceCursorTo has always named the beat among its paths -- and
+	// there is then nothing left over to commit on the way out. A beat already on the bus
+	// is not committed twice, an advance's cursor commit stays the HEAD it was, and the
+	// push stays bounded by --beat rather than becoming one per tick.
+	//
+	// IT IS PUSHED AND NOT MERELY COMMITTED. A beat commit left unpushed leaves this
+	// checkout AHEAD of the bus, and FetchAndFastForward -- which is the poll, and which
+	// will not rebase a bench's own commits during a read -- has nothing to fast-forward
+	// onto while a checkout is ahead. The NEXT wait would then poll a bus it cannot see,
+	// for its whole timeout, silently. A wait leaves the checkout clean AND level.
+	//
+	// A push that cannot land is still possible, and that is the other half of #488: send,
+	// receipt and inbox --advance take an uncommitted BEAT of the caller's own line, and an
+	// unpushed commit of the caller's own beat, as their own machinery and carry it out
+	// with the note rather than refusing over it.
+	landBeat := func() {
+		dirty, err := bus.PathDirty(o.busDir, bus.BeatPath(o.me.Lane))
+		if err != nil {
+			fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
+			return
+		}
+		if !dirty {
+			return
+		}
+		if _, err := commit(o.busDir, o.me, []string{bus.BeatPath(o.me.Lane)},
+			bus.WithTrailer("beat "+o.me.Slug(), bus.TrailerBeat), o.remote, o.branch, o.attempts, false); err != nil {
+			fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
+		}
+	}
 	for {
 		polls++
 		elapsed := time.Since(start).Round(time.Millisecond)
@@ -2413,40 +2492,33 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		// deadline. #352 blocked over the backlog instead and broke byte-identity with
 		// inbox, which is why it was reverted.
 		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) }
+		// THE BEAT, written before the poll. A waiting line's cursor does not move --
+		// there was nothing to read, so nothing was recorded -- and a line whose cursor
+		// does not move reads asleep to `nova-wake awake`. The BEAT is the file that moves
+		// anyway. Writing it HERE rather than after the poll is what lets a poll that
+		// advances the cursor carry the beat out inside its own cursor commit; see
+		// landBeat.
+		writeBeat()
 		code, r, lines, skipped := waitPoll(o, polls == 1, pollNow, keep, stderr)
 		if r.Cursor != "" {
 			cursor = r.Cursor
-		}
-		// The beat write, carried for every exit below: a wait that is handing the harness
-		// a note and stopping has a gap to the next wait, and the lease covers it.
-		writeBeat := func() {
-			if err := writeBeatLease(o, cursor); err != nil {
-				fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
-			}
 		}
 		if code != 0 {
 			// The listing this poll had already printed, if it printed one, under the
 			// refusal that is on stderr: a reader who was shown their inbox has been shown
 			// it, whatever happened after.
-			writeBeat()
+			landBeat()
 			fmt.Fprint(stdout, lines)
 			fmt.Fprintf(stdout, "WAIT DONE reason=signal rearm=required next=%s\n", next)
 			return code
 		}
-		// THE BEAT. A waiting line's cursor does not move -- there was nothing to read, so
-		// nothing was recorded -- and a line whose cursor does not move reads asleep to
-		// `nova-wake awake`. So every poll rewrites the lane's BEAT file, and at most once
-		// per --beat the BEAT is committed and pushed on its own as "beat <name>", so the
-		// line's liveness lands on the bus even while it is simply waiting. The write is to
-		// the working tree on every tick; the push is the only part bounded, because it is
-		// the only part that costs somebody's server.
-		writeBeat()
+		// At most once per --beat the BEAT is committed and pushed on its own as "beat
+		// <name>", so the line's liveness lands on the bus even while it is simply waiting.
+		// The write is to the working tree on every tick; the push is the only part
+		// bounded, because it is the only part that costs somebody's server.
 		if time.Since(lastBeat) >= o.beat {
 			lastBeat = time.Now()
-			if _, err := commit(o.busDir, o.me, []string{bus.BeatPath(o.me.Lane)},
-				bus.WithTrailer("beat "+o.me.Slug(), bus.TrailerBeat), o.remote, o.branch, o.attempts, false); err != nil {
-				fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
-			}
+			landBeat()
 		}
 		if skipped {
 			// The cursor moved over heard notes without returning, so the timeout line at
@@ -2468,7 +2540,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 			fmt.Fprintf(stdout, "WAIT OK new=%d after=%s polls=%d\n", r.New, oneline.Field(elapsed.String()), polls)
 			fmt.Fprint(stdout, lines)
 			fmt.Fprintf(stdout, "WAIT DONE reason=new rearm=required next=%s\n", next)
-			writeBeat()
+			landBeat()
 			return 0
 		}
 		// A line drawn in the future that does NOT cover the whole wait is no reason to
@@ -2495,10 +2567,13 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 	// moves on a wait that found nothing, because there is nothing to record having read --
 	// and the caller's move is to issue the next wait. Exit 0, with the counts that say the
 	// tool was awake the whole time. The exit beat extends the lease over the gap to the
-	// next wait exactly as the entry and tick beats do.
-	if err := writeBeatLease(o, cursor); err != nil {
-		fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
-	}
+	// next wait exactly as the entry and tick beats do -- the last tick wrote it, moments
+	// ago and with the same lease -- and it is LANDED here for the reason every exit lands
+	// one: the next verb in the friend's sequence gets a clean, level checkout. It is not
+	// rewritten first: a fresh line written on top of a beat this poll has just pushed
+	// would be one more commit for a stamp a fraction of a second newer, and the push is
+	// bounded by --beat.
+	landBeat()
 	fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s\n",
 		oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
 	fmt.Fprintf(stdout, "WAIT DONE reason=timeout rearm=required next=%s\n", next)

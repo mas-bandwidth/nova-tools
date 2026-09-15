@@ -178,6 +178,7 @@ nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse handoff --to <name> --root <dir>
 nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--max <n>]
+nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse width   --root <dir> --pool <pool.tsv>
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse version
@@ -351,9 +352,31 @@ The handoff at the end of a shift:
 SHIFT END cycles=<n> decisions=<n> escalations=<n>
 ```
 
+The tier is a verb, and the verb makes no model call:
+
+```
+nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
+```
+
+One cycle is: `nova-bus wait` in the foreground with the policy's timeout (the one call a
+quiet cycle makes); receipt every `START` and `DONE` note and append every other note to
+`<queue>/ESCALATE` as one line, composing no reply; harvest every card whose job holds a
+`RESULT.md` — push its branch by explicit refspec, open or update its PR, cut its read card
+from `<queue>/templates`, and refuse a fix PR carrying neither a `red:` line nor a test file
+in its diff; triage each abstain by its reason token, requeueing it once under a new number
+on the other bench and escalating the second; merge a non-draft PR whose read said `APPROVE`
+once the head revalidates and every check is `SUCCESS`, never on `HOLD`; refill the queue
+from the policy's sources to its floor, deduplicated on PR number, issue number and the
+contract sentence, in the policy's scope, leaving `AFTER: PR<n> merged` gates gated; and
+write one `MANAGER` line to `<queue>/MANAGER.log`. The policy is key=value lines —
+`wait-timeout`, `floor`, `scope-regex`, `sources`, `known-flakes`, `max-attempts` — and an
+unknown key is a refusal, exit 2, because a policy the tool half-understands is a policy
+nobody approved.
+
 Replays: `manager-never-expands-policy`, `manager-quiet-time-makes-no-call`,
 `manager-dedups-on-contract-line`, `manager-revalidates-head-before-merge`,
-`manager-never-merges-draft`, `manager-shift-ends-with-handoff`.
+`manager-never-merges-draft`, `manager-shift-ends-with-handoff`,
+`manager-requeues-once-then-escalates`, `manager-refuses-fix-pr-without-test`.
 
 ## Tests this spec demands
 
