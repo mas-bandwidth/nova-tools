@@ -181,6 +181,7 @@ WAKE LOCK path=<path> state=<held|free|-> was=<state|->
 WAKE SOURCE <bus|entries|reports> read=<n> suppressed=<n> relayed=<n> standing=<n> head=<sha|-> head-at=<stamp|->
 WAKE NOTE <something true about this run that is not a change>
 WAKE POLL <source>: <reason one poll failed, which was not fatal>
+WAKE PING id=<id> to=<name> commit=<sha|-> pushed=<true|false> attempt=<n>: one prepared note (--ping-draft) offered to the bus, printed per attempt until it lands
 WAKE MORE kind=<bus|entry|report> shown=<n> total=<t> n=<k> <remedy>
 WAKE REFUSED: <reason>
 WAKE HERE at=<stamp> load=<load|-> cpus=<n> procs=<n|->
