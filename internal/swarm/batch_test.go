@@ -854,3 +854,92 @@ func TestBatchScoresInputLimit(t *testing.T) {
 		t.Fatalf("a card that fits still scores its line 2:\n%s", out)
 	}
 }
+
+// ISSUE #593: IDLE MEANS NO CHILD ACTIVITY, NOT ONLY NO LOG GROWTH. On 2026-09-15 cards
+// 664-670 were killed "idle 300s" while their harness sat in a `go test` that prints nothing
+// for minutes: the work was alive, the log was not. A card is active while its process tree
+// is alive and its CPU time advanced since the last sample -- a grandchild's CPU counts, the
+// way a harness's own child counts -- and idle only when NEITHER the log NOR the tree moved
+// for --idle. The fake harness here spins in a grandchild and writes nothing at all; the
+// other one sleeps and writes nothing, and only that one is killed.
+func TestIdleWatchCountsChildActivity(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"spin", "RESULT: spin\nbusy and silent"},
+		{"sleeps", "RESULT: sleeps\nMISSING"},
+	})
+	// One runner, two cards: `spin` starts a silent grandchild that burns CPU for far longer
+	// than --idle and then publishes its result; `sleeps` sleeps past the idle window. Neither
+	// writes one byte to its log.
+	runner := filepath.Join(dir, "silent.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"if [ \"$label\" = \"sleeps\" ]; then sleep 30; exit 0; fi\n" +
+		// The spinner burns CPU and writes nothing, and it carries its own deadline so that a
+		// red run of this test leaves no process behind: it ends on its own at 20 s whatever
+		// happens to its parent.
+		"/bin/sh -c 'end=$(($(date +%s)+20)); while [ $(date +%s) -lt $end ]; do i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done; done' &\n" +
+		"spin=$!\n" +
+		"sleep 5\n" +
+		"kill $spin 2>/dev/null\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 30*time.Second, 2*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch holding one idle card exits 1, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "spin slot=1: busy and silent") {
+		t.Fatalf("a card whose process tree is burning CPU is never idle-killed, however silent its log:\n%s", out)
+	}
+	if !strings.Contains(out, "sleeps slot=2: ABSTAIN reason=idle=2") {
+		t.Fatalf("a card whose log and process tree both sat still for --idle is idle-killed:\n%s", out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
+		t.Fatalf("exactly one of the two silent cards is counted idle:\n%s", out)
+	}
+}
+
+// ISSUE #594: A RESULT.MD WRITTEN INSIDE repo/ IS THE CARD'S RESULT, NOT A MISSING ONE.
+// A model's cwd after STEP 1 is the clone, so it publishes RESULT.md there; gather scored
+// the card reason=no-result and the work was lost. Gather reads the job root first, else
+// repo/RESULT.md or one directory down, copies it up to the job root and says so once on
+// stderr. The RESULT contract is unchanged: line 1 is still the card's contract line.
+func TestGatherCopiesResultUpFromRepo(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green from the clone"},
+	})
+	runner := filepath.Join(dir, "runner-in-repo.sh")
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job/repo\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/repo/RESULT.md\"\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatch(t, tsv, root, runner, 10*time.Second)
+	if code != 0 {
+		t.Fatalf("a card that published inside repo/ is done, got exit %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "a slot=1: all green from the clone") {
+		t.Fatalf("the result written inside repo/ is folded, line 2 verbatim:\n%s", out)
+	}
+	job := filepath.Join(resolvedPath(t, root), "1", "jobs", "a")
+	if !strings.Contains(errs, "BATCH NOTE a RESULT.md copied up from "+filepath.Join(job, "repo", "RESULT.md")) {
+		t.Fatalf("the copy up is said once on stderr, naming where it came from:\n%s", errs)
+	}
+	if got := readTestFile(t, filepath.Join(job, "RESULT.md")); got != "RESULT: a\nall green from the clone\n" {
+		t.Fatalf("the result is copied to the job root byte for byte, got %q", got)
+	}
+}
