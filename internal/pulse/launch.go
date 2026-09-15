@@ -23,6 +23,8 @@ type LaunchInput struct {
 	Root     string // the pulse root; the swarm pool lives under <root>/pool
 	Slots    int    // the ceiling on free slots launch considers
 	Deadline string // the whole pulse's deadline, whole seconds
+	Files    int    // the file budget each batch carries, threaded to nova-swarm batch --files
+	Tokens   string // the token budget each batch carries: a number or the word `unmetered`
 	Queue    bool   // true keeps the overflow in queue.tsv instead of refusing
 	Stdout   io.Writer
 	Stderr   io.Writer
@@ -34,8 +36,8 @@ type LaunchInput struct {
 const sliceTimeout = 120 * time.Second
 
 // Launch allocates free slots, admits the cards that fit as nova-swarm batch (one per model
-// route, with --then nova-pulse harvest), and queues the rest when --queue is set. It
-// returns the process exit code: 0 when the pulse was admitted, 2 when it could not be.
+// route), and queues the rest when --queue is set. It returns the process exit code: 0 when
+// the pulse was admitted, 2 when it could not be.
 func Launch(in LaunchInput) int {
 	cards, err := readCards(in.Cards)
 	if err != nil {
@@ -103,17 +105,19 @@ func Launch(in LaunchInput) int {
 }
 
 // runBatch admits one model route as one nova-swarm batch and relays a swarm refusal as a
-// PULSE REFUSED, queueing nothing.
+// PULSE REFUSED, queueing nothing. It emits only the flags the real nova-swarm batch (pool/
+// tasks mode) defines: --pool, --tasks, --label, --files, --tokens and a duration-form
+// --deadline. There is no --then: that callback named unimplemented nova-pulse harvest.
 func runBatch(in LaunchInput, id, model, tasksDir string) bool {
-	then := fmt.Sprintf("nova-pulse harvest --id %s --root %s", id, in.Root)
 	pool := filepath.Join(in.Root, "pool")
 	var out, errb bytes.Buffer
 	cmd := exec.Command("nova-swarm", "batch",
 		"--pool", pool,
 		"--tasks", tasksDir,
 		"--label", "pulse-"+id,
-		"--deadline", in.Deadline,
-		"--then", then)
+		"--files", strconv.Itoa(in.Files),
+		"--tokens", in.Tokens,
+		"--deadline", deadlineDuration(in.Deadline))
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
@@ -125,6 +129,16 @@ func runBatch(in LaunchInput, id, model, tasksDir string) bool {
 		return false
 	}
 	return true
+}
+
+// deadlineDuration turns launch's whole-seconds deadline into the duration form nova-swarm
+// batch's pool/tasks mode parses, so a pulse deadline of 120 arrives as 120s rather than a
+// bare number the duration parser refuses.
+func deadlineDuration(deadline string) string {
+	if n, err := strconv.Atoi(deadline); err == nil {
+		return (time.Duration(n) * time.Second).String()
+	}
+	return deadline
 }
 
 // record appends one row to <root>/pulses/<id>.tsv naming the batch: its label, model and

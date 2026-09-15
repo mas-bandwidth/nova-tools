@@ -1,3 +1,38 @@
 #!/bin/sh
-printf "\n" "$*" >> ./.nova-swarm-argv.log
+# A fake nova-swarm that enforces the REAL batch (pool/tasks) flag set, so a pulse that
+# emits a flag the real binary does not define fails here instead of against the real one.
+printf '%s\n' "$*" >> ./.nova-swarm-argv.log
+
+refuse() {
+  printf 'nova-swarm batch: %s; run: nova-swarm help\n' "$1" >&2
+  exit 2
+}
+
+then=0; files=0; tokens=0; deadline=0
+for a in "$@"; do
+  case "$a" in
+    --then) then=1 ;;
+    --files) files=1 ;;
+    --tokens) tokens=1 ;;
+    --deadline) deadline=1 ;;
+  esac
+done
+
+[ "$then" = 0 ] || refuse "flag provided but not defined: -then"
+[ "$files" = 1 ] || refuse "--files is required; it wants the file budget every job in this batch carries"
+[ "$tokens" = 1 ] || refuse "--tokens is required; it wants a token budget for this job, or the word \`unmetered\`"
+[ "$deadline" = 1 ] || refuse "--deadline is required; it wants a duration such as 20m"
+
+# The deadline must be duration-form, not a bare whole number of seconds.
+prev=
+for a in "$@"; do
+  if [ "$prev" = "--deadline" ]; then
+    case "$a" in
+      *[!0-9]*) ;;
+      *) refuse "--deadline wants a duration such as 20m, got $a" ;;
+    esac
+  fi
+  prev="$a"
+done
+
 exit 0
