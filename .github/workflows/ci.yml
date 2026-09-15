@@ -61,12 +61,28 @@ jobs:
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 10
     steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        shell: bash
+        run: |
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          # This workflow manages caching explicitly; do not probe for a missing go.sum.
-          cache: false
+
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v go >/dev/null 2>&1; then
+            for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
+              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+            done
+          fi
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
 
       - name: cache go build and module cache
         # go.mod carries no dependencies today, so the module cache is nearly
@@ -111,18 +127,36 @@ jobs:
     outputs:
       packages: ${{ steps.list.outputs.packages }}
     steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        shell: bash
+        run: |
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          # This workflow manages caching explicitly; do not probe for a missing go.sum.
-          cache: false
+
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v go >/dev/null 2>&1; then
+            for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
+              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+            done
+          fi
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+
       - id: list
         shell: bash
         run: |
           set -euo pipefail
-          LINUX_SPACE='"self-hosted","linux","x64","space"'
-          MACOS_STUDIO='"self-hosted","macos","arm64","studio"'
+          # Runner labels are carried as single-string fields (os/arch/group), not
+          # as a label array: a runs-on expression must resolve to a string, so the
+          # test job composes its label list per leg.
 
           # One entry per ./cmd/<tool>: a tool is a job of its own, so the
           # slowest tool is the whole of its leg.
@@ -150,14 +184,14 @@ jobs:
 
           entries=()
           for cmd in "${cmds[@]}"; do
-            entries+=("{\"name\":\"$cmd\",\"packages\":\"./$cmd\",\"runner\":[$LINUX_SPACE]}")
-            entries+=("{\"name\":\"$cmd\",\"packages\":\"./$cmd\",\"runner\":[$MACOS_STUDIO]}")
+            entries+=("{\"name\":\"$cmd\",\"packages\":\"./$cmd\",\"os\":\"linux\",\"arch\":\"x64\",\"group\":\"space\"}")
+            entries+=("{\"name\":\"$cmd\",\"packages\":\"./$cmd\",\"os\":\"macos\",\"arch\":\"arm64\",\"group\":\"studio\"}")
           done
           for ((g=0; g<NGROUPS; g++)); do
             [ -n "${grp[$g]:-}" ] || continue
             packages="${grp[$g]# }"
-            entries+=("{\"name\":\"internal $((g+1))/$NGROUPS\",\"packages\":\"$packages\",\"runner\":[$LINUX_SPACE]}")
-            entries+=("{\"name\":\"internal $((g+1))/$NGROUPS\",\"packages\":\"$packages\",\"runner\":[$MACOS_STUDIO]}")
+            entries+=("{\"name\":\"internal $((g+1))/$NGROUPS\",\"packages\":\"$packages\",\"os\":\"linux\",\"arch\":\"x64\",\"group\":\"space\"}")
+            entries+=("{\"name\":\"internal $((g+1))/$NGROUPS\",\"packages\":\"$packages\",\"os\":\"macos\",\"arch\":\"arm64\",\"group\":\"studio\"}")
           done
 
           [ "${#entries[@]}" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
@@ -180,15 +214,34 @@ jobs:
       fail-fast: false
       matrix:
         entry: ${{ fromJSON(needs.test-packages.outputs.packages) }}
-    runs-on: ${{ matrix.entry.runner }}
+    # Labels are carried per entry as single-string variables: runs-on expressions
+    # must resolve to a string, not to an array, so the matrix cannot hand over a
+    # label list as one value.
+    runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
     timeout-minutes: 10
     steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        shell: bash
+        run: |
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          # This workflow manages caching explicitly; do not probe for a missing go.sum.
-          cache: false
+
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v go >/dev/null 2>&1; then
+            for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
+              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+            done
+          fi
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
 
       - name: cache go build and module cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -262,10 +315,23 @@ jobs:
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 10
     steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        shell: bash
+        run: |
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: install sbcl
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends sbcl
+      - name: install sbcl if missing
+        # The self-hosted runners need no sudo; install directly when sbcl is absent.
+        run: |
+          if ! command -v sbcl >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y --no-install-recommends sbcl
+          fi
+          sbcl --version
 
       - name: nova-work acceptance
         run: ./lisp/nova-work/run-tests.sh
@@ -282,8 +348,15 @@ jobs:
     # CL. The nightly schedule fires test-hosted only, so ci-ok does not run on schedule:
     # the nightly run is evidence to read, not a gate to merge against.
     if: always() && github.event_name != 'schedule'
-    needs: ${{ github.event_name == 'push' && fromJSON('["lint","test","lisp","test-hosted"]') || fromJSON('["lint","test","lisp"]') }}
-    runs-on: ubuntu-latest
+    # A STATIC needs list. GitHub does not evaluate expressions in `needs`, so the
+    # conditional array the previous revision used was refused as an invalid job
+    # reference and the run was never created. test-hosted is skipped on a pull
+    # request and ci-ok's `always()` still runs; the per-event steps below check
+    # exactly the jobs that event actually ran.
+    needs: [lint, test, lisp, test-hosted]
+    # PRs are self-hosted only; hosted runners are reserved for push to main and
+    # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
+    runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 5
     steps:
       - name: every CL-tier job succeeded (pull request or manual)
