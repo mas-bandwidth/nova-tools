@@ -57,3 +57,37 @@ func TestSumSwarmRootIsIdempotent(t *testing.T) {
 		t.Errorf("a card from another day leaked into the ledger:\n%s", after)
 	}
 }
+
+func TestSumSwarmMixedKnownUnknownDailyAggregate(t *testing.T) {
+	dir := t.TempDir()
+	root := mkdir(t, filepath.Join(dir, "root"))
+	ledger := filepath.Join(dir, "ledger.tsv")
+
+	// One card reports real input, output and dollars; the other, same model and same day,
+	// reports none of the three — a dash in, an empty out, and a malformed usd — so the
+	// day's aggregate must keep the known card's numbers and carry an explicit unknown
+	// count for the other, never fold it into a silent 0 that reads as a free route.
+	cardUsageFile(t, filepath.Join(root, "batch-a", "jobs", "j1", "usage.tsv"),
+		"deepseek", "deepseek-v4", "2026-09-11T10:00:00Z", "1000", "200", "0.0100")
+	write(t, filepath.Join(root, "batch-b", "jobs", "j2", "usage.tsv"),
+		cardUsageHeader+"\n"+strings.Join([]string{
+			"c", "1", "2026-09-11T11:00:00Z", "2026-09-11T11:00:00Z", "0", "deepseek", "deepseek-v4",
+			"-", "", "-", "-", "-", "0.0xy",
+		}, "\t")+"\n")
+
+	first := invoke(t, "sum", "--swarm-root", root, "--day", "2026-09-11", "--out", ledger)
+	wantExit(t, first, 0)
+
+	lines := strings.Split(strings.TrimRight(read(t, ledger), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("ledger has %d lines, want header + one day row:\n%s", len(lines), read(t, ledger))
+	}
+	if !strings.Contains(lines[0], "\tdashes") {
+		t.Errorf("header has no dashes column for the unknown count: %q", lines[0])
+	}
+	// The known card's numbers survive, and the unknown card is the explicit dashes count
+	// 1,1,1 — not a zero in any kept field that would make the model look free.
+	if !strings.Contains(lines[1], "\tdeepseek-v4\t1000\t200\t0.0100\t2\t1,1,1") {
+		t.Errorf("day row does not carry the known numbers plus an explicit unknown count: %q", lines[1])
+	}
+}
