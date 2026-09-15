@@ -166,14 +166,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// own group) is killed when the wall runs out, not merely handed a suggestion.
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.deadline)
 	defer cancel()
+	childEnv := nativeChildEnv(dataHome, jobDir)
+	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
 	cmd := exec.CommandContext(ctx, runPath, runArgv...)
-	cmd.Env = append(os.Environ(),
-		"HOME="+dataHome,
-		"XDG_DATA_HOME="+dataHome,
-		"NOVA_SWARM_JOB="+jobDir,
-	)
+	cmd.Env = childEnv
 	cmd.Dir = jobDir
-	cmd.Stdin = strings.NewReader("")
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		refuseNative(errOut, fmt.Sprintf("the child's stdin %s could not be opened: %s", oneline.Field(os.DevNull), oneline.Escape(err.Error())))
+		return nativeRunResult{}, 2
+	}
+	defer devNull.Close()
+	cmd.Stdin = devNull
 	log, err := os.OpenFile(filepath.Join(cfg.slotDir, "native.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the run log %s could not be opened: %s", oneline.Field(filepath.Join(cfg.slotDir, "native.log")), oneline.Escape(err.Error())))
@@ -271,6 +275,88 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir string)
 	argv = append(argv, "--")
 	argv = append(argv, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
 	return argv
+}
+
+// nativeChildEnv is the child's whole environment, built rather than inherited: a short
+// allowlist survives the caller's own environment (PATH, LANG, TERM, the XDG_ and
+// NOVA_SWARM_ families, and any provider credential whose name carries KEY, TOKEN or
+// SECRET), and the names this run owns are then set exactly once. HOME and XDG_DATA_HOME
+// point at the data home, NOVA_SWARM_JOB names the job directory, and TMPDIR sits under the
+// data home (inside a --write) instead of the caller's own, which the wall denies.
+// XDG_CONFIG_HOME and XDG_CACHE_HOME are dropped, never inherited, so the harness defaults
+// them under HOME and never follows them outside the wall.
+func nativeChildEnv(dataHome, jobDir string) []string {
+	var kept []string
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if keepNativeEnv(name) {
+			kept = append(kept, kv)
+		}
+	}
+	for _, name := range []string{"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR"} {
+		kept = environWithoutName(kept, name)
+	}
+	return append(kept,
+		"HOME="+dataHome,
+		"XDG_DATA_HOME="+dataHome,
+		"NOVA_SWARM_JOB="+jobDir,
+		"TMPDIR="+filepath.Join(dataHome, "tmp"),
+	)
+}
+
+// keepNativeEnv says whether one inherited name survives into the native child: the names a
+// program needs (PATH, LANG, TERM), the XDG_ and NOVA_SWARM_ families, and any provider
+// credential whose name carries KEY, TOKEN or SECRET. Everything else is the caller's own
+// noise and is dropped, so no path the caller happened to export reaches the child.
+func keepNativeEnv(name string) bool {
+	switch name {
+	case "PATH", "LANG", "TERM":
+		return true
+	}
+	if strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "NOVA_SWARM_") {
+		return true
+	}
+	up := strings.ToUpper(name)
+	return strings.Contains(up, "KEY") || strings.Contains(up, "TOKEN") || strings.Contains(up, "SECRET")
+}
+
+// environWithoutName is the environment minus one name, so a name this run sets itself is
+// certain to appear exactly once.
+func environWithoutName(env []string, name string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if n, _, _ := strings.Cut(kv, "="); n == name {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+// writeNativeArgvLog records the exact argv and environment the child is about to be handed
+// into <slot>/native-argv.log, so a later reader can prove what the wall was asked to run.
+// A value whose name carries KEY, TOKEN or SECRET is written as <redacted>, never the secret
+// itself.
+func writeNativeArgvLog(slotDir, runPath string, runArgv, env []string) {
+	f, err := os.OpenFile(filepath.Join(slotDir, "native-argv.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "argv: %s\n", oneline.Escape(strings.Join(append([]string{runPath}, runArgv...), " ")))
+	for _, kv := range env {
+		name, val, _ := strings.Cut(kv, "=")
+		if keepNativeSecretName(name) {
+			val = "<redacted>"
+		}
+		fmt.Fprintf(f, "env: %s=%s\n", oneline.Escape(name), oneline.Escape(val))
+	}
+}
+
+// keepNativeSecretName says whether a name carries a secret, which the argv log redacts.
+func keepNativeSecretName(name string) bool {
+	up := strings.ToUpper(name)
+	return strings.Contains(up, "KEY") || strings.Contains(up, "TOKEN") || strings.Contains(up, "SECRET")
 }
 
 // wallNamed reads the SANDBOX OK line out of the wall's captured stderr and returns the

@@ -637,6 +637,110 @@ func TestNativeRunsWalledWithoutHostRulesWhenNoRepos(t *testing.T) {
 	}
 }
 
+// TestNativeEnvIsCleanAndInsideTheWall: the walled child is handed a clean environment, not
+// the caller's. HOME and XDG_DATA_HOME appear exactly once and point at the data home, TMPDIR
+// sits under a --write, and XDG_CONFIG_HOME / XDG_CACHE_HOME do not survive to point outside
+// the wall. A planted foreign HOME/XDG_CONFIG_HOME/XDG_CACHE_HOME/TMPDIR and a provider key
+// are set first, and the run happens from a foreign cwd, proving the child's own environment
+// and directory are the run's, not the caller's.
+func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	label := "clean-env"
+
+	// Plant a foreign environment the run must shed: HOME and the two XDG homes outside the
+	// wall, a TMPDIR the wall would deny, and a provider key whose value the log must redact.
+	foreign := t.TempDir()
+	t.Setenv("HOME", filepath.Join(foreign, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(foreign, "config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(foreign, "cache"))
+	t.Setenv("TMPDIR", filepath.Join(foreign, "tmp"))
+	t.Setenv("FAKE_KEY", "planted-secret-value")
+
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(foreign); err != nil {
+		t.Fatalf("chdir to a foreign directory: %v", err)
+	}
+	defer func() { _ = os.Chdir(orig) }()
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		sandbox: sandbox,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the walled run exits 0, got %d:\n%s", code, errOut.String())
+	}
+
+	// The child still runs in its job directory even from a foreign cwd.
+	jobDir := filepath.Join(slot, "jobs", label)
+	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+	if err != nil {
+		t.Fatalf("the child did not write pwd into RESULT.md: %v", err)
+	}
+	if got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd="); got != jobDir {
+		if want, evalErr := filepath.EvalSymlinks(jobDir); evalErr == nil && got != want {
+			t.Errorf("from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, want)
+		}
+	}
+
+	// The environment the run recorded is what the wall was handed.
+	rawLog, err := os.ReadFile(filepath.Join(slot, "native-argv.log"))
+	if err != nil {
+		t.Fatalf("the run recorded no native-argv.log: %v", err)
+	}
+	env := nativeLoggedEnv(t, string(rawLog))
+	dataHome := filepath.Join(slot, "data")
+
+	if got := env["HOME"]; len(got) != 1 {
+		t.Errorf("the child has %d HOME entries, want 1: %v", len(got), got)
+	} else if got[0] != dataHome {
+		t.Errorf("HOME is %q, want the data home %q", got[0], dataHome)
+	}
+	if got := env["XDG_DATA_HOME"]; len(got) != 1 {
+		t.Errorf("the child has %d XDG_DATA_HOME entries, want 1: %v", len(got), got)
+	} else if got[0] != dataHome {
+		t.Errorf("XDG_DATA_HOME is %q, want the data home %q", got[0], dataHome)
+	}
+	if got := env["XDG_CONFIG_HOME"]; got != nil {
+		t.Errorf("XDG_CONFIG_HOME survived and points outside the wall: %v", got)
+	}
+	if got := env["XDG_CACHE_HOME"]; got != nil {
+		t.Errorf("XDG_CACHE_HOME survived and points outside the wall: %v", got)
+	}
+	tmp := env["TMPDIR"]
+	if len(tmp) != 1 {
+		t.Fatalf("the child has %d TMPDIR entries, want 1: %v", len(tmp), tmp)
+	}
+	if rel, err := filepath.Rel(dataHome, tmp[0]); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		t.Errorf("TMPDIR %q is not inside the data home %q (a --write)", tmp[0], dataHome)
+	}
+	if got := env["FAKE_KEY"]; len(got) != 1 || got[0] != "<redacted>" {
+		t.Errorf("the secret's value is not redacted in the log: %v", got)
+	}
+}
+
+// nativeLoggedEnv reads the env lines of a native-argv.log into a name -> values map.
+func nativeLoggedEnv(t *testing.T, log string) map[string][]string {
+	t.Helper()
+	m := map[string][]string{}
+	for _, line := range strings.Split(log, "\n") {
+		if !strings.HasPrefix(line, "env: ") {
+			continue
+		}
+		kv := strings.TrimPrefix(line, "env: ")
+		name, val, _ := strings.Cut(kv, "=")
+		m[name] = append(m[name], val)
+	}
+	return m
+}
+
 // TestNativeChildCwdIsJobDirUnwalled: the child runs in its job directory on BOTH paths --
 // walled and unwalled -- even when the caller's own cwd is somewhere else entirely. The
 // unwalled half is the one the sixth run proved: with no wall the child must still be in the
