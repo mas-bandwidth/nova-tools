@@ -419,7 +419,7 @@ rewritten (the CAS push above only fast-forwards) and nothing is reconciled. A s
 same flags, so a stop is bounded by the same timeout and budget. **A session whose clip is
 refused by divergence is fenced**: it is fenced exactly as in rule 2 — every write and every
 read refused `fenced` at exit 1, except the `session status` and `session export` that rule
-names — keeps
+names and the `operation status|wait|cancel` that rule 2 admits on an id resolving to its own `session.export` operation — keeps
 its journal, and `session export --session <path> --into <path>` writes its accepted events since its base as a
 request bundle — each event with its request id, expected revision and payload — which the
 owning coordinator applies with `session replay --from <path>`, one request at a time,
@@ -4023,8 +4023,8 @@ roadmap features. They add no verified completion until implementation and failu
 
 ## Efficiency: lessons absorbed 2026-09-15 *(Glenn; Emma, Stella)*
 
-Before implementing the resident session and execution slices of `nova-work`, Glenn requires that
-all operational efficiency and token optimization lessons learned from Gas Town and real multi-agent
+Before implementing the resident session and execution slices of `nova-work`, the owner requires that
+all operational efficiency and token optimization lessons learned from the pilot bench and real multi-agent
 coordination are absorbed as normative spec constraints and fences. These rules guard against token
 burn and serial bottlenecks below the model.
 
@@ -4044,7 +4044,7 @@ The rationale rests on measured facts from Gas Town:
    materialises only for independent verification, independent worker assignment, an explicit dependency
    edge, or an isolated recovery boundary; unpoured checklist items never count in `|O|` and never count
    as verified.
-3. **`:max-attempts` and `tripped=`.** Node attempts are bounded by `:max-attempts`, surfacing `tripped=`
+3. **`:max-attempts` and `tripped=`.** Node attempts are bounded by `:max-attempts` (default 3), surfacing `tripped=`
    as a status reading; taking a lease on a tripped node requires an explicit `--reason`, which explains
    the operator's intent and grants no execution authority by itself.
 4. **Delegate mode.** A declared harness role profile restricts the worker to designated verbs and
@@ -4064,7 +4064,8 @@ The rationale rests on measured facts from Gas Town:
    every card and delegated packet carries an explicit `:effort` bound (a small integer scale per task
    class stating how many reads, tool calls and how wide a fan-out the objective is worth); it is stated
    by the coordinator when the card is cut, and a packet lacking it is refused. A worker past its effort
-   limit stops and reports rather than widening on its own; widening requires an explicitly recorded reason.
+   limit stops and reports rather than widening on its own; only the coordinator may widen a card's
+   `:effort`, and only with an explicitly recorded reason.
 10. **Fleet-wide spend ceiling per day.** CONFIG maintains an explicit fleet-wide spend ceiling per day
     and per model family. When an automatic or delegated dispatch would cross that ceiling, it is refused
     with a line naming the configured ceiling and the current spend; it polices the local bench rather
@@ -4309,7 +4310,7 @@ intake that creates it.
 At load the session builds six indexes — id to node, containment adjacency, reverse dependency,
 repository, category (5654164074), and **reverse roadmap reference: from a node id to every
 roadmap that has it as a first-axis member, and to every cell whose `:ref` names it** — and every
-walk goes through them. **A seventh is opened rather than built or loaded: C's closed index**, which the
+read walk goes through the five read-path indexes. **A seventh is opened rather than built or loaded: C's closed index**, which the
 clip publishes beside the snapshot in bounded pages and which no walk over O has to rebuild —
 keyed by `:id` and by `<event-rev>:<id>`, partitioned by event day, ordered by event revision, and
 grouped by repository, so a rollup reads a settled member's newest row in one bounded lookup, a
@@ -4589,7 +4590,7 @@ from the snapshot's structure thereafter, the live snapshot bounded by `--retain
 a snapshot loaded as retention boundary plus retained events equalling a clean
 reconstruction, and `--at` before the boundary refused naming the retention archive;
 **a session started on a snapshot whose archive file is absent answering every ask of the
-query table and running every rule of the validator**, with rule 11 and rule 14 green, and
+query table that does not reach for an archived body and running every rule of the validator**, with rule 11 and rule 14 green, and
 `baseline-rows=`, `since-baseline=`, `stale=`, `freshest=`, `pointers=`, `unverified=` and
 every `done-unverified=` equal to the same load with the retention archive present, **including
 a `verify` over an evidence event no `:to :done` names**, whose `VERIFY ROW` carries the same
