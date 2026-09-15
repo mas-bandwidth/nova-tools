@@ -119,7 +119,7 @@ func TestBatchGathersLine2(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errs)
 	}
-	if !strings.Contains(out, "BATCH B1 n=2 done=2 abstain=0 usd=0.0000") {
+	if !strings.Contains(out, "BATCH B1 n=2 done=2 abstain=0 in=0 out=0 usd=0.0000") {
 		t.Fatalf("the packet's first line folds the counts:\n%s", out)
 	}
 	if !strings.Contains(out, "a all green") || !strings.Contains(out, "b done and clean") {
@@ -218,7 +218,7 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("a batch with an idle-killed card exits 1, got %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 usd=0.0000 idle=1") {
+	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the idle kill is counted as an abstain and the idle count:\n%s", out)
 	}
 	if !strings.Contains(out, "a: ABSTAIN -- idle 1s") {
@@ -253,7 +253,7 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("a batch over a card that keeps writing exits 0, got %d; stderr: %s", code, errs)
 	}
-	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 usd=0.0000 idle=0") {
+	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 in=0 out=0 usd=0.0000 idle=0") {
 		t.Fatalf("a writing card is done, never idle-killed:\n%s", out)
 	}
 	if !strings.Contains(out, "a all green") {
@@ -285,7 +285,7 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("a batch with one idle kill exits 1, got %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 usd=0.0000 idle=1") {
+	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the BATCH line counts the idle kill in its own idle=<n> field:\n%s", out)
 	}
 	if !strings.Contains(out, "a: ABSTAIN -- idle 1s") || !strings.Contains(out, "b done and clean") {
@@ -359,7 +359,7 @@ func TestWorkingCardCountsLogLines(t *testing.T) {
 	if !strings.Contains(out, "a all green log=3") {
 		t.Fatalf("the card line counts its log lines after the sandbox header:\n%s", out)
 	}
-	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 usd=0.0000 idle=0 stalled=0") {
+	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 in=0 out=0 usd=0.0000 idle=0 stalled=0") {
 		t.Fatalf("a working card is not a stall:\n%s", out)
 	}
 }
@@ -376,10 +376,53 @@ func TestBatchLineCountsStalled(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("a batch with one stalled card exits 1, got %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 usd=0.0000 idle=0 stalled=1") {
+	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=0 stalled=1") {
 		t.Fatalf("the BATCH line counts the stalled cards:\n%s", out)
 	}
 	if !strings.Contains(out, "b: ABSTAIN -- stalled (no output after the wall opened)") {
 		t.Fatalf("the stalled card is named:\n%s", out)
+	}
+}
+
+// Slice 10: the batch packet sums tokens_in, tokens_out and usd across cards, from each
+// card's usage.tsv, and prints the totals on the BATCH line as in=<n> out=<n> usd=<n>.
+func TestBatchSumsUsage(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\na second card"},
+	})
+	// The native run writes one usage.tsv per card; the batch sums them during gather. The
+	// job directory is made by scatter, so the usage files are laid down here, in the shape
+	// the runner leaves for a real native run.
+	for i, spec := range []struct {
+		label, in, out, usd string
+	}{
+		{"a", "100", "50", "0.2500"},
+		{"b", "8", "5", "0.7500"},
+	} {
+		job := filepath.Join(root, itoa(i+1), "jobs", spec.label)
+		if err := os.MkdirAll(job, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		row := UsageRow{
+			"job": spec.label, "attempt": "1", "started": "2026-09-13T00:00:00Z",
+			"ended": "2026-09-13T00:01:00Z", "rc": "0",
+			"provider": "deepseek", "model": "deepseek-chat",
+			"tokens_in": spec.in, "tokens_out": spec.out,
+			"cache_write": "-", "cache_read": "-", "reasoning": "-", "usd": spec.usd,
+		}
+		if err := WriteCardUsage(filepath.Join(job, "usage.tsv"), row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := fakeRunner(t, dir)
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 0 {
+		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "BATCH B1 n=2 done=2 abstain=0 in=108 out=55 usd=1.0000") {
+		t.Fatalf("the BATCH line sums tokens and dollars across cards:\n%s", out)
 	}
 }

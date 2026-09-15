@@ -216,12 +216,15 @@ func Batch(in BatchInput) int {
 	var (
 		done, abstain, idle, stalled int
 		holds                        []string
+		totalIn, totalOut            int
 		total                        float64
 	)
 	type row struct {
 		label    string
 		state    string
 		line2    string
+		in       int
+		out      int
 		usd      float64
 		hold     bool
 		idle     bool
@@ -231,7 +234,9 @@ func Batch(in BatchInput) int {
 	rows := make([]row, len(cards))
 	for i, c := range cards {
 		rows[i].label = c.label
-		rows[i].usd = readUSD(filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "usage"))
+		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "usage.tsv"))
+		totalIn += rows[i].in
+		totalOut += rows[i].out
 		total += rows[i].usd
 		rows[i].logLines = logOutputLines(filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "native.log"))
 		// A card the idle monitor killed is its own score, an ABSTAIN that names its reason,
@@ -277,8 +282,8 @@ func Batch(in BatchInput) int {
 	// The packet's grammar. The BATCH line first, then one line per card in admission
 	// order (label, then line 2 verbatim), then HOLD lines -- at most maxHoldLines -- so
 	// the whole packet never grows past n + 12 lines whatever the batch holds.
-	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d usd=%s idle=%d stalled=%d\n",
-		oneline.Field(in.ID), len(cards), done, abstain, formatUSD(total), idle, stalled)
+	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d\n",
+		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
 	for _, r := range rows {
 		switch {
 		case r.idle:
@@ -360,17 +365,17 @@ func logSize(path string) int64 {
 	return fi.Size()
 }
 
-// readUSD reads a card's usage file -- one number, dollars -- or zero when it is absent.
-func readUSD(path string) float64 {
-	raw, err := os.ReadFile(path)
+// readCardUsage reads one card's usage.tsv -- the native run's header-plus-row -- and
+// returns its tokens_in, tokens_out and usd, or zeroes when the file is absent.
+func readCardUsage(path string) (in, out int, usd float64) {
+	row, err := readUsageFile(path)
 	if err != nil {
-		return 0
+		return 0, 0, 0
 	}
-	n, err := strconv.ParseFloat(strings.TrimSpace(string(raw)), 64)
-	if err != nil {
-		return 0
-	}
-	return n
+	in, _ = row.Int("tokens_in")
+	out, _ = row.Int("tokens_out")
+	usd, _ = strconv.ParseFloat(strings.TrimSpace(row["usd"]), 64)
+	return in, out, usd
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }

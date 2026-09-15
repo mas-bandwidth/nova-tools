@@ -74,6 +74,10 @@ var swarmAudit = audit.Config{
 		// one of those strings is put through oneline.Field or oneline.Err before this
 		// package prints it, so none of it can write past the escape.
 		`"bytes"`,
+		// strconv (native.go, slice 10) only turns the child's exit code into the one
+		// column it occupies: Itoa of an int cannot hold a control character, and it
+		// holds no writer of its own.
+		`"strconv"`,
 	},
 	MinClassified: 40,
 }
