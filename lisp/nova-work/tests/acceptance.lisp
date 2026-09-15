@@ -1128,9 +1128,10 @@ is compared against; it is never the path `query --ask size` takes."
 (defvar *journal-test-counter* 0)
 
 (defun test-journal-path (name)
-  (let ((dir "/Users/glenn/emma-working/scratch/work-test-journals/"))
+  (let* ((base (uiop:default-temporary-directory))
+         (dir (merge-pathnames "nova-work-test-journals/" base)))
     (ensure-directories-exist dir)
-    (format nil "~A~A-~D-~D.journal" dir name (get-universal-time) (incf *journal-test-counter*))))
+    (format nil "~A~A-~D-~D.journal" (namestring dir) name (get-universal-time) (incf *journal-test-counter*))))
 
 (defun file-byte-count (path)
   (with-open-file (in path :direction :input :element-type '(unsigned-byte 8))
