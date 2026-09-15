@@ -455,6 +455,35 @@ func TestCheckAndVersion(t *testing.T) {
 	}
 }
 
+// The GPU probe is one line and one of three verdicts on darwin, and one unsupported
+// line everywhere else. It is a capability question, not a secret-read check, so it
+// exits 0 with the answer rather than refusing on a machine that has no Metal device.
+func TestProbeGPULineShape(t *testing.T) {
+	j := newJob(t)
+	code, out, errOut := j.tool(t, j.env(), "probe", "--gpu", "--write", j.write)
+	if code != 0 {
+		t.Fatalf("probe --gpu exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("probe --gpu printed %d lines, want exactly 1:\n%s", len(lines), out)
+	}
+	line := lines[0]
+	if runtime.GOOS != "darwin" {
+		want := "PROBE GPU unsupported platform=" + runtime.GOOS
+		if line != want {
+			t.Fatalf("probe --gpu on %s: got %q, want %q", runtime.GOOS, line, want)
+		}
+		return
+	}
+	for _, metal := range []string{"available", "refused", "unsupported"} {
+		if line == "PROBE GPU metal="+metal+" backend=sandbox-exec" {
+			return
+		}
+	}
+	t.Fatalf("probe --gpu line is not the grammar: %q", line)
+}
+
 // The usage banner carries the --read remedy, which is where it has to live: on linux
 // the tool is gone by the time the command dies, so it cannot say so after the fact.
 func TestUsageCarriesTheReadRemedy(t *testing.T) {

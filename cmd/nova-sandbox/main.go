@@ -13,6 +13,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -39,6 +40,7 @@ usage:
   nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>]
                [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
   nova-sandbox probe --write <dir>... [--read <dir>...] --secret <path> [--net-deny]
+  nova-sandbox probe --gpu   [--write <dir>...] [--read <dir>...] [--net-deny]
   nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
                [-- <command> <args...>]
   nova-sandbox check [--max <n>]
@@ -68,6 +70,8 @@ usage:
                   with one NOTE line, for the same reason as --name.
   --secret <path> probe only: the file a probe proves it cannot read. A path is
                   not a secret; the file's contents are never read.
+  --gpu            probe only: a Metal reachability check inside the wall, on
+                  darwin; on any other platform it prints one unsupported line.
   --max <n>       how many lines a listing prints before one MORE line stands for
                   the rest. Default 20, and 0 means all.
 
@@ -126,6 +130,7 @@ type flags struct {
 	reads, writes               []string
 	cwd, tmp, name, secret, acl string
 	netDeny, netListen          bool
+	gpu                         bool
 	max                         int
 	maxSet                      bool
 	argv                        []string
@@ -183,6 +188,8 @@ func parse(args []string) flags {
 			f.netDeny = true
 		case "--net-listen":
 			f.netListen = true
+		case "--gpu":
+			f.gpu = true
 		case "--max":
 			v, i = want(i, "--max")
 			n := 0
@@ -241,8 +248,8 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 	// to another verb was accepted here and then ignored — the opposite. --secret is
 	// probe's and --max is probe's and check's; the spec's verb table has neither on the
 	// bare form.
-	f.bad = append(f.bad, notForThisVerb("the bare form", map[string]bool{"--secret": f.secret != "", "--max": f.maxSet},
-		map[string]string{"--secret": "probe", "--max": "probe and check"})...)
+	f.bad = append(f.bad, notForThisVerb("the bare form", map[string]bool{"--secret": f.secret != "", "--max": f.maxSet, "--gpu": f.gpu},
+		map[string]string{"--secret": "probe", "--max": "probe and check", "--gpu": "probe"})...)
 	if len(f.bad) > 0 {
 		return refuseAll(stderr, f.bad)
 	}
@@ -288,7 +295,7 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 // in a fixed order so that two problems print the same way twice.
 func notForThisVerb(verb string, given map[string]bool, owner map[string]string) []sandbox.Refusal {
 	var out []sandbox.Refusal
-	for _, flag := range []string{"--secret", "--max", "--acl", "--name", "--cwd", "--tmp"} {
+	for _, flag := range []string{"--secret", "--max", "--acl", "--name", "--cwd", "--tmp", "--gpu"} {
 		if !given[flag] {
 			continue
 		}
@@ -323,11 +330,63 @@ func checkVerb(stdout io.Writer) int {
 	return 0
 }
 
+// probeGPU is the `probe --gpu` half of the compatibility observation in #230: a cheap,
+// explicit capability check for a local Metal (GPU) device, run INSIDE the wall rather
+// than inferred from an unconfined parent probe. It answers one line, metal=<available|
+// refused|unsupported>. There is no cgo-free path from Go to MTLCreateSystemDefaultDevice,
+// so the probe executes the OS's own `system_profiler SPDisplaysDataType` inside the wall
+// and reports whether the wall refused it — a denied IOKit reach shows up as the command
+// being killed, which is the whole point: the current profile grants no IOKit clauses.
+func probeGPU(f flags, stdout, stderr io.Writer, env []string) int {
+	if runtime.GOOS != "darwin" {
+		fmt.Fprintf(stdout, "PROBE GPU unsupported platform=%s\n", oneline.Field(runtime.GOOS))
+		return 0
+	}
+	prof, err := exec.LookPath("system_profiler")
+	if err != nil {
+		prof = "/usr/sbin/system_profiler"
+	}
+	p, bad := sandbox.Build(sandbox.Input{
+		Reads: f.reads, Writes: f.writes, NetDeny: f.netDeny, NetListen: f.netListen,
+		Argv: []string{prof, "SPDisplaysDataType"}, Home: homeOf(env),
+	})
+	if len(bad) > 0 {
+		for _, r := range bad {
+			fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.Escape(r.Text))
+		}
+		return sandbox.ExitCannotRun
+	}
+	childEnv := sandbox.ChildEnv(env, p.Tmp)
+	var out bytes.Buffer
+	code, err := sandbox.Run(p, childEnv, nil, &out, stderr, nil)
+	if err != nil {
+		var r sandbox.Refusal
+		if asRefusal(err, &r) {
+			fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.Escape(r.Text))
+			return sandbox.ExitCannotRun
+		}
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.Err(err))
+		return sandbox.ExitCannotRun
+	}
+	metal := "unsupported"
+	switch {
+	case code != 0:
+		metal = "refused"
+	case strings.Contains(out.String(), "Metal Support:"):
+		metal = "available"
+	}
+	fmt.Fprintf(stdout, "PROBE GPU metal=%s backend=%s\n", oneline.Field(metal), oneline.Field(sandbox.Backend))
+	return 0
+}
+
 // probeVerb is rule 10: five checks under the REAL policy for this platform, run once
 // before the first task. A wall that denies the work too is broken, and a two-check
 // probe would call it a pass.
 func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	f := parse(args)
+	if f.gpu {
+		return probeGPU(f, stdout, stderr, env)
+	}
 	// EVERY independent problem in ONE run. Emma, dogfooding v0.12.0 (nova-tools #104):
 	// a bare `probe` named the missing --secret, and named the missing --write only on
 	// the NEXT run, once --secret had been supplied -- a first run sequenced into as many

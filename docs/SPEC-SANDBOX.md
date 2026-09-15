@@ -386,6 +386,7 @@ near the end.
 ```
 nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
 nova-sandbox probe   --write <dir>... [--read <dir>...] --secret <path> [--net-deny] [--max <n>]
+nova-sandbox probe   --gpu [--write <dir>...] [--read <dir>...] [--net-deny]
 nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] [-- <command> <args...>]
 nova-sandbox fence   --out <file> [--webfetch allow|deny]
 nova-sandbox grant   --name <container> [--read <dir>]... [--write <dir>]...
@@ -521,6 +522,8 @@ SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
 PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
 PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise>
+PROBE GPU metal=<available|refused|unsupported> backend=<name>
+PROBE GPU unsupported platform=<os>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>
 POLICY OK backend=<name> read=<n> write=<n> bytes=<n>
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
@@ -1007,6 +1010,46 @@ failed check.
 The secret file's **contents are never read into memory**: the check is that
 `open(2)` (or `CreateFileW`) fails, and a probe that succeeded in opening it
 closes it without reading and reports `got=allow`.
+
+### The GPU capability probe
+
+`probe --gpu` is the compatibility observation of nova-tools #230, and it is a
+**capability question, not a release**. A bounded local model trial on Apple
+Silicon performs MLX GPU arithmetic outside the wall but fails inside it during
+import with `[metal::load_device] No Metal device available`, and a caller
+should be able to learn that **before** downloading or loading a large model —
+without an unconfined parent probe, which would report the parent's device and
+not the child's. The verb accepts `--write` (and optional `--read` and
+`--net-deny`) so it builds the real child policy, then asks one bounded
+question inside that wall.
+
+There is no cgo-free path from Go to `MTLCreateSystemDefaultDevice`, so the
+probe does not link Metal. It executes the OS's own
+`system_profiler SPDisplaysDataType` inside the wall and reports whether the
+wall let it run. The current policy's narrowly allowlisted mach-lookup profile
+grants no IOKit clauses, so on a Metal-capable machine the command is denied
+its IOKit reach and the answer is `refused` — which is the honest statement
+the issue asks for: determine the capability under the proposed child policy
+before any relaxation is considered.
+
+One line, on darwin:
+
+```
+PROBE GPU metal=<available|refused|unsupported> backend=<name>
+```
+
+`available` means the check ran inside the wall and reported a Metal device;
+`refused` means the wall denied the check (the command could not complete);
+`unsupported` means it ran and reported no Metal device. On every other
+platform the verb prints exactly one line —
+`PROBE GPU unsupported platform=<os>` — because the check is a macOS question.
+The exit is 0 with the answer, like `check`: a machine without a GPU is an
+answer, not a refusal. This probe does **not** widen the profile, and it
+changes none of the filesystem, network, clipboard or agent-socket controls:
+it is the measurement that would let a later, separately scoped change decide
+whether a narrowly scoped, opt-in local GPU policy is appropriate, recorded
+against the declared policy/runtime/model revisions rather than inferred from
+an unconfined parent.
 
 ### The internal verb, and what its guard is and is not
 
