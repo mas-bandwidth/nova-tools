@@ -201,6 +201,18 @@ func newFlags(verb string) *flags {
 	return &flags{verb: verb, fs: fs}
 }
 
+// stringListValue is a repeatable flag: every occurrence appends to the slice, so --repo a
+// --repo b gives ["a" "b"]. It backs a list-valued frozen-config field (the native run's
+// repos and recipients) with no default.
+type stringListValue struct{ dst *[]string }
+
+func (s stringListValue) String() string { return strings.Join(*s.dst, ",") }
+
+func (s stringListValue) Set(v string) error {
+	*s.dst = append(*s.dst, v)
+	return nil
+}
+
 // parse runs the flag set. It reports nothing about required flags: those are checked by
 // want and wantCount, which collect EVERY independent problem so that one run names them
 // all (ONBOARDING point 2) rather than sending a first run back three times.
@@ -1259,6 +1271,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	deadline := f.fs.String("deadline", "", "")
 	label := f.fs.String("label", "", "")
 	auth := f.fs.String("auth", "", "")
+	sandbox := f.fs.String("sandbox", "", "")
+	var repos, recipients []string
+	f.fs.Var(stringListValue{&repos}, "repo", "")
+	f.fs.Var(stringListValue{&recipients}, "recipient", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -1286,14 +1302,17 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		lbl = strings.TrimSuffix(filepath.Base(*cardPath), filepath.Ext(*cardPath))
 	}
 	cfg := nativeRunConfig{
-		binary:   *harness,
-		model:    *model,
-		label:    lbl,
-		card:     cardRaw,
-		slotDir:  *slot,
-		root:     *root,
-		authFile: *auth,
-		deadline: d,
+		binary:     *harness,
+		model:      *model,
+		label:      lbl,
+		card:       cardRaw,
+		slotDir:    *slot,
+		root:       *root,
+		authFile:   *auth,
+		deadline:   d,
+		repos:      repos,
+		recipients: recipients,
+		sandbox:    *sandbox,
 	}
 	res, code := nativeRun(cfg, stderr)
 	if code != 0 {

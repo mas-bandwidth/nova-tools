@@ -35,6 +35,11 @@ type nativeRunConfig struct {
 	root     string        // the configured root the slot directory must sit under
 	authFile string        // optional: an auth file to copy one entry out of
 	deadline time.Duration // the wall bound that kills the child
+	repos    []string      // repositories a card may clone (owner/name): network to
+	// github.com only, expressed as a wall host rule
+	recipients []string // bus lanes a card may address; default none, and a bus
+	// send is denied inside the wall regardless
+	sandbox string // the nova-sandbox binary naming the wall; "" = no wall
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -112,11 +117,32 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	binaryHash, _ := fileSHA256(bin)
 	cardHash := sha256.Sum256(cfg.card)
 
+	// (5) THE WALL (slice 11). When a wall is named the child runs inside nova-sandbox,
+	// and the two lists a run may carry -- repos a card may clone, recipients a card may
+	// address -- are the wall's allow rules. A repo is network to github.com only, which is
+	// a HOST rule; a wall that cannot express it is a refusal (`wall cannot express repo
+	// rule`), never an unwalled run. A recipient is never expressed: a bus send is denied
+	// inside the wall by construction (no nova-bus on PATH, no bus checkout in the write
+	// set), so the default of none is what the wall enforces and no allow rule is built.
+	runPath := bin
+	runArgv := []string{"run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card)}
+	if cfg.sandbox != "" {
+		if len(cfg.repos) > 0 && !sandboxHostRules(cfg.sandbox) {
+			refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
+			return nativeRunResult{}, 2
+		}
+		runPath = cfg.sandbox
+		runArgv = nativeSandboxArgv(bin, cfg, dataHome)
+	} else if len(cfg.repos) > 0 {
+		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
+		return nativeRunResult{}, 2
+	}
+
 	// THE CHILD. The deadline is a context, so the process (and any it started in its
 	// own group) is killed when the wall runs out, not merely handed a suggestion.
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.deadline)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
+	cmd := exec.CommandContext(ctx, runPath, runArgv...)
 	cmd.Env = append(os.Environ(),
 		"HOME="+dataHome,
 		"XDG_DATA_HOME="+dataHome,
@@ -152,6 +178,40 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 // refuseNative writes the one REFUSED line the run owes its caller.
 func refuseNative(w io.Writer, reason string) {
 	fmt.Fprintf(w, "NATIVE REFUSED: %s\n", oneline.Escape(reason))
+}
+
+// sandboxHostRules asks the wall, once, whether it can express a repo allow rule: network
+// to github.com for the named repositories is a HOST rule, and the wall's `check` verb says
+// so with `hosts=enforceable`. Anything else -- a check that will not run, or a line without
+// that token -- is a wall that cannot express the rule, and the run refuses rather than run
+// the card unwalled (SPEC-SANDBOX rule 1 and rule 11).
+func sandboxHostRules(sandbox string) bool {
+	out, err := exec.Command(sandbox, "check").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "hosts=enforceable")
+}
+
+// nativeSandboxArgv is the wrap for a native run: the wall's flags, then --, then the
+// harness verbatim (SPEC-SANDBOX rule 12). The job directory is the first --write and the
+// --cwd (rule 13); the data home is the second --write and the child's HOME (rule 9); the
+// slot directory is the read set. Each repo the card named is a --repo allow rule, and a
+// recipient never appears: a bus send is denied by the wall itself, not granted by the
+// caller, so no allow rule is ever built for one.
+func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome string) []string {
+	argv := []string{
+		"--read", cfg.slotDir,
+		"--write", cfg.slotDir,
+		"--write", dataHome,
+		"--cwd", cfg.slotDir,
+	}
+	for _, r := range cfg.repos {
+		argv = append(argv, "--repo", r)
+	}
+	argv = append(argv, "--")
+	argv = append(argv, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
+	return argv
 }
 
 // providerOf splits a native model id on its single slash and reports whether it
