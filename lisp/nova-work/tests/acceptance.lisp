@@ -1618,5 +1618,250 @@ is compared against; it is never the path `query --ask size` takes."
                     (check-string= init-digest (root-digest (kernel-state target-k)) "target state root digest unchanged")
                     (check-equal init-rev (kernel-next-rev target-k) "target next-rev unchanged")
                     (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
-               (close-file-journal j-replay))))
-      (ignore-errors (delete-file path)))))
+                (close-file-journal j-replay))))
+       (ignore-errors (delete-file path)))))
+
+;;; ------------------------------------------------------------------
+;;; SPEC-WORK.md lines 3600-end, part 4 of 8: session/CLI-level replays.
+;;; Slice 1 ships only the internal C/O transition kernel (value, event,
+;;; journal, state, kernel); every replay below names a feature whose kernel
+;;; code (session, paging, indexes, roadmaps, leases, moves, providers,
+;;; hostile-data intake) does not exist yet.  Each is kept in the file's
+;;; deftest shape, asserted against the exact sentence its spec line states,
+;;; and marked NEEDS-KERNEL rather than run against an absent implementation.
+;;; ------------------------------------------------------------------
+
+;; ------------------------------------------------------------------
+;; held-acceptance-converts-nothing   docs/SPEC-WORK.md:5258
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: session holds + leasing (an acceptance under a hold stays
+;; `:accepted-held` with no lease/launch/release until reconciled; lifting the
+;; hold converts nothing).
+;;(deftest "held-acceptance-converts-nothing" "docs/SPEC-WORK.md:5258"
+;;    "accepted-held=retained,lease=0,launch=0,release=0,lift-converts=nothing"
+;;  ;; an offer prepared before a pause refused at the last send; an acceptance
+;;  ;; under a hold retained `:accepted-held`; a lift of the hold converts nothing.)
+;;(pending))
+
+;; ------------------------------------------------------------------
+;; historic-tick-survives-a-source-change   docs/SPEC-WORK.md:5300
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: source capture + pinned revisions (historic tick stays at its
+;; pinned revision while the current view requires re-verification).
+;;(deftest "historic-tick-survives-a-source-change" "docs/SPEC-WORK.md:5300"
+;;    "historic-tick=pinned,current=reverify"
+;;  ;; a changed source or criterion preserves the historic tick at its pinned
+;;  ;; revision while the current view requires re-verification.)
+
+;; ------------------------------------------------------------------
+;; history-grows-startup-does-not   docs/SPEC-WORK.md:5117
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: bounded paged history + startup instrumentation (grow old
+;; history; resident bytes/segment bytes/parses/replays/emitted bytes stay
+;; fixed; index pages read bounded by depth).
+;;(deftest "history-grows-startup-does-not" "docs/SPEC-WORK.md:5117"
+;;    "resident-bytes=stable,pages=bounded-by-depth"
+;;  ;; O, recent-window volume and page bounds held fixed while old history
+;;  ;; grows: startup resident bytes, segment bytes read, parses, replays and
+;;  ;; emitted bytes do not move; index pages read stay bounded by depth.)
+
+;; ------------------------------------------------------------------
+;; hold-survives-a-crash   docs/SPEC-WORK.md:5254
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: crash durability of holds (crash after the hold recovers the
+;; same hold and target identities with no duplicate launch).
+;;(deftest "hold-survives-a-crash" "docs/SPEC-WORK.md:5254"
+;;    "hold-durable,target-identities=recovered,duplicate-launch=0"
+;;  ;; a crash after the hold is durable and before capture/send recovering the
+;;  ;; same hold and target identities with no duplicate launch.)
+
+;; ------------------------------------------------------------------
+;; hostile-data   docs/SPEC-WORK.md:5602
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: hostile-data intake adapter (reader evaluation disabled;
+;; depth/byte/node limits; no command execution or authority change; quadratic
+;; copying avoided).
+;;(deftest "hostile-data" "docs/SPEC-WORK.md:5602"
+;;    "eval-disabled,limits=enforced,command-execution=0,authority=unchanged"
+;;  ;; reader evaluation disabled; pre-parse depth, byte and node limits
+;;  ;; enforced; imported prose cannot execute a command or alter authority.)
+
+;; ------------------------------------------------------------------
+;; index-replayed-after-crash   docs/SPEC-WORK.md:5071
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: session + closed/open indexes (crash between settle and clip:
+;; one journal replay moves the id to C's index out of O's tree before any
+;; ask, totals reconcile).
+;;(deftest "index-replayed-after-crash" "docs/SPEC-WORK.md:5071"
+;;    "replay=one,open+closed=total,revive=recovered-in-O"
+;;  ;; a session killed between a `:settle` and the next clip: the restart's one
+;;  ;; journal replay puts the item in C's index and out of O's tree before the
+;;  ;; first ask, `open=` and `closed=` sum to the same total.)
+
+;; ------------------------------------------------------------------
+;; indivisible-record-refused-before-ack   docs/SPEC-WORK.md:5543
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: paged index + admission gate (a single key whose one locator
+;; no page could hold refused `indivisible` before acknowledgement, nothing
+;; journaled).
+;;(deftest "indivisible-record-refused-before-ack" "docs/SPEC-WORK.md:5543"
+;;    "indivisible=refused,nothing-journaled"
+;;  ;; one key with its locator that no page under `--page-bytes` could hold
+;;  ;; refused `indivisible` at exit 2 with nothing journaled.)
+
+;; ------------------------------------------------------------------
+;; inventory-expansion-and-contraction   docs/SPEC-WORK.md:5712
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: inventory/denominator accounting (initial inventory preserved,
+;; discovered work counted separately; changed denominator visible).
+;;(deftest "inventory-expansion-and-contraction" "docs/SPEC-WORK.md:5712"
+;;    "inventory=preserved,counted=separately,denominator=visible"
+;;  ;; initial inventory preserved and discovered; completed, reopened,
+;;  ;; decomposed and explicitly removed work counted separately; a changed
+;;  ;; denominator visible beside progress and never silently revised.)
+
+;; ------------------------------------------------------------------
+;; late-and-duplicate-receipts-are-retained   docs/SPEC-WORK.md:5243
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: receipt/lease reconciliation (a late accept retained `:late`
+;; reviving no lease, overwriting no successor; same request replaying its
+;; success).
+;;(deftest "late-and-duplicate-receipts-are-retained" "docs/SPEC-WORK.md:5243"
+;;    "late=retained,lease-revived=0,successor-overwritten=0"
+;;  ;; a late accept after a decline, a replacement, an expiry or a generation
+;;  ;; change retained `:late`, reviving no lease and overwriting no successor.)
+
+;; ------------------------------------------------------------------
+;; local-tokens-cost-zero-api   docs/SPEC-WORK.md:5288
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: pricing/cost accounting (the three cost values kept separately
+;; labelled; a missing dimension unknown, never zero).
+;;(deftest "local-tokens-cost-zero-api" "docs/SPEC-WORK.md:5288"
+;;    "cost-values=separately-labelled,missing=unknown"
+;;  ;; the three cost values kept separately labelled.)
+
+;; ------------------------------------------------------------------
+;; materialized-working-set   docs/SPEC-WORK.md:5597
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: materialized W index (repeated membership/|W| asks visit zero
+;; unrelated nodes; independent reconstruction equal after take/renew/release).
+;;(deftest "materialized-working-set" "docs/SPEC-WORK.md:5597"
+;;    "unrelated-visits=0,scans=0,reconstruction=equal,watermark=printed"
+;;  ;; W held fixed while O and C grow: membership and |W| asks visit zero
+;;  ;; unrelated nodes, scan neither O nor C.)
+
+;; ------------------------------------------------------------------
+;; matrix-retirement   docs/SPEC-WORK.md:5387
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: roadmap axes (only selected coordinates retired and
+;; recoverable; no task cancelled; layout change on populated roadmap refused).
+;;(deftest "matrix-retirement" "docs/SPEC-WORK.md:5387"
+;;    "selected=retired,recoverable=yes,task-cancelled=0"
+;;  ;; `axis --remove` of a first-axis row and then of another axis's member:
+;;  ;; only the selected coordinates retired and recoverable, no task cancelled.)
+
+;; ------------------------------------------------------------------
+;; merged-is-not-distributed   docs/SPEC-WORK.md:5093
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: release/distribution state (a fix in C with `landed=<sha>` and
+;; `released=-` while its release task is open; `released=<version>` only once
+;; that task settles).
+;;(deftest "merged-is-not-distributed" "docs/SPEC-WORK.md:5093"
+;;    "landed=set,released=-,released-set-only-when-task-settles"
+;;  ;; a fix in C with `landed=<sha>` and `released=-` while its release task is
+;;  ;; open, and `released=<version>` on the same row once that task settles.)
+
+;; ------------------------------------------------------------------
+;; metadata-patches-preserve-intent   docs/SPEC-WORK.md:5347
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: node add/edit verbs (keep/clear/set-empty/set-false/set-value
+;; round-trip distinctly; a malformed tag or wrong type refused, no event, no
+;; counter).
+;;(deftest "metadata-patches-preserve-intent" "docs/SPEC-WORK.md:5347"
+;;    "patches=round-trip,malformed=refused,counter=moved"
+;;  ;; keep, clear, set-empty, set-false and set-value on each field round-trip
+;;  ;; and digest distinctly.)
+
+;; ------------------------------------------------------------------
+;; missing-segment-is-a-gap   docs/SPEC-WORK.md:5132
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: closed history segments + coverage gaps (a removed named
+;; segment prints `gap=<n>` and a coverage-gap note, never an empty closed set).
+;;(deftest "missing-segment-is-a-gap" "docs/SPEC-WORK.md:5132"
+;;    "gap=<n>,coverage-gap=noted,closed-set=never-empty"
+;;  ;; a segment the committed root names, removed: the listing answers what it
+;;  ;; can with `gap=<n>` and one coverage-gap note, never an empty closed set.)
+
+;; ------------------------------------------------------------------
+;; move-keeps-every-count   docs/SPEC-WORK.md:5360
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: node move verb (a required subtree moved keeps all counts
+;; consistent; no whole-set scan).
+;;(deftest "move-keeps-every-count" "docs/SPEC-WORK.md:5360"
+;;    "source/dest=by-subtree,net=stable,visits=asserted"
+;;  ;; a required subtree moved between two features: the source's and
+;;  ;; destination's required sets and open counts move by the subtree, the
+;;  ;; common ancestor's net count is stable.)
+
+;; ------------------------------------------------------------------
+;; move-keeps-the-lease   docs/SPEC-WORK.md:5370
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: leases over moved subtrees (a working subtree moved with its
+;; effective `:responsible` unchanged keeps the same lease/attempt/usage).
+;;(deftest "move-keeps-the-lease" "docs/SPEC-WORK.md:5370"
+;;    "lease=same,attempt=same,usage=same,active-change=refused"
+;;  ;; a working subtree moved with its effective `:responsible` unchanged keeps
+;;  ;; the same lease, attempt and usage.)
+
+;; ------------------------------------------------------------------
+;; move-refuses-by-name   docs/SPEC-WORK.md:5367
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: node move verb refusals (a wrong `--from`, destination inside
+;; the subtree, a root container, etc. each refused with its named reason).
+;;(deftest "move-refuses-by-name" "docs/SPEC-WORK.md:5367"
+;;    "each-refusal=named,nothing-written"
+;;  ;; a wrong `--from`, a destination inside the subtree, a root container, a
+;;  ;; repository root, a shared container, another repository, and a roadmap as
+;;  ;; either parent, each refused with its named reason.)
+
+;; ------------------------------------------------------------------
+;; move-same-parent-is-a-receipt   docs/SPEC-WORK.md:5364
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: node move verb receipts (`--from` equal to `--under`: structure
+;; event alone, `changed=0`, sibling order unchanged).
+;;(deftest "move-same-parent-is-a-receipt" "docs/SPEC-WORK.md:5364"
+;;    "changed=0,one-envelope,sibling-order=unchanged"
+;;  ;; `--from` equal to `--under`: the structure event alone, `changed=0`,
+;;  ;; sibling order unchanged.)
+
+;; ------------------------------------------------------------------
+;; move-undo-refuses-a-reorder   docs/SPEC-WORK.md:5379
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: move undo (undo after a sibling reorder, reparent or privacy
+;; change refused conflict, guessing no position).
+;;(deftest "move-undo-refuses-a-reorder" "docs/SPEC-WORK.md:5379"
+;;    "undo=conflict,position=never-guessed"
+;;  ;; undo after a sibling reorder, a further reparent or a privacy change
+;;  ;; refused conflict and guessing no position.)
+
+;; ------------------------------------------------------------------
+;; move-updates-every-roadmap-scope   docs/SPEC-WORK.md:5375
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: roadmap scope revisions (a row referenced by two roadmaps
+;; advances both referencing scopes, unrelated scope stays).
+;;(deftest "move-updates-every-roadmap-scope" "docs/SPEC-WORK.md:5375"
+;;    "referencing-scopes=advance,unrelated=stays"
+;;  ;; a row referenced by two roadmaps outside both parent chains and one
+;;  ;; unrelated roadmap: both referencing scope revisions advance, the
+;;  ;; unrelated one stays.)
+
+;; ------------------------------------------------------------------
+;; moving-source   docs/SPEC-WORK.md:5585
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: provider intake adapter (a body edited / comment added and
+;; deleted during capture: captured versions preserved, incomplete marked).
+;;(deftest "moving-source" "docs/SPEC-WORK.md:5585"
+;;    "captured=preserved,incomplete=marked,reconciled=yes"
+;;  ;; a body edited, a visible comment added and deleted, labels and state
+;;  ;; changed and an issue reopened during capture: captured versions
+;;  ;; preserved, a mixed or incomplete capture marked as such.)
