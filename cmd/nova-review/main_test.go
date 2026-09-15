@@ -981,6 +981,15 @@ func TestFriendSequenceLaneAddPacket(t *testing.T) {
 	}
 }
 
+// #406 item 1: the usage line states --out is relative to the cwd (or absolute
+// under the cwd or the lane), so a coordinator whose out dir is absolute by habit
+// knows where a path resolves before it is refused.
+func TestPacketOutUsageStatesRelativeToCwd(t *testing.T) {
+	if !strings.Contains(usage, "relative to the cwd") {
+		t.Fatalf("usage does not state --out is relative to the cwd:\n%s", usage)
+	}
+}
+
 func TestPacketRefusalNamesAddRemedy(t *testing.T) {
 	lane, _ := packetLab(t)
 	old, _ := os.Getwd()

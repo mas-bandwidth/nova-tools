@@ -27,3 +27,18 @@ func TestVersionStampAndUsage(t *testing.T) {
 		t.Fatal("help omitted version")
 	}
 }
+
+// #406 item 2: the report usage line states what --file is and its shape, so
+// an input does not read like an output and a reader learns the file is the
+// rule-2 manifest (one tab-separated line per tool) before a run.
+func TestVersionReportFileUsageStatesShape(t *testing.T) {
+	var out, err bytes.Buffer
+	if code := update.Main("nova-version", []string{"help"}, "", &out, &err); code != 0 {
+		t.Fatalf("help exit %d: %s", code, err.String())
+	}
+	for _, want := range []string{"--file <manifest:", "tab-separated fields"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("help does not state --file's shape (%q):\n%s", want, out.String())
+		}
+	}
+}
