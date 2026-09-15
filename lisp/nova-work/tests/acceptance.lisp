@@ -1617,7 +1617,7 @@ is compared against; it is never the path `query --ask size` takes."
                     ;; 5. CRITICAL INVARIANT: target-k is completely UNTOUCHED
                     (check-string= init-digest (root-digest (kernel-state target-k)) "target state root digest unchanged")
                     (check-equal init-rev (kernel-next-rev target-k) "target next-rev unchanged")
-                    (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
+                     (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
                (close-file-journal j-replay))))
       (ignore-errors (delete-file path)))))
 
@@ -2024,3 +2024,190 @@ is compared against; it is never the path `query --ask size` takes."
     "expected=deny-in-cut-note-still-excludes"
   ;; NEEDS-KERNEL: Delegation note :deny constraints, applicable/goal show cap, notes index.
   (ok t "applicable-cap-never-hides-a-deny is outside slice 1"))
+;;; Slice-1 boundary replays promised by docs/SPEC-WORK.md lines
+;;; 2400-3600 (part 1 of 4). Every name is dated to the acceptance
+;;; table's own paragraph (the `docs/SPEC-WORK.md:` reference below) and
+;;; to the prose line where it is first named. This slice is the
+;;; internal C/O transition kernel only (no CLI, no socket, no provider,
+;;; no clip, no undo, no retention window — see README.md), so each of
+;;; these asserts a sentence the kernel here cannot yet satisfy. They
+;;; are kept in the file's deftest shape, marked NEEDS-KERNEL, and
+;;; counted, exactly as the card asks.
+;;; ------------------------------------------------------------------
+
+;;; endpoint-is-local-and-private  SPEC-WORK.md prose :2476 / table :5276
+;; (deftest "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5276"
+;;     "session-dir=0700;socket=0600;wider-mode-refused;no-network-bind"
+;;   ;; the session's directory created 0700 and its socket 0600, both owned
+;;   ;; by the running account; a pre-existing directory or socket with wider
+;;   ;; modes refused rather than reused; no listener on any network address.)
+;; NEEDS-KERNEL: the session/socket layer (slice 1 has no socket, no session dir).
+
+;;; wire-integers-are-strings  SPEC-WORK.md prose :2510 / table :5159
+;; (deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
+;;     "int>2^53-round-trips-as-string;json-number-frame-refused;null-and-absent-alike"
+;;   ;; an id, a revision, a counter and a token total each above 2^53 crossing
+;;   ;; the wire and returning unchanged; a frame carrying a JSON number refused;
+;;   ;; null and an absent key reading alike, an empty string and empty array as
+;;   ;; values.)
+;; NEEDS-KERNEL: the wire codec/transport (no JSON frame or wire exists here).
+
+;;; protocol-version-negotiated-or-refused  SPEC-WORK.md table :5162
+;; (deftest "protocol-version-negotiated-or-refused" "docs/SPEC-WORK.md:5162"
+;;     "unsupported-version-refused-with-list;no-request-before-handshake;oversized-frame-refused"
+;;   ;; a client offering an unsupported version refused with the supported list
+;;   ;; named and the connection closed; no request admitted before the handshake;
+;;   ;; an oversized frame refused with one framed error before the close.)
+;; NEEDS-KERNEL: the protocol handshake and connection admission (no transport).
+
+;;; pipeline-replies-are-correlated  SPEC-WORK.md prose :2529 / table :5165
+;; (deftest "pipeline-replies-are-correlated" "docs/SPEC-WORK.md:5165"
+;;     "every-response-reaches-only-its-request;operation-id-distinct;unknown-id-closes"
+;;   ;; pipeline two queries, a mutation and a long-operation acceptance, deliver
+;;   ;; response frames out of order and in fragments: every response matches only
+;;   ;; its request; unknown/duplicate/absent response ids close without falsely
+;;   ;; settling an outstanding request.)
+;; NEEDS-KERNEL: the pipelined transport with response-id correlation (no socket).
+
+;;; disconnect-is-not-a-rollback  SPEC-WORK.md prose :2540 / table :5173
+;; (deftest "disconnect-is-not-a-rollback" "docs/SPEC-WORK.md:5173"
+;;     "event-stands-after-kill;same-id-returns-recorded-disposition;different-args-refused;rev/pushed-distinct"
+;;   ;; a client killed after its mutation was journaled: the event stands, the same
+;;   ;; request id and body returns the recorded disposition, the same id with
+;;   ;; different arguments is refused, and rev= and pushed= are distinct.)
+;; NEEDS-KERNEL: socket disconnect + a pushed= counter (slice-1 receipt has pushed=-).
+
+;;; no-effect-mutation-is-journaled  SPEC-WORK.md prose :2797 / table :5176
+;; (deftest "no-effect-mutation-is-journaled" "docs/SPEC-WORK.md:5176"
+;;     "event-id-recorded;journal+1;changed=0;projection-digest-unchanged;rev+1"
+;;   ;; a mutation whose patches are all no-ops: the event id recorded, journal
+;;   ;; length +1, changed=0 on its OK line, the domain-projection digest unchanged
+;;   ;; while the event revision advances by one.)
+;; NEEDS-KERNEL: a patch/mutation verb and a changed= count (slice 1 has neither).
+
+;;; operation-survives-the-client  SPEC-WORK.md prose :2580 / table :5183
+;; (deftest "operation-survives-the-client" "docs/SPEC-WORK.md:5183"
+;;     "import-returns-op-id;cli-exit-leaves-work;result-by-id;wait-timeout-leaves-running"
+;;   ;; a long import returning an operation id, the CLI exiting, the work
+;;   ;; continuing, the result retrievable by id, and `operation wait` timing out
+;;   ;; while leaving the operation running.)
+;; NEEDS-KERNEL: the operation subsystem and import (out of slice).
+
+;;; status-answers-while-io-runs  SPEC-WORK.md prose :2581 / table :5186
+;; (deftest "status-answers-while-io-runs" "docs/SPEC-WORK.md:5186"
+;;     "status-and-cancel-within-bound;queues/staged-bounded;restart-reconciles-pending-ops"
+;;   ;; status and cancel answered within their bound while a busy capture, export
+;;   ;; and clip are in flight, with queues, staged bytes and retained results
+;;   ;; bounded, and a restart reconciling the operation ids that were pending.)
+;; NEEDS-KERNEL: the operation scheduler plus capture/export/clip (no such verbs).
+
+;;; cancel-is-a-request-not-an-erasure  SPEC-WORK.md prose :2580 / table :5189
+;; (deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5189"
+;;     "cancel-ack-own-disposition;accepted-mutation-not-erased;uncertain-external-reported-uncertain"
+;;   ;; a cancellation acknowledged with its own final disposition, erasing no
+;;   ;; accepted mutation, and reporting an uncertain external effect as uncertain
+;;   ;; rather than as cancelled.)
+;; NEEDS-KERNEL: the cancel verb and external-effect disposition (none here).
+
+;;; undo-appends-and-preserves  SPEC-WORK.md prose :2665 / table :5192
+;; (deftest "undo-appends-and-preserves" "docs/SPEC-WORK.md:5192"
+;;     "compensating-envelope-with-lineage;original-event-and-receipts-untouched"
+;;   ;; an undo of a named request appending a typed compensating envelope with its
+;;   ;; lineage while the original event and every receipt stay exactly where they are.)
+;; NEEDS-KERNEL: the undo verb and its reversible-verb table (no undo in slice).
+
+;;; redo-refuses-a-stale-plan  SPEC-WORK.md prose :2666 / table :5194
+;; (deftest "redo-refuses-a-stale-plan" "docs/SPEC-WORK.md:5194"
+;;     "stale-precondition-refused-atomically;names-what-changed;writes-nothing;undo-not-deleted"
+;;   ;; a redo whose preconditions moved refused atomically, naming what changed,
+;;   ;; writing nothing, and never reached by deleting the undo.)
+;; NEEDS-KERNEL: the redo verb (no undo/redo stack in slice 1).
+
+;;; undo-refuses-an-external-effect  SPEC-WORK.md prose :2666 / table :5201
+;; (deftest "undo-refuses-an-external-effect" "docs/SPEC-WORK.md:5201"
+;;     "sent/paid/published/deleted-refused-as-external;history-never-reset"
+;;   ;; an undo over a sent message, a paid execution, a publication and a source
+;;   ;; deletion refused and reported as an external effect; shared Git history
+;;   ;; never reset as the undo path.)
+;; NEEDS-KERNEL: undo plus external-effect awareness (no such model here).
+
+;;; undo-names-its-reversible-set  SPEC-WORK.md prose :2721 / table :5332
+;; (deftest "undo-names-its-reversible-set" "docs/SPEC-WORK.md:5332"
+;;     "each-reversible-verb-undone-by-table;refused-verb-refused-named;terminal-dispositions-refused"
+;;   ;; every row of the reversible-verb table exercised; each refused verb refused
+;;   ;; `not reversible here` naming itself; an undo over cancel and node remove
+;;   ;; refused because both dispositions are terminal.)
+;; NEEDS-KERNEL: the reversible-verb table and undo (does not exist in slice 1).
+
+;;; clip-is-one-long-operation  SPEC-WORK.md prose :2568 / table :5327
+;; (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5327"
+;;     "clip-returns-OPERATION-OK;wait-prints-CLIP-OK;raced-CLIP-RACED;session-stop-CLIP-then-SESSION"
+;;   ;; clip returning `OPERATION OK id= op=clip` and exiting, `operation wait --id`
+;;   ;; printing the CLIP OK line, a raced transport printing CLIP RACED, and
+;;   ;; session stop waiting on its own operation within --git-timeout.)
+;; NEEDS-KERNEL: the clip verb and the operation/wait transport (no clip in slice).
+
+;;; repo-only-at-the-root  SPEC-WORK.md prose :2846 / table :5341
+;; (deftest "repo-only-at-the-root" "docs/SPEC-WORK.md:5341"
+;;     "root-repo-accepted-unique;dup-repo-refused-held;subtree-repo-refused;edit/move-cannot-change"
+;;   ;; --repo under-root open work-set accepted and unique; --repo again refused
+;;   ;; `repo held by <id>`; --repo under a parent refused `repo outside root`;
+;;   ;; node edit and node move unable to change it.)
+;; NEEDS-KERNEL: node add/edit/move and the --repo field (no node verbs in slice).
+
+;;; roadmap-has-one-creator  SPEC-WORK.md prose :2846 / table :5344
+;; (deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:5344"
+;;     "add-roadmap-exits-2-naming-create;create-writes-node+view-in-one-envelope;crash-all-or-none"
+;;   ;; `node add --type roadmap` exit 2 naming `roadmap create`; `roadmap create`
+;;   ;; writing one node and one view in one envelope, a crash between them
+;;   ;; replaying all-or-none; no second alias.)
+;; NEEDS-KERNEL: the roadmap verbs (no roadmap in slice 1).
+
+;;; metadata-patches-preserve-intent  SPEC-WORK.md prose :2844 / table :5347
+;; (deftest "metadata-patches-preserve-intent" "docs/SPEC-WORK.md:5347"
+;;     "keep/clear/set-empty/set-false/set-value-distinct;all-keep/malformed/wrong-type-refused;version-on-feature-refused"
+;;   ;; keep, clear, set-empty, set-false and set-value on each of five fields
+;;   ;; round-tripping and digesting distinctly; malformed and wrong-type patches
+;;   ;; refused with no event and no counter moved; --version on a :feature refused.)
+;; NEEDS-KERNEL: node metadata-patch verbs (no node edit/version field in slice).
+
+;;; edit-is-atomic-and-replayable  SPEC-WORK.md prose :2845 / table :5351
+;; (deftest "edit-is-atomic-and-replayable" "docs/SPEC-WORK.md:5351"
+;;     "bad-patch-writes-nothing;named-fields-only-move;retry-replays-original;equal-value=no-effect-receipt"
+;;   ;; a bad one-of-five patch writing nothing; an accepted mixed edit moving only
+;;   ;; its named fields and the category index; the same request id retried answered
+;;   ;; by its original NODE OK; an equal-value edit the no-effect receipt changed=0.)
+;; NEEDS-KERNEL: the node edit verb and a changed= receipt (no edit in slice 1).
+
+;;; edit-undo-preserves-later-work  SPEC-WORK.md prose :2845 / table :5355
+;; (deftest "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
+;;     "undo-restores-before;undo-after-intervening-edit-refused;both-events-stand"
+;;   ;; an edit undone restores :before; the same undo after an intervening edit
+;;   ;; refused conflict, both events standing.)
+;; NEEDS-KERNEL: edit undo (no node edit or undo in slice 1).
+
+;;; edit-never-fetches-a-link  SPEC-WORK.md prose :2845 / table :5357
+;; (deftest "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
+;;     "live-link-added/edited/rendered-zero-requests;nul-link-refused;private-refusal-prints-no-value"
+;;   ;; a link that is a live URL to a counting endpoint added, edited and rendered
+;;   ;; with zero requests observed; a link holding NUL refused `bad link`; a
+;;   ;; refusal on a private node printing no value.)
+;; NEEDS-KERNEL: node edit + link handling (no link/network model in slice 1).
+
+;;; move-keeps-every-count  SPEC-WORK.md prose :2889 / table :5360
+;; (deftest "move-keeps-every-count" "docs/SPEC-WORK.md:5360"
+;;     "source+destination-counts-move-by-subtree;ancestor-net-stable;no-whole-set-scan"
+;;   ;; a required subtree moved between two features: the source's and destination's
+;;   ;; required sets and open counts move by the subtree, the common ancestor's net
+;;   ;; count is stable, |O|/|C|/W and every task state unchanged, and no whole-set
+;;   ;; scan (visits asserted).)
+;; NEEDS-KERNEL: the node move verb and its counters (no move in slice 1).
+
+;;; move-same-parent-is-a-receipt  SPEC-WORK.md prose :2890 / table :5364
+;; (deftest "move-same-parent-is-a-receipt" "docs/SPEC-WORK.md:5364"
+;;     "same-parent=structure-event-only;changed=0;sibling-order-unchanged;lost-reply-one-envelope"
+;;   ;; --from equal to --under and true: the structure event alone, changed=0,
+;;   ;; sibling order unchanged; a lost reply retried yields one envelope; a
+;;   ;; different payload under the id refused; every refusal leaves both parents
+;;   ;; unchanged.)
+;; NEEDS-KERNEL: the node move verb (no move in slice 1).
