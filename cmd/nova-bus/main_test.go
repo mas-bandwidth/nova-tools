@@ -199,6 +199,20 @@ func TestUsageAndUnknownVerb(t *testing.T) {
 	invoke(t, "", "wibble").mustCode(t, 2).mustContain(t, "stderr", `unknown subcommand "wibble"`)
 }
 
+// The wait usage must say plainly that an unadvanced cursor makes wait return at once
+// -- so a caller with a backlog knows to run inbox first -- and the example loop must
+// show --advance, which is what makes the second wait a real one. (#328)
+func TestWaitUsageStatesUnadvancedCursorReturnsAtOnce(t *testing.T) {
+	t.Parallel()
+	banner := invoke(t, "", "help").mustCode(t, 0).stdout
+	if !strings.Contains(banner, "unadvanced cursor makes wait return AT ONCE") {
+		t.Fatalf("the usage text does not say plainly that an unadvanced cursor makes wait return at once:\n%s", banner)
+	}
+	if !strings.Contains(banner, "--advance --remote origin --branch main") {
+		t.Fatalf("the wait example loop does not show --advance:\n%s", banner)
+	}
+}
+
 // Every required flag, refused by name. A missing one is never a guess.
 func TestRefusingToGuess(t *testing.T) {
 	t.Parallel()
