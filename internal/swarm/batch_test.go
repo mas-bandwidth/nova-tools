@@ -122,7 +122,7 @@ func TestBatchGathersLine2(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=2 abstain=0 in=0 out=0 usd=0.0000") {
 		t.Fatalf("the packet's first line folds the counts:\n%s", out)
 	}
-	if !strings.Contains(out, "a all green") || !strings.Contains(out, "b done and clean") {
+	if !strings.Contains(out, "a slot=1: all green") || !strings.Contains(out, "b slot=2: done and clean") {
 		t.Fatalf("line 2 of each card is gathered verbatim:\n%s", out)
 	}
 }
@@ -142,7 +142,7 @@ func TestBatchAbstainsMissingResult(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1") {
 		t.Fatalf("the missing result is an abstain row:\n%s", out)
 	}
-	if !strings.Contains(out, "b: ABSTAIN -- stalled (no output after the wall opened)") {
+	if !strings.Contains(out, "b slot=2: ABSTAIN -- stalled (no output after the wall opened)") {
 		t.Fatalf("a card that ended with no output is named stalled, never folded:\n%s", out)
 	}
 }
@@ -221,7 +221,7 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the idle kill is counted as an abstain and the idle count:\n%s", out)
 	}
-	if !strings.Contains(out, "a: ABSTAIN -- idle 1s") {
+	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s") {
 		t.Fatalf("an idle-killed card names its idle reason:\n%s", out)
 	}
 }
@@ -256,7 +256,7 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 in=0 out=0 usd=0.0000 idle=0") {
 		t.Fatalf("a writing card is done, never idle-killed:\n%s", out)
 	}
-	if !strings.Contains(out, "a all green") {
+	if !strings.Contains(out, "a slot=1: all green") {
 		t.Fatalf("the writing card's line 2 is gathered verbatim:\n%s", out)
 	}
 }
@@ -288,7 +288,7 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the BATCH line counts the idle kill in its own idle=<n> field:\n%s", out)
 	}
-	if !strings.Contains(out, "a: ABSTAIN -- idle 1s") || !strings.Contains(out, "b done and clean") {
+	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s") || !strings.Contains(out, "b slot=2: done and clean") {
 		t.Fatalf("the idle card is named with its reason and the done card is folded:\n%s", out)
 	}
 }
@@ -339,7 +339,7 @@ func TestStalledCardIsNamed(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("a batch with a stalled card exits 1, got %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "a: ABSTAIN -- stalled (no output after the wall opened)") {
+	if !strings.Contains(out, "a slot=1: ABSTAIN -- stalled (no output after the wall opened)") {
 		t.Fatalf("a card that ended with no output after the wall opened is named stalled, not a slow model:\n%s", out)
 	}
 }
@@ -356,7 +356,7 @@ func TestWorkingCardCountsLogLines(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("a clean card exits 0, got %d; stderr: %s", code, errs)
 	}
-	if !strings.Contains(out, "a all green log=3") {
+	if !strings.Contains(out, "a slot=1: all green log=3") {
 		t.Fatalf("the card line counts its log lines after the sandbox header:\n%s", out)
 	}
 	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 in=0 out=0 usd=0.0000 idle=0 stalled=0") {
@@ -379,7 +379,7 @@ func TestBatchLineCountsStalled(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=0 stalled=1") {
 		t.Fatalf("the BATCH line counts the stalled cards:\n%s", out)
 	}
-	if !strings.Contains(out, "b: ABSTAIN -- stalled (no output after the wall opened)") {
+	if !strings.Contains(out, "b slot=2: ABSTAIN -- stalled (no output after the wall opened)") {
 		t.Fatalf("the stalled card is named:\n%s", out)
 	}
 }
@@ -424,5 +424,80 @@ func TestBatchSumsUsage(t *testing.T) {
 	}
 	if !strings.Contains(out, "BATCH B1 n=2 done=2 abstain=0 in=108 out=55 usd=1.0000") {
 		t.Fatalf("the BATCH line sums tokens and dollars across cards:\n%s", out)
+	}
+}
+
+func TestBatchAllocatesFreeSlots(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	a := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	b := writeCard(t, dir, "b.card", "RESULT: b\ndone and clean")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t\tmodel\t"+a+"\nb\t-\tmodel\t"+b+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := fakeRunner(t, dir)
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 0 {
+		t.Fatalf("a clean auto-allocated batch exits 0, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "a slot=1: all green") {
+		t.Fatalf("the first card takes the lowest free slot (1):\n%s", out)
+	}
+	if !strings.Contains(out, "b slot=2: done and clean") {
+		t.Fatalf("the second card takes the next free slot (2):\n%s", out)
+	}
+}
+
+func TestBatchRefusesDuplicateSlots(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\nb\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(dir, "launched")
+	runner := filepath.Join(dir, "marker.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\ntouch "+sentinel+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch that names one slot twice exits 1, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(errs, "BATCH REFUSED slot 1 named twice (a, b)") {
+		t.Fatalf("the refusal names the slot and both labels:\n%s", errs)
+	}
+	if _, err := os.Stat(sentinel); err == nil {
+		t.Fatalf("the batch is refused before any launch; no runner may have run")
+	}
+	if strings.Contains(out, "BATCH") {
+		t.Fatalf("a refused batch emits no packet:\n%s", out)
+	}
+}
+
+func TestBatchSkipsBusySlot(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	busy := filepath.Join(root, "1", "jobs", "busy")
+	if err := os.MkdirAll(busy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(busy, "lock"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := fakeRunner(t, dir)
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 0 {
+		t.Fatalf("a batch that skips a busy slot exits 0, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "a slot=2: all green") {
+		t.Fatalf("allocation skips the slot whose lock carries a live pid:\n%s", out)
 	}
 }
