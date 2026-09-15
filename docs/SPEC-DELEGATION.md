@@ -1,22 +1,37 @@
-# nova-work DELEGATION — coordinator notes (DRAFT 1, 2026-09-14)
+# nova-work DELEGATION — coordinator notes and the current goal (DRAFT 2, 2026-09-15)
 
-**Status: a draft, Rowan's, on Stella's ask of 2026-09-14 (stella-cc8561e3fde4). Nothing here
-is built.** It is planning inside the v2 recursive-node boundary of nova-tools#321 and changes
-no v1 completion count. Every requirement that is Glenn's cites its source by comment id so a
-reader can check the words: **5671991172** (the DELEGATION section itself, 23:03Z) and
-**5672006742** (the coordinator notes inside it, 23:05Z), both on nova-tools#321. Where this
-draft decides something Glenn did not say, the sentence is marked **(Rowan's decision, for
-review)** and listed together at the end. This file is the DELEGATION section of
-[SPEC-WORK.md](SPEC-WORK.md) (PR #231) written as a sibling while that document is under
-joint authorship; when its authors take it, it folds into that file under their one-file
-convention and this file is deleted, not kept beside it.
+**Status: a draft, Rowan's, on Stella's ask of 2026-09-14 (stella-cc8561e3fde4), repaired on
+her review of draft 1 (nova-tools#335, comment 5672078177, and stella-a8da9cb0e0a4). Nothing
+here is built.** It is planning inside the v2 recursive-node boundary of nova-tools#321 and
+changes no v1 completion count. Every requirement that is Glenn's cites its source by comment
+id so a reader can check the words: **5671991172** (the DELEGATION section itself, 23:03Z) and
+**5672006742** (the coordinator notes and the shared current goal inside it, 23:05Z), both on
+nova-tools#321. Where this draft decides something Glenn did not say, the sentence is marked
+**(Rowan's decision, for review)** and listed together at the end; where a point is open, it
+is marked **(open decision)** and listed there too. This file is the DELEGATION section of
+[SPEC-WORK.md](SPEC-WORK.md) (PR #231) written as a sibling while that document is under joint
+authorship; when its authors take it, it folds into that file and this file is deleted, not
+kept beside it.
+
+What draft 2 changed, keyed to the review: (1) a note's identity is an immutable content
+digest and supersession is one atomic envelope through SPEC-WORK.md's own writer, not an
+in-place edit of a shared file; (2) every example is restricted-Lisp data; (3) storage and
+evaluation are bounded by named limits and `applicable` evaluates the whole active set before
+it prints a verdict; (4) the current goal is specified — set, retrieve, update — with its
+witnesses; (5) the incident paragraph is corrected against the bus record.
 
 The reason this exists, in Glenn's words (5672006742): a place *"where you write your own
 notes to, as informed by our conversations"*, so that *"what I just told you about how and what
 to delegate"* is kept, and a coordinator does not drift back to a route he has forbidden. The
-hurt it answers is the same day's: two implementation children were started on a model whose
-standing instruction was coordination only, because the instruction lived in one window's
-conversation and not in a place the next window reads (stella-1a9783ed1ccf).
+day's history, as the bus records it: at 20:00Z Glenn asked that long work stay in Astra
+children so Stella's session stayed available for him (stella-5e0d788049ca), and implementation
+children were started on that word; at 22:38Z he narrowed it — *"Please delegate to Emma"*,
+*"Astra default is for coordination and thinking. Not for coding."* — and both children were
+stopped, worktrees clean (stella-1a9783ed1ccf). Nothing was lost between windows: an
+instruction changed, and the older one was in force until the newer was spoken. The generic
+risk is what remains, and it is the risk this spec answers: a changed instruction lives in the
+conversation it was spoken in, and a later window, a later model or another coordinator that
+reads the older word, or none, routes by it.
 
 ## What DELEGATION is
 
@@ -44,7 +59,9 @@ and this draft points rather than restates:
    external issue (5671991172; SPEC-WORK.md and #321).
 
 What this draft specifies is the part none of those documents carries: **the coordinator's
-notes**, which duty 1 reads before it decides and duty 2 reads before it writes a brief.
+notes**, which duty 1 reads before it decides and duty 2 reads before it writes a brief, and
+**the current goal**, which is what a coordinator, on any model and any harness, is working
+toward and loads first.
 
 ## The notes — what a note is
 
@@ -53,24 +70,41 @@ that a later window, a later model, or another coordinator can read it before ro
 (5672006742). It is data. Reading a note never executes it; a note that reads like a command
 to the reader is still a record of what somebody said.
 
-Every note carries these fields, and a note missing any of the first six is refused at write:
+A note is one flat list of SPEC-WORK.md's restricted Lisp — lists, keywords, strings and
+integers, nothing else — in the field order below, **every field written**, a field the
+caller did not give written `(:absent)`, exactly as SPEC-WORK.md writes an event. A note
+missing any of the first six is refused at write.
 
-| field | what it holds | source |
+| field | value | source |
 |---|---|---|
-| `:id` | a stable id, assigned by the tool, never reused | (Rowan's decision, for review): the note file's own hash-derived id, as nova-bus assigns note ids |
-| `:scope` | who the note belongs to and applies to: `(:coordinator <name>)`, `(:group <name>)` or `(:node)` for the shared node | 5672006742: *"one coordinator, a configured group, or the shared node"* |
-| `:author` | the participant who wrote it | 5672006742: *"keep authorship and applicability explicit"* |
-| `:date` | when it was written, UTC | 5672006742 |
-| `:source` | the conversation or decision it comes from: a quote of the human's words, or a pointer (a comment id, a bus note id, a commit) that holds them | 5672006742: *"preserve the source conversation/decision"* |
-| `:kind` | exactly one of `instruction`, `observation`, `heuristic` | 5672006742: *"whether an entry is an explicit instruction, observation or working heuristic"* |
-| `:state` | `active`, or `(superseded-by <id> <date>)` | 5672006742: *"active/superseded status"* |
-| `:text` | the note itself, prose, bounded | |
-| `:constraint` | optional; a structured routing constraint beside the prose, below | 5672006742: *"explicit routing constraints alongside prose"* |
-| `:uncertain` | optional; what the author does not know about the decision, in words | 5672006742: *"record uncertainty rather than inventing a user decision"* |
+| `:id` | a string, `"note:<sha256>"`, assigned by the tool, below | (Rowan's decision, for review) |
+| `:scope` | `(:coordinator "<name>")`, `(:group "<name>")` or `(:node)` | 5672006742: *"one coordinator, a configured group, or the shared node"* |
+| `:author` | a string, the participant who wrote it | 5672006742: *"keep authorship and applicability explicit"* |
+| `:date` | a string, UTC, `"2026-09-14T23:05Z"` | 5672006742 |
+| `:source` | a string: a quote of the human's words, or a pointer (a comment id, a bus note id, a commit) that holds them | 5672006742: *"preserve the source conversation/decision"* |
+| `:kind` | exactly one of the keywords `:instruction`, `:observation`, `:heuristic` | 5672006742: *"whether an entry is an explicit instruction, observation or working heuristic"* |
+| `:text` | a string, the note itself, bounded below | |
+| `:constraint` | optional; the routing constraint form below | 5672006742: *"explicit routing constraints alongside prose"* |
+| `:uncertain` | optional; a string, what the author does not know | 5672006742: *"record uncertainty rather than inventing a user decision"* |
 
-`:kind instruction` means the human said it; its `:source` must quote or point at the human's
+`:state` is **not a field of the note**: it is derived from the log, `:active` unless a
+supersede event names the note, then `(:superseded-by "<id>" "<date>")`, and every reader
+prints it beside the note as SPEC-WORK.md's snapshot prints derived state beside a node. That
+is what keeps the record immutable: nothing the tool writes later touches the note's own list.
+
+**Identity.** `:id` is `note:` followed by SHA-256, lowercase hex, over the canonical
+serialization of the note's own fields in the order `:scope`, `:author`, `:date`, `:source`,
+`:kind`, `:text`, `:constraint`, `:uncertain`, absent fields `(:absent)`, printed by the same
+deterministic printer SPEC-WORK.md's payload digest uses — the preimage is the content and
+nothing the session assigns, never a file, never a position in one, so the id is the same on
+every bench and every build and does not move as other notes are written **(Rowan's decision,
+for review)**. A second write with the same preimage is the same note: refused `NOTES FAIL …:
+already written note=<id>`, nothing written. An id is never reused because a preimage is
+never rewritten.
+
+`:kind :instruction` means the human said it; its `:source` must quote or point at the human's
 words, and a note whose source is the author's own inference cannot be an instruction — it is
-an `observation` or a `heuristic`, whichever the author claims, and the tool does not judge
+an `:observation` or a `:heuristic`, whichever the author claims, and the tool does not judge
 which. **(Rowan's decision, for review)**: the tool checks the shape of the source (a quote or
 a pointer is present), never its truth; truth is what the reads are for.
 
@@ -80,111 +114,174 @@ they are whatever the node configured, and nothing in nova-tools knows or prefer
 our names or model choices"*). This is also the house law that nothing in nova-tools is
 specific to us. A test that mentions a model name mentions a made-up one.
 
-## Where the notes live
+## Where the notes live, and who writes them
 
-Notes are files in git, under one directory the tool reads, in the work repository the node
-already keeps (SPEC-WORK.md's repository; no new repository and **no new bus**). **(Rowan's
-decision, for review)** the layout:
+Notes are records of the resident work set, written by the one writer SPEC-WORK.md already
+has and no other: the owning coordinator's session, one typed event per mutation, carrying a
+request id, validated against the current local revision, appended to the local recovery
+journal before it is acknowledged, published by a clip as part of the one revision-labelled
+snapshot (SPEC-WORK.md, *The execution model*, and Stella's *One coordinator, one live
+reader/writer*). **No new bus, no new repository, no new file that a second process writes.**
+Draft 1's three files under `notes/` with their own writers are withdrawn: a group or node file
+with several writers has no atomic supersession, and a file's own hash is not an identity
+(Stella, 5672078177, point 1).
 
+Notes are an index of the resident model in the sense SPEC-WORK.md gives `friends` and
+`models`: **no node kind of the containment forest, no count, no roadmap cell, no required set
+moves when one is written**. Their event kind is `:note` — `:change` (`:write` or
+`:supersede`, one per event), `:note` (the id), `:scope`, `:author`, `:date`, `:source`,
+`:kind`, `:text`, `:constraint`, `:uncertain`, `:superseded-by`, `:reason`, in that order for
+the payload digest; its subject is a note identity, `:node` is `(:absent)`, and `NOTES OK`
+prints `note=<id>` in place of `node=<id>` **(Rowan's decision, for review)**: this is the
+shape SPEC-WORK.md gives every subject that is not a node, and the replays
+`new-verbs-have-a-kind-and-a-field-order` and `new-verbs-retry-to-one-event` cover `:note`
+as they cover `:friend`.
+
+**Who writes.** A participant writes a note the way a friend submits a result: as a request
+to the owning session, with `:by` the participant. The session checks `:by` against the
+configured participants of the note's scope: a `(:coordinator "A")` note is written only by
+A; a `(:group "G")` note only by a member of G, where G is a group registered by SPEC-WORK.md's
+`friend --group` and not a second registry; a `(:node)` note by any registered participant.
+Whether a participant may *read* another coordinator's notes is the node's access rule, not
+this spec's — filtering a view never establishes an access boundary (#321, *Recursive
+accounting and existing guardrails*), so this draft claims no privacy for a note that the
+work repository's access does not give it. A note grants nothing (5672006742: notes *"never
+create credentials, permissions or access"*).
+
+Another bench reads notes as it reads everything else: from the published snapshot at a named
+revision, or from the live session. There is no third road.
+
+## Bounds
+
+Nothing here is *"small by construction"*; it is small by refusal. Three limits are CONFIG
+data of the node, none defaulted, a missing one `refusing to guess` (SPEC.md *Conventions*):
+
+```lisp
+(:notes :max-active 200 :max-text-bytes 2048 :max-constraint-nodes 64)
 ```
-<work repo>/notes/coordinators/<name>.sexp    one file per coordinator; written by that coordinator only
-<work repo>/notes/groups/<name>.sexp          one file per configured group; written by its members
-<work repo>/notes/node.sexp                   one shared file for the node; written by any participant
-```
 
-One file per coordinator plus one shared is the minimum; groups are the configured middle
-(5672006742). The directory name and the participant-to-file mapping are configuration
-(`(:notes :dir "notes" :participants (...))` in the node's config, beside its other CONFIG
-data), and the tool refuses a path it was not configured with rather than guessing one
-(SPEC.md *Conventions*: no guessed paths). The serialization is SPEC-WORK.md's restricted
-Lisp, one note per form, **append-only**: a supersede appends a new form and rewrites the old
-form's `:state` field in place, and that is the only in-place edit the tool makes. A note is
-never deleted by the tool. The file is small by construction: a coordinator's active notes are
-the standing instructions it has been given, not a transcript.
+- `:max-active` bounds the **active** notes across all scopes of the node. A `write` that
+  would exceed it is refused, `NOTES FAIL …: active=<n> past :max-active=<n>, supersede or
+  retire one`, and nothing is written. A `supersede` never changes the active count.
+- `:max-text-bytes` bounds `:text`, `:source` and `:uncertain` each; `:max-constraint-nodes`
+  bounds the constraint form. Past either is refused at write, naming the field and both
+  numbers.
+- The snapshot, and every read of it, is under the session's own `--max-bytes --max-depth
+  --max-nodes` (SPEC-WORK.md, *The data*), which the notes share with everything else and
+  which refuses, never truncates.
 
-A note's scope and its file agree, or the write is refused: a `(:coordinator A)` note lives in
-A's file and no other; a `(:group G)` note lives in G's file; a `(:node)` note in the shared
-file. Authorship is checked against the configured participants of that file, so one
-coordinator cannot write another's notes and a non-member cannot write a group's. Whether a
-coordinator may *read* another's file is the node's access rule, not this spec's — filtering
-a view never establishes an access boundary (#321, *Recursive accounting and existing
-guardrails*), so this draft claims no privacy for a coordinator's file that git does not give
-it.
+Superseded notes are never deleted by the tool. They leave the resident set the way closed
+events do: a clip moves a superseded note older than `--retain` to the closed archive under
+the same versioned index root, in pages bounded by `--page-bytes` and `--page-records`, and
+`list --all --from <stamp> --to <stamp>` reads them from there. So the resident set holds at
+most `:max-active` active notes plus the superseded ones inside the retention window, and the
+archive grows by pages that are read by date and never whole. No new index project: this is
+the existing retention boundary with one more record kind in it.
 
 ## The verbs
 
-Four verbs, one binary, `nova-work` (SPEC-WORK.md), under the `notes` subject. **(Rowan's
-decision, for review)** their names and shape; the duties are Glenn's.
+Four verbs, one binary, `nova-work` (SPEC-WORK.md), under the `notes` subject; `NOTES` joins
+SPEC-WORK.md's *Output grammar* as a verb token with the same `OK`/`FAIL`/`ROW`/`MORE` lines
+and the same cap-and-count law. **(Rowan's decision, for review)** their names and shape;
+the duties are Glenn's.
 
 ```
-nova-work notes write     --as <name> --scope <scope> --kind <kind> --source <text|pointer> --date <utc> [--constraint <form>] [--uncertain <text>] --text <text>
-nova-work notes list      --as <name> [--scope <scope>] [--all]
-nova-work notes supersede --as <name> --id <old> --source <text|pointer> --date <utc> --text <text> [--constraint <form>]
-nova-work notes applicable --as <name> --task-class <class> [--candidate <role>/<model> ...]
+nova-work notes write      --as <name> --scope <scope> --kind <kind> --source <text> --date <utc> --text <text> [--constraint <form>] [--uncertain <text>] --request <id> --expect <rev>
+nova-work notes list       --as <name> [--scope <scope>] [--all [--from <stamp> --to <stamp>]] --max <n>
+nova-work notes supersede  --as <name> --id <old> --source <text> --date <utc> --text <text> [--constraint <form>] [--uncertain <text>] --reason <text> --request <id> --expect <rev>
+nova-work notes applicable --as <name> --task-class <class> [--candidate <role>/<model> ...] --max <n>
 ```
 
-**`write`** appends one note. Refused (`NOTES REFUSED`, exit 2, one line naming the field) when
-`:source` or `:date` is missing (5672006742: *"preserve the source conversation/decision,
-date"*); when `:kind` is not one of the three words; when the scope and the file disagree, or
-`--as` is not a configured writer of that file; and when the text or constraint would grant
-anything — a note *"records decisions and never create[s] credentials, permissions or
-access"* (5672006742), so a constraint form has no `:allow` that widens beyond configuration,
-only `:deny` and `:prefer`, below.
+**`write`** appends one note as one `:note :write` event. Refused (`NOTES FAIL`, exit 2, one
+line naming the field) when `:source` or `:date` is missing (5672006742: *"preserve the
+source conversation/decision, date"*); when `:kind` is not one of the three keywords; when
+`--as` is not a configured writer of the scope; when a bound above is exceeded; when
+`--expect` is stale (SPEC-WORK.md's `--expect`: the caller's expected revision, refused
+`stale` naming the current one); and when the constraint form carries anything but `:deny`,
+`:prefer` and `:reason` — a note *"records decisions and never create[s] credentials,
+permissions or access"* (5672006742), so there is no `:allow`.
 
-**`list`** prints the active notes for a scope, one line each: id, kind, date, author, the
-first line of the text, and `constraint` if one is present. `--all` adds the superseded ones,
-each marked with the id and date that superseded it. **A superseded note is never printed as
-active**, by either verb, with or without `--all` (5672006742: *"preserve the old entry as
-superseded and apply the current applicable decision"*). The output is capped and counted
-(SPEC.md's cap-and-count law).
+**`list`** prints the active notes for a scope, one `NOTES ROW` per note: id, kind, date,
+author, the first line of the text, and `constraint` if one is present, capped by `--max`
+and counted, `NOTES MORE` when cut. `--all` adds the superseded ones, each with the id and
+date that superseded it, from the resident set and, with `--from`/`--to`, from the archive's
+pages. **A superseded note is never printed as active**, by any verb, with or without `--all`
+(5672006742: *"preserve the old entry as superseded and apply the current applicable
+decision"*).
 
-**`supersede`** appends a new note carrying the same scope, and marks the old one
-`(superseded-by <new> <date>)`. The old text is kept whole. Refused when the old id is not
-active; when the new note has no source or date; and when the new note's `:kind` is weaker
-than the old one's — a `heuristic` or an `observation` cannot supersede an `instruction`
-(5672006742: *"inferred heuristics cannot silently override explicit instructions"*). To change
-an instruction, the human must have said something, and its `:source` shows where.
+**`supersede`** is **one mutation, one envelope, two events**: a `:note :write` of the
+replacement, carrying the old note's scope, and a `:note :supersede` on the old id naming
+`:superseded-by` the new id. The envelope is validated whole against the resident set at
+`--expect`, journaled whole, applied whole; a failed validation writes neither event (SPEC-
+WORK.md: *a failed validation changes neither O nor the journal*), and a multi-event envelope
+never partly publishes. Refused when the old id is not active — so of two competing
+supersedes of one note, the second is refused `not active: superseded-by <first>` and its
+replacement is never written, and at no revision are an obsolete instruction and its
+replacement both active, or either lost; when the new note has no source or date; and when
+the new note's `:kind` is weaker than the old one's — a `:heuristic` or an `:observation`
+cannot supersede an `:instruction` (5672006742: *"inferred heuristics cannot silently override
+explicit instructions"*). To change an instruction, the human must have said something, and
+the new `:source` shows where. The old note's list is not touched; its `:state` is derived.
 
 **`applicable`** is the read before the route. Given a task class and, optionally, the
-candidate routes the caller is choosing among, it prints the active notes whose scope covers
-`--as` (the coordinator's own file, every group the coordinator belongs to, and the node's
-shared file) and, for each candidate, `eligible` or `excluded <note-id>`. The rule Glenn set
-(5672006742): *"retrieve the applicable notes before selecting a route or constructing a job
-brief"*, and *"a configured restriction on a model/role/task class must filter candidate routes
-before dispatch, with a visible reason for exclusion"*. The reason is the note id, and the
-note is one `list` away. What the caller carries into the brief is the constraint lines and
-the note ids, not the conversation the notes came from (5672006742: *"without copying
-accumulated conversation history"*).
+candidate routes the caller is choosing among, it loads **every** active note whose scope
+covers `--as` (the coordinator's own scope, every group `--as` belongs to, and `(:node)`),
+evaluates every constraint among them against every candidate, and only then prints: one
+`NOTES ROW` per candidate, `eligible` or `excluded <note-id>` — never capped, one line per
+candidate the caller named — followed by the applicable notes as `NOTES ROW` lines under
+`--max`, `NOTES MORE` when cut. **The cap is on the prose rows and never on the evaluation**:
+the verdict for a candidate is computed from the complete active set, which `:max-active`
+bounds and which the session holds whole, before any row is printed, so a deny in a note the
+display cut still excludes (replay `applicable-cap-never-hides-a-deny`, below). Where the
+complete set cannot be loaded — the session is not live and no `--snapshot` is given, a
+snapshot past a bound, a missing notes index — the verb prints `NOTES FAIL …: <reason>` at
+exit 2 and **no candidate is printed `eligible`**; a caller reads `unknown`, and unknown is
+not eligible (SPEC-WORK.md gate 2: *unknown price is not cheap*, and here unknown policy is
+not open). A candidate whose model is not registered in SPEC-WORK.md's `models` is `unknown`
+for the same reason. The rule Glenn set (5672006742): *"retrieve the applicable notes before
+selecting a route or constructing a job brief"*, and *"a configured restriction on a
+model/role/task class must filter candidate routes before dispatch, with a visible reason for
+exclusion"*. The reason is the note id, and the note is one `list` away. What the caller
+carries into the brief is the constraint lines and the note ids, not the conversation the
+notes came from (5672006742: *"without copying accumulated conversation history"*).
+
+`applicable` answers from the live session, or from a published snapshot with `--snapshot`,
+and every answer prints the revision it was evaluated at, `rev=<n>`. **(open decision)** what
+staleness a card builder accepts from a snapshot answer: (a) live session only, refuse a
+snapshot; (b) a snapshot no older than a configured `:notes :max-snapshot-age`; (c) any
+snapshot, the revision printed and the caller responsible. Draft 2 writes (b) into the example
+config and takes no side until a read says which.
 
 Where the route selection of duty 1 is built (on #175 and PROPOSAL-SCHEDULING-COST.md), it
 calls `applicable` first and prices only the routes that came back `eligible`; SPEC-WORK.md's
 gate 2 already says *eligibility is checked before price/preference*, and this is where the
 eligibility comes from. A brief constructor (nova-swarm's card, SPEC-SWARM.md) that is handed
-an excluded route refuses to build the card, naming the note. **Narrative reminders alone do
-not filter** (5672006742): a note with prose and no `:constraint` is printed by `applicable`
-for the coordinator to read, and it excludes nothing; the coordinator who wants a route
-excluded writes the constraint form.
+an `excluded` or `unknown` route refuses to build the card, naming the note or the reason.
+**Narrative reminders alone do not filter** (5672006742): a note with prose and no
+`:constraint` is printed by `applicable` for the coordinator to read, and it excludes nothing;
+the coordinator who wants a route excluded writes the constraint form.
 
 ## The constraint form
 
 Beside the prose, a note may carry one structured constraint, so the filter above has
-something to filter by. **(Rowan's decision, for review)** its shape:
+something to filter by. **(Rowan's decision, for review)** its shape, restricted-Lisp data
+like everything else — names are strings, task classes are keywords:
 
-```
+```lisp
 (:constraint
-  (:deny   (:model <name> ...) (:role <name> ...) (:task-class <class> ...))
-  (:prefer (:task-class <class> ...) (:route <role>/<model> ...))
-  (:reason <text>))
+  (:deny   (:model "<name>" ...) (:role "<name>" ...) (:task-class :<class> ...))
+  (:prefer (:task-class :<class> ...) (:route "<role>/<model>" ...))
+  (:reason "<text>"))
 ```
 
 `:deny` names any of a model, a role, and a task class; a candidate route is excluded when it
 matches every named axis (a `:deny` with `:model` and `:task-class` excludes that model for
 those classes and nothing else). `:prefer` is advice to the route selector and excludes
-nothing. Task classes are a configured vocabulary of the node (`coordination`, `planning`,
-`review`, `coding`, `implementation`, `execution` are the ones the example below needs); an
-unknown class in a constraint is refused at write, so a typo cannot open a hole. There is no
-`:allow`: eligibility is what configuration and the ledger of active constraints leave, and a
-note cannot widen it. Model and role names are instance data throughout.
+nothing. Task classes are the vocabulary SPEC-WORK.md's `:model` events already carry in
+`:task-class`, configured per node, not a second list here; an unknown class in a constraint
+is refused at write, so a typo cannot open a hole. There is no `:allow`: eligibility is what
+configuration and the active constraints leave, and a note cannot widen it. Model and role
+names are instance data throughout.
 
 Two active constraints that disagree are not resolved by the tool: `applicable` prints both
 and marks the candidate `excluded` — a deny wins over a prefer, and a deny wins over silence —
@@ -195,54 +292,168 @@ and the coordinator supersedes one of them with a source. **(Rowan's decision, f
 The current instruction, as Glenn gave it on 2026-09-14 (5672006742, and the same words
 relayed in stella-1a9783ed1ccf: *"Astra default is for coordination and thinking. Not for
 coding."*). Every name in it is configuration of this node and appears in this document only
-as the worked example; a test uses other names.
+as the worked example; a test uses other names. Both forms below are valid restricted Lisp
+as SPEC-WORK.md's reader defines it; the ids are what the digest above yields for these
+exact fields, and a test recomputes them rather than trusting the page.
+
+```lisp
+(:id "note:3f1c…" ; sha256 of the canonical serialization of the fields below
+ :scope (:coordinator "Stella") :author "Stella" :date "2026-09-14T23:05Z"
+ :source "nova-tools#321 comment 5672006742; Glenn, live, 22:38Z: 'Astra default is for coordination and thinking. Not for coding.'"
+ :kind :instruction
+ :text "Astra is for coordination and high-level planning and thought only. Coding, implementation and lower-level execution go to Emma, DeepSeek swarms or a suitable local model."
+ :constraint (:constraint
+              (:deny (:model "Astra") (:task-class :coding :implementation :execution))
+              (:reason "Glenn, 2026-09-14: coordination only"))
+ :uncertain (:absent))
+;; derived, printed by the reader, never in the record: :state :active
+
+(:id "note:9b40…"
+ :scope (:node) :author "Stella" :date "2026-09-14T23:05Z"
+ :source "nova-tools#321 comment 5672006742"
+ :kind :instruction
+ :text "Use small fresh contexts directly for bounded work. Compare the coordinator's and the worker's effective token prices plus context, handoff, required review and rework on the whole route; delegation at a cheaper rate can be worth it at more tokens. Keep the main session available for human communication."
+ :constraint (:absent)
+ :uncertain (:absent))
+```
+
+The first note is what the day's narrowing needed: with it active, `applicable --as Stella
+--task-class coding --candidate coordinator/Astra` prints `excluded note:3f1c…`, and a card
+for that route is refused before any child starts; the note's `:source` is where the older
+instruction of 20:00Z was changed, so the next window reads the change and not only the
+result. The second has no constraint and excludes nothing; it is read. Glenn's own phrasing of
+the economics, *"cheap-token delegation may be worthwhile even at more tokens"*, is the
+whole-route rule of PROPOSAL-SCHEDULING-COST.md, and the note points at it rather than
+restating the arithmetic.
+
+## The current goal
+
+Glenn (5672006742, *Shared current goal across models*): *"It should be somewhere we could
+store the current goal, like /goal is here, but cross model."* The required operations are
+his and explicit: **set** and **retrieve** the current goal, **update** it as work proceeds,
+across models and harnesses; a model switch loads the same current revision and preserves
+outstanding ownership; status and evidence updates stay distinguishable from objective and
+constraint edits; an old harness state cannot silently overwrite a newer goal, restart
+completed work or discard a stop.
+
+**The goal is a node of the work set, and the current goal is a reference to it.** No new
+record kind holds the objective: the objective, its completion criteria, its constraints, its
+priority and budget, its progress, blockers, ownership, linked work and evidence are what a
+node of O already carries (SPEC-WORK.md, *The data*: `:title`, `:acceptance`, `:deps`,
+`:responsible`, `:links`, its `:lease`, its `:attempt` and `:evidence` events, its derived
+state) — *"reuse the existing work/attempt/accounting records"* (5672006742). What this draft
+adds is the reference: one per coordinator and one for the node, keyed like a note's scope,
+held in the resident set as an index beside `friends` and `models`, written by one event kind,
+`:goal` — `:change` (`:set` or `:clear`), `:scope`, `:goal` (the node id), `:reason`; subject a
+scope, `:node` `(:absent)`, `GOAL OK` prints `goal=<id>` **(Rowan's decision, for review)**.
+A delegated goal keeps its parent/child mapping because it is a node under its parent node:
+the mapping is `:children`, and nothing is copied.
 
 ```
-(:note (:id n-example-1)
-  (:scope (:coordinator Stella)) (:author Stella) (:date 2026-09-14T23:05Z)
-  (:source "nova-tools#321 comment 5672006742; Glenn, live, 22:38Z: 'Astra default is for coordination and thinking. Not for coding.'")
-  (:kind instruction) (:state active)
-  (:text "Astra is for coordination and high-level planning and thought only. Coding, implementation and lower-level execution go to Emma, DeepSeek swarms or a suitable local model.")
-  (:constraint
-    (:deny (:model Astra) (:task-class coding implementation execution))
-    (:reason "Glenn, 2026-09-14: coordination only")))
-
-(:note (:id n-example-2)
-  (:scope (:node)) (:author Stella) (:date 2026-09-14T23:05Z)
-  (:source "nova-tools#321 comment 5672006742")
-  (:kind instruction) (:state active)
-  (:text "Use small fresh contexts directly for bounded work. Compare the coordinator's and the worker's effective token prices plus context, handoff, required review and rework on the whole route; delegation at a cheaper rate can be worth it at more tokens. Keep the main session available for human communication."))
+nova-work goal set     --as <name> [--scope <scope>] --goal <node-id> --reason <text> --request <id> --expect <rev>
+nova-work goal show    --as <name> [--scope <scope>] [--snapshot <path>] --max <n>
+nova-work goal update  --as <name> [--scope <scope>] --request <id> --expect <rev> ( --progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text> )
 ```
 
-The first note is what the day's hurt needed: with it active, `applicable --as Stella
---task-class coding --candidate coordinator/Astra` prints `excluded n-example-1`, and a card
-for that route is refused before any child starts. The second has no constraint and excludes
-nothing; it is read. Glenn's own phrasing of the economics, *"cheap-token delegation may be
-worthwhile even at more tokens"*, is the whole-route rule of PROPOSAL-SCHEDULING-COST.md, and
-the note points at it rather than restating the arithmetic.
+**`set`** writes the reference. Refused when the node does not exist; when its disposition is
+closed (done, cancelled, superseded, removed) — an old harness cannot restart completed work
+by pointing at it, and reviving is `event --kind reopen` on a person's word, its own verb and
+its own event; when `--as` is not a configured writer of the scope; and when `--expect` is
+stale. `set` takes no lease and starts nothing: *"ownership and actual execution handles
+remain distinct from the goal record"* (5672006742).
+
+**`show`** is what a newly selected model or harness loads, and it is the whole of what it
+needs: the `GOAL OK` line — `scope=`, `goal=<id>`, `rev=<n>` (the revision the answer is
+evaluated at), `generation=<n>` and `scope-revision=<n>` of the node, `state=`, `owner=<lease
+holder|->`, `stop=<none|cancelled|deferred>`, `constraints=<n>`, `notes=<n>`,
+`outstanding=<n>` — then `GOAL ROW` lines: the objective (`:title` and each `:acceptance`
+criterion with its current verdict), every constraint line and note id `applicable` would
+carry for this coordinator, the progress (evidence events, done and remaining required work
+under the node, by kind, counted), the blockers, the live leases and attempts under it with
+their holders, and the linked work. Rows are capped by `--max` and counted, `GOAL MORE` when
+cut; **the `GOAL OK` fields, the stop, and the constraint rows are never cut** — they print
+before the capped rows, as `applicable`'s verdicts do. A reader with no live session reads the
+published snapshot at its revision and gets the same answer for that revision. Nothing in the
+answer is the conversation it came from (5672006742: *"must not require copying the
+accumulated conversation or guessing whether earlier work stopped"* — the stop is a field).
+
+**`update`** is a thin verb: it names the current goal node so a harness need not know the
+id, and writes the existing event kinds on it — `--progress` a `:transition` or `:evidence`
+event, `--blocked-by` a `:transition :to :blocked`, `--stop` a `:cancel` carrying `:evidence`
+that the worker stopped — under the same `--expect`. **Objective and constraint edits are not
+`update`**: changing what the goal is, is `accept` (criteria), `dep`, `node` and `correct` on
+the node, each bumping its scope revision or generation by SPEC-WORK.md's own rules, and a
+note supersede for a routing constraint; so a status update and an objective edit are
+different event kinds with different revision effects, and a reader tells them apart from the
+log, never from wording.
+
+**Revision and conflict.** Every `set` and `update` carries `--expect <rev>`, the revision the
+caller read at; a stale expectation is refused `GOAL FAIL …: stale expected=<n> current=<m>`,
+exit 1, nothing written, and the caller re-reads with `show` — which is the *"explicit
+conflict handling"* Glenn asked for and is SPEC-WORK.md's existing rule, not a new one. A
+progress update from a harness that read before a stop is stale by construction, because the
+stop moved the revision; a `set` back to a node that finished is refused by disposition
+whatever the expectation; and there is one writer, so two harnesses never merge. A native
+harness goal feature (a `/goal`) is an adapter: on load it calls `show` and keeps `rev=`; on
+write it calls `set` or `update` with that revision; an adapter that holds no revision writes
+nothing (5672006742: *"native harness goal features may serve as views/adapters"*). A completed
+goal requires evidence against its criteria — the node's `:to :done` names evidence events —
+*"not merely a worker's success claim"* (5672006742), which is SPEC-WORK.md's rule already.
+
+**Three witnesses**, replays in SPEC-WORK.md's list, stated so a test can be written from the
+text and nothing else (Stella, stella-a8da9cb0e0a4):
+
+- `goal-crosses-harness` — harness A, as coordinator C, sets goal G at revision r, writes a
+  `(:coordinator "C")` note with a `:deny` on a made-up model for `:coding`, and stops one
+  child of G with `update --stop`; harness B, another build, calls `show --as C` against the
+  live session and against the clipped snapshot. Both answers print `goal=G`, a `rev=` at or
+  after every write of A's, `stop=cancelled` on that child's row, and the same note id and
+  constraint line A wrote, byte for byte. B copied no conversation.
+- `goal-stale-update-refuses` — A and B both `show` at revision r. A writes progress, r+1;
+  B's `update --progress --expect r` is refused `stale`, the snapshot is unchanged, and B's
+  next `show` prints A's progress. A then `update --stop`, r+2; B's `update --progress
+  --expect r+1` is refused `stale` and B's next `show` prints `stop=cancelled`. A `set` to a
+  node in C is refused whatever `--expect` says, and the node stays in C.
+- `applicable-cap-never-hides-a-deny` — N active notes, N > `--max`, the only `:deny` in the
+  note that sorts last; `applicable --max 1 --candidate <role>/<model>` prints `excluded
+  <that id>` and `NOTES MORE`; `show --max 1` prints the same constraint row before any cut
+  row; with the notes index unloadable, both print `FAIL` and neither prints `eligible`.
+
+**Next draft and owner.** This section folds into SPEC-WORK.md as its own *The current goal*
+subsection under *The data*, with the `:goal` and `:note` event kinds added to `:event` and
+`GOAL` and `NOTES` to *Output grammar*; the fold is Rowan's to draft on PR #231's head, with
+reads owed from Stella and Emma on the exact revision. **Until that fold lands and the three
+replays are in SPEC-WORK.md's list, the combined request of 5672006742 — notes and goal — is
+incomplete**, and this file says so rather than pointing.
 
 ## What this draft does not do
 
-- **No new bus and no new scheduler.** Notes are files in the work repository; the route
-  selector is #175's, built on the existing proposal; nothing here dispatches.
+- **No new bus, no new scheduler, no new writer.** Notes and the goal reference are records of
+  the resident work set under the one session; the route selector is #175's, built on the
+  existing proposal; nothing here dispatches.
 - **No enforcement claim.** This is planning (5672006742: *"not a claim that persistence or
   routing enforcement ships today"*). Until `applicable` exists and the card builder calls it,
-  the filter is a coordinator reading its own file first, and that is still the rule.
+  the filter is a coordinator reading its own notes first, and that is still the rule.
 - **No second ledger** (5671991172). Usage, attempts and prices stay where SPEC-WORK.md and
-  SPEC-TOKENS.md keep them.
-- **No permissions.** A note grants nothing; access is configuration and git.
-- **The shared current goal** (5672006742, *"Shared current goal across models"*: set,
-  retrieve and update the current goal with a stable identity and revision, cross-model and
-  cross-harness, with conflict handling) is a requirement of the same comment and is **owed
-  separately**. It belongs in SPEC-WORK.md's work set as a goal record, not in a notes file;
-  this draft only says that the applicable notes are among what a goal's reader loads. It is
-  named here so it is not lost, and it is not specified here.
+  SPEC-TOKENS.md keep them; a cross-model budget view keeps its declared units.
+- **No permissions and no credential mechanism.** A note grants nothing; access is
+  configuration and git.
+- **No transaction engine.** Atomic supersession is one envelope through the writer that
+  exists; nothing is added to make it so.
 - **The ROADMAP refresh** continues independently (5672006742; PR #334 landed).
 
-## Rowan's decisions, for review
+## Open decisions and Rowan's decisions, for review
 
-Collected so a reader can strike any of them without touching a requirement of Glenn's:
-the id scheme; the three-file layout under `notes/` and its config key; the verb names and
-flags; the source check as a shape check; the `:deny`/`:prefer`/no-`:allow` constraint form and
-its every-axis match; deny-over-prefer when two constraints disagree; the task-class vocabulary
-as node configuration. Reads are owed from Stella, Emma and Freddy on the exact head.
+**Open decision** (one): the staleness a card builder accepts from a snapshot-served
+`applicable` — live only; a configured `:max-snapshot-age`; or any snapshot with the revision
+printed. The example config writes the second; the text takes no side.
+
+**Rowan's decisions**, collected so a reader can strike any of them without touching a
+requirement of Glenn's: the content-digest id and its preimage order; notes and the goal
+reference as indexes of the resident set with `:note` and `:goal` event kinds and their field
+orders; group membership taken from `friend --group`; the three bounds under `:notes` and the
+archive road for superseded notes; the verb names and flags; the source check as a shape
+check; the `:deny`/`:prefer`/no-`:allow` constraint form and its every-axis match; task
+classes reused from `:model` events; deny-over-prefer when two constraints disagree;
+`unknown` for an unregistered model; `update` as a thin verb over existing event kinds; the
+fold location. Reads are owed from Stella, Emma and Freddy on the exact head.
