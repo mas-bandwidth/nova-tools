@@ -457,11 +457,6 @@ nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
                     [--provider <label>=<file>]...
                     [--scratch <dir>] [--timeout <seconds>] [--max <n>]
-nova-tokens publish (--batch <dir> | --v1-day <dir> --day <YYYY-MM-DD> --seat <label>)
-                    --ledger <dir> --remote <name> --branch <name> --repo <host>/<owner>/<name>
-                    [--supersede]
-                    [--public <dir> --public-repos <file>] [--public-sources]
-                    [--deadline <seconds>] [--git-timeout <seconds>] [--attempts <n>] [--max <n>]
 nova-tokens help
 nova-tokens version
 ```
@@ -543,25 +538,9 @@ writes.
 
 ### `publish`
 
-Asserts: the contribution exists and validates — a v1 day file under rule 13's
-row rules, a batch under its envelopes' own validators — and that, when the
-verb returns 0, every one of its files is on the ledger's named branch of the
-named remote at its own path, byte-identical for a batch's content-addressed
-paths and **identical under rule 26** for a v1 day, whose identity is
-`rows_sha256` and not the whole file. Says NO (exit 1) on `reason=differs`,
-`conflict`, `incomplete`, `malformed`, `changed`, `subset` or `unconfirmed`.
-Could not run (exit 2) on a missing or bad flag, a missing `--repo`, an
-effective fetch or push URL that does not match it, unrelated dirty work in
-the clone, an empty `user.name` or `user.email`, a held publish lock, two
-given paths that resolve to one directory, a staged path that exists, a fold
-in flight, a malformed batch directory, or a batch whose schema has no
-validator here. Deliberately does not check: whether the numbers are right
-(`check` and `sum` read them), whether other days or other benches are
-present in the ledger, whether coverage of the whole ledger is complete, or
-whether the note for that day reached the bus (rule 28). `publish` is a
-**wall**, and it is the only verb that runs `git`, the only verb that writes
-into a git clone, and it is in **Publishing to the git ledger**, rules 22 to
-31.
+Not shipped. The verb is struck from this draft: the binary has no `publish`
+case and no `PUBLISH` output lines. The design is kept in **Publishing to the
+git ledger** (rules 22 to 31) as an explicit spec gate for a future build.
 
 ## Exit codes
 
@@ -570,33 +549,6 @@ into a git clone, and it is in **Publishing to the git ledger**, rules 22 to
 | 0 | the verb ran and passed: every source read, every line parsed, every day written; a sum or a listing printed; a check with nothing to name |
 | 1 | the verb ran and said **NO**: a declared source with an unreadable file, an unparsed bus line or note, a row of two day bases, a lane-day with competing reports (`TOKENS CONFLICT`), a day that would shrink, a check finding, a `report` with nothing to show |
 | 2 | could not run: missing flag, bad flag value, `--out` not a directory, `--repos` unreadable or malformed, a duplicate label, `sqlite3` absent when `--opencode` is given, a second fold holding the lock |
-
-**Amendment, 2026-09-12 (rules 22–31).** The three meanings hold for
-`publish` and the enumerations above gain its cases, which are the only ones
-this amendment adds. **Exit 0**: the contribution is on the ledger's named
-branch at its own paths, either pushed by this run (`state=published`,
-`state=superseded`) or already there — byte-identical for a batch's immutable
-paths, identical under rule 26's `rows_sha256` for a v1 day
-(`state=already-published`). **Exit 1**, the verb ran and said NO:
-`reason=differs` (a v1 day's path holds different rows and `--supersede` was
-not given), `reason=conflict` (a content-addressed path holds bytes other
-than its own digest's), `reason=incomplete` (a published coverage envelope
-whose referenced closure is missing a member or holds different bytes),
-`reason=malformed` (a v1 day file `check` would name, or a batch whose
-envelopes do not validate), `reason=changed` (an input's digest moved under
-the publication), `reason=subset` (a public subset would carry a row not on
-its allowlist), `reason=unconfirmed` (the push could not be confirmed inside
-`--attempts` and `--deadline`). **Exit 2**, could not run: a missing or bad
-flag, `--repo` missing, both contribution kinds or neither, `--supersede` with
-`--batch`, a source flag on `publish`, two given paths that resolve to one
-directory, a staged path or a temporary directory that already exists,
-`--ledger` that is not a git checkout, an effective fetch or push URL that
-does not match `--repo` or whose shape the parser does not know, more than one
-effective push URL where they do not all match, an empty `user.name` or
-`user.email` in the clone, unrelated dirty or staged work in the clone, a
-second publisher holding the lock, a `git` absent from `PATH`, a fold in
-flight under `--v1-day`, a batch that is not exactly its own named files, and
-a batch naming a schema this build has no validator for.
 
 **Exit 1 still writes.** A fold with one unreadable file writes every day it
 could compute and exits 1. The exit code is about the claim (rule 3), not
@@ -611,13 +563,7 @@ One machine-scannable line per event; first token names the verb's event
 class, second is `OK`, `FAIL` or one of the informational tokens listed here.
 `OK` and informational lines go to stdout; `FAIL`, `UNREADABLE`, `UNPARSED`,
 `MIXED`, `SHRANK`, `QUIET`, `MISSING` and refusals go to stderr.
-**Amendment, 2026-09-12 (rules 22, 24).** The rule above is unchanged and
-`publish`'s lines obey it as written: `PUBLISH PLAN`, `FILE`, `SUBSET`,
-`EXCLUDED`, `OK` and `NOTE` are informational or `OK` and go to stdout,
-`PUBLISH DIRTY`, `FAIL` and `REFUSED` go to stderr, and a `PUBLISH MORE`
-goes to the stream of the kind it caps — the MORE for `EXCLUDED` to stdout,
-the MORE for `DIRTY` to stderr — so neither stream ever shows a list without
-its MORE or a MORE without its list. `report` is the one
+`report` is the one
 exception, stated in rule 20: its stdout is exactly rule 6's body lines, and
 `REPORT OK`, `REPORT FAIL` and its `TOKENS UNREADABLE` lines go to stderr. Every path, label, model name,
 repo name, note id and reason renders through `internal/oneline`; every
@@ -667,16 +613,6 @@ SOURCES UNREADABLE label=<label> path=<path>: <why>
 SOURCES UNPARSED label=<kind>:<name> note=<id> line=<n>: <text>
 SOURCES MORE kind=<source|unreadable|unparsed> shown=<n> total=<t> nova-tokens sources … --max 0
 SOURCES OK sources=<n> files=<n> messages=<n> unreadable=<n> unparsed=<n> rows=<n>
-PUBLISH PLAN at=<stamp> build=<id> kind=<batch|v1-day> ledger=<dir> repo=<host>/<owner>/<name> remote=<name> branch=<name> seat=<label|-> day=<d|-> contribution=<hex> files=<n> bytes=<n> deadline=<seconds> public=<dir|->
-PUBLISH DIRTY path=<path>: <modified|staged|untracked>
-PUBLISH FILE path=<path> sha256=<hex> rows_sha256=<hex|-> state=<new|present|identical|superseded|conflict|missing> supersedes=<hex|->
-PUBLISH SUBSET path=<path> rows=<n> excluded=<n> repos=<list> sha256=<hex>
-PUBLISH EXCLUDED day=<d> model=<model> repo=<repo>: not on --public-repos
-PUBLISH MORE kind=<dirty|file|excluded> shown=<n> total=<t> <remedy>
-PUBLISH OK contribution=<hex> commit=<sha> pushed=<true|false> state=<published|already-published|superseded> attempts=<n> files=<n> at=<stamp> build=<id>
-PUBLISH FAIL contribution=<hex> reason=<differs|conflict|incomplete|malformed|changed|subset|unconfirmed> pushed=<true|false|->
-PUBLISH NOTE <the one remedy line>
-PUBLISH REFUSED: <reason>
 SOURCES REFUSED: <reason>
 ```
 
@@ -1040,7 +976,6 @@ sources. Ninety days under `--all`.
 | `sum --month` | 1 MONTH + 20 PAIR + 1 MORE + 20 MODEL + 1 MORE + 1 TOTAL + 1 OK = 45 | under 10 KB |
 | `check` | 20 FAIL + 1 MORE + 20 MISSING + 1 MORE + 20 STRAY + 1 MORE + 1 count line = 64 | under 8 KB |
 | `sources --all` | 10 SOURCE + 20 UNREADABLE + 1 MORE + 20 UNPARSED + 1 MORE + 1 OK = 53 | under 8 KB |
-| `publish` (2026-09-12, rules 22–31) | 1 PLAN + 20 FILE + 1 MORE + 1 SUBSET + 20 EXCLUDED + 1 MORE + 1 OK + 1 NOTE = 46 at a batch of 20 files; a refusal is at most 20 DIRTY + 1 MORE + 20 FILE + 1 MORE + 1 FAIL + 1 NOTE + one `REFUSED` per independent problem, that list being finite and enumerated by the exit-code table's amendment (eighteen), so 20 + 1 + 20 + 1 + 1 + 1 + 18 = 62 | under 12 KB |
 
 These are ceilings that do not grow with the state. A test builds that state
 in `t.TempDir()`, runs every verb, and asserts the line and byte counts
@@ -1797,6 +1732,8 @@ remedy line. The rules are numbered on from rule 21.
 
 ## What it deliberately does not do
 
+- **It does not publish.** The `publish` verb and the `PUBLISH` output lines
+  are struck from this draft: the shipped binary has no `publish` case.
 - **It does not price anything.** Tokens, by type, per model. Dollars are a
   rate card times a count, the rate card changes, and a tool that carried
   one would carry a stale one.
