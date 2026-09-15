@@ -751,16 +751,21 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
 - `--idle <seconds>` (default 300) is the per-card idle timeout, held beside
   the batch deadline, never instead of it. A card writes its own log —
   `harness.log` under its job directory, the runner's stdout pinned to a
-  regular file — and a card is idle when **neither its log nor its process
-  tree has moved** for `idle` seconds: no log growth, and no CPU time or I/O
-  advanced anywhere in the harness's process tree since the last tick. A child
-  `go test` that prints nothing for minutes is activity; a harness that sleeps
-  is not. Log growth alone killed busy cards on 2026-09-15/16 and the loop
-  raised `--idle` to 900 s as a workaround, which only delays real idle
-  detection (issue #593, open). Idle is a property of one card, measured
+  regular file — and the batch also reads the **CPU time of the card's whole
+  process tree**, the runner's children and their children with it. **Idle
+  means no child activity**: a card is alive while either its log grows or its
+  tree's CPU time advances, and it is killed only when *neither* moved for
+  `idle` seconds. On **2026-09-15** cards 664-670 were killed `idle 300s`
+  inside a `go test` that prints nothing for minutes, and the loop raised
+  `--idle` to 900 s, which only delays the same kill (issue #593): a busy
+  silent harness is working, and a sleeping one is not. Idle is measured
   against that card alone: the batch returns on its **slowest still-working
   card**, not on the deadline, because a dead card is removed from the wait as
-  soon as it stops moving.
+  soon as it stops moving. The tree is read once per poll for the whole batch,
+  at most once per `idle/4` seconds and never faster than twice a second, by
+  the kernel's own process table — never by matching a command line and never
+  by running `ps`. A platform whose process table this repo cannot read
+  watches the log alone, as it did before.
 - A card killed for idleness is scored
   `<label> slot=<n>: ABSTAIN reason=idle=<s> log=<n> watched=<path>` on the
   packet — an abstain that names *why* it stopped and the log it watched, never
@@ -769,7 +774,16 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
 ### gather — one bounded packet, mechanically
 
 `gather` reads every card's `RESULT.md` and folds the batch into **one
-bounded packet**:
+bounded packet**. **A result written inside the clone is the card's result.**
+`STEP 1` makes `repo/` the model's cwd, so a model publishes `RESULT.md`
+there; gather read only the job root, scored the card `no-result`, and the
+work was lost (issue #594). Gather takes `RESULT.md` at the job root, else at
+`repo/RESULT.md`, else one directory further down — `repo/<clone>/RESULT.md` —
+copies it up to the job root and says so once on stderr,
+`BATCH NOTE <label> RESULT.md copied up from <path>`. A job root that holds a
+result of its own keeps it: nothing is ever overwritten, and **the `RESULT`
+contract is unchanged** — line 1 is still the card's contract line, and the
+rules below still decide. The fold itself is:
 
 - the batch id and n;
 - per-card disposition lines, **line 2 of each `RESULT.md`, verbatim**;
@@ -796,9 +810,9 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | token | the card |
 |-------|----------|
 | `line1-mismatch` | published a result whose line 1 is not its contract line |
-| `no-result` | ended with rc 0 and published no `RESULT.md` |
-| `rc=<n>` | ended non-zero and published no `RESULT.md` |
-| `idle=<s>` | was killed because its own log stopped growing for `<s>` seconds |
+| `no-result` | ended with rc 0 and published no `RESULT.md`, at the job root or below it |
+| `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it |
+| `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
 | `deadline` | was killed at the batch's deadline |
 | `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
 | `admission` | was refused at admission; the reason follows the token |
