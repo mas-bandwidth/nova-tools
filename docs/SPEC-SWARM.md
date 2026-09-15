@@ -668,11 +668,13 @@ environment — the slot directory is never a repository — and prints
 `tmp=<path>` on `NATIVE OK`; a card sets no `TMPDIR` of its own.
 
 **A silent harness is never `OK`** (issue #591, PR #604). A harness that exits
-0 having written neither `harness.log` nor `RESULT.md` did no work: `NATIVE OK`
-carries `harness=silent`, and `gather` scores the card `ABSTAIN
-reason=harness-silent`, before `no-result` in precedence. A non-zero rc returns
-first as `reason=rc=<n>`, as it does today; a matching `RESULT.md` is `done`
-when the harness exited 0. The case that found it was a local model
+having written neither `harness.log` nor `RESULT.md` did no work, whatever its
+rc: `NATIVE OK` carries `harness=silent` with the rc recorded on the line, and
+`gather` scores the card `ABSTAIN reason=harness-silent`. A matching
+`RESULT.md` is `done` whatever the rc (**gather**, #577); `harness-silent`
+applies only when no matching `RESULT.md` exists, and after a non-match the
+scoring order is `card-abstain`, `admission`, `harness-silent`, `no-result`,
+`idle`, `deadline`, then `rc=<n>`. The case that found it was a local model
 emitting its tool calls as raw text the harness does not parse, so no tool ran
 and nothing was written. **A local model is one slot, and it stays off the
 critical path**: the local route needs a model whose tool-call format the
@@ -820,7 +822,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `admission` | was refused at admission; the reason follows the token |
 | `input-limit` | was refused for size, by the provider's own structured signal (issue #163) |
 | `bench-unreachable` | ran on a bench the pull could not reach, so nothing about it is known here |
-| `harness-silent` | exited 0 having written neither `harness.log` nor `RESULT.md`; scored before `no-result` (issue #591, PR #604) |
+| `harness-silent` | wrote neither `harness.log` nor a matching `RESULT.md`, whatever its rc, which the line records; after a non-match the order is `card-abstain`, `admission`, `harness-silent`, `no-result`, `idle`, `deadline`, then `rc=<n>` (issue #591, PR #604) |
 
 The card's line carries the token and its own log count —
 `<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
