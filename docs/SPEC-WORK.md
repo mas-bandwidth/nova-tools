@@ -309,16 +309,16 @@ cadence, so every bound is read rather than remembered), and it is stopped expli
 no always-on daemon is required, and a supervised session that a coordinator starts for a
 sitting and stops at its end is enough (Stella, *Keep the work set alive*).
 
-**The platform matrix (E02-F06), pinned** *(decided by Glenn, 2026-09-15)*. The runtime is SBCL on
-every cell; the first pilot's cells are the two supported rows; Windows is an out-of-scope cell by
+**The platform matrix (E02-F06), pinned** *(decided by Glenn, 2026-09-15)*. The runtime is SBCL;
+the first pilot's cells are the two supported ones; Windows is an out-of-scope cell by
 a recorded scope event until the measurement is in, and the named-pipe endpoint text of *The
 engine and its client* below stays as the Windows spelling for later.
 
 | cell | runtime | first pilot | endpoint |
 |---|---|---|---|
-| darwin-arm64 | SBCL | supported, tested before any release | Unix-domain socket |
-| linux-x64 | SBCL | supported, tested before any release | Unix-domain socket |
-| windows | SBCL | out of scope by a recorded scope event, until the measurement is in | named pipe `\\.\pipe\<name>`, the spelling kept for later |
+| darwin-arm64 | SBCL | supported | Unix-domain socket |
+| linux-x64 | SBCL | supported | Unix-domain socket |
+| windows | — | out of scope by a recorded scope event, until the measurement is in | named pipe `\\.\pipe\<name>`, the spelling kept for later |
 
 Every mutation is one typed event and carries a **request id**: `--request <id>` on every
 mutation verb, drawn by the caller (a friend's request arrives with one), or drawn by the tool
@@ -769,7 +769,7 @@ they are distinct kinds:
   `:feature` under it, and the counting unit of every rollup stays the one `unit=` names.
 - `:roadmap` — a typed view over its cells: `:axes` (ordered, named members), `:cells` mapping
   a coordinate to a `:ref`, `:scope-revision`, `:completion-policy` (`:all-required-features` is the only policy — **default by Rowan,
-  unobjected 2026-09-15**; a second policy is a later revision with its issue). A cell references a node; it never contains state of its own. An unknown axis member and a
+  unobjected 2026-09-15**). A cell references a node; it never contains state of its own. An unknown axis member and a
   duplicate coordinate are refusals; **a missing cell is not**, and an omitted cell is never
   complete (5653990830). A cell may be marked `:out-of-scope` by a recorded scope event, which
   is distinct from unstarted and from unknown, and **an out-of-scope cell leaves that axis
@@ -2270,13 +2270,11 @@ author, its request id and its expectation, and the fencing rules still decide (
 `endpoint-is-local-and-private`).
 
 **The wire is a versioned, bounded, length-prefixed UTF-8 JSON protocol, and this paragraph pins
-it** (Stella's requirement; **the exact schema below is the contract, protocol version `"1"` —
+it** (Stella's requirement; **the exact schema below is the contract, protocol version 1 —
 default by Rowan, unobjected 2026-09-15** — since her text names the properties and leaves the
-spelling open; it is pinned by **one generated schema file** listing every verb with its op, event
-kind, ordered fields and grammar line, and **one coverage test** that every verb-table row has a
-verb, every verb an op and a line, and each missing verb below is present or listed; Emma is
-building the file, and the file with its test is the lock gate's artifact for the verb and
-protocol schemas). One message is a **4-byte big-endian
+spelling open; it is pinned by **one generated schema file** (every verb with its op, event kind,
+ordered fields and grammar line) and **one coverage test** over it; Emma is building the file, and
+the file with its test is the lock gate's artifact for the verb and protocol schemas). One message is a **4-byte big-endian
 unsigned length** followed by that many bytes of one UTF-8 JSON object; a frame past
 `--max-frame-bytes` (defaulting to the session's `--max-bytes`) is refused with one framed error
 and the connection is then closed, never truncated and never partially applied. **Every integer
@@ -2699,11 +2697,11 @@ neither a friend nor a model**; a swarm labelled with a friend's name does not m
 that friend, carry that friend's continuity or speak for them; a model-only worker needs no
 invented friend identity; and the friend responsible for a pool and the actor executing a job are
 two references that are never double-counted. **Every worker carries a model or route label, no
-historical actor is renamed and every past source label and attribution is preserved.** There is
-no participation record for pools and no door into one: `friend --participation` and the
-`:participation` change are reserved as a pool door — they stay the spelling of the agreed
-participation of *A role is configured* above, and no value in them admits a friend as a pool
-worker.
+historical actor is renamed and every past source label and attribution is preserved.** A friend's
+own disposition remains the only record of that friend's consent, and a worker's reply or a silence
+is not it. There is no participation record for pools and no door into one: `friend
+--participation` and the `:participation` change are reserved — they stay the spelling of the
+agreed participation of *A role is configured* above and are not a door into a pool.
 
 ## The fleet *(Rowan, on Glenn's word of 2026-09-15; a draft for Stella's review as the section's owner)*
 
@@ -4297,8 +4295,7 @@ claim atomicity between Git and GitHub or restore an issue by inventing an autho
 These semantics are a specification, not a request to absorb existing issues now.
 **For the v1 pilot, `absorb` is disabled and `link` is the default** *(default by Rowan, unobjected
 2026-09-15)*: migration is import without delete. Close-and-point — the source issue closed with a
-comment naming its node, the outbound action of link mode (roadmap E09-F02) — is the v1 shape, to be
-decided when E09-F02 exists. The read-only real-repository pilot grant remains Glenn's, asked when
+comment naming its node (roadmap E09-F02) — is the v1 shape, to be decided when E09-F02 exists. The read-only real-repository pilot grant remains Glenn's, asked when
 E09-F01 can run.
 
 ### Initial migration: preserve first, reconcile, then choose absorption
@@ -4447,7 +4444,7 @@ Useful focused views include remaining features in one repo, ideas for that repo
 work in a category, one language's unfinished cells, and a cell's nested tasks. A listing is
 compact and capped; it carries stable IDs and a way to focus further. Category taxonomy is
 deferred to its issue (5654164074); until then `:category` is an opaque keyword the validator
-accepts and views group by (default by Rowan, unobjected 2026-09-15). The query machinery filters; the reader should not have to scan S manually.
+accepts (default by Rowan, unobjected 2026-09-15). The query machinery filters; the reader should not have to scan S manually.
 
 ### Evidence and the imported starting point
 
