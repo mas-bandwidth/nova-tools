@@ -3,6 +3,7 @@ package swarm
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -110,12 +111,53 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 			t.Fatalf("every remote run argv carries taskset, got %q", l)
 		}
 	}
-	if !strings.Contains(runs[0], "taskset -c 3") {
-		t.Fatalf("slot 3 on 1-15 runs under taskset -c 3, got %q", runs[0])
+	// The batch scatters the two cards into concurrent ssh children, so the fake ssh log
+	// records the runs in whichever order the children reach their printf -- an order this
+	// test must not read positionally. Each run is matched to its slot by the --slot it
+	// carries (slot n spells <root>/<n>/jobs/<label>) and its core read from the taskset -c
+	// beside it, so the assertion is about the pin itself, never the order the pins landed.
+	coreFor := func(slot int) string {
+		for _, l := range runs {
+			f := strings.Fields(l)
+			core, slotSeen := "", -1
+			for i := 0; i+2 < len(f); i++ {
+				if f[i] == "taskset" && f[i+1] == "-c" {
+					core = f[i+2]
+				}
+			}
+			for i := 0; i+1 < len(f); i++ {
+				if f[i] != "--slot" {
+					continue
+				}
+				segs := strings.Split(strings.Trim(f[i+1], "/"), "/")
+				for j, seg := range segs {
+					if seg == "jobs" && j > 0 {
+						slotSeen = atoiOrMinus(segs[j-1])
+					}
+				}
+			}
+			if slotSeen == slot {
+				return core
+			}
+		}
+		return ""
 	}
-	if !strings.Contains(runs[1], "taskset -c 4") {
-		t.Fatalf("slot 4 on 1-15 runs under taskset -c 4, got %q", runs[1])
+	if c := coreFor(3); c != "3" {
+		t.Fatalf("slot 3 on 1-15 runs under taskset -c 3, got taskset -c %s across:\n%s", c, strings.Join(runs, "\n"))
 	}
+	if c := coreFor(4); c != "4" {
+		t.Fatalf("slot 4 on 1-15 runs under taskset -c 4, got taskset -c %s across:\n%s", c, strings.Join(runs, "\n"))
+	}
+}
+
+// atoiOrMinus is strconv.Atoi that answers -1 (no slot) on a non-numeric segment, so a label
+// or path segment in the --slot value never reads as a slot number.
+func atoiOrMinus(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return -1
+	}
+	return n
 }
 
 // TestBatchRefusesMoreSlotsThanCores: 16 slots on 1-15 is ADMIT REFUSED bench=b2 slots=16

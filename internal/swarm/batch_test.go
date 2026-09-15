@@ -772,12 +772,27 @@ func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("a clean batch exits 0, got %d; stderr: %s:\n%s", code, errs, out)
 	}
+	// The root is compared symlink-resolved: on macOS /var is /private/var, so t.TempDir()
+	// spells the root /var/folders/... while filepath.Abs resolves it to /private/var/...
+	// and the runner records the resolved spelling. EvalSymlinks folds both to one path.
+	wantRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	arg5 := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".arg5")))
-	if arg5 != root {
+	gotArg5, err := filepath.EvalSymlinks(arg5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotArg5 != wantRoot {
 		t.Errorf("the runner's $5 is %q, want the absolute root %q; a relative root reached the runner", arg5, root)
 	}
 	envRoot := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".envroot")))
-	if envRoot != root {
+	gotEnv, err := filepath.EvalSymlinks(envRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotEnv != wantRoot {
 		t.Errorf("NOVA_SWARM_ROOT is %q, want the absolute root %q; a relative root reached the environment", envRoot, root)
 	}
 }

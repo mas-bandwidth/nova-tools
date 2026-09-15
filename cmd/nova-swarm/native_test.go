@@ -1072,8 +1072,27 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
 	}
+	// The slot is compared symlink-resolved: on macOS /var is /private/var, so t.TempDir()
+	// spells the slot /var/folders/... while filepath.Abs resolves it to /private/var/...
+	// and the wall records the resolved spelling. EvalSymlinks folds both to one path.
+	wantSlot, err := filepath.EvalSymlinks(slot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
-	if !hasFlagPair(strings.Fields(argv), "--read", slot) {
+	fields := strings.Fields(argv)
+	readsResolved := false
+	for i, a := range fields {
+		if a != "--read" || i+1 >= len(fields) {
+			continue
+		}
+		got, err := filepath.EvalSymlinks(fields[i+1])
+		if err == nil && got == wantSlot {
+			readsResolved = true
+			break
+		}
+	}
+	if !readsResolved {
 		t.Errorf("the wall argv does not read the slot by absolute path %s:\n%s", slot, argv)
 	}
 }
