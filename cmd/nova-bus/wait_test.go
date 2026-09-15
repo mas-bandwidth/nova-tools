@@ -79,6 +79,29 @@ func push(dir string) error {
 	return nil
 }
 
+// A wait is one read, and every return ends with one terminal line that says it ended and
+// hands back the command to re-arm it. A background process is not a harness wake: the
+// harness wakes when the call RETURNS, and the caller must then issue the next wait. The
+// line is always last, so a harness reading the tail of the transcript finds it.
+func TestWaitEndsWithRearmLine(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	r := invoke(t, "", waitFlags(checkout, "Ada", "1s")...).mustCode(t, 0)
+
+	done := "WAIT DONE reason=timeout rearm=required next=nova-bus wait"
+	if !strings.Contains(r.stdout, done) {
+		t.Fatalf("wait return is missing the terminal re-arm line:\n%s", r.stdout)
+	}
+	trimmed := strings.TrimRight(r.stdout, "\n")
+	last := trimmed[strings.LastIndex(trimmed, "\n")+1:]
+	if !strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait --bus "+checkout) {
+		t.Fatalf("the re-arm line is not last:\n%s", r.stdout)
+	}
+}
+
 // THE POINT OF THE VERB: a note pushed by somebody else, mid-call, ends the wait. The
 // caller is inside a tool call the whole time and gets the listing the moment it is true.
 func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {

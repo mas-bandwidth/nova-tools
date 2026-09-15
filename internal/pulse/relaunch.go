@@ -41,7 +41,7 @@ func relaunch(in HarvestInput) int {
 		return refusal(in.Stderr, "HARVEST", err)
 	}
 
-	return runLaunch(in, filepath.Join(in.Root, "cards.tsv"))
+	return runLaunchSubprocess(in, filepath.Join(in.Root, "cards.tsv"))
 }
 
 // readCandidates reads a five-field candidate TSV (source, id, kind, title, template).
@@ -102,9 +102,9 @@ func writeCardsTSV(root string, rows []CardRow) error {
 	return os.WriteFile(filepath.Join(root, "cards.tsv"), []byte(b.String()), 0o644)
 }
 
-// runLaunch invokes nova-pulse launch --queue as a subprocess and relays its output, so the
+// runLaunchSubprocess invokes nova-pulse launch --queue as a subprocess and relays its output, so the
 // batch admission goes through the launch verb, never re-implemented here.
-func runLaunch(in HarvestInput, cardsTSV string) int {
+func runLaunchSubprocess(in HarvestInput, cardsTSV string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "nova-pulse", "launch", "--cards", cardsTSV, "--root", in.Root, "--queue")
