@@ -1,5 +1,7 @@
 # nova-local — specification
 
+[Unified execution coverage](PROPOSAL-USAGE-COVERAGE.md) specifies the proposed shared token and cost accounting for AI friends, swarms, one-shots and local inference. It preserves existing formats and distinguishes local zero API cost from missing usage.
+
 **What this tool is for, in one sentence (Glenn, 2026-09-12):** *"somebody should
 be able to grab nova-local and run local models."*
 
