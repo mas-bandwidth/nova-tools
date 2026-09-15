@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -433,22 +434,32 @@ func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(
 	other := bench(t, bare)
 	note(t, other, "bo-555555555555", "new note during wait")
 
+	// The note is pushed at a sync point, not after a sleep: the wait signals the
+	// hook the moment it has polled, found nothing new, and is about to sleep, so
+	// the note cannot arrive before the wait is actually waiting, and the wait
+	// cannot return before it arrives. That order is the assertion, made by the
+	// channel instead of a wall clock that races the poll (#370).
+	blocked := make(chan struct{})
+	var once sync.Once
+	hook := waitBlockedHook(func(dir string) {
+		if dir == checkout {
+			once.Do(func() { close(blocked) })
+		}
+	})
+	prev := testWaitBlockedHook.Swap(&hook)
+	defer testWaitBlockedHook.Store(prev)
+
 	pushed := make(chan error, 1)
 	go func() {
-		time.Sleep(250 * time.Millisecond)
+		<-blocked
 		pushed <- push(other)
 	}()
 
-	start := time.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", "5s")...).mustCode(t, 0)
-	took := time.Since(start)
 	if err := <-pushed; err != nil {
 		t.Fatal(err)
 	}
 
-	if took < 200*time.Millisecond {
-		t.Fatalf("wait returned after %s before the note was pushed at 250ms:\n%s", took, r.stdout)
-	}
 	r.mustContain(t, "stdout", "WAIT OK new=1").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-555555555555")
 }
