@@ -617,3 +617,82 @@ func TestWaitBeatPushBounded(t *testing.T) {
 		t.Fatalf("pushed %d beat commits over %d polls; the push is bounded by --beat, not once per tick:\n%s", beats, pollCount, log)
 	}
 }
+
+// A --bus path holding a space must round-trip through the re-arm command: the line's next=
+// is shell-quoted argument by argument, so pasting it hands --bus the SAME one argument --
+// space and all -- rather than splitting it in two. splitShellWords tokenizes the way a
+// shell would for the grammar rearmCommand emits; the emitted command text is never executed.
+func TestRearmCommandQuotesArgumentsWithSpaces(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	_, bare := busDir(t)
+	checkout := filepath.Join(t.TempDir(), "stella 2 bus")
+	gitIn(t, filepath.Dir(checkout), "clone", "--quiet", bare, checkout)
+	settled(t, checkout)
+
+	args := waitFlags(checkout, "Ada", "1s")
+	r := invoke(t, "", args...).mustCode(t, 0)
+
+	trimmed := strings.TrimRight(r.stdout, "\n")
+	line := trimmed[strings.LastIndex(trimmed, "\n")+1:]
+	cmd, ok := strings.CutPrefix(line, "WAIT DONE reason=timeout rearm=required next=")
+	if !ok {
+		t.Fatalf("the re-arm line is missing next=:\n%s", r.stdout)
+	}
+	got := splitShellWords(cmd)
+	want := append([]string{"nova-bus", "wait"}, args[1:]...)
+	if len(got) != len(want) {
+		t.Fatalf("re-arm tokenized to %d words, want %d:\nnext=%s\ngot=%q\nwant=%q", len(got), len(want), cmd, got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("word %d is %q, want %q:\nnext=%s", i, got[i], want[i], cmd)
+		}
+	}
+}
+
+// splitShellWords tokenizes one command line under the grammar rearmCommand emits: words
+// split on spaces and tabs, single-quoted runs literal, and a backslash outside quotes
+// escapes the next character -- the '\” idiom that puts an apostrophe inside single quotes.
+// Nothing is executed and nothing is expanded, because the lines under test hold none.
+func splitShellWords(line string) []string {
+	var words []string
+	var cur strings.Builder
+	inWord := false
+	inQuote := false
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case inQuote:
+			if c == '\'' {
+				inQuote = false
+			} else {
+				cur.WriteByte(c)
+			}
+		case c == ' ' || c == '\t':
+			if inWord {
+				words = append(words, cur.String())
+				cur.Reset()
+				inWord = false
+			}
+		case c == '\'':
+			inWord = true
+			inQuote = true
+		case c == '\\':
+			inWord = true
+			if i+1 < len(line) {
+				i++
+				cur.WriteByte(line[i])
+			} else {
+				cur.WriteByte(c)
+			}
+		default:
+			inWord = true
+			cur.WriteByte(c)
+		}
+	}
+	if inWord {
+		words = append(words, cur.String())
+	}
+	return words
+}
