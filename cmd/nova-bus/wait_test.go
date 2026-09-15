@@ -79,6 +79,29 @@ func push(dir string) error {
 	return nil
 }
 
+// A wait is one read, and every return ends with one terminal line that says it ended and
+// hands back the command to re-arm it. A background process is not a harness wake: the
+// harness wakes when the call RETURNS, and the caller must then issue the next wait. The
+// line is always last, so a harness reading the tail of the transcript finds it.
+func TestWaitEndsWithRearmLine(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	r := invoke(t, "", waitFlags(checkout, "Ada", "1s")...).mustCode(t, 0)
+
+	done := "WAIT DONE reason=timeout rearm=required next=nova-bus wait"
+	if !strings.Contains(r.stdout, done) {
+		t.Fatalf("wait return is missing the terminal re-arm line:\n%s", r.stdout)
+	}
+	trimmed := strings.TrimRight(r.stdout, "\n")
+	last := trimmed[strings.LastIndex(trimmed, "\n")+1:]
+	if !strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait --bus "+checkout) {
+		t.Fatalf("the re-arm line is not last:\n%s", r.stdout)
+	}
+}
+
 // THE POINT OF THE VERB: a note pushed by somebody else, mid-call, ends the wait. The
 // caller is inside a tool call the whole time and gets the listing the moment it is true.
 func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
@@ -453,6 +476,50 @@ func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(
 		mustContain(t, "stdout", "INBOX NOTE id=bo-555555555555")
 }
 
+// Issue #328: a coordinator who receipts a note and then waits is a reader whose only news
+// is a note they have already heard. Without --advance the wait returns at once on that
+// note -- heard is not answered, so it is still news to the open list -- and the caller pays
+// a turn for nothing. With --advance the cursor is moved to the head over the heard note,
+// one WAIT ADVANCED line says so, and the wait blocks for a genuinely new note instead of
+// returning.
+func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, bare := busDir(t)
+	settled(t, checkout)
+
+	other := bench(t, bare)
+	note(t, other, "bo-555555555555", "a note already receipted")
+	if err := push(other); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, checkout, "pull", "-q", "--ff-only", "origin", "main")
+	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-555555555555",
+		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+
+	const timeout = 1 * time.Second
+	start := time.Now()
+	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String(), "--advance")...).mustCode(t, 0)
+	took := time.Since(start)
+
+	r.mustContain(t, "stdout", "WAIT ADVANCED from=").
+		mustContain(t, "stdout", " to=").
+		mustContain(t, "stdout", " heard=1").
+		mustContain(t, "stdout", "WAIT TIMEOUT after=")
+	if strings.Contains(r.stdout, "WAIT OK new=1") {
+		t.Fatalf("wait --advance returned WAIT OK on a note it had already receipted:\n%s", r.stdout)
+	}
+	if took < timeout {
+		t.Fatalf("wait --advance returned after %s, before its %s deadline, over only a heard note:\n%s", took, timeout, r.stdout)
+	}
+	// The cursor moved over the heard note: its commit is the one this run read to, which
+	// is the parent of the cursor commit the advance itself made.
+	readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD~1"))
+	if onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR")); len(onLane) == 0 || onLane[0] != readTo {
+		t.Fatalf("the cursor was not advanced to head over the heard note (read to %s):\n%s", readTo, read(t, checkout, "from-ada/CURSOR"))
+	}
+}
+
 // THE BEAT IS WRITTEN EVERY TICK. A waiting line's cursor does not move -- there was
 // nothing to read -- so a line whose cursor never moves reads asleep to `nova-wake awake`.
 // The BEAT is the file that moves anyway: rewritten on every poll, one line, the newest
@@ -467,11 +534,12 @@ func TestWaitWritesBeatEachTick(t *testing.T) {
 
 	invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "1h")...).mustCode(t, 0)
 
-	// Rewritten, not appended: one line, an RFC 3339 UTC stamp and the cursor sha.
+	// Rewritten, not appended: one line, an RFC 3339 UTC stamp, the cursor sha, and a
+	// lease until=<stamp>.
 	beat := strings.TrimSpace(read(t, checkout, "from-ada/BEAT"))
 	fields := strings.Fields(beat)
-	if len(fields) != 2 {
-		t.Fatalf("BEAT is %q, want one line <stamp> <cursor>", beat)
+	if len(fields) != 3 {
+		t.Fatalf("BEAT is %q, want one line <stamp> <cursor> until=<stamp>", beat)
 	}
 	if _, err := time.Parse(time.RFC3339Nano, fields[0]); err != nil {
 		t.Fatalf("BEAT stamp %q is not an RFC 3339 UTC stamp: %v", fields[0], err)
@@ -482,6 +550,38 @@ func TestWaitWritesBeatEachTick(t *testing.T) {
 	}
 	if strings.Count(beat, "\n") != 0 {
 		t.Fatalf("BEAT is more than one line (rewritten, not appended):\n%q", beat)
+	}
+}
+
+// THE BEAT CARRIES A LEASE, and it is written on exit as well as on every tick. A wait
+// that returns hands the harness the note and then is done: between that return and the
+// next wait there is a gap where the duty process is alive but no beat is written, and
+// over a slow note the gap outruns --window and the line reads asleep to `nova-wake
+// awake`. So the exit beat extends until=now+--beat-lease out over that gap, and the
+// lease is what keeps a working duty cycle reading awake.
+func TestWaitWritesLeaseOnExit(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "1h")...).mustCode(t, 0)
+
+	beat := strings.TrimSpace(read(t, checkout, "from-ada/BEAT"))
+	fields := strings.Fields(beat)
+	if len(fields) != 3 || !strings.HasPrefix(fields[2], "until=") {
+		t.Fatalf("BEAT is %q, want <stamp> <cursor> until=<stamp>", beat)
+	}
+	stamp, err := time.Parse(time.RFC3339Nano, fields[0])
+	if err != nil {
+		t.Fatalf("BEAT stamp %q is not an RFC 3339 UTC stamp: %v", fields[0], err)
+	}
+	until, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(fields[2], "until="))
+	if err != nil {
+		t.Fatalf("BEAT until %q is not an RFC 3339 UTC stamp: %v", fields[2], err)
+	}
+	if d := until.Sub(stamp); d != 10*time.Minute {
+		t.Fatalf("the exit beat's lease is %s, want the 10m default: %q", d, beat)
 	}
 }
 

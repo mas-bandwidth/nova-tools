@@ -32,7 +32,7 @@ Both of these were paid for in one day, by one window, in Fable turns.
 | what happened | what it cost | the rule it bought |
 |---|---|---|
 | A window ran a five-minute sleep tick to find out whether anything had moved. Most ticks found nothing. | Every tick was a model turn on the most expensive model in the fleet, spent learning that the world was exactly as it had been left. The turns were gone and the window had not coordinated anything with them. | **A watcher blocks; it does not tick.** One call, one return, one turn per change. The clock lives inside the tool, where a poll costs a subprocess and not a turn. |
-| A harness `/loop` fired a whole model every minute as a heartbeat. First fire: 53 tool calls and 165 seconds to see a note already answered; second: 58 tool calls on an empty inbox (Johnny, 2026-09-11, on the Grok harness). | Every empty minute was a load: a full context re-read to learn that nothing had arrived. | **An in-session poll is not a wake.** A harness interval that runs a model — a `/loop`, a scheduler prompt, a heartbeat — is the five-minute sleep by another name; `watch` is the blocking call inside a turn, `serve` is the process outside one, and there is no third shape. Empty minutes cost zero tokens (rule 10). |
+| A harness `/loop` fired a whole model every minute as a heartbeat. First fire: 53 tool calls and 165 seconds to see a note already answered; second: 58 tool calls on an empty inbox (Johnny, 2026-09-11, on the Grok harness). | Every empty minute was a load: a full context re-read to learn that nothing had arrived. | **An in-session poll is not a wake.** A harness interval that runs a model — a `/loop`, a scheduler prompt, a heartbeat — is the five-minute sleep by another name; `watch` is the blocking call inside a turn, `serve` is nova-wake's process outside one, and `nova-bus wait` run by the harness's own background mechanism outside the turn is the third shape, allowed where the harness cannot run serve (SPEC-WORK's per-harness table names which). Empty minutes cost zero tokens (rule 10). |
 | The state for one watched entry was stored as a **tab-joined** string whose last field was often empty. Reloading it dropped the trailing empty field, so the reloaded value never equalled the freshly computed one. | Every poll reported a change. The watcher woke the window every interval, forever, with nothing to say — a false wake is worse than a missed one, because the window learns to stop reading. | **A state value round-trips or it is not state.** The separator may not be a character the reader can eat, the comparison is byte-for-byte over the stored form, and a test writes state, reloads it, and asserts a second identical poll reports **no change**. |
 
 A third failure was paid the same day and is in **The races** below, because it is
@@ -342,12 +342,16 @@ cursor has ever been written (docs/SPEC-WORK.md, **Presence**, source
 `bus-cursor`). A `from-<name>/BEAT` file is also read, from its own content
 rather than its commit time, and where its stamp is newer than the cursor commit
 the friend reads `source=bus-beat` — the signal a merely-waiting line still
-writes every poll.
+writes every poll. The beat carries a `until=<stamp>` lease, and a beat whose
+lease is still in the future reads `awake` `source=bus-beat` even when its stamp
+and cursor are both past `--window`: that is a line whose duty process is alive
+and between two `wait` calls, not asleep.
 
 **A config file for the repeated flags.** Before the flags, this tool reads
 `<cwd>/.nova-wake/config`, or the file named by `NOVA_WAKE_CONFIG`, as `key=value`
-lines: `bus=`, `window=`, `state=` and `as=` — the four the coordinator retypes
-every turn for `awake` and `quickstart`. A flag given on the command line wins,
+lines: `bus=` for every verb, `window=` and `max=` for `awake`, and `state=` and
+`as=` for `watch` and `quickstart` — the keys the coordinator retypes every
+turn. A flag given on the command line wins,
 nothing is printed for the read, and a required value named by neither the file
 nor a flag is the same refusal, now naming the config file as a second remedy.
 
@@ -521,6 +525,10 @@ WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n> queued=<n> cc=<n> f
 FRIEND <name> awake|asleep|unknown age=<seconds|-> source=bus-cursor
 AWAKE OK friends=<n> awake=<n> asleep=<n> unknown=<n> window=<n>
 AWAKE REFUSED <reason>
+FACT process=<proven|unproven>
+FACT beat=<proven|unproven>
+FACT delivery=<proven|unproven>
+FACT wake=<proven|unproven>
 ```
 
 The last five are `serve`'s (rule 10); `WAKE HERE` and `WAKE PROBE` are
@@ -529,7 +537,20 @@ The last five are `serve`'s (rule 10); `WAKE HERE` and `WAKE PROBE` are
 the verdict line that ends the listing, and `AWAKE REFUSED` the shape for the
 things wrong about the world rather than the invocation (no `--bus`, a `--bus`
 that is not a git repository, a `--window` that is not positive, a negative
-`--max`).
+`--max`). The four `FACT` lines are the awake grammar's presence record: four
+facts a harness must prove separately — **process** alive; **beat** (the bus
+heartbeat) written; **delivery** handled (the note was receipted); **wake**
+(the parent was notified, the model woke) — each `proven` or `unproven`.
+
+The wake drill: a note sent after the parent's turn ended must produce a wake
+within `--window`. Replay: `wake-drill-note-after-turn-wakes-parent`. The
+per-harness table carries one row per harness and one column per presence fact
+plus the drill — a harness that cannot wake on a late note has `cannot` in the
+drill column:
+
+| harness | process | beat | delivery | wake | wake-drill |
+|---|---|---|---|---|---|
+| <name> | proven/unproven | proven/unproven | proven/unproven | proven/unproven | can/cannot |
 
 `WAKE CHANGE`, `WAKE QUIET`, `WAKE BROKEN` and, since 2026-09-13, `WAKE STOPPED`
 are the **last** line and the four possible verdicts. **`sources-failing=<n>`
@@ -3775,6 +3796,11 @@ left without what it pins.
     answer-within=2m` (draft 3, the grammar's new field); a `probe --line` over a
     `--state` a `watch` holds is `WAKE REFUSED` exit 2 naming the holder, and a
     `PRESENT` or `SILENT` probe leaves the state file byte-identical.
+20. `wake-drill-note-after-turn-wakes-parent`: a note sent after the parent's
+    turn ended wakes the parent's session within `--window`, so the harness row
+    in the per-harness table says `can`; a harness whose session does not wake
+    within the window says `cannot` on that row, and the drill asserts the
+    difference rather than a single passing row.
 
 ## Known limits
 

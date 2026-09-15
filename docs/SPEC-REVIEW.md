@@ -644,7 +644,11 @@ first line, which is the sha the reader then hands to `verdict`. A sha read
 from the host is a read, not a guess. A PR entry's head is fetched as
 `pull/<n>/head` from the GitHub remote the lane's `--repo` names, never from the
 lane's `--remote` (which may be a local rehearsal with no pull refs); a branch
-entry's head is fetched from the lane remote (#449).
+entry's head is fetched from the lane remote (#449). The merge base (`main`,
+or whatever `--base` names) is fetched from the same GitHub remote as the PR
+head, never from the lane's `--remote` when that remote is a local rehearsal
+with no `main` (#493); a branch entry keeps fetching its base from the lane
+remote.
 
 **`verdict --head` is required and is the full 40-character sha the reader had
 open**, exactly as `nova-merge read --head`; the tool never fills it in. `VERDICT
@@ -756,49 +760,49 @@ PACKET REFUSED: the lane does not hold this entry; add it with nova-merge add --
 PACKET REUSE asked=<hex12> found=<hex12> file=<path>: that packet was built for another (entry, head, range); build this reader's own
 PACKET FOLD file=<path>: <reason>
 PACKET REFUSED: <reason>
-VERDICT OK entry=<n-or-name> who=<name> model=<id> kind=<line|child|card> verdict=<approve|hold|abstain> head=<sha12> base_tree=<sha12|-> current=<true|false> rows=<n> block=<n> fix=<n> nit=<n> ok=<n> dup=<n> base=<n> external=<n> proposed=<n> closed=<n> carried=<n> seconds=<n|-> wall=<n|-> receipt=<source>/<bench>/<job>/<attempt>|<receipt id>|- digest=<hex12|-> review=<path> read=<path|-> pushed=true
-VERDICT ROW row=<n> id=<id> sev=<block|fix|nit|ok|dup|close> at=<path>:<line>|<finding id> side=<head|base|-> rule=<quoted|base|external|proposed|-> pin=<pin|-> ref=<the third field as written>
-VERDICT CLOSED id=<id> <path>:<line> sev=<block|fix|nit|ok>: closed by this record (rule 8)
-VERDICT CARRIED id=<id> <path>:<line> sev=<block|fix|nit|ok>: still open, not listed by this record (rule 8)
-VERDICT FAIL entry=<n-or-name> who=<name> head=<sha12> review=<path> pushed=false: <reason>; re-run the same verb to push it
-VERDICT REFUSED row=<n>: <path>:<line> <check>: <reason>
-VERDICT REFUSED approve=open id=<id> <path>:<line> sev=<block|fix>: an approve cannot stand over this reader's own open finding; close it or dup it (rule 8)
-VERDICT REFUSED input=bytes file=<path> limit=<n>: the input passed its byte budget while being read (rule 12)
-VERDICT REFUSED input=line row=<n> file=<path> limit=<n>: one line passed its byte budget while being read (rule 12)
-VERDICT MORE kind=row shown=<n> total=<t> refused=<n> nova-review verdict --lane <dir> … --max 0
-VERDICT MORE kind=<recorded|closed|carried|open|fold> shown=<n> total=<t> nova-review verdict --lane <dir> … --max 0
-VERDICT FOLD file=<path>: <reason>
-VERDICT STAGED ORPHAN id=<submission id> parts=<n> removed=true: staged with no manifest; published nowhere (amendment B)
-VERDICT REFUSED: <reason>
-ANSWER OK entry=<n-or-name> finding=<id> who=<name> as=<fixed|declined|dup> head=<sha12> of=<id|-> file=<path> pushed=true
-ANSWER FAIL entry=<n-or-name> finding=<id> file=<path> pushed=false: <reason>; re-run the same verb to push it
-ANSWER FOLD file=<path>: <reason>
-ANSWER STAGED ORPHAN id=<submission id> parts=<n> removed=true: staged with no manifest; published nowhere (amendment B)
-ANSWER REFUSED: <reason>
-POLICY OK entry=<n-or-name> id=<id> who=<name> readers=<n> reserved=<n> deadline=<stamp> head=<sha12> file=<path> pushed=true
-POLICY FAIL entry=<n-or-name> id=<id> file=<path> pushed=false: <reason>; re-run the same verb to push it
-POLICY STAGED ORPHAN id=<submission id> parts=<n> removed=true: staged with no manifest; published nowhere (amendment B)
-POLICY FOLD file=<path>: <reason>
-POLICY REFUSED: <reason>
-ROSTER READER who=<name> state=<yes|hold|abstain|waived|pending> head=<sha12|-> at=<stamp|-> model=<id|-> open=<n> evidence=<n> reserved=<true|false> policy=<id|-> by=<reserved|-> policy_by=<name|-> policy_reason=<text|-> deadline=<stamp|-> author=<true|false>
-ROSTER MORE kind=<reader|fold> shown=<n> total=<t> nova-review roster --lane <dir> … --max 0
-ROSTER OK entry=<n-or-name> head=<sha12> yes=<n> hold=<n> abstain=<n> waived=<n> pending=<n> evidence=<n> ratified=<true|false> merge_read=<satisfied|needs-read|hold> policy=<id|-> deadline=<stamp|-> policy_by=<name|-> policy_reason=<text|->
-ROSTER FOLD file=<path> ratified=false: <reason>
-ROSTER PAIR read=<path> review=<path> field=<who|head|at|verdict>: the two records of one submission disagree
-ROSTER POLICY HEAD policy=<id> policy_head=<sha12> head=<sha12> ratified=false: the policy was made at another head (rule 7)
-ROSTER REFUSED: <reason>
-DEDUPE FINDING id=<id> key=<path>:<line>@<rule_kind>:<rule ref as written> sev=<block|fix|nit|ok> head=<sha12> members=<id,...> seen=<who:model,...> unreported=<who:model,...> blind=<n> dups=<n> open=<true|false> answer=<fixed|declined|dup|->
-DEDUPE MORE kind=<finding|fold> shown=<n> total=<t> nova-review dedupe --lane <dir> … --max 0
-DEDUPE FOLD file=<path>: <reason>
-DEDUPE PAIR read=<path> review=<path> field=<who|head|at|verdict>: the two records of one submission disagree
-DEDUPE OK entry=<n-or-name> head=<sha12> findings=<n> groups=<n> folded=<n> open=<n> base=<n> external=<n> proposed=<n> readers=<n>
-COST READ entry=<n-or-name> who=<name> kind=<line|child|card> model=<id> head=<sha12> verdict=<word> receipt=<source>/<bench>/<job>/<attempt>|<receipt id>|- digest=<hex12|-> reused=<true|false> seconds=<n|-> wall=<n|-> in=<n|-> out=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> usd=<v|->
-COST HEAD entry=<n-or-name> head=<sha12> reads=<n> seconds=<n|-> wall=<n|-> latency=<n|-> in=<n|-> out=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> usd=<v|-> dashes=<n>
-COST MORE kind=<read|head|fold> shown=<n> total=<t> nova-review cost --lane <dir> … --max 0
-COST FOLD file=<path>: <reason>
-COST PAIR read=<path> review=<path> field=<who|head|at|verdict>: the two records of one submission disagree
-COST RECEIPT id=<source>/<bench>/<job>/<attempt> a=<path> digest=<hex12> b=<path> digest=<hex12>: one receipt identity, two digests
-COST OK entries=<n> reads=<n> rounds=<n> evidence_rounds=<n> receipts=<n> reused=<n> seconds=<n|-> wall=<n|-> in=<n|-> out=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> usd=<v|-> dashes=<n>
+~~VERDICT OK entry=<n-or-name> who=<name> model=<id> kind=<line|child|card> verdict=<approve|hold|abstain> head=<sha12> base_tree=<sha12|-> current=<true|false> rows=<n> block=<n> fix=<n> nit=<n> ok=<n> dup=<n> base=<n> external=<n> proposed=<n> closed=<n> carried=<n> seconds=<n|-> wall=<n|-> receipt=<source>/<bench>/<job>/<attempt>|<receipt id>|- digest=<hex12|-> review=<path> read=<path|-> pushed=true~~
+~~VERDICT ROW row=<n> id=<id> sev=<block|fix|nit|ok|dup|close> at=<path>:<line>|<finding id> side=<head|base|-> rule=<quoted|base|external|proposed|-> pin=<pin|-> ref=<the third field as written>~~
+~~VERDICT CLOSED id=<id> <path>:<line> sev=<block|fix|nit|ok>: closed by this record (rule 8)~~
+~~VERDICT CARRIED id=<id> <path>:<line> sev=<block|fix|nit|ok>: still open, not listed by this record (rule 8)~~
+~~VERDICT FAIL entry=<n-or-name> who=<name> head=<sha12> review=<path> pushed=false: <reason>; re-run the same verb to push it~~
+~~VERDICT REFUSED row=<n>: <path>:<line> <check>: <reason>~~
+~~VERDICT REFUSED approve=open id=<id> <path>:<line> sev=<block|fix>: an approve cannot stand over this reader's own open finding; close it or dup it (rule 8)~~
+~~VERDICT REFUSED input=bytes file=<path> limit=<n>: the input passed its byte budget while being read (rule 12)~~
+~~VERDICT REFUSED input=line row=<n> file=<path> limit=<n>: one line passed its byte budget while being read (rule 12)~~
+~~VERDICT MORE kind=row shown=<n> total=<t> refused=<n> nova-review verdict --lane <dir> … --max 0~~
+~~VERDICT MORE kind=<recorded|closed|carried|open|fold> shown=<n> total=<t> nova-review verdict --lane <dir> … --max 0~~
+~~VERDICT FOLD file=<path>: <reason>~~
+~~VERDICT STAGED ORPHAN id=<submission id> parts=<n> removed=true: staged with no manifest; published nowhere (amendment B)~~
+~~VERDICT REFUSED: <reason>~~
+~~ANSWER OK entry=<n-or-name> finding=<id> who=<name> as=<fixed|declined|dup> head=<sha12> of=<id|-> file=<path> pushed=true~~
+~~ANSWER FAIL entry=<n-or-name> finding=<id> file=<path> pushed=false: <reason>; re-run the same verb to push it~~
+~~ANSWER FOLD file=<path>: <reason>~~
+~~ANSWER STAGED ORPHAN id=<submission id> parts=<n> removed=true: staged with no manifest; published nowhere (amendment B)~~
+~~ANSWER REFUSED: <reason>~~
+~~POLICY OK entry=<n-or-name> id=<id> who=<name> readers=<n> reserved=<n> deadline=<stamp> head=<sha12> file=<path> pushed=true~~
+~~POLICY FAIL entry=<n-or-name> id=<id> file=<path> pushed=false: <reason>; re-run the same verb to push it~~
+~~POLICY STAGED ORPHAN id=<submission id> parts=<n> removed=true: staged with no manifest; published nowhere (amendment B)~~
+~~POLICY FOLD file=<path>: <reason>~~
+~~POLICY REFUSED: <reason>~~
+~~ROSTER READER who=<name> state=<yes|hold|abstain|waived|pending> head=<sha12|-> at=<stamp|-> model=<id|-> open=<n> evidence=<n> reserved=<true|false> policy=<id|-> by=<reserved|-> policy_by=<name|-> policy_reason=<text|-> deadline=<stamp|-> author=<true|false>~~
+~~ROSTER MORE kind=<reader|fold> shown=<n> total=<t> nova-review roster --lane <dir> … --max 0~~
+~~ROSTER OK entry=<n-or-name> head=<sha12> yes=<n> hold=<n> abstain=<n> waived=<n> pending=<n> evidence=<n> ratified=<true|false> merge_read=<satisfied|needs-read|hold> policy=<id|-> deadline=<stamp|-> policy_by=<name|-> policy_reason=<text|->~~
+~~ROSTER FOLD file=<path> ratified=false: <reason>~~
+~~ROSTER PAIR read=<path> review=<path> field=<who|head|at|verdict>: the two records of one submission disagree~~
+~~ROSTER POLICY HEAD policy=<id> policy_head=<sha12> head=<sha12> ratified=false: the policy was made at another head (rule 7)~~
+~~ROSTER REFUSED: <reason>~~
+~~DEDUPE FINDING id=<id> key=<path>:<line>@<rule_kind>:<rule ref as written> sev=<block|fix|nit|ok> head=<sha12> members=<id,...> seen=<who:model,...> unreported=<who:model,...> blind=<n> dups=<n> open=<true|false> answer=<fixed|declined|dup|->~~
+~~DEDUPE MORE kind=<finding|fold> shown=<n> total=<t> nova-review dedupe --lane <dir> … --max 0~~
+~~DEDUPE FOLD file=<path>: <reason>~~
+~~DEDUPE PAIR read=<path> review=<path> field=<who|head|at|verdict>: the two records of one submission disagree~~
+~~DEDUPE OK entry=<n-or-name> head=<sha12> findings=<n> groups=<n> folded=<n> open=<n> base=<n> external=<n> proposed=<n> readers=<n>~~
+~~COST READ entry=<n-or-name> who=<name> kind=<line|child|card> model=<id> head=<sha12> verdict=<word> receipt=<source>/<bench>/<job>/<attempt>|<receipt id>|- digest=<hex12|-> reused=<true|false> seconds=<n|-> wall=<n|-> in=<n|-> out=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> usd=<v|->~~
+~~COST HEAD entry=<n-or-name> head=<sha12> reads=<n> seconds=<n|-> wall=<n|-> latency=<n|-> in=<n|-> out=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> usd=<v|-> dashes=<n>~~
+~~COST MORE kind=<read|head|fold> shown=<n> total=<t> nova-review cost --lane <dir> … --max 0~~
+~~COST FOLD file=<path>: <reason>~~
+~~COST PAIR read=<path> review=<path> field=<who|head|at|verdict>: the two records of one submission disagree~~
+~~COST RECEIPT id=<source>/<bench>/<job>/<attempt> a=<path> digest=<hex12> b=<path> digest=<hex12>: one receipt identity, two digests~~
+~~COST OK entries=<n> reads=<n> rounds=<n> evidence_rounds=<n> receipts=<n> reused=<n> seconds=<n|-> wall=<n|-> in=<n|-> out=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> usd=<v|-> dashes=<n>~~
 ```
 
 `PACKET OK cut=<n>` is the number of files whose diff was replaced by a hunk
@@ -1373,6 +1377,10 @@ to discuss a HOLD writes a note themselves. This tool adds no verb to the bus.
 
 ## What it deliberately does not do
 
+- **The six other verbs this draft specifies — `verdict`, `answer`, `policy`,
+  `roster`, `dedupe` and `cost` — are not implemented, and their output lines
+  are struck from the grammar above until they are built: the binary ships
+  `packet`, `version` and `help`.** (drift audit, 2026-09-15)
 - **It does not review code.** It checks that a finding's ground exists at the
   head; it never checks that the claim is true, and no line of it compares two
   claims.

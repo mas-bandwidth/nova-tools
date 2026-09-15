@@ -34,62 +34,99 @@ var cardColumns = []string{
 // ledgerColumns are the columns of the daily token ledger, in order. The header the caller
 // keeps is read and refused when it differs, so a ledger filled by hand and one filled by
 // this verb can never disagree about the order.
-var ledgerColumns = []string{"day", "model", "tokens_in", "tokens_out", "usd", "cards"}
+var ledgerColumns = []string{"day", "model", "tokens_in", "tokens_out", "usd", "cards", "dashes"}
 
-const wantsLedger = "the ledger file, <ledger>.tsv, whose header is day, model, tokens_in, tokens_out, usd, cards"
+const wantsLedger = "the ledger file, <ledger>.tsv, whose header is day, model, tokens_in, tokens_out, usd, cards, dashes"
 
 // cardSum is one model's folded totals over the day: the tokens in and out, the dollars,
-// and how many cards (jobs) reported it.
+// and how many cards (jobs) reported it, plus how many of those cards left each field
+// unknown (a dash, an empty cell, or a cell that is not a number).
 type cardSum struct {
-	in, out int64
-	usd     float64
-	cards   int
+	in, out                           int64
+	usd                               float64
+	cards                             int
+	unknownIn, unknownOut, unknownUsd int
 }
 
-func (c *cardSum) add(in, out int64, usd float64) {
-	c.in += in
-	c.out += out
-	c.usd += usd
+func (c *cardSum) add(in, out int64, usd float64, inKnown, outKnown, usdKnown bool) {
+	if inKnown {
+		c.in += in
+	} else {
+		c.unknownIn++
+	}
+	if outKnown {
+		c.out += out
+	} else {
+		c.unknownOut++
+	}
+	if usdKnown {
+		c.usd += usd
+	} else {
+		c.unknownUsd++
+	}
 	c.cards++
 }
 
-// parseCardCount reads a numeric cell; a dash or an empty cell is an absence, which this
-// ledger reads as zero, because the ledger keeps only tokens in, tokens out and dollars and
-// never claims the other three types exist.
-func parseCardCount(v string) int64 {
+// parseCardCount reads a numeric cell and whether the cell held one. A dash, an empty cell,
+// or a cell that is not a number is an absence, and an absence is unknown: never the zero
+// that would make a route that did not report a count look free.
+func parseCardCount(v string) (int64, bool) {
 	v = strings.TrimSpace(v)
 	if v == "" || v == tokens.Dash {
-		return 0
+		return 0, false
 	}
 	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-		return n
+		return n, true
 	}
-	return 0
+	return 0, false
 }
 
-// parseCardUsd reads the dollar cell to four decimals; a dash is zero here too.
-func parseCardUsd(v string) float64 {
+// parseCardUsd reads the dollar cell and whether the cell held it. An absence here is
+// unknown too, never a free-route zero.
+func parseCardUsd(v string) (float64, bool) {
 	v = strings.TrimSpace(v)
 	if v == "" || v == tokens.Dash {
-		return 0
+		return 0, false
 	}
 	if f, err := strconv.ParseFloat(v, 64); err == nil {
-		return f
+		return f, true
 	}
-	return 0
+	return 0, false
+}
+
+// cardCell renders one count cell: the summed count, or `-` when every card left the field
+// unknown, matching the ledger-wide rule that an unmeasured type is `-`, never 0.
+func cardCell(n int64, unknown, cards int) string {
+	if unknown == cards {
+		return tokens.Dash
+	}
+	return strconv.FormatInt(n, 10)
+}
+
+// usdCell renders the dollar cell: `-` when every card left it unknown, else four decimals.
+func usdCell(n float64, unknown, cards int) string {
+	if unknown == cards {
+		return tokens.Dash
+	}
+	return strconv.FormatFloat(n, 'f', 4, 64)
+}
+
+// dashesCell counts, per kept field, how many cards left it unknown.
+func dashesCell(in, out, usd int) string {
+	return strconv.Itoa(in) + "," + strconv.Itoa(out) + "," + strconv.Itoa(usd)
 }
 
 // readCardFile reads one card's usage.tsv, mapping its columns by the header so the reader
 // never depends on a fixed index. It returns the started stamp, the model, and the three
 // numbers the ledger keeps, and reports whether the file held a row at all.
-func readCardFile(path string) (started, model string, in, out int64, usd float64, ok bool) {
+func readCardFile(path string) (started, model string, in, out int64, usd float64, inKnown, outKnown, usdKnown, ok bool) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", 0, 0, 0, false
+		return "", "", 0, 0, 0, false, false, false, false
 	}
 	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
 	if len(lines) < 2 {
-		return "", "", 0, 0, 0, false
+		return "", "", 0, 0, 0, false, false, false, false
 	}
 	head := strings.Split(lines[0], "\t")
 	idx := map[string]int{}
@@ -114,10 +151,12 @@ func readCardFile(path string) (started, model string, in, out int64, usd float6
 		if s == "" || m == "" {
 			continue
 		}
-		return s, m, parseCardCount(get(row, "tokens_in")), parseCardCount(get(row, "tokens_out")),
-			parseCardUsd(get(row, "usd")), true
+		in, inKnown = parseCardCount(get(row, "tokens_in"))
+		out, outKnown = parseCardCount(get(row, "tokens_out"))
+		usd, usdKnown = parseCardUsd(get(row, "usd"))
+		return s, m, in, out, usd, inKnown, outKnown, usdKnown, true
 	}
-	return "", "", 0, 0, 0, false
+	return "", "", 0, 0, 0, false, false, false, false
 }
 
 // sumSwarmRoot is the --swarm-root mode of `sum`: it walks the card usage files, folds the
@@ -147,7 +186,7 @@ func sumSwarmRoot(root, day, out string, stdout, stderr io.Writer, r *refusals) 
 	models := map[string]*cardSum{}
 	totalCards := 0
 	for _, p := range paths {
-		started, model, in, out, usd, ok := readCardFile(p)
+		started, model, in, out, usd, inKnown, outKnown, usdKnown, ok := readCardFile(p)
 		if !ok {
 			continue
 		}
@@ -159,7 +198,7 @@ func sumSwarmRoot(root, day, out string, stdout, stderr io.Writer, r *refusals) 
 			m = &cardSum{}
 			models[model] = m
 		}
-		m.add(in, out, usd)
+		m.add(in, out, usd, inKnown, outKnown, usdKnown)
 		totalCards++
 	}
 
@@ -221,10 +260,11 @@ func writeLedger(path, day string, names []string, models map[string]*cardSum) e
 		m := models[name]
 		out = append(out, strings.Join([]string{
 			day, name,
-			strconv.FormatInt(m.in, 10),
-			strconv.FormatInt(m.out, 10),
-			strconv.FormatFloat(m.usd, 'f', 4, 64),
+			cardCell(m.in, m.unknownIn, m.cards),
+			cardCell(m.out, m.unknownOut, m.cards),
+			usdCell(m.usd, m.unknownUsd, m.cards),
 			strconv.Itoa(m.cards),
+			dashesCell(m.unknownIn, m.unknownOut, m.unknownUsd),
 		}, "\t"))
 	}
 

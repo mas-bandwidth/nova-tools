@@ -304,3 +304,92 @@ func (plan ReceiptPlan) Append(root string) error {
 func (plan ReceiptPlan) Message(me Participant) string {
 	return me.Slug() + ": receipt for " + strings.Join(plan.Record, ", ")
 }
+
+// ClosePlan is what a `close --before` run will record: one receipt note per open note
+// dated before the stamp, each carrying a Re line that closes the original and a body that
+// says why. `close` is the whole backlog at once -- the one-command way out that the
+// INBOX OPEN line's `remedy=inbox --advance` names, but as a real hand rather than a line
+// drawn past the history.
+type ClosePlan struct {
+	// Prepared is the receipt notes to write, one per open note older than Before.
+	Prepared []Prepared
+	// Kept is the open notes dated at or after the stamp, left open on purpose.
+	Kept int
+	// Stamp is the Before moment rendered, used in every note's subject and body.
+	Stamp string
+}
+
+// PlanClose selects the reader's open notes dated before the stamp and builds one receipt
+// note per one. It writes nothing: the caller writes the notes and commits once.
+func PlanClose(t *Bus, me Participant, before time.Time, now time.Time) (ClosePlan, error) {
+	var plan ClosePlan
+	if me.Lane == "" {
+		return plan, fmt.Errorf("%q has no lane on this bus, so has nowhere to record a receipt", me.Name)
+	}
+	if before.IsZero() {
+		return plan, errors.New("no stamp given")
+	}
+	plan.Stamp = before.UTC().Format(ReceiptStampLayout)
+	body := "closed: unanswered before " + plan.Stamp
+	for _, item := range t.Inbox(me, maxReceiptGuessWords) {
+		when := item.Note.When()
+		if when.IsZero() || !when.Before(before) {
+			plan.Kept++
+			continue
+		}
+		target := item.Note.Header.ID
+		if target == "" {
+			target = item.Note.Path
+		}
+		prepared, err := closeReceipt(t, me, item, target, body, now)
+		if err != nil {
+			return plan, err
+		}
+		plan.Prepared = append(plan.Prepared, prepared)
+	}
+	return plan, nil
+}
+
+// closeReceipt builds one receipt note that closes one open note: a Re line to the target,
+// the Kind that marks it a receipt, and a subject and body that name the stamp.
+func closeReceipt(t *Bus, me Participant, item InboxItem, target, body string, now time.Time) (Prepared, error) {
+	h := Header{
+		From:    me.Name,
+		To:      item.From,
+		Re:      []string{target},
+		Kind:    KindReceipt,
+		Subject: body,
+		Date:    now.UTC().Format(DateLayout),
+	}
+	n := Note{Header: h, Body: body, Lane: me.Lane}
+	id, err := AssignID(t.Config, me, n.Header, n.Body, n.Header.Date)
+	if err != nil {
+		return Prepared{}, err
+	}
+	if _, clash := t.NoteByID(id); clash {
+		return Prepared{}, fmt.Errorf("the id %q is already on this bus", id)
+	}
+	n.Header.ID = id
+	n.Path = me.Lane + "/" + FileName(now, Slugify(n.Header.Subject, SlugMax), id)
+	if _, taken := t.NoteByPath(n.Path); taken {
+		return Prepared{}, fmt.Errorf("%s already exists", n.Path)
+	}
+	return Prepared{
+		Note:    n,
+		Sender:  me,
+		Path:    n.Path,
+		Index:   IndexEntryFor(t.Config, n),
+		Message: me.Slug() + ": " + n.Header.Subject,
+	}, nil
+}
+
+// Message is the commit message for a close run.
+func (plan ClosePlan) Message(me Participant) string {
+	return fmt.Sprintf("%s: close %d before %s", me.Slug(), len(plan.Prepared), plan.Stamp)
+}
+
+// maxReceiptGuessWords is the word ceiling PlanClose reads the inbox under. Close does not
+// sort notes from receipts -- it closes every open note old enough -- so the classification
+// is never consulted; a fixed ceiling keeps the signature free of a flag the caller never
+// uses.
+const maxReceiptGuessWords = 40
