@@ -14,6 +14,7 @@ package swarm
 // carries: one line, capped, one per card.
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,9 +24,22 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
+
+// admitError is a card-shape refusal found while admitting a card. It is distinct from a
+// plain read error because it carries the label and the reason and prints its own line:
+// ADMIT REFUSED <label> card-shape: <reason>, citing docs/WORKER-CARDS.md practice 17.
+type admitError struct {
+	label  string
+	reason string
+}
+
+func (e *admitError) Error() string {
+	return fmt.Sprintf("ADMIT REFUSED %s card-shape: %s", oneline.Field(e.label), e.reason)
+}
 
 // BatchInput is everything the batch scatter/wait/gather needs, held apart from the
 // command-line parsing so a test can drive it with a fake runner script.
@@ -64,7 +78,12 @@ const idlePollInterval = 100 * time.Millisecond
 func Batch(in BatchInput) int {
 	cards, err := readCards(in.Cards)
 	if err != nil {
-		fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
+		var ae *admitError
+		if errors.As(err, &ae) {
+			fmt.Fprintln(in.Stderr, ae.Error())
+		} else {
+			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
+		}
 		return 2
 	}
 	if len(cards) == 0 {
@@ -295,6 +314,9 @@ func readCards(path string) ([]batchCard, error) {
 		if contract == "" {
 			return nil, fmt.Errorf("--cards line %d: %s is empty; a card admits under line 1 of its text", i+1, cardPath)
 		}
+		if reason := cardShapeFailure(parts[2], string(cardRaw)); reason != "" {
+			return nil, &admitError{label: parts[0], reason: reason}
+		}
 		cards = append(cards, batchCard{
 			label:    parts[0],
 			slot:     slot,
@@ -344,4 +366,92 @@ func second(lines []string) string {
 		return ""
 	}
 	return lines[1]
+}
+
+// cardShapeFailure checks a card's shape at admission, and only for a DeepSeek model whose
+// provider prefix is opencode/ or deepseek/. Mercury (inception/) cards are not checked.
+// It returns the reason if the card is refused, or "" if the card's shape is acceptable.
+// The refusal cites docs/WORKER-CARDS.md practice 17: a DeepSeek card wants a working
+// directory and the clone as step 1, one command per line, numbered steps, the verdict
+// vocabulary inside the step, the RESULT shape last and short, no capitalised contract
+// block and no launcher text.
+func cardShapeFailure(model, raw string) string {
+	if !isDeepSeekModel(model) {
+		return ""
+	}
+	lines := strings.Split(raw, "\n")
+	step := "docs/WORKER-CARDS.md practice 17"
+	if firstNonEmpty := firstNonEmptyLine(lines); lineIsCapitalsOnly(firstNonEmpty) {
+		return "capitalised contract block (" + step + ")"
+	}
+	if !hasStep1(lines) {
+		return "no 'STEP 1' line in the first 15 lines (" + step + ")"
+	}
+	if mentionsLauncher(lines) {
+		return "'launcher' in the first 10 lines (" + step + ")"
+	}
+	return ""
+}
+
+// isDeepSeekModel reports whether a model's provider prefix is opencode/ or deepseek/.
+func isDeepSeekModel(model string) bool {
+	prefix, _, ok := strings.Cut(model, "/")
+	if !ok {
+		return false
+	}
+	return prefix == "opencode" || prefix == "deepseek"
+}
+
+// firstNonEmptyLine is the first line whose trimmed form is not empty, or "" when every
+// line is empty.
+func firstNonEmptyLine(lines []string) string {
+	for _, ln := range lines {
+		if strings.TrimSpace(ln) != "" {
+			return ln
+		}
+	}
+	return ""
+}
+
+// lineIsCapitalsOnly reports whether a line holds at least one letter and no lowercase one:
+// a capitalised contract block.
+func lineIsCapitalsOnly(s string) bool {
+	hasLetter := false
+	for _, r := range s {
+		if unicode.IsLetter(r) {
+			hasLetter = true
+			if unicode.IsLower(r) {
+				return false
+			}
+		}
+	}
+	return hasLetter
+}
+
+// hasStep1 reports whether any of the first 15 lines begins "STEP 1".
+func hasStep1(lines []string) bool {
+	n := len(lines)
+	if n > 15 {
+		n = 15
+	}
+	for i := 0; i < n; i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "STEP 1") {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionsLauncher reports whether any of the first 10 lines mentions "launcher".
+func mentionsLauncher(lines []string) bool {
+	n := len(lines)
+	if n > 10 {
+		n = 10
+	}
+	for i := 0; i < n; i++ {
+		if strings.Contains(strings.ToLower(lines[i]), "launcher") {
+			return true
+		}
+	}
+	return false
 }
