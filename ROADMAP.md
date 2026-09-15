@@ -686,8 +686,9 @@ Prerequisites: E08-F03, E02-F04.
 - [ ] After the team-configured silence threshold use one bounded availability probe; nonresponse is unconfirmed capacity, never proof of exhausted credits
 - [ ] quiet-until-actionable: keep unchanged traffic mechanical, batch actionable deltas within bounds and let corrections, stops, lease loss and deadlines bypass delay
 - [ ] regression-and-recovery: suspend new automatic routing on a breached trial, retain uncertain live handles and use only eligible role-preserving fallback
+- [ ] presence-and-recovery: derive one presence per friend from the newest of the four beat sources (bus cursor, wake probe, harness hook, manual), read asleep at 300 s and unacknowledged at 600 s, refuse assignment to an asleep or unknown friend, and recover only by a coordinator's recorded reassign that cites the reading and fences the prior lease
 
-Source sections: Observed availability; Friends and assignments are resident indexes too; Efficiency policy (SPEC-WORK.md@685b7c2).
+Source sections: Observed availability; Friends and assignments are resident indexes too; Efficiency policy (SPEC-WORK.md@685b7c2); Presence: who is awake and who is asleep.
 
 **E08-F05 — Bounded config/pricing exchange and model suitability**
 
