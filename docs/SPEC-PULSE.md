@@ -104,11 +104,15 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    `state=free` **and** `<slot>/native.log` has not been written for 120 s. Both, never
    one: a slot file freed under a writer is the hurt of SPEC-SWARM rule 17. `free-before=<n>`
    on the `PULSE` line is that count before admission; `--slots <n>` caps it.
-9. **Cards beyond the free slots are refused, or queued by choice.** `n` cards over `f` free
-   slots with no `--queue` is `PULSE REFUSED UNDER-SLOTS cards=<n> free=<f> (pass --queue, or
-   wait)`, exit 2, and nothing is admitted — half a pulse admitted by surprise is the
-   coordinator counting by hand. With `--queue` the first `f` cards in `cards.tsv` order go
-   out and the rest are appended to `<root>/queue.tsv`, `queued=<n>` says how many.
+9. **Launch fills every free slot on every bench, and only with admitted work.** Maximum
+   available throughput is the default, Glenn: every free slot is filled in `cards.tsv` order
+   and the rest appended to `<root>/queue.tsv`, `queued=<n>` says how many. A card is admitted
+   when (a) the shift's spend ceiling would not be crossed by its route's class — `--spend-max
+   <usd>` per shift, local and flat routes count zero; (b) its contract line has fewer than
+   `--max-attempts` (default 2) prior attempts across the queue; (c) its source is in the
+   approved scope list — `--scope <file>`, one source per line, pool sources default. A refused
+   card prints `ADMIT REFUSED card=<label> gate=<spend|attempts|scope> <value>` and waits in
+   `queue.tsv` with the rest.
 10. **Every card goes through `batch`, never a single `add`.** `launch` runs exactly one
     `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>
     --then "nova-pulse harvest --id <id> --root <root>"` per model route present, so at
@@ -149,9 +153,10 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     queue are both empty it prints `PULSE POOL EMPTY in-flight=<n>` and exits 0: real work
     ran out, and the tool says so. It invents nothing to keep the slots warm.
 16. **`width` is the alarm, and it is one line.** `PULSE WIDTH in-flight=<n> free=<n>
-    pool=<n> queued=<n>` when the state is consistent; `PULSE UNDER-WIDTH pool=<n> free=<n>:
-    launch` with exit 2 when `pool + queued > 0` and `free > 0` — work is waiting and slots
-    are idle, which is the drift Glenn named; `PULSE POOL EMPTY in-flight=<n>` when `pool =
+     pool=<n> queued=<n>` when the state is consistent; `PULSE UNDER-WIDTH pool=<n> free=<n>:
+     launch` with exit 2 when `pool + queued > 0` and `free > 0`, where `pool` counts only
+     admitted pending work, which is the drift Glenn named; `PULSE POOL EMPTY in-flight=<n>`
+     when `pool =
     0` and `queued = 0`. `width` reads `pool.tsv`, `queue.tsv` and the slot files; it
     launches nothing and writes nothing. nova-wake may run it on a clock; this tool has none.
 17. **The cost model.** `nova-pulse` costs no model tokens: no verb calls a model, reads a
@@ -174,7 +179,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
 ```
 nova-pulse pool    --sources <file> --work <nova-work root> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> --spend-max <usd> --max-attempts <n> --scope <file> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse handoff --to <name> --root <dir>
 nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--max <n>]
@@ -223,6 +228,7 @@ CUT SKIPPED source=<kind> id=<id> template=<name>: no template
 CUT REFUSED template=<name>: <which rule> (<remedy>)
 PULSE OK id=<id> n=<n> free-before=<n> queued=<n> batches=<n> deadline=<s>
 PULSE REFUSED UNDER-SLOTS cards=<n> free=<n> (pass --queue, or wait)
+ADMIT REFUSED card=<label> gate=<spend|attempts|scope> <value>
 PULSE REFUSED: <reason> (<remedy>)
 HARVEST PR repo=<owner/name> pr=<n> label=<label> branch=<name>
 HARVEST RETRY label=<label> card=<path>: <last permission or refusal line, escaped>
@@ -239,7 +245,7 @@ TAKEOVER REFUSED owner=<name> pid=<n> host=<h> (wait, or clear the stale lock)
 <TOKEN> NOTE <something true about this run that is not a finding>
 ```
 
-`POOL`, `CUT`, `PULSE`, `HARVEST`, `HANDOFF` and `TAKEOVER` are the first tokens; `OK`,
+`POOL`, `CUT`, `ADMIT`, `PULSE`, `HARVEST`, `HANDOFF` and `TAKEOVER` are the first tokens; `OK`,
 `REFUSED`, `WIDTH`, `UNDER-WIDTH` and `POOL EMPTY` the verdicts and the **last** line of a
 verb; `harvest`'s last line is the `PULSE` line of the pulse it launched, or
 `PULSE POOL EMPTY`. `OK` and `WIDTH` lines go to stdout, `REFUSED` and `UNDER-WIDTH` to
@@ -384,6 +390,18 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
 29. `takeover-inherits-queue`: the taken `HANDOFF` record's inflight, pending and
     escalations are inherited and printed as `TAKEOVER OK from=<name>
     inherited=<inflight/pending/escalations>`.
+30. `admit-refuses-over-spend`: a shift whose `--spend-max` a `pro` route card's class would
+    cross yields `ADMIT REFUSED card=<label> gate=spend <usd>`, the card queued; local and
+    flat route cards count zero.
+31. `admit-refuses-third-attempt`: a contract line with two prior attempts across the queue is
+    refused at the default `--max-attempts 2` — `ADMIT REFUSED card=<label> gate=attempts 2`;
+    a first attempt is admitted.
+32. `admit-refuses-out-of-scope`: a card whose source is not in `--scope` is
+    `ADMIT REFUSED card=<label> gate=scope <source>`; with no `--scope` the pool sources are
+    the scope and all are admitted.
+33. `under-width-counts-admitted-only`: a pool of one admitted and one gate-refused card with
+    free slots is `PULSE UNDER-WIDTH pool=1 free=<f>: launch`, exit 2 — the refused card is
+    not counted.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 
