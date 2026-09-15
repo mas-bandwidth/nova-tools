@@ -3790,7 +3790,7 @@ line that runs it rather than a promise:
 | OpenCode | a plugin holding the poll outside the turn | yes | yes | `plugin` |
 | Codex | a scheduled command re-entering the session on a note | yes | yes, while the schedule lives | `scheduled` |
 | Antigravity | its own always-loading file naming the wait as the first act of every load | yes | yes | `hook` |
-| Grok | an OS process outside the turn holds the poll and writes the beat (Johnny's `johnny_bus_heartbeat`, 2026-09-15) | yes | no, a 10 h session cap | `plugin` |
+| Grok | an OS process outside the turn holds the poll and writes the beat (Johnny's `johnny_bus_heartbeat`, 2026-09-15) | yes | no, a 10 h session cap | `plugin` (SPEC-WAKE's third shape) |
 | a bare API loop | the loop program itself, outside any session | not applicable | yes | `plugin` |
 
 **Where the harness cannot hold it**, `:wait-source` is `manual` or `none` and nothing is pretended:
