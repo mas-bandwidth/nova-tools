@@ -2473,7 +2473,7 @@ SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
 INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
-INBOX OPEN carrying=<n> heard=<m> large=<true|false> remedy=inbox --advance
+INBOX OPEN carrying=<n> heard=<m> large=<true|false> remedy=inbox --advance|reply or receipt each note, or close --before <instant> as an explicit bulk cutoff
 INBOX OPEN listed=<n> and <k> more (--open-max to widen)
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNREADABLE count=<n> unchanged=<true|false> first=<path>
