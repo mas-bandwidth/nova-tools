@@ -43,6 +43,10 @@
     :pr-338 "https://github.com/mas-bandwidth/nova-tools/pull/338"
     :pr-339 "https://github.com/mas-bandwidth/nova-tools/pull/339"
     :fleet "spec/nova-work PR 339, docs/SPEC-WORK.md section The fleet"
+    :pr-337 "https://github.com/mas-bandwidth/nova-tools/pull/337"
+    :commit-248d85b "https://github.com/mas-bandwidth/nova-tools/commit/248d85b320923803a82f1f643e303bbf42d2c74a"
+    :pr-340 "https://github.com/mas-bandwidth/nova-tools/pull/340"
+    :pr-342 "https://github.com/mas-bandwidth/nova-tools/pull/342"
     :production-inventory "ec01647")
   :baseline-features 52
   :baseline-items 171
@@ -260,9 +264,9 @@
     "Exact verb and wire protocol spelling must be finalized in one schema before lock"
     "Friend participation in swarms versus model-only pools requires explicit dispositions, including Freddy's"
     "Absorption remains disabled pending independent reconciliation and authorization gates")
-  :rd-snapshot-at "2026-09-15T00:30:00Z"
-  :rd-source-main "36efe4a9d62dfd1ae7500817fa2a19163e879de4"
-  :rd-source-spec "9c120a3b0c1b01475e13cb7bd36014ada2dfa729"
+  :rd-snapshot-at "2026-09-15T01:40:00Z"
+  :rd-source-main "16a1d47949f47724284b46b40457e14aae58bd1b"
+  :rd-source-spec "efb6dbe78d99603e26180fa5160fff67aa95e181"
   :rd-work (
     (      :id "RD-01"
       :title "PR #300: C/O transition kernel with write-maintained open count"
@@ -338,7 +342,7 @@
       :source "pr-325")
     (      :id "RD-13"
       :title "PR #326: propose optional native swarm batch admission receipts"
-      :status "in-review"
+      :status "merged"
       :owner "stella"
       :next-gate "encoding-crash-gates"
       :source "pr-326")
@@ -350,21 +354,21 @@
       :source "pr-330")
     (      :id "RD-15"
       :title "PR #331: start and restart tasks through kernel submit path"
-      :status "in-review"
+      :status "merged"
       :owner "stella"
-      :next-gate "freddy-review"
+      :next-gate "integrated"
       :source "pr-331")
     (      :id "RD-16"
       :title "PR #332: batch admission wire and recovery companion specification"
-      :status "in-review"
+      :status "merged"
       :owner "emma"
-      :next-gate "friend-gates"
-      :source "pr-332")
+      :next-gate "implementation-gate"
+      :source "pr-342")
     (      :id "RD-17"
       :title "PR #333: bounded durable journal persistence and replay adapter"
-      :status "in-review"
+      :status "merged"
       :owner "emma"
-      :next-gate "darwin-sync-witness"
+      :next-gate "integrated"
       :source "pr-333")
     (      :id "RD-18"
       :title "PR #334: Previous roadmap refresh through 23:00:18Z"
@@ -392,10 +396,28 @@
       :source "issue-336")
     (      :id "RD-22"
       :title "PR #338: Slice C: whole-package candidate and installed validator"
-      :status "in-review"
+      :status "merged"
       :owner "emma"
-      :next-gate "independent-review"
-      :source "pr-338"))
+      :next-gate "integrated"
+      :source "pr-338")
+    (      :id "RD-23"
+      :title "E10-F06: Operational adoption and continuous efficiency review"
+      :status "open"
+      :owner "unassigned"
+      :next-gate "owner-assignment"
+      :source "commit-248d85b")
+    (      :id "RD-24"
+      :title "PR #339: the fleet, a static description of the machines in the nova-work config"
+      :status "merged"
+      :owner "unassigned"
+      :next-gate "implementation-gate"
+      :source "pr-339")
+    (      :id "RD-25"
+      :title "PR #340: fold the current goal into SPEC-WORK (goal set/show/update, six replays)"
+      :status "merged"
+      :owner "unassigned"
+      :next-gate "implementation-gate"
+      :source "pr-340"))
   :epics (    (      :id "E01"
       :title "Canonical work data and restricted representation"
       :features (        (          :id "E01-F01"
