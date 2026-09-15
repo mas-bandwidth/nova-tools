@@ -885,6 +885,12 @@ they are distinct kinds:
     identity rather than a `:node`, and why no count, roadmap or required set moves when one is
     written (replays `new-verbs-have-a-kind-and-a-field-order`,
     `new-verbs-retry-to-one-event`).
+  - `:goal` — `:change` (`:set` or `:clear`), `:scope`, `:goal` (the node id; `(:absent)` on a
+    `:clear`), `:reason`. **Its subject is a scope and not a node**: `:node` is `(:absent)` and
+    `GOAL OK` prints `goal=<id|->`. It writes the `goal` index of *The current goal* below,
+    beside `friends` and `models`, under the same one writer and one journal, and moves no
+    count, roadmap or required set. `goal update` writes no `:goal` event: it writes a
+    `:transition` or an `:evidence` event on the goal node by their own field lists above.
   - `:baseline`, `:discovery`, `:remove`, `:require`, `:defer`, `:cancel` (carrying
     `:evidence` that the worker stopped), `:reopen`, `:split`, `:supersede`, `:scope`, `:axis`,
     `:source`, `:settle`, `:revive` — the scope log: a baseline records the required set of its node **as the tool
@@ -1209,6 +1215,107 @@ work; a cross-repository goal is a view over canonical owned nodes, never a copy
 O is the team's authorized known work, never a scan of every reachable repository. A GitHub
 issue or PR is a `:links` entry on a node, not the node's type; intake from issues is in
 Stella's section.
+
+### The current goal
+
+Glenn (5672006742, *Shared current goal across models*): *"It should be somewhere we could
+store the current goal, like /goal is here, but cross model."* The required operations are
+his: **set** and **retrieve** the current goal, **update** it as work proceeds, across models
+and harnesses; a model switch loads the same current revision and preserves outstanding
+ownership; status and evidence updates stay distinguishable from objective and constraint
+edits; an old harness state cannot silently overwrite a newer goal, restart completed work or
+discard a stop. The coordinator notes this goal is read beside are SPEC-DELEGATION.md's; the
+goal itself is this file's, folded here from that document's draft 3 (Stella's clearance,
+stella-1858e1eeef8d).
+
+**The goal is a node of O, and the current goal is a reference to it.** No new record kind
+holds the objective: the objective, its completion criteria, its constraints, its progress,
+blockers, ownership, linked work and evidence are what a node already carries above —
+`:title`, `:acceptance`, `:deps`, `:responsible`, `:links`, its `:lease`, its `:attempt` and
+`:evidence` events, its derived state — *"reuse the existing work/attempt/accounting records"*
+(5672006742). What this subsection adds is the reference: a `goal` index in the resident
+model, beside `friends` and `models` and no node kind of O, keyed by **scope** — a coordinator
+name, or a node id, the same key SPEC-DELEGATION.md gives a note — holding one node id per
+scope, written by the one event kind `:goal` above **(Rowan's decision, for review)**. A
+delegated goal keeps its parent/child mapping because it is a node under its parent node: the
+mapping is `:children`, and nothing is copied; a cross-repository goal is a view over owned
+nodes, by the paragraph above.
+
+**`goal set`** writes the reference. It is refused when the node does not exist; when the
+node's disposition is closed (`done`, `cancelled`, `superseded`, `removed`) — an old harness
+cannot restart completed work by pointing at it, and reviving is `event --kind reopen` on a
+person's word, its own verb and its own event; when `--as` is not a configured writer of the
+scope, by *Friends, CONFIG and ACTIVE*; and when `--expect` is stale. `set` takes no lease and
+starts nothing: *"ownership and actual execution handles remain distinct from the goal
+record"* (5672006742).
+
+**`goal show`** is what a newly selected model or harness loads, and it is the whole of what it
+needs: the `GOAL OK` line — `scope=`, `goal=<id>`, `rev=<n>` (the revision the answer is
+evaluated at), `generation=<n>` and `scope-revision=<n>` of the node, `state=`, `owner=<lease
+holder|->`, `stop=` (**derived from the state and no second field**: `requested` when the
+state is `:cancel-requested`, `cancelled` when `:cancelled`, `deferred` when `:deferred`,
+`none` otherwise), `constraints=<n>`, `notes=<n>`, `outstanding=<n>` — then `GOAL ROW` lines:
+the objective (`:title` and each `:acceptance` criterion with its current verdict), every
+constraint line and note id SPEC-DELEGATION.md's `applicable` would carry for this coordinator,
+the progress (evidence events, done and remaining required work under the node, by kind,
+counted), the blockers, the live leases and attempts under it with their holders, and the
+linked work. Rows are capped by `--max` and counted, `GOAL MORE` when cut; **the `GOAL OK`
+fields, the stop, and the constraint rows are never cut** — they print before the capped rows,
+as `applicable`'s verdicts do — and with the notes index unloadable `show` prints `GOAL FAIL`
+and no row. A reader with no live session reads the published snapshot at its revision under
+`--snapshot` with the three bounds, as `check` and `query` do, and gets the same answer for
+that revision. Nothing in the answer is the conversation it came from (5672006742: *"must not
+require copying the accumulated conversation or guessing whether earlier work stopped"* — the
+stop is a field).
+
+**`goal update`** is a thin verb: it names the current goal node of the scope so a harness need
+not know the id, and writes the existing event kinds on that node and no other — `--progress
+<text>` with `--evidence <pointer> --criterion <id> --against <sha>` an `:evidence` event, the
+same event `evidence` writes; `--progress <text>` alone a `:transition :to :doing` with
+`:reason <text>`, admitted only where the table admits it (from `:todo`, `:blocked`, `:review`,
+and from `:unknown` because the reason is carried) and refused `no edge` on a node already
+`:doing` — a progress line on a node already under way carries evidence or it is not written,
+because a progress claim with no pointer is the success claim the goal must not accept
+**(Rowan's decision, for review)**; `--blocked-by <node-id> --reason` a `:transition :to
+:blocked` with its `:blocked-by`; `--stop --reason` a `:transition :to :cancel-requested` with
+`:reason` — all under the same `--expect`. **A stop request is not stopped-worker evidence.**
+`--stop` takes no evidence and observes nothing; it is exactly the table's own edge to
+`:cancel-requested` from `:todo`, `:doing` or `:blocked` (*States and transitions* above; the
+same request `state --to cancel-requested` writes), with no edge added and none removed; and
+confirmed cancellation remains `event --kind cancel --evidence <pointer>` on the node, the one
+evidence-bearing operation, admitted only from `:cancel-requested`: there is no second
+cancellation mechanism (Stella, 5673066509). While the request is pending, `show` prints
+`stop=requested` on every harness and every build, and a harness that reads it does not resume
+the work: **`goal update` writes no transition on a node in `:cancel-requested`** — a
+`--progress` or `--blocked-by` there is refused `stop requested`, nothing written — although
+the table's withdrawal edge to `:doing` exists, because that edge is a person's explicit act,
+`state --to doing --reason` by id, and never a progress update. To act on a child, the
+coordinator either `set`s the goal reference to that child first or uses `state` and `event`
+on the child by id. **Objective and constraint edits are not `update`**: changing what the
+goal is, is `accept` (criteria), `dep`, `node` and `correct` on the node, each bumping its
+scope revision or generation by the rules above, and a note supersede for a routing
+constraint (SPEC-DELEGATION.md); so a status update and an objective edit are different event
+kinds with different revision effects, and a reader tells them apart from the log, never from
+wording.
+
+**Revision and conflict.** `goal set` and `goal update` wear `<write flags>` of *The verbs*,
+and `--expect` is **required** on both — the one place this file requires it on the
+coordinator's own path, where *The verbs* leaves it optional — because the goal is what a
+harness switch reads, and *"explicit conflict handling"* (5672006742) is the existing rule
+applied and not a new one: the expectation is the local revision on `--session`, checked as
+every mutation's is, and a stale one is refused at exit 1, `GOAL FAIL scope=<scope>
+goal=<id|-> expect=<rev> current=<rev>: stale`, nothing written, the caller re-reading with
+`show`. A progress update from a harness that read before a stop is stale by construction,
+because the stop moved the revision; a `set` back to a node that finished is refused by
+disposition whatever the expectation; and there is one writer, so two harnesses never merge.
+A native harness goal feature (a `/goal`) is an adapter: on load it calls `show` and keeps
+`rev=`; on write it calls `set` or `update` with that revision; **an adapter that holds no
+revision writes nothing**, which is why the flag is required (5672006742: *"native harness
+goal features may serve as views/adapters"*). A completed goal requires evidence against its
+criteria — the node's `:to :done` names evidence events — *"not merely a worker's success
+claim"* (5672006742), which is the rule above already. The five `goal-` replays and
+`applicable-cap-never-hides-a-deny` in *Acceptance replays* are the witnesses, stated so a test
+can be written from the text and nothing else (Stella, stella-a8da9cb0e0a4).
 
 ### Recursive structure within a repository
 
@@ -1873,6 +1980,9 @@ nova-work friend         --session <path> <write flags> (--register <name> | --r
 nova-work config         --session <path> (--request <name> --base <hash|-> | --export <name> --into <path> | --intake --from <path> <write flags>) [--max <n>]
 nova-work model          --session <path> <write flags> (--register <id> --provider <name> --route <text> --billing <metered|subscription|local|unknown> | --rate <id>=<pricing-id> --effective <stamp> --source <pointer> | --evidence <id> --task-class <label> --result <pointer> --samples <n>) --reason <text>
 nova-work observe        --session <path> <write flags> --friend <name> (--state <awake|resting|unavailable|unconfirmed> --source <pointer> | --attempt <id> --observed-model <id> --bench <name> --usage <pointer>) --reason <text>
+nova-work goal set       --session <path> <write flags> --expect <rev> [--scope <scope>] (--goal <node-id> | --clear) --reason <text>   (--expect required here; --scope defaults to the caller's --as)
+nova-work goal show      (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --as <name> [--scope <scope>] --max <n>
+nova-work goal update    --session <path> <write flags> --expect <rev> [--scope <scope>] (--progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text>)   (writes on the current goal node of the scope and on no other node)
 nova-work clip           --session <path> --as <name> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
 nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]
 nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
@@ -3065,7 +3175,7 @@ chain, high fan-out, and on one multi-command session.
 ## Output grammar
 
 Every line's first token is the verb's (`SESSION`, `EXPORT`, `REPLAY`, `HANDOFF`, `CLIP`,
-`OPERATION`, `SAVEPOINT`, `UNDO`, `REDO`, `FRIEND`, `CONFIG`, `MODEL`, `OBSERVE`,
+`OPERATION`, `SAVEPOINT`, `UNDO`, `REDO`, `FRIEND`, `CONFIG`, `MODEL`, `OBSERVE`, `GOAL`,
 `WORK`, `VERIFY`, `QUERY`, `RENDER`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
 `RESPONSIBLE`, `ACCEPT`, `SOURCE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`,
 `ATTESTED`, `STATE`, `CORRECT`, `EVENT`), the second is `OK` or `FAIL`, `RACED` for a push the base predicate
@@ -3133,6 +3243,12 @@ CONFIG FAIL friend=<name> base=<hash|-> verdict=<schema|identity|hash|incomplete
 FRIEND OK id=<event-id> request=<id> friend=<name> change=<register|retire|role|participation|capability|limit> rev=<n> pushed=<rev|-> emitted=<bytes>
 MODEL OK id=<event-id> request=<id> model=<id> change=<register|rate|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>
 OBSERVE OK id=<event-id> request=<id> friend=<name> change=<state|attempt> rev=<n> pushed=<rev|-> emitted=<bytes>
+GOAL OK id=<event-id> request=<id> scope=<scope> goal=<id|-> change=<set|clear|progress|evidence|blocked|stop> kind=<goal|transition|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>   (goal set and goal update: kind= is the event written, :goal for set and clear, the node's own :transition or :evidence for update)
+GOAL OK scope=<scope> goal=<id|-> rev=<n> pushed=<rev|-> generation=<n> scope-revision=<n> state=<s> owner=<name|-> stop=<none|requested|cancelled|deferred> constraints=<n> notes=<n> outstanding=<n> rows=<n> shown=<n> emitted=<bytes>   (goal show: no event, no id=; stop= derived from state=)
+GOAL ROW kind=<objective|criterion|constraint|note|progress|blocker|lease|attempt|link> <the fields its kind's own row carries above: a criterion row is ACCEPT's, a constraint row is SPEC-DELEGATION.md's applicable row byte for byte, a lease row is QUERY's who row>
+GOAL MORE rows=<n> shown=<n>   (constraint rows and the stop are never among the cut)
+GOAL FAIL scope=<scope> goal=<id|-> expect=<rev> current=<rev>: stale   (nothing written)
+GOAL FAIL scope=<scope> goal=<id|->: <reason>   (no such node; disposition=<done|cancelled|superseded|removed>; not a writer of the scope; no edge; stop requested; notes index unloadable — each named, exit 1, nothing written)
 RENDER OK view=<id> cells=<n> private=<n> bytes=<n> into=<path> pushed=<rev|-> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> private=<n> drifted=<n> into=<path>: <reason>
 NODE NOTE already-closed node=<id> disposition=<d> settled=<stamp>   (a same-id retry returns its prior disposition and writes nothing; a fresh-id repeat while still closed appends one typed no-effect receipt with changed=0)
@@ -3153,9 +3269,9 @@ nova-work <build identity> <goos>/<goarch> <go version>
 where `<MUTATION>` is one of `NODE`, `DECOMPOSE`, `ACCEPT`, `SOURCE`, `DEP`, `AXIS`, `CELL`,
 `RESPONSIBLE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`, `ATTESTED`, `STATE`,
 `CORRECT`, `EVENT`, `UNDO`, `REDO`, `FRIEND`, `MODEL`, `OBSERVE` and `CONFIG` (its `--intake`
-form alone). **Six of them name no node, and their lines are written out above rather than left
+form alone), `GOAL` (its `set` and `update` forms). **Seven of them name no node, and their lines are written out above rather than left
 to `node=`**: `UNDO` and `REDO` print `nodes=<n>`, `FRIEND`, `OBSERVE` and `CONFIG --intake`
-print `friend=<name>`, and `MODEL` prints `model=<id>` — each the subject its `:event` kind above
+print `friend=<name>`, `MODEL` prints `model=<id>`, and `GOAL` prints `scope=<scope> goal=<id|->` — each the subject its `:event` kind above
 names, each still carrying `id=`, `request=`, `rev=` and `pushed=`, so the once-only retry
 promise reads the same for them as for every other mutation. The rest each
 add the fields their section names (`LEASE OK … holder= deadline= default= live=`, `STATE OK
@@ -3581,6 +3697,52 @@ of this list and are not repeated here):
   `not reversible here` naming itself, an undo over `event --kind cancel` and over `node remove`
   refused because both dispositions are terminal, and no undo reaching a terminal state by any
   path.
+
+- **`goal-crosses-harness`** — harness A, as coordinator C, `goal set --goal G --expect r`;
+  writes a `(:coordinator "C")` note (SPEC-DELEGATION.md) with a `:deny` on a made-up model for
+  `:coding`; `goal update --stop --reason` on G. Harness B, another build, `goal show --as C`
+  against the live session and against the clipped snapshot: both print `goal=G`, a `rev=` at or
+  after every write of A's, `stop=requested` — not `cancelled`: no evidence of a stopped worker
+  has been written — and the same note id and constraint row A wrote, byte for byte; B's `goal
+  update --progress` on G is refused `stop requested`, nothing written. A writes `event --kind
+  cancel --evidence <pointer>` on G; B's next `show` prints `stop=cancelled`. B copied no
+  conversation.
+- **`goal-stale-update-refuses`** — A and B both `show` at revision r. A writes `update
+  --progress` with evidence, r+1; B's `update --progress --expect r` is refused `GOAL FAIL …
+  expect=r current=r+1: stale`, the snapshot is unchanged, and B's next `show` prints A's
+  evidence row. A then `update --stop --reason --expect r+1`, r+2; B's `update --progress
+  --expect r+1` is refused `stale` and B's next `show` prints `stop=requested`; B's `update
+  --progress --expect r+2` is refused `stop requested`, and `stop=requested` stands until a
+  `:cancel` with evidence or `state --to doing --reason` by id. A `goal set` to a node in C is
+  refused `disposition=done` whatever `--expect` says, and the node stays in C.
+- **`goal-stop-is-a-request-not-evidence`** — G `:doing` at r; `goal update --stop --reason
+  --expect r` prints `GOAL OK … change=stop kind=transition rev=r+1`, and the event is a
+  `:transition :to :cancel-requested` carrying `:reason` and no `:evidence`; `check` has no
+  finding; `state --to cancel-requested --reason` on a sibling writes an event of the same kind
+  and fields. `state --to doing --reason` by id is admitted (the withdrawal) and `show` prints
+  `stop=none`; stopped again, `event --kind cancel --evidence <pointer>` prints `stop=cancelled`,
+  terminal, and `goal set --goal G` is then refused `disposition=cancelled`. `goal update
+  --stop` on a `:review` node is refused `no edge`, as `state --to cancel-requested` is there,
+  and on a `:done` node the same: the edges are the table's and no other.
+- **`goal-update-writes-only-existing-kinds`** — every `goal update` form written, then the
+  journal read: each event is a `:transition` or an `:evidence` with exactly the field list of
+  its kind, on the goal node of the scope and no other node; `--progress <text>` alone on a
+  `:todo` node writes `:to :doing` with the text as `:reason` (the same event `state --to doing
+  --reason` writes) and on a `:doing` node is refused `no edge`, nothing written; `--progress`
+  with the evidence triple on a `:doing` node writes the `:evidence` event `evidence` would;
+  `goal set` and `goal set --clear` each write one `:goal` event with `:node (:absent)`; `accept
+  --add` on the node moves its scope revision and `goal update` never does; a retried `set` with
+  the same `--request` id and payload returns the same event id once.
+- **`goal-expect-is-required`** — `goal set` and `goal update` without `--expect` exit 2 naming
+  the flag, nothing written; with `--expect` at the current local revision, admitted; with
+  `--expect` one behind, refused `stale` at exit 1 with the current value printed; `--dry-run`
+  with the stale expectation prints the same refusal and writes no event, no journal revision
+  and no dedup entry; a `show` never takes `--expect` and answers at the revision it prints.
+- **`applicable-cap-never-hides-a-deny`** — N active notes, N > `--max`, the only `:deny` in
+  the note that sorts last (SPEC-DELEGATION.md's `applicable`); `applicable --max 1 --candidate
+  <role>/<model>` prints `excluded <that id>` and `NOTES MORE`; `goal show --max 1` prints the
+  same constraint row before any cut row, then `GOAL MORE`; with the notes index unloadable,
+  both print `FAIL` and neither prints `eligible` nor any row.
 
 The stall replays of 5649089106
 belong to stall detection, deferred below, and are listed there so they are not lost.
