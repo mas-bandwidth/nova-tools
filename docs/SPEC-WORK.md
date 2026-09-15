@@ -3709,8 +3709,8 @@ grammar*'s first token is the verb's and `stale` is an ask of `query` — the wo
 the line is this file's *(Rowan's decision, for review)*.
 
 **Detect at delegation time.** `offer`, `take --for <name>` and every other assignment verb consult
-the reading before writing: an assignee whose presence is `asleep` or `unknown` is **refused at
-exit 2, nothing written**, the verb's own `FAIL` line carrying `presence=<asleep|unknown>
+the reading before writing: an assignee whose presence is `asleep` is **refused at
+exit 2, nothing written**; an assignee whose presence is `unknown` because no source is configured for it is admitted with `presence=unknown` on the verb's OK line (a live line without a source is not a sleeper, Johnny's read of draft 1), and refused only when a source is configured and has never spoken, the verb's own `FAIL` line carrying `presence=<asleep|unknown>
 age=<dur|-> source=<s|->` as its reason — Glenn's spelling of the same refusal is `ASSIGN REFUSED
 <friend> asleep age=<dur>`. `--anyway --reason <text>` proceeds and records the reason in the
 event, because a coordinator who knows a line is about to wake must not be blocked by its own
@@ -3790,7 +3790,7 @@ line that runs it rather than a promise:
 | OpenCode | a plugin holding the poll outside the turn | yes | yes | `plugin` |
 | Codex | a scheduled command re-entering the session on a note | yes | yes, while the schedule lives | `scheduled` |
 | Antigravity | its own always-loading file naming the wait as the first act of every load | yes | yes | `hook` |
-| Grok | no hook surface known here; the wait is a blocking verb inside a turn | no | no | `manual` |
+| Grok | an OS process outside the turn holds the poll and writes the beat (Johnny's `johnny_bus_heartbeat`, 2026-09-15) | yes | no, a 10 h session cap | `plugin` |
 | a bare API loop | the loop program itself, outside any session | not applicable | yes | `plugin` |
 
 **Where the harness cannot hold it**, `:wait-source` is `manual` or `none` and nothing is pretended:
