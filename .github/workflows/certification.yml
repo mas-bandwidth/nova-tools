@@ -935,6 +935,112 @@ jobs:
             *) echo "the certified gate did not print a receipt for the one green run; a release would have nothing to show"; exit 1 ;;
           esac
 
+      - name: the upload respects the draft/publication boundary and refuses a published release
+        shell: bash
+        run: |
+          set -euo pipefail
+          # THE DRAFT/PUBLICATION BOUNDARY'S CONTROLS (#199). release-upload.sh is the tail
+          # of the `release` job, but until this step nothing in CI proved it cannot touch a
+          # published release -- the first sign of the draft/public mix-up would be a
+          # published release silently extended with a second set of artifacts. So the script
+          # is driven here, the way the certified gate above is driven, through a fake `gh`,
+          # against the four answers the release lookup can give: 200 whose body is a draft,
+          # 200 whose body is published, 404 (nothing yet), and a non-answer (403).
+          #
+          # A fake `gh` on PATH. The script asks `gh api -i releases/tags/<tag>` once and
+          # reads the STATUS LINE and the `draft` field rather than the exit code, so the
+          # fake reproduces `-i`: an HTTP status line, then the body after a blank line. The
+          # body is whatever fixture RELEASE_UPLOAD_RESPONSE names. A `release create` or
+          # `release upload` is ECHOED the way gh would print it, so the test can assert
+          # which command the script chose -- and never actually uploads anything.
+          mkdir -p "${RUNNER_TEMP}/fake-gh-release"
+          cat > "${RUNNER_TEMP}/fake-gh-release/gh" <<'GH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          case "${1:-}" in
+            api)
+              case "${RELEASE_UPLOAD_STATUS:-200}" in
+                404) printf 'HTTP/2 404 Not Found\r\n\r\n' ;;
+                403) printf 'HTTP/2 403 Forbidden\r\n\r\n'; exit 1 ;;
+                *) printf 'HTTP/2 200 OK\r\ndate: fake\r\n\r\n'; cat "${RELEASE_UPLOAD_RESPONSE:?}" ;;
+              esac
+              ;;
+            release) echo "gh $*" ;;
+            *) echo "unexpected fake gh invocation: $*" >&2; exit 1 ;;
+          esac
+          GH
+          chmod +x "${RUNNER_TEMP}/fake-gh-release/gh"
+
+          upload_env() {
+            export GITHUB_REPOSITORY=mas-bandwidth/nova-tools
+            export TAG=v0.14.0
+            export GH_TOKEN=fake-gh-needs-a-token-to-be-set
+            export PATH="${RUNNER_TEMP}/fake-gh-release:$PATH"
+          }
+          mkdir -p dist && : > dist/nova-bus_v0.14.0_linux_amd64
+
+          # ONE: a release that does not exist is CREATED AS A DRAFT, not published -- the
+          # artifact lands on a draft a later step publishes, and `--draft` is on the command.
+          upload_env
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=404 .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -eq 0 ] || { echo "the upload REFUSED to create the missing release at all"; exit 1; }
+          case "$out" in
+            *"gh release create"*"--draft"*) echo "ok: a missing release is created as a draft" ;;
+            *) echo "the script did not create a draft for the missing release: $out"; exit 1 ;;
+          esac
+
+          # TWO: an existing DRAFT is uploaded to, with --clobber so a rerun replaces a
+          # partial upload -- the draft stays a draft, nothing is published.
+          upload_env
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=200 RELEASE_UPLOAD_RESPONSE=.github/testdata/release-upload/draft.json \
+            .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -eq 0 ] || { echo "the upload REFUSED an existing draft it should have filled"; exit 1; }
+          case "$out" in
+            *"gh release upload"*"--clobber"*) echo "ok: an existing draft receives the artifacts" ;;
+            *) echo "the script did not upload to the draft: $out"; exit 1 ;;
+          esac
+
+          # THREE: an existing PUBLISHED release is refused in one line, and no upload or
+          # create command runs -- the release already crossed the boundary and must not be
+          # extended, so the draft/publish sequence is not silently skipped.
+          upload_env
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=200 RELEASE_UPLOAD_RESPONSE=.github/testdata/release-upload/published.json \
+            .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "the upload PUBLISHED into a release that is already published"; exit 1; }
+          case "$out" in
+            *"already has a published release"*) echo "ok: a published release is refused in one line" ;;
+            *) echo "the script refused the published release, but not for the publication boundary: $out"; exit 1 ;;
+          esac
+          case "$out" in
+            *"gh release"*) echo "the script reached a gh release command after refusing a published release"; exit 1 ;;
+          esac
+
+          # FOUR: a non-answer (403, permissions) is refused rather than read as absence --
+          # the same ask-guard release.yaml relied on, reproduced over the script.
+          upload_env
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=403 .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "the upload READ a 403 as 'no release' and walked down the create path"; exit 1; }
+          case "$out" in
+            *"neither 200 nor 404"*) echo "ok: a non-answer is refused, not read as absence" ;;
+            *) echo "the 403 was treated as a decision rather than a refusal: $out"; exit 1 ;;
+          esac
+
       - name: upload the cross-built binaries
         # So that the smoke job runs THE BINARY THIS WOULD SHIP rather than one it builds
         # itself with different flags. The job above already builds with -trimpath and
