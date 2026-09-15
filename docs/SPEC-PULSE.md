@@ -179,6 +179,7 @@ nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <di
 nova-pulse handoff --to <name> --root <dir>
 nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>
+nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--max <n>]
 nova-pulse version
 nova-pulse help
 ```
@@ -206,6 +207,31 @@ The `OWNER` lock and the `HANDOFF` record live under `<root>/queue/` as files, b
 tab-separated. `OWNER` is `name`, `host`, `pid`, `since`. `HANDOFF` is `to`, `from`,
 `width` (the last `PULSE WIDTH` line), `in-flight` (cards by bench), `pending`, `escalations`,
 `benches` and `state`.
+
+## Status
+
+`status` answers the day's questions — what is running where, how wide, are we at max
+throughput, which tools landed and who adopted them, what is in flight, what remains, what
+new work appeared, are we converging — in one page, no model call. Sources: the queue,
+`usage.tsv`, the ADOPT files, bus receipts, and `gh` (cached per tick). It reads those,
+prints at most `--max` (default 20) lines, and writes nothing. `--day <d>` (default today)
+bounds the CONTRACTION and RATE windows. The eight line kinds, counts not lists:
+
+- **`WIDTH <bench>`** running jobs, free slots, load, and headroom — one line per bench.
+- **`QUEUE`** pending, gated, launched, done, and failed cards on the swarm queue.
+- **`RATE`** cards_per_hour, p50_s, p90_s, usd_per_card, and parallelism.
+- **`REMAINING`** queue rows, unread PRs, dirty PRs, uncarded issues, and hours to empty.
+- **`CONTRACTION`** cards cut/done, PRs opened/merged, issues filed/closed — hour and day.
+- **`ADOPTION <friend>`** version, receipt, and edges — one per friend, coordinator included.
+- **`OPEN`** dogfood issues, holds, and escalations.
+- **`TOOLS`** the tools merged since adoption.
+
+In nova-work, `check` carries these same lines from the tree and the journal — nodes minted
+per node closed, remaining by depth, completion by epic — once the tree is the pool (#500).
+Prototype: `bin/status.sh`.
+
+Replays: `status-is-bounded`, `status-contraction-from-counts`,
+`status-adoption-includes-coordinator`, `status-remaining-counts-in-scope-only`.
 
 ## Exit codes and the output grammar
 
@@ -235,6 +261,15 @@ HANDOFF OK to=<name> inflight=<n> pending=<n> escalations=<n>
 HANDOFF REFUSED: <reason> (<remedy>)
 TAKEOVER OK from=<name> inherited=<inflight/pending/escalations>
 TAKEOVER REFUSED owner=<name> pid=<n> host=<h> (wait, or clear the stale lock)
+WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
+QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
+RATE cards_per_hour=<n> p50_s=<n> p90_s=<n> usd_per_card=<n> parallelism=<n>
+REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
+CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed>
+CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed>
+ADOPTION <friend> version=<v> receipt=<r> edges=<n>
+OPEN dogfood=<n> holds=<n> escalations=<n>
+TOOLS merged_since_adoption=<names>
 <TOKEN> MORE kind=<k> shown=<n> total=<t> <remedy>
 <TOKEN> NOTE <something true about this run that is not a finding>
 ```
