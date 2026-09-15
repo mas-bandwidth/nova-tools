@@ -4429,7 +4429,7 @@ The rationale rests on measured facts from Gas Town:
 10. **Fleet-wide spend ceiling per day.** CONFIG maintains an explicit fleet-wide spend ceiling per day
     and per model family. When an automatic or delegated dispatch would cross that ceiling, it is refused
     with a line naming the configured ceiling and `local-spend=` for the bench's own spend; it polices
-    the local bench rather than guessing other benches' spend. A fleet total needs the benches joined, a later slice.
+    `local-spend=` for the local bench rather than guessing other benches' spend. A fleet total needs the benches joined, a later slice.
 
 ### Required enforcement replays
 
