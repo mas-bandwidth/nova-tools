@@ -448,6 +448,12 @@
       :status "proposed"
       :owner "unassigned"
       :next-gate "proposal-intake"
+      :source "ideas-780")
+    (      :id "RD-29"
+      :title "ideas#780: a bounded sideways channel between sibling cards in flight"
+      :status "proposed"
+      :owner "unassigned"
+      :next-gate "experiment"
       :source "ideas-780"))
   :epics (    (      :id "E01"
       :title "Canonical work data and restricted representation"

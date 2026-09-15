@@ -177,12 +177,11 @@ inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
 
 wait is inbox on a clock, for a harness that does not wake you: it fetches every
 --interval (default 10s) and RETURNS the moment your inbox would list something
-new (blocking over existing unadvanced backlog unless --advance is given, so wait
-does not spin in a zero-delay loop), printing exactly what inbox prints. Nothing
-by --timeout is a WAIT TIMEOUT line and exit 0 -- not an error, the answer "nothing
-yet" -- and you issue the next one. --timeout is required, because every wait has a
-deadline, and is at most 60m: a wait runs inside your harness's tool call, so ask
-your harness what its limit is and sit under it. The loop is wait, answer, wait:
+new, printing exactly what inbox prints. Nothing by --timeout is a WAIT TIMEOUT line
+and exit 0 -- not an error, the answer "nothing yet" -- and you issue the next
+one. --timeout is required, because every wait has a deadline, and is at most
+60m: a wait runs inside your harness's tool call, so ask your harness what its
+limit is and sit under it. The loop is wait, answer, wait:
 
   nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
     --advance --remote origin --branch main
@@ -2060,27 +2059,11 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 	horizon := now.Add(timeout)
 	polls := 0
 	cursor := ""
-	// When --advance is omitted, wait blocks until a note arrives newer than what was
-	// already in the checkout when this wait began (issue #328), avoiding a zero-delay
-	// hot loop over an unadvanced cursor.
-	baselineNew := 0
-	if !o.advance {
-		_, initR := inboxListing(o, io.Discard, io.Discard, now)
-		baselineNew = initR.New
-	}
 	for {
 		polls++
 		elapsed := time.Since(start).Round(time.Millisecond)
 		pollNow := now.Add(elapsed)
-		keep := func(r inboxReading) bool {
-			if hiddenWholeWait(r.Legacy, horizon) {
-				return true
-			}
-			if o.advance {
-				return r.New > 0
-			}
-			return r.New > baselineNew
-		}
+		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) }
 		code, r, lines := waitPoll(o, polls == 1, pollNow, keep, stderr)
 		if r.Cursor != "" {
 			cursor = r.Cursor

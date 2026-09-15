@@ -681,6 +681,37 @@ The things a first run gets wrong, and what each one wants:
 - **a verb on a directory that is not a lane** — exit 2, with the whole `init`
   command in the refusal, and nothing written on the way past.
 
+## nova-review
+
+One bounded, exact-revision **review packet** at the review layer, specified in
+[docs/SPEC-REVIEW.md](SPEC-REVIEW.md). It builds the file a reader needs to
+read one entry at one head — the range since that reader's last recorded head,
+the rules the diff touches, the prior verdicts and the open findings — and it
+never forms an opinion about code and never merges anything.
+
+```
+nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--reuse <file>] [--timeout <seconds>]
+nova-review version
+nova-review help
+```
+
+The verbs are `packet`, `version` and `help`. `packet` is the one that works:
+it reads one entry on a lane at one head and writes one bounded file, capped at
+`--max-bytes` (default 131072), past which the packet holds the hunk list and
+the command that prints the rest; `--max` (default 20) caps the prior-verdicts
+table, the open-findings table and the rules section inside it. `--reuse
+<file>` hands a second reader with the same range the same bytes and reads no
+tree at all.
+
+**Reading it.** Success writes the packet to `--out` exclusively — packets are
+immutable, and an `--out` that already exists is a refusal — and prints one
+receipt line: `PACKET OK entry=… id=… head=… base=… range=… files=… hunks=…
+rules=… prior=… open=… bytes=… cut=… reused=… out=…`. A `--head` that is no
+longer the entry's head prints `PACKET STALE entry=… asked=… current=…`, exit 1,
+naming the head it moved to. Every refusal is one `PACKET REFUSED: …` line,
+exit 2, and a `--reuse` candidate built for another (entry, head, range) is a
+`PACKET REUSE` line naming what it was built for.
+
 ## nova-board
 
 ```
