@@ -213,15 +213,16 @@ func Version() string { return buildVersion() }
 
 // wakeConfig is the key=value file read BEFORE flags: <cwd>/.nova-wake/config
 // or the path in NOVA_WAKE_CONFIG. It holds the flags the coordinator retypes
-// every turn -- bus, window, state, as -- so a call that gives none of them
-// still has an answer. A flag given on the command line wins, and nothing here
-// is printed: reading the file is not a change to report.
+// every turn -- bus, window, max for awake; bus, state, as for watch -- so a
+// call that gives none of them still has an answer. A flag given on the
+// command line wins, and nothing here is printed: reading the file is not a
+// change to report.
 type wakeConfig struct {
 	path   string
 	values map[string]string
 }
 
-// configPath is the file a caller may set bus=, window=, state= and as= in.
+// configPath is the file a caller may set bus=, window=, max=, state= and as= in.
 func configPath() string {
 	if p := os.Getenv("NOVA_WAKE_CONFIG"); p != "" {
 		return p
@@ -346,7 +347,7 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 	fs := flag.NewFlagSet("awake", flag.ContinueOnError)
 	busDir := fs.String("bus", cfg.get("bus"), "")
 	window := fs.Int("window", cfg.cfgInt("window", DefaultAwakeWindow), "")
-	maxN := fs.Int("max", DefaultAwakeMax, "")
+	maxN := fs.Int("max", cfg.cfgInt("max", DefaultAwakeMax), "")
 	if !parseFlags(fs, args, stderr) {
 		return 2
 	}
@@ -515,8 +516,8 @@ func (p *problems) missing(flag string) {
 	p.add("--"+flag+" is required; refusing to guess", hintFor(flag))
 }
 
-// missingCfg is missing for the flags a config file may name (bus, window,
-// state, as): the refusal offers the file as a second remedy after the flag.
+// missingCfg is missing for the flags a config file may name (bus, state,
+// as): the refusal offers the file as a second remedy after the flag.
 func (p *problems) missingCfg(flag string, cfg *wakeConfig) {
 	p.add("--"+flag+" is required; refusing to guess; set "+flag+"= in "+cfg.path+" as a second remedy", hintFor(flag))
 }
