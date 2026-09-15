@@ -262,6 +262,7 @@ func Batch(in BatchInput) int {
 		missing  bool   // RESULT.md was not there at all
 		jobDir   string // the job directory, for the missing-result reason
 		noResult bool   // missing RESULT.md on a clean exit (rc==0)
+		refused  string // RESULT.md was there but not a regular file: the one-line refusal
 	}
 	rows := make([]row, len(cards))
 	for i, c := range cards {
@@ -283,11 +284,15 @@ func Batch(in BatchInput) int {
 			continue
 		}
 		path := filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "RESULT.md")
-		raw, err := os.ReadFile(path)
+		raw, err := readFileSteady(path)
 		if err != nil {
 			rows[i].state = "abstain"
-			rows[i].missing = true
 			rows[i].jobDir = filepath.Dir(path)
+			if errors.Is(err, errNotRegular) {
+				rows[i].refused = err.Error()
+			} else {
+				rows[i].missing = true
+			}
 			abstain++
 			continue
 		}
@@ -312,7 +317,7 @@ func Batch(in BatchInput) int {
 	// model finished its run and named its own reason, so the abstain says so rather than
 	// blaming a wall that opened on nothing.
 	for i := range rows {
-		if rows[i].state == "done" {
+		if rows[i].state == "done" || rows[i].refused != "" {
 			continue
 		}
 		if rows[i].logLines == 0 {
@@ -335,6 +340,8 @@ func Batch(in BatchInput) int {
 		switch {
 		case r.idle:
 			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- idle %ds (%s)\n", oneline.Field(r.label), r.slot, idleSeconds, r.idleLog)
+		case r.refused != "":
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- %s\n", oneline.Field(r.label), r.slot, oneline.Escape(r.refused))
 		case r.stalled:
 			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- stalled (no output after the wall opened)\n", oneline.Field(r.label), r.slot)
 		case r.noResult:
