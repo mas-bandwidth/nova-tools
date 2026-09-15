@@ -69,6 +69,11 @@ var swarmAudit = audit.Config{
 		// and writes only dataHome/auth.json, which is the child's credential, not this
 		// binary's line.
 		`"context"`, `"crypto/sha256"`, `"encoding/hex"`, `"encoding/json"`,
+		// publish.go (slice 7) needs bytes and it writes to no stream. bytes.Buffer only
+		// holds the trimmed stdout/stderr of the git and gh children it samples, and every
+		// one of those strings is put through oneline.Field or oneline.Err before this
+		// package prints it, so none of it can write past the escape.
+		`"bytes"`,
 	},
 	MinClassified: 40,
 }
