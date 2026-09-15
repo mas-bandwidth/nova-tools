@@ -3880,31 +3880,29 @@ The rationale rests on measured facts from Gas Town:
 5. **Stale pass fields.** The stale pass surfaces read-only inspection fields `escalated-age=` and
    `reread=` derived from a persisted escalation event; these fields are strictly informational and never
    perform automatic reassignment.
-6. **Durable triggers and scoped review coverage.**
-   - A durable `next-trigger` is maintained per waiting item (owner delivery, job handle, review completion,
-     or due checkpoint), ensuring that an empty pulse reruns nothing.
-   - Review coverage is strictly bound to source revision and changed scope, and is never carried across
-     an unchecked rebase.
-7. **Implementation hygiene from W1 onward.** Every implementation slice from W1 onward adheres to
+6. **Durable triggers.** A durable `next-trigger` is maintained per waiting item (owner delivery, job handle,
+   review completion, or due checkpoint), ensuring that an empty pulse reruns nothing.
+7. **Scoped review coverage.** Review coverage is strictly bound to source revision and changed scope,
+   and is never carried across an unchecked rebase.
+8. **Implementation hygiene from W1 onward.** Every implementation slice from W1 onward adheres to
    strict prompt and context hygiene: fresh minimal context per slice, discrete cards for bounded work,
    exactly one read per exact commit head, machine-generated test receipts, and zero whole-history prompts.
-8. **`:effort` bound on every card and delegation packet.** Beside bytes, attempt count and milliseconds,
+9. **`:effort` bound on every card and delegation packet.** Beside bytes, attempt count and milliseconds,
    every card and delegated packet carries an explicit `:effort` bound (a small integer scale per task
    class stating how many reads, tool calls and how wide a fan-out the objective is worth); it is stated
    by the coordinator when the card is cut, and a packet lacking it is refused. A worker past its effort
    limit stops and reports rather than widening on its own; widening requires an explicitly recorded reason.
-9. **Fleet-wide spend ceiling per day.** CONFIG maintains an explicit fleet-wide spend ceiling per day
-   and per model family. When an automatic or delegated dispatch would cross that ceiling, it is refused
-   with a line naming the configured ceiling and the current spend; it polices the local bench rather
-   than guessing other benches' spend.
+10. **Fleet-wide spend ceiling per day.** CONFIG maintains an explicit fleet-wide spend ceiling per day
+    and per model family. When an automatic or delegated dispatch would cross that ceiling, it is refused
+    with a line naming the configured ceiling and the current spend; it polices the local bench rather
+    than guessing other benches' spend.
 
 ### Required enforcement replays
 
 | Replay | Required outcome |
 | --- | --- |
 | gas-town-efficiency-accounting | Root-only step records and inline checklists avoid node explosion; durable next-triggers ensure empty pulses cause zero model re-executions. |
-| efficiency-lessons-gate | Prime read-only projection respects `--max-bytes`, unpoured checklist items never count in `|O|`, tripped nodes require `--reason`, and delegate mode refuses edits below the model. |
-| effort-and-spend-ceilings | A delegation packet lacking an explicit `:effort` bound refuses before dispatch; a dispatch crossing the configured daily fleet spend ceiling refuses naming ceiling and spend. |
+| efficiency-lessons-gate | Prime read-only projection respects `--max-bytes`, unpoured checklist items never count in `|O|`, tripped nodes require `--reason`, delegate mode refuses edits below the model, packets lacking `:effort` are refused, and dispatches crossing the configured daily fleet spend ceiling are refused. |
 
 These acceptance items belong to the existing measurement, configuration and release roadmap features
 (E10-F02 and E10-F05). They add no verified completion until implementation and failure replays pass.
