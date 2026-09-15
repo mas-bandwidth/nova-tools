@@ -198,7 +198,7 @@ func TestBatchNamesMissingResultOnCleanExit(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1") || !strings.Contains(out, "stalled=0") {
 		t.Fatalf("a clean exit is an abstain, never a stall:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN reason=no-result log=1 job="+filepath.Join(root, "1", "jobs", "a")) {
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=no-result log=1 job="+filepath.Join(resolvedPath(t, root), "1", "jobs", "a")) {
 		t.Fatalf("a clean exit with no RESULT.md names reason=no-result and the job that holds none:\n%s", out)
 	}
 	if strings.Contains(out, "reason=rc=") {
@@ -415,7 +415,7 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the stopped native.log card is counted idle:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: "+idleReason+" log=3 watched="+filepath.Join(root, "1", "native.log")) {
+	if !strings.Contains(out, "a slot=1: "+idleReason+" log=3 watched="+filepath.Join(resolvedPath(t, root), "1", "native.log")) {
 		t.Fatalf("the ABSTAIN reason names the child's log it watched:\n%s", out)
 	}
 }
@@ -750,11 +750,26 @@ func TestGatherStallOnlyWithoutResult(t *testing.T) {
 	}
 }
 
+// resolvedPath is a path made absolute and symlink-resolved, which is the form admission
+// records. A test that builds its expectation from t.TempDir() must resolve it too: on
+// darwin the temp directory is handed out under /var, a symlink to /private/var, so the
+// unresolved spelling and the recorded one are two names for one directory and a string
+// compare between them fails on every macOS bench (issue #578).
+func resolvedPath(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolving %s: %v", path, err)
+	}
+	return real
+}
+
 // TestBatchRelativeRootIsAbsolutized: the batch absolutizes --root at admission, so the
-// runner's fifth argument ($5) and NOVA_SWARM_ROOT both name the root in absolute form --
-// a relative root passed on to the wall was the refusal Emma met (the wall refused
-// `--read ./root/1` and `--write root/1/...`). The runner records both and the test asserts
-// each is the absolute root, never the relative spelling it was handed.
+// runner's fifth argument ($5) and NOVA_SWARM_ROOT both name the root in absolute and
+// symlink-resolved form -- a relative root passed on to the wall was the refusal Emma met
+// (the wall refused `--read ./root/1` and `--write root/1/...`). The runner records both and
+// the test asserts each is the resolved absolute root, never the relative spelling it was
+// handed.
 func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")

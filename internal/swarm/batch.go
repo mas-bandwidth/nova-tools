@@ -92,7 +92,9 @@ const idlePollInterval = 100 * time.Millisecond
 // 0 only when every card was done and none held, 1 otherwise, 2 when the admission could
 // not even be read.
 func Batch(in BatchInput) int {
-	absroot, err := filepath.Abs(in.Root)
+	// The root is absolute AND symlink-resolved from here on: absolute alone left `/var/...`
+	// and `/private/var/...` naming one directory two ways on darwin (issue #578).
+	absroot, err := AbsResolved(in.Root)
 	if err != nil {
 		fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 		return 2

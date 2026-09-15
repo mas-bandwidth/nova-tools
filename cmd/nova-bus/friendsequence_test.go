@@ -23,12 +23,6 @@ import (
 // empty. A verb that leaves the checkout dirty has broken the next verb, whatever its own
 // output said.
 func TestFriendSequenceWaitSendReceiptInbox(t *testing.T) {
-	// Red on main: wait leaves from-<me>/BEAT uncommitted and the send after it refuses
-	// over that file (#459, #488). No branch or PR in the repository carries the fix --
-	// #488 was closed on card 373's promise and card 373 was never opened -- so this
-	// names the issue rather than inventing a PR number. Delete this line with the fix.
-	t.Skip("red on main: wait leaves from-ada/BEAT uncommitted and send refuses over it (nova-tools#488, #459); reopened, no PR carries the fix yet")
-
 	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)

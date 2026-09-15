@@ -3496,7 +3496,7 @@ goes open. A run parses the notes that are NEW and nothing else.
 | `from-<me>/CURSOR` | one reader's | one line: the commit I last read to, and when |
 | `from-<me>/OPEN` | one reader's | one line per note I have been shown and have not answered — its whole display line, and whether I have heard it |
 | `from-<lane>/INDEX` | one lane's | one line per note that lane has sent: id, path, date, To, Re |
-| `from-<me>/BEAT` | one reader's | one line, an RFC 3339 UTC stamp, the cursor sha, and a `until=<stamp>` lease, rewritten on `wait` entry, every poll tick, and exit so a waiting line's cursor that does not move still records that the line is alive — and the lease keeps a duty cycle between two waits reading awake |
+| `from-<me>/BEAT` | one reader's | one line, an RFC 3339 UTC stamp, the cursor sha, and a `until=<stamp>` lease, rewritten on `wait` entry, every poll tick, and exit so a waiting line's cursor that does not move still records that the line is alive — and the lease keeps a duty cycle between two waits reading awake — and `send`, `receipt` and `inbox --advance` tolerate the caller's own beat, uncommitted in the tree or committed and not yet pushed, folding it into their own commit rather than refusing over it |
 
 They are files a person can read, like everything else on the bus. Blank lines
 and `#` comments are ignored in all three.
