@@ -19,10 +19,18 @@ const snapshotTimeout = 5 * time.Second
 
 // snapshotVerb writes the rule-2 manifest that CARD-306 left missing: one line
 // per tool, six tab-separated fields, so the adoption report has a hand-editable
-// draft instead of nothing. kind is binary (never one of the five curated kinds
-// — a person promotes it), latest and apply are - (unknown, never guessed), and
-// owner is --owner or -. A tool whose version cannot be read is counted, never
-// written: it is the person's line to finish by hand.
+// draft instead of nothing. kind is tool, installed is the version this tool
+// printed, latest and apply are - (unknown, never guessed), and owner is --owner
+// or -. A tool whose version cannot be read is counted, never written: it is the
+// person's line to finish by hand.
+//
+// IT WRITES WHAT REPORT READS, which it did not until #571: the kind was `binary`,
+// which is not one of the five curated kinds, and `latest=-` was not a
+// <scheme>:<locator> -- so `nova-version report --file` refused, at exit 2, the
+// file `nova-version snapshot --out` had written one command earlier. Both verbs
+// passed their own tests throughout. The kind is `tool` now, `-` is a latest and
+// an apply nobody has filled in yet, and the installed column is read as the
+// version it holds rather than as an argv to run (see Installed).
 func snapshotVerb(name string, args []string, out, errs io.Writer) int {
 	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -73,7 +81,7 @@ func snapshotVerb(name string, args []string, out, errs io.Writer) int {
 			unreadable++
 			continue
 		}
-		lines = append(lines, strings.Join([]string{n, "binary", v, "-", "-", owner}, "\t"))
+		lines = append(lines, strings.Join([]string{n, "tool", v, "-", "-", owner}, "\t"))
 		tools++
 	}
 	content := Header + "\n" + strings.Join(lines, "\n")
