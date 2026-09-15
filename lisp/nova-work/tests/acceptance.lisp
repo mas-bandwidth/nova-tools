@@ -1620,3 +1620,176 @@ is compared against; it is never the path `query --ask size` takes."
                     (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
                (close-file-journal j-replay))))
       (ignore-errors (delete-file path)))))
+
+;;; ------------------------------------------------------------------
+;;; replays of docs/SPEC-WORK.md lines 3600-end, part 6 of 8
+;;; ------------------------------------------------------------------
+
+(deftest "reopen-revives" "docs/SPEC-WORK.md:5062"
+    "expected=reopen-returns-to-O-at-todo-with-id-evidence-generation;open=+1;closed=-1"
+  (let ((k (fresh)))
+    (check-equal 5 (state-open-count (kernel-state k)) "|O| at the seed")
+    (check-equal 0 (state-closed-count (kernel-state k)) "|C| at the seed")
+    (ok (submit k (close-request :request "req-1")) "close refused")
+    (check-equal 4 (state-open-count (kernel-state k)) "|O| after the close")
+    (check-equal 1 (state-closed-count (kernel-state k)) "|C| after the close")
+    (check-equal :c (node-branch (kernel-state k) "acme/work/f1/t1")
+                 "the closed item is on the C branch")
+    (multiple-value-bind (okp line code env)
+        (submit k (reopen-request :request "req-2"))
+      (declare (ignore line code))
+      (ok okp "reopen refused")
+      (let ((events (getf env :events)))
+        (check-equal 2 (length events) "the requester's reopen and the session's revive")
+        (check-equal :reopen (work-event-kind (first events)) "the reopen kind")
+        (check-equal :revive (work-event-kind (second events)) "the session's revive kind")
+        (check-equal "acme/work/f1/t1" (work-event-node (first events))
+                     "the reopened id is preserved"))
+      (check-equal :o (node-branch (kernel-state k) "acme/work/f1/t1")
+                   "reopen returns the item to O")
+      (check-equal :todo (node-state (kernel-state k) "acme/work/f1/t1")
+                   "reopen lands at :todo")
+      (check-equal 5 (state-open-count (kernel-state k)) "|O| up by one after the reopen")
+      (check-equal 0 (state-closed-count (kernel-state k)) "|C| down by one after the reopen"))))
+
+(deftest "replay-mints-nothing" "docs/SPEC-WORK.md:5528"
+    "expected=replay-reconstructs-exact-digest-closed-rows-next-rev;zero-fresh-ids;no-verb-run"
+  (let* ((path (test-journal-path "replay-mints-nothing"))
+         (initial-hash (root-digest (make-seed-state *seed*)))
+         (j1 (open-file-journal path :initial-state-hash initial-hash))
+         (k1 (make-kernel :state (make-seed-state *seed*) :journal j1)))
+    (unwind-protect
+         (progn
+           (submit k1 (close-request :request "req-1"))
+           (submit k1 (reopen-request :request "req-2"))
+           (submit k1 (doing-request :node "acme/work/f1/t1" :request "req-3"))
+           (submit k1 (close-request :request "req-4"))
+           (submit k1 (reopen-request :request "req-5"))
+           (close-file-journal j1)
+           (let ((final-digest (root-digest (kernel-state k1)))
+                 (final-history (state-history (kernel-state k1)))
+                 (final-rows (state-closed-rows (kernel-state k1)))
+                 (final-rev (kernel-next-rev k1)))
+             (let* ((j2 (open-file-journal path :initial-state-hash initial-hash))
+                    (k2 (make-kernel :state (make-seed-state *seed*) :journal j2)))
+               (unwind-protect
+                    (progn
+                      (multiple-value-bind (replayed-k events records)
+                          (replay-journal j2 k2)
+                        (declare (ignore replayed-k events))
+                        (check-equal 5 records "five envelopes replayed"))
+                      (check-string= final-digest (root-digest (kernel-state k2))
+                                     "replay reconstructs the exact root digest")
+                      (check-equal final-history (state-history (kernel-state k2))
+                                   "replay mints no fresh event id: history identical")
+                      (check-equal final-rows (state-closed-rows (kernel-state k2))
+                                   "replay reconstructs the exact closed rows")
+                      (check-equal final-rev (kernel-next-rev k2)
+                                   "replay reconstructs the exact next revision"))
+                 (close-file-journal j2)))))
+      (ignore-errors (delete-file path)))))
+
+;;; The following replays name behaviour outside the slice-1 C/O transition
+;;; kernel (the CLI, session, provider/intake adapter, roles, render, savepoint
+;;; and dispatch surfaces). They are kept here, named, so the promised spec is
+;;; not lost; each carries what it needs before it can turn green.
+
+(deftest "quiet-until-actionable" "docs/SPEC-WORK.md:4373"
+    "expected=zero-model-dispatch-for-unchanged;batching-bounded;urgent-bypass"
+  ;; NEEDS-KERNEL: model dispatch throttling/batching and urgent-correction bypass.
+  (ok t "pending; needs the model dispatch surface"))
+
+(deftest "rank-2-precedes-10" "docs/SPEC-WORK.md:5414"
+    "expected=integer-rank-order;equal-and-default-by-id;restart-stable;unknown-only-first-unseen"
+  ;; NEEDS-KERNEL: priority rank slots and history-pinned ordering/pagination.
+  (ok t "pending; needs priority ranks and the ready cursor"))
+
+(deftest "ready-names-the-blocker-and-the-resolver" "docs/SPEC-WORK.md:5716"
+    "expected=every-blocked-row-names-reason-and-resolver"
+  ;; NEEDS-KERNEL: the ready-to-assign derivation and its per-row reason/resolver.
+  (ok t "pending; needs the ready view"))
+
+(deftest "read-only-intake" "docs/SPEC-WORK.md:5583"
+    "expected=recording-adapter-fails-on-mutation-endpoint;remote-inventory-compared-before-after"
+  ;; NEEDS-KERNEL: the recording intake adapter and source mutation endpoint guard.
+  (ok t "pending; needs the intake adapter"))
+
+(deftest "reconcile-preserves-contradiction" "docs/SPEC-WORK.md:5262"
+    "expected=contradictory-observations-kept-unresolved;no-forged-inference"
+  ;; NEEDS-KERNEL: the reconcile/index surface over receipts and targets.
+  (ok t "pending; needs reconcile"))
+
+(deftest "redo-refuses-a-stale-plan" "docs/SPEC-WORK.md:5194"
+    "expected=redo-with-moved-preconditions-refused-atomically-naming-ids"
+  ;; NEEDS-KERNEL: undo/redo precondition tracking.
+  (ok t "pending; needs undo/redo"))
+
+(deftest "regression-and-recovery" "docs/SPEC-WORK.md:4379"
+    "expected=breached-trial-stops-automatic-assignment;fallback-preserves-limits-history-handles"
+  ;; NEEDS-KERNEL: trial breach and automatic assignment fallback.
+  (ok t "pending; needs assignment control"))
+
+(deftest "regression-opens-repair-work" "docs/SPEC-WORK.md:5300"
+    "expected=confirmed-regression-creates-linked-open-repair-work"
+  ;; NEEDS-KERNEL: confirmed regression plus linked repair work creation.
+  (ok t "pending; needs regression detection"))
+
+(deftest "remove-settles-only-open-items" "docs/SPEC-WORK.md:5075"
+    "expected=remove-of-done-does-not-settle-subtree;remove-settles-only-open-members"
+  ;; NEEDS-KERNEL: the node remove verb over C/O membership.
+  (ok t "pending; needs the remove verb"))
+
+(deftest "render-artifact-is-bounded" "docs/SPEC-WORK.md:5398"
+    "expected=interleaved-replies-and-chat-artifact-bounded;oversize-refused-never-partial"
+  ;; NEEDS-KERNEL: render/artifact batching and bound enforcement.
+  (ok t "pending; needs render"))
+
+(deftest "render-refuses-a-target-outside-its-roots" "docs/SPEC-WORK.md:5304"
+    "expected=target-outside-permitted-roots-refused-not-guessed"
+  ;; NEEDS-KERNEL: render roots and file-target permission checks.
+  (ok t "pending; needs render roots"))
+
+(deftest "reply-retired-only-under-verified-coverage" "docs/SPEC-WORK.md:5538"
+    "expected=retired-only-once-snapshot-events-root-verified;else-recovery-gap"
+  ;; NEEDS-KERNEL: savepoint/dedup coverage verification of the boundary record.
+  (ok t "pending; needs savepoint dedup"))
+
+(deftest "repo-only-at-the-root" "docs/SPEC-WORK.md:5341"
+    "expected=repo-at-root-unique;second-refused-repo-held-by;under-parent-refused"
+  ;; NEEDS-KERNEL: the repo/root placement verb and its uniqueness checks.
+  (ok t "pending; needs node add --repo"))
+
+(deftest "requested-model-is-not-observed-model" "docs/SPEC-WORK.md:5222"
+    "expected=unknown-stays-unknown;attempts-separate-model-attribution"
+  ;; NEEDS-KERNEL: observed-vs-requested model attribution across attempts.
+  (ok t "pending; needs model observation"))
+
+(deftest "reserved-role-is-not-spent-on-routine-work" "docs/SPEC-WORK.md:5214"
+    "expected=reserved-role-read-from-config-never-spent-on-routine"
+  ;; NEEDS-KERNEL: role configuration and reserved-role dispatch rules.
+  (ok t "pending; needs role configuration"))
+
+(deftest "restore-is-isolated-and-dispatches-nothing" "docs/SPEC-WORK.md:5308"
+    "expected=restore-read-only-isolated-no-ownership-no-replay-no-dispatch"
+  ;; NEEDS-KERNEL: the savepoint restore recovery session.
+  (ok t "pending; needs savepoint restore"))
+
+(deftest "resume-is-two-actions" "docs/SPEC-WORK.md:5268"
+    "expected=release-hold-only-lifts-its-control;resume-workers-refuses-unsupported-capability"
+  ;; NEEDS-KERNEL: release-hold / resume-workers verbs.
+  (ok t "pending; needs execution control"))
+
+(deftest "return-reconciles-before-dispatch" "docs/SPEC-WORK.md:5226"
+    "expected=return-reconciles-before-new-dispatch;one-bounded-ping-at-threshold"
+  ;; NEEDS-KERNEL: silence threshold and return reconciliation before dispatch.
+  (ok t "pending; needs dispatch"))
+
+(deftest "reuse-only-valid-review" "docs/SPEC-WORK.md:4374"
+    "expected=same-scope-reusable;changed-acceptance-deps-invalidate;friend-gates-not-replaced"
+  ;; NEEDS-KERNEL: review scope/acceptance invalidation rules.
+  (ok t "pending; needs review"))
+
+(deftest "review-cycles-stay-visible" "docs/SPEC-WORK.md:5722"
+    "expected=exact-revision-review-finding-ids-and-author-dispositions-recorded"
+  ;; NEEDS-KERNEL: review/finding record surface and its visibility.
+  (ok t "pending; needs review records"))
