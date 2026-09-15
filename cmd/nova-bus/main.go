@@ -1230,10 +1230,13 @@ type inboxOpts struct {
 	after        string
 	diagnostics  bool
 	// me is the reader resolved against the roster, carried so `wait` can write their beat
-	// without resolving the roster twice; and beat is how often a wait pushes its BEAT file
-	// as its own commit. Both are `wait`'s only; `inbox` leaves them zero.
-	me   bus.Participant
-	beat time.Duration
+	// without resolving the roster twice; beat is how often a wait pushes its BEAT file as
+	// its own commit; and lease is how far into the future each BEAT's until= promises the
+	// line is alive, so a duty cycle between two waits still reads awake. These are `wait`'s
+	// only; `inbox` leaves them zero.
+	me    bus.Participant
+	beat  time.Duration
+	lease time.Duration
 }
 
 // inboxReading is what one listing found, for the caller that has to act on it: `inbox`
@@ -2007,6 +2010,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	timeout := f.fs.Duration("timeout", 0, "how long to wait before returning WAIT TIMEOUT (required; a duration like 25m, at most "+maxWaitTimeout.String()+")")
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
 	beat := f.fs.Duration("beat", defaultBeatInterval, "how often to push your BEAT liveness file as its own commit")
+	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "how far into the future each BEAT's until= promises the line is alive, so a duty cycle between waits still reads awake")
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
@@ -2090,6 +2094,10 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stderr, "nova-bus wait: --beat must be a positive duration like 60s\n")
 		return 2
 	}
+	if *beatLease <= 0 {
+		fmt.Fprint(stderr, "nova-bus wait: --beat-lease must be a positive duration like 10m\n")
+		return 2
+	}
 	// A wait always runs git, so the root check is unconditional -- see the same check, and
 	// the same reason for the order it is in, in cmdInbox.
 	if err := bus.IsRepoRoot(*busDir); err != nil {
@@ -2116,7 +2124,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
-		me: me, beat: *beat,
+		me: me, beat: *beat, lease: *beatLease,
 		diagnostics: *diagnostics,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
@@ -2129,6 +2137,11 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// that has hung.
 	fmt.Fprintf(stdout, "WAIT as=%s timeout=%s interval=%s cursor=%s\n",
 		oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)))
+	// THE ENTRY BEAT, written before the first poll, so a line that is about to wait
+	// already reads awake the moment its call begins, lease and all.
+	if err := bus.WriteBeat(*busDir, me.Lane, held.Commit, now, now.Add(*beatLease)); err != nil {
+		fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+	}
 	// The command the caller issues again to re-arm this wait: the next one, with the same
 	// flags, echoed back so a harness that does not wake on its own can paste it. A wait is
 	// ONE read, with one terminal line saying it ended and must be re-armed.
@@ -2152,12 +2165,28 @@ const defaultWaitInterval = 10 * time.Second
 // the beat the whole Presence design is built on.
 const defaultBeatInterval = 60 * time.Second
 
+// defaultBeatLease is how far into the future a BEAT's until= promises the line is alive
+// when `wait` writes it on entry, every tick and on exit. It is longer than --window
+// (five minutes in SPEC-WORK's Presence) so that a duty cycle between two waits -- the
+// wait returns with a note and the harness works it before issuing the next -- reads awake
+// throughout, rather than ageing past --window into "asleep" while the process is alive.
+const defaultBeatLease = 10 * time.Minute
+
 // maxWaitTimeout is as long as `wait` will block, and it is a fact about HARNESSES rather
 // than about buses; see the refusal above.
 const maxWaitTimeout = 60 * time.Minute
 
 // minWaitInterval is as fast as a wait will poll, because a poll is a git fetch.
 const minWaitInterval = 100 * time.Millisecond
+
+// writeBeatLease writes the lane's BEAT carrying until=now+lease, so a line whose duty
+// process is alive but between waits still reads awake to `nova-wake awake`. It is called
+// on entry, every tick and on exit; the stamp and until come from the same Now so the
+// lease's length is exact.
+func writeBeatLease(o inboxOpts, cursor string) error {
+	now := time.Now()
+	return bus.WriteBeat(o.busDir, o.me.Lane, cursor, now, now.Add(o.lease))
+}
 
 // waitLoop is the clock: poll, and either return what arrived or sleep and poll again
 // until the deadline. It is apart from the flags so that what it does is readable without
@@ -2190,10 +2219,18 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		if r.Cursor != "" {
 			cursor = r.Cursor
 		}
+		// The beat write, carried for every exit below: a wait that is handing the harness
+		// a note and stopping has a gap to the next wait, and the lease covers it.
+		writeBeat := func() {
+			if err := writeBeatLease(o, cursor); err != nil {
+				fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+			}
+		}
 		if code != 0 {
 			// The listing this poll had already printed, if it printed one, under the
 			// refusal that is on stderr: a reader who was shown their inbox has been shown
 			// it, whatever happened after.
+			writeBeat()
 			fmt.Fprint(stdout, lines)
 			fmt.Fprintf(stdout, "WAIT DONE reason=signal rearm=required next=%s\n", next)
 			return code
@@ -2205,9 +2242,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		// line's liveness lands on the bus even while it is simply waiting. The write is to
 		// the working tree on every tick; the push is the only part bounded, because it is
 		// the only part that costs somebody's server.
-		if err := bus.WriteBeat(o.busDir, o.me.Lane, cursor, time.Now()); err != nil {
-			fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
-		}
+		writeBeat()
 		if time.Since(lastBeat) >= o.beat {
 			lastBeat = time.Now()
 			if _, err := commit(o.busDir, o.me, []string{bus.BeatPath(o.me.Lane)},
@@ -2226,6 +2261,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 			fmt.Fprintf(stdout, "WAIT OK new=%d after=%s polls=%d\n", r.New, oneline.Field(elapsed.String()), polls)
 			fmt.Fprint(stdout, lines)
 			fmt.Fprintf(stdout, "WAIT DONE reason=new rearm=required next=%s\n", next)
+			writeBeat()
 			return 0
 		}
 		// A line drawn in the future that does NOT cover the whole wait is no reason to
@@ -2251,7 +2287,11 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 	// A TIMEOUT IS NOT AN ERROR. Nothing arrived, and nothing was written -- no cursor
 	// moves on a wait that found nothing, because there is nothing to record having read --
 	// and the caller's move is to issue the next wait. Exit 0, with the counts that say the
-	// tool was awake the whole time.
+	// tool was awake the whole time. The exit beat extends the lease over the gap to the
+	// next wait exactly as the entry and tick beats do.
+	if err := writeBeatLease(o, cursor); err != nil {
+		fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+	}
 	fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s\n",
 		oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
 	fmt.Fprintf(stdout, "WAIT DONE reason=timeout rearm=required next=%s\n", next)
