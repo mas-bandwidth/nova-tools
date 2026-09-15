@@ -337,11 +337,12 @@ func ValidGitArg(what, s string) error {
 const (
 	// TrailerKey is the trailer's key.
 	TrailerKey = "Nova-Bus"
-	// TrailerSend, TrailerReceipt and TrailerCursor are the three things this tool commits.
-	// A send carries the note's id after the word, so the log says which note.
+	// TrailerSend, TrailerReceipt, TrailerCursor and TrailerClose are the things this tool
+	// commits. A send carries the note's id after the word, so the log says which note.
 	TrailerSend    = "send"
 	TrailerReceipt = "receipt"
 	TrailerCursor  = "cursor"
+	TrailerClose   = "close"
 	// TrailerBeat is a wait's liveness beat commit, "beat <name>".
 	TrailerBeat = "beat"
 	// TrailerCommit is what stageAndCommit stamps a message that arrived without one, so

@@ -123,7 +123,7 @@ SELFTALK OK files=<n> claims=<n> standing=0 installations=0 dated=<n>
 SELFTALK FAIL <file>: STANDING: <claim>
 SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
 SELFTALK FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> shown=<n>
-SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n>
 SEND FAIL <path or (stdin)>: <reason>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> ...
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
@@ -2396,6 +2396,7 @@ nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duratio
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
+nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
 nova-bus names --bus <dir>
 
@@ -2467,14 +2468,13 @@ SEND NOTE <what a tolerance did to this draft>
 SEND NOTE this note answers nothing (no Re: line); if it is a reply, name the note: Re: <id>
 SEND NOTE Re: subject matched <n> notes; closed the newest <id>; name the id to be exact
 DRAFT NOTE <what --re resolved, on stderr, because draft's stdout is a file>
-SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
 INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
-INBOX OPEN carrying=<n> heard=<m>
+INBOX OPEN carrying=<n> heard=<m> large=<true|false> remedy=inbox --advance|reply or receipt each note, or close --before <instant> as an explicit bulk cutoff
 INBOX OPEN listed=<n> and <k> more (--open-max to widen)
-INBOX OPEN carrying=<n> is large; answer with Re: <id>, receipt --note <id>, or start over: <command>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNREADABLE count=<n> unchanged=<true|false> first=<path>
 INBOX UNADDRESSED path=<path>: <reason>
@@ -2496,6 +2496,9 @@ RECEIPT ALREADY note=<id or path> lane=<lane>
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 RECEIPT FAIL <name or path>: <reason>
 RECEIPT REFUSED: <reason>
+CLOSE OK closed=<n> kept=<n> commit=<sha8|->
+CLOSE FAIL <name or path>: <reason>
+CLOSE REFUSED: <reason>
 BUS SCOPE mode=<full|since> cursor=<sha|-> changed=<n>
 BUS INDEX lane=<lane> notes=<n>
 BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n> warn=<n>
@@ -3003,6 +3006,224 @@ outside the protected checkout is specified in
 issue #246. It is **proposed and not implemented**: no verb or flag in this
 section changes, `--reply-to` does not exist yet, and everything above is the
 behaviour the released tool has today.
+
+### Bounded transactions — one snapshot, from refresh to receipt
+
+The proposed verbs in issue #246 — `read --since`, `reply --id`, `draft` — are
+illustrative and not shipped, and two of them were settled differently before
+they were built. `--since` already belongs to `check` (SPEC.md:2397), so the
+read half is a flag on the verbs that already list, and the reply half is a form
+of the verb that already drafts. The issue is about a property, not a name:
+**one identified snapshot; a refresh and a read with bounded results and a
+continuation; a reply resolved against that fresh state with every header
+generated mechanically and the draft kept outside the protected checkout; and a
+delivery receipt carrying the immutable note id, the commit, the resolved
+recipients and the publication outcome, with the operation's identity persisted
+so an ambiguous write is reconciled against the remote before it is retried and
+never duplicated blindly.**
+
+Three of the four halves are specified already, and are reported here rather
+than re-specified:
+
+- **the read half** — `--bodies` on `inbox` and `wait`, with `--max-notes`,
+  `--max-bytes`, the counted `INBOX BODY`/`INBOX BODY END` frame, the `INBOX
+  BODIES` receipt and the `--after <token>` snapshot continuation — is
+  [docs/SPEC-BUS-REPLY.md](SPEC-BUS-REPLY.md), *The read half, pinned*;
+- **the reply half** — `draft --reply-to`, the in-verb refresh, the mechanical
+  headers, the refusal of a `--draft-dir` inside the bus — is that document's
+  main body;
+- **the delivery identity** — `prepare` assigning the id once and
+  `send --prepared` being its own retry, with an ambiguous push reconciled
+  against the remote before a second attempt and a receipt that returns
+  `state=published` or `state=already-published` without ever writing a second
+  note — is [docs/SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md).
+
+Everything below is the half the two slices did not claim and the issue names
+last: **bounded full checks, with cap, count and continuation, and repeated
+diagnostic remedies aggregated (#81), run on the shared collector rather than
+another fetch clock.** It is proposed and not implemented, on the same rule the
+two slices were written under: nothing that ships today changes a byte.
+
+#### The transaction, stated as a flow
+
+One answer to one note is one transaction, and it is **one snapshot from refresh
+to receipt**:
+
+| step | the verb that does it | the rule |
+|---|---|---|
+| refresh | `draft --reply-to` | fetch, fast-forward, resolve the target against the tree the fetch left; a fetch that fails is a refusal, never a stale answer |
+| read | `inbox --bodies` | the NEW half is bounded, and the continuation token pins the snapshot (C0..H) the run looked at |
+| reply | `draft --reply-to` | every header is the tool's and the body is the author's; the draft is a file outside the bus, published no-replace |
+| deliver | `prepare` + `send --prepared` | the id is assigned once; the saved artifact is the retry; an ambiguous write is reconciled against the remote, never duplicated |
+
+The addressed note, the CC, the receipt and the open obligation are four
+distinct lines in every read — `INBOX NOTE addr=<to|cc>`, `INBOX RECEIPT`,
+`INBOX HEARD`, `INBOX OPEN` — and none of them is dropped when a return is
+capped: the cap is a prefix of the scan order, never a sample, and the
+continuation resumes at the item where the cap stopped.
+
+**One identity, stated as the rule that binds the four.** A note's id is
+assigned once and is never recomputed; a receipt records the id and the commit;
+and the recovery from an uncertain send is the **same** prepared artifact
+retried, never a freshly generated draft — because a second draft is a second
+identity, and a second identity is how a message is delivered twice. The
+transaction's receipt is two lines and carries the whole of what the issue asks
+for, spread where each fact is true: **`DRAFT OK` carries the resolved
+recipients** (to=, cc=, capped at eight names with `+<k>`), because the
+recipients are a fact about intent at draft time, and **`SEND OK` carries the
+immutable id, the commit and the publication outcome**:
+
+```
+DRAFT OK path=<path> re=<id> from=<name> to=<names> cc=<names|-> at=<commit> moved=<true|false> bytes=<n>
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> state=<published|already-published>
+```
+
+`state=published` means the remote now holds the note the receipt names;
+`state=already-published` means it held it already — same id, same bytes, same
+path — and nothing was written. The two are one delivery, not two.
+
+#### The missing bound — full checks (#81)
+
+`check --full` today reports **every** finding in one run, one line each, and
+that is the one report on the bus with no ceiling — the shape the Conventions'
+cap-and-count law exists for, and the one listing that never met it. A first
+`check --full` over a bus adopted onto an old history names a finding per note;
+the real bus the tolerance was measured on failed 163 ways in one pass, and
+almost all of them were **one shape repeated**: 109 notes with no `Subject:`,
+21 with a `To:` the roster does not hold. So the full check takes the law in
+three pieces, each of which is the existing law applied to the one report that
+does not have it yet:
+
+- **the cap is per kind.** `check` runs several checks into one stream — parse,
+  header, lane, id, `Re:`, receipt, catalogue, state files — and a flat cap over
+  the concatenation would let the loud kind eat the quiet one, which is the
+  Conventions' own rule. Each kind is capped at `--fail-max <n>`, default 20,
+  `0` for all;
+- **repeated remedies are aggregated, one line per shape.** A finding whose
+  remedy sentence is identical across `count>=2` notes prints ONE line carrying
+  the count and the first path, and the remedy once — the same shape the inbox
+  uses for unreadable files it has already named. This is what makes a full
+  check over an old history small: the wall of red is few shapes repeated;
+- **the count prints on failure as well as success**, which is the Conventions'
+  law restated here because this is the one listing that only ever speaks on
+  failure.
+
+The grammar:
+
+```
+BUS FINDING kind=<kind> count=<n> first=<path, path:line, or lane> warn=<true|false> remedy=<the remedy, once>
+BUS MORE kind=<kind> shown=<n> total=<t> <the flag that lifts the cap, or --full to see every finding>
+BUS SUMMARY mode=<full|since> cursor=<sha|-> notes=<n> findings=<f> warn=<w> fail=<x> complete=<true|false> next=<token|->
+```
+
+`BUS FINDING` replaces nothing that ships: below `--fail-max`, the per-note
+`BUS WARN` and `BUS FAIL` lines print exactly as they do today, and `BUS
+FINDING` is the shape a **capped and aggregated** report prints instead of a
+wall. `count=<n>` is the number of notes one line covers, `first=` names the
+first so a reader holding the file has a place to start, and `warn=` says
+whether the finding is a `WARN` (tolerated) or a `FAIL` (gating), because the
+two mix in one stream. `BUS MORE` is the Conventions' MORE line, per kind,
+naming the flag that lifts the cap. `BUS SUMMARY` is the count line, and it
+prints on failure as well as success: `findings=`, `warn=` and `fail=` are the
+truth about the BUS, not about the output — the listing is capped, the counting
+never is.
+
+**Continuation, on the shared collector and not another fetch clock.** A full
+check that exceeds the caps is paged with `--after <token>`, and the token is
+the **same snapshot token the read half uses** — same schema, same C0..H
+capture, same scan order (first-parent commit order, then bytewise path, then
+receipt-record offset) — because a second ordering is a second reader that can
+drift, and a second fetch would be a second clock. `check` is the gate and
+reads the checkout, so the continuation captures a snapshot of the checkout it
+is walking: no poll, no network, no clock of its own. `complete=<true|false>`
+and `next=<token|->` carry the same meaning they carry on `INBOX BODIES`: a
+capped run that stops early is `complete=false` with a token, and the next run
+resumes at the item where the cap stopped, on the same snapshot.
+
+**What aggregation never does.** Aggregating repeated remedies is a **display**
+rule and nothing else: the run still walks every note, every finding is still
+reported on some page, the exit code is unchanged, and `count=` always adds up
+to what the per-note run would have said. A note is never left unexamined to
+save a line, and no finding is elided to fit a cap — below the cap it is named,
+above the cap it is on the next page and `total=` says how many there are.
+
+#### Replays
+
+A bounded transaction, one note answered end to end:
+
+```
+$ nova-bus draft --bus ~/bus --as Ada --reply-to bo-abcdef012345 \
+    --body-file /tmp/reply.txt --draft-dir ~/scratch --remote origin --branch main
+DRAFT OK path=/home/ada/scratch/2026-09-15T0910Z-re-bo-abcdef012345.md re=bo-abcdef012345 \
+  from=Ada to=Bo cc=- at=9f31c2b8d40e7c6a5b4938271605f4e3d2c1b0a moved=true bytes=412
+$ nova-bus prepare --bus ~/bus --as Ada --file /home/ada/scratch/2026-09-15T0910Z-re-bo-abcdef012345.md
+{"schema":"nova.bus.prepared/1","id":"ada-3f9a1c2b8d40","path":"from-ada/2026-09-15T0910Z-re-3f9a1c2b8d40.md","note":"<…>","sha256":"<64 hex>"}
+$ nova-bus send --bus ~/bus --as Ada --prepared /tmp/ada-3f9a1c2b8d40.json --remote origin --branch main
+SEND OK id=ada-3f9a1c2b8d40 path=from-ada/2026-09-15T0910Z-re-3f9a1c2b8d40.md \
+  commit=7d1e0c2b8d40e7c6a5b4938271605f4e3d2c1b0a pushed=true attempts=1 state=published
+```
+
+The same send, re-run after a push whose answer was lost — the retry, not a
+second note:
+
+```
+$ nova-bus send --bus ~/bus --as Ada --prepared /tmp/ada-3f9a1c2b8d40.json --remote origin --branch main
+SEND OK id=ada-3f9a1c2b8d40 path=from-ada/2026-09-15T0910Z-re-3f9a1c2b8d40.md \
+  commit=7d1e0c2b8d40e7c6a5b4938271605f4e3d2c1b0a pushed=true attempts=0 state=already-published
+```
+
+A full check over a bus adopted onto an old history, where the findings are few
+shapes repeated — aggregated, and one pass:
+
+```
+$ nova-bus check --bus ~/bus --full
+BUS SCOPE mode=full cursor=- changed=-
+BUS FINDING kind=missing-subject count=109 first=from-cy/2026-08-03-note.md warn=true \
+  remedy=add a Subject: line, or --legacy-before at the day the bus adopted the tool
+BUS FINDING kind=unknown-to count=21 first=from-bo/2026-08-11-note.md warn=true \
+  remedy=name a reader from nova-bus names, or --legacy-before at the day the bus adopted the tool
+BUS FINDING kind=missing-index count=3 first=from-cy/2026-08-03-note.md warn=true \
+  remedy=nova-bus check --bus ~/bus --full --rebuild-index
+BUS SUMMARY mode=full cursor=- notes=1900 findings=133 warn=133 fail=0 complete=true next=-
+```
+
+A bus where every note fails a DIFFERENT way — distinct shapes — is the case
+the cap and continuation exist for; the same walk under a per-kind cap, and
+resumed on the same snapshot:
+
+```
+$ nova-bus check --bus ~/bus --full --fail-max 2
+BUS SCOPE mode=full cursor=- changed=-
+BUS FINDING kind=parse count=12 first=from-dana/2026-08-07-prose.md warn=true \
+  remedy=the header ends at the first blank line; put a blank line after the last header
+BUS FINDING kind=parse count=9 first=from-bo/2026-08-19-heading.md warn=false \
+  remedy=headers are plain Key: value; a # heading is not a key
+BUS MORE kind=parse shown=2 total=4 remedy=--fail-max 0, or --full to see every finding
+BUS SUMMARY mode=full cursor=- notes=1900 findings=167 warn=145 fail=22 complete=false next=<token>
+$ nova-bus check --bus ~/bus --full --after <token>
+BUS FINDING kind=parse count=7 first=from-cy/2026-08-21-key.md warn=false \
+  remedy=unknown header key; the eight keys are From, To, Cc, Date, Id, Re, Kind, Subject
+BUS FINDING kind=parse count=6 first=from-cy/2026-08-23-bold.md warn=false \
+  remedy=headers are plain Key: value, not markdown bold; write To: not **To**:
+BUS SUMMARY mode=full cursor=- notes=1900 findings=167 warn=145 fail=22 complete=true next=-
+```
+
+`findings=167` is the same on both pages, and `warn=`/`fail=` with it, because
+the counting is never capped: the two pages are a prefix of one walk, not two
+walks, and `next=-` on the second page is the run saying the whole bus has been
+reported.
+
+#### Measurement
+
+The claim is the issue's, and the method is SPEC-BUS-REPLY.md's Measurement
+section applied to the whole transaction: coordinator and worker
+input/output/cache categories, turns, preparation, review, repairs, retries,
+runtime and accepted quality, before and after, on matched work — measured per
+correctly handled note, never per run. Implementation and collection overhead
+and prompt-cache effects are included, raw events and versioned reports are
+preserved, and **no savings percentage is claimed yet**: a cheaper read half or
+a shorter receipt alone does not prove lower total cost, and a harness that does
+not report a category prints `unknown` rather than `zero`.
 
 ### The receipt rule
 
@@ -3896,7 +4117,14 @@ them is missing.
 harness itself wakes the session when the call returns, on every harness there
 is, because that is what a tool call *is*. So the polling moves inside the tool.
 `wait` blocks, fetches every `--interval`, and returns the moment the inbox would
-list something new.
+list something new. Without `--advance` the cursor does not move, so an
+**unadvanced cursor makes `wait` return at once** with the same listing `inbox`
+would print, on every call, for as long as it stays where it is: a caller with a
+backlog runs `inbox` first to clear it, or passes `--advance` so the second wait is
+a real wait for a note newer than the start. With `--advance`, a wait that would
+otherwise return on notes the reader has already heard — receipted, not answered —
+instead moves the cursor to the head over them, prints one `WAIT ADVANCED
+from=<sha8> to=<sha8> heard=<n>` line, and keeps blocking for a genuinely new note.
 
 **It is `inbox`, on a clock.** The same rules about what is addressed to you, the
 same open list, the same switch-day line, the same `INBOX` lines on stdout in the

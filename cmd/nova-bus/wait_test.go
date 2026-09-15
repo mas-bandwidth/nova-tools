@@ -476,6 +476,50 @@ func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(
 		mustContain(t, "stdout", "INBOX NOTE id=bo-555555555555")
 }
 
+// Issue #328: a coordinator who receipts a note and then waits is a reader whose only news
+// is a note they have already heard. Without --advance the wait returns at once on that
+// note -- heard is not answered, so it is still news to the open list -- and the caller pays
+// a turn for nothing. With --advance the cursor is moved to the head over the heard note,
+// one WAIT ADVANCED line says so, and the wait blocks for a genuinely new note instead of
+// returning.
+func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, bare := busDir(t)
+	settled(t, checkout)
+
+	other := bench(t, bare)
+	note(t, other, "bo-555555555555", "a note already receipted")
+	if err := push(other); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, checkout, "pull", "-q", "--ff-only", "origin", "main")
+	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-555555555555",
+		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+
+	const timeout = 1 * time.Second
+	start := time.Now()
+	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String(), "--advance")...).mustCode(t, 0)
+	took := time.Since(start)
+
+	r.mustContain(t, "stdout", "WAIT ADVANCED from=").
+		mustContain(t, "stdout", " to=").
+		mustContain(t, "stdout", " heard=1").
+		mustContain(t, "stdout", "WAIT TIMEOUT after=")
+	if strings.Contains(r.stdout, "WAIT OK new=1") {
+		t.Fatalf("wait --advance returned WAIT OK on a note it had already receipted:\n%s", r.stdout)
+	}
+	if took < timeout {
+		t.Fatalf("wait --advance returned after %s, before its %s deadline, over only a heard note:\n%s", took, timeout, r.stdout)
+	}
+	// The cursor moved over the heard note: its commit is the one this run read to, which
+	// is the parent of the cursor commit the advance itself made.
+	readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD~1"))
+	if onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR")); len(onLane) == 0 || onLane[0] != readTo {
+		t.Fatalf("the cursor was not advanced to head over the heard note (read to %s):\n%s", readTo, read(t, checkout, "from-ada/CURSOR"))
+	}
+}
+
 // THE BEAT IS WRITTEN EVERY TICK. A waiting line's cursor does not move -- there was
 // nothing to read -- so a line whose cursor never moves reads asleep to `nova-wake awake`.
 // The BEAT is the file that moves anyway: rewritten on every poll, one line, the newest
@@ -572,4 +616,83 @@ func TestWaitBeatPushBounded(t *testing.T) {
 	if beats > pollCount {
 		t.Fatalf("pushed %d beat commits over %d polls; the push is bounded by --beat, not once per tick:\n%s", beats, pollCount, log)
 	}
+}
+
+// A --bus path holding a space must round-trip through the re-arm command: the line's next=
+// is shell-quoted argument by argument, so pasting it hands --bus the SAME one argument --
+// space and all -- rather than splitting it in two. splitShellWords tokenizes the way a
+// shell would for the grammar rearmCommand emits; the emitted command text is never executed.
+func TestRearmCommandQuotesArgumentsWithSpaces(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	_, bare := busDir(t)
+	checkout := filepath.Join(t.TempDir(), "stella 2 bus")
+	gitIn(t, filepath.Dir(checkout), "clone", "--quiet", bare, checkout)
+	settled(t, checkout)
+
+	args := waitFlags(checkout, "Ada", "1s")
+	r := invoke(t, "", args...).mustCode(t, 0)
+
+	trimmed := strings.TrimRight(r.stdout, "\n")
+	line := trimmed[strings.LastIndex(trimmed, "\n")+1:]
+	cmd, ok := strings.CutPrefix(line, "WAIT DONE reason=timeout rearm=required next=")
+	if !ok {
+		t.Fatalf("the re-arm line is missing next=:\n%s", r.stdout)
+	}
+	got := splitShellWords(cmd)
+	want := append([]string{"nova-bus", "wait"}, args[1:]...)
+	if len(got) != len(want) {
+		t.Fatalf("re-arm tokenized to %d words, want %d:\nnext=%s\ngot=%q\nwant=%q", len(got), len(want), cmd, got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("word %d is %q, want %q:\nnext=%s", i, got[i], want[i], cmd)
+		}
+	}
+}
+
+// splitShellWords tokenizes one command line under the grammar rearmCommand emits: words
+// split on spaces and tabs, single-quoted runs literal, and a backslash outside quotes
+// escapes the next character -- the '\” idiom that puts an apostrophe inside single quotes.
+// Nothing is executed and nothing is expanded, because the lines under test hold none.
+func splitShellWords(line string) []string {
+	var words []string
+	var cur strings.Builder
+	inWord := false
+	inQuote := false
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case inQuote:
+			if c == '\'' {
+				inQuote = false
+			} else {
+				cur.WriteByte(c)
+			}
+		case c == ' ' || c == '\t':
+			if inWord {
+				words = append(words, cur.String())
+				cur.Reset()
+				inWord = false
+			}
+		case c == '\'':
+			inWord = true
+			inQuote = true
+		case c == '\\':
+			inWord = true
+			if i+1 < len(line) {
+				i++
+				cur.WriteByte(line[i])
+			} else {
+				cur.WriteByte(c)
+			}
+		default:
+			inWord = true
+			cur.WriteByte(c)
+		}
+	}
+	if inWord {
+		words = append(words, cur.String())
+	}
+	return words
 }

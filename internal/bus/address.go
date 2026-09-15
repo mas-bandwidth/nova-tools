@@ -88,6 +88,88 @@ func (c *Config) ResolveList(line string) (names []string, unresolved []string) 
 	return names, unresolved
 }
 
+// AliasAll and AliasTable are the two broadcast aliases a To line resolves at send time
+// rather than as a group hand-declared in participants.json. They are not names, and a
+// roster that HAS a participant or group named "all" or "table" keeps that name: the
+// alias only applies where the roster does not already hold the token.
+const (
+	AliasAll   = "all"   // every participant
+	AliasTable = "table" // every participant but the sender
+)
+
+// isBroadcastAlias reports whether a token is one of the broadcast aliases AND is not a
+// name, alias or group the roster already holds. The participants file is the one source
+// of names, so a bus that really has an "all" addresses that participant, not everyone.
+func (c *Config) isBroadcastAlias(tok string) bool {
+	key := fold(tok)
+	if key != AliasAll && key != AliasTable {
+		return false
+	}
+	_, isName := c.byName[key]
+	_, isGroup := c.byGroup[key]
+	return !isName && !isGroup
+}
+
+// allNames lists every participant's name, in roster order.
+func (c *Config) allNames() []string {
+	out := make([]string, 0, len(c.Participants))
+	for _, p := range c.Participants {
+		out = append(out, p.Name)
+	}
+	return out
+}
+
+// tableNames lists every participant's name but the sender's, in roster order.
+func (c *Config) tableNames(sender Participant) []string {
+	out := make([]string, 0, len(c.Participants))
+	for _, p := range c.Participants {
+		if p.Name == sender.Name {
+			continue
+		}
+		out = append(out, p.Name)
+	}
+	return out
+}
+
+// ExpandBroadcast rewrites a To line whose tokens include a broadcast alias into the
+// concrete participant names the alias stands for, so a note naming one stores its
+// readers rather than the alias and a reader never has to resolve it. The alias is only
+// expanded where the roster does not already hold that name, and any other token is kept
+// verbatim -- including one nobody holds, which stays so a later refusal can name it. A
+// line with no alias comes back unchanged, word for word.
+func (c *Config) ExpandBroadcast(line string, sender Participant) string {
+	hasAlias := false
+	for _, tok := range splitAddresses(line) {
+		if c.isBroadcastAlias(tok) {
+			hasAlias = true
+			break
+		}
+	}
+	if !hasAlias {
+		return line
+	}
+	out := make([]string, 0, len(splitAddresses(line)))
+	for _, tok := range splitAddresses(line) {
+		switch {
+		case c.isBroadcastAlias(tok) && fold(tok) == AliasAll:
+			out = append(out, c.allNames()...)
+		case c.isBroadcastAlias(tok) && fold(tok) == AliasTable:
+			out = append(out, c.tableNames(sender)...)
+		default:
+			out = append(out, tok)
+		}
+	}
+	return strings.Join(out, "; ")
+}
+
+// ResolveBroadcast resolves an address line the way send resolves a To line: names,
+// aliases and groups exactly as ResolveList, and the two broadcast aliases expanded
+// against the roster first. It exists so draft can vouch for a To line naming "all" or
+// "table" without expanding it, while send expands the line before it is stored.
+func (c *Config) ResolveBroadcast(line string, sender Participant) (names []string, unresolved []string) {
+	return c.ResolveList(c.ExpandBroadcast(line, sender))
+}
+
 // ResolveOne resolves a From line to the single participant that wrote it. A From line
 // naming two people is not a sender, and is refused rather than resolved to the first.
 func (c *Config) ResolveOne(line string) (Participant, bool) {

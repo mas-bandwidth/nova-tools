@@ -639,6 +639,15 @@ implicit opinion about whose model runs.
 <goos>/<goarch> <go version>`, exit 0 — from `internal/buildinfo`, the same
 resolution every binary here uses. It takes no flags and no arguments.
 
+**`native`** runs one card under a frozen configuration (issue #296): a native
+harness binary, a slot strictly under the configured root, and a deadline held
+by the machinery. Folding the local one-shot into the native verb,
+`nova-swarm native --model ollama/<tag>` runs the card on the Studio's local
+model with the same wall, card contract and RESULT rules; admission refuses with
+one line `ADMIT REFUSED benchmark window open until <stamp>` when the file named
+by `NOVA_BENCH_WINDOW` (or `~/.config/nova/bench-window`, a single RFC 3339
+stamp) is in the future, so a local job never runs beside a benchmark.
+
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
 `requeue`, `note`, `finalize` and `reclaim` are the verbs that act; `supervise`
@@ -668,6 +677,13 @@ no new `run` verb, and the receipts stay exactly as the proposals define them.
   refused at gather;
 - one deadline for the whole batch — the batch's own `--deadline`, never a
   deadline any single card sets.
+- one `BATCH` lock file per local slot the batch takes — `<root>/<slot>/BATCH`
+  holding `id=<batch> pid=<n> at=<stamp>`, written at allocation and removed at
+  slot end. A slot whose lock pid is alive refuses the whole batch as
+  `ADMIT REFUSED slot=<n> held-by=<id> pid=<n>` before any card starts; a slot
+  whose lock pid is dead is taken over with one
+  `BATCH NOTE slot=<n> stale-lock id=<id> taken`. Slots are unique across
+  batches by the tool, never by the coordinator counting (issue #457).
 
 ### wait — all end, or the deadline
 
@@ -724,6 +740,8 @@ BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label>: ABSTAIN reason=<token>
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED bench=<name>: <reason>
+ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
+BATCH NOTE slot=<n> stale-lock id=<id> taken
 HOLD: <one bounded quoted line>
 ```
 
@@ -987,6 +1005,7 @@ SUPERVISE FAILED slot=<n> id=<id>: <reason>
 RUN REFUSED: <reason>
 RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
+ADMIT REFUSED benchmark window open until <stamp>
 NATIVE OK label=<id> job=<id> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> [usage=none reason=<r> path=<p>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
@@ -1731,6 +1750,13 @@ satisfied by task prose or a selector.
   reclaimable subtree.
 - **It does not spawn a task chip or any other follow-up** (Glenn, 2026-09-10:
   **no task chips**; follow-ups go to the queue).
+- **It does not become `nova-local`.** The local one-shot is folded into
+  `native --model ollama/<tag>` and nothing else: no `status`, `serve` or
+  `worker` verbs, no loopback pin, no shared weight store or box recipe
+  (BOX-LOCAL.md), no ds4 engine, no digest or load measurement. What the
+  separate `nova-local` spec promised that native does not is deleted with the
+  fold — native runs the card on the Studio's local model and refuses beside a
+  benchmark.
 
 ## What the prototype does that this spec forbids
 
@@ -2201,6 +2227,12 @@ verb, and tests that pin all three by executing them.
     `freddy-swarm.sh` and `run-freddy.sh` are not touched by any step above.
 
 ## Ideas folded on 2026-09-11
+
+**2026-09-15 — the local one-shot is folded into `native`.** `nova-swarm native
+--model ollama/<tag>` runs the card on the Studio's local model with the same
+wall, card contract and RESULT rules, refused by the benchmark window until its
+stamp, so a local job never runs beside a benchmark; the separate
+`docs/SPEC-LOCAL.md` is deleted with the fold.
 
 | source | the idea, in six words | disposition |
 |---|---|---|

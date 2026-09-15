@@ -21,7 +21,7 @@ const usage = `nova-pulse — one tool, five verbs, no model call
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]  (not yet implemented)
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]  (not yet implemented)
+nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -76,7 +76,9 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdPool(rest, stdout, stderr)
 	case "launch":
 		return cmdLaunch(rest, stdout, stderr, now)
-	case "cut", "harvest", "width":
+	case "harvest":
+		return cmdHarvest(rest, stdout, stderr)
+	case "cut", "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
 	}
@@ -186,6 +188,41 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return pulse.Launch(pulse.LaunchInput{
 		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline, Queue: *queue,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
+	})
+}
+
+func cmdHarvest(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("harvest")
+	id := f.fs.String("id", "", "")
+	root := f.fs.String("root", "", "")
+	sources := f.fs.String("sources", "", "")
+	templates := f.fs.String("templates", "", "")
+	maxBodyBytes := f.fs.Int("max-body-bytes", 4096, "")
+	max := f.fs.Int("max", 20, "")
+
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*id, "id", "the pulse id whose cards this harvest folds")
+	f.want(*root, "root", "the pulse root this pulse's state hangs under")
+	if *maxBodyBytes <= 0 {
+		f.add(fmt.Sprintf("--max-body-bytes wants a positive byte count, got %d", *maxBodyBytes))
+	}
+	if *max < 0 {
+		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.Harvest(pulse.HarvestInput{
+		ID:           *id,
+		Root:         *root,
+		Sources:      *sources,
+		Templates:    *templates,
+		MaxBodyBytes: *maxBodyBytes,
+		Max:          *max,
+		Stdout:       stdout,
+		Stderr:       stderr,
 	})
 }
 
