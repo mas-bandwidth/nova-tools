@@ -2032,11 +2032,6 @@ is compared against; it is never the path `query --ask size` takes."
 ;;   ;; NEEDS-KERNEL: cancellation verb with final disposition, distinct from erasure
 ;;   )
 
-;; (deftest "capture-survives-clip" "docs/SPEC-WORK.md:5254"
-;;     "expected=clip-between-anchor-and-manifest;pin-resolves-tick-at-pinned-revision;regression-creates-linked-repair;unrelated-receipts-untouched"
-;;   ;; NEEDS-KERNEL: capture/clip boundary, pinned revisions, regression links
-;;   )
-
 ;; (deftest "chat-and-file-render-are-byte-identical" "docs/SPEC-WORK.md:5304"
 ;;     "expected=chat-and-marker-region-bytes-identical;other-bytes-preserved;missing-duplicate-reversed-marker-refused;target-outside-roots-refused"
 ;;   ;; NEEDS-KERNEL: render with marker regions and permitted-roots boundary
@@ -2087,11 +2082,6 @@ is compared against; it is never the path `query --ask size` takes."
 ;;   ;; NEEDS-KERNEL: savepoint restore fencing and bench identity rules
 ;;   )
 
-;; (deftest "correct-is-a-linked-segment" "docs/SPEC-WORK.md:5272"
-;;     "expected=one-envelope-hold-correct-binding;retry-bumps-generation-once;old-generation-its-own-segment;bare-correct-refused-while-live"
-;;   ;; NEEDS-KERNEL: execution correct verb and generation-bound segments
-;;   )
-
 ;; (deftest "cost-joins-include-the-coordinator" "docs/SPEC-WORK.md:5733"
 ;;     "expected=complete-cost-joins-include-coordinator-overhead-rework;elapsed-attributed;hypothesis-run-after-adoption"
 ;;   ;; NEEDS-KERNEL: operational cost joins with coordinator attribution
@@ -2100,11 +2090,6 @@ is compared against; it is never the path `query --ask size` takes."
 ;; (deftest "cow-root-partition" "docs/SPEC-WORK.md:5044"
 ;;     "expected=id-in-c-or-o-never-both;open-plus-closed-equals-total;both-branches-is-rule-18-finding"
 ;;   ;; NEEDS-KERNEL: rule 18 candidate-gate finding for an id in both branches
-;;   )
-
-;; (deftest "crash-after-append-recovers-the-reply-once" "docs/SPEC-WORK.md:5511"
-;;     "expected=envelope-replayed-once;same-request-payload-original-ok;retry-mutates-nothing;changed-payload-refused-after-restore"
-;;   ;; NEEDS-KERNEL: crash/restore around the durable append at the reply boundary
 ;;   )
 
 ;; (deftest "cursor-pinned-across-a-new-settle" "docs/SPEC-WORK.md:5141"
