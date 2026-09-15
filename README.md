@@ -46,6 +46,7 @@ Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is
   helps, which two to try first, exactly how to try one cheaply, and the honest
   limits.
 - [Roadmap](ROADMAP.md): 0% verified planned work, the current baseline, and what comes next.
+- [Terminology](docs/TERMINOLOGY.md): what the words mean, with links to the spec section that defines each.
 - [Command reference](docs/CLI.md): every flag, worked examples and caveats.
 - [Tool contracts](docs/SPEC.md): what each tool promises, and what it refuses.
 - [Onboarding standard](docs/ONBOARDING.md) and
