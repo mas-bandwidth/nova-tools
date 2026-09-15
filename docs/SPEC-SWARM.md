@@ -690,6 +690,12 @@ bounded packet**:
   transcript, never a report body, never a finding's wording;
 - usage per card and the batch total;
 - bytes bounded: counts, not lists; the packet does not grow with the batch.
+- `--then <command>` (optional) names a follow-on that runs only when every
+  card is done and none stalled or idle-killed: the command runs once, with
+  `sh -c`, in the batch's root, with `BATCH_ID`, `BATCH_DONE` and `BATCH_N`
+  in its environment, and the packet prints `BATCH THEN rc=<n>`. A batch that
+  is not all done prints `BATCH THEN SKIPPED done=<d> n=<n> abstain=<a>
+  stalled=<s>` and exits 3, so the follow-on never runs on an abstain.
 
 **A card whose `RESULT.md` line 1 is not its contract line is refused.** Line
 1 is the card's contract line, the line by which it was admitted; a line 1
@@ -762,6 +768,8 @@ ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
 BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum>
+BATCH THEN rc=<n>
+BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s>
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped>
 HOLD: <one bounded quoted line>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|false> pool=<dir>

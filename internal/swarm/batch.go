@@ -50,6 +50,7 @@ type BatchInput struct {
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
 	Runner   string        // the command, one process per card
+	Then     string        // a follow-on command, run with sh -c only when every card is done; "" means none
 	Stdout   io.Writer
 	Stderr   io.Writer
 }
@@ -341,6 +342,34 @@ func Batch(in BatchInput) int {
 	}
 	for i := 0; i < len(holds) && i < maxHoldLines; i++ {
 		fmt.Fprintf(in.Stdout, "HOLD: %s\n", oneline.Escape(oneline.Cap(holds[i], oneline.TailBytes)))
+	}
+
+	// --then is the follow-on that runs only when every card is done. One abstain, one
+	// stalled card or one idle kill leaves the follow-on unrun: the batch prints one
+	// SKIPPED line naming its counts and exits 3, proof the follow-on did not run on a
+	// batch that was not all done (lesson 26).
+	if in.Then != "" {
+		if done == len(cards) && stalled == 0 && idle == 0 {
+			cmd := exec.Command("sh", "-c", in.Then)
+			cmd.Dir = in.Root
+			cmd.Env = append(os.Environ(),
+				"BATCH_ID="+in.ID,
+				"BATCH_DONE="+strconv.Itoa(done),
+				"BATCH_N="+strconv.Itoa(len(cards)))
+			rc := 0
+			if err := cmd.Run(); err != nil {
+				if ee, ok := err.(*exec.ExitError); ok {
+					rc = ee.ExitCode()
+				} else {
+					rc = -1
+				}
+			}
+			fmt.Fprintf(in.Stdout, "BATCH THEN rc=%d\n", rc)
+		} else {
+			fmt.Fprintf(in.Stdout, "BATCH THEN SKIPPED done=%d n=%d abstain=%d stalled=%d\n",
+				done, len(cards), abstain, stalled)
+			return 3
+		}
 	}
 
 	if abstain == 0 && len(holds) == 0 {
