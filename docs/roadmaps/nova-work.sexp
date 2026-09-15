@@ -55,7 +55,7 @@
   :baseline-items 171
   :discovered-features 6
   :current-features 57
-  :current-acceptance-items 203
+  :current-acceptance-items 204
   :events (    (      :kind "baseline"
       :feature-count 52
       :reason "Full initial nova-work source survey; implementation not started")
