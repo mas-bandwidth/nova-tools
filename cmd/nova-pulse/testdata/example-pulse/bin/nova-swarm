@@ -1,0 +1,3 @@
+#!/bin/sh
+printf "\n" "$*" >> ./.nova-swarm-argv.log
+exit 0

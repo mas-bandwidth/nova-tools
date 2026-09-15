@@ -24,6 +24,20 @@ nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <di
 nova-pulse width   --root <dir> --pool <pool.tsv>
 nova-pulse version
 nova-pulse help
+
+launch reads a cards.tsv of label<TAB>slot<TAB>model<TAB>card, counts the free
+slots in <root>/pool, and hands the cards that fit one model at a time to nova-swarm
+batch, queueing the rest only when --queue is set. --slots is the ceiling on the
+free slots it may use, and --deadline is the whole pulse's one deadline in whole
+seconds. It makes no model call itself: nova-swarm must be on your PATH.
+
+example:
+  nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
+  nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
+
+./cards.tsv and . there are a pulse root of your own; cmd/nova-pulse/testdata/example-pulse
+in this repo is a fixture the size of a first run, and every line above is run
+against it by the tests.
 `
 
 // refuse is what an unusable invocation costs: one line naming what was wrong and the door
