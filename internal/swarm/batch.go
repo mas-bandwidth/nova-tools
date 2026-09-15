@@ -50,6 +50,9 @@ type BatchInput struct {
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
 	Runner   string        // the command, one process per card
+	Benches  string        // path to the benches table; empty means no table is read
+	Bench    string        // comma-separated bench names to allocate the cards across; empty means local only
+	NoWall   bool          // the caller typed --no-wall: a wall=none bench may run unwalled
 	Stdout   io.Writer
 	Stderr   io.Writer
 }
@@ -60,6 +63,7 @@ type BatchInput struct {
 type batchCard struct {
 	label    string
 	slot     int
+	bench    string // the bench this card runs on; empty names the local machine
 	model    string
 	cardPath string
 	contract string // line 1 of the card's text, the line by which it was admitted
@@ -101,31 +105,57 @@ func Batch(in BatchInput) int {
 		fmt.Fprintf(in.Stderr, "BATCH REFUSED: %s holds no card; a batch of no cards is a typo\n", oneline.Field(in.Cards))
 		return 1
 	}
-	if in.Runner == "" {
+	if in.Runner == "" && in.Bench == "" && !anyCardNamesBench(cards) {
 		fmt.Fprintln(in.Stderr, "nova-swarm batch: --runner is required; it wants the command one process per card runs")
 		return 2
 	}
-	if err := assignSlots(cards, in.Root); err != nil {
+	benches := map[string]Bench{}
+	if in.Bench != "" || anyCardNamesBench(cards) {
+		var err error
+		benches, err = allocateBenches(cards, in.Benches, in.Bench)
+		if err != nil {
+			fmt.Fprintln(in.Stderr, err)
+			return 2
+		}
+	} else if err := assignSlots(cards, in.Root); err != nil {
 		fmt.Fprintln(in.Stderr, err)
 		return 1
+	}
+	// A wall=none bench runs unwalled only when the batch typed --no-wall: the flag is argv,
+	// never a default, and a wall=none bench without it is refused naming the bench and flag.
+	for _, c := range cards {
+		b, ok := benches[c.bench]
+		if ok && b.Wall == "none" && !in.NoWall {
+			fmt.Fprintf(in.Stderr, "BATCH REFUSED bench=%s wall=none: run with --no-wall or a sandbox bench\n", oneline.Field(b.Name))
+			return 2
+		}
 	}
 
 	// scatter: one runner process per card, in TSV order. The job directory is made before
 	// the process starts so a runner can write RESULT.md straight into place.
 	type proc struct {
-		cmd        *exec.Cmd
-		slot       int
-		label      string
-		idleLog    string // the file the idle monitor watched; set only on an idle kill
-		done       bool   // guarded by doneMu
-		idleKilled bool   // guarded by doneMu
-		rc         int    // the child's exit code; guarded by doneMu
-		lastGrow   time.Time
+		cmd            *exec.Cmd
+		slot           int
+		label          string
+		bench          string // the bench name a remote card runs on; empty is local
+		host           string // the ssh alias a remote card's bench names
+		remoteLog      string // the remote native.log the idle watch measures, remote only
+		harnessLog     string // the local harness.log that carries the remote RUN pgid= line
+		idleLog        string // the file the idle monitor watched; set only on an idle kill
+		done           bool   // guarded by doneMu
+		idleKilled     bool   // guarded by doneMu
+		deadlineKilled bool   // guarded by doneMu
+		unreachable    bool   // guarded by doneMu; the bench stopped answering before the deadline
+		rc             int    // the child's exit code; guarded by doneMu
+		lastGrow       time.Time
+		lastPoll       time.Time // the last remote idle poll; enforces the --idle/3 cadence
 	}
 	var doneMu sync.Mutex
 	procs := make([]proc, len(cards))
 	for i, c := range cards {
-		job := filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label)
+		// A remote card's job directory sits under <root>/<bench>-<n>/jobs/<label>; a local
+		// card's under <root>/<n>/jobs/<label>, as today.
+		job := filepath.Join(in.Root, scratchName(c), "jobs", c.label)
 		if err := os.MkdirAll(job, 0o755); err != nil {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 			return 2
@@ -138,10 +168,29 @@ func Batch(in BatchInput) int {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 			return 2
 		}
-		cmd := exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root)
-		cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root, "NOVA_SWARM_JOB="+job)
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
+		var cmd *exec.Cmd
+		if c.bench != "" {
+			// On a remote bench the batch builds the native command itself: ssh <host>
+			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
+			b := benches[c.bench]
+			if b.Wall == "none" && in.NoWall {
+				// An unwalled bench whose batch typed --no-wall is one loud line per card,
+				// before the card starts, naming the slot as bench:n.
+				fmt.Fprintf(in.Stderr, "RUN UNSANDBOXED id=%s slot=%s:%d: no OS containment; every read and write this job makes is yours\n",
+					oneline.Field(c.label), oneline.Field(b.Name), c.slot)
+			}
+			cmd, err = remoteRun(c, b, in.Root, int(in.Deadline.Seconds()), in.NoWall, logFile)
+			if err != nil {
+				_ = logFile.Close()
+				fmt.Fprintln(in.Stderr, err)
+				return 2
+			}
+		} else {
+			cmd = exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root)
+			cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root, "NOVA_SWARM_JOB="+job)
+			cmd.Stdout = logFile
+			cmd.Stderr = logFile
+		}
 		if err := cmd.Start(); err != nil {
 			_ = logFile.Close()
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: runner %s could not start for %s: %s\n",
@@ -149,7 +198,12 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 		_ = logFile.Close()
-		procs[i] = proc{cmd: cmd, slot: c.slot, label: c.label, lastGrow: time.Now()}
+		procs[i] = proc{cmd: cmd, slot: c.slot, label: c.label, bench: c.bench, harnessLog: logPath, lastGrow: time.Now()}
+		if c.bench != "" {
+			b := benches[c.bench]
+			procs[i].host = b.Host
+			procs[i].remoteLog = remoteLogPath(b, c.slot, c.label)
+		}
 	}
 
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
@@ -196,8 +250,35 @@ func Batch(in BatchInput) int {
 					return
 				case now := <-ticker.C:
 					doneMu.Lock()
+					var idleKills []*proc
 					for i := range procs {
 						if procs[i].done || procs[i].idleKilled {
+							continue
+						}
+						if procs[i].host != "" {
+							// The remote idle watch measures the remote log's byte size via
+							// ssh stat -c %s, at most once per --idle/3. A bench unreachable at a
+							// poll is not a dead card: it stays unknown until the deadline.
+							if now.Sub(procs[i].lastPoll) < in.Idle/3 {
+								continue
+							}
+							procs[i].lastPoll = now
+							size, err := statRemote(procs[i].host, procs[i].remoteLog)
+							if err != nil {
+								procs[i].unreachable = true
+								continue
+							}
+							procs[i].unreachable = false
+							if size != lastSize[i] {
+								lastSize[i] = size
+								procs[i].lastGrow = now
+								continue
+							}
+							if now.Sub(procs[i].lastGrow) >= in.Idle {
+								procs[i].idleKilled = true
+								procs[i].idleLog = procs[i].remoteLog
+								idleKills = append(idleKills, &procs[i])
+							}
 							continue
 						}
 						size := logSize(cardLogPath(in.Root, procs[i].slot, procs[i].label))
@@ -215,6 +296,11 @@ func Batch(in BatchInput) int {
 						}
 					}
 					doneMu.Unlock()
+					for _, p := range idleKills {
+						if p.cmd.Process != nil {
+							killRemote(p.cmd.Process.Pid, p.host, remotePgid(p.harnessLog))
+						}
+					}
 				}
 			}
 		}()
@@ -224,8 +310,32 @@ func Batch(in BatchInput) int {
 	case <-allDone:
 	case <-time.After(in.Deadline):
 		doneMu.Lock()
+		var remotes []*proc
 		for i := range procs {
-			if !procs[i].done && procs[i].cmd.Process != nil {
+			if !procs[i].done && procs[i].cmd.Process != nil && procs[i].host != "" {
+				if !procs[i].unreachable {
+					procs[i].deadlineKilled = true
+				}
+				remotes = append(remotes, &procs[i])
+			}
+		}
+		doneMu.Unlock()
+		// A remote card ends with its full kill sequence: SIGTERM to the ssh child's group,
+		// then pkill -TERM -g <pgid>, then -KILL after the delay. An unreachable bench skips the
+		// pkill and is scored bench-unreachable instead of deadline.
+		for _, p := range remotes {
+			if p.cmd.Process == nil {
+				continue
+			}
+			if !p.deadlineKilled {
+				TerminateGroup(p.cmd.Process.Pid, "")
+				continue
+			}
+			killRemote(p.cmd.Process.Pid, p.host, remotePgid(p.harnessLog))
+		}
+		doneMu.Lock()
+		for i := range procs {
+			if !procs[i].done && procs[i].cmd.Process != nil && procs[i].host == "" {
 				_ = procs[i].cmd.Process.Kill()
 			}
 		}
@@ -257,6 +367,9 @@ func Batch(in BatchInput) int {
 		hold     bool
 		idle     bool
 		idleLog  string // the file the idle monitor watched, for an idle-killed card
+		deadline bool   // killed at the batch deadline with no remote pkill answer
+		unreach  bool   // the bench stopped answering before the deadline
+		wallNone bool   // the card ran unwalled: a wall=none bench and a batch that typed --no-wall
 		logLines int
 		stalled  bool
 		missing  bool   // RESULT.md was not there at all
@@ -267,6 +380,9 @@ func Batch(in BatchInput) int {
 	for i, c := range cards {
 		rows[i].label = c.label
 		rows[i].slot = c.slot
+		if c.bench != "" && benches[c.bench].Wall == "none" && in.NoWall {
+			rows[i].wallNone = true
+		}
 		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(cardUsagePath(in.Root, c.slot, c.label))
 		totalIn += rows[i].in
 		totalOut += rows[i].out
@@ -280,6 +396,18 @@ func Batch(in BatchInput) int {
 			rows[i].idleLog = procs[i].idleLog
 			abstain++
 			idle++
+			continue
+		}
+		if procs[i].unreachable {
+			rows[i].state = "abstain"
+			rows[i].unreach = true
+			abstain++
+			continue
+		}
+		if procs[i].deadlineKilled {
+			rows[i].state = "abstain"
+			rows[i].deadline = true
+			abstain++
 			continue
 		}
 		path := filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "RESULT.md")
@@ -332,17 +460,25 @@ func Batch(in BatchInput) int {
 	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d\n",
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
 	for _, r := range rows {
+		wall := ""
+		if r.wallNone {
+			wall = " wall=none"
+		}
 		switch {
 		case r.idle:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- idle %ds (%s)\n", oneline.Field(r.label), r.slot, idleSeconds, r.idleLog)
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- idle %ds (%s)%s\n", oneline.Field(r.label), r.slot, idleSeconds, r.idleLog, wall)
+		case r.deadline:
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- deadline%s\n", oneline.Field(r.label), r.slot, wall)
+		case r.unreach:
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- bench-unreachable%s\n", oneline.Field(r.label), r.slot, wall)
 		case r.stalled:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- stalled (no output after the wall opened)\n", oneline.Field(r.label), r.slot)
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- stalled (no output after the wall opened)%s\n", oneline.Field(r.label), r.slot, wall)
 		case r.noResult:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- no RESULT.md in %s (rc=0)\n", oneline.Field(r.label), r.slot, r.jobDir)
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- no RESULT.md in %s (rc=0)%s\n", oneline.Field(r.label), r.slot, r.jobDir, wall)
 		case r.state == "abstain":
-			fmt.Fprintf(in.Stdout, "%s slot=%d abstain log=%d\n", oneline.Field(r.label), r.slot, r.logLines)
+			fmt.Fprintf(in.Stdout, "%s slot=%d abstain log=%d%s\n", oneline.Field(r.label), r.slot, r.logLines, wall)
 		default:
-			fmt.Fprintf(in.Stdout, "%s slot=%d: %s log=%d\n", oneline.Field(r.label), r.slot, r.line2, r.logLines)
+			fmt.Fprintf(in.Stdout, "%s slot=%d: %s log=%d%s\n", oneline.Field(r.label), r.slot, r.line2, r.logLines, wall)
 		}
 	}
 	for i := 0; i < len(holds) && i < maxHoldLines; i++ {
@@ -372,12 +508,23 @@ func readCards(path string) ([]batchCard, error) {
 			return nil, fmt.Errorf("--cards line %d wants label<TAB>slot<TAB>model<TAB>card-path, got %d fields", i+1, len(parts))
 		}
 		slot := 0
+		bench := ""
 		if s := strings.TrimSpace(parts[1]); s != "" && s != "-" {
-			n, err := strconv.Atoi(s)
-			if err != nil || n < 1 {
-				return nil, fmt.Errorf("--cards line %d wants a positive slot number, got %q", i+1, parts[1])
+			if b, n, ok := strings.Cut(s, ":"); ok {
+				// A bench slot is bench:<n>: slot n on that bench.
+				v, err := strconv.Atoi(n)
+				if err != nil || v < 1 || b == "" {
+					return nil, fmt.Errorf("--cards line %d wants a bench slot bench:<n>, got %q", i+1, parts[1])
+				}
+				slot = v
+				bench = b
+			} else {
+				n, err := strconv.Atoi(s)
+				if err != nil || n < 1 {
+					return nil, fmt.Errorf("--cards line %d wants a positive slot number, got %q", i+1, parts[1])
+				}
+				slot = n
 			}
-			slot = n
 		}
 		cardPath := parts[3]
 		cardRaw, err := os.ReadFile(cardPath)
@@ -399,6 +546,7 @@ func readCards(path string) ([]batchCard, error) {
 		cards = append(cards, batchCard{
 			label:    parts[0],
 			slot:     slot,
+			bench:    bench,
 			model:    parts[2],
 			cardPath: cardPath,
 			contract: contract,
@@ -582,6 +730,124 @@ func second(lines []string) string {
 		return ""
 	}
 	return lines[1]
+}
+
+// anyCardNamesBench reports whether any card's slot column named a bench, so a bench column
+// alone takes the batch onto the bench path even with no --bench (which then refuses the
+// unnamed bench).
+func anyCardNamesBench(cards []batchCard) bool {
+	for _, c := range cards {
+		if c.bench != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// splitBenchNames splits --bench's comma-separated list into names in deal order, dropping
+// empty entries.
+func splitBenchNames(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// allocateBenches resolves every card's bench and slot across the named benches, and checks
+// each pinning bench's slot count against its cores, returning the ADMIT REFUSED message when
+// a bench is over-subscribed. Local cards keep their bare slot numbers; a card naming a bench
+// not in the table, or not in --bench, is refused. Unassigned cards are dealt round robin,
+// each bench giving its lowest free slot; the local machine is never a pinning bench.
+func allocateBenches(cards []batchCard, benchesPath, benchNames string) (map[string]Bench, error) {
+	table, err := ReadBenchTable(benchesPath)
+	if err != nil {
+		return nil, err
+	}
+	names := splitBenchNames(benchNames)
+	named := map[string]bool{}
+	for _, n := range names {
+		named[n] = true
+	}
+	type benchUse struct {
+		slots int
+		used  map[int]bool
+	}
+	use := map[string]*benchUse{}
+	for _, n := range names {
+		use[n] = &benchUse{used: map[int]bool{}}
+	}
+	localUsed := map[int]bool{}
+	var unassigned []*batchCard
+	for i := range cards {
+		c := &cards[i]
+		if c.bench != "" {
+			if _, ok := table[c.bench]; !ok || !named[c.bench] {
+				return nil, fmt.Errorf("BATCH REFUSED card %s names bench %s not in --bench", oneline.Field(c.label), oneline.Field(c.bench))
+			}
+			if c.slot != 0 {
+				u := use[c.bench]
+				if u.used[c.slot] {
+					return nil, fmt.Errorf("BATCH REFUSED bench %s slot %d named twice", c.bench, c.slot)
+				}
+				u.used[c.slot] = true
+				u.slots++
+				continue
+			}
+			unassigned = append(unassigned, c)
+			continue
+		}
+		if c.slot != 0 {
+			if localUsed[c.slot] {
+				return nil, fmt.Errorf("BATCH REFUSED slot %d named twice", c.slot)
+			}
+			localUsed[c.slot] = true
+		} else {
+			unassigned = append(unassigned, c)
+		}
+	}
+	idx := 0
+	for _, c := range unassigned {
+		for tries := 0; tries < len(names); tries++ {
+			n := names[idx%len(names)]
+			idx++
+			slot := 1
+			if n == "local" {
+				for localUsed[slot] {
+					slot++
+				}
+				localUsed[slot] = true
+				c.bench = ""
+				c.slot = slot
+				break
+			}
+			u := use[n]
+			for u.used[slot] {
+				slot++
+			}
+			u.used[slot] = true
+			u.slots++
+			c.bench = n
+			c.slot = slot
+			break
+		}
+	}
+	for _, n := range names {
+		if n == "local" {
+			continue
+		}
+		b := table[n]
+		count := coreCount(b.Cores)
+		if count < 0 {
+			continue
+		}
+		if use[n].slots > count {
+			return nil, fmt.Errorf("ADMIT REFUSED bench=%s slots=%d cores=%d", b.Name, use[n].slots, count)
+		}
+	}
+	return table, nil
 }
 
 // cardShapeFailure checks a card's shape at admission, and only for a DeepSeek model whose
