@@ -331,6 +331,15 @@ func swarmRow(job, attempt, from, model, repo, ended string, in, out, cw, cr, rs
 	}, "\t")
 }
 
+// swarmRowCost is swarmRow with the two cells it keeps fixed — provider and usd — made
+// explicit, so an AVG-line test can carry a cost and a provider prefix.
+func swarmRowCost(job, attempt, from, provider, model, repo, ended string, in, out, cw, cr, rsn, usd string) string {
+	return strings.Join([]string{
+		job, attempt, from, ended, ended, "done", "0", provider,
+		model, repo, in, out, cw, cr, rsn, usd,
+	}, "\t")
+}
+
 func swarmUsage(t *testing.T, pool, job string, row string) {
 	t.Helper()
 	write(t, filepath.Join(pool, "usage", job+".tsv"), strings.Join(swarmHeader, "\t")+"\n"+row+"\n")

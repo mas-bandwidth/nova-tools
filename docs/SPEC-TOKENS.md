@@ -400,6 +400,21 @@ is the day it was learned.
     A friend who wants the repos touched on the note appends one
     `# repos: …` line to the body by hand; it is the one line a person adds
     to a `report`, and it carries no number.
+    After the body lines and before `REPORT OK`, a `report` prints, on
+    **stderr**, one `TOKENS AVG` line per model: the day's blended cost per
+    token, summed over every repo that model wrote that day. `model=` is
+    `provider/model` where a source named a provider and the bare model name
+    where none did; `tokens=` is input, output, cache write and cache read
+    summed (reasoning is its own column and is not in the ratio's
+    denominator); `usd=` is the model's cost, in dollars, from the usage
+    `usd` column or a cost tick the source reported, and is `0` where no
+    source reported one; `usd_per_mtok=` is that cost over those tokens,
+    dollars per million tokens to four decimals. The lines are sorted by
+    `usd_per_mtok` descending, capped at `--max` like every other listing,
+    and a model whose `tokens=` is zero still prints one line with
+    `usd_per_mtok=-`: there is no average over nothing, so the ratio is
+    never divided. The one `TOKENS AVG-ALL` line is the same four fields
+    summed over every model.
 
 21. **A harness that shows nothing is counted from the provider's side, and
     never apportioned.** Emma's harness (Antigravity, Gemini) and Johnny's
@@ -630,6 +645,8 @@ TOKENS REFUSED: <reason>
 REPORT OK who=<name> day=<d> rows=<n> at=<stamp> build=<id> subject=<subject>
 REPORT FAIL who=<name> day=<d> rows=<n> unreadable=<n>
 REPORT REFUSED: <reason>
+TOKENS AVG day=<d> model=<provider/model> tokens=<n> usd=<n> usd_per_mtok=<n|->
+TOKENS AVG-ALL day=<d> tokens=<n> usd=<n> usd_per_mtok=<n|->
 SUM MONTH month=<m> at=<stamp> build=<id> days=<n> first=<d> last=<d> missing=<n> rows=<n> turns=<n|->
 SUM PAIR model=<model> repo=<repo> input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> days=<n>
 SUM MODEL model=<model> input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> repos=<n>
