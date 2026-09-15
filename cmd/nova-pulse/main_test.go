@@ -40,8 +40,8 @@ func TestHelpListsOnlyBuiltVerbs(t *testing.T) {
 		t.Fatalf("help exit = %d, stderr=%s", code, errb.String())
 	}
 	usage := out.String()
-	shipped := map[string]bool{"pool": true, "launch": true}
-	unshipped := map[string]bool{"cut": true, "harvest": true, "width": true}
+	shipped := map[string]bool{"pool": true, "launch": true, "harvest": true}
+	unshipped := map[string]bool{"cut": true, "width": true}
 	for _, line := range strings.Split(usage, "\n") {
 		verb := strings.Fields(line)
 		if len(verb) < 2 || verb[0] != "nova-pulse" {
@@ -55,6 +55,30 @@ func TestHelpListsOnlyBuiltVerbs(t *testing.T) {
 		case shipped[name] && marked:
 			t.Errorf("help marks shipped verb %q as \"not yet implemented\": %q", name, line)
 		}
+	}
+}
+
+func TestHelpDropsNotYetImplementedForHarvest(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"help"}, &out, &errb, time.Now().UTC()); code != 0 {
+		t.Fatalf("help exit = %d, stderr=%s", code, errb.String())
+	}
+	usage := out.String()
+	for _, line := range strings.Split(usage, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "nova-pulse" || fields[1] != "harvest" {
+			continue
+		}
+		if strings.Contains(line, "not yet implemented") {
+			t.Errorf("harvest help still reads \"not yet implemented\": %q", line)
+		}
+	}
+	code := run([]string{"harvest", "--root", "/tmp/root"}, &out, &errb, time.Now().UTC())
+	if code != 2 {
+		t.Fatalf("harvest missing --id exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "--id is required") {
+		t.Errorf("harvest missing --id should name the remedy, got: %q", errb.String())
 	}
 }
 
