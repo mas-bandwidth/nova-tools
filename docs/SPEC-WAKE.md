@@ -341,6 +341,13 @@ classified `awake` inside `--window`, `asleep` past it, and `unknown` where no
 cursor has ever been written (docs/SPEC-WORK.md, **Presence**, source
 `bus-cursor`).
 
+**A config file for the repeated flags.** Before the flags, this tool reads
+`<cwd>/.nova-wake/config`, or the file named by `NOVA_WAKE_CONFIG`, as `key=value`
+lines: `bus=`, `window=`, `state=` and `as=` — the four the coordinator retypes
+every turn for `awake` and `quickstart`. A flag given on the command line wins,
+nothing is printed for the read, and a required value named by neither the file
+nor a flag is the same refusal, now naming the config file as a second remedy.
+
 **At least one source, named.** A `watch` with no `--bus`, no `--entry`, no
 `--reports`, no `--pr`, no `--owned-prs`, no `--run`, no `--ref` and no
 `--lock` (amended 2026-09-13, draft 2) is exit 2 and `refusing to guess`: a watcher with nothing to watch is
