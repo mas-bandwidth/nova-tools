@@ -404,12 +404,14 @@ content semantics; anything about the session that pastes the line.
 ### links — every internal reference resolves
 
 ```
-nova-check links --dir <dir> [--fail-max <n>]
+nova-check links --dir <dir> [--exclude <prefix>] [--fail-max <n>]
 ```
 
 **Asserts.** Every relative link target in every `.md` file under `--dir`
 resolves to an existing file or directory inside the tree. Walks the whole
-tree, skipping `.git`.
+tree, skipping `.git`. A repeatable `--exclude <prefix>` leaves a subtree
+unscanned and skips any link into it, reporting the skipped files as
+`excluded=<n>` on the LINKS line.
 
 **What counts as a link.** Inline links and images: `[text](target)` and
 `![alt](target)`, with an optional title in any of the three CommonMark forms
@@ -2474,6 +2476,7 @@ INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
 INBOX OPEN carrying=<n> heard=<m> large=<true|false> remedy=inbox --advance
 INBOX OPEN listed=<n> and <k> more (--open-max to widen)
 INBOX UNREADABLE path=<path>: <reason>
+INBOX UNREADABLE count=<n> unchanged=<true|false> first=<path>
 INBOX UNADDRESSED path=<path>: <reason>
 INBOX SWITCH your switch-day line is the date <date>, which hides every note dated <date-1> or earlier; draw it at an instant, once: <command>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
@@ -2628,6 +2631,19 @@ The one file it does not name per run is one dated BEHIND the switch-day line on
 an incremental read: that is history, and it is counted on `INBOX LEGACY`
 instead. A file dated on or after the line, or with no readable date at all, is
 named on every run, and `--full` lists every unreadable file whatever its date.
+`INBOX UNREADABLE count=<n> unchanged=<true|false> first=<path>` is the one
+line an earlier run's unreadable files collapse to on an incremental read that
+found nothing new among them: a carried file nobody can read is not news and
+naming all of them on every poll buries the inbox above them, so the default
+counts them once and names only the first. The per-file `path=` lines still
+print when any of the set is NEW since the cursor -- which is information the
+reader has not been shown -- on a `--full` read, and with `--diagnostics`,
+which asks for the whole picture whatever the default is. `count=` is the
+number of files the collapse covers, `unchanged=true` says none of them moved
+since the cursor, and `first=` names one path so a reader still holding an
+unreadable file has a place to start. `unchanged=` is a boolean in the grammar
+and `false` is the shape a changed set would print, though a changed set prints
+per-file lines instead.
 `INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
 above.
 
@@ -3017,6 +3033,9 @@ a property of how a bus writes, not of this tool: a bus of two-line notes and
 a bus of essays do not share a threshold, and a number this tool supplied would
 make a guess look like a measurement. It is a heuristic and it is wrong sometimes
 in both directions — which is why `Kind:` exists, costs one line, and wins.
+When the flag is absent, the threshold is read from a `receipt-max-words=<n>`
+line in `<bus>/.nova-bus/defaults`, then from `NOVA_BUS_RECEIPT_MAX_WORDS`, and
+the run refuses only when neither supplies one.
 
 `inbox` lists in three groups, newest first within each: the notes that carry
 something, then what has been **heard and not answered**, then the bare
@@ -3259,6 +3278,7 @@ goes open. A run parses the notes that are NEW and nothing else.
 | `from-<me>/CURSOR` | one reader's | one line: the commit I last read to, and when |
 | `from-<me>/OPEN` | one reader's | one line per note I have been shown and have not answered — its whole display line, and whether I have heard it |
 | `from-<lane>/INDEX` | one lane's | one line per note that lane has sent: id, path, date, To, Re |
+| `from-<me>/BEAT` | one reader's | one line, an RFC 3339 UTC stamp and the cursor sha, rewritten on every `wait` poll tick so a waiting line's cursor that does not move still records that the line is alive |
 
 They are files a person can read, like everything else on the bus. Blank lines
 and `#` comments are ignored in all three.
@@ -3913,6 +3933,12 @@ WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
 — and **exit 0**. A timeout is not an error. It is the answer *nothing yet*, and
 the caller issues the next one; nothing is written to the bus by a wait that
 found nothing, because there is nothing to record having read.
+
+**`wait` returns once and must be re-armed.** Every return is one read, ended
+by one terminal `WAIT DONE reason=<new|timeout|signal> rearm=required next=<command>`
+line that hands back the exact command to issue again to keep listening. A
+background process is not a harness wake callback — the harnesses that can wake
+on a process exit, and so re-arm on their own, are listed in HARNESSES.
 
 **The ceiling is 60m, and it is a fact about harnesses rather than about buses.**
 A wait runs inside a tool call, and every harness kills a call that runs too

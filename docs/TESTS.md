@@ -162,7 +162,7 @@ Fixture: `cmd/nova-check/testdata/example-self`.
 ```
 $ nova-check quickstart --dir ./self
 QUICKSTART OK dir=./self checks=2: links, then nocode
-LINKS OK files=4 links=3
+LINKS OK files=4 links=3 excluded=0
 NOCODE OK files=5 clean deny-list=floor\x20list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
 
@@ -343,6 +343,25 @@ STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stal
 STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
 ```
 
+## nova-pulse
+
+Fixture: `cmd/nova-pulse/testdata/example-pulse`, a pulse root the size of a first run: three cards (gate, hash, fold), all on one `pro` model, and the `cards.tsv` that names them. `launch` counts the free slots under `<root>/pool` (here empty, so every slot is free), then hands the cards that fit to `nova-swarm batch` one model at a time. The fixture ships a stub `bin/nova-swarm` that records the batch argv and exits 0, so the two `PULSE OK` lines below were produced by RUNNING launch on this fixture with that stub on PATH — no model call happens here, and no line reaches a network.
+
+A first sitting is three runs: one refusal (three cards into two slots), one whole pulse (three into three), and the queued form (three into two with `--queue`).
+
+### First run
+
+```
+$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120
+PULSE REFUSED UNDER-SLOTS cards=3 free=2 (pass --queue, or wait)
+
+$ nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
+PULSE OK id=20260915T161450Z-pulse-e33494 n=3 free-before=3 queued=0 batches=1 deadline=120
+
+$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
+PULSE OK id=20260915T161450Z-pulse-600cc3 n=3 free-before=2 queued=1 batches=1 deadline=120
+```
+
 ## nova-board
 
 Fixture: `cmd/nova-board/testdata/example-board`.
@@ -483,4 +502,19 @@ $ nova-version report --file cmd/nova-version/testdata/example.tsv
 REPORT at=2026-09-12T17:29:33Z file=cmd/nova-version/testdata/example.tsv host=- as=- entries=1 kinds=engine,harness,model,pin,tool timeout=5s budget=1m0s max=20 snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-version/testdata/example.tsv
+```
+
+## nova-pulse
+
+### First run
+
+From the nova-tools checkout, against the pool source fixture
+`cmd/nova-pulse/testdata/`: a `sources.tsv` declaring one `roadmap` source, and
+that roadmap — two cells naming a card and one naming none. `pool` reads the
+roadmap, skips the cell without a card, and writes the two candidates it found
+to `./root/pool.tsv`. No network, no model call.
+
+```text
+$ nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
+POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
 ```

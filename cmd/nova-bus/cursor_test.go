@@ -756,9 +756,10 @@ func TestAnUnreadableFileIsCarriedAcrossRuns(t *testing.T) {
 	if got := read(t, checkout, "from-ada/OPEN"); !strings.Contains(got, "-\tunreadable\t-\t-\t-\t-\tfrom-bo/2026-09-07T0009Z-prose.md\t-") {
 		t.Fatalf("the unreadable file was not carried on the open list:\n%s", got)
 	}
-	// The next run, with nothing new at all, still names it. That is the whole point.
+	// The next run, with nothing new at all, still names it, collapsed to one count line
+	// because it is unchanged since the cursor. That is the whole point.
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX UNREADABLE path=from-bo/2026-09-07T0009Z-prose.md: ").
+		mustContain(t, "stdout", "INBOX UNREADABLE count=1 unchanged=true first=from-bo/2026-09-07T0009Z-prose.md").
 		mustContain(t, "stdout", "unreadable=1")
 
 	// Receipting it is one way it leaves the list: a reader saying "I have seen this file"
@@ -784,6 +785,31 @@ func TestAnUnreadableFileIsCarriedAcrossRuns(t *testing.T) {
 	invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX NOTE id=bo-333333333333 from=Bo addr=to").
 		mustContain(t, "stdout", "unreadable=0")
+}
+
+func TestUnreadableNotesCollapseToOneLineWhenUnchanged(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	writeFile(t, checkout, "from-bo/2026-09-07T0009Z-prose.md",
+		"Ada, the checkpoint is pushed and the suite passed: zero divergence.\n\nMore prose.\n")
+	commitAs(t, checkout, "Bo", "bo: a file that will not parse")
+
+	// First run: the unreadable file is NEW since the cursor, so it is named with its
+	// reason, per file. News is not collapsed.
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX UNREADABLE path=from-bo/2026-09-07T0009Z-prose.md: ")
+	// Second run, nothing new: the file is carried, unchanged since the cursor, so the
+	// whole set collapses to one count line and no per-file lines print.
+	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX UNREADABLE count=1 unchanged=true first=from-bo/2026-09-07T0009Z-prose.md")
+	if strings.Contains(r.stdout, "INBOX UNREADABLE path=") {
+		t.Fatalf("an unchanged unreadable set still printed per-file lines:\n%s", r.stdout)
+	}
+	// --diagnostics asks for the whole picture whatever the default is: the per-file line
+	// is back even though nothing changed.
+	invoke(t, "", advance(checkout, "Ada", "--diagnostics")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX UNREADABLE path=from-bo/2026-09-07T0009Z-prose.md: ")
 }
 
 // field pulls one key=value out of an event line.
@@ -1197,7 +1223,7 @@ func TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed(t *testing.
 	r = invoke(t, "", advance(checkout, "Ada", "--legacy-before", "2026-09-01")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0 unreadable=1").
-		mustContain(t, "stdout", "INBOX UNREADABLE path="+recent+": ").
+		mustContain(t, "stdout", "INBOX UNREADABLE count=1 unchanged=true first="+recent).
 		mustContain(t, "stdout", "unreadable=1")
 	if strings.Contains(r.stdout, old) {
 		t.Fatalf("a file behind the line was named one by one:\n%s", r.stdout)
@@ -1211,7 +1237,7 @@ func TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed(t *testing.
 	// still names the one in front of the line.
 	r = invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0 unreadable=0").
-		mustContain(t, "stdout", "INBOX UNREADABLE path="+recent+": ").
+		mustContain(t, "stdout", "INBOX UNREADABLE count=1 unchanged=true first="+recent).
 		mustContain(t, "stdout", "unreadable=1")
 	if strings.Contains(r.stdout, old) {
 		t.Fatalf("the quiet run brought a file from behind the line back:\n%s", r.stdout)

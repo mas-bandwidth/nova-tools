@@ -31,7 +31,7 @@ var tokensAudit = audit.Config{
 		// writer of its own, and returns a string this package renders through
 		// oneline.Field at the print site below.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
-		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"runtime"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
+		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"runtime"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
 		`"runtime/debug"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,

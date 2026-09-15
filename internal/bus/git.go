@@ -343,6 +343,8 @@ const (
 	TrailerReceipt = "receipt"
 	TrailerCursor  = "cursor"
 	TrailerClose   = "close"
+	// TrailerBeat is a wait's liveness beat commit, "beat <name>".
+	TrailerBeat = "beat"
 	// TrailerCommit is what stageAndCommit stamps a message that arrived without one, so
 	// that no commit this tool makes can be mistaken for a person's.
 	TrailerCommit = "commit"
