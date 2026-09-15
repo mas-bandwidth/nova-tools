@@ -622,6 +622,38 @@ func TestWaitBeatPushBounded(t *testing.T) {
 // is shell-quoted argument by argument, so pasting it hands --bus the SAME one argument --
 // space and all -- rather than splitting it in two. splitShellWords tokenizes the way a
 // shell would for the grammar rearmCommand emits; the emitted command text is never executed.
+// The banner states plainly that an unadvanced cursor makes wait return at once, so a
+// caller carrying a backlog knows to run inbox first, and that --advance is what makes the
+// second wait a real wait. The wait/answer/wait example loop shows --advance.
+func TestWaitUsageStatesUnadvancedCursorReturnsAtOnce(t *testing.T) {
+	t.Parallel()
+	// The banner is word-wrapped, so the plain statement is searched with its line breaks
+	// folded away rather than pinned to one source line.
+	flat := strings.ReplaceAll(usage, "\n", " ")
+	if !strings.Contains(flat, "An unadvanced cursor makes wait return at once") {
+		t.Fatalf("the banner does not say plainly that an unadvanced cursor makes wait return at once:\n%s", usage)
+	}
+	loop := strings.Index(flat, "The loop is wait, answer, wait:")
+	if loop < 0 {
+		t.Fatal("the banner has no wait/answer/wait example loop")
+	}
+	rest := flat[loop:]
+	cmd := strings.Index(rest, "nova-bus wait")
+	if cmd < 0 {
+		t.Fatalf("the wait/answer/wait loop has no wait command:\n%s", rest)
+	}
+	// The example command ends where the next section begins, so the loop is the text
+	// from the command to that section; --advance must sit inside it, on the continuation.
+	end := strings.Index(rest[cmd:], "A FIRST SEND")
+	if end < 0 {
+		t.Fatalf("the wait/answer/wait loop is not followed by the next section:\n%s", rest[cmd:])
+	}
+	example := rest[cmd : cmd+end]
+	if !strings.Contains(example, "--advance") {
+		t.Fatalf("the wait/answer/wait example loop does not show --advance:\n%s", example)
+	}
+}
+
 func TestRearmCommandQuotesArgumentsWithSpaces(t *testing.T) {
 	t.Parallel()
 	hermetic(t)

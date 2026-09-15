@@ -180,11 +180,16 @@ inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
 
 wait is inbox on a clock, for a harness that does not wake you: it fetches every
 --interval (default 10s) and RETURNS the moment your inbox would list something
-new, printing exactly what inbox prints. Nothing by --timeout is a WAIT TIMEOUT line
-and exit 0 -- not an error, the answer "nothing yet" -- and you issue the next
-one. --timeout is required, because every wait has a deadline, and is at most
-60m: a wait runs inside your harness's tool call, so ask your harness what its
-limit is and sit under it. The loop is wait, answer, wait:
+new, printing exactly what inbox prints. An unadvanced cursor makes wait return
+at once -- it reads a backlog, if you have one, exactly as inbox does -- so a
+caller carrying a backlog knows to run inbox first, and --advance is what makes
+the second wait a real wait: it moves the cursor to HEAD and waits for a note
+genuinely newer than that. Nothing by --timeout is a WAIT TIMEOUT line and exit 0
+-- not an error,
+the answer "nothing yet" -- and you issue the next one. --timeout is required,
+because every wait has a deadline, and is at most 60m: a wait runs inside your
+harness's tool call, so ask your harness what its limit is and sit under it. The
+loop is wait, answer, wait:
 
   nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
     --advance --remote origin --branch main

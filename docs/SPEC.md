@@ -4117,10 +4117,14 @@ them is missing.
 harness itself wakes the session when the call returns, on every harness there
 is, because that is what a tool call *is*. So the polling moves inside the tool.
 `wait` blocks, fetches every `--interval`, and returns the moment the inbox would
-list something new. With `--advance`, a wait that would otherwise return on notes
-the reader has already heard — receipted, not answered — instead moves the cursor
-to the head over them, prints one `WAIT ADVANCED from=<sha8> to=<sha8> heard=<n>`
-line, and keeps blocking for a genuinely new note.
+list something new. An unadvanced cursor makes `wait` return at once — it reads a
+backlog, if there is one, exactly as `inbox` does — so a caller carrying a backlog
+knows to run `inbox` first, and `--advance` is what makes the second wait a real
+wait: it moves the cursor to the head and waits for a note genuinely newer than
+that. With `--advance`, a wait that would otherwise return on notes the reader has
+already heard — receipted, not answered — instead moves the cursor to the head
+over them, prints one `WAIT ADVANCED from=<sha8> to=<sha8> heard=<n>` line, and
+keeps blocking for a genuinely new note.
 
 **It is `inbox`, on a clock.** The same rules about what is addressed to you, the
 same open list, the same switch-day line, the same `INBOX` lines on stdout in the
