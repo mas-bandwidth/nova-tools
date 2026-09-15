@@ -28,7 +28,7 @@ ten before that. The form works, and every way it failed is in the table.
 | a result file was rewritten while triage was reading it | a report is **published by rename**: whole revisions, `RESULT.md.tmp` renamed over `RESULT.md`; the tool reads only the renamed file, identifies a revision by its content hash, and never by an mtime (rule 16) |
 | a bounded review that found nothing was counted as a plan, so a worker was rewarded for finding something (**Stella's read, 2026-09-11**) | completion evidence is the head's `findings: <n>` line, separate from the count: `findings: 0` is **`clean`**, a report with no head is `plan-only` (rule 8) |
 | a dispatcher killed with workers alive released the pool lock, and a second dispatcher could reuse a slot whose data home still had a writer | slots are **durable ownership** on disk: a restart adopts a live worker by its pid file, reclaims a slot whose pid is dead, and **quarantines** a slot it cannot decide (rule 17) |
-| "the slot is written before the child starts" named no transaction: a crash between the fork and the write left a running worker nobody tracked (**Stella's second read, 2026-09-11**) | the **launch transaction** (rule 18): the runner reserves the slot with a placeholder, the child writes its own pid, pgid and start stamp into it before doing anything else, the runner waits for that write with a bounded timeout or kills and marks `LAUNCH FAILED`; the child is a **supervisor** that writes durable completion evidence, and an outcome with none is `unknown`, never guessed |
+| "the slot is written before the child starts" named no transaction: a crash between the fork and the write left a running worker nobody tracked (**Stella's second read, 2026-09-11**) | the **launch transaction** (rule 18): the runner reserves the slot with a placeholder, the child writes its own pid, pgid and start stamp into it before doing anything else, the runner waits for that write with a bounded timeout or kills and marks `RUN LAUNCH-FAILED`; the child is a **supervisor** that writes durable completion evidence, and an outcome with none is `unknown`, never guessed |
 | rule 15 said a malformed report is never handed to a person, and the template section said it is quoted into the page | **one contract**: a malformed `RESULT.md` is quarantined and never folded; `result --id <job>` shows it verbatim to a person who asks by id, and that is the only path (rule 15) |
 | a completed job reclaimed before the first triage lost its only `RESULT.md` | `finalize` copies the published report to `<pool>/reports/<job>/RESULT.md` (or writes a `MALFORMED` or `NO-RESULT` marker there) before anything moves, and `reclaim` refuses without both the usage file and that copy (rule 12) |
 | usage lived inside the directory `reclaim` removes | the **usage file** `<pool>/usage/<job>.tsv` is written by `finalize` outside the reclaimable subtree, before anything moves, and `reclaim` refuses without it (rule 12) |
@@ -540,6 +540,9 @@ nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
 nova-swarm version
 nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
+nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
+nova-swarm quickstart --pool <dir>
+nova-swarm help
 ```
 
 `--tokens <n>` is the token budget (rule 13). It has no default and `0` is
@@ -673,10 +676,13 @@ RUN MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
 RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> recovered=<n> auto_retry=<true|false> after=<d>
 RUN NOTE <the one remedy line>
 RUN UNSANDBOXED id=<id> slot=<n>: no OS containment; every read and write this job makes is yours
+SUPERVISE FAILED slot=<n> id=<id>: <reason>
 RUN REFUSED: <reason>
 RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
+NATIVE REFUSED: <reason>
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
+STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
 TRIAGE REPORT id=<id> rev=<sha12> job=<name> result=<ok|clean|plan-only> items=<n> red=<n> green=<n> notdone=<n>: <head>
 TRIAGE QUARANTINED id=<id> rev=<sha12> line=<n>: not folded; nova-swarm result --pool <dir> --id <id>
 TRIAGE INPUT-LIMIT id=<id> job=<label>: <the provider's own words>
@@ -692,14 +698,19 @@ VERDICT OK id=<id> who=<name> accurate=<n> wrong=<n>
 VERDICT REFUSED: <reason>
 COST TASK id=<id> attempt=<n> end=<word> in=<n|-> out=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> usd=<n.nnnn|-> model=<model> repo=<repo|->
 COST OK tasks=<n> in=<n> out=<n> cache_write=<n> cache_read=<n> reasoning=<n> dashes=<in>,<out>,<cw>,<cr>,<r> usd=<n.nnnn|-> window=<stamp>..<stamp> known_usd=<n.nnnn> usd_missing=<n>
+COST REFUSED: <reason>
 REQUEUE OK id=<id> from=<old-id> changed=<true>
+REQUEUE REFUSED: <reason>
 NOTE OK id=<id> notes=<n>
 NOTE REFUSED: <reason>
 FINALIZE OK id=<id> usage=<path> existed=<true|false>
 FINALIZE REFUSED id=<id>: <reason>
 RECLAIM OK id=<id> freed=<bytes> usage=<path>
 RECLAIM REFUSED id=<id>: <reason>
+RECLAIM MORE kind=<task> shown=<n> total=<t> nova-swarm reclaim --pool <dir> --all --max 0
 STOP OK pool=<dir> running=<n>
+QUICKSTART OK pool=<dir> pending=<n> next=add,run,triage
+QUICKSTART NOTE <one remedy line>
 ```
 
 The [profile proposal](SPEC-SWARM-PROFILES.md) additionally specifies
@@ -717,8 +728,8 @@ the terminal summary. **Neither line prints the key, the key file's contents,
 or the env var's value** — only the variable's name, where a name is needed at
 all.
 
-**Every listing is a cap and a count**, per SPEC.md. `run`, `status`, `triage`
-and `cost` take `--max <n>`, default 20, `0` for all, one MORE line naming the
+**Every listing is a cap and a count**, per SPEC.md. `run`, `status`, `triage`,
+`cost` and `reclaim` take `--max <n>`, default 20, `0` for all, one MORE line naming the
 remedy. On `run`, `--max` limits only displayed `RUN` task lines; it never
 limits admissions, workers, attempts or retries. The counts are the truth about
 the **pool**, never about the output.
