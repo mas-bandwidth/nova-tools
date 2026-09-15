@@ -120,6 +120,14 @@ func Batch(in BatchInput) int {
 		fmt.Fprintln(in.Stderr, err)
 		return 1
 	}
+	// Issue #457: a batch writes its own lock on every local slot it takes, so a second batch
+	// that names a slot already in use is refused before any card starts, and a slot whose
+	// previous batch is dead is taken over, not left to collide.
+	if err := takeSlots(in.Root, in.ID, cards, in.Stderr); err != nil {
+		fmt.Fprintln(in.Stderr, err)
+		return 2
+	}
+	defer releaseSlots(in.Root, cards)
 
 	// scatter: one runner process per card, in TSV order. The job directory is made before
 	// the process starts so a runner can write RESULT.md straight into place.
@@ -633,6 +641,86 @@ func assignSlots(cards []batchCard, root string) error {
 		assigned[n] = label
 	}
 	return nil
+}
+
+// batchLockPath is the lock a batch writes on a slot it takes: <root>/<slot>/BATCH, one line
+// `id=<batch> pid=<n> at=<stamp>`, written at allocation and removed at slot end. The batch
+// name travels in the lock so a later batch can say who held the slot it is refusing.
+func batchLockPath(root string, slot int) string {
+	return filepath.Join(slotDir(root, slot), "BATCH")
+}
+
+// readBatchLock reads one batch lock into its id and pid. ok is false when there is no lock.
+func readBatchLock(root string, slot int) (id string, pid int, ok bool) {
+	raw, err := os.ReadFile(batchLockPath(root, slot))
+	if err != nil {
+		return "", 0, false
+	}
+	for _, f := range strings.Fields(string(raw)) {
+		k, v, ok := strings.Cut(f, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "id":
+			id = v
+		case "pid":
+			pid, _ = strconv.Atoi(v)
+		}
+	}
+	return id, pid, true
+}
+
+// takeSlots admits every local slot the batch was assigned: a slot whose BATCH lock carries a
+// live pid refuses the whole batch with ADMIT REFUSED slot=<n> held-by=<id> pid=<n> before any
+// card starts; a slot whose lock pid is dead is taken over with one BATCH NOTE line. Once every
+// slot is cleared, the batch writes its own lock on each.
+func takeSlots(root, id string, cards []batchCard, note io.Writer) error {
+	pid := os.Getpid()
+	at := Stamp(time.Now())
+	// First, refuse any live lock before a stale one is noted or a lock is written: the batch
+	// is all of its cards or none. Slots are distinct within a batch (assignSlots refused any
+	// named twice), so each card's slot is checked once.
+	for _, c := range cards {
+		if c.bench != "" || c.slot <= 0 {
+			continue
+		}
+		heldBy, heldPid, ok := readBatchLock(root, c.slot)
+		if !ok {
+			continue
+		}
+		if Alive(heldPid, "") {
+			return fmt.Errorf("ADMIT REFUSED slot=%d held-by=%s pid=%d", c.slot, oneline.Field(heldBy), heldPid)
+		}
+	}
+	// Every live lock is clear; note each stale take-over and write this batch's lock.
+	for _, c := range cards {
+		if c.bench != "" || c.slot <= 0 {
+			continue
+		}
+		heldBy, _, ok := readBatchLock(root, c.slot)
+		if ok {
+			fmt.Fprintf(note, "BATCH NOTE slot=%d stale-lock id=%s taken\n", c.slot, oneline.Field(heldBy))
+		}
+		if err := os.MkdirAll(slotDir(root, c.slot), 0o755); err != nil {
+			return err
+		}
+		line := fmt.Sprintf("id=%s pid=%d at=%s\n", oneline.Field(id), pid, at)
+		if err := os.WriteFile(batchLockPath(root, c.slot), []byte(line), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// releaseSlots removes the BATCH lock this batch wrote on each local slot, at slot end.
+func releaseSlots(root string, cards []batchCard) {
+	for _, c := range cards {
+		if c.bench != "" || c.slot <= 0 {
+			continue
+		}
+		_ = os.Remove(batchLockPath(root, c.slot))
+	}
 }
 
 func first(lines []string) string {

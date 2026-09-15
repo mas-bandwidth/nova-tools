@@ -677,6 +677,13 @@ no new `run` verb, and the receipts stay exactly as the proposals define them.
   refused at gather;
 - one deadline for the whole batch — the batch's own `--deadline`, never a
   deadline any single card sets.
+- one `BATCH` lock file per local slot the batch takes — `<root>/<slot>/BATCH`
+  holding `id=<batch> pid=<n> at=<stamp>`, written at allocation and removed at
+  slot end. A slot whose lock pid is alive refuses the whole batch as
+  `ADMIT REFUSED slot=<n> held-by=<id> pid=<n>` before any card starts; a slot
+  whose lock pid is dead is taken over with one
+  `BATCH NOTE slot=<n> stale-lock id=<id> taken`. Slots are unique across
+  batches by the tool, never by the coordinator counting (issue #457).
 
 ### wait — all end, or the deadline
 
@@ -733,6 +740,8 @@ BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label>: ABSTAIN reason=<token>
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED bench=<name>: <reason>
+ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
+BATCH NOTE slot=<n> stale-lock id=<id> taken
 HOLD: <one bounded quoted line>
 ```
 

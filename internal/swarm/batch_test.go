@@ -3,6 +3,7 @@ package swarm
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -778,6 +779,86 @@ func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
 	envRoot := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".envroot")))
 	if envRoot != root {
 		t.Errorf("NOVA_SWARM_ROOT is %q, want the absolute root %q; a relative root reached the environment", envRoot, root)
+	}
+}
+
+// TestBatchRefusesLiveSlot: a batch names a slot whose BATCH lock carries a live pid, so the
+// whole batch refuses with ADMIT REFUSED slot=<n> held-by=<id> pid=<n> before any card starts
+// (issue #457: slots are unique across batches by the tool, not by the coordinator counting).
+func TestBatchRefusesLiveSlot(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	slotDir := filepath.Join(root, "1")
+	if err := os.MkdirAll(slotDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pid := os.Getpid()
+	if err := os.WriteFile(filepath.Join(slotDir, "BATCH"),
+		[]byte("id=B42 pid="+strconv.Itoa(pid)+" at=2026-09-15T15:05:00Z\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(dir, "launched")
+	runner := filepath.Join(dir, "marker.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\ntouch "+sentinel+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 2 {
+		t.Fatalf("a batch over a live slot refuses at exit 2, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(errs, "ADMIT REFUSED slot=1 held-by=B42 pid="+strconv.Itoa(pid)) {
+		t.Fatalf("the refusal names the slot, the holder and the live pid:\n%s", errs)
+	}
+	if _, err := os.Stat(sentinel); err == nil {
+		t.Fatalf("the batch is refused before any launch; no runner may have run")
+	}
+	if strings.Contains(out, "BATCH") {
+		t.Fatalf("a refused batch emits no packet:\n%s", out)
+	}
+}
+
+// TestBatchTakesOverStaleSlotLock: a slot whose BATCH lock pid is dead is taken over with one
+// BATCH NOTE line, not refused, and the batch runs that slot (issue #457).
+func TestBatchTakesOverStaleSlotLock(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	slotDir := filepath.Join(root, "1")
+	if err := os.MkdirAll(slotDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A pid that is provably dead: a child that already exited.
+	dead := exec.Command("true")
+	if err := dead.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = dead.Wait()
+	if err := os.WriteFile(filepath.Join(slotDir, "BATCH"),
+		[]byte("id=B42 pid="+strconv.Itoa(dead.Process.Pid)+" at=2026-09-15T15:05:00Z\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := fakeRunner(t, dir)
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 0 {
+		t.Fatalf("a batch that takes over a stale lock runs clean, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(errs, "BATCH NOTE slot=1 stale-lock id=B42 taken") {
+		t.Fatalf("the stale lock is taken over with one NOTE line:\n%s", errs)
+	}
+	if !strings.Contains(out, "a slot=1: all green") {
+		t.Fatalf("the card runs in the taken-over slot:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(slotDir, "BATCH")); err == nil {
+		t.Fatalf("the slot's BATCH lock is removed at slot end")
 	}
 }
 
