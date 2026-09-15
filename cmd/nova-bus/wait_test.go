@@ -397,3 +397,58 @@ func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
 		t.Fatalf("a wait return printed %d OPEN carrying lines, want exactly 1:\n%s", n, r.stdout)
 	}
 }
+
+// Issue #328: nova-bus wait returns instantly when the cursor is unadvanced; never blocks on a busy bus.
+// Without --advance, wait should block until a note NEWER than the moment the wait started arrives,
+// rather than returning instantly on an unadvanced backlog.
+func TestWaitWithoutAdvanceBlocksWhenCursorIsUnadvanced(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	// In busDir(t), Bo has already pushed 2 notes, and Ada has NO cursor.
+	// So Ada has an unadvanced backlog of 2 notes.
+
+	// A wait without --advance should block until the timeout expires, not return instantly on poll 1.
+	const timeout = 1 * time.Second
+	start := time.Now()
+	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)
+	took := time.Since(start)
+
+	if took < timeout {
+		t.Fatalf("wait returned after %s, before its %s deadline over an unadvanced cursor:\n%s", took, timeout, r.stdout)
+	}
+	r.mustContain(t, "stdout", "WAIT TIMEOUT after=")
+	if strings.Contains(r.stdout, "WAIT OK") {
+		t.Fatalf("wait without --advance returned WAIT OK on unadvanced backlog:\n%s", r.stdout)
+	}
+}
+
+// A note arriving mid-wait ends the wait even when the caller had an unadvanced backlog.
+func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, bare := busDir(t)
+	// Ada has unadvanced backlog of 2 notes.
+
+	other := bench(t, bare)
+	note(t, other, "bo-555555555555", "new note during wait")
+
+	pushed := make(chan error, 1)
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		pushed <- push(other)
+	}()
+
+	start := time.Now()
+	r := invoke(t, "", waitFlags(checkout, "Ada", "5s")...).mustCode(t, 0)
+	took := time.Since(start)
+	if err := <-pushed; err != nil {
+		t.Fatal(err)
+	}
+
+	if took < 200*time.Millisecond {
+		t.Fatalf("wait returned after %s before the note was pushed at 250ms:\n%s", took, r.stdout)
+	}
+	r.mustContain(t, "stdout", "WAIT OK new=3").
+		mustContain(t, "stdout", "INBOX NOTE id=bo-555555555555")
+}
