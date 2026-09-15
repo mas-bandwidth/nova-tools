@@ -1266,3 +1266,54 @@ func TestNativeNoWallWritesHarnessLog(t *testing.T) {
 		})
 	}
 }
+
+// TestNativeSilentHarnessIsNotOK: a harness that exits 0 having written NOTHING -- not a byte
+// into <job>/harness.log, which the test above proves the run now captures walled or not, and
+// no RESULT.md anywhere the gather looks -- did not run the card, and the one line a
+// coordinator reads says so: `harness=silent` (issue #591). The fault it closes was a local
+// model whose tool calls the harness never parsed: no tool ran, nothing was written, the
+// process exited 0 and `NATIVE OK` said OK. The token is ALWAYS present -- `harness=ok` for a
+// harness that said or published anything -- so a reader never has to know which runs carry
+// it.
+func TestNativeSilentHarnessIsNotOK(t *testing.T) {
+	bin := nativeHarness(t)
+	const label = "silent-label"
+	for _, tc := range []struct {
+		name, card, want string
+		// inRepo makes <job>/repo before the run, so the card below can publish its result
+		// inside its clone the way a card whose STEP 1 cloned into repo/ does.
+		inRepo bool
+	}{
+		{name: "silent", card: "FAKE-NORESULT\n", want: " harness=silent"},
+		{name: "wrote_a_result", card: "a card line 1\nline 2\n", want: " harness=ok"},
+		// Issue #594: the gather finds a result at the job root, under repo/, or one level
+		// below that, and copies it up. A run that published in its clone WORKED, and calling
+		// it silent would be this token's own fault repeated one directory down.
+		{name: "result_under_repo", card: "FAKE-TOUCH REPO/RESULT.md\nFAKE-NORESULT\n", want: " harness=ok", inRepo: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, slot := aSlot(t)
+			if tc.inRepo {
+				repo := filepath.Join(slot, "jobs", label, "repo")
+				if err := os.MkdirAll(repo, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				tc.card = strings.Replace(tc.card, "REPO/", repo+"/", 1)
+			}
+			cardPath := filepath.Join(root, "card.md")
+			if err := os.WriteFile(cardPath, []byte(tc.card), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+				"--label", label, "--card", cardPath, "--slot", slot, "--root", root,
+				"--deadline", "30s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+			if rc != 0 {
+				t.Fatalf("the run exits 0, got %d:\n%s", rc, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), tc.want) {
+				t.Fatalf("the NATIVE OK line carries%s:\n%s", tc.want, stdout.String())
+			}
+		})
+	}
+}

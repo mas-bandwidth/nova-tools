@@ -59,6 +59,7 @@ type nativeRunResult struct {
 	usageReason  string  // no-rows | no-store | no-sqlite3, "" when the store answered
 	configSHA    string  // sha8 of the carried provider config, "" when --config named none
 	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
+	harness      string  // ok | silent: silent when the harness left neither harness.log nor a RESULT.md
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -283,6 +284,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	res.wallSeconds = time.Since(start).Seconds()
 	log.Close()
 	harnessLog.Close()
+	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
+	// logs are closed, so every byte the child wrote is on disk -- and carried on the OK line.
+	res.harness = harnessState(jobDir)
 
 	if wall != "" {
 		backend, cwd, ok := wallNamed(wallOut.String())
@@ -301,6 +305,48 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// can fold the card's tokens and dollars without re-reading the harness.
 	res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], start, time.Now(), res.rc, errOut)
 	return res, 0
+}
+
+// harnessState is the `harness=<ok|silent>` token the NATIVE OK line always carries: `silent`
+// when the harness process left NO record of itself -- not a byte in `<job>/harness.log`, and
+// no `RESULT.md` anywhere the gather looks for one -- and `ok` otherwise (issue #591).
+//
+// A SILENT HARNESS IS NOT A QUIET MODEL. The run this closes was a local model whose tool
+// calls the harness never parsed: the child emitted them as raw text, no tool ran, nothing
+// was written, and the process exited 0, so the one line a coordinator reads said OK and the
+// batch behind it scored `no-result` -- the token for a model that chose to publish nothing.
+// The two are different faults with different remedies (a harness that cannot drive this
+// model; a model that had nothing to say), and the line now tells them apart.
+//
+// THE HARNESS LOG IS THE RUN'S OWN CAPTURE (issue #608): this process pins the child's stdout
+// and stderr to `<job>/harness.log` as well as `<slot>/native.log`, walled or not, so a
+// harness that SAID anything at all is `ok` -- there is evidence to read -- and `silent` is
+// the run that produced neither a word nor a result.
+//
+// THE RESULT IS LOOKED FOR WHERE THE GATHER LOOKS FOR IT, by the gather's own lookup
+// (swarm.FindCardResult): the job root, then `repo/` and one directory below it (issue #594).
+// A card's STEP 1 makes `repo/` the model's cwd, so a working run publishes there and the
+// batch copies it up; a shallower lookup here would print `harness=silent` about a run that
+// worked, which is the same class of fault this token exists to end.
+//
+// An EMPTY file counts as nothing written, because it is: a batch opens `<job>/harness.log`
+// before the runner starts (internal/swarm/batch.go), so existence alone would answer `ok` for
+// every card in every batch, which is exactly the silence this token is for.
+func harnessState(jobDir string) string {
+	if wroteBytes(filepath.Join(jobDir, "harness.log")) {
+		return "ok"
+	}
+	if result, ok := swarm.FindCardResult(jobDir); ok && wroteBytes(result) {
+		return "ok"
+	}
+	return "silent"
+}
+
+// wroteBytes says whether a path is a regular file holding at least one byte: the one test
+// harnessState applies to each record, so an empty file is nothing written wherever it sits.
+func wroteBytes(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
 }
 
 // refuseNative writes the one REFUSED line the run owes its caller.
