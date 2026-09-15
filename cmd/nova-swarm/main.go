@@ -1318,8 +1318,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
-	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s rc=%d wall=%.2fs card_sha256=%s binary_sha256=%s\n",
-		oneline.Field(cfg.label), oneline.Field(res.job), res.rc, res.wallSeconds, oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256))
+	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s rc=%d wall=%.2fs card_sha256=%s binary_sha256=%s%s\n",
+		oneline.Field(cfg.label), oneline.Field(res.job), res.rc, res.wallSeconds, oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), usageSuffix(res.usageState))
 	if res.rc != 0 {
 		if res.rc > 0 {
 			return res.rc
@@ -1357,6 +1357,16 @@ func dash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// usageSuffix renders the usage status the NATIVE OK line carries: the empty string when a
+// store answered, otherwise ` usage=none path=<looked>` with the looked path put through
+// oneline.Field here. It is registered as an escaper in the audit for exactly that reason.
+func usageSuffix(state string) string {
+	if state == "" {
+		return ""
+	}
+	return " usage=none path=" + oneline.Field(state)
 }
 
 func orElse(a, b string) string {

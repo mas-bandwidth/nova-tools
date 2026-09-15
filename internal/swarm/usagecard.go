@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -35,28 +36,53 @@ const cardMessagesSQL = `SELECT provider, model, ` +
 	`SUM(tokens_in), SUM(tokens_out), SUM(cache_write), SUM(cache_read), SUM(reasoning), SUM(usd) ` +
 	`FROM messages WHERE role='assistant' GROUP BY provider, model`
 
-// ReadCardUsage reads one card's accounting out of its harness store and returns the values
-// plus a note. A note names a condition the caller should carry to the person reading it --
+// cardStoreLocations are the store paths OpenCode may keep inside one data home, in the
+// order this reader tries them: the run's own data directory first -- <dataHome>/opencode/
+// opencode.db, the XDG_DATA_HOME location this tool exports -- then the HOME/.local/share
+// location a real OpenCode honours when it reads HOME instead of XDG_DATA_HOME. The native
+// run points both HOME and XDG_DATA_HOME at the same data directory, so both live under the
+// path native.go passes here.
+func cardStoreLocations(dataHome string) []string {
+	return []string{
+		filepath.Join(dataHome, "opencode", "opencode.db"),
+		filepath.Join(dataHome, ".local", "share", "opencode", "opencode.db"),
+	}
+}
+
+// ReadCardUsage reads one card's accounting out of its harness store and returns the values,
+// a note, and the store path that answered. The data home the native run chose is passed in
+// explicitly, and the reader looks in its standard locations in order rather than guessing
+// one path. A note names a condition the caller should carry to the person reading it --
 // most importantly, sqlite3 missing from PATH, under which the token columns are dashes and
-// the row still writes rather than the run failing on a number nobody can see.
-func ReadCardUsage(dbPath string) (ProviderUsage, string) {
-	st, err := os.Stat(dbPath)
-	if err != nil || st.IsDir() {
-		return ProviderUsage{Values: dashCardTokens()}, ""
+// the row still writes rather than the run failing on a number nobody can see. When no store
+// exists at either location the returned path is empty and the note names what was looked for.
+func ReadCardUsage(dataHome string) (ProviderUsage, string, string) {
+	locations := cardStoreLocations(dataHome)
+	for _, dbPath := range locations {
+		st, err := os.Stat(dbPath)
+		if err != nil || st.IsDir() {
+			continue
+		}
+		if _, err := exec.LookPath(SQLiteBinary); err != nil {
+			note := fmt.Sprintf("usage.tsv token columns are %q: %s is not on PATH, and the store is read with %q read-only",
+				Dash, SQLiteBinary, SQLiteBinary)
+			return ProviderUsage{Values: dashCardTokens()}, note, dbPath
+		}
+		rows, err := queryCardMessages(dbPath)
+		if err != nil {
+			return ProviderUsage{Values: dashCardTokens()}, "", dbPath
+		}
+		if len(rows) == 0 {
+			return ProviderUsage{Values: dashCardTokens()}, "", dbPath
+		}
+		usage, _ := foldCardMessages(rows)
+		if dbPath == locations[0] {
+			return usage, "", dbPath
+		}
+		note := fmt.Sprintf("usage.tsv read the store at %s (the primary %s was absent)", dbPath, locations[0])
+		return usage, note, dbPath
 	}
-	if _, err := exec.LookPath(SQLiteBinary); err != nil {
-		note := fmt.Sprintf("usage.tsv token columns are %q: %s is not on PATH, and the store is read with %q read-only",
-			Dash, SQLiteBinary, SQLiteBinary)
-		return ProviderUsage{Values: dashCardTokens()}, note
-	}
-	rows, err := queryCardMessages(dbPath)
-	if err != nil {
-		return ProviderUsage{Values: dashCardTokens()}, ""
-	}
-	if len(rows) == 0 {
-		return ProviderUsage{Values: dashCardTokens()}, ""
-	}
-	return foldCardMessages(rows)
+	return ProviderUsage{Values: dashCardTokens()}, fmt.Sprintf("no harness store: looked at %s and %s", locations[0], locations[1]), ""
 }
 
 // dashCardTokens is the row of a store that reported nothing: every numeric column a dash.
