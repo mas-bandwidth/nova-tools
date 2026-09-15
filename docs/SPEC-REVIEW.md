@@ -588,7 +588,7 @@ the end. The date on a rule is the day it was learned.
 ## The verbs
 
 ```
-nova-review packet  --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max <n>]
+nova-review packet  --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max <n>]
 nova-review verdict --lane <dir> (--pr <n>|--branch <name>) --who <name> --model <id> --kind line|child|card [--of <line>] [--job <id>] --head <sha> [--base <sha>] --verdict approve|hold|abstain (--findings <file> | --reason <text>) [--note <text>] [--usage <file> --usage-source <id> --bench <name> | --receipt <id>] [--started <stamp>] [--max <n>] [--max-rows <n>] [--max-input-bytes <n>] [--max-line-bytes <n>]
 nova-review answer  --lane <dir> (--pr <n>|--branch <name>) --who <name> --finding <id> --head <sha> --as fixed|declined|dup [--of <id>] [--note <text>]
 nova-review policy  --lane <dir> (--pr <n>|--branch <name>) --who <name> --readers <name,...> --reserved <name,...> --deadline <stamp> --reason <text> --head <sha>
@@ -820,6 +820,9 @@ the entry, never about the output.
 
 ## The packet file
 
+`--out <file>` may be a relative path under the current directory, or an
+absolute path under the current directory or the lane; a path that escapes
+both is refused (`--out escapes the current directory and the lane; ...`).
 `--out <file>` is written through a **unique exclusive temporary file** —
 `<file>.<pid>-<rand6>.tmp`, created with `O_CREAT|O_EXCL` and renamed onto
 `<file>` — never in place and never through a shared `<file>.tmp`, so two
@@ -1011,7 +1014,7 @@ source test finds no such comparison).
 
 ## The lane, as this tool sees it
 
-`--lane <dir>` is a lane `nova-merge init` made. This tool adds one tracked
+`--lane <dir>` is a lane: a directory made by `nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>`. This tool adds one tracked
 directory to it and nothing else:
 
 ```

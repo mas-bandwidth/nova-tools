@@ -27,7 +27,7 @@ import (
 const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REVIEW.md)
 
 usage:
-  nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--reuse <file>] [--timeout <seconds>]
+  nova-review packet --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--reuse <file>] [--timeout <seconds>]
   nova-review version    print this build identity (--version also accepted)
   nova-review help
 
@@ -106,8 +106,8 @@ func packet(args []string, out, errOut io.Writer) int {
 	if (*pr > 0) == (*branch != "") {
 		return refuse(errOut, "give exactly one of --pr or --branch")
 	}
-	if filepath.IsAbs(*dest) || strings.Contains(filepath.Clean(*dest), "..") {
-		return refuse(errOut, "--out must be a relative path without ..")
+	if outEscapes(*dest, *lane) {
+		return refuse(errOut, "--out escapes the current directory and the lane; give a relative path under the current directory or an absolute path under the current directory or the lane")
 	}
 	if _, err := os.Lstat(*dest); err == nil {
 		return refuse(errOut, "--out already exists; packets are immutable")
@@ -121,29 +121,41 @@ func packet(args []string, out, errOut io.Writer) int {
 
 	st, err := merge.Load(*lane)
 	if err != nil {
+		if errors.Is(err, merge.ErrNotALane) {
+			return refuse(errOut, fmt.Sprintf("--lane %s is not a lane; a lane is a directory made by nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>", *lane))
+		}
 		return refuse(errOut, fmt.Sprintf("could not read lane: %v", err))
 	}
-	id, selector := "", ""
+	id := ""
 	if *pr > 0 {
 		id = fmt.Sprint(*pr)
 	} else {
-		id, selector = *branch, *branch
+		id = *branch
 	}
 	entry := st.Find(id)
 	if entry == nil {
 		return refuse(errOut, "the lane does not hold this entry")
 	}
 	repo := filepath.Join(*lane, merge.RepoDir)
-	current := ""
-	if *pr > 0 {
-		current, err = hostPRHead(ctx, st.Repo, *pr)
-	} else {
-		current, err = gitOut(ctx, repo, "rev-parse", selector)
-	}
+	oldHead := entry.OID
+	current, err := fetchEntryHead(ctx, repo, *pr, *branch)
 	if err != nil {
-		return refuse(errOut, "could not resolve the entry head")
+		return refuse(errOut, fmt.Sprintf("could not fetch the entry head: %v", err))
 	}
 	current = strings.TrimSpace(current)
+	if oldHead != "" && current != oldHead {
+		fmt.Fprintf(errOut, "PACKET NOTE head moved %s -> %s\n", merge.Short(oldHead), merge.Short(current))
+		if uerr := merge.Update(*lane, time.Duration(*timeout)*time.Second, func(s *merge.State) error {
+			e := s.Find(id)
+			if e == nil {
+				return fmt.Errorf("the lane no longer holds this entry")
+			}
+			e.OID = current
+			return nil
+		}); uerr != nil {
+			return refuse(errOut, fmt.Sprintf("could not record the moved head: %v", uerr))
+		}
+	}
 	if *asked != "" {
 		if !merge.IsSHA(*asked) {
 			return refuse(errOut, "--head wants a full 40-character sha")
@@ -336,37 +348,49 @@ func gitOut(ctx context.Context, repo string, args ...string) (string, error) {
 	return string(b), nil
 }
 
-func hostPRHead(ctx context.Context, repo string, pr int) (string, error) {
-	c := exec.CommandContext(ctx, "gh", "pr", "view", fmt.Sprint(pr), "--repo", repo, "--json", "headRefOid")
-	stdout, err := c.StdoutPipe()
+// fetchEntryHead fetches the entry's current head into the lane's clone: the pull request's
+// `pull/<n>/head` for a PR, the branch itself for a branch, then reads the fetched commit
+// back out of FETCH_HEAD. The fetch is the verb's one way to learn a head the remote moved
+// (a force-push) without trusting a local ref that has not been updated.
+func fetchEntryHead(ctx context.Context, repo string, pr int, branch string) (string, error) {
+	refspec := branch
+	if pr > 0 {
+		refspec = fmt.Sprintf("pull/%d/head", pr)
+	}
+	if _, err := gitOut(ctx, repo, "fetch", "origin", refspec); err != nil {
+		return "", err
+	}
+	return gitOut(ctx, repo, "rev-parse", "FETCH_HEAD")
+}
+
+// outEscapes reports whether --out, resolved against the current directory, lies outside
+// both the current directory and the lane directory. A path accepted here is under one of
+// the two; a path that escapes both is refused.
+func outEscapes(dest, lane string) bool {
+	cwd, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return true
 	}
-	var stderr bytes.Buffer
-	c.Stderr = &stderr
-	if err := c.Start(); err != nil {
-		return "", err
+	if !filepath.IsAbs(dest) {
+		dest = filepath.Join(cwd, dest)
 	}
-	const maxRead = 1024 * 1024
-	b, err := io.ReadAll(io.LimitReader(stdout, maxRead+1))
+	if underDir(cwd, dest) {
+		return false
+	}
+	return !underDir(lane, dest)
+}
+
+func underDir(root, path string) bool {
+	rootAbs, err1 := filepath.Abs(root)
+	pathAbs, err2 := filepath.Abs(path)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(rootAbs, pathAbs)
 	if err != nil {
-		_ = c.Process.Kill()
-		return "", err
+		return false
 	}
-	if len(b) > maxRead {
-		_ = c.Process.Kill()
-		return "", fmt.Errorf("gh pr view output exceeded limit (%d bytes)", maxRead)
-	}
-	if err := c.Wait(); err != nil {
-		return "", err
-	}
-	var v struct {
-		Head string `json:"headRefOid"`
-	}
-	if err := json.Unmarshal(b, &v); err != nil || !merge.IsSHA(v.Head) {
-		return "", fmt.Errorf("host returned no full pull request head")
-	}
-	return v.Head, nil
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func diffCounts(diff string) (files, hunks int) {
