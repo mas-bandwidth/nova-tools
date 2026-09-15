@@ -342,7 +342,10 @@ cursor has ever been written (docs/SPEC-WORK.md, **Presence**, source
 `bus-cursor`). A `from-<name>/BEAT` file is also read, from its own content
 rather than its commit time, and where its stamp is newer than the cursor commit
 the friend reads `source=bus-beat` — the signal a merely-waiting line still
-writes every poll.
+writes every poll. The beat carries a `until=<stamp>` lease, and a beat whose
+lease is still in the future reads `awake` `source=bus-beat` even when its stamp
+and cursor are both past `--window`: that is a line whose duty process is alive
+and between two `wait` calls, not asleep.
 
 **A config file for the repeated flags.** Before the flags, this tool reads
 `<cwd>/.nova-wake/config`, or the file named by `NOVA_WAKE_CONFIG`, as `key=value`

@@ -550,6 +550,22 @@ nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-
 nova-swarm help
 ```
 
+`batch --root` and `native --slot`/`--root` are made **absolute and
+symlink-resolved** at admission, and that one spelling is what reaches the
+runner, `NOVA_SWARM_ROOT`, the wall's argv and every later compare. Absolute
+alone is not enough: on darwin `/var` is a symlink to `/private/var`, so one
+directory reached admission under two names depending on how the caller typed
+it. A path that does not exist yet resolves its deepest existing ancestor.
+
+`native --config <file>` copies an `opencode.json` beside the carried auth into
+the job's data home, mode 0600. Only the provider named by `--model` is checked:
+a config whose entry for THAT provider has no key in `--auth` is refused before
+anything runs, naming the provider and never the key; a provider whose options
+carry a `baseURL` and no `apiKey` (ollama on localhost) needs no key and is
+admitted without one, so its card runs walled on the local model. Every other
+provider in the file — a person's config names all of them — is copied verbatim
+and not checked, because this run never calls it.
+
 `--tokens <n>` is the token budget (rule 13). It has no default and `0` is
 refused, on `add` and on `batch` alike, for the reason `--files` has none.
 
@@ -633,6 +649,15 @@ implicit opinion about whose model runs.
 <goos>/<goarch> <go version>`, exit 0 — from `internal/buildinfo`, the same
 resolution every binary here uses. It takes no flags and no arguments.
 
+**`native`** runs one card under a frozen configuration (issue #296): a native
+harness binary, a slot strictly under the configured root, and a deadline held
+by the machinery. Folding the local one-shot into the native verb,
+`nova-swarm native --model ollama/<tag>` runs the card on the Studio's local
+model with the same wall, card contract and RESULT rules; admission refuses with
+one line `ADMIT REFUSED benchmark window open until <stamp>` when the file named
+by `NOVA_BENCH_WINDOW` (or `~/.config/nova/bench-window`, a single RFC 3339
+stamp) is in the future, so a local job never runs beside a benchmark.
+
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
 `requeue`, `note`, `finalize` and `reclaim` are the verbs that act; `supervise`
@@ -662,6 +687,37 @@ no new `run` verb, and the receipts stay exactly as the proposals define them.
   refused at gather;
 - one deadline for the whole batch — the batch's own `--deadline`, never a
   deadline any single card sets.
+- one `BATCH` lock file per local slot the batch takes — `<root>/<slot>/BATCH`
+  holding `id=<batch> pid=<n> at=<stamp>`, written at allocation and removed at
+  slot end. Slots are unique across batches by the tool, never by the
+  coordinator counting (issue #457); the paragraphs below say what a live and a
+  stale lock each do.
+
+**Admission is per card, never per batch.** A card refused at admission — a
+shape refused under `docs/WORKER-CARDS.md` practice 17, or a repository it
+cannot reach without credentials — is **one `ABSTAIN` row** with
+`reason=admission <why>`, and every other card runs. The refusal is said once
+on stderr, `ADMIT REFUSED <label> <why>`, and the `BATCH` line counts the card
+under `abstain`. One card's shape never takes a batch down with it: on
+**2026-09-15** one card whose *quoted issue text* held the word `launcher` made
+`ADMIT REFUSED` for the whole batch and **34 cards never ran** (issue #529).
+The practice-17 word check reads the card's **contract lines — lines 1-3: the
+contract line, the role line and `STEP 1`** — and nothing below them, because a
+card that quotes a launcher is a card *about* one, not a card run by one.
+
+**One batch holds one slot, and the lock dies with its holder** (issue #457).
+At slot allocation the batch writes `<root>/<slot>/BATCH` carrying
+`id=<batch> pid=<n> at=<stamp>`, and removes it at slot end. A slot whose lock
+is **live** — the holder's pid is alive — is not free: an auto-allocated card
+skips it, and a card that *named* it is refused with
+`ADMIT REFUSED slot=<n> held-by=<id> pid=<n>`, that card alone abstaining with
+`reason=admission`. A **stale** lock, whose pid no process holds, is taken over
+once and said out loud: `BATCH NOTE slot=<n> stale-lock id=<id> taken`. Two
+batches that allocated at the same moment once took slot 1 twice and both cards
+were lost. **A batch removes only the locks it took**, never the live lock of
+the batch that refused it. This is per card, and it supersedes the whole-batch
+refusal that landed with the lock in #568: an admission refusal is one card's,
+the slot's as much as the shape's (issue #529).
 
 ### wait — all end, or the deadline
 
@@ -680,9 +736,10 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
   card alone: the batch returns on its **slowest still-working card**, not on
   the deadline, because a dead card is removed from the wait as soon as its
   log stops growing.
-- A card killed for idleness is scored `<label>: ABSTAIN reason=idle=<s>` on the
-  packet — an abstain that names *why* it stopped, never a bare missing
-  result — and the BATCH line's `idle=<n>` counts those kills.
+- A card killed for idleness is scored
+  `<label> slot=<n>: ABSTAIN reason=idle=<s> log=<n> watched=<path>` on the
+  packet — an abstain that names *why* it stopped and the log it watched, never
+  a bare missing result — and the BATCH line's `idle=<n>` counts those kills.
 
 ### gather — one bounded packet, mechanically
 
@@ -703,6 +760,34 @@ words into the batch. The refusal names the card and its line, and the card
 is `refused` on the packet, not folded — rule 15's quarantine, applied to
 the batch.
 
+**A `RESULT.md` carrying its contract line is `done` whatever the harness exit
+code was**, unless the card abstained in its own words — a line 1 or a line 2
+beginning `ABSTAIN`. The contract decides, never the child's rc and never its
+timing.
+
+**Every abstain names ONE reason token**, so the packet is the whole read and a
+coordinator never opens a `RESULT.md` to learn why (issue #461):
+
+| token | the card |
+|-------|----------|
+| `line1-mismatch` | published a result whose line 1 is not its contract line |
+| `no-result` | ended with rc 0 and published no `RESULT.md` |
+| `rc=<n>` | ended non-zero and published no `RESULT.md` |
+| `idle=<s>` | was killed because its own log stopped growing for `<s>` seconds |
+| `deadline` | was killed at the batch's deadline |
+| `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
+| `admission` | was refused at admission; the reason follows the token |
+| `input-limit` | was refused for size, by the provider's own structured signal (issue #163) |
+| `bench-unreachable` | ran on a bench the pull could not reach, so nothing about it is known here |
+
+The card's line carries the token and its own log count —
+`<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
+field after it where the remedy needs a path: `watched=<path>`, the log the
+idle monitor watched, or `job=<dir>`, the job directory that holds no result.
+**A stall is `log=0`**: a card that ended with no output after the wall opened
+is counted on the `BATCH` line's `stalled=<n>` and reads its own emptiness on
+its line.
+
 ### read — one agent, one packet, once
 
 **One agent reads the one packet once** and carries the dispositions to the
@@ -713,21 +798,26 @@ are the thing the packet replaced.
 ### The packet's grammar
 
 ```
-BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum> idle=<n> [benches=<n>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
-<label>: ABSTAIN reason=<token>
+<label> slot=<n>: <line 2, verbatim, capped> log=<n>
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
+ADMIT REFUSED <label> <why>
+ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
 ADMIT REFUSED bench=<name>: <reason>
+BATCH NOTE slot=<n> stale-lock id=<id> taken
 HOLD: <one bounded quoted line>
 ```
 
 `BATCH` is the packet's first line: the id, the admitted n, the cards done,
-the cards abstain, the batch usd total, and `idle=<n>` — how many cards the
-idle timeout killed. One `CARD` line per card, in admission order: its
-admitted-text sha prefix, its state, its usage, and its disposition line —
-line 2 verbatim, capped at one line. A card killed by the idle timeout is its
-own one-line score, `<label>: ABSTAIN reason=idle=<s>`, in place of a `CARD`
-line. `HOLD:` lines carry evidence a count would hide, each capped. Counts
+the cards abstain, the token and usd totals, `idle=<n>` — how many cards the
+idle timeout killed — and `stalled=<n>`, how many ended with no output at all.
+One card line per card, in admission order: its label, its resolved slot, and
+either its disposition line — line 2 verbatim, capped — or `ABSTAIN` with its
+one reason token, each carrying that card's own `log=<n>`. `ADMIT REFUSED` and
+`BATCH NOTE` are said once on stderr, never inside the packet, so the packet's
+bytes stay bounded by n. `HOLD:` lines carry evidence a count would hide, each capped. Counts
 and caps bound the packet's bytes; a packet never lists a finding and never
 quotes a report body.
 
@@ -818,10 +908,29 @@ runs under, printed before any card work so the batch can name it. **The
 card is the only file copied out**, to `<root>/cards/<label>.md` by `rsync`
 (or `scp`), before the run; the repository is cloned by the card on the bench
 as today, and no runner script, config or key crosses the wire. **Three files
-come back** after the run, by `rsync`, into the local root at
+come back** after the run, into the local root at
 `<root>/<bench>-<n>/jobs/<label>/`: `RESULT.md`, `usage.tsv`, and the last
 64 KiB of `native.log` — so `gather` reads what it reads today, one directory
 per card, and nothing in `gather` knows a bench exists.
+
+**The pull is three rules, and a bench run lost its results to each of them on
+2026-09-15.** (1) The pull **waits up to 30 s for `RESULT.md` to exist on the
+bench**, asking once a second: the remote slot's shell returns before the
+harness's last write has landed, and a pull that copies at once copies nothing.
+(2) Each file is **its own explicit `scp`**, named on both sides — never one
+`rsync` with an include filter, because a filter that matches nothing exits 0
+and a copy of nothing then reads as a card that abstained. (3) When `RESULT.md`
+is absent from the job but present under `repo/`, or one directory below it, it
+is **copied up into the job** and the batch prints
+
+```
+SPACE NOTE RESULT.md copied up from <path>
+```
+
+so the card's mistake is on the record and its work is not lost to it. A pull
+that cannot reach the bench at all — `ssh`'s own exit 255, not a remote command
+saying no — scores the card `ABSTAIN reason=bench-unreachable`; a bench that
+answers and holds no result is the ordinary missing-result abstain and not that.
 
 **Deadline and idle are held here, on the local machine, as today.** The batch
 process owns the batch deadline and the per-card `--idle`. The local wrapper
@@ -835,7 +944,8 @@ counted in `idle=<n>`. If `ssh` itself is unreachable then, the slot is
 network drop after `RESULT.md` was written is recovered by a second pull at
 gather: one retry, 30 s, none after. The reason in `ABSTAIN reason=<token>` is
 one token, the set issue #461 gives every card: `line1-mismatch | no-result |
-rc=<n> | idle=<s> | deadline | card-abstain | bench-unreachable`. The idle watch on a
+rc=<n> | idle=<s> | deadline | card-abstain | admission <why> | input-limit |
+bench-unreachable`, and the card's line carries its own `log=<n>` after it. The idle watch on a
 remote card asks `ssh <host> stat -c %s <root>/<n>/jobs/<label>/native.log` —
 bytes, the growth a local log is measured by, never an mtime (rule 16) — no
 more than once per `--idle/3` seconds. A bench unreachable at a poll is not a
@@ -926,6 +1036,15 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 13. `bench-name-is-not-a-friend` — a `--bench` name on the bus's friends list is `ADMIT REFUSED bench=<name> is a friend`, and the fake bus sees no line.
 14. `gather-retries-pull-once` — a pull that fails after `RESULT.md` exists on the bench is retried once at gather, 30 s later, and folds as done; a second failure is `no-result`.
 15. `pin-none-row-admits-without-taskset` — `cores=-` on a bench whose fake `PATH` lacks `taskset` probes `pin=none`, admits, and its argv carries no `taskset`; `cores=1-15` on the same bench is `BENCH REFUSED check=pin`.
+16. `pull-waits-for-result` — the bench holds `RESULT.md` back until the third ask; the pull
+    waits, then copies, and each of the three files is its own `scp` naming one file, with no
+    filter and no pattern on any argv (`TestPullWaitsForResult`).
+17. `pull-copies-result-up-from-repo` — a card that wrote `RESULT.md` under `repo/` one level
+    down has it copied up into the job, pulled back, and `SPACE NOTE RESULT.md copied up from
+    <path>` printed (`TestPullCopiesResultUpFromRepo`).
+18. `pull-scores-bench-unreachable` — a bench whose `ssh` exits 255 scores its card `ABSTAIN
+    reason=bench-unreachable`, not a plain abstain and not a stall
+    (`TestPullScoresBenchUnreachable`).
 
 ## Exit codes
 
@@ -953,9 +1072,14 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n|
 ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
-BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum> idle=<n> [benches=<n>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
+BATCH NOTE slot=<n> stale-lock id=<id> taken
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
+<label> slot=<n>: <line 2, verbatim, capped> log=<n>
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
+ADMIT REFUSED <label> <why>
+ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
 HOLD: <one bounded quoted line>
 BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall> ok=<true|false> [<one bounded value>]
 BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>
@@ -981,6 +1105,7 @@ SUPERVISE FAILED slot=<n> id=<id>: <reason>
 RUN REFUSED: <reason>
 RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
+ADMIT REFUSED benchmark window open until <stamp>
 NATIVE OK label=<id> job=<id> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> [usage=none reason=<r> path=<p>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
@@ -1725,6 +1850,13 @@ satisfied by task prose or a selector.
   reclaimable subtree.
 - **It does not spawn a task chip or any other follow-up** (Glenn, 2026-09-10:
   **no task chips**; follow-ups go to the queue).
+- **It does not become `nova-local`.** The local one-shot is folded into
+  `native --model ollama/<tag>` and nothing else: no `status`, `serve` or
+  `worker` verbs, no loopback pin, no shared weight store or box recipe
+  (BOX-LOCAL.md), no ds4 engine, no digest or load measurement. What the
+  separate `nova-local` spec promised that native does not is deleted with the
+  fold — native runs the card on the Studio's local model and refuses beside a
+  benchmark.
 
 ## What the prototype does that this spec forbids
 
@@ -2195,6 +2327,12 @@ verb, and tests that pin all three by executing them.
     `freddy-swarm.sh` and `run-freddy.sh` are not touched by any step above.
 
 ## Ideas folded on 2026-09-11
+
+**2026-09-15 — the local one-shot is folded into `native`.** `nova-swarm native
+--model ollama/<tag>` runs the card on the Studio's local model with the same
+wall, card contract and RESULT rules, refused by the benchmark window until its
+stamp, so a local job never runs beside a benchmark; the separate
+`docs/SPEC-LOCAL.md` is deleted with the fold.
 
 | source | the idea, in six words | disposition |
 |---|---|---|

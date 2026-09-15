@@ -432,27 +432,33 @@ func WriteCursor(root, lane, commit string, open int, legacy string, now time.Ti
 	return replaceLaneFile(root, CursorPath(lane), line+"\n")
 }
 
-// WriteBeat writes a lane's BEAT: one line, the RFC 3339 UTC stamp of `now` and the cursor
-// sha the line is standing at (or "-" when it has no cursor yet). The stamp is full RFC
-// 3339 with nanoseconds so two poll ticks a fraction of a second apart carry different
-// stamps, which is what lets a reader tell the line is alive rather than merely that it
-// polled once; the beat is rewritten, not appended, because only the newest one matters.
+// WriteBeat writes a lane's BEAT: one line, the RFC 3339 UTC stamp of `now`, the cursor
+// sha the line is standing at (or "-" when it has no cursor yet), and, when `until` is not
+// the zero time, a lease until=<stamp> naming when the beat stops counting as alive. The
+// stamp is full RFC 3339 with nanoseconds so two poll ticks a fraction of a second apart
+// carry different stamps, which is what lets a reader tell the line is alive rather than
+// merely that it polled once; the beat is rewritten, not appended, because only the newest
+// one matters.
 //
 // A beat's sha is the cursor commit and carries no ValidCommitHex guard of its own: the
 // value written here came from ReadCursor, which already checked it, or is "-". It is a
 // presence signal, not a git argument.
-func WriteBeat(root, lane, cursor string, now time.Time) error {
+func WriteBeat(root, lane, cursor string, now, until time.Time) error {
 	if cursor == "" {
 		cursor = "-"
 	}
 	line := now.UTC().Format(time.RFC3339Nano) + " " + cursor
+	if !until.IsZero() {
+		line += " until=" + until.UTC().Format(time.RFC3339Nano)
+	}
 	return replaceLaneFile(root, BeatPath(lane), line+"\n")
 }
 
 // ReadBeat reads a lane's BEAT and returns its stamp as a moment, or the zero value and
 // false when the lane has no beat (or a beat that does not parse). Nothing else in this
 // tool computes from a beat; it exists so `check` validates the one file the same way it
-// validates CURSOR, OPEN and INDEX rather than stepping over a corrupt one in silence.
+// validates CURSOR, OPEN and INDEX rather than stepping over a corrupt one in silence. A
+// beat may carry a trailing until=<stamp> lease, which is tolerated rather than required.
 func ReadBeat(root, lane string) (time.Time, error) {
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(BeatPath(lane))))
 	if errors.Is(err, os.ErrNotExist) {
@@ -462,8 +468,8 @@ func ReadBeat(root, lane string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	fields := strings.Fields(strings.TrimSpace(string(raw)))
-	if len(fields) != 2 {
-		return time.Time{}, fmt.Errorf("%s: a beat is <stamp> <cursor>", BeatPath(lane))
+	if len(fields) != 2 && !(len(fields) == 3 && strings.HasPrefix(fields[2], "until=")) {
+		return time.Time{}, fmt.Errorf("%s: a beat is <stamp> <cursor> [until=<stamp>]", BeatPath(lane))
 	}
 	stamp, err := time.Parse(time.RFC3339Nano, fields[0])
 	if err != nil {
