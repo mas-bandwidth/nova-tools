@@ -63,6 +63,21 @@ type nativeRunResult struct {
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
 func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
+	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute at admission so a
+	// relative spelling cannot reach the wall (which refuses `--read ./x` and `--write x/...`).
+	abslot, err := filepath.Abs(cfg.slotDir)
+	if err != nil {
+		refuseNative(errOut, fmt.Sprintf("the slot directory %s could not be made absolute: %s", oneline.Field(cfg.slotDir), oneline.Escape(err.Error())))
+		return nativeRunResult{}, 2
+	}
+	cfg.slotDir = abslot
+	absroot, err := filepath.Abs(cfg.root)
+	if err != nil {
+		refuseNative(errOut, fmt.Sprintf("the configured root %s could not be made absolute: %s", oneline.Field(cfg.root), oneline.Escape(err.Error())))
+		return nativeRunResult{}, 2
+	}
+	cfg.root = absroot
+
 	// (1) THE BINARY. Resolved once, on PATH when the name has no separator, then
 	// checked for existence and the execute bit. A missing binary and an
 	// unexecutable one are the same refusal class, one line each.
