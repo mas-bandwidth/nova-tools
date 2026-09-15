@@ -180,11 +180,16 @@ inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
 
 wait is inbox on a clock, for a harness that does not wake you: it fetches every
 --interval (default 10s) and RETURNS the moment your inbox would list something
-new, printing exactly what inbox prints. Nothing by --timeout is a WAIT TIMEOUT line
-and exit 0 -- not an error, the answer "nothing yet" -- and you issue the next
-one. --timeout is required, because every wait has a deadline, and is at most
-60m: a wait runs inside your harness's tool call, so ask your harness what its
-limit is and sit under it. The loop is wait, answer, wait:
+new, printing exactly what inbox prints. Without --advance the cursor does not
+move, so an unadvanced cursor makes wait return AT ONCE with the same listing
+inbox would print, every call, for as long as it stays where it is: a caller
+with a backlog runs inbox first to clear it, or passes --advance so the second
+wait is a real wait for a note newer than the start. Nothing by --timeout is a
+WAIT TIMEOUT line and exit 0 -- not an error, the answer "nothing yet" -- and you
+issue the next one. --timeout is required, because every wait has a deadline, and
+is at most 60m: a wait runs inside your harness's tool call, so ask your harness
+what its limit is and sit under it. The loop is wait, answer, wait, with --advance
+so the second wait is a real wait:
 
   nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
     --advance --remote origin --branch main
@@ -659,7 +664,14 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if strings.TrimSpace(line.value) == "" {
 			continue
 		}
-		names, unknown := c.ResolveList(line.value)
+		var names, unknown []string
+		if line.flag == "--to" {
+			// A To line may name the broadcast aliases "all" and "table"; they are
+			// vouched for here, unexpanded, and resolved from the roster at send time.
+			names, unknown = c.ResolveBroadcast(line.value, me)
+		} else {
+			names, unknown = c.ResolveList(line.value)
+		}
 		if len(unknown) > 0 {
 			problems = append(problems, fmt.Errorf("%s: %s names no one on this bus (known: %s)", line.flag, strings.Join(bus.UnknownNames(unknown), ", "), strings.Join(c.KnownNames(), "; ")))
 			continue
@@ -727,6 +739,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 0
 	}
 	fmt.Fprint(stdout, skeleton)
+	fmt.Fprintf(stderr, "DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>\n")
 	return 0
 }
 
@@ -887,8 +900,9 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 			printTranscript(stderr, err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d state=%s\n",
-			oneline.Field(art.ID), oneline.Field(art.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, oneline.Field(res.State))
+		to, _ := p.Note.Header.Recipients(c)
+		fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d state=%s wakes=%d\n",
+			oneline.Field(art.ID), oneline.Field(art.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, oneline.Field(res.State), len(to))
 		return 0
 	}
 
@@ -983,8 +997,9 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		printTranscript(stderr, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d\n",
-		oneline.Field(prepared.Note.Header.ID), oneline.Field(prepared.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts)
+	to, _ := prepared.Note.Header.Recipients(t.Config)
+	fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d wakes=%d\n",
+		oneline.Field(prepared.Note.Header.ID), oneline.Field(prepared.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, len(to))
 	return 0
 }
 
