@@ -1,0 +1,1 @@
+RESULT gamma sha=ccc

@@ -20,6 +20,9 @@ nova-pulse help`
 func help(w io.Writer) {
 	fmt.Fprintln(w, pulseVerbs)
 	fmt.Fprintln(w, "Defaults: --max 20 (0 = all), --max-body-bytes 4096.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "example:")
+	fmt.Fprintln(w, "  nova-pulse harvest --id pulse-1 --root .")
 }
 
 // Main is nova-pulse's entry point; it parses the verb and its flags and runs harvest.

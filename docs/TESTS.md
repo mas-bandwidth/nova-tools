@@ -484,3 +484,19 @@ REPORT at=2026-09-12T17:29:33Z file=cmd/nova-version/testdata/example.tsv host=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-version/testdata/example.tsv
 ```
+
+## nova-pulse
+
+Fixture: `cmd/nova-pulse/testdata/example-pulse`, copied out to a directory of its own so a harvest can write `seen.tsv` and `retry.tsv` beside `cards.tsv` without dirtying the checkout. The card paths in `cards.tsv` are read relative to the working directory, so the run below happens *inside* the copy. It is three cards and, by design, none of them pushes or opens a PR: `harvest` never merges, and these cards stand in the three states a fold reports without reaching the network — a `done` card whose `BRANCH main` is refused (a mismatch), and two abstains sent to `retry.tsv` with the last refusal line pulled from each job's `harness.log`. The pulse then runs again and finds nothing left to cut: `PULSE POOL EMPTY`.
+
+### First run
+
+```text
+$ nova-pulse harvest --id pulse-1 --root .
+HARVEST RETRY label=beta card=cards/beta.md: permission denied: /etc/hosts
+HARVEST RETRY label=gamma card=cards/gamma.md: tool call refused: deadline exceeded
+HARVEST OK id=pulse-1 done=0 pushed=0 prs=0 abstain=2 mismatch=1 refused=0 retry=2 usd=- took=4ms
+PULSE POOL EMPTY in-flight=0
+```
+
+The three dispositions govern the whole verb. `HARVEST RETRY` is an abstain: each of `beta` and `gamma` wrote an `ABSTAIN` line in its `RESULT.md`, so harvest folds the job's last refusal line from `harness.log` into `retry.tsv` and the card goes back to the queue via the relaunch; the `mismatch` (card `alpha`) refuses to push a `BRANCH main` and is only marked in `seen.tsv`, so no line is printed for it. `HARVEST OK` counts the sitting — `done=0 pushed=0 prs=0` because nothing here was pushed, `abstain=2 mismatch=1` are the three cards, and `usd=-` because `pulses/pulse-1.packet` does not exist in this fixture. `PULSE POOL EMPTY` is harvest's own last line: the relaunch cut nothing because there was no `queue.tsv`, `next.tsv` or `pool.tsv` to draw from.
