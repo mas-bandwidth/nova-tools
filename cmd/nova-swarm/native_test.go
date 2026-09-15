@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,7 +73,7 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir)
+	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	harnessDir := filepath.Dir(bin)
 	if !hasFlagPair(argv, "--read", harnessDir) {
 		t.Errorf("the wall argv does not read the harness directory %s:\n%s", harnessDir, strings.Join(argv, " "))
@@ -927,8 +929,9 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	if len(tmp) != 1 {
 		t.Fatalf("the child has %d TMPDIR entries, want 1: %v", len(tmp), tmp)
 	}
-	if rel, err := filepath.Rel(dataHome, tmp[0]); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		t.Errorf("TMPDIR %q is not inside the data home %q (a --write)", tmp[0], dataHome)
+	wantTmp := filepath.Join(slot, "tmp", label)
+	if tmp[0] != wantTmp {
+		t.Errorf("TMPDIR is %q, want the slot temp dir %q (never a data-home path)", tmp[0], wantTmp)
 	}
 	if got := env["FAKE_KEY"]; len(got) != 1 || got[0] != "<redacted>" {
 		t.Errorf("the secret's value is not redacted in the log: %v", got)
@@ -1076,4 +1079,78 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	if !hasFlagPair(strings.Fields(argv), "--read", slot) {
 		t.Errorf("the wall argv does not read the slot by absolute path %s:\n%s", slot, argv)
 	}
+}
+
+// TestNativeTmpDirIsOutsideAnyRepo: the native run exports TMPDIR=<slot>/tmp/<label>, not a
+// path under the job directory. Native admission git-inits the job directory (issue #460), and
+// a temp dir inside that repo leaks the repo up into every child a card forks -- the card's own
+// tests then see a repo they did not make and fail for a reason they did not cause. The slot
+// directory is never a repo, so TMPDIR under it resolves to nothing: a `git rev-parse
+// --show-toplevel` run from inside TMPDIR fails, while the same from the job directory returns
+// the job's own repo. The test also asserts the exported path is exactly the slot temp dir.
+func TestNativeTmpDirIsOutsideAnyRepo(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "tmp-outside-repo"
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+	}
+
+	wantTmp := filepath.Join(slot, "tmp", label)
+	if res.tmp != wantTmp {
+		t.Errorf("the run records tmp=%q, want %q", res.tmp, wantTmp)
+	}
+	if fi, err := os.Stat(wantTmp); err != nil || !fi.IsDir() {
+		t.Fatalf("the temp directory %s was not made: %v", wantTmp, err)
+	}
+
+	// The runner git-inits the job directory: native admission wants a repo there.
+	jobDir := filepath.Join(slot, "jobs", label)
+	if err := gitInit(t, jobDir); err != nil {
+		t.Fatalf("git init the job directory: %v", err)
+	}
+
+	// The ambient checkout (the working tree these tests run under) is itself a repo, so a
+	// bare `git rev-parse` from inside TMPDIR would resolve UP to it and mask the question.
+	// GIT_CEILING_DIRECTORIES bounds git at the root, so a repo can only resolve from the
+	// directories this test actually makes -- the job directory -- never from TMPDIR.
+	topFromTmp, err := gitToplevel(t, wantTmp, root)
+	if err == nil {
+		t.Errorf("git rev-parse resolves %q from TMPDIR %s, which must sit outside any repo", topFromTmp, wantTmp)
+	}
+	top, err := gitToplevel(t, jobDir, root)
+	if err != nil {
+		t.Fatalf("git rev-parse from the job directory: %v", err)
+	}
+	if !sameDir(top, jobDir) {
+		t.Errorf("git rev-parse --show-toplevel from the job directory is %q, want %q", top, jobDir)
+	}
+}
+
+func gitInit(t *testing.T, dir string) error {
+	t.Helper()
+	cmd := exec.Command("git", "init", "-q", dir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git init: %v (%s)", err, out)
+	}
+	return nil
+}
+
+func gitToplevel(t *testing.T, dir, ceiling string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CEILING_DIRECTORIES="+ceiling)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse: %v (%s)", err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
