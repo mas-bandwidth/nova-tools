@@ -32,6 +32,14 @@ import (
 
 func main() {
 	args := os.Args[1:]
+	if tr := os.Getenv("NOVA_WAKE_FAKE_GIT_TRACE"); tr != "" {
+		f, _ := os.OpenFile(tr, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if f != nil {
+			fmt.Fprintf(f, "pid=%d args=%v diffenv=%q pidfileenv=%q\n", os.Getpid(), args,
+				os.Getenv("NOVA_WAKE_FAKE_GIT_DIFF"), os.Getenv("NOVA_WAKE_FAKE_GIT_PIDFILE"))
+			f.Close()
+		}
+	}
 	has := func(want string) bool {
 		for _, a := range args {
 			if a == want {
