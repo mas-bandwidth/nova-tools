@@ -36,6 +36,9 @@ type testBatch struct {
 func newTestBatch(t *testing.T) *testBatch {
 	t.Helper()
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	mapBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "codex", "mapping.json"))
 	if err != nil {
@@ -625,6 +628,9 @@ func TestTC_VAL_17_RetainedUnsupportedSubfieldAccepted(t *testing.T) {
 
 	// Build a complete batch around this single observation envelope
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	mapBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "codex", "mapping.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -903,6 +909,9 @@ func TestTC_PKG_11_MappingAlreadyInDestinationLedgerPackaged(t *testing.T) {
 // TC-VAL-14: shard_record_unallocated_and_underscore_paths
 func TestTC_VAL_14_ShardRecordUnallocatedAndUnderscorePaths(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	mapBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "codex", "mapping.json"))
 	if err != nil {
