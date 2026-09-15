@@ -150,7 +150,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// second. --config copies an opencode.json beside the carried auth file, mode 0600, so
 	// the harness resolves the provider exactly as it does when a person adds it to
 	// ~/.config/opencode. A config that names a provider whose key is absent from --auth is
-	// refused before anything runs, naming the provider and never the key.
+	// refused before anything runs, naming the provider and never the key; a provider whose
+	// options carry a baseURL and no apiKey field has no key to be absent (ollama on
+	// localhost) and is admitted without one.
 	configSHA := ""
 	if cfg.configFile != "" {
 		sha8, reason := copyProviderConfig(cfg.configFile, cfg.authFile, dataHome)
@@ -565,7 +567,9 @@ func copyProviderConfig(configPath, authPath, dataHome string) (sha8, reason str
 // configProvidersMissingAuth returns the first provider an opencode.json config names whose
 // entry is absent from the auth file, or "" when every named provider has one (or when the
 // config does not parse into a "provider" object, which the copy still performs verbatim).
-// The provider names are the keys of the config's top-level "provider" object.
+// The provider names are the keys of the config's top-level "provider" object. A provider
+// whose options carry a baseURL and no apiKey field needs no key (ollama on localhost), so
+// it is skipped: the refusal applies only to providers that reference a key.
 func configProvidersMissingAuth(raw []byte, authPath string) string {
 	var cfg map[string]any
 	if err := json.Unmarshal(raw, &cfg); err != nil {
@@ -587,11 +591,34 @@ func configProvidersMissingAuth(raw []byte, authPath string) string {
 		}
 	}
 	for p := range providers {
+		if keylessProvider(providers[p]) {
+			continue
+		}
 		if !entries[p] {
 			return p
 		}
 	}
 	return ""
+}
+
+// keylessProvider reports whether a provider entry needs no key: its options carry a baseURL
+// and no apiKey field, so the harness reaches it (for example ollama on localhost) with no
+// credential to be absent.
+func keylessProvider(v any) bool {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	opts, ok := m["options"].(map[string]any)
+	if !ok {
+		return false
+	}
+	baseURL, _ := opts["baseURL"].(string)
+	if baseURL == "" {
+		return false
+	}
+	_, hasKey := opts["apiKey"]
+	return !hasKey
 }
 
 // fileSHA256 returns the lowercase hex sha256 of a file's bytes.

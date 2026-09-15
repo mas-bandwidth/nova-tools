@@ -176,6 +176,8 @@ nova-pulse pool    --sources <file> --work <nova-work root> --root <dir> [--out 
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
+nova-pulse handoff --to <name> --root <dir>
+nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>
 nova-pulse version
 nova-pulse help
@@ -185,6 +187,25 @@ Those lines are the string `nova-pulse help` prints, byte for byte. `--timeout <
 120) bounds every `gh`, `git` and `nova-swarm` child, for SPEC-MERGE's reason
 (SPEC-MERGE.md:458). `harvest` takes `--sources` and `--templates` because its last act is
 `pool` and `cut` again (rule 15). There is no `--model`, no `--priority`, no `--retry`.
+
+## Handoff
+
+The duty shift is the coordinator's turn on a queue, and it ends by handoff and begins again
+by takeover. `handoff --to <name>` ends the shift: it writes the `SHIFT END` line, stops the
+loop, releases the `OWNER` lock (name, host, pid, since), writes a `HANDOFF` record (last
+`WIDTH`, in-flight cards by bench, pending, escalations open, benches and state) and posts
+one bus note to the successor carrying the record. It refuses mid-harvest — it finishes the
+harvest first — and refuses when the successor is asleep by `nova-wake awake`, and then
+prints `HANDOFF OK`. `takeover --as <name>` refuses when `OWNER` names a live process on a
+reachable host (`TAKEOVER REFUSED owner=<name> pid=<n> host=<h>`); a stale lock is taken with
+one `NOTE` line, then the loop and a duty shift start on the same queue and it prints
+`TAKEOVER OK`. When nova-work is open, `handoff` also moves the coordinator ownership record
+in the tree — generation, token, fencing, the `:handoff` event SPEC-WORK names.
+
+The `OWNER` lock and the `HANDOFF` record live under `<root>/queue/` as files, both
+tab-separated. `OWNER` is `name`, `host`, `pid`, `since`. `HANDOFF` is `to`, `from`,
+`width` (the last `PULSE WIDTH` line), `in-flight` (cards by bench), `pending`, `escalations`,
+`benches` and `state`.
 
 ## Exit codes and the output grammar
 
@@ -210,15 +231,20 @@ HARVEST REFUSED id=<id>: <reason> (<remedy>)
 PULSE WIDTH in-flight=<n> free=<n> pool=<n> queued=<n>
 PULSE UNDER-WIDTH pool=<n> free=<n>: launch
 PULSE POOL EMPTY in-flight=<n>
+HANDOFF OK to=<name> inflight=<n> pending=<n> escalations=<n>
+HANDOFF REFUSED: <reason> (<remedy>)
+TAKEOVER OK from=<name> inherited=<inflight/pending/escalations>
+TAKEOVER REFUSED owner=<name> pid=<n> host=<h> (wait, or clear the stale lock)
 <TOKEN> MORE kind=<k> shown=<n> total=<t> <remedy>
 <TOKEN> NOTE <something true about this run that is not a finding>
 ```
 
-`POOL`, `CUT`, `PULSE` and `HARVEST` are the first tokens; `OK`, `REFUSED`, `WIDTH`,
-`UNDER-WIDTH` and `POOL EMPTY` the verdicts and the **last** line of a verb; `harvest`'s last
-line is the `PULSE` line of the pulse it launched, or `PULSE POOL EMPTY`. `OK` and `WIDTH`
-lines go to stdout, `REFUSED` and `UNDER-WIDTH` to stderr. Every line is one line; a count
-stands where a list would be; every refusal carries one remedy in parentheses.
+`POOL`, `CUT`, `PULSE`, `HARVEST`, `HANDOFF` and `TAKEOVER` are the first tokens; `OK`,
+`REFUSED`, `WIDTH`, `UNDER-WIDTH` and `POOL EMPTY` the verdicts and the **last** line of a
+verb; `harvest`'s last line is the `PULSE` line of the pulse it launched, or
+`PULSE POOL EMPTY`. `OK` and `WIDTH` lines go to stdout, `REFUSED` and `UNDER-WIDTH` to
+stderr. Every line is one line; a count stands where a list would be; every refusal carries
+one remedy in parentheses.
 
 ## The card, as `cut` writes it
 
@@ -258,6 +284,42 @@ after line 2. `<head>` is the repo's default-branch head at cut time, read once 
   transcript, never scores a finding. The swarm's packet is the whole read.
 - **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `--then`;
   the alarm is `width`, run by nova-wake or a person.
+
+## The duty tier
+
+Stella's answer to Glenn's *"I want the intelligence; I don't want to spend it sending out jobs
+and reading results"* is a third tier between planning and work. **Planning** is a person and
+the strong model: decisions, specs, rules; its output is cards and notes. **Duty** is a bounded
+controller on the cheapest qualified model: it owns the bus wait, harvests, triages abstains
+and HOLD reads by rewriting cards from templates, files dogfood issues, cuts fix cards, merges
+non-draft PRs on an approving read plus green CI, and escalates a decision as one line.
+**Work** is swarms and local models. Duty is where the intelligence is spent once and the
+scatter-gather is spent never.
+
+Duty executes an approved finite policy and never expands it; it is the single owner of the bus
+wait; it keeps one card per work item, deduplicated on the contract line; it revalidates the PR
+head before any side effect; it runs an explicit shift length and ends with a handoff line; quiet
+time makes no model call and sends no status note; state is published mechanically (the `WIDTH`
+line); a note goes out only on a meaningful change; and it never merges a draft spec, never edits
+a spec, never addresses the person. Measurement is cost per accepted decision across all tiers
+(provider-priced input, output, cache, plus review and retry), with wrong or missed decisions
+and recovery latency as gates.
+
+The escalation line, one line, one decision not in the policy:
+
+```
+ESCALATE <stamp> <kind> <ref>: <one line>
+```
+
+The handoff at the end of a shift:
+
+```
+SHIFT END cycles=<n> decisions=<n> escalations=<n>
+```
+
+Replays: `duty-never-expands-policy`, `duty-quiet-time-makes-no-call`,
+`duty-dedups-on-contract-line`, `duty-revalidates-head-before-merge`,
+`duty-never-merges-draft`, `duty-shift-ends-with-handoff`.
 
 ## Tests this spec demands
 
@@ -340,6 +402,24 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
     one open, unleased, unblocked item node yields `work=2`, two `pool.tsv` rows whose `id` is
     the node id, and `candidates=2`; a node that is leased or blocked is nowhere; the id is
     carried on the card's line 1 so `harvest` records the attempt on the node.
+24. `handoff-writes-record-and-note`: `handoff --to <name>` ends the shift — `SHIFT END` on
+    stdout, the loop stopped — writes `<root>/queue/OWNER` freed and `<root>/queue/HANDOFF`
+    with the last width, in-flight by bench, pending, escalations, benches and state, and the
+    fixture bus records one note to the successor carrying the record; `HANDOFF OK
+    to=<name> inflight=<n> pending=<n> escalations=<n>`.
+25. `handoff-refuses-asleep-successor`: the fixture `nova-wake awake <name>` exits non-zero —
+    `HANDOFF REFUSED` naming the remedy, exit 2, no record, no note, `OWNER` unchanged.
+26. `handoff-finishes-harvest-first`: a harvest in progress is finished before the handoff
+    proceeds; a fixture mid-harvest is refused with the remedy and the harvest's line is
+    still printed.
+27. `takeover-refuses-live-owner`: `OWNER` names a live process on a reachable host —
+    `TAKEOVER REFUSED owner=<name> pid=<n> host=<h>`, exit 2, nothing taken.
+28. `takeover-takes-stale-lock-with-note`: `OWNER` names a dead process or an unreachable
+    host — the lock is taken, one `NOTE` line says so, and the loop and a duty shift start on
+    the same queue.
+29. `takeover-inherits-queue`: the taken `HANDOFF` record's inflight, pending and
+    escalations are inherited and printed as `TAKEOVER OK from=<name>
+    inherited=<inflight/pending/escalations>`.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 

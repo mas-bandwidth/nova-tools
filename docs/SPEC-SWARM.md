@@ -550,6 +550,12 @@ nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-
 nova-swarm help
 ```
 
+`native --config <file>` copies an `opencode.json` beside the carried auth into
+the job's data home, mode 0600, and a config that names a provider whose key is
+absent from `--auth` is refused before anything runs; a provider whose options
+carry a `baseURL` and no `apiKey` (ollama on localhost) needs no key and is
+admitted without one, so its card runs walled on the local model.
+
 `--tokens <n>` is the token budget (rule 13). It has no default and `0` is
 refused, on `add` and on `batch` alike, for the reason `--files` has none.
 

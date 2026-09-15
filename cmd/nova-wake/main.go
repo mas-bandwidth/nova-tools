@@ -213,15 +213,16 @@ func Version() string { return buildVersion() }
 
 // wakeConfig is the key=value file read BEFORE flags: <cwd>/.nova-wake/config
 // or the path in NOVA_WAKE_CONFIG. It holds the flags the coordinator retypes
-// every turn -- bus, window, state, as -- so a call that gives none of them
-// still has an answer. A flag given on the command line wins, and nothing here
-// is printed: reading the file is not a change to report.
+// every turn -- bus, window, max for awake; bus, state, as for watch -- so a
+// call that gives none of them still has an answer. A flag given on the
+// command line wins, and nothing here is printed: reading the file is not a
+// change to report.
 type wakeConfig struct {
 	path   string
 	values map[string]string
 }
 
-// configPath is the file a caller may set bus=, window=, state= and as= in.
+// configPath is the file a caller may set bus=, window=, max=, state= and as= in.
 func configPath() string {
 	if p := os.Getenv("NOVA_WAKE_CONFIG"); p != "" {
 		return p
@@ -346,7 +347,7 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 	fs := flag.NewFlagSet("awake", flag.ContinueOnError)
 	busDir := fs.String("bus", cfg.get("bus"), "")
 	window := fs.Int("window", cfg.cfgInt("window", DefaultAwakeWindow), "")
-	maxN := fs.Int("max", DefaultAwakeMax, "")
+	maxN := fs.Int("max", cfg.cfgInt("max", DefaultAwakeMax), "")
 	if !parseFlags(fs, args, stderr) {
 		return 2
 	}
@@ -379,8 +380,16 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 		ageText := "-"
 		source := "bus-cursor"
 		ct, haveCursor := cursorTime(*busDir, name)
-		bt, haveBeat := beatTime(*busDir, name)
+		bt, until, haveBeat := beatTime(*busDir, name)
 		switch {
+		case haveBeat && until > 0 && until > now:
+			// The beat carries a lease that has not run out: the line is between two waits
+			// (or mid-wait), its cursor and beat stamp may both be old, but its duty
+			// process promised to be alive until `until`, so it reads awake.
+			source = "bus-beat"
+			ageText = strconv.FormatInt(now-bt, 10)
+			state = "awake"
+			awake++
 		case haveBeat && (!haveCursor || bt > ct):
 			// The beat is newer than the cursor (or there is no cursor at all), so it is
 			// the friend's last sign of life: a line whose cursor has not moved but whose
@@ -468,22 +477,31 @@ func cursorTime(dir, name string) (int64, bool) {
 
 // beatTime is the stamp carried INSIDE from-<name>/BEAT, parsed from the file's own
 // content rather than any commit time, and false when no such file exists or it does not
-// parse. A waiting line's cursor does not move, so the beat is the liveness signal that
-// moves while the line merely waits; see docs/SPEC-WORK.md, Presence, source bus-beat.
-func beatTime(dir, name string) (int64, bool) {
+// parse. It also returns the beat's until=<stamp> lease, zero when the beat carries none,
+// which is how a line between two waits -- no fresh beat, no moving cursor -- still reads
+// awake inside its lease. A waiting line's cursor does not move, so the beat is the
+// liveness signal that moves while the line merely waits; see docs/SPEC-WORK.md, Presence,
+// source bus-beat.
+func beatTime(dir, name string) (int64, int64, bool) {
 	raw, err := os.ReadFile(filepath.Join(dir, "from-"+name, "BEAT"))
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 	fields := strings.Fields(string(raw))
 	if len(fields) < 1 {
-		return 0, false
+		return 0, 0, false
 	}
 	t, err := time.Parse(time.RFC3339Nano, fields[0])
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
-	return t.Unix(), true
+	var until int64
+	if len(fields) >= 3 && strings.HasPrefix(fields[2], "until=") {
+		if ut, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(fields[2], "until=")); err == nil {
+			until = ut.Unix()
+		}
+	}
+	return t.Unix(), until, true
 }
 
 // repeated is a flag that may be given more than once: --entry, --reports,
@@ -515,8 +533,8 @@ func (p *problems) missing(flag string) {
 	p.add("--"+flag+" is required; refusing to guess", hintFor(flag))
 }
 
-// missingCfg is missing for the flags a config file may name (bus, window,
-// state, as): the refusal offers the file as a second remedy after the flag.
+// missingCfg is missing for the flags a config file may name (bus, state,
+// as): the refusal offers the file as a second remedy after the flag.
 func (p *problems) missingCfg(flag string, cfg *wakeConfig) {
 	p.add("--"+flag+" is required; refusing to guess; set "+flag+"= in "+cfg.path+" as a second remedy", hintFor(flag))
 }
