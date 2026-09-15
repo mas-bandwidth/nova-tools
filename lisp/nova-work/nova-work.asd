@@ -17,7 +17,8 @@
                (:file "src/event")
                (:file "src/state")
                (:file "src/journal")
-               (:file "src/kernel")))
+               (:file "src/kernel")
+               (:file "src/session")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
