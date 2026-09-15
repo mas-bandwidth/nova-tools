@@ -414,11 +414,10 @@ Both validators execute the verification matrix against the batch:
    - Attempting to output into an existing directory is refused (`RuleDestinationExists`, exit 2).
    - **Pinned Atomic No-Replace Semantics**:
      Atomic commit cannot rely on check-then-rename, as a concurrency race could insert `batch.json` between the check and `rename(2)`, which would overwrite and clobber the destination.
-     Instead, native collection and publication rely on OS-level atomic no-replace primitives:
-     - On macOS / Darwin: `renameatx_np(AT_FDCWD, tmpPath, AT_FDCWD, targetPath, RENAME_EXCL)` (flag `0x00000004` / `RENAME_EXCL`).
-     - On Linux: `renameat2(AT_FDCWD, tmpPath, AT_FDCWD, targetPath, RENAME_NOREPLACE)` (flag `1`).
-     - Portable POSIX fallback idiom: hard link `link(tmpPath, targetPath)` (which atomically fails with `EEXIST` if `targetPath` exists), followed by `unlink(tmpPath)`.
-     - If `batch.json` exists at the destination path prior to or during the atomic no-replace commit, the operation fails with `EEXIST` / `RuleMarkerExists` (exit 2). The existing `batch.json` remains byte-identical and un-clobbered, and execution fails stop.
+     Native collection and publication pin the portable link/unlink no-replace algorithm as primary across POSIX platforms:
+     - Primary portable implementation: hard link `link(tmpPath, targetPath)` (which atomically fails with `EEXIST` if `targetPath` exists, without overwriting), followed by `unlink(tmpPath)` on success. Non-`EEXIST` link failures map to `RulePermissionsInvalid` (exit 2).
+     - Platform-specific equivalents: `renameatx_np(AT_FDCWD, tmpPath, AT_FDCWD, targetPath, RENAME_EXCL)` (flag `0x00000004` / `RENAME_EXCL` on Darwin) and `renameat2(AT_FDCWD, tmpPath, AT_FDCWD, targetPath, RENAME_NOREPLACE)` (flag `1` on Linux) provide equivalent atomic no-replace semantics.
+     - If `batch.json` exists at the destination path prior to or during the atomic no-replace commit, the operation fails with `EEXIST` / `RuleMarkerExists` (exit 2). The existing `batch.json` remains byte-identical and un-clobbered, the temporary marker is preserved for crash recovery, and execution fails stop.
 2. **Durability Fsync Ordering (Bottom-Up Directory Sync Trace)**:
    - Fsync trace guarantees that every file and directory entry is safely committed to persistent storage in proper bottom-up dependency order:
      1. Create fresh root directory (`mkdir(dir, 0755)`).
