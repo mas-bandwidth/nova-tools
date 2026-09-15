@@ -1801,3 +1801,92 @@ is compared against; it is never the path `query --ask size` takes."
 ;; NEEDS-KERNEL: new-verbs-retry-to-one-event (docs/SPEC-WORK.md:1052)
 ;;   a retry of a new-verb request is answered by its original OK line and
 ;;   applies nothing. Waits on the new verbs' journal/dedup path.
+;;; Assignment & execution control replays (SPEC-WORK.md:2400-3600).
+;;;
+;;; The slice-1 kernel implements only the three C/O transition verbs
+;;; (state-to-done, state-to-doing, event-reopen). Every replay named
+;;; below promises a verb or index that does not exist in this slice —
+;;; offer, acknowledge, decline, execution pause/stop/resume/correct/
+;;; reconcile, and the fleet query — so each is kept in the file's
+;;; deftest shape, marked, and counted as needs-kernel rather than run.
+;;; ------------------------------------------------------------------
+
+;; NEEDS-KERNEL: fleet `query --for` writes no lease and leaves `who` unchanged.
+;; (deftest "fleet-for-is-a-recommendation-not-a-lease" "docs/SPEC-WORK.md:3377"
+;;     "expected=for-writes-no-lease;who-unchanged")
+
+;; NEEDS-KERNEL: fleet `query --for` over an excluding member is a refusal, not an empty answer.
+;; (deftest "an-excluded-choice-is-refused-not-empty" "docs/SPEC-WORK.md:3378"
+;;     "expected=excluded-kind-refused;never-empty-rows")
+
+;; NEEDS-KERNEL: offer/acknowledge/decline verbs keep the four facts apart, infer none, launch none.
+;; (deftest "four-facts-four-verbs" "docs/SPEC-WORK.md:3398"
+;;     "expected=dispatch-delivery-accepted-ownership-stay-apart;nothing-inferred;nothing-launched")
+
+;; NEEDS-KERNEL: acknowledge/decline admit only behind an operator-configured verifier.
+;; (deftest "a-receipt-needs-a-verifier" "docs/SPEC-WORK.md:3413"
+;;     "expected=unverified-provenance-refused;state-unchanged;no-bus-body-authority")
+
+;; NEEDS-KERNEL: staged verifier/provenance/payload inputs run outside the mutation loop; stale/failed stage writes nothing.
+;; (deftest "staged-admission-refuses" "docs/SPEC-WORK.md:3414"
+;;     "expected=stale-or-failed-stage-writes-nothing")
+
+;; NEEDS-KERNEL: an admitted offer writes :effect :dispatched, a pending-offer entry, and one (offer,attempt) reservation.
+;; (deftest "offer-writes-intent-and-a-reservation" "docs/SPEC-WORK.md:3439"
+;;     "expected=:effect-:dispatched;pending-offer;reservation-keyed-by-offer-attempt;no-lease")
+
+;; NEEDS-KERNEL: a second offer to another name while a holder is pending/accepted is refused — no shadow lease.
+;; (deftest "no-shadow-lease-across-holders" "docs/SPEC-WORK.md:3440"
+;;     "expected=cross-holder-offer-refused;no-shadow-lease")
+
+;; NEEDS-KERNEL: accepted creates exactly one lease, or binds to the holder's own without touching deadline/default.
+;; (deftest "accepted-creates-one-lease-or-binds" "docs/SPEC-WORK.md:3458"
+;;     "expected=one-lease-or-bind-to-holders-own;deadline-and-default-unchanged-on-bind")
+
+;; NEEDS-KERNEL: at --until an unanswered offer is overdue and unreconciled; no auto launch and the reservation stands.
+;; (deftest "until-is-overdue-not-released" "docs/SPEC-WORK.md:3473"
+;;     "expected=overdue-unreconciled;no-auto-launch;reservation-stands")
+
+;; NEEDS-KERNEL: a late receipt is retained as :effect :late, a duplicate consumes no capacity, conflicting bytes refused.
+;; (deftest "late-and-duplicate-receipts-are-retained" "docs/SPEC-WORK.md:3474"
+;;     "expected=:effect-:late-retained;duplicate-consumes-no-capacity;conflicting-bytes-refused")
+
+;; NEEDS-KERNEL: execution stop installs a durable hold plus directives and writes no transition — not a cancel.
+;; (deftest "stop-is-a-hold-not-a-cancel" "docs/SPEC-WORK.md:3499"
+;;     "expected=hold-plus-directives;no-transition;not-a-cancel")
+
+;; NEEDS-KERNEL: the :cancel's evidence covers the attempt set, so one worker's stop note cannot cancel another live attempt.
+;; (deftest "one-stop-note-cannot-cancel-two-attempts" "docs/SPEC-WORK.md:3499"
+;;     "expected=one-stop-note-cannot-cancel-node-with-another-live-attempt")
+
+;; NEEDS-KERNEL: the hold and the capture anchor are journaled before EXECUTION OK, so a crash leaves both.
+;; (deftest "hold-survives-a-crash" "docs/SPEC-WORK.md:3517"
+;;     "expected=hold-and-capture-anchor-durable-before-ack")
+
+;; NEEDS-KERNEL: a clip that publishes during a live capture carries the pin forward; the capture never reads a newer scope.
+;; (deftest "capture-survives-clip" "docs/SPEC-WORK.md:3517"
+;;     "expected=clip-carries-pin-forward;no-reconstruct-from-newer-scope")
+
+;; NEEDS-KERNEL: the dispatch barrier is checked at offer, at conversion and at the last send.
+;; (deftest "no-dispatch-slips-past-a-hold" "docs/SPEC-WORK.md:3534"
+;;     "expected=barrier-at-offer-conversion-send;no-dispatch-between-capture-and-hold")
+
+;; NEEDS-KERNEL: an acceptance under a hold is retained :accepted-held with no lease, launch or release; lift converts nothing.
+;; (deftest "held-acceptance-converts-nothing" "docs/SPEC-WORK.md:3535"
+;;     "expected=:accepted-held;no-lease-no-launch-no-release;lift-converts-nothing")
+
+;; NEEDS-KERNEL: reconcile preserves contradictory observations unresolved, never last-write-wins.
+;; (deftest "reconcile-preserves-contradiction" "docs/SPEC-WORK.md:3564"
+;;     "expected=contradictions-preserved-unresolved;never-last-write-wins")
+
+;; NEEDS-KERNEL: resume is two acts — release-hold (its own control only) and resume-workers (hold kept until running).
+;; (deftest "resume-is-two-actions" "docs/SPEC-WORK.md:3574"
+;;     "expected=release-hold-lifts-only-its-control;resume-workers-keeps-hold-until-running")
+
+;; NEEDS-KERNEL: execution correct keeps old-generation usage/results as a linked segment, not a rewrite.
+;; (deftest "correct-is-a-linked-segment" "docs/SPEC-WORK.md:3592"
+;;     "expected=linked-segment-not-rewrite;old-generation-usage-and-results-kept")
+
+;; NEEDS-KERNEL: the bare correct is refused while any execution of the node is live or uncertain.
+;; (deftest "bare-correct-refuses-under-execution" "docs/SPEC-WORK.md:3592"
+;;     "expected=bare-correct-refused-while-live;demands-execution-correct")
