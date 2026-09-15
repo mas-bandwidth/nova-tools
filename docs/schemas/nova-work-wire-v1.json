@@ -1,0 +1,2229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "nova-work-wire-v1",
+  "description": "Canonical wire protocol v1 and verb schema for nova-work, pinning the complete command grammar, wire envelope contracts, event kinds, ordered field structures, and the 18 Rowan marks.",
+  "protocol_version": "1",
+  "wire": {
+    "framing": "4-byte-big-endian-unsigned-length",
+    "encoding": "utf-8-json",
+    "integer_encoding": "decimal-string",
+    "timestamp_encoding": "rfc3339-utc-trailing-z",
+    "null_semantics": "absent-and-null-mean-not-given",
+    "empty_semantics": "empty-string-and-empty-array-are-values",
+    "max_frame_bytes_flag": "--max-frame-bytes",
+    "request_envelope": {
+      "type": "object",
+      "required": [
+        "op",
+        "request",
+        "as",
+        "args"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "description": "Typed operation name, never executable form, no Lisp, no shell, no unresolved path"
+        },
+        "request": {
+          "type": "string",
+          "description": "Unique client-drawn request identifier for deduplication and response correlation"
+        },
+        "as": {
+          "type": "string",
+          "description": "Author identity string recorded in :by or :generation-owner"
+        },
+        "expect": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Expected precondition revision as decimal string, or null if unconstrained"
+        },
+        "now": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "RFC 3339 UTC timestamp with trailing Z, or null to use session clock"
+        },
+        "max": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Maximum listing count limit as decimal string ('0' means all), or null"
+        },
+        "deadline": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "RFC 3339 UTC timestamp after which caller stops waiting for response, or null"
+        },
+        "args": {
+          "type": "object",
+          "description": "Operation-specific structured arguments mapping directly to ordered fields"
+        }
+      }
+    },
+    "response_envelope": {
+      "type": "object",
+      "required": [
+        "request",
+        "ok",
+        "exit",
+        "lines",
+        "rev",
+        "pushed"
+      ],
+      "properties": {
+        "request": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Echoed client request id; null only if frame was refused before valid request id could be decoded"
+        },
+        "ok": {
+          "type": "boolean",
+          "description": "True if operation succeeded (exit 0), false otherwise"
+        },
+        "exit": {
+          "type": "string",
+          "enum": [
+            "0",
+            "1",
+            "2"
+          ],
+          "description": "Exit code as decimal string ('0' success, '1' domain refusal/finding/stale, '2' usage error/fatal)"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Verbatim output grammar lines, split by client using second token (OK, ROW, NOTE, MORE -> stdout; FAIL, RACED -> stderr)"
+        },
+        "rev": {
+          "type": "string",
+          "description": "Session local accepted event revision count as decimal string"
+        },
+        "pushed": {
+          "type": "string",
+          "description": "Last clipped/shared git revision as decimal string, or '-' if no clip has occurred"
+        }
+      }
+    },
+    "negotiation": {
+      "client_hello": {
+        "op": "hello",
+        "protocol": [
+          "1"
+        ],
+        "client": "<build identity>"
+      },
+      "session_response": {
+        "op": "hello-ok",
+        "protocol": "1",
+        "session": "<build identity>"
+      }
+    }
+  },
+  "rowan_marks": [
+    {
+      "id": "RM-01",
+      "name": "wire-length-prefix-4-byte",
+      "summary": "One message is a 4-byte big-endian unsigned length followed by UTF-8 JSON object.",
+      "spec_citation": "docs/SPEC-WORK.md:2483-2485,5294"
+    },
+    {
+      "id": "RM-02",
+      "name": "max-frame-bytes-bound",
+      "summary": "Frames exceeding --max-frame-bytes (defaulting to session --max-bytes) are refused with framed error and connection closed.",
+      "spec_citation": "docs/SPEC-WORK.md:2485-2486,5294"
+    },
+    {
+      "id": "RM-03",
+      "name": "integers-are-decimal-strings",
+      "summary": "Every protocol integer is a JSON decimal string (never JSON number) to protect 64-bit counts from IEEE-754 rounding.",
+      "spec_citation": "docs/SPEC-WORK.md:2486-2490,5295-5296"
+    },
+    {
+      "id": "RM-04",
+      "name": "rfc3339-utc-trailing-z",
+      "summary": "All timestamps are RFC 3339 UTC with a trailing Z, never local zones, offsets, or epoch counts.",
+      "spec_citation": "docs/SPEC-WORK.md:2490-2491,5296"
+    },
+    {
+      "id": "RM-05",
+      "name": "absent-and-null-distinct-from-empty",
+      "summary": "Absent key and null mean not given; empty string and empty array are values; agreed with digest (:absent) vs ().",
+      "spec_citation": "docs/SPEC-WORK.md:2492-2496,5296,5310-5311"
+    },
+    {
+      "id": "RM-06",
+      "name": "request-envelope-schema",
+      "summary": "Request envelope has op, request, as, expect, now, max, deadline, args with op typed, never executable form.",
+      "spec_citation": "docs/SPEC-WORK.md:2496-2498,5296-5297"
+    },
+    {
+      "id": "RM-07",
+      "name": "response-envelope-schema",
+      "summary": "Response envelope has request, ok, exit, lines, rev, pushed; lines carry output grammar answers verbatim.",
+      "spec_citation": "docs/SPEC-WORK.md:2498-2500,5296-5297"
+    },
+    {
+      "id": "RM-08",
+      "name": "lines-carry-output-grammar-verbatim",
+      "summary": "Client splits response lines strictly by second token: OK, ROW, NOTE, MORE to stdout; FAIL, RACED to stderr.",
+      "spec_citation": "docs/SPEC-WORK.md:2500-2505,5297"
+    },
+    {
+      "id": "RM-09",
+      "name": "hello-protocol-negotiation",
+      "summary": "Client sends hello frame with protocol versions; session answers or refuses and closes, never guessing.",
+      "spec_citation": "docs/SPEC-WORK.md:2505-2509,5295"
+    },
+    {
+      "id": "RM-10",
+      "name": "sexp-store-json-wire-only",
+      "summary": "Restricted s-expressions remain durable work-data store; JSON is strictly wire transport.",
+      "spec_citation": "docs/SPEC-WORK.md:2509-2511,5294-5297"
+    },
+    {
+      "id": "RM-11",
+      "name": "response-echoes-request-id",
+      "summary": "Every response echoes client request id for pipelined correlation; pre-decode framing refusal returns request: null and closes.",
+      "spec_citation": "docs/SPEC-WORK.md:2513-2525,5296-5297"
+    },
+    {
+      "id": "RM-12",
+      "name": "durable-operation-id-before-print",
+      "summary": "Slow asynchronous work generates an operation id journaled to recovery log before printing to prevent lost handles on crash.",
+      "spec_citation": "docs/SPEC-WORK.md:2548-2556,5312-5313"
+    },
+    {
+      "id": "RM-13",
+      "name": "operation-verbs-spelling",
+      "summary": "Asynchronous operations spelled operation status|list|wait|cancel with event cursor.",
+      "spec_citation": "docs/SPEC-WORK.md:2170-2173,2248,5298-5299"
+    },
+    {
+      "id": "RM-14",
+      "name": "undo-redo-verbs-spelling",
+      "summary": "Reversible mistake verbs spelled undo-plan/undo and redo-plan/redo with --request-of.",
+      "spec_citation": "docs/SPEC-WORK.md:2178-2181,2249,5299-5300"
+    },
+    {
+      "id": "RM-15",
+      "name": "savepoint-vs-checkpoint-spelling",
+      "summary": "Savepoint verbs spelled savepoint list|create|verify|restore|compare; savepoint names local snapshot vs checkpoint for clip commit.",
+      "spec_citation": "docs/SPEC-WORK.md:2174-2177,2250,5300-5301"
+    },
+    {
+      "id": "RM-16",
+      "name": "friend-config-model-observe-machine-spelling",
+      "summary": "Entity management verbs spelled friend, config, model, observe, and machine with non-node subject tokens on OK lines.",
+      "spec_citation": "docs/SPEC-WORK.md:2182-2194,2250-2253,5301-5303"
+    },
+    {
+      "id": "RM-17",
+      "name": "query-specialized-asks",
+      "summary": "Query asks include roadmap, friends, models, ready, and fleet as specialized query dimensions.",
+      "spec_citation": "docs/SPEC-WORK.md:2208-2215,5302"
+    },
+    {
+      "id": "RM-18",
+      "name": "aggregation-and-missing-verbs-named",
+      "summary": ":aggregation restricted to :required-members, :all-members, :leaves; 9 missing verbs explicitly named before lock gate.",
+      "spec_citation": "docs/SPEC-WORK.md:770-775,2759-2780,5303,5314-5315"
+    }
+  ],
+  "verbs": [
+    {
+      "verb": "session start",
+      "op": "session-start",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Start a resident coordinator session on a local socket endpoint.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "file",
+        "journal",
+        "cache",
+        "repo",
+        "remote",
+        "branch",
+        "max-bytes",
+        "max-depth",
+        "max-nodes",
+        "every",
+        "skew",
+        "clip-every",
+        "clip-after",
+        "retain",
+        "savepoint-every",
+        "savepoint-after",
+        "max-frame-bytes",
+        "silence-ping",
+        "index-cache",
+        "page-bytes",
+        "page-records",
+        "closed-window",
+        "resolver",
+        "git-timeout",
+        "attempts",
+        "repair",
+        "foreground",
+        "max",
+        "now"
+      ],
+      "grammar_line": "SESSION OK session=<path> owner=<name> generation=<n> state=<live|fenced|red> until=<stamp> file=<path> base=<sha> journal=<path> events=<n> pending=<n> pushed=<rev|-> nodes=<n> edges=<n> parses=<n> replays=<n> every=<duration> skew=<duration> clip-every=<duration> clip-after=<n> retain=<duration> index-cache=<n> page-bytes=<n> page-records=<n> closed-window=<duration> max-bytes=<n> max-depth=<n> max-nodes=<n> boundary=<rev> findings=<n> build=<identity> emitted=<bytes>"
+    },
+    {
+      "verb": "session export",
+      "op": "session-export",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Export session or journal requests into an exchange bundle.",
+      "ordered_fields": [
+        "session",
+        "journal",
+        "max-bytes",
+        "max-depth",
+        "max-nodes",
+        "into"
+      ],
+      "grammar_line": "EXPORT OK session=<path> into=<path> requests=<n> base=<sha> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "session export --state",
+      "op": "session-export-state",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Export captured revision snapshot state with closed history into directory.",
+      "ordered_fields": [
+        "session",
+        "snapshot",
+        "cache",
+        "state",
+        "at",
+        "closed-history",
+        "from",
+        "to",
+        "into",
+        "max-bytes",
+        "max-depth",
+        "max-nodes",
+        "max-output-bytes"
+      ],
+      "grammar_line": "EXPORT OK state=true session=<path> operation=<id|-> at=<rev> manifest=<sha256> members=<n> bytes=<n> complete=<true|false> into=<path> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "state load",
+      "op": "state-load",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Load an exported snapshot into an isolated read-only session.",
+      "ordered_fields": [
+        "from",
+        "into",
+        "max-bytes",
+        "max-depth",
+        "max-nodes"
+      ],
+      "grammar_line": "LOAD OK from=<path> at=<rev> manifest=<sha256> snapshot=<path> cache=<path> members=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "session replay",
+      "op": "session-replay",
+      "event_kind": null,
+      "mutating": true,
+      "description": "Replay an exported request bundle into the session under coordinator authority.",
+      "ordered_fields": [
+        "session",
+        "from",
+        "as",
+        "max"
+      ],
+      "grammar_line": "REPLAY OK from=<path> requests=<n> applied=<n> refused=<n> pushed=<rev|-> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "session status",
+      "op": "session-status",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Inspect running session state, active lease, and counts.",
+      "ordered_fields": [
+        "session"
+      ],
+      "grammar_line": "SESSION OK session=<path> owner=<name> generation=<n> state=<live|fenced|red> until=<stamp> file=<path> base=<sha> journal=<path> events=<n> pending=<n> pushed=<rev|-> nodes=<n> edges=<n> parses=<n> replays=<n> every=<duration> skew=<duration> clip-every=<duration> clip-after=<n> retain=<duration> index-cache=<n> page-bytes=<n> page-records=<n> closed-window=<duration> max-bytes=<n> max-depth=<n> max-nodes=<n> boundary=<rev> findings=<n> build=<identity> emitted=<bytes>"
+    },
+    {
+      "verb": "session stop",
+      "op": "session-stop",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Stop session coordinator process after durable final clip.",
+      "ordered_fields": [
+        "session",
+        "git-timeout",
+        "attempts",
+        "no-clip"
+      ],
+      "grammar_line": "SESSION OK session=<path> owner=<name> generation=<n> state=<live|fenced|red> until=<stamp> file=<path> base=<sha> journal=<path> events=<n> pending=<n> pushed=<rev|-> nodes=<n> edges=<n> parses=<n> replays=<n> every=<duration> skew=<duration> clip-every=<duration> clip-after=<n> retain=<duration> index-cache=<n> page-bytes=<n> page-records=<n> closed-window=<duration> max-bytes=<n> max-depth=<n> max-nodes=<n> boundary=<rev> findings=<n> build=<identity> emitted=<bytes>"
+    },
+    {
+      "verb": "session handoff",
+      "op": "session-handoff",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Handoff session coordinator ownership to another peer with fence advance.",
+      "ordered_fields": [
+        "session",
+        "to",
+        "git-timeout",
+        "attempts"
+      ],
+      "grammar_line": "HANDOFF OK session=<path> generation=<n> to=<name> commit=<sha> pushed=<rev> emitted=<bytes>"
+    },
+    {
+      "verb": "operation status",
+      "op": "operation-status",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Query status of an asynchronous background operation by id.",
+      "ordered_fields": [
+        "session",
+        "id"
+      ],
+      "grammar_line": "OPERATION OK id=<id> op=<capture|stage|export|clip> state=<queued|running|done|cancelling|cancelled|failed> started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "operation list",
+      "op": "operation-list",
+      "event_kind": null,
+      "mutating": false,
+      "description": "List tracked asynchronous operations.",
+      "ordered_fields": [
+        "session",
+        "max"
+      ],
+      "grammar_line": "OPERATION OK id=<id> op=<capture|stage|export|clip> state=<queued|running|done|cancelling|cancelled|failed> started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "operation wait",
+      "op": "operation-wait",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Wait boundedly for an asynchronous operation to reach terminal state.",
+      "ordered_fields": [
+        "session",
+        "id",
+        "timeout",
+        "after"
+      ],
+      "grammar_line": "OPERATION OK id=<id> op=<capture|stage|export|clip> state=<queued|running|done|cancelling|cancelled|failed> started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "operation cancel",
+      "op": "operation-cancel",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Request cancellation of an active asynchronous operation.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "id",
+        "reason"
+      ],
+      "grammar_line": "OPERATION OK id=<id> op=<capture|stage|export|clip> state=cancelled started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "savepoint list",
+      "op": "savepoint-list",
+      "event_kind": null,
+      "mutating": false,
+      "description": "List available local savepoints with validation status.",
+      "ordered_fields": [
+        "session",
+        "max"
+      ],
+      "grammar_line": "SAVEPOINT OK id=<id> rev=<n> checkpoint=<rev|-> pushed=<rev|-> boundary=<rev> age=<duration> unshared=<n> manifest=<sha> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "savepoint create",
+      "op": "savepoint-create",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Create a local recovery savepoint of resident session state.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "reason"
+      ],
+      "grammar_line": "SAVEPOINT OK id=<id> rev=<n> checkpoint=<rev|-> pushed=<rev|-> boundary=<rev> age=<duration> unshared=<n> manifest=<sha> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "savepoint verify",
+      "op": "savepoint-verify",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Verify integrity and manifest digest of a local savepoint.",
+      "ordered_fields": [
+        "session",
+        "id"
+      ],
+      "grammar_line": "SAVEPOINT OK id=<id> rev=<n> checkpoint=<rev|-> pushed=<rev|-> boundary=<rev> age=<duration> unshared=<n> manifest=<sha> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "savepoint restore",
+      "op": "savepoint-restore",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Isolated read-only restore of a savepoint to an inspection directory.",
+      "ordered_fields": [
+        "savepoint",
+        "into",
+        "max-bytes",
+        "max-depth",
+        "max-nodes"
+      ],
+      "grammar_line": "SAVEPOINT OK id=<id> rev=<n> checkpoint=<rev|-> pushed=<rev|-> boundary=<rev> age=<duration> unshared=<n> manifest=<sha> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "savepoint compare",
+      "op": "savepoint-compare",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Compare savepoint state against session or snapshot state.",
+      "ordered_fields": [
+        "savepoint",
+        "against",
+        "session",
+        "snapshot",
+        "max-bytes",
+        "max-depth",
+        "max-nodes",
+        "max"
+      ],
+      "grammar_line": "SAVEPOINT OK id=<id> rev=<n> checkpoint=<rev|-> pushed=<rev|-> boundary=<rev> age=<duration> unshared=<n> manifest=<sha> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "undo-plan",
+      "op": "undo-plan",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Compute projected compensating events for undoing a named request.",
+      "ordered_fields": [
+        "session",
+        "request",
+        "max"
+      ],
+      "grammar_line": "UNDO ROW node=<id> effect=<state|scope|assignment|counter|verification> before=<text> after=<text>"
+    },
+    {
+      "verb": "undo",
+      "op": "undo",
+      "event_kind": ":undo",
+      "mutating": true,
+      "description": "Apply compensating events to reverse effects of a previous request.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "request-of",
+        "reason"
+      ],
+      "grammar_line": "UNDO OK id=<event-id> request=<id> request-of=<id> nodes=<n> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "redo-plan",
+      "op": "redo-plan",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Compute projected reapplying events for redoing a previously undone request.",
+      "ordered_fields": [
+        "session",
+        "request",
+        "max"
+      ],
+      "grammar_line": "REDO ROW node=<id> effect=<state|scope|assignment|counter|verification> before=<text> after=<text>"
+    },
+    {
+      "verb": "redo",
+      "op": "redo",
+      "event_kind": ":redo",
+      "mutating": true,
+      "description": "Reapply events reversed by an earlier undo.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "request-of",
+        "reason"
+      ],
+      "grammar_line": "REDO OK id=<event-id> request=<id> request-of=<id> nodes=<n> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "friend",
+      "op": "friend",
+      "event_kind": ":friend",
+      "mutating": true,
+      "description": "Register, retire, or modify friend role, participation, capability, or limits.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "register",
+        "retire",
+        "role",
+        "participation",
+        "capability",
+        "group",
+        "limit",
+        "reason"
+      ],
+      "grammar_line": "FRIEND OK id=<event-id> request=<id> friend=<name> change=<register|retire|role|participation|capability|limit> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "config",
+      "op": "config",
+      "event_kind": ":config",
+      "mutating": true,
+      "description": "Request, export, or intake verified team configuration.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "base",
+        "export",
+        "into",
+        "intake",
+        "from",
+        "max"
+      ],
+      "grammar_line": "CONFIG OK id=<event-id> request=<id> friend=<name> base=<hash|-> revision=<n> hash=<hash> parts=<n> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "model",
+      "op": "model",
+      "event_kind": ":model",
+      "mutating": true,
+      "description": "Register model or update pricing rate or benchmark suitability evidence.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "register",
+        "provider",
+        "route",
+        "billing",
+        "rate",
+        "effective",
+        "source",
+        "evidence",
+        "task-class",
+        "result",
+        "samples",
+        "reason"
+      ],
+      "grammar_line": "MODEL OK id=<event-id> request=<id> model=<id> change=<register|rate|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "observe",
+      "op": "observe",
+      "event_kind": ":observe",
+      "mutating": true,
+      "description": "Record friend availability observation or worker execution attempt receipt.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "friend",
+        "state",
+        "source",
+        "attempt",
+        "observed-model",
+        "bench",
+        "usage",
+        "reason"
+      ],
+      "grammar_line": "OBSERVE OK id=<event-id> request=<id> friend=<name> change=<state|attempt> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "goal set",
+      "op": "goal-set",
+      "event_kind": ":goal",
+      "mutating": true,
+      "description": "Set or clear the active goal node for an execution scope.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "scope",
+        "goal",
+        "clear",
+        "reason"
+      ],
+      "grammar_line": "GOAL OK id=<event-id> request=<id> scope=<scope> goal=<id|-> change=<set|clear|progress|evidence|blocked|stop> kind=<goal|transition|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "goal show",
+      "op": "goal-show",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Display active goal status, constraints, notes, and progress for a scope.",
+      "ordered_fields": [
+        "session",
+        "snapshot",
+        "max-bytes",
+        "max-depth",
+        "max-nodes",
+        "cache",
+        "as",
+        "scope",
+        "max"
+      ],
+      "grammar_line": "GOAL OK scope=<scope> goal=<id|-> rev=<n> pushed=<rev|-> generation=<n> scope-revision=<n> state=<s> owner=<name|-> stop=<none|requested|cancelled|deferred> constraints=<n> notes=<n> outstanding=<n> rows=<n> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "goal update",
+      "op": "goal-update",
+      "event_kind": ":transition",
+      "mutating": true,
+      "description": "Update active goal with progress, evidence, blocker, or request stop edge.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "scope",
+        "progress",
+        "evidence",
+        "criterion",
+        "against",
+        "blocked-by",
+        "stop",
+        "reason"
+      ],
+      "grammar_line": "GOAL OK id=<event-id> request=<id> scope=<scope> goal=<id|-> change=<set|clear|progress|evidence|blocked|stop> kind=<goal|transition|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "machine",
+      "op": "machine",
+      "event_kind": ":machine",
+      "mutating": true,
+      "description": "Register, retire, permit, exclude, limit, or record static facts for fleet machines in CONFIG.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "register",
+        "name",
+        "owner",
+        "connect",
+        "role",
+        "retire",
+        "permit",
+        "exclude",
+        "limit",
+        "fact",
+        "declared-by",
+        "reason"
+      ],
+      "grammar_line": "MACHINE OK id=<event-id> request=<id> machine=<id> change=<register|retire|permit|exclude|limit|fact> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "offer",
+      "op": "offer",
+      "event_kind": ":offer",
+      "mutating": true,
+      "description": "Dispatch a delegated work offer to a worker or swarm.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "offer",
+        "to",
+        "profile",
+        "attempt",
+        "generation",
+        "request-ref",
+        "payload",
+        "payload-sha256",
+        "reserve",
+        "until",
+        "requested-model",
+        "predecessor-offer",
+        "predecessor-attempt",
+        "reason"
+      ],
+      "grammar_line": "OFFER OK id=<event-id> request=<id> node=<id> offer=<id> attempt=<id> to=<name> effect=dispatched reserved=<n> until=<stamp> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "acknowledge",
+      "op": "acknowledge",
+      "event_kind": ":acknowledge",
+      "mutating": true,
+      "description": "Acknowledge or accept a dispatched offer with receipt and lease bounds.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "offer",
+        "reply",
+        "stage",
+        "provenance",
+        "provenance-sha256",
+        "by",
+        "default",
+        "observed-model",
+        "bench",
+        "execution",
+        "reason"
+      ],
+      "grammar_line": "ACKNOWLEDGE OK id=<event-id> request=<id> node=<id> offer=<id> attempt=<id> stage=<received|accepted> effect=<received|accepted|accepted-held|late|duplicate> lease=<lease-id|-> reserved=<n> committed=<n> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "decline",
+      "op": "decline",
+      "event_kind": ":decline",
+      "mutating": true,
+      "description": "Decline an offer and release reserved capacity.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "offer",
+        "reply",
+        "provenance",
+        "provenance-sha256",
+        "reason"
+      ],
+      "grammar_line": "DECLINE OK id=<event-id> request=<id> node=<id> offer=<id> attempt=<id> effect=<declined|late|duplicate> released=<n> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "execution pause",
+      "op": "execution-pause",
+      "event_kind": ":execution-control",
+      "mutating": true,
+      "description": "Pause active workers on a node, repository, or entire session.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "repo",
+        "all",
+        "reason"
+      ],
+      "grammar_line": "EXECUTION OK id=<event-id> request=<id> control=<id> change=pause scope=<selector> operation=<id|-> selected=<n> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "execution stop",
+      "op": "execution-stop",
+      "event_kind": ":execution-control",
+      "mutating": true,
+      "description": "Stop active workers on a node, repository, or entire session.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "repo",
+        "all",
+        "reason"
+      ],
+      "grammar_line": "EXECUTION OK id=<event-id> request=<id> control=<id> change=stop scope=<selector> operation=<id|-> selected=<n> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "execution resume",
+      "op": "execution-resume",
+      "event_kind": ":execution-control",
+      "mutating": true,
+      "description": "Resume paused execution or release hold on a control identifier.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "control",
+        "action",
+        "reason"
+      ],
+      "grammar_line": "EXECUTION OK id=<event-id> request=<id> control=<id> change=resume scope=<selector> operation=<id|-> selected=<n> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "execution correct",
+      "op": "execution-correct",
+      "event_kind": ":execution-control",
+      "mutating": true,
+      "description": "Send mid-flight steering instructions to an active worker execution.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "instructions",
+        "sha256",
+        "reason"
+      ],
+      "grammar_line": "EXECUTION OK id=<event-id> request=<id> control=<id> change=correct scope=<selector> operation=<id|-> selected=<n> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "execution reconcile",
+      "op": "execution-reconcile",
+      "event_kind": ":execution-control",
+      "mutating": true,
+      "description": "Reconcile execution control state from a durable external manifest.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "control",
+        "from",
+        "reason"
+      ],
+      "grammar_line": "EXECUTION OK id=<event-id> request=<id> control=<id> change=reconcile scope=<selector> operation=<id|-> selected=<n> rev=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "execution status",
+      "op": "execution-status",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Inspect execution control status and worker delivery dispositions.",
+      "ordered_fields": [
+        "session",
+        "control",
+        "max"
+      ],
+      "grammar_line": "EXECUTION OK control=<id> change=<c> selected=<n> pending-delivery=<n> acknowledged=<n> confirmed=<n> unsupported=<n> unresolved=<n> rev=<n> pushed=<rev|-> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "clip",
+      "op": "clip",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Trigger periodic or explicit Git checkpoint commit and push of local accepted events.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "git-timeout",
+        "attempts",
+        "max",
+        "now"
+      ],
+      "grammar_line": "OPERATION OK id=<id> op=clip state=<queued|running> started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "check",
+      "op": "check",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Audit structural invariants, referential integrity, and counters across the work graph.",
+      "ordered_fields": [
+        "session",
+        "snapshot",
+        "max-bytes",
+        "max-depth",
+        "max-nodes",
+        "cache",
+        "max"
+      ],
+      "grammar_line": "WORK OK nodes=<n> edges=<n> events=<n> leases=<n> expired=<n> escalated=<n> stale=<n> scope=<rev> source=<sha|-> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "verify",
+      "op": "verify",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Verify external evidence pointers against commit hashes using registered resolvers.",
+      "ordered_fields": [
+        "session",
+        "offline",
+        "max-fetch",
+        "fetch-timeout",
+        "node",
+        "max"
+      ],
+      "grammar_line": "VERIFY OK pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "query",
+      "op": "query",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Execute bounded query against work graph, roadmaps, friends, models, ready tasks, or fleet.",
+      "ordered_fields": [
+        "session",
+        "snapshot",
+        "max-bytes",
+        "max-depth",
+        "max-nodes",
+        "cache",
+        "ask",
+        "branch",
+        "node",
+        "repo",
+        "owner",
+        "category",
+        "axis",
+        "for",
+        "since",
+        "at",
+        "from",
+        "to",
+        "after",
+        "window",
+        "max"
+      ],
+      "grammar_line": "QUERY OK ask=<kind> scope=<rev> membership=<rule> branch=<open|closed|root> unit=<unit> source=<sha|-> freshest=<stamp|-> done=<n> done-unverified=<n> unknown=<n> deferred=<n> cancelled=<n> superseded=<n> stale=<n> required=<n> since-baseline=<n> private=<n> open=<n> closed=<n> gap=<n> [from=<stamp> to=<stamp> closed-in=<n> settles-in=<n> revives-in=<n> items-in=<n>] [green=<k> applicable=<n> baseline-rows=<n0> row-kind=<kind>] [held-not-worked=<n> unowned=<n>] [leases=<n>] [responsible=<name|->] pushed=<rev|-> rows=<n> shown=<n> pages=<n> parses=<n> replays=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "render",
+      "op": "render",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Render projected roadmap markdown table between specified file markers.",
+      "ordered_fields": [
+        "session",
+        "view",
+        "into",
+        "start",
+        "end",
+        "at",
+        "check"
+      ],
+      "grammar_line": "RENDER OK view=<id> cells=<n> private=<n> bytes=<n> into=<path> pushed=<rev|-> emitted=<bytes>"
+    },
+    {
+      "verb": "node add",
+      "op": "node-add",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Add new work item node (work-set, epic, feature, task) under an existing parent.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "id",
+        "type",
+        "under",
+        "title",
+        "category",
+        "required",
+        "acceptance",
+        "reason"
+      ],
+      "grammar_line": "NODE OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "node edit",
+      "op": "node-edit",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Edit mutable node metadata fields via discrete patches.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "title",
+        "clear-title",
+        "category",
+        "clear-category",
+        "link",
+        "links-empty",
+        "clear-links",
+        "private",
+        "clear-private",
+        "version",
+        "clear-version",
+        "reason"
+      ],
+      "grammar_line": "NODE OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=edit changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "node move",
+      "op": "node-move",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Move or reparent a node under a different parent.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "from",
+        "under",
+        "reason"
+      ],
+      "grammar_line": "NODE OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=move changed=<n> from=<id> under=<id> emitted=<bytes>"
+    },
+    {
+      "verb": "node remove",
+      "op": "node-remove",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Detach node from parent, settling open items of subtree into C with removed disposition.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "reason"
+      ],
+      "grammar_line": "NODE OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "node require",
+      "op": "node-require",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Update whether an open work item is required or optional for parent completion.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "to",
+        "reason"
+      ],
+      "grammar_line": "NODE OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "decompose",
+      "op": "decompose",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Split feature into multiple required children, carrying initial acceptance criteria.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "into",
+        "acceptance",
+        "reason"
+      ],
+      "grammar_line": "DECOMPOSE OK id=<event-id> request=<id> node=<id> children=<n> unit=leaves leaves-before=<n> leaves-after=<n> unit=features features-before=<n> features-after=<n> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "accept",
+      "op": "accept",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Add or remove an acceptance criterion on an open node before done transition.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "add",
+        "remove",
+        "reason"
+      ],
+      "grammar_line": "ACCEPT OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "source",
+      "op": "source",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Pin verified source git revision SHA for an epic or feature.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "to",
+        "reason"
+      ],
+      "grammar_line": "SOURCE OK id=<event-id> request=<id> node=<id> to=<sha> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "dep",
+      "op": "dep",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Add or remove a dependency edge between nodes, checking acyclicity.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "add",
+        "remove",
+        "reason"
+      ],
+      "grammar_line": "DEP OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "axis",
+      "op": "axis",
+      "event_kind": ":scope",
+      "mutating": true,
+      "description": "Add an axis member to a roadmap projection matrix.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "roadmap",
+        "axis",
+        "add",
+        "reason"
+      ],
+      "grammar_line": "AXIS OK id=<event-id> request=<id> roadmap=<id> axis=<id> add=<member> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "roadmap create",
+      "op": "roadmap-create",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Create a new roadmap node with dimensions and aggregation policy.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "id",
+        "under",
+        "title",
+        "row-kind",
+        "aggregation",
+        "completion-policy",
+        "axes-none",
+        "axis-id",
+        "permit-root",
+        "reason"
+      ],
+      "grammar_line": "ROADMAP OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=create changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "roadmap configure",
+      "op": "roadmap-configure",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Reconfigure dimensions or policies of an existing roadmap.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "roadmap",
+        "row-kind",
+        "aggregation",
+        "completion-policy",
+        "axes-none",
+        "axis-id",
+        "permit-root",
+        "roots-empty",
+        "reason"
+      ],
+      "grammar_line": "ROADMAP OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=configure changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "roadmap row",
+      "op": "roadmap-row",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Add or remove a row member on an axisless roadmap.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "roadmap",
+        "add",
+        "remove",
+        "reason"
+      ],
+      "grammar_line": "ROADMAP OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=<row-add|row-remove> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "roadmap projection",
+      "op": "roadmap-projection",
+      "event_kind": ":structure",
+      "mutating": true,
+      "description": "Add or remove a materialized markdown table projection for a roadmap view.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "roadmap",
+        "add",
+        "root",
+        "repo",
+        "path",
+        "start",
+        "end",
+        "policy",
+        "row-axis",
+        "column-axis",
+        "fixed",
+        "remove",
+        "reason"
+      ],
+      "grammar_line": "ROADMAP OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=<projection-add|projection-remove> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "prioritise",
+      "op": "prioritise",
+      "event_kind": ":prioritise",
+      "mutating": true,
+      "description": "Set or clear ordering priority on a node.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "set",
+        "clear",
+        "context",
+        "reason"
+      ],
+      "grammar_line": "PRIORITY OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> change=<set|clear> context=<self|subtree> rank=<n|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "cell",
+      "op": "cell",
+      "event_kind": ":scope",
+      "mutating": true,
+      "description": "Map, clear, or declare scope boundary for a roadmap matrix coordinate.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "roadmap",
+        "coord",
+        "ref",
+        "out-of-scope",
+        "in-scope",
+        "reason"
+      ],
+      "grammar_line": "CELL OK id=<event-id> request=<id> roadmap=<id> coord=<member,member> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "responsible",
+      "op": "responsible",
+      "event_kind": ":assignment",
+      "mutating": true,
+      "description": "Assign responsible owner name to a node with subtree inheritance.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "to",
+        "reason"
+      ],
+      "grammar_line": "RESPONSIBLE OK id=<event-id> request=<id> node=<id> to=<name> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "take",
+      "op": "take",
+      "event_kind": ":assignment",
+      "mutating": true,
+      "description": "Acquire execution lease on ready node with duration and default expiry action.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "by",
+        "default"
+      ],
+      "grammar_line": "LEASE OK id=<event-id> request=<id> node=<id> holder=<name> deadline=<stamp> default=<release|extend-once|escalate:<name>> live=<n> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "heartbeat",
+      "op": "heartbeat",
+      "event_kind": ":assignment",
+      "mutating": true,
+      "description": "Extend lease activity timestamp with active execution evidence pointer.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "evidence"
+      ],
+      "grammar_line": "HEARTBEAT OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "release",
+      "op": "release",
+      "event_kind": ":assignment",
+      "mutating": true,
+      "description": "Release active lease, optionally handing off to another designated worker.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "handed",
+        "by",
+        "default"
+      ],
+      "grammar_line": "RELEASE OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "attest",
+      "op": "attest",
+      "event_kind": ":evidence",
+      "mutating": true,
+      "description": "Attest satisfaction of an acceptance criterion with external test/file result pointer.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "criterion",
+        "result",
+        "against"
+      ],
+      "grammar_line": "ATTESTED OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> criterion=<id> against=<sha> emitted=<bytes>"
+    },
+    {
+      "verb": "attempt",
+      "op": "attempt",
+      "event_kind": ":assignment",
+      "mutating": true,
+      "description": "Record execution attempt outcome by worker model, bench, and token usage.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "model",
+        "bench",
+        "result",
+        "usage"
+      ],
+      "grammar_line": "ATTEMPT OK id=<event-id> request=<id> node=<id> by=<name> result=<pointer> generation=<n> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "evidence",
+      "op": "evidence",
+      "event_kind": ":evidence",
+      "mutating": true,
+      "description": "Attach verified evidence pointer to criterion and target commit sha.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "pointer",
+        "criterion",
+        "against",
+        "attempt"
+      ],
+      "grammar_line": "EVIDENCE OK id=<event-id> request=<id> node=<id> pointer=<pointer> criterion=<id> against=<sha> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "state",
+      "op": "state",
+      "event_kind": ":transition",
+      "mutating": true,
+      "description": "Transition node lifecycle state across validated edges with evidence or reason.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "to",
+        "evidence",
+        "reason",
+        "blocked-by"
+      ],
+      "grammar_line": "STATE OK id=<event-id> request=<id> node=<id> from=<state> to=<state> evidence=<event-id|-> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "correct",
+      "op": "correct",
+      "event_kind": ":transition",
+      "mutating": true,
+      "description": "Correct completed node by bumping generation and reopening for fresh evidence.",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "reason"
+      ],
+      "grammar_line": "CORRECT OK id=<event-id> request=<id> node=<id> generation=<n> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "event",
+      "op": "event",
+      "event_kind": ":scope",
+      "mutating": true,
+      "description": "Record explicit scope lifecycle events (baseline, discovery, defer, cancel, reopen, supersede).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "kind",
+        "node",
+        "reason",
+        "member",
+        "superseded-by",
+        "evidence"
+      ],
+      "grammar_line": "EVENT OK id=<event-id> request=<id> node=<id> kind=<kind> scope=<rev> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "version",
+      "op": "version",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Print client build identity and Go runtime version.",
+      "ordered_fields": [],
+      "grammar_line": "nova-work <build identity> <goos>/<goarch> <go version>"
+    },
+    {
+      "verb": "help",
+      "op": "help",
+      "event_kind": null,
+      "mutating": false,
+      "description": "Print command synopsis and available verb families.",
+      "ordered_fields": [],
+      "grammar_line": "nova-work help"
+    }
+  ],
+  "missing_verbs": [
+    {
+      "verb": "node edit",
+      "op": "node-edit",
+      "owning_domain": "work structure",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#293",
+      "event_kind": ":structure",
+      "rationale": "Integrated into canonical work CLI and wire schema by structure, roadmap, export & priority fold #293 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "title",
+        "category",
+        "links",
+        "private",
+        "version",
+        "reason"
+      ],
+      "grammar_line": "NODE OK id=<event-id> request=<id> node=<id> change=edit rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "node add --repo",
+      "op": "node-add",
+      "owning_domain": "work structure",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#293",
+      "event_kind": ":structure",
+      "rationale": "Integrated into canonical work CLI and wire schema by structure, roadmap, export & priority fold #293 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "id",
+        "type",
+        "under",
+        "repo",
+        "title",
+        "category",
+        "required",
+        "acceptance",
+        "reason"
+      ],
+      "grammar_line": "NODE OK id=<event-id> request=<id> node=<id> type=work-set repo=<repo> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "node move",
+      "op": "node-move",
+      "owning_domain": "work structure",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#293",
+      "event_kind": ":structure",
+      "rationale": "Integrated into canonical work CLI and wire schema by structure, roadmap, export & priority fold #293 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "from-parent",
+        "to-parent",
+        "reason"
+      ],
+      "grammar_line": "NODE OK id=<event-id> request=<id> node=<id> change=move from=<parent-id> to=<parent-id> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "axis --remove",
+      "op": "axis",
+      "owning_domain": "roadmaps",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#293",
+      "event_kind": ":scope",
+      "rationale": "Integrated into canonical work CLI and wire schema by structure, roadmap, export & priority fold #293 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "roadmap",
+        "axis",
+        "remove",
+        "reason"
+      ],
+      "grammar_line": "AXIS OK id=<event-id> request=<id> roadmap=<id> axis=<id> remove=<member> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "roadmap",
+      "op": "roadmap",
+      "owning_domain": "roadmaps",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#293",
+      "event_kind": ":scope",
+      "rationale": "Integrated into canonical work CLI and wire schema by structure, roadmap, export & priority fold #293 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "id",
+        "axes",
+        "row-kind",
+        "aggregation",
+        "completion-policy",
+        "projection-targets",
+        "target-roots",
+        "reason"
+      ],
+      "grammar_line": "ROADMAP OK id=<event-id> request=<id> roadmap=<id> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "prioritise",
+      "op": "prioritise",
+      "owning_domain": "scope and dependencies",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#293",
+      "event_kind": ":scope",
+      "rationale": "Integrated into canonical work CLI and wire schema by structure, roadmap, export & priority fold #293 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "rank",
+        "after",
+        "before",
+        "reason"
+      ],
+      "grammar_line": "PRIORITISE OK id=<event-id> request=<id> node=<id> rank=<rank> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "offer",
+      "op": "offer",
+      "owning_domain": "assignments and execution",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#294",
+      "event_kind": ":assignment",
+      "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "to",
+        "expires",
+        "reason"
+      ],
+      "grammar_line": "OFFER OK id=<event-id> request=<id> node=<id> to=<name> expires=<stamp> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "acknowledge",
+      "op": "acknowledge",
+      "owning_domain": "assignments and execution",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#294",
+      "event_kind": ":assignment",
+      "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "offer",
+        "reason"
+      ],
+      "grammar_line": "ACKNOWLEDGE OK id=<event-id> request=<id> node=<id> offer=<id> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "decline",
+      "op": "decline",
+      "owning_domain": "assignments and execution",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#294",
+      "event_kind": ":assignment",
+      "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "offer",
+        "reason"
+      ],
+      "grammar_line": "DECLINE OK id=<event-id> request=<id> node=<id> offer=<id> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "pause",
+      "op": "pause",
+      "owning_domain": "assignments and execution",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#294",
+      "event_kind": ":transition",
+      "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "reason"
+      ],
+      "grammar_line": "PAUSE OK id=<event-id> request=<id> node=<id> state=paused rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "stop",
+      "op": "stop",
+      "owning_domain": "assignments and execution",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#294",
+      "event_kind": ":transition",
+      "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "reason"
+      ],
+      "grammar_line": "STOP OK id=<event-id> request=<id> node=<id> state=cancel-requested rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "reconcile",
+      "op": "reconcile",
+      "owning_domain": "assignments and execution",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#294",
+      "event_kind": ":assignment",
+      "rationale": "Integrated into canonical work CLI and wire schema by assignment & execution control fold #294 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "as",
+        "request",
+        "expect",
+        "now",
+        "deadline",
+        "dry-run",
+        "node",
+        "handle",
+        "status",
+        "reason"
+      ],
+      "grammar_line": "RECONCILE OK id=<event-id> request=<id> node=<id> handle=<pointer> status=<status> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>"
+    },
+    {
+      "verb": "session export --at",
+      "op": "session-export",
+      "owning_domain": "session and durability",
+      "status": "filled-by-folds",
+      "disposition": "filled-by-fold-#293",
+      "event_kind": null,
+      "rationale": "Integrated into canonical work CLI and wire schema by structure, roadmap, export & priority fold #293 (docs/SPEC-WORK.md:2759-2780).",
+      "ordered_fields": [
+        "session",
+        "journal",
+        "into",
+        "at",
+        "max-bytes",
+        "max-depth",
+        "max-nodes"
+      ],
+      "grammar_line": "EXPORT OK session=<path> into=<path> at=<revision> requests=<n> base=<sha> pushed=<rev|-> emitted=<bytes>"
+    }
+  ],
+  "coordinator_domains": [
+    {
+      "domain": "session and durability",
+      "operations": [
+        "start",
+        "status",
+        "clip",
+        "savepoint list",
+        "savepoint create",
+        "savepoint verify",
+        "savepoint restore",
+        "savepoint compare",
+        "session export",
+        "session export --state",
+        "state load",
+        "session replay",
+        "session stop",
+        "session handoff"
+      ],
+      "in_scope_verbs": [
+        "session start",
+        "session status",
+        "clip",
+        "savepoint list",
+        "savepoint create",
+        "savepoint verify",
+        "savepoint restore",
+        "savepoint compare",
+        "session export",
+        "session export --state",
+        "state load",
+        "session replay",
+        "session stop",
+        "session handoff"
+      ],
+      "deferred_verbs": []
+    },
+    {
+      "domain": "reversible mistakes",
+      "operations": [
+        "undo-plan",
+        "undo",
+        "redo-plan",
+        "redo",
+        "operation cancel"
+      ],
+      "in_scope_verbs": [
+        "undo-plan",
+        "undo",
+        "redo-plan",
+        "redo",
+        "operation cancel"
+      ],
+      "deferred_verbs": []
+    },
+    {
+      "domain": "work structure",
+      "operations": [
+        "node add",
+        "node edit",
+        "node move",
+        "decompose",
+        "accept",
+        "node require",
+        "node remove"
+      ],
+      "in_scope_verbs": [
+        "node add",
+        "node edit",
+        "node move",
+        "decompose",
+        "accept",
+        "node require",
+        "node remove"
+      ],
+      "deferred_verbs": []
+    },
+    {
+      "domain": "scope and dependencies",
+      "operations": [
+        "event",
+        "dep",
+        "prioritise"
+      ],
+      "in_scope_verbs": [
+        "event",
+        "dep",
+        "prioritise"
+      ],
+      "deferred_verbs": []
+    },
+    {
+      "domain": "assignments and execution",
+      "operations": [
+        "offer",
+        "acknowledge",
+        "decline",
+        "execution pause",
+        "execution stop",
+        "execution resume",
+        "execution correct",
+        "execution reconcile",
+        "execution status",
+        "responsible",
+        "take",
+        "heartbeat",
+        "release",
+        "attempt",
+        "correct"
+      ],
+      "in_scope_verbs": [
+        "offer",
+        "acknowledge",
+        "decline",
+        "execution pause",
+        "execution stop",
+        "execution resume",
+        "execution correct",
+        "execution reconcile",
+        "execution status",
+        "responsible",
+        "take",
+        "heartbeat",
+        "release",
+        "attempt",
+        "correct"
+      ],
+      "deferred_verbs": []
+    },
+    {
+      "domain": "evidence and completion",
+      "operations": [
+        "accept",
+        "source",
+        "attest",
+        "evidence",
+        "state",
+        "verify"
+      ],
+      "in_scope_verbs": [
+        "accept",
+        "source",
+        "attest",
+        "evidence",
+        "state",
+        "verify"
+      ],
+      "deferred_verbs": []
+    },
+    {
+      "domain": "roadmaps",
+      "operations": [
+        "axis",
+        "roadmap create",
+        "roadmap configure",
+        "roadmap row",
+        "roadmap projection",
+        "cell",
+        "render",
+        "query",
+        "check"
+      ],
+      "in_scope_verbs": [
+        "axis",
+        "roadmap create",
+        "roadmap configure",
+        "roadmap row",
+        "roadmap projection",
+        "cell",
+        "render",
+        "query",
+        "check"
+      ],
+      "deferred_verbs": []
+    },
+    {
+      "domain": "friends and CONFIG",
+      "operations": [
+        "friend",
+        "config",
+        "machine"
+      ],
+      "in_scope_verbs": [
+        "friend",
+        "config",
+        "machine"
+      ],
+      "deferred_verbs": []
+    },
+    {
+      "domain": "ACTIVE",
+      "operations": [
+        "observe",
+        "query"
+      ],
+      "in_scope_verbs": [
+        "observe",
+        "query"
+      ],
+      "deferred_verbs": []
+    },
+    {
+      "domain": "models and prices",
+      "operations": [
+        "model",
+        "query"
+      ],
+      "in_scope_verbs": [
+        "model",
+        "query"
+      ],
+      "deferred_verbs": []
+    },
+    {
+      "domain": "issue correspondence",
+      "operations": [
+        "session export",
+        "savepoint restore"
+      ],
+      "in_scope_verbs": [
+        "session export",
+        "savepoint restore"
+      ],
+      "deferred_verbs": []
+    },
+    {
+      "domain": "queries and operations",
+      "operations": [
+        "query",
+        "check",
+        "verify",
+        "operation status",
+        "operation list",
+        "operation wait",
+        "operation cancel",
+        "execution status",
+        "goal set",
+        "goal show",
+        "goal update"
+      ],
+      "in_scope_verbs": [
+        "query",
+        "check",
+        "verify",
+        "operation status",
+        "operation list",
+        "operation wait",
+        "operation cancel",
+        "execution status",
+        "goal set",
+        "goal show",
+        "goal update"
+      ],
+      "deferred_verbs": []
+    }
+  ]
+}
