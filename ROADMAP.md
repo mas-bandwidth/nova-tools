@@ -7,7 +7,7 @@ Help AI friends coordinate work without repeatedly rebuilding the plan in their 
 **Planning baseline: 10 epics, 52 features, 171 inventoried items (166 acceptance items and 5 open questions).**
 **Verified implementation: 0%.** This is proposed scope for review, not a delivery-date or effort estimate.
 The current main branch has no production `nova-work` engine or CLI; existing prototypes and written specs do not count as verified production features.
-Current scope after the recorded moves and discoveries: 57 product features and 200 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
+Current scope after the recorded moves and discoveries: 57 product features and 201 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
 
 The current work register is below. The first internal C/O kernel has merged; a merged partial implementation and passing subset tests do not mark a full production feature verified. The planning source records partial support for E01-F01, E01-F03, E01-F05, E03-F01 and E04-F01 with the merged subset evidence; their cells remain ❌ until all criteria pass.
 
@@ -17,7 +17,7 @@ Completion is verified features divided by applicable features; it is not averag
 This roadmap uses **epic → feature → sub-feature/acceptance item**, with no language axis.
 [Recursive work data](docs/roadmaps/nova-work.sexp) retains stable IDs, dependencies and source references.
 This baseline format is planning data, not a claim that nova-work import/export already exists.
-Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation), proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound), `SPEC-WORK.md@685b7c2` (efficiency policy, merged to `spec/nova-work` by PR #317 as `cf5dd8f5`), and PR #319 `SPEC-WORK.md@9488a19` (recursive project/stream grouping, merged to `spec/nova-work` as `9c120a3b`). A source-section label below is resolved through its named file/revision key.
+Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation), proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound), proposed `spec/nova-work` PR #339 (the fleet), `SPEC-WORK.md@685b7c2` (efficiency policy, merged to `spec/nova-work` by PR #317 as `cf5dd8f5`), and PR #319 `SPEC-WORK.md@9488a19` (recursive project/stream grouping, merged to `spec/nova-work` as `9c120a3b`). A source-section label below is resolved through its named file/revision key.
 
 | Epic | Features | Verified |
 |---|:---:|:---:|
@@ -38,7 +38,7 @@ Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WOR
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | 52 | 6 | 0 | 0 | 1 | 57 |
 
-Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation, ten efficiency-policy and three recursive-grouping acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
+Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation, ten efficiency-policy, three recursive-grouping and one fleet acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
 Do not count removal as completion. These counts track inventory movement, not estimated engineering effort.
 
 ## Open questions
@@ -51,7 +51,7 @@ Do not count removal as completion. These counts track inventory movement, not e
 
 ## Research and Development (R&D)
 
-All active engineering and research items outside the v1 product feature denominator are organized in this explicit R&D register. These items track active prototypes, compiler and runtime hardening, protocol companions, decision packets, and adapter explorations across the team. Items in this register do not grant completion credit toward the v1 product denominator (57 features and 200 acceptance items). Current evidence snapshot at 2026-09-15T00:30:00Z (main `36efe4a9`, spec `9c120a3b`).
+All active engineering and research items outside the v1 product feature denominator are organized in this explicit R&D register. These items track active prototypes, compiler and runtime hardening, protocol companions, decision packets, and adapter explorations across the team. Items in this register do not grant completion credit toward the v1 product denominator (57 features and 201 acceptance items). Current evidence snapshot at 2026-09-15T00:30:00Z (main `36efe4a9`, spec `9c120a3b`).
 
 | ID | Work Item | Status | Owner | Next Gate | Source / Evidence |
 |---|---|:---:|:---:|:---:|---|
@@ -666,8 +666,9 @@ Prerequisites: E04-F04, E03-F04.
 - [ ] Store agreed specialist roles per friend; keep model strengths/weaknesses in the shared model catalog
 - [ ] Represent children, swarm capabilities, local runs and one-shots separately from friend identity; agreed concurrency limits apply
 - [ ] bounds-are-not-prompts: refuse automatic dispatch when an adapter cannot enforce the configured execution limit; distinguish wait deadline from observed stop or unresolved outcome
+- [ ] fleet-is-static-config: hold the fleet as `:machine` records in CONFIG with stable id, owner, connection-profile reference, roles, limits, permits, exclusions and dated declared facts, all instance data; list it and recommend members for a workload kind from declared facts, never a lease; refuse a record without owner or id, a held connection profile, a credential, an unknown owner or role, and a choice of a member for a workload it excludes
 
-Source sections: Friends and assignments are resident indexes too; CONFIG and ACTIVE are different sections; Efficiency policy (SPEC-WORK.md@685b7c2).
+Source sections: Friends and assignments are resident indexes too; CONFIG and ACTIVE are different sections; Efficiency policy (SPEC-WORK.md@685b7c2); The fleet (spec/nova-work [PR #339](https://github.com/mas-bandwidth/nova-tools/pull/339)).
 
 **E08-F04 — Availability, offers and assignment reconciliation**
 
@@ -860,7 +861,7 @@ Source sections: Output grammar; The verbs; Required test suites.
 
 Issue [#321](https://github.com/mas-bandwidth/nova-tools/issues/321) (including coordinator delegation notes and shared goal requirements confirmed in [comment 5672006742](https://github.com/mas-bandwidth/nova-tools/issues/321#issuecomment-5672006742)) and [PR #335](https://github.com/mas-bandwidth/nova-tools/pull/335) define the scope for future v2 architecture: arbitrary real/virtual/mixed node hierarchies, durable repository-backed virtual nodes, mapped GitHub completion return paths, personal/group coordinator notes, and set/retrieve/update operations for the shared current goal across models and harnesses.
 
-All v2 capabilities are grouped into this explicit epic outside the v1 product feature denominator. The v1 denominator remains strictly **57 features and 200 acceptance items** (5 partial, 0 verified).
+All v2 capabilities are grouped into this explicit epic outside the v1 product feature denominator. The v1 denominator remains strictly **57 features and 201 acceptance items** (5 partial, 0 verified).
 
 | ID | Feature Area / Acceptance Item | Extends | Status | Owner | Next Gate | Source |
 |---|---|---|:---:|:---:|:---:|---|
