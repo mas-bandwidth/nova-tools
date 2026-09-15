@@ -484,3 +484,17 @@ REPORT at=2026-09-12T17:29:33Z file=cmd/nova-version/testdata/example.tsv host=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-version/testdata/example.tsv
 ```
+
+## nova-pulse
+
+### First run
+
+Cut one card of each kind out of the fixture pool, into a fresh `./cards` and
+`./root` in the checkout. The fixture lives at `cmd/nova-pulse/testdata/`: a
+two-line `pool.tsv` (a read and a fix candidate) and a `templates` directory
+with `models.tsv`, `read.md` and `fix.md`.
+
+```text
+$ nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
+CUT OK cards=2 skipped=0 flash=1 pro=1 out=./cards
+```

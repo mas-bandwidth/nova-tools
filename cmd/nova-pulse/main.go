@@ -22,7 +22,10 @@ nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>
 nova-pulse version
-nova-pulse help`
+nova-pulse help
+
+example:
+  nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root`
 
 // refuse is what an unusable invocation costs: one line naming what was wrong and the door
 // to the usage, never the banner.
