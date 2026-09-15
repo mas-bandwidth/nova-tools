@@ -1224,9 +1224,9 @@ his: **set** and **retrieve** the current goal, **update** it as work proceeds, 
 and harnesses; a model switch loads the same current revision and preserves outstanding
 ownership; status and evidence updates stay distinguishable from objective and constraint
 edits; an old harness state cannot silently overwrite a newer goal, restart completed work or
-discard a stop. The coordinator notes this goal is read beside are SPEC-DELEGATION.md's; the
-goal itself is this file's, folded here from that document's draft 3 (Stella's clearance,
-stella-1858e1eeef8d).
+discard a stop. The coordinator notes a goal is read beside stay SPEC-DELEGATION.md's; the
+goal itself is this file's, folded here from that document's draft 3 on Stella's clearance
+(stella-1858e1eeef8d).
 
 **The goal is a node of O, and the current goal is a reference to it.** No new record kind
 holds the objective: the objective, its completion criteria, its constraints, its progress,
@@ -1277,11 +1277,13 @@ and from `:unknown` because the reason is carried) and refused `no edge` on a no
 `:doing` — a progress line on a node already under way carries evidence or it is not written,
 because a progress claim with no pointer is the success claim the goal must not accept
 **(Rowan's decision, for review)**; `--blocked-by <node-id> --reason` a `:transition :to
-:blocked` with its `:blocked-by`; `--stop --reason` a `:transition :to :cancel-requested` with
-`:reason` — all under the same `--expect`. **A stop request is not stopped-worker evidence.**
+:blocked` with its `:blocked-by`, admitted from `:todo`, `:doing` and `:unknown` and refused
+`no edge` from `:review`, as the table says; `--stop --reason` a `:transition :to
+:cancel-requested` with `:reason` — all under the same `--expect`. **A stop request is not stopped-worker evidence.**
 `--stop` takes no evidence and observes nothing; it is exactly the table's own edge to
-`:cancel-requested` from `:todo`, `:doing` or `:blocked` (*States and transitions* above; the
-same request `state --to cancel-requested` writes), with no edge added and none removed; and
+`:cancel-requested` from `:todo`, `:doing` or `:blocked`, and from `:unknown` because the
+reason is carried (*States and transitions* above; the same request `state --to
+cancel-requested` writes), with no edge added to the table and none removed from it; and
 confirmed cancellation remains `event --kind cancel --evidence <pointer>` on the node, the one
 evidence-bearing operation, admitted only from `:cancel-requested`: there is no second
 cancellation mechanism (Stella, 5673066509). While the request is pending, `show` prints
@@ -1289,7 +1291,9 @@ cancellation mechanism (Stella, 5673066509). While the request is pending, `show
 the work: **`goal update` writes no transition on a node in `:cancel-requested`** — a
 `--progress` or `--blocked-by` there is refused `stop requested`, nothing written — although
 the table's withdrawal edge to `:doing` exists, because that edge is a person's explicit act,
-`state --to doing --reason` by id, and never a progress update. To act on a child, the
+`state --to doing --reason` by id, and never a progress update. **This is the verb narrowing
+what the table admits, and the table itself is unchanged; the source draft said the table
+refuses it, which the withdrawal edge makes false (Rowan's decision, for review).** To act on a child, the
 coordinator either `set`s the goal reference to that child first or uses `state` and `event`
 on the child by id. **Objective and constraint edits are not `update`**: changing what the
 goal is, is `accept` (criteria), `dep`, `node` and `correct` on the node, each bumping its
@@ -1299,8 +1303,9 @@ kinds with different revision effects, and a reader tells them apart from the lo
 wording.
 
 **Revision and conflict.** `goal set` and `goal update` wear `<write flags>` of *The verbs*,
-and `--expect` is **required** on both — the one place this file requires it on the
-coordinator's own path, where *The verbs* leaves it optional — because the goal is what a
+and `--expect` is **required** on both, an omission exit 2 naming the flag — the one place
+this file requires it on the coordinator's own path, where *The verbs* leaves it optional
+**(Rowan's decision, for review)** — because the goal is what a
 harness switch reads, and *"explicit conflict handling"* (5672006742) is the existing rule
 applied and not a new one: the expectation is the local revision on `--session`, checked as
 every mutation's is, and a stale one is refused at exit 1, `GOAL FAIL scope=<scope>
@@ -3243,7 +3248,7 @@ CONFIG FAIL friend=<name> base=<hash|-> verdict=<schema|identity|hash|incomplete
 FRIEND OK id=<event-id> request=<id> friend=<name> change=<register|retire|role|participation|capability|limit> rev=<n> pushed=<rev|-> emitted=<bytes>
 MODEL OK id=<event-id> request=<id> model=<id> change=<register|rate|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>
 OBSERVE OK id=<event-id> request=<id> friend=<name> change=<state|attempt> rev=<n> pushed=<rev|-> emitted=<bytes>
-GOAL OK id=<event-id> request=<id> scope=<scope> goal=<id|-> change=<set|clear|progress|evidence|blocked|stop> kind=<goal|transition|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>   (goal set and goal update: kind= is the event written, :goal for set and clear, the node's own :transition or :evidence for update)
+GOAL OK id=<event-id> request=<id> scope=<scope> goal=<id|-> change=<set|clear|progress|evidence|blocked|stop> kind=<goal|transition|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>   (goal set and goal update: change= is the form the caller used, evidence for --progress with the evidence triple and progress for --progress alone; kind= is the event written, :goal for set and clear, the node's own :transition or :evidence for update)
 GOAL OK scope=<scope> goal=<id|-> rev=<n> pushed=<rev|-> generation=<n> scope-revision=<n> state=<s> owner=<name|-> stop=<none|requested|cancelled|deferred> constraints=<n> notes=<n> outstanding=<n> rows=<n> shown=<n> emitted=<bytes>   (goal show: no event, no id=; stop= derived from state=)
 GOAL ROW kind=<objective|criterion|constraint|note|progress|blocker|lease|attempt|link> <the fields its kind's own row carries above: a criterion row is ACCEPT's, a constraint row is SPEC-DELEGATION.md's applicable row byte for byte, a lease row is QUERY's who row>
 GOAL MORE rows=<n> shown=<n>   (constraint rows and the stop are never among the cut)
@@ -3698,7 +3703,8 @@ of this list and are not repeated here):
   refused because both dispositions are terminal, and no undo reaching a terminal state by any
   path.
 
-- **`goal-crosses-harness`** — harness A, as coordinator C, `goal set --goal G --expect r`;
+- **`goal-crosses-harness`** — G a `:doing` leaf at revision r; harness A, as coordinator C,
+  `goal set --goal G --expect r`, `GOAL OK … rev=r+1`;
   writes a `(:coordinator "C")` note (SPEC-DELEGATION.md) with a `:deny` on a made-up model for
   `:coding`; `goal update --stop --reason` on G. Harness B, another build, `goal show --as C`
   against the live session and against the clipped snapshot: both print `goal=G`, a `rev=` at or
@@ -3708,20 +3714,21 @@ of this list and are not repeated here):
   cancel --evidence <pointer>` on G; B's next `show` prints `stop=cancelled`. B copied no
   conversation.
 - **`goal-stale-update-refuses`** — A and B both `show` at revision r. A writes `update
-  --progress` with evidence, r+1; B's `update --progress --expect r` is refused `GOAL FAIL …
+  --progress` with the evidence triple on G, a `:doing` leaf, r+1; B's `update --progress --expect r` is refused `GOAL FAIL …
   expect=r current=r+1: stale`, the snapshot is unchanged, and B's next `show` prints A's
   evidence row. A then `update --stop --reason --expect r+1`, r+2; B's `update --progress
   --expect r+1` is refused `stale` and B's next `show` prints `stop=requested`; B's `update
   --progress --expect r+2` is refused `stop requested`, and `stop=requested` stands until a
-  `:cancel` with evidence or `state --to doing --reason` by id. A `goal set` to a node in C is
-  refused `disposition=done` whatever `--expect` says, and the node stays in C.
+  `:cancel` with evidence or `state --to doing --reason` by id. A `goal set` to a node on the
+  closed branch is refused `disposition=done` whatever `--expect` says, and the node stays
+  closed.
 - **`goal-stop-is-a-request-not-evidence`** — G `:doing` at r; `goal update --stop --reason
   --expect r` prints `GOAL OK … change=stop kind=transition rev=r+1`, and the event is a
   `:transition :to :cancel-requested` carrying `:reason` and no `:evidence`; `check` has no
   finding; `state --to cancel-requested --reason` on a sibling writes an event of the same kind
   and fields. `state --to doing --reason` by id is admitted (the withdrawal) and `show` prints
-  `stop=none`; stopped again, `event --kind cancel --evidence <pointer>` prints `stop=cancelled`,
-  terminal, and `goal set --goal G` is then refused `disposition=cancelled`. `goal update
+  `stop=none`; stopped again, then `event --kind cancel --evidence <pointer>`, and `show` prints
+  `stop=cancelled`, terminal, and `goal set --goal G` is then refused `disposition=cancelled`. `goal update
   --stop` on a `:review` node is refused `no edge`, as `state --to cancel-requested` is there,
   and on a `:done` node the same: the edges are the table's and no other.
 - **`goal-update-writes-only-existing-kinds`** — every `goal update` form written, then the
