@@ -79,6 +79,29 @@ func push(dir string) error {
 	return nil
 }
 
+// A wait is one read, and every return ends with one terminal line that says it ended and
+// hands back the command to re-arm it. A background process is not a harness wake: the
+// harness wakes when the call RETURNS, and the caller must then issue the next wait. The
+// line is always last, so a harness reading the tail of the transcript finds it.
+func TestWaitEndsWithRearmLine(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	r := invoke(t, "", waitFlags(checkout, "Ada", "1s")...).mustCode(t, 0)
+
+	done := "WAIT DONE reason=timeout rearm=required next=nova-bus wait"
+	if !strings.Contains(r.stdout, done) {
+		t.Fatalf("wait return is missing the terminal re-arm line:\n%s", r.stdout)
+	}
+	trimmed := strings.TrimRight(r.stdout, "\n")
+	last := trimmed[strings.LastIndex(trimmed, "\n")+1:]
+	if !strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait --bus "+checkout) {
+		t.Fatalf("the re-arm line is not last:\n%s", r.stdout)
+	}
+}
+
 // THE POINT OF THE VERB: a note pushed by somebody else, mid-call, ends the wait. The
 // caller is inside a tool call the whole time and gets the listing the moment it is true.
 func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
@@ -494,5 +517,70 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD~1"))
 	if onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR")); len(onLane) == 0 || onLane[0] != readTo {
 		t.Fatalf("the cursor was not advanced to head over the heard note (read to %s):\n%s", readTo, read(t, checkout, "from-ada/CURSOR"))
+	}
+}
+
+// THE BEAT IS WRITTEN EVERY TICK. A waiting line's cursor does not move -- there was
+// nothing to read -- so a line whose cursor never moves reads asleep to `nova-wake awake`.
+// The BEAT is the file that moves anyway: rewritten on every poll, one line, the newest
+// stamp and the cursor the line is standing at. The write is unbounded; what is bounded is
+// the push, tested next. Here --beat is far longer than the wait, so nothing is pushed and
+// the only trace is the working-tree file, rewritten down to its last tick.
+func TestWaitWritesBeatEachTick(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "1h")...).mustCode(t, 0)
+
+	// Rewritten, not appended: one line, an RFC 3339 UTC stamp and the cursor sha.
+	beat := strings.TrimSpace(read(t, checkout, "from-ada/BEAT"))
+	fields := strings.Fields(beat)
+	if len(fields) != 2 {
+		t.Fatalf("BEAT is %q, want one line <stamp> <cursor>", beat)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, fields[0]); err != nil {
+		t.Fatalf("BEAT stamp %q is not an RFC 3339 UTC stamp: %v", fields[0], err)
+	}
+	cursor := strings.Fields(read(t, checkout, "from-ada/CURSOR"))
+	if len(cursor) == 0 || fields[1] != cursor[0] {
+		t.Fatalf("BEAT cursor %q does not match CURSOR %q", fields[1], read(t, checkout, "from-ada/CURSOR"))
+	}
+	if strings.Count(beat, "\n") != 0 {
+		t.Fatalf("BEAT is more than one line (rewritten, not appended):\n%q", beat)
+	}
+}
+
+// THE PUSH IS BOUNDED. A beat push costs somebody's server, so only the push is gated at
+// --beat, never the write: over a wait whose --beat is far longer than --interval the BEAT
+// is written on every poll but pushed only when a whole beat has elapsed. Here the beat is
+// short enough that a push MUST happen, and the assertion is that pushes never outrun the
+// polls -- a beat pushed once per poll would be a poller, not a beat.
+func TestWaitBeatPushBounded(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	r := invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "150ms")...).mustCode(t, 0)
+
+	pollCount, err := strconv.Atoi(field(t, r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):], "polls="))
+	if err != nil || pollCount < 1 {
+		t.Fatalf("polls=%d, want at least 1:\n%s", pollCount, r.stdout)
+	}
+
+	log := gitIn(t, checkout, "log", "--format=%s", "main")
+	beats := 0
+	for _, line := range strings.Split(log, "\n") {
+		if strings.Contains(line, "beat ada") {
+			beats++
+		}
+	}
+	if beats < 1 {
+		t.Fatalf("a wait with --beat 150ms pushed no beat commit:\n%s", log)
+	}
+	if beats > pollCount {
+		t.Fatalf("pushed %d beat commits over %d polls; the push is bounded by --beat, not once per tick:\n%s", beats, pollCount, log)
 	}
 }
