@@ -633,6 +633,92 @@ resolution every binary here uses. It takes no flags and no arguments.
 `requeue`, `note`, `finalize` and `reclaim` are the verbs that act; `supervise`
 is `run`'s child and nobody's verb.
 
+## Batch: scatter, wait, gather
+
+A batch is the `batch=<id>` already in the sidecar (rule 14), held through
+four parts: **scatter** admits n cards with one batch id and one deadline;
+**wait** ends every card or the deadline; **gather** folds the batch into one
+bounded packet, mechanically; **read** hands the packet once to one agent.
+The admission half is `batch --tasks <dir>` and the two proposals it cites —
+`docs/PROPOSAL-SWARM-BATCH-RECEIPTS.md` and
+`docs/PROPOSAL-SWARM-BATCH-ADMISSION-CONTRACT.md`. **This section adds no
+dispatcher extension beyond those two proposals**: no new admission boundary,
+no new `run` verb, and the receipts stay exactly as the proposals define them.
+
+### scatter — one admission of n cards, one id, one deadline
+
+- one admission of n cards — any route: Mercury, the DeepSeek API, OpenCode
+  Go or Zen — one slot each, in `--tasks <dir>` name order (rule 14);
+- one `batch=<id>`, stamped on every sidecar at admission, printed on
+  `BATCH OK`;
+- per-card **sha256 of the admitted text**, recorded at admission, the hash
+  the receipt and admission-contract proposals already demand; line 1 of the
+  card's `RESULT.md` must be that admission's contract line, or the card is
+  refused at gather;
+- one deadline for the whole batch — the batch's own `--deadline`, never a
+  deadline any single card sets.
+
+### wait — all end, or the deadline
+
+`wait` blocks until every card has ended **or** the batch's deadline has
+passed. A card past the deadline is an **abstain** row on the packet, **never
+a hang**: the wait ends at the deadline and reports the stragglers; it does
+not wait for them. The wait reads sidecars and usage files — the pool's own
+accounting, never a card's process. **Missing contact is `unknown`, not
+failure**: a card the machinery cannot reach is `unknown`, never failed.
+
+### gather — one bounded packet, mechanically
+
+`gather` reads every card's `RESULT.md` and folds the batch into **one
+bounded packet**:
+
+- the batch id and n;
+- per-card disposition lines, **line 2 of each `RESULT.md`, verbatim**;
+- evidence collapsed to **counts and `HOLD:` quotes only** — never a
+  transcript, never a report body, never a finding's wording;
+- usage per card and the batch total;
+- bytes bounded: counts, not lists; the packet does not grow with the batch.
+
+**A card whose `RESULT.md` line 1 is not its contract line is refused.** Line
+1 is the card's contract line, the line by which it was admitted; a line 1
+that differs is a different card, and folding it would fold a stranger's
+words into the batch. The refusal names the card and its line, and the card
+is `refused` on the packet, not folded — rule 15's quarantine, applied to
+the batch.
+
+### read — one agent, one packet, once
+
+**One agent reads the one packet once** and carries the dispositions to the
+pull requests — or `nova-review`'s outbox carries them. The packet is the
+whole read; a reader never walks the reports behind it, because the reports
+are the thing the packet replaced.
+
+### The packet's grammar
+
+```
+BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum>
+CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped>
+HOLD: <one bounded quoted line>
+```
+
+`BATCH` is the packet's first line: the id, the admitted n, the cards done,
+the cards abstain, the batch usd total. One `CARD` line per card, in
+admission order: its admitted-text sha prefix, its state, its usage, and its
+disposition line — line 2 verbatim, capped at one line. `HOLD:` lines carry
+evidence a count would hide, each capped. Counts and caps bound the packet's
+bytes; a packet never lists a finding and never quotes a report body.
+
+### What this section does not do
+
+- **No cross-batch scheduling.** A batch waits for its own cards and no
+  other; nothing schedules one batch around another, and no batch is held
+  for another's deadline.
+- **No retries.** A failed card is a row on the packet; `requeue` with
+  changed text is a person's decision (rule 11), and the only automatic
+  retry is the admission contract's one `refused`/`write_before_task` retry.
+- It does not judge findings, does not merge findings, and does not write to
+  the board, the bus or any repository — it reads cards and builds one packet.
+
 ## Exit codes
 
 | code | meaning |
@@ -659,6 +745,9 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n|
 ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
+BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum>
+CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped>
+HOLD: <one bounded quoted line>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|false> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
