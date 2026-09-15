@@ -641,7 +641,10 @@ STALE … current=<sha12>`, when they differ: a packet for a head nobody has is
 work nobody can use, because a verdict for it authorizes nothing (SPEC-MERGE
 rule 19). Absent, the head is read from the host and written on the packet's
 first line, which is the sha the reader then hands to `verdict`. A sha read
-from the host is a read, not a guess.
+from the host is a read, not a guess. A PR entry's head is fetched as
+`pull/<n>/head` from the GitHub remote the lane's `--repo` names, never from the
+lane's `--remote` (which may be a local rehearsal with no pull refs); a branch
+entry's head is fetched from the lane remote (#449).
 
 **`verdict --head` is required and is the full 40-character sha the reader had
 open**, exactly as `nova-merge read --head`; the tool never fills it in. `VERDICT
