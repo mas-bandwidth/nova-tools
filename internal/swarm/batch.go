@@ -154,6 +154,8 @@ func Batch(in BatchInput) int {
 		bench      string
 		label      string
 		idleLog    string // the file the idle monitor watched; set only on an idle kill
+		cpu        uint64 // the card's process tree's CPU time at the last sample; guarded by doneMu
+		haveCPU    bool   // whether cpu holds a sample to compare against; guarded by doneMu
 		done       bool   // guarded by doneMu
 		idleKilled bool   // guarded by doneMu
 		deadKilled bool   // killed at the batch deadline; guarded by doneMu
@@ -212,9 +214,11 @@ func Batch(in BatchInput) int {
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
 	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
 	// --idle is set, one monitor re-reads each running card's own log -- <slot>/native.log
-	// when the child wrote one, else the job's harness.log -- and kills a card whose log has
-	// not grown for the idle window: a dead card is removed from the wait, so the batch
-	// returns on its slowest still-working card rather than burning the whole deadline.
+	// when the child wrote one, else the job's harness.log -- AND its process tree's CPU
+	// time, and kills a card only when neither has moved for the idle window: a dead card is
+	// removed from the wait, so the batch returns on its slowest still-working card rather
+	// than burning the whole deadline, and a card whose harness is busy and silent -- a
+	// `go test` that prints nothing for minutes -- is not a dead card (issue #593).
 	var wg sync.WaitGroup
 	allDone := make(chan struct{})
 	for i := range procs {
@@ -248,6 +252,7 @@ func Batch(in BatchInput) int {
 			ticker := time.NewTicker(idlePollInterval)
 			defer ticker.Stop()
 			lastSize := make([]int64, len(procs))
+			var lastSample time.Time
 			for {
 				select {
 				case <-stopMonitor:
@@ -255,6 +260,13 @@ func Batch(in BatchInput) int {
 				case <-allDone:
 					return
 				case now := <-ticker.C:
+					// The process table is read once per activity poll, outside the lock, and
+					// every card is asked of that one snapshot (issue #593).
+					var snap *procSnapshot
+					if now.Sub(lastSample) >= activityInterval(in.Idle) {
+						snap = newProcSnapshot()
+						lastSample = now
+					}
 					doneMu.Lock()
 					for i := range procs {
 						if procs[i].done || procs[i].idleKilled {
@@ -265,6 +277,20 @@ func Batch(in BatchInput) int {
 							lastSize[i] = size
 							procs[i].lastGrow = now
 							continue
+						}
+						// A silent log is not a silent card: a harness inside a `go test` that
+						// prints nothing for minutes is working, and its work is CPU its process
+						// tree spent -- its children's as much as its own. A card is idle only
+						// when NEITHER its log NOR its tree moved for the whole --idle window.
+						if snap != nil && procs[i].cmd != nil && procs[i].cmd.Process != nil {
+							if cpu, ok := snap.TreeCPU(procs[i].cmd.Process.Pid); ok {
+								grew := procs[i].haveCPU && cpu > procs[i].cpu
+								procs[i].cpu, procs[i].haveCPU = cpu, true
+								if grew {
+									procs[i].lastGrow = now
+									continue
+								}
+							}
 						}
 						if now.Sub(procs[i].lastGrow) >= in.Idle {
 							procs[i].idleKilled = true
@@ -378,6 +404,10 @@ func Batch(in BatchInput) int {
 			abstain++
 			continue
 		}
+		// A result the card wrote inside its clone is the card's result, not a missing one
+		// (issue #594): it is copied up to the job root before the card is scored, and the
+		// copy is said once on stderr so the packet's own bytes stay bounded by n.
+		liftResult(filepath.Join(in.Root, scratchName(c), "jobs", c.label), c.label, in.Stderr)
 		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
 		rows[i].state, rows[i].reason, rows[i].tail, rows[i].line2 = state, reason, tail, line2
 		if state == "done" {
@@ -426,6 +456,78 @@ func Batch(in BatchInput) int {
 		return 0
 	}
 	return 1
+}
+
+// resultLiftDepth is how far below the job root gather looks for a result the card wrote
+// somewhere else: repo/RESULT.md, and one directory down from there -- repo/<clone>/RESULT.md,
+// the cwd of a model that cloned into its clone. Deeper is not searched: a result further
+// down than that is a file the card left behind, not the result it published.
+const resultLiftDepth = 2
+
+// liftResult copies a card's RESULT.md up to the job root when the card wrote it inside its
+// clone instead (issue #594). STEP 1 of a card makes repo/ the model's cwd, so the model
+// publishes there; gather read only the job root, scored the card reason=no-result, and the
+// work was lost. The job root wins whenever it holds a result of its own -- nothing is ever
+// overwritten -- and the copy is said once on stderr, never in the packet, so the packet's
+// bytes stay bounded by n. The RESULT contract is untouched: line 1 is still the card's
+// contract line, and scoreCard still decides.
+func liftResult(job, label string, notes io.Writer) {
+	root := filepath.Join(job, "RESULT.md")
+	if fileExists(root) {
+		return
+	}
+	from, ok := findResultBelow(job, resultLiftDepth)
+	if !ok {
+		return
+	}
+	raw, err := readRegular(from)
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(root, raw, 0o644); err != nil {
+		return
+	}
+	if notes != nil {
+		fmt.Fprintf(notes, "BATCH NOTE %s RESULT.md copied up from %s\n", oneline.Field(label), oneline.Field(from))
+	}
+}
+
+// findResultBelow is the first RESULT.md under dir, breadth first and in name order, no
+// deeper than depth directories down: repo/ is looked at before any other name, because
+// repo/ is the directory the card's own STEP 1 makes. A symlinked directory is not followed
+// -- the wall is not a wall if the thing outside it will fetch (regular.go).
+func findResultBelow(dir string, depth int) (string, bool) {
+	if depth <= 0 {
+		return "", false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	// repo/ first, then the rest in the order the directory was read (ReadDir sorts by name).
+	for i, name := range dirs {
+		if name == "repo" {
+			dirs = append([]string{name}, append(dirs[:i:i], dirs[i+1:]...)...)
+			break
+		}
+	}
+	for _, name := range dirs {
+		if p := filepath.Join(dir, name, "RESULT.md"); fileExists(p) {
+			return p, true
+		}
+	}
+	for _, name := range dirs {
+		if p, ok := findResultBelow(filepath.Join(dir, name), depth-1); ok {
+			return p, true
+		}
+	}
+	return "", false
 }
 
 // scoreCard decides one card's state and, when it abstains, its ONE reason token

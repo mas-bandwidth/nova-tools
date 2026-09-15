@@ -1386,7 +1386,7 @@ type inboxOpts struct {
 	// me is the reader resolved against the roster, carried so `wait` can write their beat
 	// without resolving the roster twice; beat is how often a wait pushes its BEAT file as
 	// its own commit; and lease is how far into the future each BEAT's until= promises the
-	// line is alive, so a duty cycle between two waits still reads awake. These are `wait`'s
+	// line is alive, so a manager cycle between two waits still reads awake. These are `wait`'s
 	// only; `inbox` leaves them zero.
 	me    bus.Participant
 	beat  time.Duration
@@ -2230,7 +2230,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	timeout := f.fs.Duration("timeout", 0, "how long to wait before returning WAIT TIMEOUT (required; a duration like 25m, at most "+maxWaitTimeout.String()+")")
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
 	beat := f.fs.Duration("beat", defaultBeatInterval, "how often to push your BEAT liveness file as its own commit")
-	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "how far into the future each BEAT's until= promises the line is alive, so a duty cycle between waits still reads awake")
+	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "how far into the future each BEAT's until= promises the line is alive, so a manager cycle between waits still reads awake")
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
@@ -2389,7 +2389,7 @@ const defaultBeatInterval = 60 * time.Second
 
 // defaultBeatLease is how far into the future a BEAT's until= promises the line is alive
 // when `wait` writes it on entry, every tick and on exit. It is longer than --window
-// (five minutes in SPEC-WORK's Presence) so that a duty cycle between two waits -- the
+// (five minutes in SPEC-WORK's Presence) so that a manager cycle between two waits -- the
 // wait returns with a note and the harness works it before issuing the next -- reads awake
 // throughout, rather than ageing past --window into "asleep" while the process is alive.
 const defaultBeatLease = 10 * time.Minute
@@ -2401,7 +2401,7 @@ const maxWaitTimeout = 60 * time.Minute
 // minWaitInterval is as fast as a wait will poll, because a poll is a git fetch.
 const minWaitInterval = 100 * time.Millisecond
 
-// writeBeatLease writes the lane's BEAT carrying until=now+lease, so a line whose duty
+// writeBeatLease writes the lane's BEAT carrying until=now+lease, so a line whose manager
 // process is alive but between waits still reads awake to `nova-wake awake`. It is called
 // on entry, every tick and on exit; the stamp and until come from the same Now so the
 // lease's length is exact.

@@ -35,9 +35,9 @@ func relaunch(in HarvestInput) int {
 		if err := os.WriteFile(cardPath, []byte(render(c, in.Templates)), 0o644); err != nil {
 			return refusal(in.Stderr, "HARVEST", fmt.Errorf("cannot cut %s: %s", label, oneline.Err(err)))
 		}
-		rows = append(rows, CardRow{Label: label, Slot: "-", Model: modelFor(c.Kind), Card: cardPath})
+		rows = append(rows, CardRow{Label: label, Slot: "-", Model: modelFor(c.Kind, "", relaunchTiers), Card: cardPath})
 	}
-	if err := writeCardsTSV(in.Root, rows); err != nil {
+	if err := writeCardsTSV(filepath.Join(in.Root, "cards.tsv"), rows); err != nil {
 		return refusal(in.Stderr, "HARVEST", err)
 	}
 
@@ -84,23 +84,10 @@ func render(c Candidate, templatesDir string) string {
 	return "RESULT " + c.ID + " sha=000000000000\n" + c.Title + "\n"
 }
 
-// modelFor routes a card kind to its model: read/text/tone are flash, fix/replay/drift are pro.
-func modelFor(kind string) string {
-	switch kind {
-	case "read", "text", "tone":
-		return "flash"
-	default:
-		return "pro"
-	}
-}
-
-func writeCardsTSV(root string, rows []CardRow) error {
-	var b strings.Builder
-	for _, r := range rows {
-		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", r.Label, r.Slot, r.Model, r.Card)
-	}
-	return os.WriteFile(filepath.Join(root, "cards.tsv"), []byte(b.String()), 0o644)
-}
+// relaunchTiers names the two tiers a relaunch routes to. The relaunch has no models.tsv
+// and no --local of its own, so it routes by kind alone through cut's modelFor and gets
+// the same "flash"/"pro" it has always written.
+var relaunchTiers = map[string]string{"flash": "flash", "pro": "pro"}
 
 // runLaunchSubprocess invokes nova-pulse launch --queue as a subprocess and relays its output, so the
 // batch admission goes through the launch verb, never re-implemented here.
