@@ -456,8 +456,16 @@ func joinWrapper() {
 			b, _ := os.ReadFile(filepath.Join(lane, "INDEX"))
 			return a.ID != "" && bytes.Contains(b, []byte(a.ID))
 		case killAfterAttrs:
-			out, err := exec.Command("git", "-C", checkout, "diff", "--cached", "--name-only").Output()
-			return err == nil && bytes.Contains(out, []byte(".gitattributes"))
+			// The staged state is transient -- git add stages .gitattributes and the
+			// immediately following git commit unstages it -- so a subprocess probe
+			// (`git diff --cached`) polls slower than the window it observes and can miss
+			// the kill entirely. Reading the index directly names the same fact -- the
+			// path is present in the index exactly when it is staged -- in a single fast
+			// read, which is the sync point that makes the boundary reliably observable.
+			// The hermetic git here always writes a v2 index whose paths are stored as
+			// full null-terminated names, so a byte match is exact.
+			b, err := os.ReadFile(filepath.Join(checkout, ".git", "index"))
+			return err == nil && bytes.Contains(b, []byte(".gitattributes"))
 		case killAfterCmt:
 			h := headOf(checkout)
 			return h != "" && h != baseHead
@@ -730,7 +738,7 @@ func (r reporter) leftInTheLane(t *testing.T) string {
 // index; this list is intentionally narrower than a wildcard lock cleanup.
 func staleGitTransactionLocks(gitDir string) []string {
 	var found []string
-	for _, pattern := range []string{"index.lock", "HEAD.lock", "next-index-*.lock"} {
+	for _, pattern := range []string{"index.lock", "HEAD.lock", "next-index-*.lock", "refs/heads/*.lock", "logs/HEAD.lock", "logs/refs/heads/*.lock"} {
 		matches, _ := filepath.Glob(filepath.Join(gitDir, pattern))
 		found = append(found, matches...)
 	}
@@ -758,11 +766,17 @@ func removeStaleGitTransactionLocks(t *testing.T, gitDir string) []string {
 
 func TestRemoveStaleGitTransactionLocksNamesOnly(t *testing.T) {
 	gitDir := filepath.Join(t.TempDir(), ".git")
-	if err := os.Mkdir(gitDir, 0o755); err != nil {
-		t.Fatal(err)
+	for _, dir := range []string{gitDir, filepath.Join(gitDir, "refs", "heads"), filepath.Join(gitDir, "logs", "refs", "heads")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _, name := range []string{"HEAD.lock", "index.lock", "next-index-11397.lock", "config.lock", "next-index.lock"} {
-		if err := os.WriteFile(filepath.Join(gitDir, name), nil, 0o600); err != nil {
+	for _, name := range []string{
+		"HEAD.lock", "index.lock", "next-index-11397.lock",
+		"refs/heads/main.lock", "logs/HEAD.lock", "logs/refs/heads/main.lock",
+		"config.lock", "next-index.lock",
+	} {
+		if err := os.WriteFile(filepath.Join(gitDir, filepath.FromSlash(name)), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -770,10 +784,14 @@ func TestRemoveStaleGitTransactionLocksNamesOnly(t *testing.T) {
 	removed := removeStaleGitTransactionLocks(t, gitDir)
 	var names []string
 	for _, path := range removed {
-		names = append(names, filepath.Base(path))
+		rel, err := filepath.Rel(gitDir, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, filepath.ToSlash(rel))
 	}
 	sort.Strings(names)
-	want := []string{"HEAD.lock", "index.lock", "next-index-11397.lock"}
+	want := []string{"HEAD.lock", "index.lock", "logs/HEAD.lock", "logs/refs/heads/main.lock", "next-index-11397.lock", "refs/heads/main.lock"}
 	if strings.Join(names, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("removed %v, want %v", names, want)
 	}
