@@ -1,0 +1,203 @@
+{
+  "schema": "nova.swarm.native-model.vectors/1",
+  "status": "proposal-only encoding vectors; synthetic routes, no provider, SDK, admission, or launch validation",
+  "vectors": [
+    {
+      "name": "synthetic-go-route",
+      "resolved": {
+        "provider": "synthetic-go",
+        "model": "synthetic/go-small",
+        "endpoint": "https://go.synthetic.invalid/v1",
+        "native": {
+          "schema": "nova.swarm.native-model/1",
+          "api_id": "Synthetic-API-Small",
+          "sdk": "@synthetic/go-sdk",
+          "model_url": "https://model.synthetic.invalid/fallback",
+          "runtime": {
+            "name": "Synthetic Go Small",
+            "family": "synthetic",
+            "release_date": "2026-01-01",
+            "status": "active",
+            "capabilities": {
+              "temperature": true,
+              "reasoning": false,
+              "attachment": false,
+              "toolcall": true,
+              "input": {
+                "text": true,
+                "audio": false,
+                "image": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "audio": false,
+                "image": false,
+                "video": false,
+                "pdf": false
+              },
+              "interleaved": true
+            },
+            "limits": {
+              "context": "4096",
+              "input": "1024",
+              "output": "512"
+            },
+            "headers": [
+              {
+                "name": "X-Synthetic-Route",
+                "value": "go"
+              }
+            ],
+            "sdk_options": {
+              "kind": "object",
+              "members": [
+                {
+                  "name": "maxRetries",
+                  "value": {
+                    "kind": "number",
+                    "decimal": "2"
+                  }
+                },
+                {
+                  "name": "stream",
+                  "value": {
+                    "kind": "bool",
+                    "value": true
+                  }
+                }
+              ]
+            },
+            "model_options": {
+              "kind": "object",
+              "members": [
+                {
+                  "name": "tag",
+                  "value": {
+                    "kind": "string",
+                    "value": "synthetic-go"
+                  }
+                },
+                {
+                  "name": "temperature",
+                  "value": {
+                    "kind": "number",
+                    "decimal": "0.25"
+                  }
+                }
+              ]
+            },
+            "variant": null
+          }
+        }
+      },
+      "canonical": "{\"endpoint\":\"https://go.synthetic.invalid/v1\",\"model\":\"synthetic/go-small\",\"native\":{\"api_id\":\"Synthetic-API-Small\",\"model_url\":\"https://model.synthetic.invalid/fallback\",\"runtime\":{\"capabilities\":{\"attachment\":false,\"input\":{\"audio\":false,\"image\":false,\"pdf\":false,\"text\":true,\"video\":false},\"interleaved\":true,\"output\":{\"audio\":false,\"image\":false,\"pdf\":false,\"text\":true,\"video\":false},\"reasoning\":false,\"temperature\":true,\"toolcall\":true},\"family\":\"synthetic\",\"headers\":[{\"name\":\"X-Synthetic-Route\",\"value\":\"go\"}],\"limits\":{\"context\":\"4096\",\"input\":\"1024\",\"output\":\"512\"},\"model_options\":{\"kind\":\"object\",\"members\":[{\"name\":\"tag\",\"value\":{\"kind\":\"string\",\"value\":\"synthetic-go\"}},{\"name\":\"temperature\",\"value\":{\"decimal\":\"0.25\",\"kind\":\"number\"}}]},\"name\":\"Synthetic Go Small\",\"release_date\":\"2026-01-01\",\"sdk_options\":{\"kind\":\"object\",\"members\":[{\"name\":\"maxRetries\",\"value\":{\"decimal\":\"2\",\"kind\":\"number\"}},{\"name\":\"stream\",\"value\":{\"kind\":\"bool\",\"value\":true}}]},\"status\":\"active\",\"variant\":null},\"schema\":\"nova.swarm.native-model/1\",\"sdk\":\"@synthetic/go-sdk\"},\"provider\":\"synthetic-go\"}",
+      "content_id": "sha256:6ed836a4917bac978ca0e8457fd5dc7f3d3a5e13cd67b73bb5e0ac2adbff9e8a",
+      "lowered_sdk_options": "{\"maxRetries\":2,\"stream\":true}",
+      "lowered_model_options": "{\"tag\":\"synthetic-go\",\"temperature\":0.25}"
+    },
+    {
+      "name": "synthetic-zen-route",
+      "resolved": {
+        "provider": "synthetic-zen",
+        "model": "synthetic/zen-reasoning",
+        "endpoint": "https://zen.synthetic.invalid/v2",
+        "native": {
+          "schema": "nova.swarm.native-model/1",
+          "api_id": "synthetic-api-zen",
+          "sdk": "@synthetic/zen-sdk",
+          "model_url": "https://zen-model.synthetic.invalid/fallback",
+          "runtime": {
+            "name": "Synthetic Zen Reasoning",
+            "family": "synthetic-reasoning",
+            "release_date": "2026-02-02",
+            "status": "beta",
+            "capabilities": {
+              "temperature": false,
+              "reasoning": true,
+              "attachment": true,
+              "toolcall": false,
+              "input": {
+                "text": true,
+                "audio": false,
+                "image": true,
+                "video": false,
+                "pdf": true
+              },
+              "output": {
+                "text": true,
+                "audio": false,
+                "image": false,
+                "video": false,
+                "pdf": false
+              },
+              "interleaved": {
+                "field": "reasoning_content"
+              }
+            },
+            "limits": {
+              "context": "16384",
+              "input": null,
+              "output": "2048"
+            },
+            "headers": [
+              {
+                "name": "X-Alpha",
+                "value": "a"
+              },
+              {
+                "name": "X-Zeta",
+                "value": "z"
+              }
+            ],
+            "sdk_options": {
+              "kind": "object",
+              "members": [
+                {
+                  "name": "effort",
+                  "value": {
+                    "kind": "string",
+                    "value": "high"
+                  }
+                },
+                {
+                  "name": "requestBudget",
+                  "value": {
+                    "kind": "number",
+                    "decimal": "12.5"
+                  }
+                }
+              ]
+            },
+            "model_options": {
+              "kind": "object",
+              "members": [
+                {
+                  "name": "labels",
+                  "value": {
+                    "kind": "array",
+                    "items": [
+                      {
+                        "kind": "null"
+                      },
+                      {
+                        "kind": "string",
+                        "value": "synthetic-zen"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "variant": "precise"
+          }
+        }
+      },
+      "canonical": "{\"endpoint\":\"https://zen.synthetic.invalid/v2\",\"model\":\"synthetic/zen-reasoning\",\"native\":{\"api_id\":\"synthetic-api-zen\",\"model_url\":\"https://zen-model.synthetic.invalid/fallback\",\"runtime\":{\"capabilities\":{\"attachment\":true,\"input\":{\"audio\":false,\"image\":true,\"pdf\":true,\"text\":true,\"video\":false},\"interleaved\":{\"field\":\"reasoning_content\"},\"output\":{\"audio\":false,\"image\":false,\"pdf\":false,\"text\":true,\"video\":false},\"reasoning\":true,\"temperature\":false,\"toolcall\":false},\"family\":\"synthetic-reasoning\",\"headers\":[{\"name\":\"X-Alpha\",\"value\":\"a\"},{\"name\":\"X-Zeta\",\"value\":\"z\"}],\"limits\":{\"context\":\"16384\",\"input\":null,\"output\":\"2048\"},\"model_options\":{\"kind\":\"object\",\"members\":[{\"name\":\"labels\",\"value\":{\"items\":[{\"kind\":\"null\"},{\"kind\":\"string\",\"value\":\"synthetic-zen\"}],\"kind\":\"array\"}}]},\"name\":\"Synthetic Zen Reasoning\",\"release_date\":\"2026-02-02\",\"sdk_options\":{\"kind\":\"object\",\"members\":[{\"name\":\"effort\",\"value\":{\"kind\":\"string\",\"value\":\"high\"}},{\"name\":\"requestBudget\",\"value\":{\"decimal\":\"12.5\",\"kind\":\"number\"}}]},\"status\":\"beta\",\"variant\":\"precise\"},\"schema\":\"nova.swarm.native-model/1\",\"sdk\":\"@synthetic/zen-sdk\"},\"provider\":\"synthetic-zen\"}",
+      "content_id": "sha256:f3094db08202bac13da631684c8711bc6831e10c7291bbecfebbc76d9eddff0e",
+      "lowered_sdk_options": "{\"effort\":\"high\",\"requestBudget\":12.5}",
+      "lowered_model_options": "{\"labels\":[null,\"synthetic-zen\"]}"
+    }
+  ]
+}
