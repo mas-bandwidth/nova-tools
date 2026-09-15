@@ -69,11 +69,21 @@ func Load(r io.Reader) ([]Entry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("line %d: %w", line, err)
 		}
-		if f[4] != "none" {
+		// "-" is the field a snapshot leaves for a person to fill in, and it is the same
+		// answer as "none": there is no command to apply an update with. It is not a
+		// command named "-" (#571).
+		if f[4] != "none" && f[4] != "-" {
 			e.Apply, err = argv(f[4])
 			if err != nil {
 				return nil, fmt.Errorf("line %d: %w", line, err)
 			}
+		}
+		// A latest of "-" is NOT YET KNOWN, which is what a snapshot writes and what a
+		// person promotes to a source by hand. It is read, reported as unknown, and never
+		// guessed at; every other value is still a <scheme>:<locator> or a refusal.
+		if e.Latest == "-" {
+			out = append(out, e)
+			continue
 		}
 		scheme, loc, ok := strings.Cut(e.Latest, ":")
 		if !ok || loc == "" {

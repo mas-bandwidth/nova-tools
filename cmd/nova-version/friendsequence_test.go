@@ -16,20 +16,18 @@ import (
 // tools they have installed, then report on the manifest snapshot just wrote. Both verbs
 // pass their own tests -- snapshot writes the file it says it writes
 // (TestSnapshotWritesRuleTwoManifest), report reads the manifests in testdata -- and the
-// sequence is still broken, because snapshot writes `kind=binary` and report's manifest
-// parser accepts only the five curated kinds:
+// sequence was broken anyway until #571, because snapshot wrote `kind=binary` and report's
+// manifest parser accepts only the five curated kinds:
 //
 //	REPORT REFUSED: <path>: line 2: unknown kind binary (use harness,engine,model,tool,pin)
 //
-// exit 2, on the file this tool wrote one command earlier. That is the whole of the
-// dogfood finding, and it is the shape no single-verb test can see: the two verbs are
-// each right about themselves and disagree about the file between them.
+// exit 2, on the file this tool wrote one command earlier. That was the whole of the
+// dogfood finding, and it is the shape no single-verb test can see: the two verbs were
+// each right about themselves and disagreed about the file between them.
 //
 // The stubs are shell scripts, so this file is unix-only, as the fixture in
 // internal/update's own snapshot test is.
 func TestFriendSequenceSnapshotReport(t *testing.T) {
-	t.Skip("red on main: snapshot writes kind=binary and report refuses it as an unknown kind (nova-tools#571); un-skip with the PR that fixes it")
-
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
