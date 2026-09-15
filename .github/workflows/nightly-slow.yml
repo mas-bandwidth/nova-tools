@@ -1,0 +1,80 @@
+# Nightly slow suite: the tests behind the `slow` build tag.
+#
+# Issue #516 splits tests by BUILD TAG rather than by schedule-of-record. The PR
+# test jobs in ci.yml run `go test` without the tag, so a test moved behind
+# `slow` simply stops costing per-change time; it still has to run SOMEWHERE, and
+# this file is that somewhere. It runs `go test -tags slow ./...` on the same
+# operating-system matrix as certification.yml's `test` job — nightly, and on
+# demand — so the slow-tagged tests are compiled and run against the whole tree,
+# nothing listed by hand and nothing able to fall out silently.
+#
+# A RED run here does not block anything: it opens (or updates) a single issue
+# titled "nightly slow suite red <date>" for the morning. No aggregate gate, no
+# release blocker — the slow tier is evidence to read, not a check to merge
+# against.
+
+name: nightly-slow
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-slow-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # THE SAME MATRIX AS certification.yml's `test` job: two operating systems,
+    # whole-tree. The `slow` tag, not a package list and not a `-run`, decides
+    # what is extra — `./...` decides where it may live, so a slow-tagged test
+    # added tomorrow lands in this run the moment it has a test file.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: slow suite
+        run: go test -tags slow -count=1 ./...
+
+  report:
+    # ONE ISSUE PER DAY, not one per leg. The `test` matrix job above is
+    # `failure()` if ANY leg failed, and this job then makes sure there is
+    # exactly one open issue whose title names today: create it if absent,
+    # add a comment pointing at this run if it is already there.
+    needs: test
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: open or update one "nightly slow suite red" issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="nightly slow suite red $(date -u +%Y-%m-%d)"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          numbers=$(gh issue list --state open --limit 200 --json number,title \
+            | jq -r --arg t "$title" '.[] | select(.title == $t) | .number')
+          if [ -n "$numbers" ]; then
+            n=$(printf '%s\n' "$numbers" | head -n 1)
+            echo "issue #$n already open for today; adding a comment"
+            gh issue comment "$n" --body "Slow suite still red: $run_url"
+          else
+            gh issue create --title "$title" \
+              --body "The nightly \`go test -tags slow ./...\` suite failed.\n\nRun: $run_url"
+          fi
