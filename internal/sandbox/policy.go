@@ -110,6 +110,20 @@ func (p *Policy) Net() string {
 // that is ever printed: arguments carry task text and task text carries quoted rules.
 func (p *Policy) CmdName() string { return filepath.Base(p.Command) }
 
+// ancestorPaths is the set of paths whose proper ancestors the darwin profile grants
+// file-read-metadata on: every --read and --write, plus the --cwd and the temp directory.
+func (p *Policy) ancestorPaths() []string {
+	paths := append(append([]string{}, p.Reads...), p.Writes...)
+	return append(paths, p.Cwd, p.Tmp)
+}
+
+// AncestorCount is how many file-read-metadata ancestor literals the darwin profile emits
+// for this policy: one per proper ancestor of every --read, --write, --cwd and --tmp path,
+// "/" excluded. It is the ancestors=<n> number on the SANDBOX OK line.
+func (p *Policy) AncestorCount() int {
+	return len(Ancestors(p.ancestorPaths()...))
+}
+
 // darwinOptRoots is the per-platform optional root table, as DATA and in one place
 // (spec: "they are data, not code"). The fixed darwin roots — /, /etc, /tmp, /var as
 // literals on the symlinks, /System, /usr, /bin, /sbin, /Library, /private/etc,
