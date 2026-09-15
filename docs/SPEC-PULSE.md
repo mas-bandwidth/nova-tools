@@ -33,7 +33,7 @@ more. Merges are not this tool's: `nova-merge` and a person hold the gates
 ```
 pool ──► cut ──► launch ══(nova-swarm batch, --then harvest)══► harvest ──► pool ──► …
  │                 │                                              │
- │  candidates     │  cards that fit the free slots go out now;    │  done: push, PR, read card
+ │  candidates     │  every free slot is filled with admitted work;│  done: push, PR, read card
  │  from sources   │  the rest wait in queue.tsv, never dropped    │  abstain: retry.tsv, no push
  │                 │                                              │  then pool, cut, launch again
  └─ empty? say so: PULSE POOL EMPTY. Never pad. ◄─────────────────┘
@@ -111,8 +111,11 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    <usd>` per shift, local and flat routes count zero; (b) its contract line has fewer than
    `--max-attempts` (default 2) prior attempts across the queue; (c) its source is in the
    approved scope list — `--scope <file>`, one source per line, pool sources default. A refused
-   card prints `ADMIT REFUSED card=<label> gate=<spend|attempts|scope> <value>` and waits in
-   `queue.tsv` with the rest.
+   card prints `ADMIT REFUSED card=<label> gate=<spend|attempts|scope> <value> (<remedy>)`,
+   and its `queue.tsv` row carries the gate that refused it, so `width` can tell pending work
+   from gated work (rule 16). An admission refusal is not a failed run: `launch` fills the
+   slots it can and exits 0. There is no `UNDER-SLOTS` refusal any more — a pulse never
+   refuses for being wider than the bench; the remainder queues, always.
 10. **Every card goes through `batch`, never a single `add`.** `launch` runs exactly one
     `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>
     --then "nova-pulse harvest --id <id> --root <root>"` per model route present, so at
@@ -148,7 +151,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     pick the item up again (rule 2). No automatic requeue, no backoff, no second try of the
     same bytes ([WORKER-CARDS.md](WORKER-CARDS.md), practice 17's holder: *fix the prompt*).
 15. **Harvest pulses again, queue first.** After the counts, `harvest` runs `pool`, `cut`
-    and `launch --queue` in that order, with `queue.tsv` rows first, then `next.tsv`, then
+    and `launch` in that order, with `queue.tsv` rows first, then `next.tsv`, then
     the sources, and prints the next `PULSE` line as its own last line. When the pool and the
     queue are both empty it prints `PULSE POOL EMPTY in-flight=<n>` and exits 0: real work
     ran out, and the tool says so. It invents nothing to keep the slots warm.
@@ -156,7 +159,9 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     pool=<n> queued=<n>` when the state is consistent; `PULSE UNDER-WIDTH pool=<n> free=<n>:
     launch` with exit 2 when `pool + queued > 0` and `free > 0`, where `pool` counts only
     admitted pending work, which is the drift Glenn named; `PULSE POOL EMPTY in-flight=<n>`
-    when `pool = 0` and `queued = 0`. `width` reads `pool.tsv`, `queue.tsv` and the slot files; it
+    when `pool = 0` and `queued = 0`. Admitted pending work is the `queue.tsv` rows with no
+    gate recorded on them (rule 9) plus the `pool.tsv` rows not yet cut; `width` reads
+    `pool.tsv`, `queue.tsv` and the slot files, takes no gate flag of its own, and
     launches nothing and writes nothing. nova-wake may run it on a clock; this tool has none.
 17. **The cost model.** `nova-pulse` costs no model tokens: no verb calls a model, reads a
     report body, or summarises anything. Each card's usage is on the swarm's `CARD` line and
@@ -164,7 +169,8 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     nothing. The coordinator's cost per cycle is one `PULSE` line read and one `HARVEST`
     line read, so fewer turns in the window (Glenn 2026-09-14: input tokens are the win).
 18. **Bounded output, per SPEC.md.** Every verb prints at most `--max` (default 20) event
-    lines per kind — `HARVEST PR`, `HARVEST RETRY`, `CUT SKIPPED` — then one `<TOKEN> MORE
+    lines per kind — `HARVEST PR`, `HARVEST RETRY`, `CUT SKIPPED`, `ADMIT REFUSED` — then
+    one `<TOKEN> MORE
     kind=<k> shown=<n> total=<t> <remedy>`; the count line prints on failure as well as
     success; every value is one `internal/oneline` token. No verb prints a list of titles.
 19. **State is files under `--root`, all of them tab-separated, all of them in the open.**
@@ -178,7 +184,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
 ```
 nova-pulse pool    --sources <file> --work <nova-work root> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> --spend-max <usd> --max-attempts <n> --scope <file> [--queue] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--spend-max <usd>] [--max-attempts <n>] [--scope <file>] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse handoff --to <name> --root <dir>
 nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--max <n>]
@@ -251,8 +257,9 @@ STATUS TOOLS merged_since_adoption=<n> <names>
 Per SPEC.md: **0** the verb ran and the state it reports is consistent — a pool written, cards
 cut, a batch admitted, a harvest folded, a width that is not under; **1** the tool saying NO —
 a harvest with `mismatch > 0` or `abstain > 0`, a cut with `skipped > 0`; **2** could not run
-— every refusal the rules name, `UNDER-SLOTS`, and `UNDER-WIDTH` (rule 16: the alarm is a
-state the coordinator must act on, and it exits like a refusal so a wake fires on it).
+— every refusal the rules name and `UNDER-WIDTH` (rule 16: the alarm is a state the
+coordinator must act on, and it exits like a refusal so a wake fires on it). An
+`ADMIT REFUSED` line is an event, not a verdict: it leaves the exit code alone (rule 9).
 
 ```
 POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> work=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
@@ -261,8 +268,7 @@ CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
 CUT SKIPPED source=<kind> id=<id> template=<name>: no template
 CUT REFUSED template=<name>: <which rule> (<remedy>)
 PULSE OK id=<id> n=<n> free-before=<n> queued=<n> batches=<n> deadline=<s>
-PULSE REFUSED UNDER-SLOTS cards=<n> free=<n> (pass --queue, or wait)
-ADMIT REFUSED card=<label> gate=<spend|attempts|scope> <value>
+ADMIT REFUSED card=<label> gate=<spend|attempts|scope> <value> (<remedy>)
 PULSE REFUSED: <reason> (<remedy>)
 HARVEST PR repo=<owner/name> pr=<n> label=<label> branch=<name>
 HARVEST RETRY label=<label> card=<path>: <last permission or refusal line, escaped>
@@ -281,7 +287,8 @@ TAKEOVER REFUSED owner=<name> pid=<n> host=<h> (wait, or clear the stale lock)
 
 `POOL`, `CUT`, `ADMIT`, `PULSE`, `HARVEST`, `HANDOFF` and `TAKEOVER` are the first tokens; `OK`,
 `REFUSED`, `WIDTH`, `UNDER-WIDTH` and `POOL EMPTY` the verdicts and the **last** line of a
-verb; `harvest`'s last line is the `PULSE` line of the pulse it launched, or
+verb — except `ADMIT REFUSED`, which is an event line `launch` prints per gated card and
+never its last; `harvest`'s last line is the `PULSE` line of the pulse it launched, or
 `PULSE POOL EMPTY`. `OK` and `WIDTH` lines go to stdout, `REFUSED` and `UNDER-WIDTH` to
 stderr. Every line is one line; a count stands where a list would be; every refusal carries
 one remedy in parentheses.
@@ -416,11 +423,13 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
    `read`, `text`, `tone` and `pro` on `fix`, `replay`, `drift`, ids from `models.tsv`;
    `flash=3 pro=3`; a candidate with template `probe` is `skipped=1`, one `CUT SKIPPED` line,
    a `skipped.tsv` row, and exit 1.
-9. `launch-refuses-under-slots`: eight cards, four free slots, no `--queue`: `PULSE REFUSED
-   UNDER-SLOTS cards=8 free=4`, exit 2, the fixture `nova-swarm` recording zero runs.
-10. `launch-queues-remainder`: the same with `--queue`: `nova-swarm batch` runs with a
-    `--tasks` dir holding exactly the first four cards in `cards.tsv` order, `queued=4`,
-    `queue.tsv` holding the other four, `pulses/<id>.tsv` naming the batch.
+9. `launch-fills-every-free-slot`: eight admitted cards and four free slots admit exactly
+   four — every free slot filled, none left idle, exit 0 and no `UNDER-SLOTS` anywhere in
+   either stream; the mutation that matters: a launch that refuses instead of filling.
+10. `launch-queues-remainder`: the same run queues the rest with no flag asked for:
+    `nova-swarm batch` runs with a `--tasks` dir holding exactly the first four cards in
+    `cards.tsv` order, `queued=4`, `queue.tsv` holding the other four, `pulses/<id>.tsv`
+    naming the batch.
 11. `launch-slot-free-needs-both`: a slot file `state=free` whose `native.log` was written
     30 s ago is not free; a slot file absent whose `native.log` is 130 s old is; `free-before`
     counts only the second — the mutation that matters: a slot freed on the file alone.
@@ -496,8 +505,9 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
     PRs and uncarded issues in scope only — a bench or friend outside `--roots <dirs>` is
     nowhere on the line.
 34. `admit-refuses-over-spend`: a shift whose `--spend-max` a `pro` route card's class would
-    cross yields `ADMIT REFUSED card=<label> gate=spend <usd>`, the card queued; local and
-    flat route cards count zero.
+    cross yields `ADMIT REFUSED card=<label> gate=spend <usd> (<remedy>)`, the card queued
+    with `spend` on its `queue.tsv` row, the run still exit 0; local and flat route cards
+    count zero.
 35. `admit-refuses-third-attempt`: a contract line with two prior attempts across the queue is
     refused at the default `--max-attempts 2` — `ADMIT REFUSED card=<label> gate=attempts 2`;
     a first attempt is admitted.
