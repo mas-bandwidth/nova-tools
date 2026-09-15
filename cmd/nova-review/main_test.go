@@ -31,6 +31,7 @@ func packetLab(t *testing.T) (lane, head string) {
 	git("init", "-q", "-b", "main")
 	git("config", "user.email", "test@example.invalid")
 	git("config", "user.name", "test")
+	git("remote", "add", "origin", repo)
 	if e := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("base\n"), 0o644); e != nil {
 		t.Fatal(e)
 	}
@@ -262,6 +263,7 @@ func packetLabTwoHeads(t *testing.T) (lane, base, h1, h2 string) {
 	git("init", "-q", "-b", "main")
 	git("config", "user.email", "test@example.invalid")
 	git("config", "user.name", "test")
+	git("remote", "add", "origin", repo)
 	if e := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("base\n"), 0o644); e != nil {
 		t.Fatal(e)
 	}
@@ -538,5 +540,105 @@ func TestMaxFlagTruncatesEarlierVerdicts(t *testing.T) {
 	text := string(b)
 	if !strings.Contains(text, "1 more of 2; print with: nova-review roster --lane") {
 		t.Fatalf("lacks roster continuation line in All verdicts:\n%s", text)
+	}
+}
+
+func TestPacketAcceptsAbsoluteOutUnderCwd(t *testing.T) {
+	lane, _ := packetLab(t)
+	cwd := t.TempDir()
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	if e := os.Chdir(cwd); e != nil {
+		t.Fatal(e)
+	}
+	absOut := filepath.Join(cwd, "packet.md")
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", absOut}, &out, &errb); code != 0 {
+		t.Fatalf("absolute --out under cwd refused: code=%d stderr=%s", code, errb.String())
+	}
+	if _, err := os.Stat(absOut); err != nil {
+		t.Fatalf("packet not written at %s: %v", absOut, err)
+	}
+}
+
+func TestPacketRefetchesMovedHead(t *testing.T) {
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "remote.git")
+	seed := filepath.Join(dir, "seed")
+	if e := os.MkdirAll(seed, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt := func(d string, args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	gitAt(dir, "init", "-q", "--bare", remote)
+	gitAt(seed, "init", "-q", "-b", "main")
+	gitAt(seed, "config", "user.email", "t@example.invalid")
+	gitAt(seed, "config", "user.name", "t")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "base")
+	base := gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\nv1\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "v1")
+	old := gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-q", remote, "main:refs/heads/main", "feature:refs/heads/feature")
+	gitAt(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	lane := filepath.Join(dir, "lane")
+	if e := os.MkdirAll(lane, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(dir, "clone", "-q", remote, filepath.Join(lane, merge.RepoDir))
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: base, LaneBranch: "lane", Branches: []*merge.Entry{{Branch: "feature", OID: old, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\nv2\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "v2")
+	newHead := gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-qf", remote, "feature:refs/heads/feature")
+
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", filepath.Join(lane, "packet.md")}, &out, &errb); code != 0 {
+		t.Fatalf("packet after a moved head code=%d stderr=%s", code, errb.String())
+	}
+	if want := "PACKET NOTE head moved " + merge.Short(old) + " -> " + merge.Short(newHead); !strings.Contains(errb.String(), want) {
+		t.Fatalf("missing moved-head note %q in %q", want, errb.String())
+	}
+	st2, e := merge.Load(lane)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if got := st2.Find("feature").OID; got != newHead {
+		t.Fatalf("recorded head not updated: got %s want %s", got, newHead)
+	}
+}
+
+func TestLaneRefusalNamesRemedy(t *testing.T) {
+	plain := t.TempDir()
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", plain, "--branch", "feature", "--who", "emma", "--out", "p.md"}, &out, &errb); code != 2 {
+		t.Fatalf("plain checkout code=%d, want 2", code)
+	}
+	want := "a lane is a directory made by nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>"
+	if !strings.Contains(errb.String(), want) {
+		t.Fatalf("refusal does not name the remedy; got %q want %q", errb.String(), want)
 	}
 }
