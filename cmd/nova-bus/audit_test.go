@@ -104,6 +104,12 @@ var messageBusAudit = audit.Config{
 		// and its result reaches the line through oneline.Field.
 		`"bytes"`, `"encoding/base64"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
+		// board is `wait`'s re-arm command: board.Quote single-quotes each argument of the
+		// next= command it echoes, so a --bus path holding a space pastes back whole. It is
+		// a pure string transformer that holds no writer and reaches no stream -- its result
+		// lands in the next= value, which the waitLoop|next exemption above owns, and goes
+		// through fmt like every other value there.
+		`"github.com/mas-bandwidth/nova-tools/internal/board"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at
 		// all and reaches no stream.

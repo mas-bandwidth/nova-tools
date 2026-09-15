@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -97,8 +98,104 @@ func TestWaitEndsWithRearmLine(t *testing.T) {
 	}
 	trimmed := strings.TrimRight(r.stdout, "\n")
 	last := trimmed[strings.LastIndex(trimmed, "\n")+1:]
-	if !strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait --bus "+checkout) {
+	if !strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait '--bus' '"+checkout+"'") {
 		t.Fatalf("the re-arm line is not last:\n%s", r.stdout)
+	}
+}
+
+// shellWords splits a printed command line the way a POSIX shell would, single quotes and
+// backslash escapes included, so a test can read a pasted command's words back. It is the
+// same helper cmd/nova-board uses to prove its printed lines paste to the original argv.
+func shellWords(line string) []string {
+	const (
+		unquoted = iota
+		double
+		single
+	)
+	var out []string
+	var cur strings.Builder
+	inWord := false
+	mode := unquoted
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch mode {
+		case single:
+			if c == '\'' {
+				mode = unquoted
+			} else {
+				cur.WriteByte(c)
+				inWord = true
+			}
+		case double:
+			switch {
+			case c == '\\' && i+1 < len(line) && strings.IndexByte("$`\"\\\n", line[i+1]) >= 0:
+				i++
+				cur.WriteByte(line[i])
+				inWord = true
+			case c == '"':
+				mode = unquoted
+			default:
+				cur.WriteByte(c)
+				inWord = true
+			}
+		default:
+			switch {
+			case c == '\\' && i+1 < len(line):
+				i++
+				cur.WriteByte(line[i])
+				inWord = true
+			case c == '\'':
+				mode = single
+				inWord = true
+			case c == '"':
+				mode = double
+				inWord = true
+			case c == ' ':
+				if inWord {
+					out = append(out, cur.String())
+					cur.Reset()
+					inWord = false
+				}
+			default:
+				cur.WriteByte(c)
+				inWord = true
+			}
+		}
+	}
+	if inWord {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+// Issue #527: the re-arm command joins raw argv with spaces, so a --bus path holding a
+// space, pasted back, splits into two arguments and the second half is dropped. The next=
+// command must shell-quote each argument so the pasted line tokenizes to the exact argv.
+func TestRearmCommandQuotesArgumentsWithSpaces(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	_, bare := busDir(t)
+	checkout := filepath.Join(t.TempDir(), "stella 2", "bus-delivery-main-1802")
+	if err := os.MkdirAll(filepath.Dir(checkout), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, filepath.Dir(checkout), "clone", "--quiet", bare, checkout)
+
+	args := waitFlags(checkout, "Ada", "1s")
+	r := invoke(t, "", args...).mustCode(t, 0)
+
+	trimmed := strings.TrimRight(r.stdout, "\n")
+	last := trimmed[strings.LastIndex(trimmed, "\n")+1:]
+	const marker = "rearm=required next="
+	i := strings.Index(last, marker)
+	if i < 0 {
+		t.Fatalf("the re-arm line carries no next= command:\n%s", r.stdout)
+	}
+	next := last[i+len(marker):]
+	got := shellWords(next)
+	want := append([]string{"nova-bus", "wait"}, args[1:]...)
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("the re-arm command does not round-trip to the original argv:\n got: %q\nwant: %q\nnext=%s", got, want, next)
 	}
 }
 

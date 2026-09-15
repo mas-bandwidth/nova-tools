@@ -51,6 +51,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/board"
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -2132,7 +2133,11 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// The command the caller issues again to re-arm this wait: the next one, with the same
 	// flags, echoed back so a harness that does not wake on its own can paste it. A wait is
 	// ONE read, with one terminal line saying it ended and must be re-armed.
-	next := "nova-bus wait " + strings.Join(args, " ")
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = board.Quote(a)
+	}
+	next := "nova-bus wait " + strings.Join(quoted, " ")
 	return waitLoop(o, *timeout, *interval, next, stdout, stderr, now)
 }
 
