@@ -658,6 +658,15 @@ one line `ADMIT REFUSED benchmark window open until <stamp>` when the file named
 by `NOVA_BENCH_WINDOW` (or `~/.config/nova/bench-window`, a single RFC 3339
 stamp) is in the future, so a local job never runs beside a benchmark.
 
+**A native run captures the harness's output to `<job>/harness.log`, walled or
+not** — the same file, the same bytes, alongside `<slot>/native.log` — so an
+unwalled card's failure is as diagnosable as a walled one's and
+`harness=silent` means a silent harness and never a lost log. `--no-wall`
+removes the containment and nothing else: it never removes the evidence. The
+log is appended to, never truncated, because a `batch` pins its runner's stdout
+to that same file before the run starts (issue #608, every Space no-result of
+2026-09-16).
+
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
 `requeue`, `note`, `finalize` and `reclaim` are the verbs that act; `supervise`
