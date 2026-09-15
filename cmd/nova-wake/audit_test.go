@@ -19,7 +19,15 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 }
 
 var wakeAudit = audit.Config{
-	Exempt: map[string]string{},
+	Exempt: map[string]string{
+		// HereLine composes the whole WAKE HERE line itself, every field through
+		// oneline.Field, from three numbers this tool read out of the kernel: a
+		// load average, a CPU count and a process count. There is no text from
+		// anywhere else in it -- no path, no name, no command line -- so there
+		// is nothing here for an escape to do that the line's own construction
+		// has not already done.
+		`main.go|cmdProbe|wake.HereLine(clock.Now(), wake.ReadBench(), *quietLoad)`: "the line is composed through oneline.Field inside internal/wake and carries only numbers the kernel gave",
+	},
 	Imports: []string{
 		`"context"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"strconv"`, `"strings"`, `"time"`,
 		// runtime, for the version verb's os/arch/toolchain, which are
@@ -38,6 +46,14 @@ var wakeAudit = audit.Config{
 		// shadows nothing; the sentence the caller prints is a constant, printed
 		// through w.note like every other WAKE NOTE.
 		`"errors"`,
+		// os/signal and syscall, for rule 15's stop: a watch ends on the first
+		// change, at its deadline, or on the CALLER'S SIGINT or SIGTERM, and
+		// signal.NotifyContext is how the second of those reaches the loop and
+		// cancels the gh call in flight. Both read signals and write nothing:
+		// what the stop produces is one constant WAKE STOPPED line whose only
+		// variable fields are a duration and two counts.
+		`"os/signal"`,
+		`"syscall"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/wake"`,

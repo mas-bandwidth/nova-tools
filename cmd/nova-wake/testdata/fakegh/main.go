@@ -1,12 +1,22 @@
-// A fake gh, for the tests of nova-wake's entry source. nova-wake's view of a
+// A fake gh, for the tests of nova-wake's forge sources. nova-wake's view of a
 // forge is gh's, and a test that talked to a forge would be a test with a
 // network in it.
 //
-// One directory, named in NOVA_WAKE_FAKE_GH:
+// One directory, named in NOVA_WAKE_FAKE_GH. Every invocation is appended to
+// `calls`, one line, and the answer is read from a file named for what was
+// asked:
 //
-//	<number>.json   what `gh pr view <number> --json ...` prints
-//	<number>.exit   an exit code for that entry, so unreadable can be proved
-//	calls           appended to, one line per invocation
+//	<number>.json           `gh pr view <number> --json ...`      (the entry source)
+//	user.json               `gh api user`                         (--owned-prs)
+//	prlist-<o>-<r>.json     `gh pr list --repo <o>/<r> ...`       (--owned-prs)
+//	pr-<o>-<r>-<n>.json     `gh api graphql` standing read        (--pr)
+//	pr-<o>-<r>-<n>.nodes.json   the same with -F fetch=1          (--not-mine)
+//	runs-<sha>.json         `gh api .../commits/<sha>/check-runs` (--run)
+//	status-<sha>.json       `gh api .../commits/<sha>/status`     (--run)
+//	ref-<o>-<r>-<name>.json `gh api .../git/ref/heads/<name>`     (--ref)
+//
+// Beside any of them, `<key>.exit` is an exit code and `<key>.stderr` what it
+// prints, so unreadable: can be proved without a forge that misbehaves.
 package main
 
 import (
@@ -25,22 +35,88 @@ func main() {
 	}
 	args := os.Args[1:]
 	appendLine(filepath.Join(dir, "calls"), strings.Join(args, " "))
-	number := ""
-	for i, a := range args {
-		if a == "view" && i+1 < len(args) {
-			number = args[i+1]
-		}
-	}
-	if code := strings.TrimSpace(read(filepath.Join(dir, number+".exit"))); code != "" {
-		fmt.Fprintln(os.Stderr, read(filepath.Join(dir, number+".stderr")))
+	key, fallback := keyOf(args)
+	if code := strings.TrimSpace(read(filepath.Join(dir, key+".exit"))); code != "" {
+		fmt.Fprintln(os.Stderr, read(filepath.Join(dir, key+".stderr")))
 		c, _ := strconv.Atoi(code)
 		os.Exit(c)
 	}
-	out := read(filepath.Join(dir, number+".json"))
+	out := read(filepath.Join(dir, key+".json"))
 	if out == "" {
-		out = `{"state":"OPEN","statusCheckRollup":[]}`
+		out = fallback
+	}
+	if out == "" {
+		fmt.Fprintf(os.Stderr, "the fake gh has no answer for %s\n", key)
+		os.Exit(1)
 	}
 	fmt.Print(out)
+}
+
+// keyOf names the fixture file this invocation is answered from, and the answer
+// to give when the test wrote none.
+func keyOf(args []string) (key, fallback string) {
+	field := func(name string) string {
+		for i, a := range args {
+			if (a == "-F" || a == "-f") && i+1 < len(args) {
+				if v, ok := strings.CutPrefix(args[i+1], name+"="); ok {
+					return v
+				}
+			}
+		}
+		return ""
+	}
+	has := func(want string) bool {
+		for _, a := range args {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case len(args) >= 2 && args[0] == "pr" && args[1] == "view":
+		number := ""
+		for i, a := range args {
+			if a == "view" && i+1 < len(args) {
+				number = args[i+1]
+			}
+		}
+		return number, `{"state":"OPEN","statusCheckRollup":[]}`
+	case len(args) >= 2 && args[0] == "pr" && args[1] == "list":
+		repo := ""
+		for i, a := range args {
+			if a == "--repo" && i+1 < len(args) {
+				repo = args[i+1]
+			}
+		}
+		return "prlist-" + strings.ReplaceAll(repo, "/", "-"), "[]"
+	case len(args) >= 2 && args[0] == "api" && args[1] == "graphql":
+		key = fmt.Sprintf("pr-%s-%s-%s", field("owner"), field("repo"), field("number"))
+		if has("fetch=1") {
+			key += ".nodes"
+		}
+		return key, ""
+	case len(args) >= 2 && args[0] == "api" && args[1] == "user":
+		return "user", `{"login":"me"}`
+	case len(args) >= 2 && args[0] == "api":
+		target := args[1]
+		if i := strings.IndexByte(target, '?'); i >= 0 {
+			target = target[:i]
+		}
+		parts := strings.Split(target, "/")
+		switch {
+		case strings.HasSuffix(target, "/check-runs") && len(parts) >= 5:
+			return "runs-" + parts[len(parts)-2], `{"total_count":0,"check_runs":[]}`
+		case strings.HasSuffix(target, "/status") && len(parts) >= 5:
+			return "status-" + parts[len(parts)-2], `{"statuses":[]}`
+		case strings.Contains(target, "/git/ref/heads/") && len(parts) >= 3:
+			owner, repo := parts[1], parts[2]
+			name := target[strings.Index(target, "/git/ref/heads/")+len("/git/ref/heads/"):]
+			return fmt.Sprintf("ref-%s-%s-%s", owner, repo, strings.ReplaceAll(name, "/", "-")), ""
+		}
+		return strings.ReplaceAll(target, "/", "-"), ""
+	}
+	return strings.Join(args, "-"), ""
 }
 
 func read(path string) string {

@@ -26,8 +26,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -51,6 +53,21 @@ usage:
         [--final-only]      an entry wakes only when it is MERGED, CLOSED or pending=0
         [--gh-timeout <seconds>]   budget for one gh, git or nova-bus call; default 45
         [--reports <dir> ...]   every RESULT.md at any depth under it (repeatable)
+        [--to-only]         an addr=cc note is counted, not a wake; refused with --advance-cursor
+        [--pr <owner>/<repo>#<n> ...]      its comments, reviews and review threads
+        [--owned-prs <owner>/<repo> ...]   every open pull request the account authored, 20 per repo
+        [--not-mine <file>]     forge node ids THIS actor emitted, one per line, set aside
+        [--ref <owner>/<repo>:<name> ...]  a branch moving; the value is its head sha
+        [--run <owner>/<repo>@<sha> ...]   the hosted checks on one head; --entry-interval, floor 30s
+        [--lock <path> ...]     an advisory lock released; probed non-blocking, never held
+        --forge-interval <duration>   the third clock, for --pr, --owned-prs and --ref; floor 30s
+  nova-wake probe --bus <dir> --line <name> --state <file>
+        [--silent-after <d>] [--answer-within <d>]   default 5m and 2m, the family's numbers
+        [--rest <file>]     lines that have declared a rest: <name> <note id> <stamp>
+        [--refresh --remote <name> --branch <name> --interval <duration>]
+        [--ping-draft <file> --as <name>]   one prepared note, offered to the bus until it lands
+        [--correlate-max <n>] [--correlate-bytes <n>]   the lane read's budget; default 300, 262144
+  nova-wake probe --here [--quiet-load <x>]
   nova-wake serve --bus <dir> --as <name> --receipt-max-words <n> --on-note <command>
         --interval <duration> --state <file> --hours <h> --remote <name> --branch <name>
         [--receipt] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
@@ -81,12 +98,20 @@ refusing to guess. --interval and --entry-interval have a 5s floor and --max a
 --max-lines (40), --gh-timeout (45s) and --offline-after (10m) have defaults,
 because none of them is a fact about your world that only you can supply.
 
-exit codes: 0 the watch ran (something changed, or the deadline arrived);
-2 could not run. Read the SECOND TOKEN OF THE LAST LINE -- WAKE CHANGE, WAKE
-QUIET or WAKE BROKEN -- and never the exit code, to learn which it was.
+exit codes for watch and serve: 0 the call ran (something changed, the deadline
+arrived, or you stopped it); 2 could not run. Read the SECOND TOKEN OF THE LAST
+LINE -- WAKE CHANGE, WAKE QUIET, WAKE STOPPED or WAKE BROKEN -- and never the
+exit code, to learn which it was.
+
+probe is the one verb that gates, and its 0 and 1 answer ONE question -- can
+work be handed over right now: 0 is PRESENT or ANSWERED, 1 is SILENT, PINGED,
+UNAVAILABLE, UNRECONCILED or RESTING, and only 2 means the call could not run.
+It says NO to an assignment, never to the line, and it never writes a cause:
+it has measured a silence and nothing else.
 
 example:
   nova-wake quickstart --state ./wake.state --reports ./reports
+  nova-wake probe --here
   nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
   nova-wake watch --state ./wake.state --max 5s --on-deadline hold --interval 5s --reports ./reports --max-lines 0 --baseline
 
@@ -105,7 +130,7 @@ const (
 	deadlineHint   = `--on-deadline <word> is what YOU will do if nothing moves, echoed back on the verdict so the transcript records the decision. This tool takes no action itself: the word is yours (report, hold, merge, ask)`
 	intervalHint   = `--interval <duration> is the cadence for the bus, --line and the report directories, and it has no default because the right cadence is a fact about the watched thing's rate that only you know; it will not go below 5s, because a poll is a git fetch and a call against somebody else's server`
 	entryEveryHint = `--entry-interval <duration> is the expected length of the hosted run: an 8-minute CI run deserves one check at 8 minutes, not eight checks at one minute`
-	sourceHint     = `name at least one source: --bus <dir> --as <name> --receipt-max-words <n>, --entry <owner>/<repo>#<n>, or --reports <dir>. A watch with nothing to watch is a sleep with a longer name`
+	sourceHint     = `name at least one source: --bus <dir> --as <name> --receipt-max-words <n>, --entry <owner>/<repo>#<n>, --reports <dir>, --pr <owner>/<repo>#<n>, --owned-prs <owner>/<repo>, --run <owner>/<repo>@<sha>, --ref <owner>/<repo>:<name>, or --lock <path>. A watch with nothing to watch is a sleep with a longer name`
 	asHint         = `--as <name> is the name YOU read the bus as, spelled the way the bus's roster spells it; it is the claim this tool makes on your behalf and there is no flag that reads as somebody else`
 	busHint        = `--bus <dir> is the bus checkout to read, a git clone of the shared notes repository`
 	wordsHint      = `--receipt-max-words <n> is handed to nova-bus and decides how much of a receipt it prints; nova-bus has no default for it and neither has this`
@@ -113,7 +138,20 @@ const (
 	onNoteHint     = `--on-note <command> is the command a landed note starts, and it receives note ids and nothing else; what it is (a claude -p, an opencode run, a grok invocation) is your business and never this tool's`
 	hoursHint      = `--hours <h> is how long this serve runs before it ends on its own, as a DECIMAL number of hours rather than a whole one: 8 is a working day, 0.5 is thirty minutes and 0.02 is about a minute, which is how a first run tries it. A process with no end is the orphaned shell of 2026-09-09`
 	redeliverHint  = `--redeliver <id> runs an uncertain dispatch once more, and it is a person's act: you have ended the earlier command or watched it return. It needs --on-note, because the state stores no command`
+	forgeHint      = `--forge-interval <duration> is the third clock, for --pr, --owned-prs and --ref. It has no default and a 30s floor, because these sources have no run length to pace by: they are one API call per watched thing per tick against a shared hourly limit, and people write comments and push branches at a rate a 30-second tick already over-serves`
+	refHint        = `--ref <owner>/<repo>:<name> is the forge branch to watch; --branch <name> is the bus checkout's branch, on every verb. The colon is the separator because # names an entry and @ names a head`
+	runHint        = `--run <owner>/<repo>@<sha> watches the hosted checks on one head, because the thing you wait for is THIS HEAD IS GREEN and not THIS NUMBER IS GREEN. It shares --entry-interval, whose floor is 30s once any --run is given: a head costs two REST calls a tick`
+	lockHint       = `--lock <path> is a file some other process holds an advisory lock on. The probe takes it non-blocking and releases it in the next system call: it never waits for it, never creates it, never writes to it and never deletes it`
 )
+
+// forgeFloorHint answers the --entry-interval floor refusal, which has two
+// readings: the 5s floor an entry keeps, and the 30s floor a head earns.
+func forgeFloorHint(withRuns bool) string {
+	if withRuns {
+		return "  " + runHint + "\n"
+	}
+	return "  a poll is a call against somebody else's server; 5s is the fastest this tool will ask for one\n"
+}
 
 func hintFor(name string) string {
 	switch name {
@@ -127,6 +165,8 @@ func hintFor(name string) string {
 		return "  " + intervalHint + "\n"
 	case "entry-interval":
 		return "  " + entryEveryHint + "\n"
+	case "forge-interval":
+		return "  " + forgeHint + "\n"
 	case "as":
 		return "  " + asHint + "\n"
 	case "bus":
@@ -181,6 +221,8 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		return cmdWatch(args[1:], stdout, stderr, clock, false)
 	case "quickstart":
 		return cmdWatch(args[1:], stdout, stderr, clock, true)
+	case "probe":
+		return cmdProbe(args[1:], stdout, stderr, clock)
 	case "serve":
 		return cmdServe(args[1:], stdout, stderr, clock)
 	case "version":
@@ -292,13 +334,26 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		entryEvery   = fs.String("entry-interval", "", "")
 		finalOnly    = fs.Bool("final-only", false, "")
 		ghTimeout    = fs.Int("gh-timeout", DefaultGHTimeout, "")
+		toOnly       = fs.Bool("to-only", false, "")
+		forgeEvery   = fs.String("forge-interval", "", "")
+		notMine      = fs.String("not-mine", "", "")
 		entries      repeated
 		reports      repeated
 		lines        repeated
+		prs          repeated
+		ownedPRs     repeated
+		refs         repeated
+		runs         repeated
+		locks        repeated
 	)
 	fs.Var(&entries, "entry", "")
 	fs.Var(&reports, "reports", "")
 	fs.Var(&lines, "line", "")
+	fs.Var(&prs, "pr", "")
+	fs.Var(&ownedPRs, "owned-prs", "")
+	fs.Var(&refs, "ref", "")
+	fs.Var(&runs, "run", "")
+	fs.Var(&locks, "lock", "")
 	if !parseFlags(fs, args, stderr) {
 		return 2
 	}
@@ -341,14 +396,76 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 	if *ghTimeout <= 0 {
 		p.add("--gh-timeout must be a positive number of seconds", "  a budget of zero or less is not 'unlimited'; it is a call that can never finish\n")
 	}
-	if len(entries) > 0 && *entryEvery == "" {
+	if (len(entries) > 0 || len(runs) > 0) && *entryEvery == "" {
 		p.missing("entry-interval")
 	}
 	var entryEveryDur time.Duration
 	if *entryEvery != "" {
 		entryEveryDur = parseDur(&p, "entry-interval", *entryEvery)
-		if entryEveryDur > 0 && entryEveryDur < IntervalFloor {
-			p.add("--entry-interval "+*entryEvery+" is below the "+wake.Dur(IntervalFloor)+" floor", "")
+		// --run shares the entry clock, and its floor is 30s: a head costs TWO
+		// REST calls a tick, so 5 seconds is 1,440 calls an hour per head and
+		// four watched heads spend a whole pool. --entry alone keeps the 5s
+		// floor, because an entry read is one call.
+		floor := IntervalFloor
+		if len(runs) > 0 {
+			floor = wake.RunIntervalFloor
+		}
+		if entryEveryDur > 0 && entryEveryDur < floor {
+			p.add("--entry-interval "+*entryEvery+" is below the "+wake.Dur(floor)+" floor", forgeFloorHint(len(runs) > 0))
+		}
+	}
+	forge := len(prs) > 0 || len(ownedPRs) > 0 || len(refs) > 0
+	if forge && *forgeEvery == "" {
+		p.add("--forge-interval is required; refusing to guess", "  "+forgeHint+"\n")
+	}
+	var forgeEveryDur time.Duration
+	if *forgeEvery != "" {
+		forgeEveryDur = parseDur(&p, "forge-interval", *forgeEvery)
+		if forgeEveryDur > 0 && forgeEveryDur < wake.ForgeIntervalFloor {
+			p.add("--forge-interval "+*forgeEvery+" is below the "+wake.Dur(wake.ForgeIntervalFloor)+" floor", "  "+forgeHint+"\n")
+		}
+	}
+	for _, name := range prs {
+		if _, _, err := wake.SplitPR(name); err != nil {
+			p.add("--pr "+name+" is not a pull request", "  "+oneline.Err(err)+"\n")
+		}
+	}
+	for _, repo := range ownedPRs {
+		if strings.Count(repo, "/") != 1 || strings.ContainsAny(repo, "#@:") {
+			p.add("--owned-prs "+repo+" is not a repository", "  --owned-prs <owner>/<repo> watches every open pull request in it that the account authored\n")
+		}
+	}
+	for _, name := range refs {
+		if _, _, err := wake.SplitRef(name); err != nil {
+			p.add("--ref "+name+" is not a branch", "  "+oneline.Err(err)+"\n")
+		}
+	}
+	for _, name := range runs {
+		if _, _, err := wake.SplitHead(name); err != nil {
+			p.add("--run "+name+" is not a head", "  "+oneline.Err(err)+"\n")
+		}
+	}
+	// --ref is a prefix of --refresh, the parse is exact, and NEITHER REFUSAL
+	// SUGGESTS THE OTHER: a "did you mean --refresh" under a mistyped --ref
+	// would talk a caller into fetching the bus when they meant to watch a
+	// branch, and the reverse would silently drop a fetch the bus source needs.
+	if *branch != "" && !*refresh && !*advance {
+		if strings.Contains(*branch, ":") {
+			p.add("--branch "+*branch+" names a forge branch, and --branch is the bus branch on every verb",
+				"  "+refHint+"\n")
+		} else {
+			p.add("--branch "+*branch+" was given with nothing that fetches the bus", "")
+		}
+	}
+	var mine func() (map[string]bool, error)
+	if *notMine != "" {
+		if _, err := wake.ReadIDs(*notMine); err != nil {
+			p.add("--not-mine "+*notMine+" could not be read", "  "+oneline.Err(err)+"\n")
+		} else {
+			// Re-read at the start of each forge tick, so an id appended
+			// mid-run is set aside from the next tick on.
+			path := *notMine
+			mine = func() (map[string]bool, error) { return wake.ReadIDs(path) }
 		}
 	}
 	for _, name := range entries {
@@ -378,8 +495,12 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 	if *refresh && (*remote == "" || *branch == "") {
 		p.add("--refresh needs --remote and --branch", "  "+remoteHint+"\n")
 	}
-	if len(entries) == 0 && len(reports) == 0 && *busDir == "" {
+	if len(entries) == 0 && len(reports) == 0 && *busDir == "" && !forge && len(runs) == 0 && len(locks) == 0 {
 		p.add("no source named; refusing to guess", "  "+sourceHint+"\n")
+	}
+	if *toOnly && *advance {
+		p.add("--to-only and --advance-cursor together would consume mail this call chose not to print",
+			"  an advance moves the cursor past every listed note, and a cursor is a claim about what the reader has been shown; with --refresh the pair is fine, because nothing moves\n")
 	}
 	if p.any() {
 		return p.print(stderr, verb)
@@ -423,6 +544,19 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 	}
 
 	ctx := context.Background()
+	// Rule 15: a wait ends on the first change, at its deadline, or on the
+	// CALLER'S STOP, and never otherwise. The stop is SIGINT or SIGTERM, and it
+	// cancels the context too, so a gh call in flight is abandoned rather than
+	// waited out.
+	var stopCh <-chan struct{}
+	if watchStopHook != nil {
+		stopCh = watchStopHook()
+	} else {
+		stopCtx, stopStop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stopStop()
+		ctx = stopCtx
+		stopCh = stopCtx.Done()
+	}
 	busVersion := "-"
 	var sources []*polled
 	var busSrc *wake.Bus
@@ -446,6 +580,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		busSrc = &wake.Bus{
 			Dir: *busDir, As: *as, ReceiptMaxWords: *words, Every_: every, Timeout: timeout,
 			Refresh: *refresh, Remote: *remote, Branch: *branch,
+			ToOnly:  *toOnly,
 			Seen:    func(line string) bool { _, ok := st.Get("bus:line:" + line); return ok },
 			Printed: func(id string) bool { return st.PrintedID("bus:note:"+id) != "-" },
 		}
@@ -459,6 +594,30 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 	if len(reports) > 0 {
 		sources = append(sources, &polled{src: &wake.Reports{Dirs: reports, Every_: every}, due: now})
 	}
+	prev := func(key string) (string, bool) { return st.Newest(key) }
+	var prSrc *wake.PRs
+	var runSrc *wake.Runs
+	var branchSrc *wake.Branches
+	var lockSrc *wake.Locks
+	if forge {
+		prSrc = &wake.PRs{
+			Names: prs, Owned: ownedPRs, Every_: forgeEveryDur, Timeout: timeout,
+			NotMine: mine, Prev: prev,
+		}
+		sources = append(sources, &polled{src: prSrc, due: now})
+	}
+	if len(runs) > 0 {
+		runSrc = &wake.Runs{Names: runs, Every_: entryEveryDur, Timeout: timeout, Final: *finalOnly, Prev: prev}
+		sources = append(sources, &polled{src: runSrc, due: now})
+	}
+	if len(refs) > 0 {
+		branchSrc = &wake.Branches{Names: refs, Every_: forgeEveryDur, Timeout: timeout, Prev: prev}
+		sources = append(sources, &polled{src: branchSrc, due: now})
+	}
+	if len(locks) > 0 {
+		lockSrc = &wake.Locks{Paths: locks, Every_: every, Prev: prev}
+		sources = append(sources, &polled{src: lockSrc, due: now})
+	}
 	if len(lines) > 0 {
 		lineView = &wake.Lines{Bus: *busDir, Names: lines, After: offline, Timeout: timeout, Start: now}
 	}
@@ -468,6 +627,8 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		maxLines: *maxLines, finalOnly: *finalOnly,
 		cold: st.Cold() && !*baseline, sources: sources, bus: busSrc, lines: lineView,
 		busDir: *busDir, timeout: timeout, every: every, lineDue: now,
+		stopCh: stopCh, prs: prSrc, runs: runSrc, branches: branchSrc, locks: lockSrc,
+		toOnly: *toOnly,
 	}
 	if *advance {
 		w.advancer = &wake.Advancer{Bus: busSrc, Clock: clock}
@@ -478,7 +639,8 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 	}
 	fmt.Fprintf(stdout, "WAKE at=%s as=%s max=%s interval=%s on-deadline=%s sources=%s state=%s cold=%t nova-bus=%s pending=%d\n",
 		oneline.Field(wake.Stamp(now)), oneline.Field(dash(*as)), oneline.Field(wake.Dur(max)),
-		oneline.Field(wake.Dur(every)), oneline.Field(*onDeadline), oneline.Field(sourceList(*busDir, entries, reports)),
+		oneline.Field(wake.Dur(every)), oneline.Field(*onDeadline),
+		oneline.Field(sourceList(*busDir, entries, reports, forge, runs, refs, locks)),
 		oneline.Field(*state), w.cold, oneline.Field(busVersion), st.Pending())
 	if *busDir != "" && !*refresh && !*advance {
 		w.note("bus checkout is read as it stands; nothing fetches without --advance-cursor; freshness is head-at=")
@@ -488,7 +650,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 
 // sourceList is the opening line's sources= field: the sources this run was
 // told to watch, in the grammar's order.
-func sourceList(busDir string, entries, reports []string) string {
+func sourceList(busDir string, entries, reports []string, forge bool, runs, refs, locks []string) string {
 	var out []string
 	if busDir != "" {
 		out = append(out, "bus")
@@ -498,6 +660,18 @@ func sourceList(busDir string, entries, reports []string) string {
 	}
 	if len(reports) > 0 {
 		out = append(out, "reports")
+	}
+	if forge {
+		out = append(out, "prs")
+	}
+	if len(runs) > 0 {
+		out = append(out, "runs")
+	}
+	if len(refs) > 0 {
+		out = append(out, "branches")
+	}
+	if len(locks) > 0 {
+		out = append(out, "locks")
 	}
 	return strings.Join(out, ",")
 }
@@ -560,6 +734,12 @@ func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 // serveKillPoint is.
 var watchKillPoint string
 
+// watchStopHook is rule 15's stop, injected. A test cannot send itself a
+// SIGTERM without ending the test binary, so the channel a signal would close
+// is handed in here instead, exactly as watchKillPoint is a var and not an
+// environment variable.
+var watchStopHook func() <-chan struct{}
+
 // watcher is the loop.
 type watcher struct {
 	stdout, stderr  io.Writer
@@ -568,11 +748,17 @@ type watcher struct {
 	statePath       string
 	maxLines        int
 	finalOnly       bool
+	toOnly          bool
 	cold            bool
 	sources         []*polled
 	bus             *wake.Bus
 	lines           *wake.Lines
 	busDir          string
+	stopCh          <-chan struct{}
+	prs             *wake.PRs
+	runs            *wake.Runs
+	branches        *wake.Branches
+	locks           *wake.Locks
 	every           time.Duration
 	lineDue         time.Time
 	timeout         time.Duration
@@ -634,9 +820,14 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		// watch that polled at its deadline would make one more call against
 		// somebody else's server for an answer it has no time to print.
 		reached := !now.Before(deadline)
+		// And so is the stop, for the same reason: a call the caller has ended
+		// makes no further call against anybody's server. What it still does is
+		// finish the step of rule 11 it is in -- an observation already made is
+		// written, a line already printed is marked -- which is the code below.
+		stopped := w.stopRequested()
 		w.busRead, w.busFail = false, false
 		broken := ""
-		if !reached {
+		if !reached && !stopped {
 			for _, s := range w.sources {
 				if now.Before(s.due) {
 					continue
@@ -721,9 +912,15 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 			return 2
 		case news > 0:
 			w.sourceLine()
-			fmt.Fprintf(w.stdout, "WAKE CHANGE after=%s polls=%d bus=%d entries=%d reports=%d lines=%d pending=%d\n",
+			fmt.Fprintf(w.stdout, "WAKE CHANGE after=%s polls=%d bus=%d entries=%d reports=%d lines=%d prs=%d runs=%d branches=%d locks=%d pending=%d\n",
 				oneline.Field(wake.Dur(now.Sub(start))), w.polls, w.changed["bus"], w.changed["entries"],
-				w.changed["reports"], w.changed["lines"], w.st.Pending())
+				w.changed["reports"], w.changed["lines"], w.changed["prs"], w.changed["runs"],
+				w.changed["branches"], w.changed["locks"], w.st.Pending())
+			return 0
+		case stopped:
+			w.sourceLine()
+			fmt.Fprintf(w.stdout, "WAKE STOPPED after=%s polls=%d pending=%d: stopped by the caller\n",
+				oneline.Field(wake.Dur(now.Sub(start))), w.polls, w.st.Pending())
 			return 0
 		case reached:
 			w.sourceLine()
@@ -735,8 +932,42 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 				oneline.Field(wake.Dur(now.Sub(start))), w.polls, oneline.Field(onDeadline), len(w.failing))
 			return 0
 		}
-		w.clock.Sleep(w.until(now, deadline))
+		w.rest(w.until(now, deadline))
 	}
+}
+
+// stopRequested answers rule 15's third ending. It never blocks: the stop is
+// read where the deadline is read, at the top of an iteration, so a call that
+// has been ended polls nothing more and prints its verdict.
+func (w *watcher) stopRequested() bool {
+	if w.stopCh == nil {
+		return false
+	}
+	select {
+	case <-w.stopCh:
+		return true
+	default:
+		return false
+	}
+}
+
+// rest is the sleep between polls, and it ends on the caller's stop. On the
+// injected clock it is the clock's own hands moving, which is what makes a
+// twenty-minute watch a millisecond of test; on the real one it is a select, so
+// a SIGTERM inside an interval does not wait the interval out.
+func (w *watcher) rest(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	if _, real := w.clock.(wake.Real); real && w.stopCh != nil {
+		select {
+		case <-w.stopCh:
+			return
+		case <-time.After(d):
+			return
+		}
+	}
+	w.clock.Sleep(d)
 }
 
 // until is the sleep: to the earliest due source, and never past the deadline.
@@ -855,6 +1086,9 @@ func (w *watcher) pollLines(ctx context.Context, now time.Time) {
 // stored newest one, byte for byte.
 func (w *watcher) observe(source string, res wake.Result, now time.Time, failed bool) {
 	w.standing = append(w.standing, res.Standing...)
+	for _, n := range res.Notes {
+		w.note(n)
+	}
 	for _, key := range res.StandingKeys {
 		// The same recency the sighting memory is evicted by: a standing line
 		// ages only while it is not standing.
@@ -862,7 +1096,7 @@ func (w *watcher) observe(source string, res wake.Result, now time.Time, failed 
 	}
 	for _, it := range res.Items {
 		w.markRefusal(it.Key, failed)
-		value, display := it.Value, it.Value
+		value, display := it.Value, it.Shown()
 		switch it.Kind {
 		case wake.KindBus:
 			value = wake.WithCommit(value, w.head)
@@ -911,6 +1145,21 @@ func (w *watcher) observe(source string, res wake.Result, now time.Time, failed 
 				w.st.RecordOnly(it.Key, value)
 				continue
 			}
+		}
+		// --final-only applies to a head with the same meaning, and unreadable:
+		// wakes under it exactly as an entry's does.
+		if w.finalOnly && it.Kind == wake.KindRun {
+			if bad, _ := wake.Unreadable(value); !bad && !wake.IsFinalRun(value) {
+				w.st.RecordOnly(it.Key, value)
+				continue
+			}
+		}
+		// The source's own observation-time exclusion: a pull request that
+		// joined the set mid-run, and --not-mine's proved-own tick. Stored
+		// either way -- the suppression is of the wake and never of the state.
+		if it.Record {
+			w.st.RecordOnly(it.Key, value)
+			continue
 		}
 		if w.st.ObserveDisplay(it.Key, value, display, it.DeliveryID()) && !w.refusal[it.Key] {
 			// The verdict's counts are about the WORLD: a line from a poll that
@@ -1116,6 +1365,14 @@ func (w *watcher) kindOf(key string) string {
 		return wake.KindReport
 	case strings.HasPrefix(key, "line:"):
 		return wake.KindLine
+	case strings.HasPrefix(key, "pr:"):
+		return wake.KindPR
+	case strings.HasPrefix(key, "run:"):
+		return wake.KindRun
+	case strings.HasPrefix(key, "branch:"):
+		return wake.KindBranch
+	case strings.HasPrefix(key, "lock:"):
+		return wake.KindLock
 	}
 	return ""
 }
@@ -1124,13 +1381,176 @@ func (w *watcher) kindOf(key string) string {
 // add up: read equals the sum of the other three. A bus that printed nothing
 // and a bus that printed twelve bookkeeping lines must not look the same.
 func (w *watcher) sourceLine() {
-	if w.bus == nil || w.sourcePrinted {
+	if w.sourcePrinted {
 		return
 	}
 	w.sourcePrinted = true
+	w.forgeLines()
+	if w.bus == nil {
+		return
+	}
 	read, suppress, relay, standing := w.bus.Counts()
+	if w.toOnly {
+		// cc= is a breakdown of suppressed= and never a fourth term, so the sum
+		// holds with the flag as without it.
+		fmt.Fprintf(w.stdout, "WAKE SOURCE bus read=%d suppressed=%d relayed=%d standing=%d head=%s head-at=%s cc=%d\n",
+			read, suppress, relay, standing, oneline.Field(dash(w.head)), oneline.Field(dash(w.headAt)), w.bus.CC())
+		return
+	}
 	fmt.Fprintf(w.stdout, "WAKE SOURCE bus read=%d suppressed=%d relayed=%d standing=%d head=%s head-at=%s\n",
 		read, suppress, relay, standing, oneline.Field(dash(w.head)), oneline.Field(dash(w.headAt)))
 }
 
+// forgeLines are the amendment's four WAKE SOURCE lines. Every forge source
+// carries calls=, the gh invocations it made this run, so the spend is on the
+// record beside the news and a rate limit arrives as unreadable: rather than as
+// silence. The lock source carries no calls= and no login=: it starts nothing
+// at all, and a login is the prs source's fact.
+func (w *watcher) forgeLines() {
+	if w.prs != nil {
+		read, changed, unreadable, calls, self, login := w.prs.Counts()
+		fmt.Fprintf(w.stdout, "WAKE SOURCE prs read=%d changed=%d unreadable=%d calls=%d self=%d login=%s\n",
+			read, changed, unreadable, calls, self, oneline.Field(dash(login)))
+	}
+	if w.runs != nil {
+		read, changed, unreadable, calls := w.runs.Counts()
+		fmt.Fprintf(w.stdout, "WAKE SOURCE runs read=%d changed=%d unreadable=%d calls=%d\n",
+			read, changed, unreadable, calls)
+	}
+	if w.branches != nil {
+		read, changed, unreadable, calls := w.branches.Counts()
+		fmt.Fprintf(w.stdout, "WAKE SOURCE branches read=%d changed=%d unreadable=%d calls=%d\n",
+			read, changed, unreadable, calls)
+	}
+	if w.locks != nil {
+		read, changed, unreadable := w.locks.Counts()
+		fmt.Fprintf(w.stdout, "WAKE SOURCE locks read=%d changed=%d unreadable=%d\n",
+			read, changed, unreadable)
+	}
+}
+
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// AnswerCeiling is --answer-within's, and it is --max's 60 minutes for --max's
+// reason: a call that runs longer than the harness allows is killed with
+// nothing said at all.
+const AnswerCeiling = MaxCeiling
+
+// cmdProbe is the amendment's one new verb. Its 0 and 1 are its answer to ONE
+// QUESTION -- can work be handed over right now -- and only its 2 means the call
+// could not run. That is the whole of the deviation, and it is stated in the
+// spec's Exit codes section once.
+func cmdProbe(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
+	var (
+		here      = fs.Bool("here", false, "")
+		quietLoad = fs.String("quiet-load", "", "")
+		busDir    = fs.String("bus", "", "")
+		lineName  = fs.String("line", "", "")
+		state     = fs.String("state", "", "")
+		as        = fs.String("as", "", "")
+		remote    = fs.String("remote", "", "")
+		branch    = fs.String("branch", "", "")
+		refresh   = fs.Bool("refresh", false, "")
+		interval  = fs.String("interval", "", "")
+		silent    = fs.String("silent-after", "", "")
+		answer    = fs.String("answer-within", "", "")
+		restFile  = fs.String("rest", "", "")
+		pingDraft = fs.String("ping-draft", "", "")
+		ghTimeout = fs.Int("gh-timeout", DefaultGHTimeout, "")
+		corrMax   = fs.Int("correlate-max", wake.DefaultCorrelateMax, "")
+		corrBytes = fs.Int("correlate-bytes", wake.DefaultCorrelateBytes, "")
+	)
+	if !parseFlags(fs, args, stderr) {
+		return 2
+	}
+
+	// --here TAKES NO STATE, NO LOCK AND NO FLAGS BUT --quiet-load, and exits 0
+	// on a reading: it reports numbers and gates nothing.
+	if *here {
+		var p problems
+		if *busDir != "" || *lineName != "" || *state != "" || *pingDraft != "" {
+			p.add("probe --here takes no flags but --quiet-load", "  --here asks whether THIS BENCH is quiet, which needs no bus, no state and no lock; --line asks the same question of another line\n")
+		}
+		if p.any() {
+			return p.print(stderr, "probe")
+		}
+		fmt.Fprintf(stdout, "%s\n", wake.HereLine(clock.Now(), wake.ReadBench(), *quietLoad))
+		return 0
+	}
+
+	var p problems
+	if *busDir == "" {
+		p.missing("bus")
+	}
+	if *lineName == "" {
+		p.add("--line is required; refusing to guess", "  probe --line <name> asks whether one named line can be handed work now; probe --here asks it of this bench\n")
+	}
+	if *state == "" {
+		p.missing("state")
+	}
+	silentAfter := wake.DefaultSilentAfter
+	if *silent != "" {
+		silentAfter = parseDur(&p, "silent-after", *silent)
+	}
+	answerWithin := wake.DefaultAnswerWithin
+	if *answer != "" {
+		answerWithin = parseDur(&p, "answer-within", *answer)
+	}
+	if answerWithin > AnswerCeiling {
+		p.add("--answer-within "+*answer+" is over the 60m ceiling",
+			"  a probe that blocks runs inside a tool call, and a window above your harness's limit does not wait longer: it is killed with nothing said at all\n")
+	}
+	var every time.Duration
+	if *interval != "" {
+		every = parseDur(&p, "interval", *interval)
+	}
+	if *refresh && (*remote == "" || *branch == "") {
+		p.add("--refresh needs --remote and --branch", "  "+remoteHint+"\n")
+	}
+	if *pingDraft != "" && *as == "" {
+		p.add("--ping-draft needs --as", "  a note is signed by the line that sends it, and this tool composes nothing: the draft is yours and the roster is nova-bus's\n")
+	}
+	if *corrMax <= 0 || *corrBytes <= 0 {
+		p.add("--correlate-max and --correlate-bytes must be positive", "  a budget of zero or less is not 'unlimited'; it is a read that can never take an item\n")
+	}
+	rest := map[string]wake.Rest{}
+	if *restFile != "" {
+		roll, err := wake.ReadRest(*restFile)
+		if err != nil {
+			// A file that cannot be read is exit 2 and NEVER AN EMPTY ROLL.
+			p.add("--rest "+*restFile+" could not be read", "  "+oneline.Err(err)+"\n")
+		} else {
+			rest = roll
+		}
+	}
+	if p.any() {
+		return p.print(stderr, "probe")
+	}
+
+	// A probe takes the same exclusive <state>.lock beside the file, for the
+	// duration of its call and by the same primitive watch uses, so it never
+	// shares a map with a live watcher and never writes over one.
+	release, holder, err := wake.LockState(*state)
+	if err != nil {
+		return refused(stderr, oneline.Err(err))
+	}
+	if release == nil {
+		return refused(stderr, "another nova-wake holds "+wake.LockName(*state)+" (pid "+holder+"); a probe never writes a state file another run owns. Give this probe a state file of its own")
+	}
+	defer release()
+
+	st, err := wake.Load(*state)
+	if err != nil {
+		return refused(stderr, "the state file "+*state+" could not be read: "+oneline.Err(err)+
+			"; repair it, or pass a new --state path and accept a cold start on purpose")
+	}
+	pr := &wake.Probe{
+		Bus: *busDir, Line: *lineName, As: *as, Remote: *remote, Branch: *branch,
+		Refresh: *refresh, SilentAfter: silentAfter, AnswerWithin: answerWithin,
+		Interval: every, Timeout: time.Duration(*ghTimeout) * time.Second,
+		PingDraft: *pingDraft, Rest: rest, CorrelateMax: *corrMax, CorrelateBytes: *corrBytes,
+		StatePath: *state, Clock: clock,
+	}
+	return pr.Run(context.Background(), st, stdout, stderr)
+}

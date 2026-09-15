@@ -341,7 +341,8 @@ func (s *State) touch(key string) {
 // beside them: bus:advance, fail:<source>, serve:<id>, queue:next and the
 // queue records.
 func watchedRow(key string) bool {
-	for _, prefix := range []string{"bus:line:", "bus:note:", "entry:", "report:", "line:"} {
+	for _, prefix := range []string{"bus:line:", "bus:note:", "entry:", "report:", "line:",
+		"pr:", "run:", "branch:", "lock:"} {
 		if strings.HasPrefix(key, prefix) {
 			return true
 		}

@@ -48,10 +48,30 @@ type Result struct {
 
 // Item is one observation.
 type Item struct {
-	Kind  string // bus, busline, entry, report, line
+	Kind  string // bus, busline, entry, report, line, pr, run, branch, lock
 	Key   string
 	Value string
 	ID    string // the delivery id; empty means derive it from the key and value
+	// Display is the line the window reads where it carries fields the compared
+	// identity does not: a pull request's self=, rescan=, push=, by= and url=
+	// are facts about a PRINTED LINE and not about the value, and folding them
+	// into the value would make a tick that moved none of them a change.
+	// Empty means the value is the display.
+	Display string
+	// Record keeps this observation out of the delivery queue at observation
+	// time: the cold-join rule for a pull request that opened mid-run, and
+	// --not-mine's proved-own tick. It is stored either way -- the suppression
+	// is of the wake and never of the state.
+	Record bool
+}
+
+// Shown is the line's own form of an item, which is Display where the source
+// gave one and the value otherwise.
+func (i Item) Shown() string {
+	if i.Display != "" {
+		return i.Display
+	}
+	return i.Value
 }
 
 // DeliveryID is the id of a value the window was shown: a note's own id for a
@@ -81,6 +101,12 @@ const (
 	KindEntry   = "entry"
 	KindReport  = "report"
 	KindLine    = "line"
+	// The amendment of 2026-09-13's four, which with line make EIGHT KINDS AND
+	// EIGHT CAPS -- the arithmetic rule 5 recomputes as 8 * --max-lines + 17.
+	KindPR     = "pr"
+	KindRun    = "run"
+	KindBranch = "branch"
+	KindLock   = "lock"
 )
 
 // CapKind maps an item kind to the kind named on its WAKE MORE line. A relayed
@@ -94,6 +120,14 @@ func CapKind(kind string) string {
 		return "entry"
 	case KindReport:
 		return "report"
+	case KindPR:
+		return "pr"
+	case KindRun:
+		return "run"
+	case KindBranch:
+		return "branch"
+	case KindLock:
+		return "lock"
 	default:
 		return kind
 	}
@@ -134,6 +168,47 @@ func Render(kind, key, value string, now time.Time) string {
 		return fmt.Sprintf("WAKE REPORT path=%s lines=%s bytes=%s %s",
 			oneline.Field(strings.TrimPrefix(key, "report:")),
 			oneline.Field(dash(p[2])), oneline.Field(dash(p[1])), oneline.Field(dash(p[3])))
+	case KindPR:
+		name := strings.TrimPrefix(key, "pr:")
+		p := Decompose(value)
+		if len(p) == 2 && p[0] == "unreadable" {
+			return fmt.Sprintf("WAKE PR %s unreadable: %s", oneline.Field(name), escapeTail(p[1]))
+		}
+		p = fields(p, 12)
+		return fmt.Sprintf("WAKE PR %s comments=%s reviews=%s threads=%s self=%s rescan=%s push=%s head=%s newest=%s by=%s review=%s at=%s url=%s",
+			oneline.Field(name), oneline.Field(dash(p[0])), oneline.Field(dash(p[1])),
+			oneline.Field(dash(p[2])), oneline.Field(dash(p[3])), oneline.Field(dash(p[4])),
+			oneline.Field(dash(p[5])), oneline.Field(dash(p[6])), oneline.Field(dash(p[7])),
+			oneline.Field(dash(p[8])), oneline.Field(dash(p[9])), oneline.Field(dash(p[10])),
+			oneline.Field(dash(p[11])))
+	case KindRun:
+		name := strings.TrimPrefix(key, "run:")
+		p := Decompose(value)
+		if len(p) == 2 && p[0] == "unreadable" {
+			return fmt.Sprintf("WAKE RUN %s unreadable: %s", oneline.Field(name), escapeTail(p[1]))
+		}
+		p = fields(p, 4)
+		return fmt.Sprintf("WAKE RUN %s fail=%s pending=%s pass=%s final=%t failing=%s",
+			oneline.Field(name), oneline.Field(dash(p[0])), oneline.Field(dash(p[1])),
+			oneline.Field(dash(p[2])), IsFinalRun(value), oneline.Field(dash(p[3])))
+	case KindBranch:
+		name := strings.TrimPrefix(key, "branch:")
+		p := Decompose(value)
+		if len(p) == 2 && p[0] == "unreadable" {
+			return fmt.Sprintf("WAKE BRANCH %s unreadable: %s", oneline.Field(name), escapeTail(p[1]))
+		}
+		p = fields(p, 2)
+		return fmt.Sprintf("WAKE BRANCH %s head=%s was=%s",
+			oneline.Field(name), oneline.Field(sha(p[0])), oneline.Field(sha(p[1])))
+	case KindLock:
+		path := strings.TrimPrefix(key, "lock:")
+		p := Decompose(value)
+		if len(p) == 2 && p[0] == "unreadable" {
+			return fmt.Sprintf("WAKE LOCK path=%s unreadable: %s", oneline.Field(path), escapeTail(p[1]))
+		}
+		p = fields(p, 2)
+		return fmt.Sprintf("WAKE LOCK path=%s state=%s was=%s",
+			oneline.Field(path), oneline.Field(dash(p[0])), oneline.Field(dash(p[1])))
 	case KindLine:
 		p := fields(Decompose(value), 3)
 		silent := "-"
@@ -158,6 +233,16 @@ func fields(p []string, n int) []string {
 
 func dash(s string) string {
 	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// sha renders a branch end. `absent` is the stored WORD for a branch that is
+// not there -- a state value like any other -- and `-` is how the line says it,
+// so a deletion reads head=- was=b2 and a creation reads was=-.
+func sha(s string) string {
+	if s == "" || s == "absent" {
 		return "-"
 	}
 	return s
