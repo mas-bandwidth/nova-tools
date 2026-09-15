@@ -79,8 +79,11 @@ func Batch(in BatchInput) int {
 	cards, err := readCards(in.Cards)
 	if err != nil {
 		var ae *admitError
+		var ar *admitRefusal
 		if errors.As(err, &ae) {
 			fmt.Fprintln(in.Stderr, ae.Error())
+		} else if errors.As(err, &ar) {
+			fmt.Fprintln(in.Stderr, ar.Error())
 		} else {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 		}
@@ -329,6 +332,11 @@ func readCards(path string) ([]batchCard, error) {
 		}
 		if reason := cardShapeFailure(parts[2], string(cardRaw)); reason != "" {
 			return nil, &admitError{label: parts[0], reason: reason}
+		}
+		// A card whose repositories are not reachable without credentials is refused at
+		// admission, before any runner starts: lesson 7 (private repositories).
+		if err := checkRepos(parts[0], string(cardRaw)); err != nil {
+			return nil, err
 		}
 		cards = append(cards, batchCard{
 			label:    parts[0],
