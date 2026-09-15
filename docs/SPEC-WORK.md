@@ -444,6 +444,54 @@ it (Fable at d1b20f42, 2026-09-13: a fenced owner killed by its supervisor at th
 sitting stranded its accepted events in a journal no verb read). `render` writes a working-tree
 file that the next clip commits; it is not a second write path to the branch.
 
+**A journal has an identity, every record in it has a place, and a rotation changes neither**
+(#295 at `c2be4d6b`, Stella's *Savepoints name a complete journal envelope*, folded on Rowan's read
+there; the built shape is Emma's #333 at `79277f05`, and where the two differ this paragraph says
+which is the contract). A newly initialized journal writes a header first: `:magic
+"nova-work/journal"`, `:version`, a **journal id** — 256 random bits as 64 lowercase hex
+characters, an identity and never an ownership token — and `:initial-state`, the root digest of the
+state its first record applies against, so a replay over the wrong seed is refused `journal
+mismatch` (`SESSION FAIL` or `SAVEPOINT FAIL`, exit 1) and applies nothing. The bench, lock identity and coordinator generation of rule 2 are
+bound beside it; **a copied journal grants nothing on another bench** — the fencing rules decide
+activation, and the id only says which journal a savepoint or a rotation is talking about. Every
+accepted envelope and every clip boundary record is one record with a **sequence**, a positive
+consecutive integer within the journal — a decimal string under the reader's bounds
+like every protocol integer, never a machine word — and a **record hash**: SHA-256, lowercase hex,
+over the canonical serialization (the digest paragraph's printer, so a successor of another build
+recomputes the same chain) of the journal id, the sequence, the previous record's hash — `(:absent)`
+on the first — and the whole body; the hash lies outside its own preimage, detects a mismatch and
+authenticates nothing. **A mutation record holds, in order**: its journal id, sequence and previous
+hash; the request id, the canonical requester payload and its digest; the local revision after the
+envelope and every assigned event in its semantic order, generated events included; and **the
+original reply whole** — exit, the ordered output lines verbatim, the resulting local revision and
+the `pushed=` it reported — constructed before the record is synced, because **no acknowledgement
+precedes the durable storage of the complete record**, and a record that would pass the reader's
+three bounds whole is refused before acceptance, exit 2, `indivisible` naming `--max-bytes`, and
+never trimmed to fit (the admission rule of *Retention* below, whose line shape it shares). Recovery replays the retained events and never runs the verb again, which is
+how it mints no id, reads no clock and settles nothing twice. **A rotation opens a new physical
+segment of the same logical journal**: the segment's header names the journal id, the previous
+segment and the copied boundary record, which keeps its sequence, previous hash and hash, its
+`:initial-state` the digest that record names, and the next record continues the chain; a new file is not a new journal, and a rotation creates no second
+accepted mutation and resets no request identity. **Where #333 differs, this is the contract and
+#333 is the slice to change** *(Rowan's decision, for review)*: it frames each record as `(:frame
+:seq :len :checksum :record)` with a checksum over the record alone and no journal id in its header
+— the journal id and the previous hash join the preimage and the id joins the header; its
+`:capacity` refuses a new request outright once its store is full (`journal capacity exceeded`)
+where the bound this document names is the clip's rotation, `--clip-after` events and never a
+record count, so a full journal is a clip due and not a refused request; its `:line` retains one
+reply line where a reply of several lines is retained whole; and its replay begins at the header
+where this document's begins at a savepoint's cut or the newest boundary record. **Where it
+agrees, it is the built witness of this paragraph**: the record is written and synced before the
+state is applied and the reply sent (`durable-journal-append-plus-lost-reply-recovers-once`); a
+torn tail, a flipped bit and a wrong header refuse with the file bit for bit as it was
+(`durable-journal-corrupt-data-refuses-without-truncation`); a multi-event envelope is one record
+under one hash; a replay reconstructs the exact root digest and next revision without a fresh id;
+and an append or sync that failed leaves the journal **uncertain**, every mutation refused
+`journal uncertain` until the tail has been read and diagnosed
+(`durable-journal-uncertain-write-refuses-until-recovery`; its other witnesses are named beside
+the replays `crash-after-append-recovers-the-reply-once`, `torn-tail-is-diagnosed-not-truncated`
+and `replay-mints-nothing` below).
+
 **The periodic clip is the same clip, run by the session on two triggers named at start.**
 `session start` takes `--clip-every <duration>` and `--clip-after <n>`, both required, both
 distinct from the reconfirm's `--every`: the session clips when its pending accepted events
@@ -572,6 +620,32 @@ is monotonic with revision — so a selection reads the intersecting days by the
 applies the exact half-open `[from, to)` bounds inside them, and never lists every historical file
 and filters afterwards (Stella, `SPEC-WORK-CLOSED.md`).
 
+**Days are merged by revision and never concatenated, and a historical ask has a page budget that
+`--max` is not** (#295 at `c2be4d6b`; Rowan's read there, items 2 and 3). A time query routes only
+the days its `[from, to)` intersects and then **merges** their revision-ordered streams — one
+bounded leaf cursor per day and a heap over `<event-rev>:<id>` up to a configured fan-in, and past
+it deterministic external merge passes over operation-local runs that are never canonical, are
+held only for the ask and its continuation, and are discarded at its end, its cancel or the
+continuation's expiry (the bounds and the expiry are open below) — because a backdated stamp keeps a row in its
+recorded day while the revision remains the order, and two days laid end to end would print a
+later revision before an earlier one; **no row is emitted until no unvisited selected stream can
+hold an earlier eligible one**. The default window needs no run under any fan-in of two or more,
+which the fan-in must be, and only an explicit historical ask pays. **`--max` caps the rows printed and bounds nothing
+else**, so a filtered historical ask whose filter rejects every row it reads could scan unbounded
+history while claiming a small answer; `query --page-budget <n>` *(Rowan's decision, for review)*
+caps the index pages and segments read in one call whatever the filter rejects, and an ask that
+meets it before it can print a row answers `QUERY MORE rows=<n> shown=0 pages=<n> after=<cursor>` —
+the one cursor rule of the closed-index paragraphs below, `--after <cursor>` with its pinned
+revision, and not a second one, the cursor carrying the captured root, the merge-run identity and
+each run's position, so the next call continues the same root or is refused `page expired` like
+any other continuation. The stamp summaries a manifest carries per day and per segment may let a
+merge skip a leaf the window cannot touch, as an optimization, and are never proof of time order;
+**`pages=` is printed and never promised** — a cold lookup reads as many pages as the routed path
+is deep, the depth is bounded by the key's bit length under the reader's field bound, and no
+segment outside the routed path is read, which is the *no whole-C load* of
+`history-grows-startup-does-not` stated as a number a test reads (replays
+`days-merge-by-revision-never-concatenate`, `page-budget-is-not-max`).
+
 **Both indexes are versioned roots of bounded pages, and the clip's small root names them.** An
 index root names its pages; a page locates partitions by day and records by stable item and event
 id and by repository; **every page is bounded by `--page-bytes <n>` and `--page-records <n>`, both
@@ -582,6 +656,39 @@ this document promises is that the number is bounded by that depth and by nothin
 work the team has finished. **The indexes are rebuildable from the retained canonical events and
 the closure records**, which is what makes them an index and not a second store; a key-value cache
 in front of them, if a pilot wants one, is a cache and nothing more.
+
+**The keys are ordered without a hash, one key set is one tree, and the bounds are checked at
+start** (#295 at `c2be4d6b`). A key is a prefix-free encoding of its fields in the order its index
+routes by — the closed index by id then revision, by revision then id, and by repository then
+revision then id; the day tree by UTC date; the dedup index by request id — in which **opaque text
+sorts in raw byte order, a prefix before its extension, and a revision sorts numerically with no
+width**, so `2` precedes `10` and no counter limit is fabricated; no composite key is hashed, and a
+key on a page is a string beside its bit length and never an evaluated form. Every root is a
+compact binary radix tree: an internal page holds its split bit and two child references (path,
+hash, record count) and repeats no key range; a leaf holds complete keys with their locators; a
+bucket that would pass either bound splits at the first bit after its longest common prefix; and
+**one logical key set under one pair of bounds yields one tree, whatever the clip batching or the
+insertion order** — which is what lets a busy day's segments come out the same however the day was
+clipped, and a backdated closure rewrite its own bucket and its ancestors and nothing beside them.
+A page's own references count as its records and bytes, so **`session start` preflights every
+fixed-arity wrapper** — the closed root with its four references, a day manifest, a two-child
+internal page — against `--page-bytes`, `--page-records` and the reader's three bounds, and refuses
+at exit 2 naming the flag a bound no wrapper fits, `--page-records` below `4` among them, beside
+`--closed-window`'s `48h` refusal. Different bounds are a different tree: a root names the bounds
+it was built under, and changing them is an explicit full reindex under a new root, never a mix
+under one header. The byte forms of the encoding are open (*What this draft does not do* below);
+the ordering, the prefix-freedom and the one-tree property are the contract.
+
+```lisp
+;; EXAMPLE DATA, NOT A LOCKED CODEC: one internal page and one leaf of the closed index by id.
+(:version "work-index-v1" :kind :radix-internal :key-kind :closed-by-id :bit 149 :records 2
+ :zero (:path "closed/pages/a.sexp" :sha256 "<64-hex>" :records 71)
+ :one  (:path "closed/pages/b.sexp" :sha256 "<64-hex>" :records 64))
+(:version "work-index-v1" :kind :radix-leaf :key-kind :closed-by-id :records 1
+ :entries ((:key "<hex>" :bits 231
+            :value (:day "2026-09-14" :segment "closed/segments/x.sexp" :sha256 "<64-hex>"
+                    :event (:revision 812 :id "T-7")))))
+```
 
 **The resident cache is bounded, and the default window is Glenn's two days.** `session start
 --index-cache <n>` is required and names the greatest number of index pages the session holds
@@ -625,6 +732,18 @@ settle and the next clip leaves no id in both branches and none in neither, whet
 before the acknowledgement, after it and before the clip, or inside the publication (replay
 `index-replayed-after-crash`).
 
+**Recovery starts at a savepoint's cut when there is one, and the overlay it builds is bounded**
+(#295 at `c2be4d6b`). With a savepoint, the session loads its image and its retained local replies
+and replays only the complete records strictly after the cut, once, in sequence, boundary records
+included; without one it replays from the journal's newest boundary record as above. What the
+replay passes becomes **overlay
+pages** — closed rows and locators over the published roots, and the local dedup entries that still
+answer their original `OK` — held in bounded paged scratch under the same `--index-cache` limit as
+every other page, rebuilt from the durable journal at recovery and never by replaying the journal
+on a query; **evicting an overlay page erases nothing**, because the journal is the truth and the
+next clip writes the overlay into the pages. A startup still loads no whole C and no whole dedup
+index (replay `overlay-is-bounded-and-rebuilt`).
+
 **An absent day and a missing segment are two different answers, and the manifest is what tells
 them apart.** A day with no manifest inside a complete manifested range **means no events that
 day**: the answer is the rows there are, `gap=0`, and no note. **A manifest or a segment the
@@ -664,6 +783,16 @@ remedy is always `lower --retain or raise --max-bytes` and there is no longer a 
 lower. **An index page never refuses a clip at all**: a page that would pass `--page-bytes` or
 `--page-records` is split into another page, which is what a paged index on disk is for, and the
 bound a growing history meets is the bench's own disk rather than a session's resident memory.
+**What is refused is the one record no page could hold, and it is refused at admission and never
+at the clip** (#295 at `c2be4d6b`; Rowan's read there, item 1): a growing record splits or chunks
+— repeatable evidence behind a detail root, a long row behind its locator — but a single key with
+its one locator that would pass `--page-bytes` on a page of its own is indivisible, and the
+mutation that would write it is refused at the candidate gate, exit 2, `<MUTATION> FAIL
+request=<id> key=<kind> bytes=<n> past <--page-bytes|--max-bytes>=<n>: indivisible`, nothing journaled and
+nothing acknowledged, so canonical history never holds a record the clip could not publish — the
+journal paragraph's over-bound record is refused by this gate too, naming `--max-bytes`. So the
+sentence before this one stays true: the clip never refuses what was never admitted (replay
+`indivisible-record-refused-before-ack`).
 The one file a
 tool must never write is one it cannot read back, and a remedy that cannot move the number it
 names is worse than no remedy at all (Fable at 7472e545, 2026-09-13: the refusal named
@@ -2048,7 +2177,7 @@ nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-t
 nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
                          (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet)
                          [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>]
-                         [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--max <n>]
+                         [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--page-budget <n>] [--max <n>]
                          (who and stale: --window <duration>, required; percent: --axis <member>, required;
                           --branch closed and --branch root: --from and --to, required, and refused under --branch open;
                           who, stale and handoffs: --branch open only, the other two exit 2;
@@ -3679,15 +3808,16 @@ QUERY ROW <machine-id> kind=machine name=<text> owner=<name> roles=<build,test,p
 QUERY FAIL ask=fleet rows=0 shown=0: <id> excludes <kind>   (--for with --node on a member that excludes the kind: a refusal, never an empty answer)
 QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable   (a state-as-of ask whose day partition the committed root names and this read could not open; never answered from a later row)
 QUERY FAIL ask=<kind> after=<cursor> pinned=<rev> current=<rev>: page expired   (a continuation whose captured revision the session can no longer serve; never a drifted page)
+QUERY MORE rows=<n> shown=<n> pages=<n> after=<cursor>   (a page budget met: shown=0 is permitted when no row could yet be emitted; the continuation is the one cursor rule and never a second)
 OPERATION OK id=<id> op=<capture|stage|export|clip|execution> state=<queued|running|done|cancelling|cancelled|failed> started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>
 OPERATION ROW id=<id> op=<kind> state=<s> started=<stamp> updated=<stamp> external=<known|uncertain|none>   (operation list, and one per event of a wait's cursor)
 OPERATION NOTE waiting id=<id> timeout=<duration> after=<cursor>   (a wait that timed out: the operation is still running, and this line says so)
 OPERATION FAIL id=<id> op=<kind> state=<s>: <reason>
 OPERATION FAIL id=<id> op=- state=-: no such operation   (an id the journal does not hold: exit 2, never an invented state)
 SAVEPOINT OK id=<id> rev=<n> checkpoint=<rev|-> pushed=<rev|-> boundary=<rev> age=<duration> unshared=<n> manifest=<sha> shown=<n> emitted=<bytes>   (rev= is this bench's savepoint, checkpoint= the newest clipped one, so a local success can never be read as a shared backup)
-SAVEPOINT ROW id=<id> rev=<n> at=<stamp> manifest=<sha> verdict=<good|corrupt|unverified>
-SAVEPOINT NOTE recovery-gap kind=<missing-tail|remote-unavailable> since=<rev>   (reported, never rounded to success)
-SAVEPOINT FAIL id=<id> rev=<n>: <reason>
+SAVEPOINT ROW id=<id> rev=<n> at=<stamp> manifest=<sha> verdict=<good|corrupt|unverified|failed>   (failed: an attempt whose image, manifest or sync did not complete, listed and never restored)
+SAVEPOINT NOTE recovery-gap kind=<missing-tail|torn-tail|corrupt-record|coverage-unverified|remote-unavailable> since=<rev>   (reported, never rounded to success; torn-tail is an interrupted append at the end of the journal, corrupt-record anything else, and neither is truncated)
+SAVEPOINT FAIL id=<id> rev=<n>: <reason>   (cut inside an envelope, journal mismatch, image revision differs from its cut, missing original reply: nothing published, the previous verified savepoint kept)
 UNDO OK id=<event-id> request=<id> request-of=<id> nodes=<n> rev=<n> pushed=<rev|-> emitted=<bytes>   (redo prints REDO OK with the same fields)
 UNDO ROW node=<id> effect=<state|scope|assignment|counter|verification> before=<text> after=<text>   (an undo-plan's or redo-plan's rows; redo-plan prints REDO ROW)
 UNDO FAIL request-of=<id> expect=<rev> current=<rev>: stale plan   (nothing written)
@@ -3726,6 +3856,8 @@ NODE NOTE already-closed node=<id> disposition=<d> settled=<stamp>   (a same-id 
 <MUTATION> FAIL request=<id> applied=<rev>: already applied
 <MUTATION> FAIL request=<id>: reused with a different payload
 <MUTATION> FAIL request=<id> page=<name>: dedup unavailable   (a dedup page the predicate needs and could not read: the request is refused admission, never admitted as new)
+<MUTATION> FAIL request=<id> key=<kind> bytes=<n> past <--page-bytes|--max-bytes>=<n>: indivisible   (exit 2: one key with its one locator no page could hold, or one journal record the reader's bounds could not read back, refused at admission, nothing journaled; a growing record splits instead)
+<MUTATION> FAIL request=<id> journal=<path>: journal uncertain   (an append or sync that failed: nothing admitted until the tail is read and diagnosed, and the tail is never truncated)
 <MUTATION> FAIL node=<id> findings=<n> was=<n>: no repair   (--repair only)
 LEASE FAIL node=<id> holder=<name> since=<stamp> deadline=<stamp> live=<n>: held
 <TOKEN> NOTE <caveat>
@@ -4261,6 +4393,59 @@ of this list and are not repeated here):
   same constraint row before any cut row, then `GOAL MORE`; with the notes index unloadable,
   both print `FAIL` and neither prints `eligible` nor any row.
 
+**The replays of #295 at `c2be4d6b`, for the journal's identity, the savepoint's cut and the
+index's admission** (where #333 at `79277f05` already has a built witness, it is named):
+
+- **`savepoint-cut-never-splits-an-envelope`** — a two-event request accepted and a savepoint
+  after it: both events represented once in the image and a retry answered the byte-identical
+  original lines; a savepoint whose cut would fall between the two events refused `cut inside an
+  envelope` and no image published.
+- **`crash-after-append-recovers-the-reply-once`** — a crash after the durable append and before
+  the reply: the envelope replayed once from the record, the same request and payload answered
+  with the original `OK`, the retry mutating nothing; the same id with a changed payload refused
+  `reused with a different payload` after the restore as before it (#333
+  `durable-journal-append-plus-lost-reply-recovers-once`, `durable-journal-changed-payload-refuses`).
+- **`rotation-keeps-one-journal`** — a clip rotating the journal after a savepoint: the new
+  segment's header naming the same journal id and the copied boundary record with its sequence and
+  hashes, the chain continuing, the savepoint's cut and every disposition it needs reachable
+  without a scan of old segments, and `session export --journal` writing the same bundle from
+  either file.
+- **`torn-tail-is-diagnosed-not-truncated`** — a partial frame at the end of the journal, a
+  flipped bit inside a frame and a wrong header each refused with the file bit for bit as it was,
+  the first reported `recovery-gap kind=torn-tail`, the second `kind=corrupt-record` and the third
+  `journal mismatch`, none rounded to another, and every mutation refused `journal uncertain` after a failed append until
+  the tail is read (#333 `durable-journal-corrupt-data-refuses-without-truncation`,
+  `durable-journal-partial-write-refuses-without-truncation`,
+  `durable-journal-uncertain-write-refuses-until-recovery`).
+- **`replay-mints-nothing`** — a replay of five envelopes reconstructing the exact root digest, the
+  closed rows and the next revision with no fresh event id, no clock read and no verb run; a replay
+  failing midway leaving its target untouched (#333 `durable-journal-replay-generates-no-fresh-ids`,
+  `durable-journal-replay-failure-isolates-target-kernel`).
+- **`savepoint-write-failure-keeps-the-previous`** — the image write, the manifest publication and
+  the sync each failed in turn: the previous verified savepoint restores, and `savepoint list`
+  prints the attempt `verdict=failed`.
+- **`copied-journal-grants-nothing`** — a journal and its savepoint copied to another bench:
+  `savepoint restore` there inspects in isolation, takes no ownership and dispatches nothing, and a
+  `session start` over the copy is refused by the fencing rules, the journal id notwithstanding.
+- **`reply-retired-only-under-verified-coverage`** — a request whose events lie before the clip
+  boundary: its retry answered `already applied` only once the committed snapshot, its retained
+  events and the dedup root the boundary record names are verified reachable; with the push failed
+  or the root unreadable, the original `OK` still answered from the retained disposition or
+  `recovery-gap kind=coverage-unverified` printed, and never a reply invented or deleted.
+- **`indivisible-record-refused-before-ack`** — one key with its locator that no page under
+  `--page-bytes` could hold refused `indivisible` at exit 2 with nothing journaled, while a request
+  whose repeatable evidence would pass the bound is admitted and chunked behind a detail root; and
+  `session start --page-records 2` refused at exit 2 naming the flag.
+- **`days-merge-by-revision-never-concatenate`** — a closure backdated by `--now` into an earlier
+  day: its row in that day, and a `--from`/`--to` over both days printing rows in revision order
+  across the day boundary; the same day clipped in one batch and in ten yielding identical leaves.
+- **`page-budget-is-not-max`** — a filtered historical ask whose filter rejects every row read:
+  `QUERY MORE … shown=0 pages=<n>` at the budget, the whole history never scanned, `--max`
+  untouched by it, and the continuation answering from the same captured root.
+- **`overlay-is-bounded-and-rebuilt`** — a recovery replaying a thousand settles into overlay pages
+  under `--index-cache`, an eviction under load losing no row, the next clip writing them into the
+  pages, and no query replaying the journal.
+
 The stall replays of 5649089106
 belong to stall detection, deferred below, and are listed there so they are not lost.
 
@@ -4349,6 +4534,67 @@ assignment, replays no bus message and duplicates no external side effect, and a
 promoted only through a fenced validated reconciliation with the current state (replays
 `restore-is-isolated-and-dispatches-nothing`, `a-savepoint-is-not-a-shared-backup`,
 `compaction-keeps-the-last-copy`).
+
+**A savepoint names one complete journal record, and its manifest says which** (#295 at
+`c2be4d6b`, Stella's draft, folded on Rowan's read there). Three boundaries stay three: the
+**retention boundary** is the clip snapshot's and the archive's; a **clip boundary record** in the
+journal names what was clipped and is the offline bundle's base and the dedup index's edge; a
+**savepoint's replay cut** names the last complete journal record its image reflects — and it moves
+neither of the other two. The manifest is one restricted S-expression whose fields, in order, name
+the schema, the journal id, the image's local revision, the replay cut as a sequence and record
+hash, the newest boundary record the image reflects the same way, and two hash-checked content
+references inside the savepoint's own root — the image and the retained local replies — with
+`(:absent)` for the cut or boundary an initial image has none of; the manifest holds no digest of
+itself, and `manifest=<sha>` is its complete canonical bytes hashed outside it:
+
+```lisp
+;; EXAMPLE DATA, NOT A LOCKED CODEC: the content references' path, hash and size form is open below.
+(:schema "work-savepoint-v1" :journal "<64-hex>" :local-revision 812
+ :replay-cut (:sequence 420 :sha256 "<record-hash>")
+ :boundary (:sequence 390 :sha256 "<record-hash>")
+ :state <content-reference> :local-replies <content-reference>)
+```
+
+**The cut can never fall between an envelope's events**: it resolves to one complete verified
+record whose resulting revision is the image's, or the manifest is refused, `SAVEPOINT FAIL id=<id>
+rev=<n>: cut inside an envelope`, and no image is published; the image is the resident state whole
+— configuration, observations and index overlay included — and is neither the clip snapshot nor the
+retention archive. **The local replies are retained until their coverage is verified, and a marker
+alone proves neither coverage nor publication** — the boundary record is the `:boundary` above and
+never a filename or a wall-clock guess: each retained disposition is a request id, its
+payload digest, its accepted record's sequence and hash and the original reply, kept in the image
+even when its events lie before the cut; a disposition whose events lie before the clip boundary is
+retired to the dedup index's `already applied` only once the committed snapshot, its retained
+events and the dedup root that boundary record names are verified reachable, because a commit that
+exists locally is not a push that succeeded; until then the original `OK` still answers or
+`SAVEPOINT NOTE recovery-gap kind=coverage-unverified` prints, and a reply is never deleted, never
+invented and never reconstructed from current state — a restore missing one refuses. **Writing one
+is four steps and restoring one is five**: one immutable image and one record cut captured at the
+same revision under the single writer; the image and reply objects written and synced; the
+candidate manifest validated against their exact identities, then published atomically and synced
+under the declared filesystem contract, the prior verified savepoint kept through it; and on
+restore the manifest, the journal id and the exact cut verified, the image and its replies loaded,
+only the complete records strictly after the cut replayed once in sequence, boundary records
+processed, then the whole validation before anything is exposed — read-only, isolated,
+non-dispatching, promoted only through the fenced reconciliation above. A missing or mismatched
+cut, a missing required tail, a broken hash or sequence or an incomplete envelope is a recovery gap
+by its kind and never a truncation or a rollback of acknowledged work; **a torn tail is evidence of
+an interrupted append, told apart from a corrupt record, and both are kept**. A small cut licenses
+no history-wide pass: a new savepoint verifies what it newly wrote, a retained immutable object
+keeps its prior verified identity, and a later read checks the bytes it uses. **Rotating or pruning
+a journal keeps a reachable verified cut and every tail record and disposition each retained
+savepoint needs, or publishes a validated replacement first** — the newest filename and the largest
+revision are never that proof, and a rotation may hand a bounded locator to the same retained
+record rather than a scan. **The image is one immutable revision, and how it is captured beside a
+running writer is open**: whether by pinning a generation, by copy on write or by a serialization
+held for the capture is specified and tested before concurrent mutation is allowed, and the C, O
+and W roots above imply no copy-on-write mechanism by their names (replays
+`savepoint-cut-never-splits-an-envelope`, `savepoint-write-failure-keeps-the-previous`,
+`copied-journal-grants-nothing`, `reply-retired-only-under-verified-coverage`,
+`rotation-keeps-one-journal`, `torn-tail-is-diagnosed-not-truncated`). **#333 at `79277f05` has no
+savepoint and no boundary record**: its `replay-journal` with a stop sequence is this paragraph's
+cut once it starts at the cut rather than the header, which the journal paragraph above already
+names as its slice to change; nothing here contradicts what it built.
 
 **Seven obligations come from work already done and are fixtures or real-work replays, not an
 invitation to grow a second scheduler** (Stella, `docs/SPEC-WORK-PILOT.md`; each needs an owner in
@@ -4486,6 +4732,18 @@ coordinator and no parallel writer is authorized by any review so far. **Reconci
 cross-bench-backend-is-undecided paragraph with that proposal in one voice is still open and is
 hers**, and it is named here so it is not mistaken for settled.
 
+**What #295 at `c2be4d6b` leaves open is named here with an owner, so a fold is not read as a
+lock.** The **physical codecs** — the byte forms of the prefix-free key encodings, the exact record
+field order, empty roots, path derivation, the minimum wrapper sizes, the detail and segment
+reference forms, the savepoint's content-reference form, and the journal segment header and locator
+forms — are Stella's, as the draft's author, with Emma's #333 the slice that widens the built frame
+to the journal contract above. The **merge fan-in, the temporary runs' bounds and lifetime, and the
+work-continuation's expiry** behind `--page-budget` are Rowan's. The **snapshot-isolation
+mechanism** for capturing one immutable image beside the single writer is Emma's, specified and
+tested before concurrent mutation is allowed. The **bench, lock identity and generation fields of
+the journal header** wait on the cross-bench backend decision above and are Stella's with it. No
+bounded historical-range latency is claimed until the fan-in and the continuation are pinned.
+
 ## Additions of the authors', not in the source
 
 So a reader never mistakes them for Glenn's requirements. Rowan's: the lease model whole
@@ -4600,6 +4858,17 @@ in her sections below,
 the pilot branch and sha, the prototype facts, the rate schedule and virtual cost, the
 `NEXT-TOOLS.md` hand-off, and the fixed-table capability boundary. Each is open to be cut by
 the pilot.
+
+**From #295 at `c2be4d6b`, Stella's draft folded on Rowan's read there**: Stella's — the journal
+id and the record hash chain, the record's retained original reply, the rotation that keeps one
+logical journal, the savepoint manifest and its replay cut, the retained local replies and their
+coverage rule, the prefix-free unhashed keys and the one-tree radix layout, the admission refusal
+of an indivisible record, the day merge by revision and the page budget's need; Rowan's spellings,
+each marked *(Rowan's decision, for review)* where it is made — `--page-budget <n>`, `QUERY MORE`
+with `pages=` and `after=`, `indivisible` and `journal uncertain` as refusal reasons, `cut inside
+an envelope`, the three added `recovery-gap` kinds, `verdict=failed` on a `SAVEPOINT ROW`, `:boundary` as the
+manifest's name for the draft's `:clip-marker`, the `4` below which `--page-records` is refused,
+and the choice of the chain over #333's per-record checksum.
 
 ## Issues, intake, migration, and the one coordinator *(Stella, from her amendment at 60b9027; the one-coordinator rule is Glenn's and supersedes every earlier two-writer sentence)*
 
