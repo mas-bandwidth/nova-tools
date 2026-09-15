@@ -218,7 +218,7 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("a batch with an idle-killed card exits 1, got %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 usd=0.0000 idle=1") {
+	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the idle kill is counted as an abstain and the idle count:\n%s", out)
 	}
 	if !strings.Contains(out, "a: ABSTAIN -- idle 1s") {
@@ -253,7 +253,7 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("a batch over a card that keeps writing exits 0, got %d; stderr: %s", code, errs)
 	}
-	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 usd=0.0000 idle=0") {
+	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 in=0 out=0 usd=0.0000 idle=0") {
 		t.Fatalf("a writing card is done, never idle-killed:\n%s", out)
 	}
 	if !strings.Contains(out, "a all green") {
@@ -285,7 +285,7 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("a batch with one idle kill exits 1, got %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 usd=0.0000 idle=1") {
+	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the BATCH line counts the idle kill in its own idle=<n> field:\n%s", out)
 	}
 	if !strings.Contains(out, "a: ABSTAIN -- idle 1s") || !strings.Contains(out, "b done and clean") {
