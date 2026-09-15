@@ -57,7 +57,7 @@ func fakeRunnerLog(t *testing.T, dir, name, body string) string {
 		"line2=$(sed -n 2p \"$card\")\n" +
 		"if [ \"$line2\" = \"MISSING\" ]; then exit 0; fi\n" +
 		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n" +
-		"cp " + strconv.Quote(logSrc) + " \"$job/native.log\"\n"
+		"cp " + strconv.Quote(logSrc) + " \"$root/$slot/native.log\"\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestBatchNamesMissingResultOnCleanExit(t *testing.T) {
 		"label=\"$1\"; slot=\"$2\"; root=\"$5\"\n" +
 		"job=\"$root/$slot/jobs/$label\"\n" +
 		"mkdir -p \"$job\"\n" +
-		"echo \"line one\" > \"$job/native.log\"\n" +
+		"echo \"line one\" > \"$root/$slot/native.log\"\n" +
 		"exit 0\n"
 	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -535,5 +535,83 @@ func TestBatchSkipsBusySlot(t *testing.T) {
 	}
 	if !strings.Contains(out, "a slot=2: all green") {
 		t.Fatalf("allocation skips the slot whose lock carries a live pid:\n%s", out)
+	}
+}
+
+// TestGatherResultWinsOverEmptyLog: a valid RESULT.md (line 1 equals the contract) is done
+// whatever the log count. fakeRunner publishes RESULT.md and writes no run log, so the card
+// has no native.log and an empty harness.log -- the shape run 10's defect mistook for a stall.
+func TestGatherResultWinsOverEmptyLog(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+	})
+	runner := fakeRunner(t, dir)
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 0 {
+		t.Fatalf("a card with a valid RESULT.md exits 0 even with an empty log, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 in=0 out=0 usd=0.0000 idle=0 stalled=0") {
+		t.Fatalf("a valid RESULT.md is done and never stalled by an empty log:\n%s", out)
+	}
+	if !strings.Contains(out, "a slot=1: all green") {
+		t.Fatalf("line 2 is carried verbatim:\n%s", out)
+	}
+}
+
+// TestGatherCountsNativeLog: the log the gather counts is the child's own run log,
+// <slot>/native.log, not the job's harness.log (which holds only the runner's NATIVE OK line).
+// The card line's log=<n> reflects native.log's non-header lines.
+func TestGatherCountsNativeLog(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+	})
+	runner := filepath.Join(dir, "native-log.sh")
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n" +
+		"printf 'SANDBOX OK backend=fake-wall cmd=opencode\\nline one\\nline two\\n' > \"$root/$slot/native.log\"\n" +
+		"echo 'NATIVE OK label=a rc=0'\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 0 {
+		t.Fatalf("a clean card exits 0, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "a slot=1: all green log=2") {
+		t.Fatalf("the card line counts the child's native.log (2 lines), not harness.log's NATIVE OK line:\n%s", out)
+	}
+}
+
+// TestGatherStallOnlyWithoutResult: the stall rule fires only for a card without a valid
+// RESULT.md. A card whose RESULT.md is present and matches its contract is done whatever its
+// log count; a card with no result at all and no output is named stalled.
+func TestGatherStallOnlyWithoutResult(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\nMISSING"},
+	})
+	runner := fakeRunner(t, dir)
+	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch with one stalled card exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=0 stalled=1") {
+		t.Fatalf("the stall is counted only for the card without a valid RESULT.md:\n%s", out)
+	}
+	if !strings.Contains(out, "a slot=1: all green") || !strings.Contains(out, "b slot=2: ABSTAIN -- stalled (no output after the wall opened)") {
+		t.Fatalf("done wins over an empty log; the stall names only the missing-result card:\n%s", out)
+	}
+	if strings.Contains(out, "a slot=1: ABSTAIN") {
+		t.Fatalf("a valid RESULT.md is never stalled by an empty log:\n%s", out)
 	}
 }

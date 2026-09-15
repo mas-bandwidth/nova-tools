@@ -260,7 +260,7 @@ func Batch(in BatchInput) int {
 		totalIn += rows[i].in
 		totalOut += rows[i].out
 		total += rows[i].usd
-		rows[i].logLines = logOutputLines(filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "native.log"))
+		rows[i].logLines = logOutputLines(cardLogPath(in.Root, c.slot, c.label))
 		// A card the idle monitor killed is its own score, an ABSTAIN that names its reason,
 		// not a missing-result abstain: the card was not hung by its work but stopped growing.
 		if procs[i].idleKilled {
@@ -420,6 +420,19 @@ func readCardUsage(path string) (in, out int, usd float64) {
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }
+
+// cardLogPath is the child's own log the gather counts: <slot>/native.log when the native
+// run wrote one, else the job's harness.log (which carries only the runner's own stdout, the
+// NATIVE OK line). Run 10's defect was counting a log the child never wrote: a card with a
+// valid RESULT.md looked stalled because the gather counted a non-existent native.log under
+// the job directory instead of the child's real log under the slot.
+func cardLogPath(root string, slot int, label string) string {
+	native := filepath.Join(root, strconv.Itoa(slot), "native.log")
+	if _, err := os.Stat(native); err == nil {
+		return native
+	}
+	return filepath.Join(root, strconv.Itoa(slot), "jobs", label, "harness.log")
+}
 
 // logOutputLines counts a card's own output lines: everything in the run log after the
 // sandbox's own header lines, each beginning "SANDBOX ", is what the model wrote once the
