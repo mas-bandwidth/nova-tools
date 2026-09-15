@@ -895,6 +895,28 @@ they are distinct kinds:
     beside `friends` and `models`, under the same one writer and one journal, and moves no
     count, roadmap or required set. `goal update` writes no `:goal` event: it writes a
     `:transition` or an `:evidence` event on the goal node by their own field lists above.
+  - `:offer` — `:offer`, `:attempt`, `:generation` (the node's, pinned), `:to`, `:profile`
+    (`<capability-id>@<config-revision>`), `:request-ref`, `:payload`, `:payload-sha256`, `:reserve`, `:until`, `:requested-model`,
+    `:predecessor-offer`, `:predecessor-attempt`, `:reason`; `:acknowledge` — `:offer`, `:reply`,
+    `:stage` (`:received` or `:accepted`), `:provenance`, `:provenance-sha256`, `:deadline`,
+    `:default`, `:observed-model`, `:bench`, `:execution`, `:reason`; `:decline` — `:offer`,
+    `:reply`, `:provenance`, `:provenance-sha256`, `:reason`. **Their subject is the task node
+    and an offer identity**: `:node` is the node the offer names, and `OFFER OK`, `ACKNOWLEDGE
+    OK` and `DECLINE OK` print `node=<id> offer=<id>`. Each also carries three fields **the
+    verifier derives and a request never supplies** — `:sender`, `:receipt-digest`, `:effect` —
+    the session's own half of the envelope, outside the payload digest as a `:settle` is;
+    `:effect` is one of `:dispatched`, `:received`, `:accepted`, `:accepted-held`, `:declined`,
+    `:late`, `:duplicate`, or `:cancelled` on the one `:offer` an undo appends to end a pending
+    offer (*Assignment and execution control* below).
+  - `:execution-control` — `:change` (`:pause`, `:stop`, `:resume`, `:correct` or `:reconcile`),
+    `:control` (the prior control a `:resume` or a `:reconcile` names, `(:absent)` otherwise: a
+    new control's identity is its own request id), `:scope` (a typed selector, `(:node "<id>")`,
+    `(:repo "<owner>/<name>")` or `(:all)`), `:action` (`:release-hold` or `:resume-workers`),
+    `:instructions`, `:sha256`, `:manifest`, `:reason`. **Its subject is a control and not a
+    node**: `:node` is `(:absent)` and `EXECUTION OK` prints `control=<id>`. The capture anchor,
+    the target manifest and the receipts the engine derives are records outside the payload
+    digest, as a long operation's are. A `:correct` change writes the node's own `:correct` event
+    in the same envelope under one request id, so a retry cannot bump a generation twice.
   - `:baseline`, `:discovery`, `:remove`, `:require`, `:defer`, `:cancel` (carrying
     `:evidence` that the worker stopped), `:reopen`, `:split`, `:supersede`, `:scope`, `:axis`,
     `:source`, `:settle`, `:revive` — the scope log: a baseline records the required set of its node **as the tool
@@ -1011,7 +1033,10 @@ every `state` that may follow, so a reopened node that landed in a state an impl
 would be a different set for every implementation (Fable and Opus at d1b20f42, 2026-09-13). **A `:cancel` is admitted only from
 `:cancel-requested`** — the one edge the table below gives it — and an `event --kind cancel`
 on a node in any other state is refused by rule 10 as an invalid transition, so the scope log
-is never a way around the transition table. `:unknown` is explicit and is neither
+is never a way around the transition table; **and its `:evidence` must cover every attempt of
+the node that was live or uncertain at the request**, each confirmed stopped or `not-started`,
+so one worker's stop note cannot cancel a node with another live attempt (*Assignment and
+execution control* below). `:unknown` is explicit and is neither
 zero nor not-started (5653970526). Its generation is the count of its `:correct` events. The
 allowed transitions are a table the validator holds: from `:todo` to `:doing`, `:blocked`,
 `:cancel-requested`; from `:doing` to `:blocked`, `:review`, `:done`, `:cancel-requested`;
@@ -1954,7 +1979,8 @@ its intake, so no second transport is invented here. Every client verb that list
 duration comes from a flag: `--window` is required by `who` and `stale`, `--by` by `take` and
 by `release --handed` — **where it names the lease's `:deadline` and never the event's `:by`**,
 the author of every event being `--as` and the stored `:by` being what `--as` wrote —
-`--every` and `--clip-every` by `session start`. **`--as <name>` is caller text on every verb**:
+`--every` and `--clip-every` by `session start`; `--by` and `--default` on `acknowledge --stage
+accepted` are the same two flags meaning the same lease. **`--as <name>` is caller text on every verb**:
 the tool authenticates nobody, the name is what the record will say, and the one place it is
 checked against anything is `release`, below. On `session replay` it names the coordinator
 applying the bundle and is recorded in `:generation-owner`; **the event's `:by` stays the
@@ -1994,6 +2020,15 @@ nova-work goal set       --session <path> <write flags> --expect <rev> [--scope 
 nova-work goal show      (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --as <name> [--scope <scope>] --max <n>
 nova-work goal update    --session <path> <write flags> --expect <rev> [--scope <scope>] (--progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text>)   (writes on the current goal node of the scope and on no other node)
 nova-work machine        --session <path> <write flags> (--register <id> --name <text> --owner <name> --connect <ref> --role <build|test|profile> ... | --retire <id> | --permit <id>=<kind> | --exclude <id>=<kind> | --limit <id> <key>=<n|n,n,...> | --fact <id> <key>=<value> --declared-by <name>) --reason <text>
+nova-work offer          --session <path> <write flags> --node <id> --offer <offer-id> --to <name> --profile <capability-id>@<config-revision> --attempt <attempt-id> --generation <n> --request-ref <opaque-id> --payload <pointer> --payload-sha256 <hex> --reserve <slots> --until <stamp> [--requested-model <model-id>] [--predecessor-offer <offer-id> --predecessor-attempt <attempt-id>] [--reason <text>]
+nova-work acknowledge    --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --stage <received|accepted> --provenance <pointer> --provenance-sha256 <hex> [--by <duration|stamp> --default <release|extend-once|escalate:<name>>] [--observed-model <model-id>] [--bench <name>] [--execution <handle>] [--reason <text>]   (--stage accepted: --by and --default, required, create-if-needed; --stage received: both exit 2)
+nova-work decline        --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --provenance <pointer> --provenance-sha256 <hex> [--reason <text>]
+nova-work execution pause     --session <path> <write flags> (--node <id> | --repo <owner/name> | --all) --reason <text>
+nova-work execution stop      --session <path> <write flags> (--node <id> | --repo <owner/name> | --all) --reason <text>
+nova-work execution resume    --session <path> <write flags> --control <id> --action <release-hold|resume-workers> --reason <text>
+nova-work execution correct   --session <path> <write flags> --node <id> --instructions <pointer> --sha256 <hex> --reason <text>
+nova-work execution reconcile --session <path> <write flags> --control <id> --from <manifest-id> --reason <text>   (a content identity, never a local path)
+nova-work execution status    --session <path> --control <id> [--max <n>]
 nova-work clip           --session <path> --as <name> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
 nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]
 nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
@@ -2034,7 +2069,11 @@ nova-work help
 list|create|verify|restore|compare`, `undo-plan`/`undo`/`redo-plan`/`redo` with `--request-of`,
 and `friend`, `config`, `model`, `observe` and `machine` with their flags. Stella's companion names the
 operations and leaves the spelling open, and *Additions of the authors'* gathers them again so a
-reviewer can find them in one place rather than two.
+reviewer can find them in one place rather than two. **The `offer`, `acknowledge`, `decline` and
+`execution …` spellings are her draft's (#294 at `4fddfcb2`)**, folded in *Assignment and
+execution control* below with one change: `acknowledge --stage accepted` spells its lease inputs
+`--by` and `--default`, as `take` does, in place of the draft's `--lease-by` and
+`--lease-default`, by the no-parallel-aliases rule **(Rowan's decision, for review)**.
 
 **What a mutation does, stated exactly.** `node add`, `node remove`, `node require`,
 `decompose`, `accept`, `dep`, `axis`, `cell`, `responsible` and `source` are structure verbs: each appends one structure event and, where it changes a
@@ -2465,6 +2504,12 @@ new work with a `:dep` on the closed id, which is a record of the decision and n
 | `source` | `source --to` the preimage sha | — |
 | `take` | a `release` envelope | the lease has expired or another holder took it |
 | `release` | a `take` envelope restoring the preimage holder and deadline | the node has since been taken by another |
+| `offer` | a cancellation of the pending offer, releasing only its untouched reservation | the offer has been handed to transport — a claimed or in-flight send included — a receipt exists, or a successor changed its lineage; the way on is `decline`, a hold or a replacement offer |
+| `acknowledge`, `decline` | — | always: each records a verified receipt, and an acceptance may have created or bound a lease; a later decline, hold, release or reconciliation is a new act |
+| `execution pause`, `execution stop` | a reversal removing only this untouched hold and cancelling its unsent directives | any directive delivered or any target uncertain; the way on is `execution resume --action release-hold` after the control's outcomes reconcile, and no undo claims a worker restarted |
+| `execution resume` | a reversal restoring only the prior untouched hold and cancelling unsent resume directives | a resume delivered, or a running or unknown observation |
+| `execution correct` | a reversal, only before any correction directive leaves the coordinator and only while the old and new generation postimages and the retained instruction identity are unchanged | any delivery or any old- or new-generation uncertainty; a reapply of earlier instructions is a new generation with lineage, never a rewind |
+| `execution reconcile` | — | always: it records validated observations; a later reconciliation records a new set and keeps the earlier one, contradictions included |
 | `state --to <s>` | a `state --to` the preimage state, and where the original settled the item, the `event --kind reopen` envelope that writes its `:revive` | the preimage state is unreachable by the transition table |
 | `event --kind baseline` | — | always: a baseline records what the set was at a moment |
 | `event --kind discovery` | a `node require --to false` for each member it added | a member has since closed |
@@ -2547,13 +2592,6 @@ not a second way in:
   disagree the stored metadata is the requirement and `render`'s flags are the gap.
 - **`prioritise`** — a recorded ordering act. No field of *The data* holds a priority either, so
   this is a noun and a verb both.
-- **`offer`, `acknowledge`, `decline`** — *Friends, CONFIG and ACTIVE* distinguishes dispatch,
-  delivery, acknowledgement and accepted ownership as four facts, and only the lease verbs write
-  any of them. A pending offer has no verb and so no event.
-- **`pause`, `stop`, `reconcile`** — `a-stop-reaches-distributed-work` is an obligation with no
-  verb to reach it, and `:cancel-requested` is a state written by `state --to :cancel-requested`
-  from `:todo`, `:doing`, or `:blocked` (997–999; 1007–1008), and reachable from
-  `:unknown` by a transition carrying evidence or a reason (1002–1003).
 - **`session export --at <revision>`** — `full-round-trip` asks for the **export of a captured
   revision**, and `session export` exports requests, not a revision's state. The export the
   acceptance suite names is a verb this draft does not have.
@@ -2819,6 +2857,264 @@ holds on a machine — is not a fleet slot and is never counted as one** (Johnny
 `observe` and a probe change no member), `no-machine-name-in-the-tool`, `one-profile-one-unit`,
 `no-credential-in-a-member`, `unknown-owner-is-refused`, `fleet-for-is-a-recommendation-not-a-lease` (the ask writes no lease
 and leaves `who` unchanged), `an-excluded-choice-is-refused-not-empty`.
+## Assignment and execution control *(Stella's draft, nova-tools #294 at `4fddfcb2`, folded; Root and Terra's corrections taken as she took them; the spellings are this file's)*
+
+**The six verbs the missing-verb register named, and two beside them, have their contracts here
+and their spellings in *The verbs*: `offer`, `acknowledge` and `decline` for an assignment, and
+`execution pause`, `stop`, `resume`, `correct` and `reconcile` for work already distributed.** They add no second
+scheduler, no provider adapter, no bus and no protocol lock: every one of them is a mutation verb
+under the one writer, the one journal, `<write flags>` and the dedup predicate of *Retention*,
+and every external effect it starts is a long operation of *The engine and its client* with its
+own durable id. What this section settles is which fact each verb writes and which it must never
+infer.
+
+**Dispatch, delivery, acknowledgement and accepted ownership are four facts, and the four verbs
+keep them apart** (*Friends, CONFIG and ACTIVE* above). `offer` writes dispatch — the
+coordinator's intent to send a named offer — and nothing else: no node state, no task evidence,
+no `:attempt`, no lease and no W. `acknowledge --stage received` writes delivery, a verified
+report that the named recipient received that exact offer, and consents to nothing. `acknowledge
+--stage accepted` writes accepted ownership, the coordinator's admission of a verified acceptance
+as an assignment to a lease holder; it changes no `:responsible` and proves nothing about whether
+remote work began. `decline` writes a verified refusal. None of the four is inferred from
+another, and none of them launches anything (replay `four-facts-four-verbs`).
+
+**A receipt is a verified observation and never a request's word.** A bus note, a launcher
+callback and a copied JSON body are provenance data; `--as` names the request's author and
+authenticates nobody, as on every verb. The coordinator admits `acknowledge` and `decline` only
+after an **operator-configured verifier** has returned the configured recipient identity, a
+stable receipt id and the digest of the received bytes, and the three fields it derives —
+`:sender`, `:receipt-digest`, `:effect` — are the session's own half of the envelope, refused
+when a plain request carries them. **The verifier, the provenance body and the offered payload
+are staged inputs**: their readers run outside the mutation loop, produce immutable staged bytes
+and a validation result, and only then does the one writer revalidate `--expect`, the offer's
+immutable tuple, the profile and the capacity before admitting one envelope — *Slow I/O stages
+its inputs and results outside the mutation loop* applied here and not a second rule. A stale or
+failed stage writes no reservation, no lease, no W entry and no receipt, and `status` answers
+while the stage runs. A verifier outage is `ACKNOWLEDGE FAIL … : provenance unverified`, canonical
+state unchanged, and never a bus body promoted to authority (replays `a-receipt-needs-a-verifier`,
+`staged-admission-refuses`).
+
+**An offer is an identity the recipient must echo whole.** `--offer <offer-id>` is drawn by the
+requester and unique in the session — `--request` stays the mutation's idempotency key and is
+not substituted for it — and the offer pins `--node`, the node's current `--generation`, an
+`--attempt <attempt-id>`, the recipient `--to`, the execution profile `--profile
+<capability-id>@<config-revision>` (an entry of that friend's CONFIG at that exact revision, one
+of the four capability groups), `--request-ref` for the transport, `--payload <pointer>` with
+its `--payload-sha256` — the exact bounded assignment body, instructions and any non-secret
+launch plan, staged by its configured reader and retained by the writer before the offer is
+acknowledged, so the dispatched bytes are the retained bytes — `--reserve <slots>`, required and
+positive, **because capacity is declared and never guessed from a catalog or an old heartbeat**,
+and `--until <stamp>`, the response deadline, which is neither the request's `--deadline` nor
+the lease's. A replacement names `--predecessor-offer` and `--predecessor-attempt` and
+overwrites neither lineage. An absent `--requested-model` is unknown, never CONFIG's usual model
+(*requested-model-is-not-observed-model*). A receipt is admitted only against the same offer id,
+node and generation, attempt id, payload digest and profile revision it was sent with. **`offer`
+refuses, nothing written**: a malformed id, stamp or digest; a reused offer or attempt id; a
+profile that is not that friend's at that revision, or under whose policy the requested model is
+not admissible; a payload whose staged digest is not `--payload-sha256`; a reservation that is
+not positive or that declared free capacity does not cover; a stale `--generation`; a
+predecessor that is not this node's; an effective hold on the scope (below); and **a
+cross-holder conflict** — a second offer or live attempt for one node is admitted only for the
+same current or proposed lease holder with its own declared capacity, and an offer to another
+name while a holder is pending or accepted is refused, because **an offer cannot create a shadow
+lease** and reassignment is a reconciliation (replays `offer-writes-intent-and-a-reservation`,
+`no-shadow-lease-across-holders`). Admitted, it writes `:effect :dispatched`, a pending-offer
+entry in the assignment index under both the node and the friend, and a reservation keyed by
+`(offer, attempt)`; the friend is not thereby willing or available (*willingness is never
+inferred from configured capacity*).
+
+**Acceptance creates exactly one lease or binds to the holder's own.** `acknowledge --stage
+accepted` requires an earlier verified `:received` on the offer, a still-current generation, an
+unresolved pending offer, and either no live lease on the node or a live lease held by that same
+recipient; it carries `--by` and `--default` as **create-if-needed lease inputs**, so two
+concurrent acceptances from one holder need no second payload once the first has created the
+lease. Where no lease exists, the one accepted envelope writes `:effect :accepted`, converts the
+reservation to **committed** execution capacity — an accounting fact, not an observation that
+work runs — creates one canonical `:lease` with the supplied deadline and default, and W updates
+from it once. Where the holder's lease exists, the envelope binds the assignment to it in the
+assignment index and changes neither its deadline nor its default; `ACKNOWLEDGE OK` names the
+lease that actually holds. The binding is the index's and not a field of the lease. **No
+`:attempt` is written because a recipient accepted**: an execution's handle, observed model,
+usage and outcome arrive by `observe --attempt` and `attempt`, independently, as the
+requested-model rule already says (replay `accepted-creates-one-lease-or-binds`).
+
+**A deadline releases nothing and a late reply revives nothing.** At `--until` an unanswered
+offer is **overdue and unreconciled**: no new offer and no automatic launch is admitted for it,
+the reservation stands, and any receipt that then arrives is retained as `:effect :late` with no
+conversion and no release — only `execution reconcile` below chooses the next act. Lease expiry
+takes the task out of W as *The lease* says and leaves the friend's ACTIVE capacity and any
+uncertain execution retained (W4). A timely `decline` records `:declined` and releases only that
+still-pending reservation; a decline after acceptance or over an uncertain execution is `:late`
+and releases neither committed nor uncertain capacity. **Receipt id and digest are a second
+uniqueness key beside the request id**: the same request replays to its recorded disposition;
+the same verified receipt under a fresh request journals one no-effect `:duplicate` receipt and
+consumes no capacity twice; a receipt after a decline, an acceptance, a generation change, an
+expiry or a replacement is `:late`, linked to its lineage, and can create no lease, no launch, no
+conversion and no release; **conflicting bytes for one receipt id are refused**. Silence is
+still a question and not a failure (replays `until-is-overdue-not-released`,
+`late-and-duplicate-receipts-are-retained`).
+
+**A stop is a scheduling hold plus directives, and it is not a cancellation.** `execution pause`
+installs a **durable scheduling hold** on its scope and stages a cooperative pause directive for
+each captured assignment; `execution stop` installs the same hold and stages stop directives. The
+scope is a typed selector, `(:node "<id>")`, `(:repo "<owner>/<name>")` or `(:all)`, never a
+reserved node id, and it covers descendants later added or moved beneath it; **a held node cannot
+be moved out from under its hold while a captured or uncertain execution remains** — moving it is
+a reconciliation, not an escape. A worker that reports no pause or stop support is counted
+`unsupported`, neither killed nor counted paused, and its hold and its uncertainty stand; a
+target with no report is `unresolved`, and the two are never one count. Neither verb
+cancels the task, marks it done, grants a permission or restarts anything, and a later offer is
+its own admission. `session stop` ends the coordinator's session and `operation cancel` ends a
+local long operation; **neither spelling is overloaded to mean this**. And the task's own
+cancellation is untouched: **the request is `state --to cancel-requested` — or `goal update
+--stop`, which is that edge — and the confirmation is `event --kind cancel --evidence`, the one
+evidence-bearing operation, admitted from `:cancel-requested` alone**, exactly as *States and
+transitions* and *The current goal* say; `execution stop` writes no transition, adds no edge to
+the table and is not a second cancellation mechanism. What this section adds to that gate is
+stated at the gate, in *States and transitions*: the `:cancel`'s evidence covers the attempt
+set — `stopped` or `not-started` below, per attempt — so **one worker's stop note cannot cancel
+a node with another live attempt**. A coordinator who wants a task cancelled and its workers
+stopped writes two things, the request on the node and `execution stop --node`, and neither
+implies the other **(Rowan's decision, for review)**. `goal show`'s `stop=` stays derived from
+the state and no hold is read into it (replays
+`stop-is-a-hold-not-a-cancel`, `one-stop-note-cannot-cancel-two-attempts`).
+
+**The hold is durable before it is acknowledged, and the capture is anchored before it is
+read.** Admission journals the hold and a recoverable **capture anchor** — the validated base
+snapshot hash, the accepted journal boundary and the captured model revision — and only then
+replies `EXECUTION OK`, so a crash can never leave an acknowledged pause with no hold or no
+reproducible target set. Here C/O/W is the source's closed, open and working root of *The data*
+and **not copy-on-write**: the in-memory pointer is no anchor. The capture then selects pending
+offers and current or unresolved executions **through the existing node, repository and friend
+indexes**, reads that immutable revision in pages bounded by `--page-bytes` and `--page-records`,
+stores the ordered target manifest with its content hash, and stages one directive per target
+with a stable identity — proportional to the selected assignments and no read of all of C, and
+**no promise of an O(1) stop of arbitrarily many workers**. A lease expiry cannot remove a target
+from the capture. **A clip may publish while a capture is live, and it carries the pin forward**:
+the anchored snapshot object and the committed journal span stay retained until the manifest is
+durable, and the capture never reconstructs from a newer scope; where the configured retention
+cannot hold those exact references, admission refuses the control before acknowledging it rather
+than waiting on I/O or weakening the capture, and the pin is released only after the manifest's
+anchor and bytes verify (replays `hold-survives-a-crash`, `capture-survives-clip`).
+
+**The dispatch barrier is checked at offer, at conversion and at the last send.** The single
+writer that admits an offer, converts an acceptance to a lease and hands a directive to
+transport revalidates every effective hold at each of those three points, so an offer prepared
+before a hold cannot launch after it and no dispatch slips between capture and hold. **An
+acceptance arriving under a hold is retained as `:effect :accepted-held`**, reservation intact:
+no lease, no launch, no capacity release; lifting the hold does not convert it, and only
+`execution reconcile` rechecks its generation, identity, capacity and the other holds. Work
+already launched stays in the manifest; an in-flight send with an uncertain outcome stays a
+target until reconciled. A directive carries the control id, the offer and attempt identity, the
+node generation, the coordinator's fencing generation, the action and the content hash; a
+transport retry resends that identity and never makes a new model job; a receiver refuses a
+stale fence or a mismatched target with a bounded disposition. **Delivery, acknowledgement and an
+observed pause or exit are three receipts**, a bus receipt proving delivery to the configured
+transport and nothing further; imported prose mutates nothing. Pending sends and uncertain
+outcomes survive clip and recovery so a successor reconciles before it resends; a fence stored
+in a message is not proof that a provider enforces it (replays `no-dispatch-slips-past-a-hold`,
+`held-acceptance-converts-nothing`).
+
+**A control is a long operation and `EXECUTION OK` acknowledges intent, not a stopped fleet.**
+Its transport is `op=execution` under *The engine and its client*: durable id before it is
+printed, `operation wait`, `operation cancel` as a request with its own disposition, and
+**refused by its own entry id inside an atomic batch** (B4) — an independent batch may carry it
+with per-entry correlation. `execution status --control <id>` prints bounded counts — selected,
+pending-delivery, acknowledged, confirmed, unsupported, unresolved — and one row per target
+under `--max`; an observation that times out prints unresolved, completes nothing and launches
+no replacement.
+
+**An observation manifest is evidence, retained with provenance, and contradictions are kept.**
+`execution reconcile --control <id> --from <manifest-id>` admits a bounded, content-addressed
+manifest whose records bind control, offer and attempt id, node generation, source identity,
+observed handle, observation time, an outcome in `running`, `paused`, `stopped`, `completed`,
+`not-started`, `unsupported`, `unknown`, and result and usage references where present. A late
+record about an earlier attempt attaches there and releases nothing of the newer one; a negative
+process lookup counts only for its bound execution identity; **silence, an expired lease and an
+elapsed estimate are not stop evidence**; contradictory observations are preserved unresolved,
+never last-write-wins; missing usage stays unknown, **and a stop report never synthesises zero
+cost**. `not-started` qualifies **only when the responsible launch authority durably rejects that
+exact assignment identity from future launch** — a queue miss is not it — and it alone may
+release an unlaunched reservation without inventing an attempt. Confirmed termination permits
+capacity reconciliation but **bypasses no holder-only `release`**: a validated release by the
+holder may join the envelope, and otherwise the lease reads held-not-worked to its deadline or
+an authorised settlement; the coordinator never signs for a holder. It manufactures no verdict
+and erases no result, usage, side effect or history; a completed execution still needs ordinary
+evidence to make its task done; capacity held for an unknown execution is never advertised free;
+W stays live leases and ACTIVE keeps the uncertain executions W no longer names (replay
+`reconcile-preserves-contradiction`).
+
+**Resume is two different acts under one verb.** `--action release-hold` removes only its named
+control's hold, after the outcomes that control required have reconciled; overlapping holds stay
+effective, and it neither resumes nor relaunches a remote process. `--action resume-workers`
+stages an explicit resume directive for each confirmed-paused bound execution, refuses an
+unsupported capability before sending, and **keeps the hold until a running observation at the
+resumed boundary arrives** — a delivery receipt alone releases nothing; it starts no replacement
+and lifts no other control's hold. An `unsupported` outcome closes the control's transport
+operation `failed` and clears neither the hold nor the uncertainty (replay
+`resume-is-two-actions`).
+
+**`execution correct` is the correction that reaches workers, and the bare `correct` is not.**
+It installs the node's hold, captures its old-generation executions, writes the node's own
+`:correct` event and binds the new generation to immutable instruction bytes and their SHA-256,
+all in one envelope under one request id, so a retry cannot bump the generation twice. The
+instruction reference is data — no command, no access grant — and its configured reader
+validates and bounds the bytes **outside** the mutation loop; the writer revalidates the
+revision, the generation and the holds after the staged bytes return and retains those bytes,
+and dispatch sends the retained body and never newer text at the reference; a missing,
+mismatched or stale stage refuses whole. Each capable worker receives the old and new
+generation, its offer and attempt, and the instruction hash, and acknowledges the boundary it
+applied, keeping old-generation usage and results as **a linked segment, not a rewrite** of the
+earlier attempt; an unsupported correction stays held and the way on is `execution stop`,
+reconciliation and a new offer with lineage — never an automatic duplicate launch. **The bare
+`correct` still invalidates evidence and claims no delivery, and while any execution of the node
+is live or uncertain it is refused, `CORRECT FAIL node=<id>: execution live, use execution
+correct`**, because otherwise it would bypass the barrier (an amendment to *The verbs*; replays
+`correct-is-a-linked-segment`, `bare-correct-refuses-under-execution`).
+
+**Undo stops at transport handoff, and a handoff includes a claimed send.** The rows are in the
+reversible-verb table above; what the table does not say is the boundary: a reversal is admitted
+while the exact postimage, the captured target set and the hold generation are unchanged, and
+**a claimed or in-flight send with no receipt is a handoff**, because the absence of a receipt
+does not prove a directive was never sent. The `offer` compensator is one `:offer` event with
+`:effect :cancelled`, the session's own, and until its codec is pinned (open item 6) an
+implementation refuses the undo rather than inferring that a queue, a worker or a lease can be
+restored (replay `undo-names-its-reversible-set`, extended to these rows).
+
+```lisp
+;; EXAMPLE DATA, NOT PRODUCT CONSTANTS: one offer, its two receipts and a hold.
+(:kind :offer :id "e-7c21" :node "schema/fixed-tables/versioning/cpp" :by "coord" :stamp "2026-09-15T02:00:00Z"
+ :offer "o-4b9e" :attempt "a-0d13" :to "worker-a" :profile "child-agent@17" :request-ref "dispatch-91"
+ :generation 2 :payload "note:bus:coord-5e1a" :payload-sha256 "3f…" :reserve 1 :until "2026-09-15T02:30:00Z"
+ :requested-model (:absent) :predecessor-offer (:absent) :predecessor-attempt (:absent) :reason (:absent)
+ :sender (:absent) :receipt-digest (:absent) :effect :dispatched)
+(:kind :acknowledge :node "schema/fixed-tables/versioning/cpp" :offer "o-4b9e" :reply "r-1" :stage :received
+ :provenance "note:bus:worker-a-88c0" :provenance-sha256 "9a…" :deadline (:absent) :default (:absent)
+ :observed-model (:absent) :bench (:absent) :execution (:absent) :reason (:absent)
+ :sender "worker-a" :receipt-digest "9a…" :effect :received)
+(:kind :acknowledge :node "schema/fixed-tables/versioning/cpp" :offer "o-4b9e" :reply "r-2" :stage :accepted
+ :provenance "note:bus:worker-a-88d4" :provenance-sha256 "c2…" :deadline "2026-09-15T08:00:00Z" :default :release
+ :observed-model (:absent) :bench (:absent) :execution (:absent) :reason (:absent)
+ :sender "worker-a" :receipt-digest "c2…" :effect :accepted)          ; created lease l-…, W += the node
+(:kind :execution-control :node (:absent) :change :stop :control (:absent)
+ :scope (:node "schema/fixed-tables/versioning/cpp") :action (:absent) :instructions (:absent) :sha256 (:absent)
+ :manifest (:absent) :reason "wrong generation dispatched")            ; hold durable; capture anchored; op=execution queued
+```
+
+**What this section leaves open, each with an owner, and none of it inferred meanwhile.** (1) The
+receipt-verifier interface and its bounded public output, and how a configured friend identity
+is bound without a secret in any record — Stella. (2) The assignment-index binding from an
+accepted offer to the holder's existing lease, outside the lease schema — Stella. (3) The wire's
+omission, `null` and list grammar and byte limits for the payload, the reason, the provenance
+body, execution handles and the assignment body — Rowan, with the protocol table. (4) The
+reconciliation and reassignment policy: what may clear uncertain capacity and authorise a
+replacement — Glenn. (5) Model-only pool actors as recipients without an invented friend —
+the open decision of *Friends, CONFIG and ACTIVE*, Stella. (6) The capture-pin and clip
+representation in *Retention*, the reversal-envelope codec and its relation to `undo`, the
+derived capture, receipt and observation codecs, adapter pause, resume and correction
+capabilities with the segment-boundary codec, and fencing enforcement at the receiver — Stella,
+before any runtime intake. (7) The `EXECUTION` and `OFFER` line shapes below are this file's
+first spelling and are a protocol-lock decision — Rowan.
 
 ## Models, prices and what they are evidence of *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
 
@@ -3319,7 +3615,7 @@ chain, high fan-out, and on one multi-command session.
 
 Every line's first token is the verb's (`SESSION`, `EXPORT`, `REPLAY`, `HANDOFF`, `CLIP`,
 `OPERATION`, `SAVEPOINT`, `UNDO`, `REDO`, `FRIEND`, `CONFIG`, `MODEL`, `OBSERVE`, `GOAL`, `MACHINE`,
-`WORK`, `VERIFY`, `QUERY`, `RENDER`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
+`OFFER`, `ACKNOWLEDGE`, `DECLINE`, `EXECUTION`, `WORK`, `VERIFY`, `QUERY`, `RENDER`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
 `RESPONSIBLE`, `ACCEPT`, `SOURCE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`,
 `ATTESTED`, `STATE`, `CORRECT`, `EVENT`), the second is `OK` or `FAIL`, `RACED` for a push the base predicate
 refused (SPEC-MERGE rule 21's shape, exit 1, nothing pushed), or one of the informational
@@ -3369,7 +3665,7 @@ QUERY ROW <machine-id> kind=machine name=<text> owner=<name> roles=<build,test,p
 QUERY FAIL ask=fleet rows=0 shown=0: <id> excludes <kind>   (--for with --node on a member that excludes the kind: a refusal, never an empty answer)
 QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable   (a state-as-of ask whose day partition the committed root names and this read could not open; never answered from a later row)
 QUERY FAIL ask=<kind> after=<cursor> pinned=<rev> current=<rev>: page expired   (a continuation whose captured revision the session can no longer serve; never a drifted page)
-OPERATION OK id=<id> op=<capture|stage|export|clip> state=<queued|running|done|cancelling|cancelled|failed> started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>
+OPERATION OK id=<id> op=<capture|stage|export|clip|execution> state=<queued|running|done|cancelling|cancelled|failed> started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>
 OPERATION ROW id=<id> op=<kind> state=<s> started=<stamp> updated=<stamp> external=<known|uncertain|none>   (operation list, and one per event of a wait's cursor)
 OPERATION NOTE waiting id=<id> timeout=<duration> after=<cursor>   (a wait that timed out: the operation is still running, and this line says so)
 OPERATION FAIL id=<id> op=<kind> state=<s>: <reason>
@@ -3396,6 +3692,16 @@ GOAL ROW kind=<objective|criterion|constraint|note|progress|blocker|lease|attemp
 GOAL MORE rows=<n> shown=<n>   (constraint rows and the stop are never among the cut)
 GOAL FAIL scope=<scope> goal=<id|-> expect=<rev> current=<rev>: stale   (nothing written)
 GOAL FAIL scope=<scope> goal=<id|->: <reason>   (no such node; disposition=<done|cancelled|superseded|removed>; not a writer of the scope; no edge; stop requested; notes index unloadable — each named, exit 1, nothing written)
+OFFER OK id=<event-id> request=<id> node=<id> offer=<id> attempt=<id> to=<name> effect=dispatched reserved=<n> until=<stamp> rev=<n> pushed=<rev|-> emitted=<bytes>
+ACKNOWLEDGE OK id=<event-id> request=<id> node=<id> offer=<id> attempt=<id> stage=<received|accepted> effect=<received|accepted|accepted-held|late|duplicate> lease=<lease-id|-> reserved=<n> committed=<n> rev=<n> pushed=<rev|-> emitted=<bytes>   (lease= names the lease that actually holds, created or bound; a late or duplicate line carries its original lineage in offer= and attempt=)
+DECLINE OK id=<event-id> request=<id> node=<id> offer=<id> attempt=<id> effect=<declined|late|duplicate> released=<n> rev=<n> pushed=<rev|-> emitted=<bytes>
+OFFER FAIL node=<id> offer=<id>: <reason>   (malformed id, stamp or digest; offer or attempt id reused; profile not <name>'s at <revision>; model not admissible; payload digest mismatch; reserve not positive; capacity <n> < reserve <n>; stale generation; predecessor not this node's; held by control <id>; holder conflict with <name> — each named, exit 1, nothing written)
+ACKNOWLEDGE FAIL node=<id> offer=<id> reply=<id>: <reason>   (provenance unverified; tuple mismatch; invalid stage; no received receipt; conflicting bytes for receipt <id> — nothing written; DECLINE FAIL the same shape)
+EXECUTION OK id=<event-id> request=<id> control=<id> change=<pause|stop|resume|correct|reconcile> scope=<selector> operation=<id|-> selected=<n> rev=<n> pushed=<rev|-> emitted=<bytes>   (durable intent and an anchored capture, never a stopped fleet; operation= is the directives' transport, - for a release-hold and a reconcile)
+EXECUTION OK control=<id> change=<c> selected=<n> pending-delivery=<n> acknowledged=<n> confirmed=<n> unsupported=<n> unresolved=<n> rev=<n> pushed=<rev|-> shown=<n> emitted=<bytes>   (execution status: no event, no id=)
+EXECUTION ROW control=<id> node=<id> offer=<id> attempt=<id> generation=<n> disposition=<pending-delivery|acknowledged|confirmed|unsupported|unresolved> observed=<running|paused|stopped|completed|not-started|unsupported|unknown|-> at=<stamp|->
+EXECUTION FAIL control=<id> change=<c>: <reason>   (unknown selector; capture pin unrepresentable; instructions unverified; stale generation; unsupported before send; no such control — exit 1, nothing written, no hold installed)
+CORRECT FAIL node=<id>: execution live, use execution correct   (an attempt of the node live or uncertain: the bare verb bypasses no barrier)
 RENDER OK view=<id> cells=<n> private=<n> bytes=<n> into=<path> pushed=<rev|-> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> private=<n> drifted=<n> into=<path>: <reason>
 NODE NOTE already-closed node=<id> disposition=<d> settled=<stamp>   (a same-id retry returns its prior disposition and writes nothing; a fresh-id repeat while still closed appends one typed no-effect receipt with changed=0)
@@ -3415,10 +3721,11 @@ nova-work <build identity> <goos>/<goarch> <go version>
 
 where `<MUTATION>` is one of `NODE`, `DECOMPOSE`, `ACCEPT`, `SOURCE`, `DEP`, `AXIS`, `CELL`,
 `RESPONSIBLE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`, `ATTESTED`, `STATE`,
-`CORRECT`, `EVENT`, `UNDO`, `REDO`, `FRIEND`, `MODEL`, `OBSERVE`, `MACHINE` and `CONFIG` (its `--intake`
-form alone), `GOAL` (its `set` and `update` forms). **Eight of them name no node, and their lines are written out above rather than left
+`CORRECT`, `EVENT`, `UNDO`, `REDO`, `FRIEND`, `MODEL`, `OBSERVE`, `MACHINE`, `OFFER`, `ACKNOWLEDGE`,
+`DECLINE`, `EXECUTION` and `CONFIG` (its `--intake`
+form alone), `GOAL` (its `set` and `update` forms). **Nine of them name no node, and their lines are written out above rather than left
 to `node=`**: `UNDO` and `REDO` print `nodes=<n>`, `FRIEND`, `OBSERVE` and `CONFIG --intake`
-print `friend=<name>`, `MODEL` prints `model=<id>`, `GOAL` prints `scope=<scope> goal=<id|->`, and `MACHINE` prints `machine=<id>` — each the subject its `:event` kind above
+print `friend=<name>`, `MODEL` prints `model=<id>`, `GOAL` prints `scope=<scope> goal=<id|->`, `MACHINE` prints `machine=<id>`, and `EXECUTION` prints `control=<id>` — each the subject its `:event` kind above
 names, each still carrying `id=`, `request=`, `rev=` and `pushed=`, so the once-only retry
 promise reads the same for them as for every other mutation. The rest each
 add the fields their section names (`LEASE OK … holder= deadline= default= live=`, `STATE OK
@@ -3783,6 +4090,53 @@ of this list and are not repeated here):
   **`return-reconciles-before-dispatch`** — the configured silence threshold triggering one bounded
   ping, a nonresponsive capacity marked unavailable with reason `unconfirmed` and no claim of sleep
   or exhausted credit, a failed probe read as unresolved delivery, and explicit rest respected.
+- **`four-facts-four-verbs`** and **`offer-writes-intent-and-a-reservation`** — an admitted
+  `offer` with declared free slots writing `:effect :dispatched`, a pending-offer index entry and
+  a reservation, and leaving node state, W, the lease index, attempts, evidence and completion
+  unchanged; `acknowledge --stage received` writing delivery only; nothing inferred from
+  anything.
+- **`a-receipt-needs-a-verifier`** and **`staged-admission-refuses`** — a copied note and an
+  `--as <recipient>` with no verifier result refused with no canonical write; a verifier or
+  payload reader that returns after a conflicting revision, or fails validation, writing no
+  reservation, receipt, lease or W change while `session status` answers inside its bound.
+- **`accepted-creates-one-lease-or-binds`** and **`no-shadow-lease-across-holders`** — an
+  accepted receipt after `received` creating exactly one `:lease` and one W entry, or binding a
+  second attempt to the same holder's lease with its deadline unchanged, converting and never
+  doubling capacity, an absent observed model recorded unknown; a cross-holder offer or accepted
+  reply refused or retained late and creating no lease.
+- **`until-is-overdue-not-released`** and **`late-and-duplicate-receipts-are-retained`** — at
+  `--until` and at lease expiry no duplicate launch and no stopped or completed claim, the
+  reservation and any uncertain execution retained until reconciled; a late accept after a
+  decline, a replacement, an expiry or a generation change retained `:late`, reviving no lease
+  and overwriting no successor; the same request replaying its success, the same verified
+  receipt under a new request consuming no capacity, conflicting bytes for one receipt id
+  refused.
+- **`stop-is-a-hold-not-a-cancel`** and **`one-stop-note-cannot-cancel-two-attempts`** —
+  `execution stop --node` writing a hold and directives and no transition, `goal show` still
+  printing `stop=none`; `state --to cancel-requested` then an `event --kind cancel` whose
+  evidence covers one of two live attempts refused, the same with both covered admitted.
+- **`hold-survives-a-crash`** and **`capture-survives-clip`** — a crash after the hold is durable
+  and before capture or send recovering the same hold and target identities with no duplicate
+  launch; a clip completing between the anchor and the manifest, the pin resolving the same
+  revision and span, and an unrepresentable pin refusing admission before `EXECUTION OK`.
+- **`no-dispatch-slips-past-a-hold`** and **`held-acceptance-converts-nothing`** — an offer
+  prepared before a pause refused at the last send; a launch, a correction and a move raced
+  against a scope pause all held; an acceptance under a hold retained `:accepted-held` with no
+  lease, launch or release until reconciled, and a lift of the hold converting nothing.
+- **`reconcile-preserves-contradiction`** — live, expired, pending, paused, unsupported and
+  unreachable targets captured exactly through the indexes in bounded pages; duplicate, delayed
+  and out-of-order receipts and a forged source inferring no ownership, release, cancellation or
+  completion; two contradictory observations kept unresolved; a stop report carrying no
+  synthesised zero usage; two attempts on one task stopped by two receipts, usage retained apart,
+  the task counted once in W; and the holder-only `release` rule unbypassed by a confirmed exit.
+- **`resume-is-two-actions`** — `release-hold` lifting only its control's hold with an
+  overlapping hold still effective and no process resumed; `resume-workers` refusing an
+  unsupported capability before sending and holding until a running observation, a delivery
+  receipt alone releasing nothing.
+- **`correct-is-a-linked-segment`** and **`bare-correct-refuses-under-execution`** — one
+  envelope writing the hold, the `:correct` and the instruction binding, a retry bumping the
+  generation once; a worker's old-generation usage kept as its own segment; the bare `correct`
+  refused by name while an attempt is live and admitted once none is.
 - **`endpoint-is-local-and-private`** — the session's directory created `0700` and its socket
   `0600`, both owned by the account that runs it, a pre-existing directory or socket with wider
   modes refused rather than reused, the Windows named pipe created with
@@ -4005,7 +4359,8 @@ rewritten as a competing tool):
   the remaining uncertainty are preserved, not a green badge.
 - **`a-stop-reaches-distributed-work`** — a priority change, correction, pause or stop across
   already-distributed tasks, with durable request identity, delivery and acknowledgement and
-  reconciled execution handles; blocked questions and bounded fallback plans persisted **so a
+  reconciled execution handles — reached by `execution pause`, `stop` and `correct` of
+  *Assignment and execution control*; blocked questions and bounded fallback plans persisted **so a
   missing answer at night does not stall every independent task**.
 - **`cost-joins-include-the-coordinator`** — comparable-work experiment records and complete
   operational cost joins, coordinator overhead and rework included, with elapsed time attributed to
@@ -4177,7 +4532,14 @@ as the line that prints it with its unit and revision; the word *savepoint* and 
 decision, marked *(Rowan's decision, for review)* where it is made**: the atomic mutation
 batch refusing a long-operation entry **by its own entry id**, which is where `bc4a4a4`'s
 *refuse the verbs marked as carrying an external effect* had to be written once draft 27 had
-settled that the external effects are outcomes and not verbs of this grammar;
+settled that the external effects are outcomes and not verbs of this grammar; **and the fold of
+Stella's #294 (`4fddfcb2`), whose contracts are hers and whose spellings are marked *(Rowan's
+decision, for review)* where made**: `--by` and `--default` on `acknowledge` in place of
+`--lease-by` and `--lease-default`; the `:offer`, `:acknowledge`, `:decline` and
+`:execution-control` kinds with their ordered field lists and subjects; `execution status`; the
+`OFFER`, `ACKNOWLEDGE`, `DECLINE` and `EXECUTION` line shapes and `op=execution`; the
+cancellation request and `execution stop` kept as two acts that imply nothing of each other;
+the six reversible-verb rows over eight verbs;
 the exact list of refused reader syntax beyond `#.` (every dispatch macro,
 `#'`, quote, backquote, package-prefixed symbols, ratios, floats, characters); `;` comments
 discarded by the reader; the three bound flags and their no-default rule; unknown keys
