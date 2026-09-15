@@ -7,7 +7,7 @@ Help AI friends coordinate work without repeatedly rebuilding the plan in their 
 **Planning baseline: 10 epics, 52 features, 171 inventoried items (166 acceptance items and 5 open questions).**
 **Verified implementation: 0%.** This is proposed scope for review, not a delivery-date or effort estimate.
 The current main branch has no production `nova-work` engine or CLI; existing prototypes and written specs do not count as verified production features.
-Current scope after the recorded moves and discoveries: 57 product features and 201 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
+Current scope after the recorded moves and discoveries: 63 product features and 231 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
 
 The current work register is below. The first internal C/O kernel has merged; a merged partial implementation and passing subset tests do not mark a full production feature verified. The planning source records partial support for E01-F01, E01-F03, E01-F05, E03-F01 and E04-F01 with the merged subset evidence; their cells remain ❌ until all criteria pass.
 
@@ -17,7 +17,7 @@ Completion is verified features divided by applicable features; it is not averag
 This roadmap uses **epic → feature → sub-feature/acceptance item**, with no language axis.
 [Recursive work data](docs/roadmaps/nova-work.sexp) retains stable IDs, dependencies and source references.
 This baseline format is planning data, not a claim that nova-work import/export already exists.
-Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation), proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound), proposed `spec/nova-work` PR #339 (the fleet), `SPEC-WORK.md@685b7c2` (efficiency policy, merged to `spec/nova-work` by PR #317 as `cf5dd8f5`), and PR #319 `SPEC-WORK.md@9488a19` (recursive project/stream grouping, merged to `spec/nova-work` as `9c120a3b`). A source-section label below is resolved through its named file/revision key.
+Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation), proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound), proposed `spec/nova-work` PR #339 (the fleet), `SPEC-WORK.md@685b7c2` (efficiency policy, merged to `spec/nova-work` by PR #317 as `cf5dd8f5`), and PR #319 `SPEC-WORK.md@9488a19` (recursive project/stream grouping, merged to `spec/nova-work` as `9c120a3b`). The E11 source section *Delegation* resolves through the sexp's `:delegation-fold` key (`SPEC-WORK.md` at this fold's head, folded from `SPEC-DELEGATION.md`, PR #335). A source-section label below is resolved through its named file/revision key.
 
 | Epic | Features | Verified |
 |---|:---:|:---:|
@@ -31,14 +31,15 @@ Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WOR
 | [Coordinator protocol, friends and execution records](#e08) | 5 | 0% |
 | [Issue intake, migration and external boundaries](#e09) | 5 | 0% |
 | [Diagnostics, measurement and release gates](#e10) | 7 | 0% |
+| [Delegation](#e11) | 6 | 0% |
 
 ## Scope movement
 
 | Baseline features | Discovered after baseline | Verified | Reopened | Removed | Current features |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| 52 | 6 | 0 | 0 | 1 | 57 |
+| 52 | 12 | 0 | 0 | 1 | 63 |
 
-Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation, ten efficiency-policy, three recursive-grouping, one fleet and two efficiency-lessons acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
+Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation, ten efficiency-policy, three recursive-grouping, one fleet and two efficiency-lessons acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. The six E11 features and their 27 acceptance items are the DELEGATION contract folded into `SPEC-WORK.md` section *Delegation* on Glenn's word of 2026-09-15, spoken live in Rowan's window and carried by no comment id ("merge 'delegation' into work spec as a new epic"); they enter the denominator unverified; 231 is the sexp's 204 plus 27, and this file's earlier 201 and 203 were stale against the sexp and are reconciled here. Append discoveries with reasons; record decomposition and removal separately.
 Do not count removal as completion. These counts track inventory movement, not estimated engineering effort.
 
 ## Open questions
@@ -51,7 +52,7 @@ Do not count removal as completion. These counts track inventory movement, not e
 
 ## Research and Development (R&D)
 
-All active engineering and research items outside the v1 product feature denominator are organized in this explicit R&D register. These items track active prototypes, compiler and runtime hardening, protocol companions, decision packets, and adapter explorations across the team. Items in this register do not grant completion credit toward the v1 product denominator (57 features and 203 acceptance items). Current evidence snapshot at 2026-09-15T01:40:00Z (main `16a1d479`, spec `efb6dbe7`); PR #335 (V2-F05 coordinator notes, draft 1) merged at 45b44bdb and has no register row.
+All active engineering and research items outside the v1 product feature denominator are organized in this explicit R&D register. These items track active prototypes, compiler and runtime hardening, protocol companions, decision packets, and adapter explorations across the team. Items in this register do not grant completion credit toward the v1 product denominator (63 features and 231 acceptance items). Current evidence snapshot at 2026-09-15T01:40:00Z (main `16a1d479`, spec `efb6dbe7`); PR #335 (V2-F05 coordinator notes, draft 1) merged at 45b44bdb and has no register row.
 
 | ID | Work Item | Status | Owner | Next Gate | Source / Evidence |
 |---|---|:---:|:---:|:---:|---|
@@ -867,11 +868,98 @@ Source sections: Output grammar; The verbs; Required test suites.
 
 </details>
 
+<a id="e11"></a>
+
+### Delegation
+
+| Feature | Verified |
+|---|:---:|
+| E11-F01 — Coordinator notes: record, identity and one writer | ❌ |
+| E11-F02 — The current goal across models and harnesses | ❌ |
+| E11-F03 — Admission gates 1 to 3: notes read, packet bounded, route eligible | ❌ |
+| E11-F04 — Execution and result gates 4 to 6: real bounds, receipts by machinery, integration | ❌ |
+| E11-F05 — Decision packets | ❌ |
+| E11-F06 — The envelope up and escalation: the no survives the hop | ❌ |
+
+<details>
+<summary>Sub-features, prerequisites and acceptance scope</summary>
+
+**E11-F01 — Coordinator notes: record, identity and one writer**
+
+Prerequisites: E01-F01, E03-F01, E08-F01.
+
+- [ ] notes-refuse-missing-source-or-date: refuse a write without --source or --date, or with a :kind outside :instruction, :observation and :heuristic, at exit 2 naming the field, nothing written
+- [ ] notes-id-is-content-digest: assign :id as note:<sha256> over the canonical eight fields so two benches yield one id; refuse a second write of the same preimage as already written; never reuse an id
+- [ ] notes-writer-is-scoped: refuse a coordinator-scope note by another --as, a group-scope note by a non-member and an unregistered --as; a note grants no access
+- [ ] notes-bounds-refuse: refuse a write past :max-active, :max-text-bytes or :max-constraint-nodes naming the field and both numbers; refuse to guess a missing bound; a supersede never changes the active count
+- [ ] notes-supersede-is-one-envelope: write the replacement and the supersede as one validated envelope or neither; refuse the second of two competing supersedes as not active; never print a superseded note as active
+- [ ] notes-weaker-kind-cannot-supersede: refuse an :observation or :heuristic replacement for an :instruction; inherit :kind and :scope from the old note and require a new :source
+
+Source sections: Delegation; The data; Output grammar.
+
+**E11-F02 — The current goal across models and harnesses**
+
+Prerequisites: E11-F01, E03-F02, E08-F01.
+
+- [ ] goal-crosses-harness: a second build and harness reads the same goal, rev, stop=requested and the same note id and constraint row byte for byte, live and from the snapshot; its progress update on the stopped goal is refused
+- [ ] goal-stale-update-refuses: refuse goal update and goal set with a stale --expect as GOAL FAIL naming expect and current, nothing written; refuse goal set to a closed node by disposition whatever --expect says
+- [ ] goal-stop-is-a-request-not-evidence: goal update --stop writes only a :transition to :cancel-requested with :reason and no :evidence; show prints stop=requested; stop=cancelled only after event --kind cancel with evidence
+- [ ] goal-update-writes-only-existing-kinds: every goal update form writes a :transition or :evidence event with its kind's field list on the goal node and no other; goal set writes one :goal event; objective edits never go through update
+- [ ] goal-expect-is-required: refuse goal set and goal update without --expect at exit 2 naming the flag; --dry-run with a stale expectation prints the refusal and writes nothing
+
+Source sections: The current goal; Delegation; Acceptance replays.
+
+**E11-F03 — Admission gates 1 to 3: notes read, packet bounded, route eligible**
+
+Prerequisites: E11-F01, E08-F04, E10-F02.
+
+- [ ] applicable-before-route: route selection calls applicable first and prices only routes printed eligible; a card builder handed an excluded or unknown route refuses naming the note id or the reason
+- [ ] applicable-cap-never-hides-a-deny: with more active notes than --max and the only :deny in the note that sorts last, applicable prints excluded with that id and NOTES MORE; goal show prints the constraint row uncut
+- [ ] applicable-unknown-is-not-eligible: with no live session and no --snapshot, a snapshot past a bound, a missing notes index or an unregistered model, print NOTES FAIL and no eligible row
+- [ ] applicable-snapshot-is-planning-only: an answer from=snapshot admits no route; the admitting write carries --expect the live rev and a stop or deny written between check and admission refuses it stale
+- [ ] narrative-does-not-filter: a note with prose and no :constraint is printed and excludes nothing; a :deny excludes only a candidate matching every named axis; two disagreeing constraints print both and exclude
+- [ ] delegation-admission-gates: refuse a packet lacking objective, source revision, criteria, scope, result contract, checkpoint or :effort at gate 2; refuse a dispatch crossing the daily spend ceiling at gate 3 naming the ceiling; each refusal names its gate and reason at exit 2
+
+Source sections: Delegation; Admission and result gates; Efficiency: lessons absorbed 2026-09-15.
+
+**E11-F04 — Execution and result gates 4 to 6: real bounds, receipts by machinery, integration**
+
+Prerequisites: E11-F03, E08-F05, E05-F02.
+
+- [ ] delegation-result-gates: refuse an offer to a friend reading asleep or unknown at gate 4; record the requested execution limit and the observed expiry or stop outcome separately; never start a second attempt silently after uncertainty about the first
+- [ ] receipt-at-exact-head: book a child's result as a machinery receipt at the exact head it ran against; bind a review verdict to --head <sha> and never reuse it across a changed head or an unchecked rebase
+- [ ] partial-child-never-closes-parent: one child done beside one refused, blocked or asleep leaves the parent open with outstanding=<n> and the mapped external issue open; the outstanding count and the issue mapping survive the child's refusal unchanged
+
+Source sections: Delegation; Admission and result gates; Presence: who is awake and who is asleep; Assignment and execution control.
+
+**E11-F05 — Decision packets**
+
+Prerequisites: E11-F04, E08-F02.
+
+- [ ] decision-packet-per-item-revision: machinery builds one packet per item and revision; a newer revision supersedes it keeping its open findings; a busy reader's packet is amended, not duplicated; an empty pulse wakes no model
+- [ ] packet-is-smallest-sufficient: the packet carries the delta since this reader's recorded head, the rules it touches, open findings with dispositions, new behaviour with evidence pointers and links to full sources; the whole diff only on a first read
+- [ ] no-receipt-of-receipt: a worker returns one structured result; a verdict is keyed (reader, sha) and a gate (base, head, integration) in one durable home; an independent review is not re-routed through the coordinator; a receipt of a receipt is refused as a duplicate
+
+Source sections: Delegation; Efficiency: lessons absorbed 2026-09-15.
+
+**E11-F06 — The envelope up and escalation: the no survives the hop**
+
+Prerequisites: E11-F04, E11-F05, E08-F03.
+
+- [ ] no-survives-the-hop: a decline, refused offer, excluded route, asleep recipient, tripped node or effort limit reaches the parent as a named refusal with its reason and revision, never as silence or success
+- [ ] envelope-up-is-a-copy: the child's verdict, result pointer, evidence events, usage pointer and exact head arrive byte-copied by machinery beside its distilled learning in its own words; the parent can open the child's evidence from the envelope
+- [ ] finality-rises-with-tier: a child's done is a claim; the parent moves only after its own verification with evidence bound to its own criteria; a worker's success claim alone never moves a node below the seat
+- [ ] escalation-is-a-packet: a hold, question or exception the child cannot decide rises as a packet with reason and revision; escalated-age= and reread= are information and reassign nothing; an :effort widening or expensive-route exception carries the coordinator's recorded reason
+
+Source sections: Delegation; Efficiency: lessons absorbed 2026-09-15; Presence: who is awake and who is asleep.
+
+</details>
+
 ## Future Plans (v2)
 
 Issue [#321](https://github.com/mas-bandwidth/nova-tools/issues/321) (including coordinator delegation notes and shared goal requirements confirmed in [comment 5672006742](https://github.com/mas-bandwidth/nova-tools/issues/321#issuecomment-5672006742)) and [PR #335](https://github.com/mas-bandwidth/nova-tools/pull/335) define the scope for future v2 architecture: arbitrary real/virtual/mixed node hierarchies, durable repository-backed virtual nodes, mapped GitHub completion return paths, personal/group coordinator notes, and set/retrieve/update operations for the shared current goal across models and harnesses.
 
-All v2 capabilities are grouped into this explicit epic outside the v1 product feature denominator. The v1 denominator remains strictly **57 features and 203 acceptance items** (5 partial, 0 verified).
+All v2 capabilities are grouped into this explicit epic outside the v1 product feature denominator; V2-F05-01 and V2-F05-02 are marked `folded` because their contracts now stand in E11 inside the denominator, and their rows remain here as the record of where they came from. The v1 denominator remains strictly **63 features and 231 acceptance items** (5 partial, 0 verified).
 
 | ID | Feature Area / Acceptance Item | Extends | Status | Owner | Next Gate | Source |
 |---|---|---|:---:|:---:|:---:|---|
@@ -887,8 +975,8 @@ All v2 capabilities are grouped into this explicit epic outside the v1 product f
 | V2-F04-01 | After agreed completion and review, close the correctly mapped Issue and post or update one correlated Discussion completion summary with evidence; a child alone cannot close a group Issue and a summary does not imply Discussion closure or accepted answer | E09-F05 | `proposed` | unassigned | v2-spec | [Issue #321](https://github.com/mas-bandwidth/nova-tools/issues/321) |
 | V2-F04-02 | Persist the intended upstream operation before delivery and retain acknowledgment; local accepted completion with failed or interrupted GitHub delivery remains visibly pending and reconciles after restart without duplicate comments or closures | E09-F05 | `proposed` | unassigned | v2-spec | [Issue #321](https://github.com/mas-bandwidth/nova-tools/issues/321) |
 | V2-F04-03 | Preserve mappings and resolve contradictory upstream reopen, reassignment or transfer while updates are pending; an externally closed Issue does not prove local acceptance, and a future native backing preserves unresolved work and evidence | E09-F05 | `proposed` | unassigned | v2-spec | [Issue #321](https://github.com/mas-bandwidth/nova-tools/issues/321) |
-| V2-F05-01 | Personal and shared coordinator notes retain author, conversational source, applicability, revisions and routing constraints; load relevant notes when models or harnesses change | E08-F01 | `proposed` | rowan | goal-contract | [Issue #321 (c5672006742)](https://github.com/mas-bandwidth/nova-tools/issues/321#issuecomment-5672006742), [PR #335](https://github.com/mas-bandwidth/nova-tools/pull/335) |
-| V2-F05-02 | Set, retrieve and update a shared current goal across models and harnesses in the canonical work set, preserving stable identity, revision-aware edits, ownership, stop state, progress and completion evidence; native harness goals are synchronized views rather than independent ledgers | E08-F01 | `proposed` | rowan | goal-contract | [Issue #321 (c5672006742)](https://github.com/mas-bandwidth/nova-tools/issues/321#issuecomment-5672006742), [PR #335](https://github.com/mas-bandwidth/nova-tools/pull/335) |
+| V2-F05-01 | Personal and shared coordinator notes retain author, conversational source, applicability, revisions and routing constraints; load relevant notes when models or harnesses change | E08-F01 | `folded` | rowan | E11-F01 | [Issue #321 (c5672006742)](https://github.com/mas-bandwidth/nova-tools/issues/321#issuecomment-5672006742), [PR #335](https://github.com/mas-bandwidth/nova-tools/pull/335) |
+| V2-F05-02 | Set, retrieve and update a shared current goal across models and harnesses in the canonical work set, preserving stable identity, revision-aware edits, ownership, stop state, progress and completion evidence; native harness goals are synchronized views rather than independent ledgers | E08-F01 | `folded` | rowan | E11-F02 | [Issue #321 (c5672006742)](https://github.com/mas-bandwidth/nova-tools/issues/321#issuecomment-5672006742), [PR #335](https://github.com/mas-bandwidth/nova-tools/pull/335) |
 
 ## Review and build gates
 
