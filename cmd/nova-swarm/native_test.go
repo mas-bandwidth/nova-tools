@@ -38,12 +38,12 @@ func nativeSandbox(t *testing.T) string {
 	return bin
 }
 
-// sandboxArgv reads the argv the wall recorded into the slot directory, if any.
-func sandboxArgv(t *testing.T, slot string) string {
+// sandboxArgv reads the argv the wall recorded into the job directory, if any.
+func sandboxArgv(t *testing.T, jobDir string) string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(slot, "sandbox-argv"))
+	raw, err := os.ReadFile(filepath.Join(jobDir, "sandbox-argv"))
 	if err != nil {
-		t.Fatalf("the wall recorded no argv under %s: %v", slot, err)
+		t.Fatalf("the wall recorded no argv under %s: %v", jobDir, err)
 	}
 	return string(raw)
 }
@@ -314,6 +314,96 @@ func TestNativeRunChildDirIsJobDir(t *testing.T) {
 	}
 }
 
+// TestNativeChildCwdIsJobDirFromForeignCwd: the walled child also runs in the job
+// directory, and it does so even when the caller's own cwd is somewhere else entirely.
+// The test chdirs away from the slot, the root, and the job directory, then runs the
+// walled path and asserts the fake harness's pwd is exactly the job directory.
+func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	label := "foreign-cwd-label"
+
+	foreign := t.TempDir()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(foreign); err != nil {
+		t.Fatalf("chdir to a foreign directory: %v", err)
+	}
+	defer func() { _ = os.Chdir(orig) }()
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		sandbox: sandbox,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the walled run exits 0, got %d:\n%s", code, errOut.String())
+	}
+	jobDir := filepath.Join(slot, "jobs", label)
+	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+	if err != nil {
+		t.Fatalf("the child did not write pwd into RESULT.md under the job directory: %v", err)
+	}
+	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
+	want, err := filepath.EvalSymlinks(jobDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, want)
+	}
+}
+
+// TestNativeOKNamesTheWall: NATIVE OK names the wall it ran inside, copied from the wall's
+// own SANDBOX OK line, and says none when no wall was named -- so a run without a wall is
+// visible in the one line a caller reads.
+func TestNativeOKNamesTheWall(t *testing.T) {
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+
+	t.Run("no_wall", func(t *testing.T) {
+		root, slot := aSlot(t)
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
+			"--deadline", "10s"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 0 {
+			t.Fatalf("exit 0, got %d:\n%s", rc, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "NATIVE OK ") || !strings.Contains(stdout.String(), " sandbox=none ") {
+			t.Fatalf("NATIVE OK names the wall none when no wall runs:\n%s", stdout.String())
+		}
+	})
+
+	t.Run("walled", func(t *testing.T) {
+		t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+		root, slot := aSlot(t)
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
+			"--deadline", "10s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 0 {
+			t.Fatalf("exit 0, got %d:\n%s", rc, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), " sandbox=fake-wall ") {
+			t.Fatalf("NATIVE OK copies the wall's own name (fake-wall):\n%s", stdout.String())
+		}
+	})
+}
+
 // THE WALL RULES OF THE NATIVE RUN (slice 11, lesson 11). A frozen run configuration gains
 // two lists: repos (repositories a card may clone) and recipients (bus lanes a card may
 // address, default none). The native run passes them to the sandbox layer as allow rules:
@@ -340,7 +430,7 @@ func TestNativeRunPassesRepoAllowRule(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("a walled run with a repo rule exits 0, got %d:\n%s", code, errOut.String())
 	}
-	argv := sandboxArgv(t, slot)
+	argv := sandboxArgv(t, filepath.Join(slot, "jobs", "a-label"))
 	if !strings.Contains(argv, "--repo mas-bandwidth/nova-tools") {
 		t.Errorf("the wall argv does not carry the repo allow rule:\n%s", argv)
 	}
@@ -365,7 +455,7 @@ func TestNativeRunDeniesBusInsideWall(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("a walled run exits 0, got %d:\n%s", code, errOut.String())
 	}
-	argv := sandboxArgv(t, slot)
+	argv := sandboxArgv(t, filepath.Join(slot, "jobs", "a-label"))
 	for _, denied := range []string{"nova-bus", "--recipient"} {
 		if strings.Contains(argv, denied) {
 			t.Errorf("the wall argv grants a bus lane the wall denies (%q):\n%s", denied, argv)
