@@ -4310,7 +4310,9 @@ intake that creates it.
 At load the session builds six indexes — id to node, containment adjacency, reverse dependency,
 repository, category (5654164074), and **reverse roadmap reference: from a node id to every
 roadmap that has it as a first-axis member, and to every cell whose `:ref` names it** — and every
-read walk goes through the five read-path indexes. **A seventh is opened rather than built or loaded: C's closed index**, which the
+read walk goes through the five read-path indexes — id to node, containment adjacency, reverse
+dependency, repository and category, the reverse roadmap reference being the sixth and on the
+write path only. **A seventh is opened rather than built or loaded: C's closed index, additional to the six**, which the
 clip publishes beside the snapshot in bounded pages and which no walk over O has to rebuild —
 keyed by `:id` and by `<event-rev>:<id>`, partitioned by event day, ordered by event revision, and
 grouped by repository, so a rollup reads a settled member's newest row in one bounded lookup, a
