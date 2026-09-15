@@ -237,6 +237,47 @@ line binds the card it heads; the swarm records the same hash at admission and r
 after line 2. `<head>` is the repo's default-branch head at cut time, read once per repo per
 `cut` run; a candidate whose repo cannot be read is `skipped` with the reason, never cut blind.
 
+## The duty tier
+
+Three tiers share the estate: **planning** (a person and the strong model —
+decisions, specs, rules; output is cards and notes); **duty** (a bounded
+controller on the cheapest qualified model); **work** (swarms and local models).
+`nova-pulse` is the work tier's scatter-gather; the duty tier owns the bus wait
+and the harvests, and never spends the two turns the planning tier exists to save
+(Glenn 2026-09-15: *"I want the intelligence; I don't want to spend it sending
+out jobs and reading results."*).
+
+Duty **executes an approved finite policy and never expands it.** Its bounds:
+
+- **Single owner of the bus wait.** One duty line at a time; the wait is a
+  watch, not a poll.
+- **One card per work item, deduplicated on the contract line.** Two cards with
+  the same line 1 are one item; the second is dropped, never re-cut.
+- **Revalidates the PR head before any side effect.** A merge, read or abstain
+  first re-reads the PR's head; a moved head voids that decision, not the drive.
+- **An explicit shift length, with a handoff line at the end.** The last line of
+  every shift is the handoff: `SHIFT END cycles=<n> decisions=<n> escalations=<n>`.
+- **Quiet time makes no model call and sends no status note.** No new decision,
+  no note; state is published mechanically (the `WIDTH` line).
+- **Never merges a draft spec, never edits a spec, never addresses the person.**
+  Specs are the planning tier's; the person is addressed only by escalation.
+
+An abstain or a `HOLD` read is triaged by rewriting its card from a template, never
+decided in place; a dogfood issue is filed; a fix card is cut; a non-draft PR is
+merged on an approving read plus green CI. A decision the policy does not name is
+**not** made — it is escalated, one line:
+
+`ESCALATE <stamp> <kind> <ref>: <one line>`
+
+`<stamp>` is the clock's, `<kind>` is the decision's own (`hold`, `abstain`,
+`conflict`, `dogfood`, `merge`), `<ref>` names the card, PR or issue, and `<one
+line>` is the single sentence a person reads.
+
+Replays that pin the bounds: `duty-never-expands-policy`,
+`duty-quiet-time-makes-no-call`, `duty-dedups-on-contract-line`,
+`duty-revalidates-head-before-merge`, `duty-never-merges-draft`,
+`duty-shift-ends-with-handoff`.
+
 ## What this draft does not do
 
 - **No model routing beyond the kind→model table.** Two routes, six kinds, one file in git.

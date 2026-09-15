@@ -520,6 +520,10 @@ WAKE BLOCKED as=<name> uncertain=<id> queued=<n>: a dispatch may still own this 
 WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n> queued=<n> cc=<n> failed=<n> max_wait=<d> idle=<duration>
 FRIEND <name> awake|asleep|unknown age=<seconds|-> source=bus-cursor
 AWAKE OK friends=<n> awake=<n> asleep=<n> unknown=<n> window=<n>
+FACT process = proven|unproven
+FACT beat = proven|unproven
+FACT delivery = proven|unproven
+FACT wake = proven|unproven
 AWAKE REFUSED <reason>
 ```
 
@@ -530,6 +534,22 @@ the verdict line that ends the listing, and `AWAKE REFUSED` the shape for the
 things wrong about the world rather than the invocation (no `--bus`, a `--bus`
 that is not a git repository, a `--window` that is not positive, a negative
 `--max`).
+
+**The four presence facts.** A harness claiming a friend is `awake` proves four
+facts separately, one `FACT <kind> = proven|unproven` line each: `process` — the
+friend's process is alive; `beat` — a bus heartbeat was written within
+`--window`; `delivery` — the note was handled, i.e. receipted; `wake` — the
+parent was notified, i.e. the model woke. All four `proven` is `awake`; one
+`unproven` degrades the row to the fact that failed.
+
+**The wake drill.** A note sent after the parent's turn ended must produce a wake
+within `--window`, or the harness's `wake-drill` column says `cannot`, and that
+row is not trusted to be here. The per-harness table is one row a harness, six
+columns — the four `FACT` words and the drill:
+
+| harness | process | beat | delivery | wake | wake-drill |
+|---|---|---|---|---|---|
+| `<name>` | proven | proven | proven | proven | wakes within --window |
 
 `WAKE CHANGE`, `WAKE QUIET`, `WAKE BROKEN` and, since 2026-09-13, `WAKE STOPPED`
 are the **last** line and the four possible verdicts. **`sources-failing=<n>`
@@ -3775,6 +3795,12 @@ left without what it pins.
     answer-within=2m` (draft 3, the grammar's new field); a `probe --line` over a
     `--state` a `watch` holds is `WAKE REFUSED` exit 2 naming the holder, and a
     `PRESENT` or `SILENT` probe leaves the state file byte-identical.
+20. `wake-drill-note-after-turn-wakes-parent`: a note sent after the parent's
+    turn ended produces a wake within `--window` and the harness row's
+    `wake-drill` column reads `wakes within --window`; a fixture whose note lands
+    past `--window` reads `cannot`, and that row's `wake` fact stays `unproven`.
+    A mutation that writes `wakes` while no note was receipted within the window
+    turns the test red.
 
 ## Known limits
 
