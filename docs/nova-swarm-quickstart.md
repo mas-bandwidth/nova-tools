@@ -80,6 +80,19 @@ ROOT="$5"
 JOB_DIR="$ROOT/$SLOT/jobs/$LABEL"
 mkdir -p "$JOB_DIR"
 
+# Scope git root to the slot directory so OpenCode does not traverse into parent checkouts
+if [ ! -d "$JOB_DIR/.git" ]; then
+  git -C "$JOB_DIR" init -q
+fi
+
+# If using a custom OpenAI-compatible provider (e.g. inception/mercury-2.5)
+if [ -f "$HOME/.config/opencode/opencode.json" ]; then
+  cp "$HOME/.config/opencode/opencode.json" "$JOB_DIR/opencode.json"
+fi
+if [ -z "${INCEPTION_API_KEY:-}" ] && [ -f "$HOME/.config/freddy/env" ]; then
+  export INCEPTION_API_KEY="$(cat "$HOME/.config/freddy/env" | tr -d '\n\r ')"
+fi
+
 exec nova-swarm native \
   --harness /Users/Shared/nova-swarm-stella-20260913/harness-v1.18.20/opencode \
   --model "$MODEL" \
