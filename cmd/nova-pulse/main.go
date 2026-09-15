@@ -102,6 +102,7 @@ func cmdPool(args []string, stdout, stderr io.Writer) int {
 	root := f.fs.String("root", "", "")
 	out := f.fs.String("out", "", "")
 	timeout := f.fs.Int("timeout", 120, "")
+	max := f.fs.Int("max", 0, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -109,6 +110,9 @@ func cmdPool(args []string, stdout, stderr io.Writer) int {
 	f.want(*root, "root", "the directory holding seen.tsv and the pool state")
 	if *timeout < 1 {
 		f.problems = append(f.problems, fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
+	}
+	if *max < 0 {
+		f.problems = append(f.problems, fmt.Sprintf("--max wants a whole number of candidates or 0 for no bound, got %d", *max))
 	}
 	if f.refused(stderr) {
 		return 2
@@ -118,6 +122,7 @@ func cmdPool(args []string, stdout, stderr io.Writer) int {
 		Root:    *root,
 		Out:     *out,
 		Timeout: time.Duration(*timeout) * time.Second,
+		Max:     *max,
 		Stdout:  stdout,
 		Stderr:  stderr,
 	})
