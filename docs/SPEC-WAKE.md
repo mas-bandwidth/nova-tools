@@ -58,11 +58,13 @@ nova-wake watch --state <file> --max <duration> --on-deadline <word> --interval 
       [--reports <dir> ...]
 nova-wake serve --bus <dir> --as <name> --on-note <command> --interval <duration> --state <file> --hours <h> [--receipt --remote <name> --branch <name>] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
 nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> [--on-note-idempotent]
+nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]   --window default 300, --max default 50
 nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
 nova-wake help
 ```
 
-One verb that watches, one that serves, one that shows a first run, and `help`.
+One verb that watches, one that serves, one that asks who is awake, one that
+shows a first run, and `help`.
 The two shapes are exactly two: `watch` is a **blocking tool call** inside a
 turn the session is already spending, and `serve` is a **process outside any
 session** that starts a turn only when a note has landed (rule 10). There is no
@@ -71,6 +73,12 @@ poll — a harness `/loop`, a scheduler prompt, a heartbeat that runs a model on
 an interval — is not a wake and is not `serve`; it is the five-minute sleep of
 the first lesson, a load per tick, and this tool offers no verb for it (Johnny,
 2026-09-11: 53 tool calls to learn nothing).
+
+`awake` reads presence over bus cursors: for every `from-<name>/CURSOR` lane in
+the bus clone, the newest commit touching the cursor is that friend's last beat,
+classified `awake` inside `--window`, `asleep` past it, and `unknown` where no
+cursor has ever been written (docs/SPEC-WORK.md, **Presence**, source
+`bus-cursor`).
 
 **At least one source, named.** A `watch` with no `--bus`, no `--entry` and no
 `--reports` is exit 2 and `refusing to guess`: a watcher with nothing to watch is
@@ -170,9 +178,17 @@ WAKE UNCERTAIN id=<id> attempt=<n>: dispatch interrupted; nova-wake serve --bus 
 WAKE UNCERTAIN id=<id> attempt=<n> rc=<n>: retry not terminal; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
 WAKE BLOCKED as=<name> uncertain=<id> queued=<n>: a dispatch may still own this receiver; end it, then nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
 WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n> queued=<n> cc=<n> failed=<n> max_wait=<d> idle=<duration>
+FRIEND <name> awake|asleep|unknown age=<seconds|-> source=bus-cursor
+AWAKE OK friends=<n> awake=<n> asleep=<n> unknown=<n> window=<n>
+AWAKE REFUSED <reason>
 ```
 
-The last five are `serve`'s (rule 10); everything above them is `watch`'s.
+The last five are `serve`'s (rule 10); everything above them is `watch`'s. The
+last three are `awake`'s: `FRIEND` once per friend lane read over the bus
+cursors, `AWAKE OK` the verdict line that ends the listing, and `AWAKE REFUSED`
+the shape for the things wrong about the world rather than the invocation
+(no `--bus`, a `--bus` that is not a git repository, a `--window` that is not
+positive, a negative `--max`).
 
 `WAKE CHANGE`, `WAKE QUIET` and `WAKE BROKEN` are the **last** line and the three
 possible verdicts, and `pending=<n>` on each of the first two is the length of
@@ -182,7 +198,8 @@ is the printed line**, rule 11); the opening `WAKE` line is the **first**, print
 waited on, so a transcript shows the call began and what it was told to do — a
 tool call that prints nothing for twenty minutes and then prints everything is,
 while it runs, indistinguishable from one that has hung. `WAKE` lines and the
-informational tokens go to stdout; `WAKE REFUSED` and `WAKE POLL` go to stderr.
+informational tokens go to stdout; `WAKE REFUSED`, `WAKE POLL` and `AWAKE
+REFUSED` go to stderr; `FRIEND` and `AWAKE OK` go to stdout.
 
 Every path, subject, reason, entry name and relayed bus line is rendered through
 `internal/oneline`, so a note whose subject carries U+2028 arrives as one escaped

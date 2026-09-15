@@ -26,8 +26,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -73,6 +76,7 @@ usage:
         [--receipt] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
   nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
         [--on-note-idempotent]
+  nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]
   nova-wake version
   nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
         [--reports <dir> ...] [--bus <dir> --as <name> --receipt-max-words <n>]
@@ -225,6 +229,8 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		return cmdProbe(args[1:], stdout, stderr, clock)
 	case "serve":
 		return cmdServe(args[1:], stdout, stderr, clock)
+	case "awake":
+		return cmdAwake(args[1:], stdout, stderr, clock)
 	case "version":
 		// The first question after a table misbehaves is which build each line
 		// is running, and a tool that cannot answer it costs a person the
@@ -256,6 +262,131 @@ func refuse(stderr io.Writer, where, what string) int {
 func refused(stderr io.Writer, what string) int {
 	fmt.Fprintf(stderr, "WAKE REFUSED: %s\n", oneline.Escape(what))
 	return 2
+}
+
+// DefaultAwakeWindow is Glenn's five minutes: presence is the newest record a
+// source saw, and no record inside this window is asleep (docs/SPEC-WORK.md,
+// Presence). It is a number of seconds because the flag is a number of seconds.
+const DefaultAwakeWindow = 300
+
+// DefaultAwakeMax is how many FRIEND lines print before one "... and N more"
+// stands for the rest.
+const DefaultAwakeMax = 50
+
+// awakeRefused is the AWAKE REFUSED shape: the things that are wrong about the
+// world rather than the invocation, exactly as refused is for watch.
+func awakeRefused(stderr io.Writer, what string) int {
+	fmt.Fprintf(stderr, "AWAKE REFUSED %s\n", oneline.Escape(what))
+	return 2
+}
+
+// cmdAwake is the presence reader over bus cursors: for every lane from-<name>/
+// in the bus clone, the newest commit touching from-<name>/CURSOR is that
+// friend's last beat (docs/SPEC-WORK.md, Presence, source bus-cursor).
+func cmdAwake(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+	fs := flag.NewFlagSet("awake", flag.ContinueOnError)
+	busDir := fs.String("bus", "", "")
+	window := fs.Int("window", DefaultAwakeWindow, "")
+	maxN := fs.Int("max", DefaultAwakeMax, "")
+	if !parseFlags(fs, args, stderr) {
+		return 2
+	}
+	if *busDir == "" {
+		return awakeRefused(stderr, "no --bus named; refusing to guess")
+	}
+	if *window <= 0 {
+		return awakeRefused(stderr, "--window must be a positive number of seconds")
+	}
+	if *maxN < 0 {
+		return awakeRefused(stderr, "--max may not be negative")
+	}
+	if st, err := os.Stat(*busDir); err != nil || !st.IsDir() {
+		return awakeRefused(stderr, "the bus checkout "+*busDir+" is not a directory")
+	}
+	if !isGitRepo(*busDir) {
+		return awakeRefused(stderr, *busDir+" is not a git repository")
+	}
+
+	names, err := laneNames(*busDir)
+	if err != nil {
+		return awakeRefused(stderr, oneline.Err(err))
+	}
+
+	now := clock.Now().Unix()
+	var awake, asleep, unknown int
+	total := len(names)
+	for i, name := range names {
+		state := "unknown"
+		ageText := "-"
+		if ct, ok := cursorTime(*busDir, name); ok {
+			age := now - ct
+			ageText = strconv.FormatInt(age, 10)
+			if age < int64(*window) {
+				state = "awake"
+				awake++
+			} else {
+				state = "asleep"
+				asleep++
+			}
+		} else {
+			unknown++
+		}
+		if i < *maxN {
+			fmt.Fprintf(stdout, "FRIEND %s %s age=%s source=bus-cursor\n",
+				oneline.Field(name), oneline.Field(state), oneline.Field(ageText))
+		}
+	}
+	if total > *maxN {
+		fmt.Fprintf(stdout, "... and %d more\n", total-*maxN)
+	}
+	fmt.Fprintf(stdout, "AWAKE OK friends=%d awake=%d asleep=%d unknown=%d window=%d\n",
+		total, awake, asleep, unknown, *window)
+	return 0
+}
+
+// isGitRepo reports whether dir is a git working tree, the one thing that makes
+// a directory a bus rather than a directory.
+func isGitRepo(dir string) bool {
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "--git-dir")
+	return cmd.Run() == nil
+}
+
+// laneNames is every from-<name>/ directory in the bus clone, sorted by name.
+func laneNames(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "from-") {
+			continue
+		}
+		if name := strings.TrimPrefix(e.Name(), "from-"); name != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// cursorTime is the committer unix time of the newest commit touching
+// from-<name>/CURSOR, and false when no such commit exists.
+func cursorTime(dir, name string) (int64, bool) {
+	cmd := exec.Command("git", "-C", dir, "log", "-1", "--format=%ct", "--", "from-"+name+"/CURSOR")
+	raw, err := cmd.Output()
+	if err != nil {
+		return 0, false
+	}
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
 }
 
 // repeated is a flag that may be given more than once: --entry, --reports,
