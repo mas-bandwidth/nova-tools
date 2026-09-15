@@ -379,7 +379,7 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 		if rc != 0 {
 			t.Fatalf("exit 0, got %d:\n%s", rc, stderr.String())
 		}
-		if !strings.Contains(stdout.String(), "NATIVE OK ") || !strings.Contains(stdout.String(), "wall=none") {
+		if !strings.Contains(stdout.String(), "NATIVE OK ") || !strings.Contains(stdout.String(), " sandbox=none ") {
 			t.Fatalf("NATIVE OK names the wall none when no wall runs:\n%s", stdout.String())
 		}
 	})
@@ -398,7 +398,7 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 		if rc != 0 {
 			t.Fatalf("exit 0, got %d:\n%s", rc, stderr.String())
 		}
-		if !strings.Contains(stdout.String(), "wall=fake-wall") {
+		if !strings.Contains(stdout.String(), " sandbox=fake-wall ") {
 			t.Fatalf("NATIVE OK copies the wall's own name (fake-wall):\n%s", stdout.String())
 		}
 	})
