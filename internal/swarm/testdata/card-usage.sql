@@ -1,16 +1,9 @@
-CREATE TABLE messages (
+CREATE TABLE message (
   id INTEGER PRIMARY KEY,
-  role TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  model TEXT NOT NULL,
-  tokens_in INTEGER,
-  tokens_out INTEGER,
-  cache_write INTEGER,
-  cache_read INTEGER,
-  reasoning INTEGER,
-  usd REAL
+  data TEXT NOT NULL,
+  time_created INTEGER NOT NULL
 );
-INSERT INTO messages (role, provider, model, tokens_in, tokens_out, cache_write, cache_read, reasoning, usd) VALUES
-  ('assistant', 'deepseek', 'deepseek-chat', 100, 50, 10, 20, 5, 0.25),
-  ('assistant', 'deepseek', 'deepseek-chat', 7, 3, NULL, NULL, NULL, 0.50),
-  ('assistant', 'deepseek', 'deepseek-chat', 1, 2, NULL, NULL, NULL, 0.25);
+INSERT INTO message (data, time_created) VALUES
+  ('{"role":"assistant","providerID":"deepseek","modelID":"deepseek-chat","tokens":{"input":100,"output":50,"cache":{"write":10,"read":20},"reasoning":5},"cost":0.25}', 1760000000000),
+  ('{"role":"assistant","providerID":"deepseek","modelID":"deepseek-chat","tokens":{"input":7,"output":3},"cost":0.50}', 1760000000000),
+  ('{"role":"assistant","providerID":"deepseek","modelID":"deepseek-chat","tokens":{"input":1,"output":2},"cost":0.25}', 1760000000000);
