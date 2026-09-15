@@ -120,6 +120,21 @@ func main() {
 			fmt.Printf("fake harness: cat %s: ok len=%d\n", path, len(body))
 		}
 	}
+	// FAKE-RECORD-CONFIG records the provider config the harness would resolve from its own
+	// data home -- the opencode.json a `--config` run is meant to place beside the carried
+	// auth -- into <job>/config-record so a test can assert the child sees it, its mode and
+	// its bytes, without a provider or a network.
+	if _, ok := directive(prompt, "FAKE-RECORD-CONFIG"); ok && job != "" {
+		path := filepath.Join(os.Getenv("HOME"), ".config", "opencode", "opencode.json")
+		st, err := os.Stat(path)
+		if err != nil {
+			writeRecorded(filepath.Join(job, "config-record"), []byte("absent\n"), 0o644)
+		} else {
+			body, _ := os.ReadFile(path)
+			writeRecorded(filepath.Join(job, "config-record"),
+				[]byte(fmt.Sprintf("mode=%04o\n%s", st.Mode().Perm(), string(body))), 0o644)
+		}
+	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
 			fmt.Printf("fake harness: read of /etc/somewhere: permission denied (refused)\n")

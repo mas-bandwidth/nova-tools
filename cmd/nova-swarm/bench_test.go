@@ -55,11 +55,24 @@ func newProbeFixture(t *testing.T) *probeFixture {
 	writeScript(t, f.harness, "exit 0")
 	writeScript(t, filepath.Join(f.root, "bin", "nova-swarm"), "exec \"$REAL_NOVA_SWARM\" version")
 
+	// The fake bin is the bench's whole PATH: it holds the fake stat, nproc and
+	// nova-sandbox above, plus links to the one real system tool each probe round
+	// trip names -- sh, true, touch, rm. taskset is never linked in, so a bench
+	// whose PATH lacks taskset is exactly a fake bin without a taskset script, and
+	// the host's real taskset cannot leak in.
+	for _, name := range []string{"sh", "true", "touch", "rm"} {
+		if src, err := exec.LookPath(name); err == nil {
+			if err := os.Symlink(src, filepath.Join(f.fakeBin, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
 	if err := os.WriteFile(f.auth, []byte("key not read\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	f.env = []string{
-		"PATH=" + f.fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"PATH=" + f.fakeBin,
 		"SSH_LOG=" + f.sshLog,
 		"REAL_NOVA_SWARM=" + tool,
 		"SANDBOX_BACKEND=sandbox-exec",

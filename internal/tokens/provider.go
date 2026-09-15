@@ -2,6 +2,7 @@ package tokens
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"io"
 	"sort"
 	"strconv"
@@ -106,6 +107,13 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 		return s
 	}
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+
+	// A `grok usage` export is JSON, not CSV: the xAI parser reads both shapes, chosen by
+	// the first non-space byte. The JSON shape is the documented `grok usage` object
+	// (a sessionId and a turns array) and folds to the same rows the CSV shape produces.
+	if trimmed := strings.TrimSpace(text); trimmed != "" && (trimmed[0] == '{' || trimmed[0] == '[') {
+		return readXaiJSON(kind, path, text, s)
+	}
 
 	zone := ""
 	var body []string
@@ -245,6 +253,89 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 		s.Stream = append(s.Stream, m)
 	}
 	return s
+}
+
+// xaiJSONColumns maps the grok usage JSON's camelCase turn fields to the five token types
+// the xAI parser already reports from the CSV shape. totalTokens is a derived sum, and
+// modelCalls/costUsdTicks/turnCount are not token spend, so none of them is a column: an
+// unknown field is ignored rather than admitted as a seventh type.
+var xaiJSONColumns = map[string]Type{
+	"inputTokens":         Input,
+	"outputTokens":        Output,
+	"cacheCreationTokens": CacheWrite,
+	"cachedReadTokens":    CacheRead,
+	"reasoningTokens":     Reasoning,
+}
+
+// readXaiJSON folds the documented `grok usage` JSON shape into the same rows the CSV
+// shape produces. Each turn is one message: its endedAt is the UTC day, primaryModelId is
+// the model, and the five token fields are the counts. A turn field the source did not
+// carry is an absence (a dash), never a zero, exactly as the CSV parser reads a blank
+// cell. A document with none of the expected keys is UNREADABLE naming both shapes.
+func readXaiJSON(kind, path, text string, s *Source) *Source {
+	reports := []Type{Input, Output, CacheWrite, CacheRead, Reasoning}
+	sortTypes(reports)
+	s.Reports = reports
+	s.Basis = UTC
+
+	var root map[string]interface{}
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		s.unreadable(path, providerJSONReason(kind))
+		return s
+	}
+	turnsRaw, ok := root["turns"]
+	if !ok {
+		s.unreadable(path, providerJSONReason(kind))
+		return s
+	}
+	turns, ok := turnsRaw.([]interface{})
+	if !ok {
+		s.unreadable(path, providerJSONReason(kind))
+		return s
+	}
+	for i, e := range turns {
+		turn, ok := e.(map[string]interface{})
+		if !ok {
+			s.unparsed(path, i+1, "a turn that is not a JSON object")
+			continue
+		}
+		endedAt, ok := turn["endedAt"].(string)
+		if !ok {
+			s.unparsed(path, i+1, "a turn whose endedAt is not an RFC 3339 string")
+			continue
+		}
+		tm, err := time.Parse(time.RFC3339, endedAt)
+		if err != nil {
+			s.unparsed(path, i+1, "the turn's endedAt is not RFC 3339")
+			continue
+		}
+		model, _ := turn["primaryModelId"].(string)
+		m := Message{
+			Day:   tm.UTC().Format(dayLayout),
+			Basis: UTC,
+			Model: model,
+			Repo:  Unattributed,
+		}
+		for field, t := range xaiJSONColumns {
+			v, ok := turn[field].(json.Number)
+			if !ok {
+				continue
+			}
+			if n, err := strconv.ParseInt(v.String(), 10, 64); err == nil {
+				m.Counts.Set(t, n)
+			}
+		}
+		s.Stream = append(s.Stream, m)
+	}
+	return s
+}
+
+// providerJSONReason is the refusal for a JSON document that has none of the expected
+// keys: it names both shapes the parser reads rather than guessing which one was meant.
+func providerJSONReason(kind string) string {
+	return "the export is neither the comma-separated shape nor the grok usage JSON shape (a sessionId and a turns array) the " + kind + " parser reads"
 }
 
 // sortTypes puts a reports list into the five types' own order, so that `reports=` reads
