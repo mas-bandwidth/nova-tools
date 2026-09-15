@@ -55,11 +55,22 @@ func newProbeFixture(t *testing.T) *probeFixture {
 	writeScript(t, f.harness, "exit 0")
 	writeScript(t, filepath.Join(f.root, "bin", "nova-swarm"), "exec \"$REAL_NOVA_SWARM\" version")
 
+	// The bench's PATH is only the fake bin, so a real taskset on the host (Linux CI)
+	// never leaks into the pin check: the row that has no taskset genuinely has none.
+	// The few real tools the remote needs -- sh, touch, rm, true -- are linked into the
+	// fake bin so the probe's shell one-liners still run.
+	for _, tool := range []string{"sh", "touch", "rm", "true"} {
+		if real, err := exec.LookPath(tool); err == nil {
+			if err := os.Symlink(real, filepath.Join(f.fakeBin, tool)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	if err := os.WriteFile(f.auth, []byte("key not read\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	f.env = []string{
-		"PATH=" + f.fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"PATH=" + f.fakeBin,
 		"SSH_LOG=" + f.sshLog,
 		"REAL_NOVA_SWARM=" + tool,
 		"SANDBOX_BACKEND=sandbox-exec",
