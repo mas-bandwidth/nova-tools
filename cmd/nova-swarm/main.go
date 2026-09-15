@@ -49,6 +49,7 @@ usage:
   nova-swarm verdict   --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
   nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>]
   nova-swarm result    --pool <dir> --id <job>
+  nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker
   nova-swarm cost      --pool <dir> [--since <stamp>] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
@@ -157,6 +158,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdTriage(rest, stdout, stderr, now)
 	case "result":
 		return cmdResult(rest, stdout, stderr)
+	case "verify":
+		return cmdVerify(rest, stdout, stderr)
 	case "template":
 		return cmdTemplate(rest, stdout, stderr)
 	case "cost":
@@ -931,6 +934,89 @@ func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Owed:   owedList,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
 	})
+}
+
+func cmdVerify(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("verify")
+	result := f.fs.String("result", "", "")
+	contract := f.fs.String("contract", "", "")
+	label := f.fs.String("label", "", "")
+	card := f.fs.String("card", "", "")
+	runRecord := f.fs.String("run-record", "", "")
+	usageFile := f.fs.String("usage", "", "")
+	max := f.fs.Int("max", swarm.DefaultContractLines, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*result, "result", "the path to the job's RESULT.md whose line 1 is to be checked")
+	f.want(*contract, "contract", "the card's contract line, which line 1 of RESULT.md must equal exactly")
+	f.want(*label, "label", "the job's label, carried on the result line and in the receipt")
+	if *max < 1 {
+		f.add(fmt.Sprintf("--max is at least 1, got %d; it bounds the evidence lines past the disposition", *max))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+
+	c := swarm.Contract{Label: *label, ContractLine: *contract, MaxLines: *max, WallSeconds: -1, ExitCode: -1}
+	if *card != "" {
+		raw, err := os.ReadFile(*card)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm verify: --card wants a readable file of the card text: %s\n", oneline.Err(err))
+			return 2
+		}
+		c.Card = raw
+	}
+	if *runRecord != "" {
+		var rec swarm.ExitRecord
+		if err := swarm.ReadJSON(*runRecord, &rec); err != nil {
+			fmt.Fprintf(stderr, "nova-swarm verify: --run-record wants a readable exit.json: %s\n", oneline.Err(err))
+			return 2
+		}
+		c.HaveRun, c.ExitCode = true, rec.RC
+	}
+	if *usageFile != "" {
+		raw, err := os.ReadFile(*usageFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm verify: --usage wants a readable usage file: %s\n", oneline.Err(err))
+			return 2
+		}
+		row := swarm.UsageRow{}
+		lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+		if len(lines) >= 2 {
+			head := strings.Split(lines[0], "\t")
+			values := strings.Split(lines[1], "\t")
+			for i, name := range head {
+				if i < len(values) {
+					row[name] = values[i]
+				}
+			}
+		}
+		c.HaveUsage = true
+		c.TokensIn, _ = row.Int("tokens_in")
+		c.TokensOut, _ = row.Int("tokens_out")
+		c.USD = dash(row["usd"])
+		if started, err := time.Parse(time.RFC3339, dash(row["started"])); err == nil {
+			if ended, err := time.Parse(time.RFC3339, dash(row["ended"])); err == nil {
+				c.WallSeconds = int(ended.Sub(started).Seconds())
+			}
+		}
+	}
+
+	out, err := swarm.CheckResult(*result, c)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-swarm verify: --result wants a readable RESULT.md: %s\n", oneline.Err(err))
+		return 2
+	}
+	if err := swarm.WriteReceipt(*result+".receipt", out, c); err != nil {
+		fmt.Fprintf(stderr, "nova-swarm verify: the receipt could not be written: %s\n", oneline.Err(err))
+		return 2
+	}
+	fmt.Fprintln(stdout, oneline.Escape(out.Line))
+	if !out.OK {
+		return 1
+	}
+	return 0
 }
 
 func cmdResult(args []string, stdout, stderr io.Writer) int {
