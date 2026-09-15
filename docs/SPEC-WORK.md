@@ -1993,7 +1993,7 @@ nova-work observe        --session <path> <write flags> --friend <name> (--state
 nova-work goal set       --session <path> <write flags> --expect <rev> [--scope <scope>] (--goal <node-id> | --clear) --reason <text>   (--expect required here; --scope defaults to the caller's --as)
 nova-work goal show      (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --as <name> [--scope <scope>] --max <n>
 nova-work goal update    --session <path> <write flags> --expect <rev> [--scope <scope>] (--progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text>)   (writes on the current goal node of the scope and on no other node)
-nova-work machine        --session <path> <write flags> (--register <id> --name <text> --owner <name> --connect <ref> --role <build|test|profile> ... | --retire <id> | --permit <id>=<kind> | --exclude <id>=<kind> | --limit <id> <key>=<n> | --fact <id> <key>=<value> --declared-by <name>) --reason <text>
+nova-work machine        --session <path> <write flags> (--register <id> --name <text> --owner <name> --connect <ref> --role <build|test|profile> ... | --retire <id> | --permit <id>=<kind> | --exclude <id>=<kind> | --limit <id> <key>=<n|n,n,...> | --fact <id> <key>=<value> --declared-by <name>) --reason <text>
 nova-work clip           --session <path> --as <name> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
 nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]
 nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
@@ -2737,7 +2737,7 @@ Stella's (stella-42885d237271) or Johnny's (johnny-5b879930aae8) and none of the
   a current probe**.
 
 ```lisp
-;; EXAMPLE DATA, NOT PRODUCT CONSTANTS: three invented members of a `fleet` section.
+;; EXAMPLE DATA, NOT PRODUCT CONSTANTS: three example members of a `fleet` section.
 (:kind :machine :id "m-a1" :name "studio" :owner "glenn"
  :connect "profile:studio"
  :roles (:build :test)
@@ -2767,19 +2767,23 @@ Stella's (stella-42885d237271) or Johnny's (johnny-5b879930aae8) and none of the
 **One verb configures it** *(Rowan's decision, for review; the spelling mirrors `friend`)*:
 `nova-work machine --session <path> <write flags> (--register <id> --name <text> --owner <name>
 --connect <ref> --role <build|test|profile> ... | --retire <id> | --permit <id>=<kind> | --exclude
-<id>=<kind> | --limit <id> <key>=<n> | --fact <id> <key>=<value> --declared-by <name>) --reason
+<id>=<kind> | --limit <id> <key>=<n|n,n,...> | --fact <id> <key>=<value> --declared-by <name>) --reason
 <text>`, in the grammar block above. It writes one `:machine` event — `:change` (`:register`,
 `:retire`, `:permit`, `:exclude`, `:limit` or `:fact`), `:machine`, `:name`, `:owner`, `:connect`,
 `:roles`, `:workload`, `:key`, `:value`, `:declared-by`, `:reason`, in that order for the payload
 digest — whose subject is a machine identity and not a node: `:node` is `(:absent)` and `MACHINE
 OK` prints `machine=<id>`. A retired record stays in the journal; it answers no query but the
 history. **The verb refuses, exit 1, `MACHINE FAIL machine=<id>: <reason>`, nothing written**:
-a record with **no `:owner`** or **no stable `:id`** (`no owner`, `no id`); a `--register` whose
-`--connect` is **the locator of a member already in the fleet** (`locator held by <id>`: one host is
-one unit); a **credential in a record** — a `--connect` that is not a `profile:` reference, or any
+a record with **no `:owner`** or **no stable `:id`** (`no owner`; `no id`, printed `machine=-`); an
+`:owner` who is not a friend of `friends` (`unknown owner`); a `--register` whose `--connect` is
+**the connection profile of a member already in the fleet** (`connect held by <id>`: one profile is
+one unit — and because the tool sees a profile name and never resolves it, **two profiles that reach
+one host is the owner's duty to refuse and not a check this tool can make**, so the one-host-one-unit
+rule above is the owner's word, enforced here only as far as the profile); a **credential in a record** — a `--connect` that is not a `profile:` reference, or any
 field named `key`, `token`, `password` or `secret` (`credential in record`; the record is refused
 whole and the value is not echoed); a role outside the three (`unknown role`); a `--fact` with no
-`--declared-by` (`fact without provenance`).
+`--declared-by` (`fact without provenance`). A `--limit` value is one integer or a comma-separated
+list of them (`isolated-cores=2,3` writes `:isolated-cores (2 3)`).
 
 **Two asks query it, and both are in the `--ask` list and the grammar** *(Rowan's decision, for
 review)*. `query --ask fleet` **lists the fleet**: every live member, one `QUERY ROW` per machine
@@ -2812,8 +2816,8 @@ recorded for a later revision and **not requested**; ownership of execution is t
 contract; results are the existing attempt records. **A sitting — an interactive session a friend
 holds on a machine — is not a fleet slot and is never counted as one** (Johnny). Replays:
 `fleet-is-static-config` (a `:machine` event moves no count and no roadmap; a heartbeat, an
-`observe` and a probe change no member), `no-machine-name-in-the-tool`, `one-locator-one-unit`,
-`no-credential-in-a-member`, `fleet-for-is-a-recommendation-not-a-lease` (the ask writes no lease
+`observe` and a probe change no member), `no-machine-name-in-the-tool`, `one-profile-one-unit`,
+`no-credential-in-a-member`, `unknown-owner-is-refused`, `fleet-for-is-a-recommendation-not-a-lease` (the ask writes no lease
 and leaves `who` unchanged), `an-excluded-choice-is-refused-not-empty`.
 
 ## Models, prices and what they are evidence of *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
@@ -3383,7 +3387,7 @@ CONFIG OK id=<event-id> request=<id> friend=<name> base=<hash|-> revision=<n> ha
 CONFIG FAIL friend=<name> base=<hash|-> verdict=<schema|identity|hash|incomplete>: <reason>   (the old config is left intact)
 FRIEND OK id=<event-id> request=<id> friend=<name> change=<register|retire|role|participation|capability|limit> rev=<n> pushed=<rev|-> emitted=<bytes>
 MACHINE OK id=<event-id> request=<id> machine=<id> change=<register|retire|permit|exclude|limit|fact> rev=<n> pushed=<rev|-> emitted=<bytes>
-MACHINE FAIL machine=<id>: <reason>   (no owner, no id, locator held by <id>, credential in record, unknown role, fact without provenance: nothing written, the value never echoed)
+MACHINE FAIL machine=<id|->: <reason>   (no owner, no id, unknown owner, connect held by <id>, credential in record, unknown role, fact without provenance: nothing written, the value never echoed)
 MODEL OK id=<event-id> request=<id> model=<id> change=<register|rate|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>
 OBSERVE OK id=<event-id> request=<id> friend=<name> change=<state|attempt> rev=<n> pushed=<rev|-> emitted=<bytes>
 GOAL OK id=<event-id> request=<id> scope=<scope> goal=<id|-> change=<set|clear|progress|evidence|blocked|stop> kind=<goal|transition|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>   (goal set and goal update: change= is the form the caller used, evidence for --progress with the evidence triple and progress for --progress alone; kind= is the event written, :goal for set and clear, the node's own :transition or :evidence for update)
