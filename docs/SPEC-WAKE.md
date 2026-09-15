@@ -60,11 +60,16 @@ nova-wake serve --bus <dir> --as <name> --on-note <command> --interval <duration
 nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> [--on-note-idempotent]
 nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]   --window default 300, --max default 50
 nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
+nova-wake probe --bus <dir> --line <name> --state <file> [--silent-after <d>] [--answer-within <d>] [--rest <file>]
+nova-wake probe --here [--quiet-load <x>]
+nova-wake version
 nova-wake help
 ```
 
 One verb that watches, one that serves, one that asks who is awake, one that
-shows a first run, and `help`.
+shows a first run, one that asks whether a line may be handed work, `version`,
+and `help`. `probe` is a one-question call that reports and gates nothing;
+`version` names this build.
 The two shapes are exactly two: `watch` is a **blocking tool call** inside a
 turn the session is already spending, and `serve` is a **process outside any
 session** that starts a turn only when a note has landed (rule 10). There is no
@@ -161,6 +166,7 @@ WAKE at=<stamp> as=<name|-> max=<d> interval=<d> on-deadline=<word> sources=<bus
 WAKE CHANGE after=<d> polls=<n> bus=<n> entries=<n> reports=<n> lines=<n> pending=<n>
 WAKE QUIET after=<d> polls=<n> default=<word> sources-failing=<n>: deadline, default taken
 WAKE BROKEN source=<bus|entries|reports> failures=<n> since=<stamp>: <reason>
+WAKE STOPPED after=<d> polls=<n> pending=<n>: stopped by the caller
 WAKE BUS id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> commit=<sha|-> path=<path>: <subject>
 WAKE BUS LINE <the bus's own line, verbatim>
 WAKE BUS STANDING <the bus's own line, verbatim>
@@ -168,11 +174,18 @@ WAKE ENTRY <repo>#<n> state=<state> fail=<n> pending=<n> pass=<n> final=<true|fa
 WAKE ENTRY <repo>#<n> unreadable: <reason>
 WAKE REPORT path=<path> lines=<n> bytes=<n> <new|modified>
 WAKE LINE name=<name> state=<OFFLINE|BACK> last=<stamp|-> silent=<d> commit=<sha|->
+WAKE PR <owner>/<repo>#<n> comments=<n> reviews=<n> threads=<n> self=<login|-> rescan=<n> push=<n> head=<sha|-> newest=<stamp|-> by=<name|-> review=<word|-> at=<stamp|-> url=<url>
+WAKE RUN <owner>/<repo>@<sha> fail=<n> pending=<n> pass=<n> final=<true|false> failing=<names|->
+WAKE BRANCH <owner>/<repo>:<name> head=<sha|-> was=<sha|->
+WAKE LOCK path=<path> state=<held|free|-> was=<state|->
 WAKE SOURCE <bus|entries|reports> read=<n> suppressed=<n> relayed=<n> standing=<n> head=<sha|-> head-at=<stamp|->
 WAKE NOTE <something true about this run that is not a change>
 WAKE POLL <source>: <reason one poll failed, which was not fatal>
+WAKE PING id=<id> to=<name> commit=<sha|-> pushed=<true|false> attempt=<n>: one prepared note (--ping-draft) offered to the bus, printed per attempt until it lands
 WAKE MORE kind=<bus|entry|report> shown=<n> total=<t> n=<k> <remedy>
 WAKE REFUSED: <reason>
+WAKE HERE at=<stamp> load=<load|-> cpus=<n> procs=<n|->
+WAKE PROBE name=<name> state=<state> contact=<name|-> last=<stamp|-> silent=<d> commit=<sha|-> pinged=<stamp|-> pinged-id=<id|-> rest=<d> reconciled=<true|false> correlation=<id|-> remaining=<n> gaps=<n> silent-after=<d> answer-within=<d> head-at=<stamp|->
 WAKE FIRED ids=<n> first=<id> rc=<n> redelivered=<0|1>
 WAKE UNCERTAIN id=<id> attempt=<n>: dispatch interrupted; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
 WAKE UNCERTAIN id=<id> attempt=<n> rc=<n>: retry not terminal; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
@@ -183,12 +196,13 @@ AWAKE OK friends=<n> awake=<n> asleep=<n> unknown=<n> window=<n>
 AWAKE REFUSED <reason>
 ```
 
-The last five are `serve`'s (rule 10); everything above them is `watch`'s. The
-last three are `awake`'s: `FRIEND` once per friend lane read over the bus
-cursors, `AWAKE OK` the verdict line that ends the listing, and `AWAKE REFUSED`
-the shape for the things wrong about the world rather than the invocation
-(no `--bus`, a `--bus` that is not a git repository, a `--window` that is not
-positive, a negative `--max`).
+The last five are `serve`'s (rule 10); `WAKE HERE` and `WAKE PROBE` are
+`probe`'s; everything above them is `watch`'s. The three `awake` lines are
+`awake`'s: `FRIEND` once per friend lane read over the bus cursors, `AWAKE OK`
+the verdict line that ends the listing, and `AWAKE REFUSED` the shape for the
+things wrong about the world rather than the invocation (no `--bus`, a `--bus`
+that is not a git repository, a `--window` that is not positive, a negative
+`--max`).
 
 `WAKE CHANGE`, `WAKE QUIET` and `WAKE BROKEN` are the **last** line and the three
 possible verdicts, and `pending=<n>` on each of the first two is the length of
