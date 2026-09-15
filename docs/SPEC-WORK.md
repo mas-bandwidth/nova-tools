@@ -879,7 +879,11 @@ they are distinct kinds:
     arrived on**, because `--from` names a file on one bench and a successor of another build
     would digest a different string for the same request. Its subject is a friend identity:
     `:node` is `(:absent)` and `CONFIG OK` prints `friend=<name>`.
-    **The `friends` and `models` sections these five kinds write are indexes in the resident
+  - `:machine` — `:change` (`:register`, `:retire`, `:permit`, `:exclude`, `:limit` or `:fact`),
+    `:machine`, `:name`, `:owner`, `:connect`, `:roles`, `:workload`, `:key`, `:value`,
+    `:declared-by`, `:reason`. Its subject is a machine identity of *The fleet* below: `:node` is
+    `(:absent)` and `MACHINE OK` prints `machine=<id>`.
+    **The `friends`, `models` and `fleet` sections these six kinds write are indexes in the resident
     model under the one writer and the one journal, by *Friends, CONFIG and ACTIVE* below, and
     are no node kind of *The data* above** — which is why their events name a friend or a model
     identity rather than a `:node`, and why no count, roadmap or required set moves when one is
@@ -1818,6 +1822,7 @@ transition log is not a counting row. Every other ask prints the counting row. A
 | `friends` / `friends --owner <name>` | every known friend, idle, resting and unavailable ones included, with status, observation age, working count and the pending and acknowledged assignments; expanding one friend costs `O(k)` in its k tasks and answers *friend, task, executing model* directly |
 | `models` / `models --category <task-class>` | the shared model catalog by stable model and version identity, with declared capability, friend assessment and measured result kept apart, each with its observation age, sample count and uncertainty, and bounded drill-down to the receipts |
 | `ready --node X` | the work that can actually be started under X, derived from dependencies, agreed scope, acceptance readiness, ownership, availability and resource limits; **every row that cannot proceed prints its exact reason and who can resolve it**, because waiting is not execution (replay `ready-names-the-blocker-and-the-resolver`) |
+| `fleet` / `fleet --for <workload-kind>` | the fleet of *The fleet* below: every live member with owner, roles, limits and dated declared facts; under `--for`, the members whose declared roles and permits admit the kind and whose exclusions do not — **a recommendation from declared facts, never a lease** (johnny-5b879930aae8) |
 
 ### The worked acceptance: findings per repository across C and O *(Glenn's own query, 23:36Z)*
 
@@ -1988,16 +1993,18 @@ nova-work observe        --session <path> <write flags> --friend <name> (--state
 nova-work goal set       --session <path> <write flags> --expect <rev> [--scope <scope>] (--goal <node-id> | --clear) --reason <text>   (--expect required here; --scope defaults to the caller's --as)
 nova-work goal show      (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --as <name> [--scope <scope>] --max <n>
 nova-work goal update    --session <path> <write flags> --expect <rev> [--scope <scope>] (--progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text>)   (writes on the current goal node of the scope and on no other node)
+nova-work machine        --session <path> <write flags> (--register <id> --name <text> --owner <name> --connect <ref> --role <build|test|profile> ... | --retire <id> | --permit <id>=<kind> | --exclude <id>=<kind> | --limit <id> <key>=<n> | --fact <id> <key>=<value> --declared-by <name>) --reason <text>
 nova-work clip           --session <path> --as <name> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
 nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]
 nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
 nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
-                         (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready)
-                         [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>]
+                         (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet)
+                         [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>]
                          [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--max <n>]
                          (who and stale: --window <duration>, required; percent: --axis <member>, required;
                           --branch closed and --branch root: --from and --to, required, and refused under --branch open;
-                          who, stale and handoffs: --branch open only, the other two exit 2)
+                          who, stale and handoffs: --branch open only, the other two exit 2;
+                          fleet: --for optional, --node names a machine id, and --for with --node on a member that excludes the kind is refused)
 nova-work render         --session <path> --view <roadmap-id> --into <path> --start <marker> --end <marker> [--at <revision>] [--check]
 nova-work node add       --session <path> <write flags> --id <id> --type <kind> --under <parent-id> [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id:kind:subject:predicate> ...] --reason <text>
 nova-work node remove    --session <path> <write flags> --node <id> --reason <text>
@@ -2025,7 +2032,7 @@ nova-work help
 **Every verb spelling in that block is Rowan's, and the block is where they are made**
 *(Rowan's decision, for review)*: `operation status|list|wait|cancel`, `savepoint
 list|create|verify|restore|compare`, `undo-plan`/`undo`/`redo-plan`/`redo` with `--request-of`,
-and `friend`, `config`, `model` and `observe` with their flags. Stella's companion names the
+and `friend`, `config`, `model`, `observe` and `machine` with their flags. Stella's companion names the
 operations and leaves the spelling open, and *Additions of the authors'* gathers them again so a
 reviewer can find them in one place rather than two.
 
@@ -2682,6 +2689,133 @@ supported, it needs an explicit participation record with its scope and revision
 behaviour that reconciles running jobs. This is in *What this draft does not do* as well, so it is
 not read as settled.
 
+## The fleet *(Rowan, on Glenn's word of 2026-09-15; a draft for Stella's review as the section's owner)*
+
+**Glenn's word, 2026-09-15 01:05Z to 01:07Z, verbatim, is the whole of the requirement**: "A fleet
+is the set of machines that we have available to work on, including this studio, ssh space, and now
+the mac mini. I will add more as machines come online. These machines are places where we can build
+code, run tests, and do profiling. This is a new concept." / "Please tell Stella that I would like us
+to add the 'fleet' to the nova-work config." / "So we can configure it within nova work, and query
+it." Stella bounds the scope (stella-1858e1eeef8d): **inside the nova-work config, a static
+description of the test machines available for building and profiling**; her dynamic-resource
+design (stella-42885d237271) is not part of the request; machine metadata is instance data. This
+section is that and nothing more. So: the fleet is a set of **member records**; it is **configured**
+by one verb; it is **queried** by two asks; a machine comes online by a person adding its record,
+which is how Glenn said he will add more.
+
+**A member is a record of the desired half — configuration, never work — `:kind :machine`, and
+every field of it is instance data.** It lives in a `fleet` section of CONFIG beside `friends` and
+`models`, under the one writer, the one journal, the clip and the three bounds like everything else
+there; it is **no child of O and under no repository work set**, so no count, roadmap or required
+set moves when one is written, and *The root is COW* is untouched by it. It is mostly constant and
+changes only on a meaningful configuration change — never on a heartbeat, a probe or a load sample —
+which is what makes it CONFIG and not ACTIVE. **Nothing in nova-work names a machine**: no hostname,
+alias, user, path, architecture or core count is a constant in the product, the way no friend name
+is (*Friends, CONFIG and ACTIVE* above; Johnny, johnny-5b879930aae8: *a tool that names a host in
+source has already failed the test*). Every value in this section is a team's own configuration and
+**the three records below are EXAMPLE DATA, NOT PRODUCT CONSTANTS**. The fields, each of them
+Stella's (stella-42885d237271) or Johnny's (johnny-5b879930aae8) and none of them the tool's:
+
+- `:id` — the **stable machine id**: never reused, never display text, never a locator. One physical
+  host reached through two aliases is **one record and one unit**, never two.
+- `:name` — display only; may change freely.
+- `:owner` — a friend of `friends`, **required**: the person whose word admits a workload there.
+- `:connect` — a **connection-profile reference** the team's own store resolves, of the form
+  `"profile:<name>"`; **never a credential**: no key, token, password or secret is ever in a record,
+  a manifest or a clip, by the CONFIG rule above.
+- `:roles` — the **intended roles**, each one of `:build`, `:test` and `:profile` (Glenn's three:
+  *build code, run tests, and do profiling*); an unknown role is a refusal, never a guess.
+- `:permits` and `:excludes` — **workload kinds** as a team's own labels (`"go-test"`,
+  `"bench:schema"`): the kinds admitted and the kinds that **must never run there**. `:excludes`
+  wins wherever the two name one kind.
+- `:limits` — declared **concurrency and resource limits**: `:concurrent <n>` and whatever resources
+  a team names (`:cores`, `:memory-gb`); **declared by the owner and never derived** from a friend's
+  child ceiling, a sitting or a probe (Johnny: *do not offer unused child ceiling as capacity*; *a
+  sitting is not a fleet slot*).
+- `:facts` — **hardware and OS facts with provenance**: the facts, then `:declared-by <name>` and
+  `:declared-at <stamp>`, so a fact is a dated declaration and **a stale declaration is never read as
+  a current probe**.
+
+```lisp
+;; EXAMPLE DATA, NOT PRODUCT CONSTANTS: three invented members of a `fleet` section.
+(:kind :machine :id "m-a1" :name "studio" :owner "glenn"
+ :connect "profile:studio"
+ :roles (:build :test)
+ :permits ("go-test" "cpp-test" "swarm-cards")
+ :excludes ("bench:schema")                    ; loud bench; never a profile run here
+ :limits (:concurrent 4 :cores 16 :memory-gb 128)
+ :facts (:arch "arm64" :os "macos" :cores 24 :memory-gb 192
+         :declared-by "glenn" :declared-at "2026-09-15T01:05:00Z"))
+(:kind :machine :id "m-b2" :name "profiling host" :owner "glenn"
+ :connect "profile:space"
+ :roles (:build :test :profile)
+ :permits ("go-test" "cpp-test" "bench:schema")
+ :excludes ("swarm-cards")                     ; profiling wants a quiet box
+ :limits (:concurrent 1 :isolated-cores (2 3))
+ :facts (:arch "x86_64" :os "linux" :cores 8 :memory-gb 125
+         :declared-by "glenn" :declared-at "2026-09-15T01:05:00Z"))
+(:kind :machine :id "m-c3" :name "mini" :owner "glenn"
+ :connect "profile:mini"
+ :roles (:build :test)
+ :permits ("go-test")
+ :excludes ("bench:schema")
+ :limits (:concurrent 2)
+ :facts (:arch "arm64" :os "macos"
+         :declared-by "rowan" :declared-at "2026-09-15T01:06:00Z"))
+```
+
+**One verb configures it** *(Rowan's decision, for review; the spelling mirrors `friend`)*:
+`nova-work machine --session <path> <write flags> (--register <id> --name <text> --owner <name>
+--connect <ref> --role <build|test|profile> ... | --retire <id> | --permit <id>=<kind> | --exclude
+<id>=<kind> | --limit <id> <key>=<n> | --fact <id> <key>=<value> --declared-by <name>) --reason
+<text>`, in the grammar block above. It writes one `:machine` event — `:change` (`:register`,
+`:retire`, `:permit`, `:exclude`, `:limit` or `:fact`), `:machine`, `:name`, `:owner`, `:connect`,
+`:roles`, `:workload`, `:key`, `:value`, `:declared-by`, `:reason`, in that order for the payload
+digest — whose subject is a machine identity and not a node: `:node` is `(:absent)` and `MACHINE
+OK` prints `machine=<id>`. A retired record stays in the journal; it answers no query but the
+history. **The verb refuses, exit 1, `MACHINE FAIL machine=<id>: <reason>`, nothing written**:
+a record with **no `:owner`** or **no stable `:id`** (`no owner`, `no id`); a `--register` whose
+`--connect` is **the locator of a member already in the fleet** (`locator held by <id>`: one host is
+one unit); a **credential in a record** — a `--connect` that is not a `profile:` reference, or any
+field named `key`, `token`, `password` or `secret` (`credential in record`; the record is refused
+whole and the value is not echoed); a role outside the three (`unknown role`); a `--fact` with no
+`--declared-by` (`fact without provenance`).
+
+**Two asks query it, and both are in the `--ask` list and the grammar** *(Rowan's decision, for
+review)*. `query --ask fleet` **lists the fleet**: every live member, one `QUERY ROW` per machine
+with its owner, roles, limits and declared facts and their dates, capped and counted like every
+listing. `query --ask fleet --for <workload-kind>` answers **which machines admit this workload**:
+the members whose declared `:roles` and `:permits` admit the kind and whose `:excludes` do not, in
+their configured order, each row carrying the declared facts and their dates so the asker can see
+how old the declaration is. **The answer is a recommendation from declared facts and never a
+lease** (Johnny: *the registry is facts; picking a machine is a recommendation; dispatch still needs
+a lease*): it reserves nothing, dispatches nothing, probes nothing and proves nothing about the
+machine now; what execution needs is *The lease* above and an attempt whose `--bench` may carry the
+machine id, so a build, test or profile result retains the machine it ran on (Stella). `--node
+<machine-id>` narrows either ask to one member, and **an ask asked to choose that member for a
+workload it excludes is refused**, `QUERY FAIL ask=fleet rows=0 shown=0: <id> excludes <kind>`, exit
+1, never an empty answer a caller could read as *no machine* and fall through — the exclusion is the
+owner's word and the answer says so. The rows:
+
+```
+QUERY ROW <machine-id> kind=machine name=<text> owner=<name> roles=<build,test,profile> admits=<kind|-> concurrent=<n|-> arch=<text|-> os=<text|-> declared-by=<name> declared-at=<stamp>   (fleet; admits= is the --for kind where given, and every row printed under --for admits it)
+QUERY FAIL ask=fleet rows=0 shown=0: <id> excludes <kind>   (--for with --node naming a member that excludes the kind: a refusal, never an empty answer)
+```
+
+**What this section does not do, and must not.** It probes no machine, reads no load, tests no
+reachability, discovers no toolchain, schedules nothing, dispatches nothing, leases nothing and runs
+nothing: **a configured member is not authority to run anything there** (Stella), and enrolling a
+host, its accounts and its keys stays a person's hand outside this tool. Selection under live
+capacity, observed availability with its stamps and sources, oversubscription across coordinators
+and a child node exposing delegated resources are Stella's dynamic design (stella-42885d237271),
+recorded for a later revision and **not requested**; ownership of execution is the existing lease
+contract; results are the existing attempt records. **A sitting — an interactive session a friend
+holds on a machine — is not a fleet slot and is never counted as one** (Johnny). Replays:
+`fleet-is-static-config` (a `:machine` event moves no count and no roadmap; a heartbeat, an
+`observe` and a probe change no member), `no-machine-name-in-the-tool`, `one-locator-one-unit`,
+`no-credential-in-a-member`, `fleet-for-is-a-recommendation-not-a-lease` (the ask writes no lease
+and leaves `who` unchanged), `an-excluded-choice-is-refused-not-empty`.
+
 ## Models, prices and what they are evidence of *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
 
 **A shared `models` section is keyed by stable model and version identity, with provider route and
@@ -3180,7 +3314,7 @@ chain, high fan-out, and on one multi-command session.
 ## Output grammar
 
 Every line's first token is the verb's (`SESSION`, `EXPORT`, `REPLAY`, `HANDOFF`, `CLIP`,
-`OPERATION`, `SAVEPOINT`, `UNDO`, `REDO`, `FRIEND`, `CONFIG`, `MODEL`, `OBSERVE`, `GOAL`,
+`OPERATION`, `SAVEPOINT`, `UNDO`, `REDO`, `FRIEND`, `CONFIG`, `MODEL`, `OBSERVE`, `GOAL`, `MACHINE`,
 `WORK`, `VERIFY`, `QUERY`, `RENDER`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
 `RESPONSIBLE`, `ACCEPT`, `SOURCE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`,
 `ATTESTED`, `STATE`, `CORRECT`, `EVENT`), the second is `OK` or `FAIL`, `RACED` for a push the base predicate
@@ -3227,6 +3361,8 @@ QUERY ROW <id> branch=<open|closed> disposition=<pending|working|deferred|done|c
 QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows whose bodies the retention archive holds, or whose day partition or manifest the committed root names, and this read could not reach; an absent day inside a complete manifested range is no events and prints no note)
 QUERY ROW <lease-id> node=<id> kind=<lease|heartbeat|release|handoff> rev=<n> at=<stamp> from=<name|-> to=<name|-> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|->   (handoffs)
 QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
+QUERY ROW <machine-id> kind=machine name=<text> owner=<name> roles=<build,test,profile> admits=<kind|-> concurrent=<n|-> arch=<text|-> os=<text|-> declared-by=<name> declared-at=<stamp>   (fleet)
+QUERY FAIL ask=fleet rows=0 shown=0: <id> excludes <kind>   (--for with --node on a member that excludes the kind: a refusal, never an empty answer)
 QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable   (a state-as-of ask whose day partition the committed root names and this read could not open; never answered from a later row)
 QUERY FAIL ask=<kind> after=<cursor> pinned=<rev> current=<rev>: page expired   (a continuation whose captured revision the session can no longer serve; never a drifted page)
 OPERATION OK id=<id> op=<capture|stage|export|clip> state=<queued|running|done|cancelling|cancelled|failed> started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>
@@ -3246,6 +3382,8 @@ CONFIG OK friend=<name> verdict=<unchanged|manifest|delta> base=<hash|-> revisio
 CONFIG OK id=<event-id> request=<id> friend=<name> base=<hash|-> revision=<n> hash=<hash> parts=<n> rev=<n> pushed=<rev|-> emitted=<bytes>   (--intake alone, the mutation form, its :config event by the kinds above)
 CONFIG FAIL friend=<name> base=<hash|-> verdict=<schema|identity|hash|incomplete>: <reason>   (the old config is left intact)
 FRIEND OK id=<event-id> request=<id> friend=<name> change=<register|retire|role|participation|capability|limit> rev=<n> pushed=<rev|-> emitted=<bytes>
+MACHINE OK id=<event-id> request=<id> machine=<id> change=<register|retire|permit|exclude|limit|fact> rev=<n> pushed=<rev|-> emitted=<bytes>
+MACHINE FAIL machine=<id>: <reason>   (no owner, no id, locator held by <id>, credential in record, unknown role, fact without provenance: nothing written, the value never echoed)
 MODEL OK id=<event-id> request=<id> model=<id> change=<register|rate|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>
 OBSERVE OK id=<event-id> request=<id> friend=<name> change=<state|attempt> rev=<n> pushed=<rev|-> emitted=<bytes>
 GOAL OK id=<event-id> request=<id> scope=<scope> goal=<id|-> change=<set|clear|progress|evidence|blocked|stop> kind=<goal|transition|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>   (goal set and goal update: change= is the form the caller used, evidence for --progress with the evidence triple and progress for --progress alone; kind= is the event written, :goal for set and clear, the node's own :transition or :evidence for update)
@@ -3273,10 +3411,10 @@ nova-work <build identity> <goos>/<goarch> <go version>
 
 where `<MUTATION>` is one of `NODE`, `DECOMPOSE`, `ACCEPT`, `SOURCE`, `DEP`, `AXIS`, `CELL`,
 `RESPONSIBLE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`, `ATTESTED`, `STATE`,
-`CORRECT`, `EVENT`, `UNDO`, `REDO`, `FRIEND`, `MODEL`, `OBSERVE` and `CONFIG` (its `--intake`
-form alone), `GOAL` (its `set` and `update` forms). **Seven of them name no node, and their lines are written out above rather than left
+`CORRECT`, `EVENT`, `UNDO`, `REDO`, `FRIEND`, `MODEL`, `OBSERVE`, `MACHINE` and `CONFIG` (its `--intake`
+form alone), `GOAL` (its `set` and `update` forms). **Eight of them name no node, and their lines are written out above rather than left
 to `node=`**: `UNDO` and `REDO` print `nodes=<n>`, `FRIEND`, `OBSERVE` and `CONFIG --intake`
-print `friend=<name>`, `MODEL` prints `model=<id>`, and `GOAL` prints `scope=<scope> goal=<id|->` — each the subject its `:event` kind above
+print `friend=<name>`, `MODEL` prints `model=<id>`, `GOAL` prints `scope=<scope> goal=<id|->`, and `MACHINE` prints `machine=<id>` — each the subject its `:event` kind above
 names, each still carrying `id=`, `request=`, `rev=` and `pushed=`, so the once-only retry
 promise reads the same for them as for every other mutation. The rest each
 add the fields their section names (`LEASE OK … holder= deadline= default= live=`, `STATE OK
