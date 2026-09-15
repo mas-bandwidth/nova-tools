@@ -64,6 +64,33 @@ func TestAwakeClassifiesByCursorAge(t *testing.T) {
 	}
 }
 
+func TestAwakeReadsMaxAndAsFromConfig(t *testing.T) {
+	dir := awakeBus(t)
+	for _, name := range []string{"a", "b", "c"} {
+		if err := os.MkdirAll(filepath.Join(dir, "from-"+name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfgPath := filepath.Join(t.TempDir(), "config")
+	write(t, cfgPath, "bus="+dir+"\nas=rowan\nmax=2\n")
+	t.Setenv("NOVA_WAKE_CONFIG", cfgPath)
+
+	r := wakeRun(t, "awake")
+	if r.exit != 0 {
+		t.Fatalf("awake exit %d, want 0; stderr=%s", r.exit, r.stderr)
+	}
+	lines := strings.Split(strings.TrimRight(r.stdout, "\n"), "\n")
+	if len(lines) != 4 { // 2 FRIEND, 1 "... and N more", 1 AWAKE OK
+		t.Fatalf("config max not read: awake printed %d lines, want 4\nstdout=%s", len(lines), r.stdout)
+	}
+	if !strings.Contains(r.stdout, "... and 1 more\n") {
+		t.Fatalf("bounds line missing\nstdout=%s", r.stdout)
+	}
+	if !strings.Contains(r.stdout, "AWAKE OK friends=3 awake=0 asleep=0 unknown=3 window=300\n") {
+		t.Fatalf("summary line missing\nstdout=%s", r.stdout)
+	}
+}
+
 func TestAwakeReadsBusAndWindowFromConfig(t *testing.T) {
 	dir := awakeBus(t)
 	cursorCommit(t, dir, "alice", at.Add(-10*time.Second))
