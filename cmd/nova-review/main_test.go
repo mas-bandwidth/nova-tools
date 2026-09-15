@@ -841,6 +841,146 @@ func TestLaneRefusalNamesRemedy(t *testing.T) {
 	}
 }
 
+func packetLabPR(t *testing.T) (lane, base, head string) {
+	t.Helper()
+	dir := t.TempDir()
+	lane = filepath.Join(dir, "lane")
+	remote := filepath.Join(dir, "remote.git")
+	seed := filepath.Join(dir, "seed")
+	gitAt := func(d string, args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	gitAt(dir, "init", "-q", "--bare", remote)
+	if e := os.MkdirAll(seed, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "init", "-q", "-b", "main")
+	gitAt(seed, "config", "user.email", "t@example.invalid")
+	gitAt(seed, "config", "user.name", "t")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "base")
+	base = gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\nchanged\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "change")
+	head = gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-q", remote, "main:refs/heads/main", "feature:refs/heads/feature")
+	gitAt(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	if e := os.MkdirAll(lane, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(dir, "clone", "-q", remote, filepath.Join(lane, merge.RepoDir))
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: base, LaneBranch: "lane", PRs: []*merge.Entry{{PR: 411, OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+	return lane, base, head
+}
+
+func TestPacketHeadBypassBuildsWhenTheEntryHeadFetchFails(t *testing.T) {
+	lane, base, head := packetLabPR(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--pr", "411", "--who", "Johnny", "--head", head, "--out", "pkt.md"}, &out, &errb); code != 0 {
+		t.Fatalf("packet --head (no pull ref) code=%d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "PACKET NOTE fetch failed, using --head") {
+		t.Fatalf("missing note %q in %q", "PACKET NOTE fetch failed, using --head", errb.String())
+	}
+	body, e := os.ReadFile("pkt.md")
+	if e != nil {
+		t.Fatal(e)
+	}
+	got := string(body)
+	if !strings.Contains(got, "head="+head) {
+		t.Fatalf("packet lacks head=%s:\n%s", head, got)
+	}
+	if !strings.Contains(got, "range="+merge.Short(base)+"...") {
+		t.Fatalf("packet lacks range against base %s:\n%s", merge.Short(base), got)
+	}
+}
+
+func TestFriendSequenceLaneAddPacket(t *testing.T) {
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "remote.git")
+	reporemote := filepath.Join(dir, "repo.git")
+	seed := filepath.Join(dir, "seed")
+	gitAt := func(d string, args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	gitAt(dir, "init", "-q", "--bare", remote)
+	gitAt(dir, "init", "-q", "--bare", reporemote)
+	if e := os.MkdirAll(seed, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "init", "-q", "-b", "main")
+	gitAt(seed, "config", "user.email", "t@example.invalid")
+	gitAt(seed, "config", "user.name", "t")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "base")
+	base := gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-q", remote, "main:refs/heads/main")
+	gitAt(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	gitAt(seed, "checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\nchanged\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "change")
+	head := gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-q", reporemote, "feature:refs/pull/411/head")
+
+	lane := filepath.Join(dir, "lane")
+	if e := os.MkdirAll(lane, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(dir, "clone", "-q", remote, filepath.Join(lane, merge.RepoDir))
+	repo := filepath.Join(lane, merge.RepoDir)
+	gitAt(repo, "remote", "add", "repohost", reporemote)
+	gitAt(repo, "fetch", "-q", "repohost", "pull/411/head:refs/remotes/repohost/pull/411/head")
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: base, LaneBranch: "lane", PRs: []*merge.Entry{{PR: 411, OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--pr", "411", "--who", "Johnny", "--head", head, "--out", "pkt-head.md"}, &out, &errb); code != 0 {
+		t.Fatalf("sequence packet --head code=%d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "PACKET NOTE fetch failed, using --head") {
+		t.Fatalf("sequence missing note in %q", errb.String())
+	}
+	if _, e := os.Stat("pkt-head.md"); e != nil {
+		t.Fatalf("sequence did not write the packet: %v", e)
+	}
+}
+
 func TestPacketRefusalNamesAddRemedy(t *testing.T) {
 	lane, _ := packetLab(t)
 	old, _ := os.Getwd()

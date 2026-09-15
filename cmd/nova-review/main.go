@@ -140,10 +140,15 @@ func packet(args []string, out, errOut io.Writer) int {
 	oldHead := entry.OID
 	current, err := fetchEntryHead(ctx, repo, *pr, *branch, st.Repo)
 	if err != nil {
-		return refuse(errOut, fmt.Sprintf("could not fetch the entry head: %v", err))
+		if *asked != "" && merge.IsSHA(*asked) {
+			current = *asked
+			fmt.Fprintf(errOut, "PACKET NOTE fetch failed, using --head\n")
+		} else {
+			return refuse(errOut, fmt.Sprintf("could not fetch the entry head: %v", err))
+		}
 	}
 	current = strings.TrimSpace(current)
-	if oldHead != "" && current != oldHead {
+	if err == nil && oldHead != "" && current != oldHead {
 		fmt.Fprintf(errOut, "PACKET NOTE head moved %s -> %s\n", merge.Short(oldHead), merge.Short(current))
 		if uerr := merge.Update(*lane, time.Duration(*timeout)*time.Second, func(s *merge.State) error {
 			e := s.Find(id)
