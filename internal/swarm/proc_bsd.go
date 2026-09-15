@@ -10,3 +10,7 @@ func StartStamp(pid int) string { return "-" }
 // GroupMembers cannot enumerate a group here. The caller falls back to GroupAlive, which
 // answers the weaker question -- is anything left in the group at all.
 func GroupMembers(pgid, self int) (int, bool) { return 0, false }
+
+// ProcTreeActivity has no standard-library route to the CPU/I/O counters here. ok=false says
+// the measurement could not be made, and the idle watch falls back to the card's log alone.
+func ProcTreeActivity(pid int) (cpu, io int64, ok bool) { return 0, 0, false }

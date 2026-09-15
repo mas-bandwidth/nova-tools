@@ -22,3 +22,9 @@ func StartStamp(pid int) string { return "-" }
 // back to GroupAlive over the job's own process group, which the supervisor is not a
 // member of, so "is anything left in it" is answerable without enumeration.
 func GroupMembers(pgid, self int) (int, bool) { return 0, false }
+
+// ProcTreeActivity has no standard-library route to the CPU/I/O counters here, the same
+// reason StartStamp is a dash: reading ps or a command line is the one thing this tool must
+// never do. ok=false says the measurement could not be made, and the idle watch falls back
+// to the card's own log alone.
+func ProcTreeActivity(pid int) (cpu, io int64, ok bool) { return 0, 0, false }

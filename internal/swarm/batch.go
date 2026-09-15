@@ -51,7 +51,7 @@ func admitRefusalLine(label, why string) string {
 type BatchInput struct {
 	ID       string        // the batch id, printed on the BATCH line
 	Deadline time.Duration // the whole batch's own deadline
-	Idle     time.Duration // per-card idle timeout: a card's log not growing this long is killed
+	Idle     time.Duration // per-card idle timeout: a card whose log AND harness tree sit still this long is killed
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
 	Runner   string        // the command, one process per card
@@ -159,6 +159,8 @@ func Batch(in BatchInput) int {
 		deadKilled bool   // killed at the batch deadline; guarded by doneMu
 		rc         int    // the child's exit code; guarded by doneMu
 		lastGrow   time.Time
+		lastCPU    int64 // the harness tree's CPU ticks at last look; guarded by doneMu
+		lastIO     int64 // the harness tree's I/O bytes at last look; guarded by doneMu
 	}
 	var doneMu sync.Mutex
 	procs := make([]proc, len(cards))
@@ -212,9 +214,12 @@ func Batch(in BatchInput) int {
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
 	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
 	// --idle is set, one monitor re-reads each running card's own log -- <slot>/native.log
-	// when the child wrote one, else the job's harness.log -- and kills a card whose log has
-	// not grown for the idle window: a dead card is removed from the wait, so the batch
-	// returns on its slowest still-working card rather than burning the whole deadline.
+	// when the child wrote one, else the job's harness.log -- and, when the log sat still,
+	// the harness process tree's own CPU and I/O (issue #593): a card whose log has stopped
+	// growing AND whose tree has stopped moving for the idle window is killed, so a dead
+	// card is removed from the wait and the batch returns on its slowest still-working card.
+	// A child go test that prints nothing for minutes still advances its own CPU, so it is
+	// never killed as idle.
 	var wg sync.WaitGroup
 	allDone := make(chan struct{})
 	for i := range procs {
@@ -265,6 +270,19 @@ func Batch(in BatchInput) int {
 							lastSize[i] = size
 							procs[i].lastGrow = now
 							continue
+						}
+						// The log sat still this tick, but the harness tree may still be
+						// working: a child go test prints nothing for minutes while burning
+						// CPU and moving bytes. Treat any advance in the tree's own CPU or
+						// I/O exactly as log growth, so a silent long test is never killed
+						// as idle (issue #593).
+						if pid := procs[i].cmd.Process; pid != nil {
+							if cpu, io, ok := ProcTreeActivity(pid.Pid); ok && (cpu != procs[i].lastCPU || io != procs[i].lastIO) {
+								procs[i].lastCPU = cpu
+								procs[i].lastIO = io
+								procs[i].lastGrow = now
+								continue
+							}
 						}
 						if now.Sub(procs[i].lastGrow) >= in.Idle {
 							procs[i].idleKilled = true
@@ -547,8 +565,9 @@ func readCards(path string) ([]batchCard, error) {
 }
 
 // logSize is the byte length of a card's log file, or zero when the file is not there yet.
-// Growth is the only signal the idle monitor trusts: a card that has written nothing, or has
-// stopped writing, reads the same size twice and is on the clock.
+// Growth is one signal the idle monitor trusts; a card that has written nothing, or has
+// stopped writing, reads the same size twice and is then on the clock unless its harness
+// tree's own CPU or I/O is still advancing (issue #593).
 func logSize(path string) int64 {
 	fi, err := os.Stat(path)
 	if err != nil {

@@ -731,11 +731,13 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
 - `--idle <seconds>` (default 300) is the per-card idle timeout, held beside
   the batch deadline, never instead of it. A card writes its own log —
   `harness.log` under its job directory, the runner's stdout pinned to a
-  regular file — and a card whose log has not grown for `idle` seconds is
-  killed. Idle is a property of one card's own log, measured against that
-  card alone: the batch returns on its **slowest still-working card**, not on
-  the deadline, because a dead card is removed from the wait as soon as its
-  log stops growing.
+  regular file — and a card is killed only when **neither** its log has grown
+  **nor** its harness process tree's CPU or I/O has advanced for `idle`
+  seconds. Idle is a property of one card's own log and tree, measured against
+  that card alone: a child `go test` that prints nothing while it works is
+  still moving, so the batch returns on its **slowest still-working card**, not
+  on the deadline, because a card that has truly stopped is removed from the
+  wait as soon as both logs stop moving.
 - A card killed for idleness is scored
   `<label> slot=<n>: ABSTAIN reason=idle=<s> log=<n> watched=<path>` on the
   packet — an abstain that names *why* it stopped and the log it watched, never
@@ -773,7 +775,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `line1-mismatch` | published a result whose line 1 is not its contract line |
 | `no-result` | ended with rc 0 and published no `RESULT.md` |
 | `rc=<n>` | ended non-zero and published no `RESULT.md` |
-| `idle=<s>` | was killed because its own log stopped growing for `<s>` seconds |
+| `idle=<s>` | was killed because neither its log grew nor its harness tree's CPU or I/O moved for `<s>` seconds |
 | `deadline` | was killed at the batch's deadline |
 | `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
 | `admission` | was refused at admission; the reason follows the token |

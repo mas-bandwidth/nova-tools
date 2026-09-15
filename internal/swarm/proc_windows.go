@@ -119,5 +119,10 @@ func StartStamp(pid int) string {
 // GroupMembers counts the processes in a group other than self. Unavailable here.
 func GroupMembers(pgid, self int) (int, bool) { return 0, false }
 
+// ProcTreeActivity has no standard-library route to the whole tree's CPU/I/O counters here:
+// GetProcessTimes needs an open handle per pid, and there is no group to enumerate. ok=false
+// says the measurement could not be made, and the idle watch falls back to the log alone.
+func ProcTreeActivity(pid int) (cpu, io int64, ok bool) { return 0, 0, false }
+
 // pgidOf has no process group to report here, so a process is its own group of one.
 func pgidOf(pid int) int { return pid }

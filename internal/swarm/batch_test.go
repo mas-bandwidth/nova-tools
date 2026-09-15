@@ -400,6 +400,52 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 	}
 }
 
+// TestIdleWatchCountsChildActivity: a harness whose log sits still while a CHILD of it
+// burns CPU -- a silent go test -- is never killed "idle". The idle monitor must read the
+// harness process tree's own activity, not just its log: the spinner card finishes and
+// publishes, while a card that truly sleeps past --idle is still killed.
+func TestIdleWatchCountsChildActivity(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"spinner", "RESULT: spinner\nall green"},
+		{"sleeper", "RESULT: sleeper\nall green"},
+	})
+	// One runner: the spinner fork-execs a child that spins silently (no log line, only CPU)
+	// for ~3 s, well past --idle=1 s, then publishes; the sleeper sleeps 30 s and never writes.
+	runner := filepath.Join(dir, "child-activity.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"path=\"$root/$slot/jobs/$label/RESULT.md\"\n" +
+		"mkdir -p \"$(dirname \"$path\")\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"if [ \"$label\" = \"spinner\" ]; then\n" +
+		"  ( start=$(date +%s); while [ $(( $(date +%s) - start )) -lt 3 ]; do :; done ) &\n" +
+		"  busy=$!\n" +
+		"  wait $busy\n" +
+		"  printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$path\"\n" +
+		"else\n" +
+		"  sleep 30\n" +
+		"fi\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch with one idle-killed card exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
+		t.Fatalf("the spinner is done and the sleeper counted idle:\n%s", out)
+	}
+	if !strings.Contains(out, "spinner slot=1: all green") {
+		t.Fatalf("a silently-spinning child's tree counts as active, its card is done, never idle-killed:\n%s", out)
+	}
+	if !strings.Contains(out, "sleeper slot=2: ABSTAIN reason=idle=1") {
+		t.Fatalf("a truly-sleeping card is still killed and names its idle reason:\n%s", out)
+	}
+}
+
 func TestBatchOutputBounded(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
