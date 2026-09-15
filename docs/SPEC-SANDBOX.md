@@ -66,11 +66,10 @@ near the end.
 1. **OS-enforced or refused.** There is one Go function,
    `sandbox.Run`, with three
    bodies behind build tags: `sandbox-exec` on `darwin`, Landlock on `linux`,
-   AppContainer on `windows`. The bodies differ in whether the tool survives
-   the command: on `darwin` and `windows` the tool waits and returns the
-   command's status; on `linux` the function does not return on success,
-   because the tool restricts itself and then `exec`s the command in place
-   (rule 12). If the platform's backend is not available at run time — no
+   AppContainer on `windows`. On `darwin`, `linux` and `windows` alike the tool
+   waits and returns the command's status. On `linux` it restricts **itself**
+   first and starts the command afterwards, so the tool is inside the wall it
+   applied while it waits (rule 12 and the Linux section). If the platform's backend is not available at run time — no
    Landlock in the running kernel, no `sandbox-exec` on `PATH` and none at
    `/usr/bin/sandbox-exec`, an AppContainer
    profile that cannot be created — the tool prints `SANDBOX REFUSED
@@ -461,7 +460,7 @@ range, and this is a deliberate, recorded departure from the conventions
 |------|---------|
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
 | 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI newer than this tool's table (`reason=landlock_abi_unknown`), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`) |
-| 126 | the command could not be executed **and the tool was still there to say so**: on `linux` `syscall.Exec` returned an error, on `windows` `CreateProcessW` failed. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
+| 126 | the command could not be executed **and the tool was still there to say so**: on `linux` the child could not be started inside the wall, on `windows` `CreateProcessW` failed. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
 | 127 | the command could not be resolved on the caller's `PATH`: `SANDBOX REFUSED reason=not_found`, printed like every other refusal of the tool's own |
 | 128+N | the wrapped command was killed by signal `N` |
 
@@ -498,9 +497,9 @@ wall and a `127` means the tool could not find the command at all. A command
 that is found and then dies inside the wall for want of its interpreter or a
 shared library exits `126` or dies by signal. There is **no** `SANDBOX NOTE`
 on that failure, and the previous revision was wrong to promise one: on linux
-the tool has `syscall.Exec`'d itself away before the command runs, so nothing
-of the tool is left to print anything (rule 12), and a promise the tool can
-keep on one platform and not the other two is worse than no promise. The
+the tool is inside the wall it applied by the time the command runs, so it can
+print no more than the command's own status (rule 12), and a promise the tool
+can keep on one platform and not the other two is worse than no promise. The
 remedy is printed where it can be printed on all three — the usage banner and
 the `--read` paragraph of the roots section — and a reader diagnosing a `126`
 compares it with the same command run without the wrap.
@@ -534,8 +533,8 @@ the executable — and never the arguments, because arguments carry task text an
 task text carries quoted rules.
 
 Every `SANDBOX NOTE` is printed **before** the command starts, for the reason
-`SANDBOX OK` is: on linux the tool becomes the command and can print nothing
-afterwards. There is no note about a failure the command suffered inside the
+`SANDBOX OK` is: on linux the tool is inside the wall from the moment it is
+applied, and the wall goes up before the command does. There is no note about a failure the command suffered inside the
 wall, on any platform.
 
 `net=nopromise` is rule 7: the caller did not ask for network denial and the
@@ -759,12 +758,15 @@ status, not to clean anything up.
 
 ## Linux — Landlock, no root
 
-> **Unimplemented proposal (2026-09-12).** The Linux (Landlock) backend
-> described in this section is not implemented: the linux body of `nova-sandbox`
-> is not built today (`cmd/nova-sandbox/parent_linux.go` carries only the
-> probe's parent-executable guard), so no Landlock wall is applied on linux. Its
-> requirements are preserved below, word for word, as the owed work for when the
-> body is built; nothing below is a promise the current binary keeps.
+> **Implemented (2026-09-15, [#69](https://github.com/mas-bandwidth/nova-tools/issues/69)).**
+> The linux body is `internal/sandbox/wrap_linux.go` and
+> `internal/sandbox/landlock_linux.go`, and it is measured on the fleet's linux
+> bench (Ubuntu 24.04, kernel 6.8, Landlock **ABI 4**): `nova-sandbox check`
+> there is `backend=landlock abi=4 net=enforceable`. One thing below changed
+> when it was built and is marked where it changed: the body is
+> **restrict-then-fork**, not restrict-then-exec in place. The limits this
+> backend has and the darwin one does not are listed at the end of this section
+> rather than left for a reader to infer.
 
 Landlock is an LSM available from kernel **5.13**, usable by an unprivileged
 process, and inherited across `execve(2)` so that the child cannot lift it. The
@@ -846,14 +848,36 @@ first, or `landlock_restrict_self` fails with `EPERM`.
 4. `runtime.LockOSThread` (the restriction is per-thread until it is applied,
    and Go may otherwise move the goroutine), `prctl(PR_SET_NO_NEW_PRIVS, 1)`,
    `landlock_restrict_self`.
-5. `syscall.Exec(path, argv, env)` — the tool **becomes** the command. Nothing
-   after this line runs, so every status line, including `SANDBOX OK`, is
-   printed and flushed before step 4.
+5. The command is started as a child and the tool **waits** for it, exactly as
+   the darwin body waits on `sandbox-exec`'s child, and returns its status.
+   Every status line, including `SANDBOX OK`, is printed and flushed before
+   step 4, because past step 4 the tool is itself inside the wall.
 
-The alternative is a re-exec helper (the tool re-executes itself with a hidden
-flag, restricts, then execs), which buys a waiting parent at the cost of a
-second process and a hidden flag; it is not chosen, because nothing on linux
-needs cleanup after the command ends.
+**Restrict-then-fork, and why it is not the `syscall.Exec` this section first
+proposed.** Revision 9 said the tool should `syscall.Exec` the command and
+*become* it, so `Run` never returns on success. That cannot be this body, and
+`probe` is the reason: rule 10's `probe` runs **four** walled steps in **one**
+process and reads the status of each, so a `Run` that never returns turns the
+probe into its own first step and the other three never happen. Rule 10 has
+tests and the `Exec` shape had none, so the shape gave way.
+
+What is chosen is not the re-exec helper this section also considered and
+rejected: there is **no** second process and **no** hidden flag. The tool
+applies the ruleset to itself and forks the command, so the process count is
+the darwin body's — tool plus command — and Landlock's inheritance across
+`fork(2)` is what carries the wall to the child. `runtime.LockOSThread` pins
+the goroutine to the thread being restricted so that the fork happens on that
+thread, and there is no matching `UnlockOSThread`: the thread is walled for
+good and handing it back to the runtime's pool would hand an unrelated
+goroutine a wall it never asked for.
+
+The cost is stated rather than hidden: **`Run` is one-way.** Past
+`landlock_restrict_self` the tool's own process is inside the wall and no call
+takes it back out. A caller that runs `Run` twice in one process nests a second
+domain inside the first — which is what `probe` does, and because its walled
+steps all share one policy the nested domain is the same wall again. Anything a
+caller must do unwalled it must do **before** the first `Run`, which is exactly
+why rule 10 runs `write_outside_control` first.
 
 The ABI is discovered with `landlock_create_ruleset(NULL, 0,
 LANDLOCK_CREATE_RULESET_VERSION)`, and the handled set is masked down to what
@@ -881,6 +905,35 @@ Landlock is unavailable when the kernel predates 5.13, when it is not compiled
 in, or when it is not in the boot-time `lsm=` list. All three come back as a
 failed version query, and all three are `SANDBOX REFUSED reason=no_sandbox`
 (rule 1).
+
+**What this backend cannot do that the darwin one can.** Four things, and they
+are here rather than in a footnote because a wall's gaps are the part a reader
+must be able to find:
+
+1. **It denies; it does not hide.** Landlock has no mount namespace, so a path
+   in neither `--read` nor `--write` is *unreadable*, not *absent*: its
+   **contents** never come out, while its **name** can still appear in a
+   listing of a readable parent directory. This matches the darwin backend,
+   which also denies rather than hides, and it is the promise both make — the
+   bytes, not the name.
+2. **Network denial is TCP only.** `--net-deny` is TCP `bind`/`connect`, which
+   is all Landlock restricts at any ABI; **UDP is not restricted**, so a walled
+   process under `net=denied` can still send and receive UDP, DNS included. The
+   darwin backend withholds the whole network grant and has no such hole.
+3. **No `ioctl` restriction below ABI 5** (kernel 6.10), which the fleet's
+   linux bench at kernel 6.8 is: `LANDLOCK_ACCESS_FS_IOCTL_DEV` does not exist
+   there, so a walled process can `ioctl` any device file it can open. The bit
+   is handled the moment the kernel defines it, and `abi=` on the `SANDBOX OK`
+   line is how a reader knows which machine they are on.
+4. **No abstract-unix-socket or signal scope below ABI 6** (kernel 6.12), as
+   the paragraph above says: a walled process on the 6.8 bench can connect to
+   an abstract socket outside its domain and signal a process outside it.
+
+A fifth is not this backend's but the roots table's, and it bites hardest on
+linux: **"the directory of the resolved command" is a read root**, so a command
+that lives in a directory holding secrets makes that directory readable. Keep
+the tool and the commands it wraps in a `bin` directory, never in the job's
+parent or in a shared `/tmp`.
 
 ## Windows — AppContainer, no admin
 
