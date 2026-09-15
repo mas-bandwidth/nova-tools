@@ -1364,6 +1364,10 @@ to discuss a HOLD writes a note themselves. This tool adds no verb to the bus.
 
 ## What it deliberately does not do
 
+- **The six other verbs this draft specifies — `verdict`, `answer`, `policy`,
+  `roster`, `dedupe` and `cost` — are not implemented, and their output lines
+  are struck from the grammar above until they are built: the binary ships
+  `packet`, `version` and `help`.** (drift audit, 2026-09-15)
 - **It does not review code.** It checks that a finding's ground exists at the
   head; it never checks that the claim is true, and no line of it compares two
   claims.
