@@ -378,7 +378,7 @@ func Batch(in BatchInput) int {
 			abstain++
 			continue
 		}
-		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
+		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog, in.Stderr)
 		rows[i].state, rows[i].reason, rows[i].tail, rows[i].line2 = state, reason, tail, line2
 		if state == "done" {
 			done++
@@ -435,7 +435,7 @@ func Batch(in BatchInput) int {
 // contract decides, never the child's timing or its rc. The tail is one bounded field the
 // remedy needs -- the log the idle monitor watched, or the job directory that holds no
 // result -- printed after log=<n>, never in place of the token.
-func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSeconds int, logPath, idleLog string) (state, reason, tail, line2 string) {
+func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSeconds int, logPath, idleLog string, notes io.Writer) (state, reason, tail, line2 string) {
 	switch {
 	case idleKilled:
 		watched := idleLog
@@ -451,7 +451,7 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	// A remote card's job came back under <root>/<bench>-<n>/jobs/<label>; a local card's
 	// sits under <root>/<n>/jobs/<label>.
 	job := filepath.Join(root, scratchName(c), "jobs", c.label)
-	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	raw, err := os.ReadFile(gatherResult(notes, c.label, job))
 	if err != nil {
 		// A card that ran to a clean exit and published nothing named no result; a card that
 		// ended non-zero names the code it ended with, which is the thing to go and read.
@@ -473,6 +473,35 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		return "abstain", "card-abstain", "", ""
 	}
 	return "done", "", "", two
+}
+
+// gatherResult locates a card's RESULT.md and returns the job-root path the gather reads.
+// The card's cwd after STEP 1 is repo/ inside the job, so a model sometimes writes RESULT.md
+// inside the repository it cloned rather than in the job directory; when the job root holds
+// none, the gather looks at repo/RESULT.md or one directory below, copies the file up to the
+// job root and notes the copy (issue #594) -- used for local and native cards, where the
+// pull's own repo lookup does not run.
+func gatherResult(notes io.Writer, label, job string) string {
+	result := filepath.Join(job, "RESULT.md")
+	if _, err := os.Stat(result); err == nil {
+		return result
+	}
+	for _, pat := range []string{
+		filepath.Join(job, "repo", "RESULT.md"),
+		filepath.Join(job, "repo", "*", "RESULT.md"),
+	} {
+		matches, _ := filepath.Glob(pat)
+		for _, from := range matches {
+			if err := copyFile(from, result, 0o644); err != nil {
+				continue
+			}
+			if notes != nil {
+				fmt.Fprintf(notes, "BATCH NOTE %s RESULT.md copied up from %s\n", oneline.Field(label), from)
+			}
+			return result
+		}
+	}
+	return result
 }
 
 // readCards reads the TSV and admits every card or none: one line that does not parse

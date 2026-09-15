@@ -209,6 +209,57 @@ func TestBatchAbstainsWrongLine1(t *testing.T) {
 	}
 }
 
+// THE CARD WROTE IT INSIDE THE REPO IT CLONED, and the file is plainly there. A model whose
+// cwd after STEP 1 is repo/ sometimes writes RESULT.md there, not in the job directory; a
+// gather that reads only the job root scores that work as no-result and loses it. The gather
+// looks at repo/RESULT.md and one directory below, copies the file up to the job root, and
+// says so (issue #594) -- the card is wrong and a reader is told where the result was found.
+func TestGatherCopiesResultUpFromRepo(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A runner that writes RESULT.md one directory below repo/ rather than at the job root:
+	// the card's own mistake, standing in for a real worker's cwd.
+	runner := filepath.Join(dir, "buried.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job/repo/nova-tools\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/repo/nova-tools/RESULT.md\"\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 0 {
+		t.Fatalf("a buried result is still done, exits 0, got %d;\nstdout: %s\nstderr: %s", code, out, errs)
+	}
+	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0") {
+		t.Fatalf("the buried result is gathered, never scored no-result:\n%s", out)
+	}
+	if !strings.Contains(out, "a slot=1: all green") {
+		t.Fatalf("line 2 is the card's disposition, gathered verbatim:\n%s", out)
+	}
+	job := filepath.Join(resolvedPath(t, root), "1", "jobs", "a")
+	buried := filepath.Join(job, "repo", "nova-tools", "RESULT.md")
+	want := "BATCH NOTE a RESULT.md copied up from " + buried
+	if !strings.Contains(errs, want) {
+		t.Fatalf("the gather did not say where it found the result:\nwant: %s\ngot: %s", want, errs)
+	}
+	if _, err := os.Stat(filepath.Join(job, "RESULT.md")); err != nil {
+		t.Fatalf("the result was not copied up into the job root: %v", err)
+	}
+	up, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	if err != nil || string(up) != "RESULT: a\nall green\n" {
+		t.Fatalf("the copied-up result is the card's own, unchanged: %q, %v", up, err)
+	}
+}
+
 func TestBatchKillsAtDeadline(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")

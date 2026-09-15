@@ -920,14 +920,15 @@ harness's last write has landed, and a pull that copies at once copies nothing.
 (2) Each file is **its own explicit `scp`**, named on both sides — never one
 `rsync` with an include filter, because a filter that matches nothing exits 0
 and a copy of nothing then reads as a card that abstained. (3) When `RESULT.md`
-is absent from the job but present under `repo/`, or one directory below it, it
-is **copied up into the job** and the batch prints
+is absent from the job root but present under `repo/`, or one directory below
+it, it is **copied up into the job root**: the pull prints
 
 ```
 SPACE NOTE RESULT.md copied up from <path>
 ```
 
-so the card's mistake is on the record and its work is not lost to it. A pull
+and the local gather prints `BATCH NOTE <label> RESULT.md copied up from <path>` — so
+the card's mistake is on the record and its work is not lost to it. A pull
 that cannot reach the bench at all — `ssh`'s own exit 255, not a remote command
 saying no — scores the card `ABSTAIN reason=bench-unreachable`; a bench that
 answers and holds no result is the ordinary missing-result abstain and not that.
