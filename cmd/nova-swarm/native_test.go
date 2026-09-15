@@ -369,6 +369,89 @@ func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
 	}
 }
 
+// TestNativeConfigKeylessProviderAdmitted: a --config that names a provider whose entry is
+// absent from --auth is admitted, not refused, when that provider's options carry a baseURL
+// and no apiKey field -- ollama on localhost needs no key, so there is no key to be absent.
+// The config is still copied verbatim, mode 0600, and the run records its sha8.
+func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "ollama/north-mini-code-32k", label: "lbl",
+		card: []byte("FAKE-RECORD-CONFIG\n"), slotDir: slot, root: root, authFile: auth,
+		configFile: cfgPath, deadline: 30 * time.Second, noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("a keyless provider (baseURL, no apiKey) is admitted, got exit %d:\n%s", code, errOut.String())
+	}
+	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Fatalf("the keyless provider is not refused, got:\n%s", errOut.String())
+	}
+	wantSum := sha256.Sum256([]byte(config))
+	wantSHA := hex.EncodeToString(wantSum[:])[:8]
+	if res.configSHA != wantSHA {
+		t.Errorf("the run records config sha8 %q, want %q", res.configSHA, wantSHA)
+	}
+	assertConfigRecord(t, slot, "0600", config)
+}
+
+// TestFriendSequenceLocalModelCard runs one known-answer card on a fake local provider: the
+// harness is the fake, the provider is a keyless ollama (baseURL, no apiKey, no auth entry),
+// and the card FAKE-PWD answers with the job directory. The run is walled, admitted without a
+// refusal, and the wall's own name and the card's known answer both land where a reader looks.
+func TestFriendSequenceLocalModelCard(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	label := "local-model-card"
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "ollama/north-mini-code-32k", label: label,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, authFile: auth,
+		configFile: cfgPath, deadline: 30 * time.Second, sandbox: sandbox,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the keyless local provider runs walled, got exit %d:\n%s", code, errOut.String())
+	}
+	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Fatalf("the local provider card is admitted, not refused:\n%s", errOut.String())
+	}
+	if res.wall != "fake-wall" {
+		t.Errorf("the run names the wall it ran inside, got %q", res.wall)
+	}
+	jobDir := filepath.Join(slot, "jobs", label)
+	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+	if err != nil {
+		t.Fatalf("the card's known answer was not written: %v", err)
+	}
+	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
+	if !sameDir(got, jobDir) {
+		t.Errorf("the card's known answer is %q, want the job directory %q", got, jobDir)
+	}
+}
+
 // TestNativeRunRefusalsNameTheirReason drives the remaining three refusals -- a model with
 // no provider prefix, an auth file looser than 0600, and a slot outside its root -- so each
 // prints its one REFUSED line.
