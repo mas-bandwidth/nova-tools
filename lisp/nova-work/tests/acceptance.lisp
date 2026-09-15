@@ -1618,5 +1618,160 @@ is compared against; it is never the path `query --ask size` takes."
                     (check-string= init-digest (root-digest (kernel-state target-k)) "target state root digest unchanged")
                     (check-equal init-rev (kernel-next-rev target-k) "target next-rev unchanged")
                     (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
-               (close-file-journal j-replay))))
+                (close-file-journal j-replay))))
       (ignore-errors (delete-file path)))))
+
+;;;; ------------------------------------------------------------------
+;;;; Replays promised by docs/SPEC-WORK.md lines 3600-end, part 8 of 8.
+;;;; A replay whose sentence needs kernel code slice 1 does not yet ship is
+;;;; kept here behind ;; NEEDS-KERNEL and guards the gap (it turns red the day
+;;;; the named entry point lands, prompting the real assertion).
+;;;; ------------------------------------------------------------------
+
+(defmacro needs-kernel (name spec need what)
+  `(deftest ,name ,spec ,(format nil "NEEDS-KERNEL:~A" what)
+     ;; NEEDS-KERNEL: ,need
+     (ok (null (find-symbol ,what :nova-work))
+         ,(format nil "~A entry point is not yet shipped" what))))
+
+(needs-kernel "state-export-refuses-a-gap" "docs/SPEC-WORK.md:5428"
+  "state export: a missing mandatory member, a changed digest, a dangling internal reference, a path escape, a symlink, an output overrun and a corrupt S-expression each refused with no valid load"
+  "EXPORT-STATE")
+
+(needs-kernel "state-load-is-isolated" "docs/SPEC-WORK.md:5445"
+  "an instrumented load with no ownership change, no dispatch, no replay, no merge, no resolver run, no network and no repository write"
+  "LOAD-STATE")
+
+(needs-kernel "status-answers-while-io-runs" "docs/SPEC-WORK.md:5186"
+  "status and cancel answered within their bound while a busy capture, export and clip are in flight"
+  "OPERATION-STATUS")
+
+(needs-kernel "stop-is-a-hold-not-a-cancel" "docs/SPEC-WORK.md:5250"
+  "execution stop writing a hold and directives and no transition, goal show still printing stop=none"
+  "EXECUTION-STOP")
+
+(needs-kernel "subscription-is-not-free-reference-cost" "docs/SPEC-WORK.md:5288"
+  "the three cost values (subscription, reference, local api) kept separately labelled"
+  "SUBSCRIPTION-COST")
+
+(needs-kernel "unchanged-config-is-one-bounded-answer" "docs/SPEC-WORK.md:5284"
+  "the config exchange bounded, validated and atomic, no roster and no prose repeated per poll"
+  "CONFIG-DELTA")
+
+(needs-kernel "undo-appends-and-preserves" "docs/SPEC-WORK.md:5192"
+  "an undo appending a typed compensating envelope with its lineage while the original event and every receipt stay where they are"
+  "UNDO")
+
+(needs-kernel "undo-names-its-reversible-set" "docs/SPEC-WORK.md:5332"
+  "every row of the reversible-verb table: each reversible verb undone by the envelope the table names, each refused verb refused not-reversible naming itself"
+  "UNDO")
+
+(needs-kernel "undo-refuses-an-external-effect" "docs/SPEC-WORK.md:5201"
+  "an undo over a sent message, a paid execution, a publication and a source deletion refused and reported as an external effect"
+  "UNDO")
+
+(needs-kernel "undo-redo" "docs/SPEC-WORK.md:5599"
+  "reversible edits reversed, history preserved, redo only against valid preconditions; a conflict explicit and mutating nothing"
+  "REDO")
+
+(needs-kernel "unknown-price-is-not-zero" "docs/SPEC-WORK.md:5287"
+  "a missing pricing dimension reported unknown, never read as a zero historical receipt"
+  "PRICE-LOOKUP")
+
+(needs-kernel "unrelated-receipts-stay-reusable" "docs/SPEC-WORK.md:5301"
+  "a changed source or criterion preserving the historic tick at its pinned revision while unrelated receipts stay untouched"
+  "RECEIPT-LOOKUP")
+
+(needs-kernel "until-is-overdue-not-released" "docs/SPEC-WORK.md:5243"
+  "at --until and lease expiry no duplicate launch and no stopped or completed claim, the reservation retained until reconciled"
+  "LEASE-UNTIL")
+
+(needs-kernel "working-is-a-view" "docs/SPEC-WORK.md:5082"
+  "|W| <= |O| over a set where every item is leased then released, and no verb writes W"
+  "WORKING-SET")
+
+(deftest "torn-tail-is-diagnosed-not-truncated" "docs/SPEC-WORK.md:5521"
+    "expected=torn-tail-vs-corrupt-record-vs-journal-mismatch;zero-truncation;file-bytes-preserved"
+  ;; NEEDS-KERNEL: recovery-gap kind=torn-tail and kind=corrupt-record named
+  ;; codes; slice 1 distinguishes the three via journal-corrupt-data /
+  ;; journal-mismatch, and the file stays bit-for-bit through each refusal.
+  (let ((initial-hash (root-digest (make-seed-state *seed*))))
+    (flet ((bytes-unbroken (path before-bytes before-sha)
+             (check-equal before-bytes (file-byte-count path) "file size preserved bit-for-bit")
+             (check-string= before-sha (file-sha256-hex path) "file bytes preserved bit-for-bit")))
+      ;; Case 1: a partial frame at the end -> journal-corrupt-data, never mismatch.
+      (let ((path (test-journal-path "torn-tail")))
+        (unwind-protect
+             (progn
+               (let ((j (open-file-journal path :initial-state-hash initial-hash)))
+                  (let ((k (fresh :journal j)))
+                    (submit k (close-request :node "acme/work/f1/t1" :request "req-1")))
+                  (close-file-journal j))
+                (with-open-file (out path :direction :output :if-exists :append :element-type 'character)
+                  (write-string "(:frame :seq 2 :len 120 :checksum \"0000\"" out)
+                 (finish-output out))
+               (let ((before (file-byte-count path)) (sha (file-sha256-hex path)))
+                 (handler-case (open-file-journal path :initial-state-hash initial-hash)
+                   (journal-corrupt-data () (ok t "torn tail is a corrupt-data refusal"))
+                   (journal-mismatch () (fail "torn tail rounded to a mismatch"))
+                   (error (c) (fail "unexpected error: ~A" c)))
+                 (bytes-unbroken path before sha)))
+          (ignore-errors (delete-file path))))
+      ;; Case 2: a flipped bit inside a frame -> corrupt record (checksum), never mismatch.
+      (let ((path (test-journal-path "corrupt-record")))
+        (unwind-protect
+             (progn
+               (let ((j (open-file-journal path :initial-state-hash initial-hash)))
+                  (let ((k (fresh :journal j)))
+                    (submit k (close-request :node "acme/work/f1/t1" :request "req-1")))
+                  (close-file-journal j))
+                (let* ((record (list :transition :node "acme/work/f1/t1" :to :done :reason "x"
+                                    :blocked-by +absent+ :evidence '("e")))
+                      (rec-canon (canonical-string record))
+                      (frame (list :frame :seq 2 :len (length rec-canon)
+                                   :checksum "0000000000000000000000000000000000000000000000000000000000000000"
+                                   :record record)))
+                 (with-open-file (out path :direction :output :if-exists :append :element-type 'character)
+                   (write-string (canonical-string frame) out)
+                   (write-char #\Newline out)
+                   (finish-output out)))
+               (let ((before (file-byte-count path)) (sha (file-sha256-hex path)))
+                 (handler-case (open-file-journal path :initial-state-hash initial-hash)
+                   (journal-corrupt-data (c)
+                     (ok (search "checksum" (journal-corrupt-data-reason c))
+                         "flipped bit is a corrupt record, not a torn tail: ~A"
+                         (journal-corrupt-data-reason c)))
+                   (journal-mismatch () (fail "corrupt record rounded to a mismatch"))
+                   (error (c) (fail "unexpected error: ~A" c)))
+                 (bytes-unbroken path before sha)))
+          (ignore-errors (delete-file path))))
+      ;; Case 3: a wrong header -> journal-mismatch, never corrupt-data.
+      (let ((path (test-journal-path "wrong-header")))
+        (unwind-protect
+             (progn
+               (let ((j (open-file-journal path :initial-state-hash "header-aaa")))
+                 (close-file-journal j))
+               (let ((before (file-byte-count path)) (sha (file-sha256-hex path)))
+                 (handler-case (open-file-journal path :initial-state-hash "header-bbb")
+                   (journal-mismatch () (ok t "wrong header is a journal mismatch"))
+                   (journal-corrupt-data () (fail "wrong header rounded to corrupt-data"))
+                   (error (c) (fail "unexpected error: ~A" c)))
+                 (bytes-unbroken path before sha)))
+          (ignore-errors (delete-file path)))))))
+
+(deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
+    "expected=bignum-fields-round-trip-exact;json-number-frame-refused"
+  (dolist (field '((:id 9007199254740993)
+                   (:revision 9007199254740995)
+                   (:counter 9007199254740997)
+                   (:token-total 9007199254740999)))
+    (let ((n (second field)))
+      (let ((wire (canonical-string n)))
+        (ok (stringp wire) "~A serializes to a string: ~A" (first field) wire)
+        (check-string= (princ-to-string n) wire "exact decimal digits")
+        (check-equal n (read-restricted wire) "round-trip unchanged"))))
+  (dolist (json-number '("9007199254740993.0" "1e5" "1.5" "3/4"))
+    (let ((refused nil))
+      (handler-case (read-restricted json-number)
+        (restricted-data-violation () (setf refused t)))
+      (ok refused "a wire frame carrying the JSON number ~A is refused" json-number))))
