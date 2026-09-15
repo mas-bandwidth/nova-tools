@@ -756,9 +756,10 @@ func TestAnUnreadableFileIsCarriedAcrossRuns(t *testing.T) {
 	if got := read(t, checkout, "from-ada/OPEN"); !strings.Contains(got, "-\tunreadable\t-\t-\t-\t-\tfrom-bo/2026-09-07T0009Z-prose.md\t-") {
 		t.Fatalf("the unreadable file was not carried on the open list:\n%s", got)
 	}
-	// The next run, with nothing new at all, still names it. That is the whole point.
+	// The next run, with nothing new at all, still names it, collapsed to one count line
+	// because it is unchanged since the cursor. That is the whole point.
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX UNREADABLE path=from-bo/2026-09-07T0009Z-prose.md: ").
+		mustContain(t, "stdout", "INBOX UNREADABLE count=1 unchanged=true first=from-bo/2026-09-07T0009Z-prose.md").
 		mustContain(t, "stdout", "unreadable=1")
 
 	// Receipting it is one way it leaves the list: a reader saying "I have seen this file"
@@ -784,6 +785,31 @@ func TestAnUnreadableFileIsCarriedAcrossRuns(t *testing.T) {
 	invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX NOTE id=bo-333333333333 from=Bo addr=to").
 		mustContain(t, "stdout", "unreadable=0")
+}
+
+func TestUnreadableNotesCollapseToOneLineWhenUnchanged(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	writeFile(t, checkout, "from-bo/2026-09-07T0009Z-prose.md",
+		"Ada, the checkpoint is pushed and the suite passed: zero divergence.\n\nMore prose.\n")
+	commitAs(t, checkout, "Bo", "bo: a file that will not parse")
+
+	// First run: the unreadable file is NEW since the cursor, so it is named with its
+	// reason, per file. News is not collapsed.
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX UNREADABLE path=from-bo/2026-09-07T0009Z-prose.md: ")
+	// Second run, nothing new: the file is carried, unchanged since the cursor, so the
+	// whole set collapses to one count line and no per-file lines print.
+	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX UNREADABLE count=1 unchanged=true first=from-bo/2026-09-07T0009Z-prose.md")
+	if strings.Contains(r.stdout, "INBOX UNREADABLE path=") {
+		t.Fatalf("an unchanged unreadable set still printed per-file lines:\n%s", r.stdout)
+	}
+	// --diagnostics asks for the whole picture whatever the default is: the per-file line
+	// is back even though nothing changed.
+	invoke(t, "", advance(checkout, "Ada", "--diagnostics")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX UNREADABLE path=from-bo/2026-09-07T0009Z-prose.md: ")
 }
 
 // field pulls one key=value out of an event line.
@@ -1197,7 +1223,7 @@ func TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed(t *testing.
 	r = invoke(t, "", advance(checkout, "Ada", "--legacy-before", "2026-09-01")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0 unreadable=1").
-		mustContain(t, "stdout", "INBOX UNREADABLE path="+recent+": ").
+		mustContain(t, "stdout", "INBOX UNREADABLE count=1 unchanged=true first="+recent).
 		mustContain(t, "stdout", "unreadable=1")
 	if strings.Contains(r.stdout, old) {
 		t.Fatalf("a file behind the line was named one by one:\n%s", r.stdout)
@@ -1211,7 +1237,7 @@ func TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed(t *testing.
 	// still names the one in front of the line.
 	r = invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0 unreadable=0").
-		mustContain(t, "stdout", "INBOX UNREADABLE path="+recent+": ").
+		mustContain(t, "stdout", "INBOX UNREADABLE count=1 unchanged=true first="+recent).
 		mustContain(t, "stdout", "unreadable=1")
 	if strings.Contains(r.stdout, old) {
 		t.Fatalf("the quiet run brought a file from behind the line back:\n%s", r.stdout)
@@ -1574,12 +1600,9 @@ func TestTheLargeListLineFiresPastTheWarnThresholdAndNotAtIt(t *testing.T) {
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=40 open=40")
 	plain := []string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40"}
 	r := invoke(t, "", plain...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OPEN carrying=40 heard=0")
-	if strings.Contains(r.stdout, "is large") {
-		t.Fatalf("carrying 40 is not past a threshold of 40:\n%s", r.stdout)
-	}
+		mustContain(t, "stdout", "INBOX OPEN carrying=40 heard=0 large=false remedy=inbox --advance")
 
-	// One more, and the line fires -- with this run's own values in the command it names.
+	// One more, and the flag flips -- the two numbers are the same line from then on.
 	writeFile(t, checkout, "from-bo/2026-09-09T1159Z-edge-bo-ffffffffffff.md",
 		"From: Bo\nTo: Ada\nDate: Wed Sep  9 11:59:00 UTC 2026\nId: bo-ffffffffffff\nSubject: The forty-first\n\nOne past the line.\n")
 	gitIn(t, checkout, "add", "-A")
@@ -1587,21 +1610,18 @@ func TestTheLargeListLineFiresPastTheWarnThresholdAndNotAtIt(t *testing.T) {
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 	r = invoke(t, "", append(append([]string{}, plain...), "--advance", "--remote", "origin", "--branch", "main", "--attempts", "3")...).
 		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OPEN carrying=41 heard=0").
-		mustContain(t, "stdout", fmt.Sprintf(`INBOX OPEN carrying=41 is large; answer with Re: <id>, receipt --note <id>, or start over: nova-bus inbox --bus %q --as "Ada" --receipt-max-words 40 --full --legacy-now --advance --remote "origin" --branch "main"`, checkout))
-	if n := strings.Count(r.stdout, "is large"); n != 1 {
-		t.Fatalf("the large-list line was printed %d times, want 1:\n%s", n, r.stdout)
+		mustContain(t, "stdout", "INBOX OPEN carrying=41 heard=0 large=true remedy=inbox --advance")
+	if n := strings.Count(r.stdout, "INBOX OPEN carrying=41 heard="); n != 1 {
+		t.Fatalf("the OPEN line was printed %d times, want 1:\n%s", n, r.stdout)
 	}
 	// It is a NOTE and not a refusal: the run did what it was asked and the cursor moved.
 	r.mustContain(t, "stdout", "INBOX CURSOR commit=")
 
 	// The threshold is the caller's, in both directions.
-	invoke(t, "", append(append([]string{}, plain...), "--open-warn", "41")...).mustCode(t, 0)
-	if r := invoke(t, "", append(append([]string{}, plain...), "--open-warn", "41")...); strings.Contains(r.stdout, "is large") {
-		t.Fatalf("--open-warn 41 fired at 41:\n%s", r.stdout)
-	}
+	invoke(t, "", append(append([]string{}, plain...), "--open-warn", "41")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OPEN carrying=41 heard=0 large=false remedy=inbox --advance")
 	invoke(t, "", append(append([]string{}, plain...), "--open-warn", "0")...).
-		mustCode(t, 0).mustContain(t, "stdout", "is large")
+		mustCode(t, 0).mustContain(t, "stdout", "INBOX OPEN carrying=41 heard=0 large=true remedy=inbox --advance")
 	invoke(t, "", append(append([]string{}, plain...), "--open-warn", "-1")...).
 		mustCode(t, 2).mustContain(t, "stderr", "--open-warn counts entries, so it is 0 or more")
 }
@@ -1614,8 +1634,8 @@ func TestASmallOpenListIsNotCalledLarge(t *testing.T) {
 	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
-		mustCode(t, 0).mustContain(t, "stdout", "INBOX OPEN carrying=2 heard=0")
-	if strings.Contains(r.stdout, "is large") {
+		mustCode(t, 0).mustContain(t, "stdout", "INBOX OPEN carrying=2 heard=0 large=false remedy=inbox --advance")
+	if strings.Contains(r.stdout, "large=true") {
 		t.Fatalf("a reader carrying 2 was told their list is large:\n%s", r.stdout)
 	}
 }

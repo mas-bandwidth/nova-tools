@@ -528,6 +528,7 @@ nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
 nova-swarm bench    probe --benches <file> --bench <name>
+nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
@@ -544,8 +545,16 @@ nova-swarm version
 nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
 nova-swarm quickstart --pool <dir>
+nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>]
+nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
 nova-swarm help
 ```
+
+`native --config <file>` copies an `opencode.json` beside the carried auth into
+the job's data home, mode 0600, and a config that names a provider whose key is
+absent from `--auth` is refused before anything runs; a provider whose options
+carry a `baseURL` and no `apiKey` (ollama on localhost) needs no key and is
+admitted without one, so its card runs walled on the local model.
 
 `--tokens <n>` is the token budget (rule 13). It has no default and `0` is
 refused, on `add` and on `batch` alike, for the reason `--files` has none.
@@ -677,7 +686,7 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
   card alone: the batch returns on its **slowest still-working card**, not on
   the deadline, because a dead card is removed from the wait as soon as its
   log stops growing.
-- A card killed for idleness is scored `<label>: ABSTAIN -- idle <n>s` on the
+- A card killed for idleness is scored `<label>: ABSTAIN reason=idle=<s>` on the
   packet — an abstain that names *why* it stopped, never a bare missing
   result — and the BATCH line's `idle=<n>` counts those kills.
 
@@ -710,9 +719,11 @@ are the thing the packet replaced.
 ### The packet's grammar
 
 ```
-BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum> idle=<n>
-<label>: ABSTAIN -- idle <n>s
-CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped>
+BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum> idle=<n> [benches=<n>]
+BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
+<label>: ABSTAIN reason=<token>
+CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
+ADMIT REFUSED bench=<name>: <reason>
 HOLD: <one bounded quoted line>
 ```
 
@@ -721,7 +732,7 @@ the cards abstain, the batch usd total, and `idle=<n>` — how many cards the
 idle timeout killed. One `CARD` line per card, in admission order: its
 admitted-text sha prefix, its state, its usage, and its disposition line —
 line 2 verbatim, capped at one line. A card killed by the idle timeout is its
-own one-line score, `<label>: ABSTAIN -- idle <n>s`, in place of a `CARD`
+own one-line score, `<label>: ABSTAIN reason=idle=<s>`, in place of a `CARD`
 line. `HOLD:` lines carry evidence a count would hide, each capped. Counts
 and caps bound the packet's bytes; a packet never lists a finding and never
 quotes a report body.
@@ -823,19 +834,19 @@ process owns the batch deadline and the per-card `--idle`. The local wrapper
 holds its `ssh` child in a process group of its own; on deadline or idle it
 sends `SIGTERM` to that group, then `ssh <host> pkill -TERM -g <pgid>` with
 the pgid from the `RUN pgid=<n>` line, then `-KILL` after 5 s, and the card is
-scored as a local card: `<label>: ABSTAIN -- deadline`, or `-- idle=<s>`
+scored as a local card: `<label>: ABSTAIN reason=deadline`, or `reason=idle=<s>`
 counted in `idle=<n>`. If `ssh` itself is unreachable then, the slot is
-`<label>: ABSTAIN -- bench-unreachable` and gather records what was pulled
+`<label>: ABSTAIN reason=bench-unreachable` and gather records what was pulled
 (`RESULT.md` absent, `usage.tsv` absent) with the last local log line. A
 network drop after `RESULT.md` was written is recovered by a second pull at
-gather: one retry, 30 s, none after. The reason after `ABSTAIN --` is one
-token, the set issue #461 gives every card: `line1-mismatch | no-result |
+gather: one retry, 30 s, none after. The reason in `ABSTAIN reason=<token>` is
+one token, the set issue #461 gives every card: `line1-mismatch | no-result |
 rc=<n> | idle=<s> | deadline | card-abstain | bench-unreachable`. The idle watch on a
 remote card asks `ssh <host> stat -c %s <root>/<n>/jobs/<label>/native.log` —
 bytes, the growth a local log is measured by, never an mtime (rule 16) — no
 more than once per `--idle/3` seconds. A bench unreachable at a poll is not a
 dead card: the card stays `unknown` until the batch deadline, when it is
-`ABSTAIN -- bench-unreachable` (**wait**: missing contact is `unknown`, not failure).
+`ABSTAIN reason=bench-unreachable` (**wait**: missing contact is `unknown`, not failure).
 
 **The cost of a bench, per card:** one `ssh` and one `rsync` at the start,
 one `rsync` at the end, one `ssh stat` per `--idle/3` while it runs, and
@@ -914,10 +925,10 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 6. `batch-copies-card-only` — exactly one file crosses before the run, and it is the card.
 7. `batch-pulls-result-and-usage` — `RESULT.md`, `usage.tsv` and a bounded `native.log` land under `<root>/<bench>-<n>/jobs/<label>/`, and `gather` folds them unchanged.
 8. `batch-line-has-bench-lines` — `benches=2` and two `BENCH` lines whose `done` sum to the `BATCH` line's.
-9. `deadline-kills-remote-group` — at the deadline the local ssh child's group gets `SIGTERM`, the fake ssh sees `pkill -TERM -g <pgid>` with the pgid from the `RUN pgid=` line, then `-KILL`, and the card is `ABSTAIN -- deadline`.
+9. `deadline-kills-remote-group` — at the deadline the local ssh child's group gets `SIGTERM`, the fake ssh sees `pkill -TERM -g <pgid>` with the pgid from the `RUN pgid=` line, then `-KILL`, and the card is `ABSTAIN reason=deadline`.
 10. `unwalled-bench-needs-no-wall-and-marks-result` — `wall=none` without `--no-wall` is refused; with it the `RUN UNSANDBOXED` line prints, `native` gets `--no-wall`, and the `CARD` line carries `wall=none`.
 11. `local-row-unchanged-behaviour` — a cards file of bare slot numbers and no `--bench` gives the same argv, files and packet as before this section, byte for byte.
-12. `remote-idle-watch-reads-size` — the idle poll is `stat -c %s`, at most once per `--idle/3`, and an unreachable bench leaves the card `unknown` until the deadline, then `ABSTAIN -- bench-unreachable` with both files absent and the last local log line recorded.
+12. `remote-idle-watch-reads-size` — the idle poll is `stat -c %s`, at most once per `--idle/3`, and an unreachable bench leaves the card `unknown` until the deadline, then `ABSTAIN reason=bench-unreachable` with both files absent and the last local log line recorded.
 13. `bench-name-is-not-a-friend` — a `--bench` name on the bus's friends list is `ADMIT REFUSED bench=<name> is a friend`, and the fake bus sees no line.
 14. `gather-retries-pull-once` — a pull that fails after `RESULT.md` exists on the bench is retried once at gather, 30 s later, and folds as done; a second failure is `no-result`.
 15. `pin-none-row-admits-without-taskset` — `cores=-` on a bench whose fake `PATH` lacks `taskset` probes `pin=none`, admits, and its argv carries no `taskset`; `cores=1-15` on the same bench is `BENCH REFUSED check=pin`.
@@ -976,6 +987,7 @@ SUPERVISE FAILED slot=<n> id=<id>: <reason>
 RUN REFUSED: <reason>
 RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
+NATIVE OK label=<id> job=<id> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> [usage=none reason=<r> path=<p>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
@@ -1007,6 +1019,8 @@ RECLAIM MORE kind=<task> shown=<n> total=<t> nova-swarm reclaim --pool <dir> --a
 STOP OK pool=<dir> running=<n>
 QUICKSTART OK pool=<dir> pending=<n> next=add,run,triage
 QUICKSTART NOTE <one remedy line>
+PUBLISH OK branch=<name> head=<sha> pr=<url>
+PUBLISH REFUSED: <reason>
 ```
 
 The [profile proposal](SPEC-SWARM-PROFILES.md) additionally specifies

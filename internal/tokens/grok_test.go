@@ -493,8 +493,8 @@ func TestGrokUnsupportedAndOwedCellsRefuse(t *testing.T) {
 	if _, err := GrokNormalizedSpend(recs); !errors.Is(err, ErrGrokNormalizedSpendUnsupported) {
 		t.Errorf("normalized spend from a Grok turn key is unsupported until identity stability is evidenced: %v", err)
 	}
-	if _, err := GrokSessionAggregate(grokSource(t, "source_export.json"), grokFixtureOptions(mappingID)); !errors.Is(err, ErrGrokSessionAggregateOwed) {
-		t.Errorf("the session aggregate is a separate owed mapping: %v", err)
+	if _, err := GrokSessionAggregate(grokSource(t, "source_export.json"), grokFixtureOptions(mappingID)); err != nil {
+		t.Errorf("the session aggregate is now a covered separate mapping: %v", err)
 	}
 	if _, err := GrokRequestObservations(grokSource(t, "source_export.json"), grokFixtureOptions(mappingID)); !errors.Is(err, ErrGrokRequestGrainOutsideMapping) {
 		t.Errorf("request grain is outside this mapping: %v", err)
@@ -881,5 +881,95 @@ func TestGrokLexemeGrammarsAcceptWhatTheWireAccepts(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Grok session aggregate mapping and checksum (once owed, now covered). The aggregate maps
+// the session block to a kind:aggregate observation in its own namespace, never filling a
+// missing turn; the checksum compares it against the turn rows only over complete coverage.
+func TestGrokSessionAggregateMappingAndChecksum(t *testing.T) {
+	_, mappingID := grokManifest(t)
+	raw := grokSource(t, "source_export.json")
+
+	recs, err := GrokSessionAggregate(raw, grokFixtureOptions(mappingID))
+	if err != nil {
+		t.Fatalf("session aggregate maps without refusal: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("one session aggregate record, got %d", len(recs))
+	}
+	agg := recs[0]
+	o := agg.Observation
+	if o.Source.Kind != GrokSourceKind || o.Source.Namespace != GrokSessionNamespace || o.Kind != GrokSessionObservationKind {
+		t.Errorf("aggregate is grok/ns=%s/kind=%s, got %s/%s/%s",
+			GrokSessionNamespace, GrokSessionObservationKind, o.Source.Kind, o.Source.Namespace, o.Kind)
+	}
+	if len(o.Source.EventKey) != 1 || o.Source.EventKey[0] != "fixture-grok-session" {
+		t.Errorf("aggregate event key is [session_id] alone: %v", o.Source.EventKey)
+	}
+	if o.Time.Basis != "source_aggregate" || o.Time.OccurredAt != nil || o.Time.Start != nil || o.Time.End != nil {
+		t.Errorf("aggregate carries source_aggregate basis with no instant or interval: %+v", o.Time)
+	}
+	if len(o.RawUsage) != 6 {
+		t.Errorf("aggregate raw_usage carries the six session totals, found %d", len(o.RawUsage))
+	}
+	if f := o.RawUsage["inputTokens"]; !f.Present() || f.Value == nil || *f.Value != "3010" {
+		t.Errorf("aggregate inputTokens is the session total 3010, got %+v", f)
+	}
+	// A round-trip: the aggregate's own sealed bytes read back to the same observation.
+	v := records.NewValidator(GrokSessionAllowlists())
+	env, err := v.ValidateEnvelope(agg.Envelope)
+	if err != nil {
+		t.Fatalf("aggregate record refused: %v", err)
+	}
+	if env.Observation.Kind != GrokSessionObservationKind {
+		t.Errorf("aggregate envelope reads back as kind %q", env.Observation.Kind)
+	}
+
+	// The checksum against complete turn coverage: the fixture declares 4 turns over 5
+	// retained rows (and one carries a gap), so coverage is incomplete and nothing matches.
+	turns, err := DecodeGrokTurns(raw, grokFixtureOptions(mappingID))
+	if err != nil {
+		t.Fatalf("decode turns: %v", err)
+	}
+	ck := GrokSessionChecksum(agg, turns)
+	if ck.CoverageComplete {
+		t.Errorf("the fixture session declares 4 turns for 5 retained rows: coverage is not complete")
+	}
+	if ck.Match {
+		t.Errorf("over incomplete coverage there is no trustworthy checksum match")
+	}
+
+	// A complete single-turn session whose totals agree checksums to a match.
+	matchRaw := []byte(`{"sessionId":"s","session":{"inputTokens":1000,"outputTokens":100,"totalTokens":1100,` +
+		`"modelCalls":2,"costUsdTicks":77,"turnCount":1},` +
+		`"turns":[{"turnNumber":1,"inputTokens":1000,"outputTokens":100,"totalTokens":1100,"modelCalls":2,"costUsdTicks":77}]}`)
+	mopts := GrokOptions{MappingID: "sha256:" + strings.Repeat("0", 64)}
+	magg, err := GrokSessionAggregate(matchRaw, mopts)
+	if err != nil {
+		t.Fatalf("matching aggregate: %v", err)
+	}
+	mturns, err := DecodeGrokTurns(matchRaw, mopts)
+	if err != nil {
+		t.Fatalf("matching turns: %v", err)
+	}
+	if ck := GrokSessionChecksum(magg[0], mturns); !ck.CoverageComplete || !ck.Match || len(ck.MismatchedFields) != 0 {
+		t.Errorf("a complete single-turn session that agrees checksums to a match: %+v", ck)
+	}
+
+	// A mismatched total over complete coverage is a conflict, not a match.
+	mismatchRaw := []byte(`{"sessionId":"s","session":{"inputTokens":999,"outputTokens":100,"totalTokens":1099,` +
+		`"modelCalls":2,"costUsdTicks":77,"turnCount":1},` +
+		`"turns":[{"turnNumber":1,"inputTokens":1000,"outputTokens":100,"totalTokens":1100,"modelCalls":2,"costUsdTicks":77}]}`)
+	mmagg, err := GrokSessionAggregate(mismatchRaw, mopts)
+	if err != nil {
+		t.Fatalf("mismatched aggregate: %v", err)
+	}
+	mmturns, err := DecodeGrokTurns(mismatchRaw, mopts)
+	if err != nil {
+		t.Fatalf("mismatched turns: %v", err)
+	}
+	if ck := GrokSessionChecksum(mmagg[0], mmturns); ck.Match || !ck.CoverageComplete {
+		t.Errorf("a same-key total mismatch over complete coverage conflicts rather than matches: %+v", ck)
 	}
 }

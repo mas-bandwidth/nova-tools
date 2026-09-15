@@ -42,8 +42,9 @@ type nativeRunConfig struct {
 	// github.com only, expressed as a wall host rule
 	recipients []string // bus lanes a card may address; default none, and a bus
 	// send is denied inside the wall regardless
-	sandbox string // the nova-sandbox binary naming the wall; "" = resolve on PATH
-	noWall  bool   // the caller typed --no-wall: run with no containment, named by its OK line
+	sandbox    string // the nova-sandbox binary naming the wall; "" = resolve on PATH
+	noWall     bool   // the caller typed --no-wall: run with no containment, named by its OK line
+	configFile string // optional: an opencode.json provider config copied beside the auth copy
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -56,6 +57,7 @@ type nativeRunResult struct {
 	job          string  // the job directory <slot>/jobs/<label> the child ran in
 	usageState   string  // the store path the NATIVE OK line names when no store answered, "" otherwise
 	usageReason  string  // no-rows | no-store | no-sqlite3, "" when the store answered
+	configSHA    string  // sha8 of the carried provider config, "" when --config named none
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -142,6 +144,25 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 	}
 
+	// (4b) THE PROVIDER CONFIG (issue #465). The clean env carries the provider's auth entry
+	// into the job's own XDG data home but no opencode.json, so every configured provider --
+	// ollama, inception, zen -- is unknown to the harness and the run dies rc=1 in under a
+	// second. --config copies an opencode.json beside the carried auth file, mode 0600, so
+	// the harness resolves the provider exactly as it does when a person adds it to
+	// ~/.config/opencode. A config that names a provider whose key is absent from --auth is
+	// refused before anything runs, naming the provider and never the key; a provider whose
+	// options carry a baseURL and no apiKey field has no key to be absent (ollama on
+	// localhost) and is admitted without one.
+	configSHA := ""
+	if cfg.configFile != "" {
+		sha8, reason := copyProviderConfig(cfg.configFile, cfg.authFile, dataHome)
+		if reason != "" {
+			refuseNative(errOut, reason)
+			return nativeRunResult{}, 2
+		}
+		configSHA = sha8
+	}
+
 	// The two hashes are recorded from the same bytes the run is about to use, so a
 	// caller can prove later that neither the card nor the binary changed under it.
 	binaryHash, _ := fileSHA256(bin)
@@ -211,6 +232,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		binarySHA256: binaryHash,
 		job:          jobDir,
 		wall:         "none",
+		configSHA:    configSHA,
 	}
 	if cfg.noWall {
 		res.wall = "none-by-flag"
@@ -513,6 +535,90 @@ func copyAuth(src, provider, dataHome string) string {
 		_ = os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600)
 	}
 	return ""
+}
+
+// copyProviderConfig copies an opencode.json provider config beside the carried auth copy
+// in the job's own data home, mode 0600, and returns the sha8 the NATIVE OK line names. A
+// config that names a provider whose entry is absent from the auth file is refused before
+// anything runs: that provider is exactly the one the harness would call unknown, and the
+// refusal names the provider, never the key. The bytes are copied verbatim even when they
+// are not a JSON object this side can parse -- the refusal check is best-effort, the copy
+// is not.
+func copyProviderConfig(configPath, authPath, dataHome string) (sha8, reason string) {
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error()))
+	}
+	if missing := configProvidersMissingAuth(raw, authPath); missing != "" {
+		return "", fmt.Sprintf("the config file %s names provider %s, whose key is absent from the auth file %s; add it to --auth or drop the provider from --config",
+			oneline.Field(configPath), oneline.Field(missing), oneline.Field(dash(authPath)))
+	}
+	sum := sha256.Sum256(raw)
+	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error()))
+	}
+	if err := os.WriteFile(dst, raw, 0o600); err != nil {
+		return "", fmt.Sprintf("the config copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error()))
+	}
+	return hex.EncodeToString(sum[:])[:8], ""
+}
+
+// configProvidersMissingAuth returns the first provider an opencode.json config names whose
+// entry is absent from the auth file, or "" when every named provider has one (or when the
+// config does not parse into a "provider" object, which the copy still performs verbatim).
+// The provider names are the keys of the config's top-level "provider" object. A provider
+// whose options carry a baseURL and no apiKey field needs no key (ollama on localhost), so
+// it is skipped: the refusal applies only to providers that reference a key.
+func configProvidersMissingAuth(raw []byte, authPath string) string {
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return ""
+	}
+	providers, ok := cfg["provider"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	entries := map[string]bool{}
+	if authPath != "" {
+		if authRaw, err := os.ReadFile(authPath); err == nil {
+			var a map[string]any
+			if json.Unmarshal(authRaw, &a) == nil {
+				for p := range a {
+					entries[p] = true
+				}
+			}
+		}
+	}
+	for p := range providers {
+		if keylessProvider(providers[p]) {
+			continue
+		}
+		if !entries[p] {
+			return p
+		}
+	}
+	return ""
+}
+
+// keylessProvider reports whether a provider entry needs no key: its options carry a baseURL
+// and no apiKey field, so the harness reaches it (for example ollama on localhost) with no
+// credential to be absent.
+func keylessProvider(v any) bool {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	opts, ok := m["options"].(map[string]any)
+	if !ok {
+		return false
+	}
+	baseURL, _ := opts["baseURL"].(string)
+	if baseURL == "" {
+		return false
+	}
+	_, hasKey := opts["apiKey"]
+	return !hasKey
 }
 
 // fileSHA256 returns the lowercase hex sha256 of a file's bytes.

@@ -215,8 +215,8 @@ Every rule is normative and has one line in **tests this spec demands**.
 | determinism | baked into the derived tag (`temperature 0`, `--seed`) | **per request**, not per process: `serve --seed` on ds4 is exit 2 naming this row, because this tool sends no inference requests |
 | harness id | provider `ollama`, model the derived tag. OpenCode's `--model` is `<provider>/<model>`, so the harness argv carries `ollama/{model}` while the description's `model` stays the bare served id (`worker.go:229`) | **unknown** — the spelling an OpenAI-compatible client must send, which `worker` needs and cannot guess |
 
-`ds4_server.c` is antirez's checkout at `/Users/rowan/rowan-working/ds4`, readable
-from this bench; every line cited above was read at commit **c0a6119f** (2026-09-12).
+`ds4_server.c` is antirez's private checkout of DwarfStar; every line cited above
+was read at commit **c0a6119f** (2026-09-12).
 Three unknowns stay open and are **read off that source before
 `internal/local/ds4.go` is written**: whether any endpoint reports load progress (so
 `state=loading` would be an inference and must be labelled one); whether the process
@@ -612,9 +612,9 @@ still a place to push back.
 
 ## Sources
 
-`memory/…` is Rowan's self repo (`/Users/glenn/rowan-new`); `standard/…` is
-`/Users/glenn/rowan-working/standard`; `ds4_server.c` is antirez's checkout at
-`/Users/rowan/rowan-working/ds4`, readable from this bench at c0a6119f.
+`memory/…` is a private checkout of Rowan's self repo; `standard/…` is a private
+checkout of the standard repo; `ds4_server.c` is antirez's private checkout of
+DwarfStar, readable from this bench at c0a6119f.
 
 - `memory/local-model-doctrine.md:105`, 2026-09-09 — rule 8's *"a lock is probably not needed"* (receipt `inbox/2026-09-10-bench-note-local-models-on-the-studio.md`).
 - `memory/the-machine-is-the-mandate.md:24,43-44` — ds4's Flash and PRO measurements · `memory/model-trust.md`, `a-guard-without-its-writer.md`, `ready-is-a-measurement.md`, `tool-output-costs-tokens.md` — rules 4, 8, 13.

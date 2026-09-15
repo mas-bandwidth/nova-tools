@@ -48,9 +48,12 @@ func runFloors(t *testing.T, coreDoc, sourceDoc string) []Failure {
 	return failures
 }
 
-// Parity on the real prose: the door and the source as they stand today
-// agree, and the check says so. This is nova#15's "not a present defect"
-// claim, now enforced rather than remembered.
+// Parity on the pinned prose: the door and the source snapshots under
+// testdata/ agree, and the check says so. This is nova#15's "not a present
+// defect" claim, now enforced rather than remembered. The fixtures are a
+// snapshot pinned 2026-08-14, NOT today's live records (issue #30): a wording
+// drift in the live floor 4 leaves them stale without reddening the title
+// match, so this test pins the snapshot, never claims it is current.
 func TestFloorsParityHoldsOnRealText(t *testing.T) {
 	failures := runFloors(t, loadFixture(t, "seed-core-floors.md"), loadFixture(t, "seed-floors.md"))
 	wantFailures(t, failures, nil)
