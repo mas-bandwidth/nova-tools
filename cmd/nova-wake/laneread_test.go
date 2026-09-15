@@ -106,21 +106,17 @@ func TestAHugeReceiptsAppendIsNeverHeldWhole(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "probe.state")
 	seedPing(t, state, busDir, peer, "rowan-00000000000a", anchor, at)
 
-	traceFile := filepath.Join(t.TempDir(), "trace")
 	pidfile := filepath.Join(t.TempDir(), "diff")
 	fakeGit(t)
-	t.Setenv("NOVA_WAKE_FAKE_GIT_TRACE", traceFile)
 	t.Setenv("NOVA_WAKE_FAKE_GIT_DIFF", "1200") // ~1.1 MiB of appended lines
 	t.Setenv("NOVA_WAKE_FAKE_GIT_PIDFILE", pidfile)
 
 	// A budget that fits two of those lines and no more.
 	probeAt(t, at.Add(time.Minute), "--bus", busDir, "--line", peer, "--state", state,
 		"--as", caller, "--correlate-bytes", "2048")
-	fi, err := os.Stat(pidfile + ".bytes")
 	raw := read(t, pidfile+".bytes")
 	if raw == "" {
-		t.Fatalf("the shim never answered a diff; it is not on PATH (size=%d err=%v raw=%q)",
-			func() int64 { if fi != nil { return fi.Size() }; return -1 }(), err, raw)
+		t.Fatalf("the shim never answered a diff; it is not on PATH")
 	}
 	written, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil {
@@ -132,11 +128,6 @@ func TestAHugeReceiptsAppendIsNeverHeldWhole(t *testing.T) {
 	if written == 0 {
 		t.Errorf("the read took nothing at all; the stream never started")
 	}
-}
-
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 // ---------------------------------------------------------------------------

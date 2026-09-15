@@ -32,14 +32,6 @@ import (
 
 func main() {
 	args := os.Args[1:]
-	if tr := os.Getenv("NOVA_WAKE_FAKE_GIT_TRACE"); tr != "" {
-		f, _ := os.OpenFile(tr, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if f != nil {
-			fmt.Fprintf(f, "pid=%d args=%v diffenv=%q pidfileenv=%q\n", os.Getpid(), args,
-				os.Getenv("NOVA_WAKE_FAKE_GIT_DIFF"), os.Getenv("NOVA_WAKE_FAKE_GIT_PIDFILE"))
-			f.Close()
-		}
-	}
 	has := func(want string) bool {
 		for _, a := range args {
 			if a == want {
@@ -76,8 +68,17 @@ func main() {
 			return true
 		}
 		record := func() {
-			if pidfile != "" {
-				_ = os.WriteFile(pidfile+".bytes", []byte(strconv.Itoa(written)), 0o644)
+			if pidfile == "" {
+				return
+			}
+			// The reader reads .bytes the moment the read returns, which can be
+			// while this process is still streaming and rewriting the count. A
+			// plain os.WriteFile truncates before it writes, so a concurrent
+			// reader can see a zero-length file; write to a temp file and rename
+			// so the file always holds a complete previous or new count.
+			tmp := pidfile + ".bytes.tmp"
+			if err := os.WriteFile(tmp, []byte(strconv.Itoa(written)), 0o644); err == nil {
+				_ = os.Rename(tmp, pidfile+".bytes")
 			}
 		}
 		// The count is written AS IT GOES, because the reader closing the pipe
