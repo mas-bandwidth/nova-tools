@@ -96,8 +96,8 @@ func TestDraftWithoutReplyToIsByteIdenticalToTodays(t *testing.T) {
 	if r.stdout != expected {
 		t.Errorf("stdout is %q, want %q", r.stdout, expected)
 	}
-	if r.stderr != "" {
-		t.Errorf("the released form printed %q on stderr; it prints nothing there when nothing is wrong", r.stderr)
+	if r.stderr != "DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>\n" {
+		t.Errorf("the released form printed %q on stderr; want the one-line send hint", r.stderr)
 	}
 	// And the refusal side, unchanged: exit 2, one DRAFT REFUSED line per problem.
 	bad := invoke(t, "", "draft", "--bus", checkout, "--as", "Nobody", "--to", "Bo").mustCode(t, 2)

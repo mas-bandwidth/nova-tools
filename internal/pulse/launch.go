@@ -167,27 +167,6 @@ func queueRemainder(root string, cards []CardRow) error {
 	return nil
 }
 
-// readCards reads cards.tsv: label<TAB>slot<TAB>model<TAB>card. The slot column is read and
-// discarded; launch allocates no slot itself, it hands the cards to nova-swarm batch.
-func readCards(path string) ([]CardRow, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("--cards wants a readable TSV of label, slot, model, card: %w", err)
-	}
-	var cards []CardRow
-	for i, line := range strings.Split(string(raw), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		parts := strings.Split(line, "\t")
-		if len(parts) != 4 {
-			return nil, fmt.Errorf("--cards line %d wants label<TAB>slot<TAB>model<TAB>card, got %d fields", i+1, len(parts))
-		}
-		cards = append(cards, CardRow{Label: parts[0], Model: parts[2], Card: parts[3]})
-	}
-	return cards, nil
-}
-
 // groupByModel folds the cards into benches in cards.tsv order, one bench per distinct model
 // in the order the models first appear.
 func groupByModel(cards []CardRow) []BenchRow {
