@@ -94,6 +94,11 @@ func readLines(t *testing.T, path string) []string {
 
 // TestBatchPinsSlotToCore: slot 3 on cores=1-15 runs under taskset -c 3, and every remote
 // argv carries taskset. The fake ssh records each argv; none of them run native.
+//
+// The two cards run at once, so the order their argv lands in ssh.log is the order two
+// concurrent slots happened to reach the fake -- not a fact about pinning. Reading runs[0]
+// as card a's line made this test red 5 runs in 8 on this bench; the assertion is over the
+// SET of run lines, each matched by its own label, which is what pinning actually claims.
 func TestBatchPinsSlotToCore(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -128,9 +133,12 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 		t.Fatalf("the fake ssh saw no run; the remote card never ran")
 	}
 	// The two remote cards' ssh writes land in ssh.log in whichever order the scheduler
-	// ran them, so the RUN lines are not ordered by slot on return. The pins they carry
-	// order them deterministically (-c 3 before -c 4), which is the sync point that keeps
-	// the slot->core assertions below order-independent rather than a scheduling coin flip.
+	// ran them, so the RUN lines are not ordered by slot on return (#583). Sorting by the
+	// pin they carry gives the loop below and any failure message a stable order.
+	//
+	// It is NOT what makes the slot->core assertions order-independent: sorting the lines
+	// by the very core the test then names cannot tell card a on core 3 from card a on
+	// core 4, so the pairing is asserted by matching each line's own --label instead.
 	sort.Slice(runs, func(i, j int) bool {
 		return coreIn(runs[i]) < coreIn(runs[j])
 	})
@@ -139,11 +147,22 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 			t.Fatalf("every remote run argv carries taskset, got %q", l)
 		}
 	}
-	if !strings.Contains(runs[0], "taskset -c 3") {
-		t.Fatalf("slot 3 on 1-15 runs under taskset -c 3, got %q", runs[0])
+	if len(runs) != 2 {
+		t.Fatalf("two cards run, the fake ssh saw %d runs:\n%v", len(runs), runs)
 	}
-	if !strings.Contains(runs[1], "taskset -c 4") {
-		t.Fatalf("slot 4 on 1-15 runs under taskset -c 4, got %q", runs[1])
+	pin := map[string]string{}
+	for _, l := range runs {
+		for _, label := range []string{"a", "b"} {
+			if strings.Contains(l, "--label "+label+" ") {
+				pin[label] = l
+			}
+		}
+	}
+	if !strings.Contains(pin["a"], "taskset -c 3") {
+		t.Fatalf("card a on slot 3 of 1-15 runs under taskset -c 3, got %q", pin["a"])
+	}
+	if !strings.Contains(pin["b"], "taskset -c 4") {
+		t.Fatalf("card b on slot 4 of 1-15 runs under taskset -c 4, got %q", pin["b"])
 	}
 }
 

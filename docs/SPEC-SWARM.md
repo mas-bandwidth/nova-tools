@@ -550,11 +550,21 @@ nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-
 nova-swarm help
 ```
 
+`batch --root` and `native --slot`/`--root` are made **absolute and
+symlink-resolved** at admission, and that one spelling is what reaches the
+runner, `NOVA_SWARM_ROOT`, the wall's argv and every later compare. Absolute
+alone is not enough: on darwin `/var` is a symlink to `/private/var`, so one
+directory reached admission under two names depending on how the caller typed
+it. A path that does not exist yet resolves its deepest existing ancestor.
+
 `native --config <file>` copies an `opencode.json` beside the carried auth into
-the job's data home, mode 0600, and a config that names a provider whose key is
-absent from `--auth` is refused before anything runs; a provider whose options
+the job's data home, mode 0600. Only the provider named by `--model` is checked:
+a config whose entry for THAT provider has no key in `--auth` is refused before
+anything runs, naming the provider and never the key; a provider whose options
 carry a `baseURL` and no `apiKey` (ollama on localhost) needs no key and is
-admitted without one, so its card runs walled on the local model.
+admitted without one, so its card runs walled on the local model. Every other
+provider in the file — a person's config names all of them — is copied verbatim
+and not checked, because this run never calls it.
 
 `--tokens <n>` is the token budget (rule 13). It has no default and `0` is
 refused, on `add` and on `batch` alike, for the reason `--files` has none.
