@@ -1621,7 +1621,7 @@ is compared against; it is never the path `query --ask size` takes."
                (close-file-journal j-replay))))
       (ignore-errors (delete-file path)))))
 
-;;; ------------------------------------------------------------------
+ ;;; ------------------------------------------------------------------
 ;;; Acceptance replays named in docs/SPEC-WORK.md lines 1-1200 that
 ;;; were not yet covered. The four whose kernel support exists in this
 ;;; slice assert their sentence; the sixteen that need kernel code that
@@ -2005,3 +2005,119 @@ is compared against; it is never the path `query --ask size` takes."
 ;; bounds-are-not-prompts (SPEC-WORK.md:4372) --- a launcher lacking a required hard limit
 ;; refusing automatic dispatch; a supported deadline returning a terminal or unresolved handle
 ;; without duplicate execution.
+;;; Acceptances promised by docs/SPEC-WORK.md (lines 3600-end) and absent
+;;; from slice 1. Each is kept in the file's replay shape but needs session,
+;;; CLI, query, paging, capture, clip, render, savepoint, cost, undo or
+;;; execution machinery that this internal C/O kernel does not ship. Uncomment
+;;; a deftest when its kernel code lands.
+;;; ------------------------------------------------------------------
+
+;; (deftest "branch-and-window-required" "docs/SPEC-WORK.md:5095"
+;;     "expected=query-ask-without-branch-refused-exit-2;closed-without-from-to-refused;from-under-open-refused;who-stale-handoffs-refused-under-closed-and-root"
+;;   ;; NEEDS-KERNEL: query command and --branch/--window flag validation at exit 2
+;;   )
+
+;; (deftest "busy-day-many-segments" "docs/SPEC-WORK.md:5115"
+;;     "expected=many-segments-read-in-bounded-pages;max-caps-rows;more-names-after;day-never-read-whole"
+;;   ;; NEEDS-KERNEL: closed-history index with day segments and paged reads
+;;   )
+
+;; (deftest "cache-aware-context-choice" "docs/SPEC-WORK.md:4377"
+;;     "expected=cache-read-write-tier-threshold-priced-separately;reset-costs-refused-when-separate;lower-hit-can-win-on-cost"
+;;   ;; NEEDS-KERNEL: cache tier pricing and context-choice cost model
+;;   )
+
+;; (deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5189"
+;;     "expected=cancel-has-its-own-disposition;erases-no-mutation;uncertain-effect-reported-uncertain"
+;;   ;; NEEDS-KERNEL: cancellation verb with final disposition, distinct from erasure
+;;   )
+
+;; (deftest "capture-survives-clip" "docs/SPEC-WORK.md:5254"
+;;     "expected=clip-between-anchor-and-manifest;pin-resolves-tick-at-pinned-revision;regression-creates-linked-repair;unrelated-receipts-untouched"
+;;   ;; NEEDS-KERNEL: capture/clip boundary, pinned revisions, regression links
+;;   )
+
+;; (deftest "chat-and-file-render-are-byte-identical" "docs/SPEC-WORK.md:5304"
+;;     "expected=chat-and-marker-region-bytes-identical;other-bytes-preserved;missing-duplicate-reversed-marker-refused;target-outside-roots-refused"
+;;   ;; NEEDS-KERNEL: render with marker regions and permitted-roots boundary
+;;   )
+
+;; (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5327"
+;;     "expected=clip-operation-ok-op-pushed;wait-prints-clip-ok-operation;raced-prints-clip-raced;session-stop-prints-clip-ok-then-session-ok"
+;;   ;; NEEDS-KERNEL: clip long-operation protocol and operation wait id
+;;   )
+
+;; (deftest "clip-names-the-index-that-overflowed" "docs/SPEC-WORK.md:5102"
+;;     "expected=snapshot-retained-index-closed-index-printed;remedy-lower-retain-or-raise-max-bytes;lower-retain-passes;index-page-split-not-refused"
+;;   ;; NEEDS-KERNEL: clip snapshot/index bound refusal naming the overflowing index
+;;   )
+
+;; (deftest "closed-paged-without-full-load" "docs/SPEC-WORK.md:5087"
+;;     "expected=max-20-reads-20;more-names-after;next-page-reads-next-20;parses=0-replays=0;whole-history-never-loaded"
+;;   ;; NEEDS-KERNEL: closed listing paging over the closed index
+;;   )
+
+;; (deftest "closed-row-with-archive-absent" "docs/SPEC-WORK.md:5090"
+;;     "expected=ask-answers-same-four-rows-with-archive-absent;archived-body-ask-prints-gap-and-coverage-gap"
+;;   ;; NEEDS-KERNEL: retention archive file and coverage-gap ask
+;;   )
+
+;; (deftest "compaction-keeps-the-last-copy" "docs/SPEC-WORK.md:5309"
+;;     "expected=compaction-never-removes-the-only-recoverable-copy"
+;;   ;; NEEDS-KERNEL: compaction over savepoints preserves the last copy
+;;   )
+
+;; (deftest "complete-cost-lineage" "docs/SPEC-WORK.md:4375"
+;;     "expected=parent-child-retry-join-once;failed-count;cache-subsets-no-double-count;impl-cost-separate;gaps-unknown"
+;;   ;; NEEDS-KERNEL: cost lineage joins over receipt records
+;;   )
+
+;; (deftest "completed-view-mutation" "docs/SPEC-WORK.md:5394"
+;;     "expected=metadata-projection-render-on-settled-roadmap-revive-nothing;member-add-applies-atomic-revival;counts-indexes-checked"
+;;   ;; NEEDS-KERNEL: roadmap view mutation and atomic revival rule
+;;   )
+
+;; (deftest "configure-no-effect-and-undo-conflict" "docs/SPEC-WORK.md:5391"
+;;     "expected=equal-configure-original-receipt-and-later-value-kept;undo-restores-preimage-only-while-guards-match"
+;;   ;; NEEDS-KERNEL: configure + undo retry/guard machinery
+;;   )
+
+;; (deftest "copied-journal-grants-nothing" "docs/SPEC-WORK.md:5535"
+;;     "expected=restore-inspects-in-isolation-takes-no-ownership-dispatches-nothing;session-start-over-copy-refused-by-fencing"
+;;   ;; NEEDS-KERNEL: savepoint restore fencing and bench identity rules
+;;   )
+
+;; (deftest "correct-is-a-linked-segment" "docs/SPEC-WORK.md:5272"
+;;     "expected=one-envelope-hold-correct-binding;retry-bumps-generation-once;old-generation-its-own-segment;bare-correct-refused-while-live"
+;;   ;; NEEDS-KERNEL: execution correct verb and generation-bound segments
+;;   )
+
+;; (deftest "cost-joins-include-the-coordinator" "docs/SPEC-WORK.md:5733"
+;;     "expected=complete-cost-joins-include-coordinator-overhead-rework;elapsed-attributed;hypothesis-run-after-adoption"
+;;   ;; NEEDS-KERNEL: operational cost joins with coordinator attribution
+;;   )
+
+;; (deftest "cow-root-partition" "docs/SPEC-WORK.md:5044"
+;;     "expected=id-in-c-or-o-never-both;open-plus-closed-equals-total;both-branches-is-rule-18-finding"
+;;   ;; NEEDS-KERNEL: rule 18 candidate-gate finding for an id in both branches
+;;   )
+
+;; (deftest "crash-after-append-recovers-the-reply-once" "docs/SPEC-WORK.md:5511"
+;;     "expected=envelope-replayed-once;same-request-payload-original-ok;retry-mutates-nothing;changed-payload-refused-after-restore"
+;;   ;; NEEDS-KERNEL: crash/restore around the durable append at the reply boundary
+;;   )
+
+;; (deftest "cursor-pinned-across-a-new-settle" "docs/SPEC-WORK.md:5141"
+;;     "expected=no-missing-no-duplicate-row;pinned-revision-honoured;unservable-pin-refused-page-expired"
+;;   ;; NEEDS-KERNEL: paged continuation cursor pinned to a served revision
+;;   )
+
+;; (deftest "days-merge-by-revision-never-concatenate" "docs/SPEC-WORK.md:5547"
+;;     "expected=backdated-closure-in-earlier-day;from-to-prints-revision-order-across-boundary;one-batch-and-ten-yield-identical-leaves"
+;;   ;; NEEDS-KERNEL: day-partition date index merged by revision
+;;   )
+
+;; (deftest "dedup-page-unavailable-refuses" "docs/SPEC-WORK.md:5147"
+;;     "expected=retry-with-unreadable-dedup-page-refused-dedup-unavailable-applies-nothing;admitted-when-readable"
+;;   ;; NEEDS-KERNEL: dedup page availability gate on retry
+;;   )
