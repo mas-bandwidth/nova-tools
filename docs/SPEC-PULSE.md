@@ -52,7 +52,11 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    command, verbatim output, expected, smallest fix), `audits` (`owner/repo` — open issues
    whose body has a `MISSING:` or `DRIFT` line, one candidate per such line), `bus` (a
    nova-bus checkout — open notes whose body has a `slices:` block, one candidate per slice),
-   `roadmap` (a lisp file under `docs/roadmaps/` — every cell whose `:card` names a template).
+   `roadmap` (a lisp file under `docs/roadmaps/` — every cell whose `:card` names a template),
+   `work` (a nova-work checkout — bug nodes and item nodes that are open, unleased and
+   unblocked, one candidate per node). A `work` node is unleased when no `launch` currently
+   holds it and unblocked when it is not waiting on a merge; the node id rides on the card's
+   line 1 (rule 5) so `harvest` can record the attempt on the node (rule 11).
    A missing `--sources` is `refusing to guess`, exit 2. A source that cannot be read — a
    `gh` non-zero, a bus checkout that is not one, a roadmap file that does not parse — is one
    `POOL REFUSED` line naming the source and the remedy, exit 2, and no `pool.tsv` is written:
@@ -60,7 +64,8 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    rule 7: a dead source is never green).
 2. **`pool.tsv` is five fields, one candidate per line, in source order.** `source`, `id`,
    `kind`, `title`, `template`. `id` is the issue number, the audit line's `<issue>#<n>`,
-   the note id and slice ordinal, or the roadmap cell name. `template` is the source's unless
+   the note id and slice ordinal, the roadmap cell name, or the work node id. `template` is
+   the source's unless
    the item names one: an issue body line `template: <name>`, a slice's `template:` word, or
    the cell's `:card`. A candidate whose (`source`,`id`) is already in `<root>/seen.tsv` with
    state `carded`, `running` or `pr` is not re-pooled; a `retry` state is, so a rewritten
@@ -167,7 +172,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
 ## The verbs
 
 ```
-nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
+nova-pulse pool    --sources <file> --work <nova-work root> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
@@ -190,7 +195,7 @@ a harvest with `mismatch > 0` or `abstain > 0`, a cut with `skipped > 0`; **2** 
 state the coordinator must act on, and it exits like a refusal so a wake fires on it).
 
 ```
-POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
+POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> work=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
 POOL REFUSED source=<kind>:<locator>: <reason> (<remedy>)
 CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
 CUT SKIPPED source=<kind> id=<id> template=<name>: no template
@@ -331,6 +336,10 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
     value is one token; `--max 0` prints all; `--max -1` is exit 2.
 22. `every-refusal-names-its-remedy`: every refusal in the package lives in one table the
     test walks; each ends in a parenthesised remedy, and removing one turns the test red.
+23. `pool-reads-work-nodes`: a `work` source with one open, unleased, unblocked bug node and
+    one open, unleased, unblocked item node yields `work=2`, two `pool.tsv` rows whose `id` is
+    the node id, and `candidates=2`; a node that is leased or blocked is nowhere; the id is
+    carried on the card's line 1 so `harvest` records the attempt on the node.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 
