@@ -678,6 +678,29 @@ no new `run` verb, and the receipts stay exactly as the proposals define them.
 - one deadline for the whole batch — the batch's own `--deadline`, never a
   deadline any single card sets.
 
+**Admission is per card, never per batch.** A card refused at admission — a
+shape refused under `docs/WORKER-CARDS.md` practice 17, or a repository it
+cannot reach without credentials — is **one `ABSTAIN` row** with
+`reason=admission <why>`, and every other card runs. The refusal is said once
+on stderr, `ADMIT REFUSED <label> <why>`, and the `BATCH` line counts the card
+under `abstain`. One card's shape never takes a batch down with it: on
+**2026-09-15** one card whose *quoted issue text* held the word `launcher` made
+`ADMIT REFUSED` for the whole batch and **34 cards never ran** (issue #529).
+The practice-17 word check reads the card's **contract lines — lines 1-3: the
+contract line, the role line and `STEP 1`** — and nothing below them, because a
+card that quotes a launcher is a card *about* one, not a card run by one.
+
+**One batch holds one slot, and the lock dies with its holder** (issue #457).
+At slot allocation the batch writes `<root>/<slot>/BATCH` carrying
+`id=<batch> pid=<n> at=<stamp>`, and removes it at slot end. A slot whose lock
+is **live** — the holder's pid is alive — is not free: an auto-allocated card
+skips it, and a card that *named* it is refused with
+`ADMIT REFUSED slot=<n> held-by=<id> pid=<n>`, that card alone abstaining with
+`reason=admission`. A **stale** lock, whose pid no process holds, is taken over
+once and said out loud: `BATCH NOTE slot=<n> stale-lock id=<id> taken`. Two
+batches that allocated at the same moment once took slot 1 twice and both cards
+were lost.
+
 ### wait — all end, or the deadline
 
 `wait` blocks until every card has ended **or** the batch's deadline has
@@ -695,9 +718,10 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
   card alone: the batch returns on its **slowest still-working card**, not on
   the deadline, because a dead card is removed from the wait as soon as its
   log stops growing.
-- A card killed for idleness is scored `<label>: ABSTAIN reason=idle=<s>` on the
-  packet — an abstain that names *why* it stopped, never a bare missing
-  result — and the BATCH line's `idle=<n>` counts those kills.
+- A card killed for idleness is scored
+  `<label> slot=<n>: ABSTAIN reason=idle=<s> log=<n> watched=<path>` on the
+  packet — an abstain that names *why* it stopped and the log it watched, never
+  a bare missing result — and the BATCH line's `idle=<n>` counts those kills.
 
 ### gather — one bounded packet, mechanically
 
@@ -718,6 +742,33 @@ words into the batch. The refusal names the card and its line, and the card
 is `refused` on the packet, not folded — rule 15's quarantine, applied to
 the batch.
 
+**A `RESULT.md` carrying its contract line is `done` whatever the harness exit
+code was**, unless the card abstained in its own words — a line 1 or a line 2
+beginning `ABSTAIN`. The contract decides, never the child's rc and never its
+timing.
+
+**Every abstain names ONE reason token**, so the packet is the whole read and a
+coordinator never opens a `RESULT.md` to learn why (issue #461):
+
+| token | the card |
+|-------|----------|
+| `line1-mismatch` | published a result whose line 1 is not its contract line |
+| `no-result` | ended with rc 0 and published no `RESULT.md` |
+| `rc=<n>` | ended non-zero and published no `RESULT.md` |
+| `idle=<s>` | was killed because its own log stopped growing for `<s>` seconds |
+| `deadline` | was killed at the batch's deadline |
+| `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
+| `admission` | was refused at admission; the reason follows the token |
+| `input-limit` | was refused for size, by the provider's own structured signal (issue #163) |
+
+The card's line carries the token and its own log count —
+`<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
+field after it where the remedy needs a path: `watched=<path>`, the log the
+idle monitor watched, or `job=<dir>`, the job directory that holds no result.
+**A stall is `log=0`**: a card that ended with no output after the wall opened
+is counted on the `BATCH` line's `stalled=<n>` and reads its own emptiness on
+its line.
+
 ### read — one agent, one packet, once
 
 **One agent reads the one packet once** and carries the dispositions to the
@@ -728,21 +779,26 @@ are the thing the packet replaced.
 ### The packet's grammar
 
 ```
-BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum> idle=<n> [benches=<n>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
-<label>: ABSTAIN reason=<token>
+<label> slot=<n>: <line 2, verbatim, capped> log=<n>
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit> log=<n> [watched=<path>|job=<dir>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
+ADMIT REFUSED <label> <why>
+ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
 ADMIT REFUSED bench=<name>: <reason>
+BATCH NOTE slot=<n> stale-lock id=<id> taken
 HOLD: <one bounded quoted line>
 ```
 
 `BATCH` is the packet's first line: the id, the admitted n, the cards done,
-the cards abstain, the batch usd total, and `idle=<n>` — how many cards the
-idle timeout killed. One `CARD` line per card, in admission order: its
-admitted-text sha prefix, its state, its usage, and its disposition line —
-line 2 verbatim, capped at one line. A card killed by the idle timeout is its
-own one-line score, `<label>: ABSTAIN reason=idle=<s>`, in place of a `CARD`
-line. `HOLD:` lines carry evidence a count would hide, each capped. Counts
+the cards abstain, the token and usd totals, `idle=<n>` — how many cards the
+idle timeout killed — and `stalled=<n>`, how many ended with no output at all.
+One card line per card, in admission order: its label, its resolved slot, and
+either its disposition line — line 2 verbatim, capped — or `ABSTAIN` with its
+one reason token, each carrying that card's own `log=<n>`. `ADMIT REFUSED` and
+`BATCH NOTE` are said once on stderr, never inside the packet, so the packet's
+bytes stay bounded by n. `HOLD:` lines carry evidence a count would hide, each capped. Counts
 and caps bound the packet's bytes; a packet never lists a finding and never
 quotes a report body.
 
@@ -968,9 +1024,14 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n|
 ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
-BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum> idle=<n> [benches=<n>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
+BATCH NOTE slot=<n> stale-lock id=<id> taken
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
+<label> slot=<n>: <line 2, verbatim, capped> log=<n>
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit> log=<n> [watched=<path>|job=<dir>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
+ADMIT REFUSED <label> <why>
+ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
 HOLD: <one bounded quoted line>
 BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall> ok=<true|false> [<one bounded value>]
 BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>

@@ -142,8 +142,11 @@ func TestBatchAbstainsMissingResult(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1") {
 		t.Fatalf("the missing result is an abstain row:\n%s", out)
 	}
-	if !strings.Contains(out, "b slot=2: ABSTAIN -- stalled (no output after the wall opened)") {
-		t.Fatalf("a card that ended with no output is named stalled, never folded:\n%s", out)
+	if !strings.Contains(out, "b slot=2: ABSTAIN reason=no-result log=0") {
+		t.Fatalf("the missing result names its one reason token and its empty log, never folded:\n%s", out)
+	}
+	if !strings.Contains(out, "stalled=1") {
+		t.Fatalf("a card that ended with no output after the wall opened is counted stalled:\n%s", out)
 	}
 }
 
@@ -175,11 +178,11 @@ func TestBatchNamesMissingResultOnCleanExit(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1") || !strings.Contains(out, "stalled=0") {
 		t.Fatalf("a clean exit is an abstain, never a stall:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- no RESULT.md in "+filepath.Join(root, "1", "jobs", "a")+" (rc=0)") {
-		t.Fatalf("a clean exit with no RESULT.md names its reason, not a stall:\n%s", out)
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=no-result log=1 job="+filepath.Join(root, "1", "jobs", "a")) {
+		t.Fatalf("a clean exit with no RESULT.md names reason=no-result and the job that holds none:\n%s", out)
 	}
-	if strings.Contains(out, "stalled (no output after the wall opened)") {
-		t.Fatalf("a clean exit is not named stalled:\n%s", out)
+	if strings.Contains(out, "reason=rc=") {
+		t.Fatalf("a clean exit names no exit code; it published no result:\n%s", out)
 	}
 }
 
@@ -257,8 +260,8 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the idle kill is counted as an abstain and the idle count:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s") {
-		t.Fatalf("an idle-killed card names its idle reason:\n%s", out)
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=idle=1 log=0") {
+		t.Fatalf("an idle-killed card names its idle reason token:\n%s", out)
 	}
 }
 
@@ -324,7 +327,7 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the BATCH line counts the idle kill in its own idle=<n> field:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s") || !strings.Contains(out, "b slot=2: done and clean") {
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=idle=1") || !strings.Contains(out, "b slot=2: done and clean") {
 		t.Fatalf("the idle card is named with its reason and the done card is folded:\n%s", out)
 	}
 }
@@ -392,7 +395,7 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the stopped native.log card is counted idle:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s ("+filepath.Join(root, "1", "native.log")+")") {
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=idle=1 log=3 watched="+filepath.Join(root, "1", "native.log")) {
 		t.Fatalf("the ABSTAIN reason names the child's log it watched:\n%s", out)
 	}
 }
@@ -443,8 +446,11 @@ func TestStalledCardIsNamed(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("a batch with a stalled card exits 1, got %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN -- stalled (no output after the wall opened)") {
-		t.Fatalf("a card that ended with no output after the wall opened is named stalled, not a slow model:\n%s", out)
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=no-result log=0") {
+		t.Fatalf("a card that ended with no output after the wall opened names its reason and its empty log:\n%s", out)
+	}
+	if !strings.Contains(out, "stalled=1") {
+		t.Fatalf("the stall is counted on the BATCH line, not read out of a RESULT:\n%s", out)
 	}
 }
 
@@ -483,8 +489,8 @@ func TestBatchLineCountsStalled(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=0 stalled=1") {
 		t.Fatalf("the BATCH line counts the stalled cards:\n%s", out)
 	}
-	if !strings.Contains(out, "b slot=2: ABSTAIN -- stalled (no output after the wall opened)") {
-		t.Fatalf("the stalled card is named:\n%s", out)
+	if !strings.Contains(out, "b slot=2: ABSTAIN reason=no-result log=0") {
+		t.Fatalf("the stalled card is named by its reason token and its empty log:\n%s", out)
 	}
 }
 
@@ -716,7 +722,7 @@ func TestGatherStallOnlyWithoutResult(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=0 stalled=1") {
 		t.Fatalf("the stall is counted only for the card without a valid RESULT.md:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: all green") || !strings.Contains(out, "b slot=2: ABSTAIN -- stalled (no output after the wall opened)") {
+	if !strings.Contains(out, "a slot=1: all green") || !strings.Contains(out, "b slot=2: ABSTAIN reason=no-result log=0") {
 		t.Fatalf("done wins over an empty log; the stall names only the missing-result card:\n%s", out)
 	}
 	if strings.Contains(out, "a slot=1: ABSTAIN") {

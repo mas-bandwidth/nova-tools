@@ -226,7 +226,11 @@ prefix is one arm.
 
 A card for a DeepSeek model states the working directory and the clone as step 1, with one
 command per line, numbered steps with one check each, the verdict vocabulary inside the step,
-the RESULT shape last and short, no capitalised contract block and no launcher text.
+the RESULT shape last and short, no capitalised contract block and no launcher text in its
+contract lines. **The word check reads lines 1-3 — the contract line, the role line and
+`STEP 1` — and nothing below them**: a card that *quotes* an issue mentioning a launcher is a
+card about one, not a card run by one, and refusing it cost a batch 34 cards (nova-tools
+issue #529).
 **Measured:** 2026-09-15, three read cards in the capitalised-contract shape stalled 20
 minutes with no output on opencode/deepseek-v4-flash (cards 50, 51, 52); the same job in the
 numbered shape ran in 148 s for USD 0.007 with correct quoted evidence (card 55); four writing
