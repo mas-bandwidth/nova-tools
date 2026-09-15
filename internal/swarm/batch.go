@@ -50,6 +50,7 @@ type BatchInput struct {
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
 	Runner   string        // the command, one process per card
+	Benches  []Bench       // the benches table; cards with a <bench>:<n> slot run and pull remote
 	Stdout   io.Writer
 	Stderr   io.Writer
 }
@@ -60,6 +61,7 @@ type BatchInput struct {
 type batchCard struct {
 	label    string
 	slot     int
+	bench    string // empty for a local slot, else the bench this card runs on
 	model    string
 	cardPath string
 	contract string // line 1 of the card's text, the line by which it was admitted
@@ -109,6 +111,10 @@ func Batch(in BatchInput) int {
 		fmt.Fprintln(in.Stderr, err)
 		return 1
 	}
+	benchByName := make(map[string]Bench, len(in.Benches))
+	for _, b := range in.Benches {
+		benchByName[b.Name] = b
+	}
 
 	// scatter: one runner process per card, in TSV order. The job directory is made before
 	// the process starts so a runner can write RESULT.md straight into place.
@@ -125,7 +131,7 @@ func Batch(in BatchInput) int {
 	var doneMu sync.Mutex
 	procs := make([]proc, len(cards))
 	for i, c := range cards {
-		job := filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label)
+		job := benchCardDir(in.Root, c.bench, c.slot, c.label)
 		if err := os.MkdirAll(job, 0o755); err != nil {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 			return 2
@@ -138,8 +144,21 @@ func Batch(in BatchInput) int {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 			return 2
 		}
-		cmd := exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root)
-		cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root, "NOVA_SWARM_JOB="+job)
+		var cmd *exec.Cmd
+		if c.bench == "" {
+			cmd = exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root)
+			cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root, "NOVA_SWARM_JOB="+job)
+		} else {
+			b, ok := benchByName[c.bench]
+			if !ok {
+				_ = logFile.Close()
+				fmt.Fprintf(in.Stderr, "BATCH REFUSED: card %s names bench %s, which --benches holds no row for\n",
+					oneline.Field(c.label), oneline.Field(c.bench))
+				return 2
+			}
+			cmd = remoteCommand(b, in.Runner, c.label, c.slot, c.model, c.cardPath)
+			cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+b.Root, "NOVA_SWARM_JOB="+remoteJobDir(b, c.slot, c.label))
+		}
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
 		if err := cmd.Start(); err != nil {
@@ -247,31 +266,59 @@ func Batch(in BatchInput) int {
 		total                        float64
 	)
 	type row struct {
-		label    string
-		slot     int
-		state    string
-		line2    string
-		in       int
-		out      int
-		usd      float64
-		hold     bool
-		idle     bool
-		idleLog  string // the file the idle monitor watched, for an idle-killed card
-		logLines int
-		stalled  bool
-		missing  bool   // RESULT.md was not there at all
-		jobDir   string // the job directory, for the missing-result reason
-		noResult bool   // missing RESULT.md on a clean exit (rc==0)
+		label            string
+		slot             int
+		bench            string
+		state            string
+		line2            string
+		in               int
+		out              int
+		usd              float64
+		hold             bool
+		idle             bool
+		idleLog          string // the file the idle monitor watched, for an idle-killed card
+		logLines         int
+		stalled          bool
+		missing          bool   // RESULT.md was not there at all
+		jobDir           string // the job directory, for the missing-result reason
+		noResult         bool   // missing RESULT.md on a clean exit (rc==0)
+		benchUnreachable bool   // a bench the batch could not reach at all
+	}
+	// benchTotals folds one bench's cards into its BENCH line: how many slots it held, how
+	// many of them finished, and the token and dollar sums gathered from its pulled usage.
+	type benchTotals struct {
+		slots, done, abstain int
+		in, out              int
+		usd                  float64
+	}
+	benches := map[string]*benchTotals{}
+	benchRef := func(name string) *benchTotals {
+		b, ok := benches[name]
+		if !ok {
+			b = &benchTotals{}
+			benches[name] = b
+		}
+		return b
 	}
 	rows := make([]row, len(cards))
 	for i, c := range cards {
 		rows[i].label = c.label
 		rows[i].slot = c.slot
-		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(cardUsagePath(in.Root, c.slot, c.label))
+		rows[i].bench = c.bench
+		var usagePath, logPath string
+		jobDir := benchCardDir(in.Root, c.bench, c.slot, c.label)
+		if c.bench == "" {
+			usagePath = cardUsagePath(in.Root, c.slot, c.label)
+			logPath = cardLogPath(in.Root, c.slot, c.label)
+		} else {
+			usagePath = filepath.Join(jobDir, "usage.tsv")
+			logPath = filepath.Join(jobDir, "harness.log")
+		}
+		rows[i].in, rows[i].out, rows[i].usd = readCardUsage(usagePath)
 		totalIn += rows[i].in
 		totalOut += rows[i].out
 		total += rows[i].usd
-		rows[i].logLines = logOutputLines(cardLogPath(in.Root, c.slot, c.label))
+		rows[i].logLines = logOutputLines(logPath)
 		// A card the idle monitor killed is its own score, an ABSTAIN that names its reason,
 		// not a missing-result abstain: the card was not hung by its work but stopped growing.
 		if procs[i].idleKilled {
@@ -280,25 +327,55 @@ func Batch(in BatchInput) int {
 			rows[i].idleLog = procs[i].idleLog
 			abstain++
 			idle++
+			benchRef(c.bench).slots++
+			benchRef(c.bench).abstain++
 			continue
 		}
-		path := filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "RESULT.md")
+		path := filepath.Join(jobDir, "RESULT.md")
+		if c.bench != "" {
+			// A remote card's result is pulled back by rsync before gather reads it, one
+			// retry after the interval; a second failure scores no-result or, when ssh itself
+			// never reached the bench, bench-unreachable.
+			if err := pullRemote(benchByName[c.bench], c.slot, c.label, jobDir); err != nil {
+				rows[i].state = "abstain"
+				rows[i].missing = true
+				rows[i].jobDir = jobDir
+				benchRef(c.bench).slots++
+				benchRef(c.bench).abstain++
+				if procs[i].rc != 0 {
+					rows[i].benchUnreachable = true
+				} else {
+					rows[i].noResult = true
+				}
+				abstain++
+				continue
+			}
+		}
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			rows[i].state = "abstain"
 			rows[i].missing = true
 			rows[i].jobDir = filepath.Dir(path)
 			abstain++
+			benchRef(c.bench).slots++
+			benchRef(c.bench).abstain++
 			continue
 		}
 		lines := strings.Split(string(raw), "\n")
 		if !strings.EqualFold(strings.TrimSpace(first(lines)), strings.TrimSpace(c.contract)) {
 			rows[i].state = "abstain"
 			abstain++
+			benchRef(c.bench).slots++
+			benchRef(c.bench).abstain++
 			continue
 		}
 		rows[i].state = "done"
 		done++
+		benchRef(c.bench).slots++
+		benchRef(c.bench).done++
+		benchRef(c.bench).in += rows[i].in
+		benchRef(c.bench).out += rows[i].out
+		benchRef(c.bench).usd += rows[i].usd
 		rows[i].line2 = strings.TrimRight(second(lines), "\r\n")
 		if strings.Contains(rows[i].line2, "HOLD") {
 			rows[i].hold = true
@@ -315,6 +392,9 @@ func Batch(in BatchInput) int {
 		if rows[i].state == "done" {
 			continue
 		}
+		if rows[i].benchUnreachable {
+			continue
+		}
 		if rows[i].logLines == 0 {
 			rows[i].stalled = true
 			stalled++
@@ -325,18 +405,31 @@ func Batch(in BatchInput) int {
 		}
 	}
 
-	// The packet's grammar. The BATCH line first, then one line per card in admission
-	// order (label, its resolved slot, then line 2 verbatim), then HOLD lines -- at most
-	// maxHoldLines -- so the whole packet never grows past n + 12 lines whatever the batch
-	// holds.
-	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d\n",
-		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
+	// The packet's grammar. The BATCH line first, then one BENCH line per named bench, then
+	// one line per card in admission order, then HOLD lines -- at most maxHoldLines -- so the
+	// whole packet never grows past n + 12 + benches lines whatever the batch holds.
+	benchSuffix := ""
+	if len(in.Benches) > 0 {
+		benchSuffix = fmt.Sprintf(" benches=%d", len(in.Benches))
+	}
+	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d%s\n",
+		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled, benchSuffix)
+	for _, b := range in.Benches {
+		tot, ok := benches[b.Name]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(in.Stdout, "BENCH %s slots=%d done=%d abstain=%d in=%d out=%d usd=%s\n",
+			oneline.Field(b.Name), tot.slots, tot.done, tot.abstain, tot.in, tot.out, formatUSD(tot.usd))
+	}
 	for _, r := range rows {
 		switch {
 		case r.idle:
 			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- idle %ds (%s)\n", oneline.Field(r.label), r.slot, idleSeconds, r.idleLog)
 		case r.stalled:
 			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- stalled (no output after the wall opened)\n", oneline.Field(r.label), r.slot)
+		case r.benchUnreachable:
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- bench-unreachable\n", oneline.Field(r.label), r.slot)
 		case r.noResult:
 			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- no RESULT.md in %s (rc=0)\n", oneline.Field(r.label), r.slot, r.jobDir)
 		case r.state == "abstain":
@@ -372,12 +465,13 @@ func readCards(path string) ([]batchCard, error) {
 			return nil, fmt.Errorf("--cards line %d wants label<TAB>slot<TAB>model<TAB>card-path, got %d fields", i+1, len(parts))
 		}
 		slot := 0
+		bench := ""
 		if s := strings.TrimSpace(parts[1]); s != "" && s != "-" {
-			n, err := strconv.Atoi(s)
-			if err != nil || n < 1 {
-				return nil, fmt.Errorf("--cards line %d wants a positive slot number, got %q", i+1, parts[1])
+			b, n, err := parseRemoteSlot(s)
+			if err != nil {
+				return nil, fmt.Errorf("--cards line %d %s", i+1, err)
 			}
-			slot = n
+			slot, bench = n, b
 		}
 		cardPath := parts[3]
 		cardRaw, err := os.ReadFile(cardPath)
@@ -399,6 +493,7 @@ func readCards(path string) ([]batchCard, error) {
 		cards = append(cards, batchCard{
 			label:    parts[0],
 			slot:     slot,
+			bench:    bench,
 			model:    parts[2],
 			cardPath: cardPath,
 			contract: contract,
@@ -542,14 +637,15 @@ func busySlots(root string) map[int]bool {
 // lock) nor already assigned to another card in this batch.
 func assignSlots(cards []batchCard, root string) error {
 	busy := busySlots(root)
-	assigned := map[int]string{}
+	assigned := map[string]string{}
 	for i := range cards {
 		label := cards[i].label
 		if cards[i].slot != 0 {
-			if prev, ok := assigned[cards[i].slot]; ok {
+			key := slotKey(cards[i].bench, cards[i].slot)
+			if prev, ok := assigned[key]; ok {
 				return fmt.Errorf("BATCH REFUSED slot %d named twice (%s, %s)", cards[i].slot, prev, label)
 			}
-			assigned[cards[i].slot] = label
+			assigned[key] = label
 			continue
 		}
 		n := 1
@@ -558,16 +654,25 @@ func assignSlots(cards []batchCard, root string) error {
 				n++
 				continue
 			}
-			if _, ok := assigned[n]; ok {
+			if _, ok := assigned[slotKey("", n)]; ok {
 				n++
 				continue
 			}
 			break
 		}
 		cards[i].slot = n
-		assigned[n] = label
+		assigned[slotKey("", n)] = label
 	}
 	return nil
+}
+
+// slotKey names a slot for the duplicate check: the bench and number together, so b1:1 and
+// b2:1 are two different slots on two benches, never one slot named twice.
+func slotKey(bench string, slot int) string {
+	if bench == "" {
+		return strconv.Itoa(slot)
+	}
+	return bench + ":" + strconv.Itoa(slot)
 }
 
 func first(lines []string) string {
