@@ -1333,6 +1333,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
+	if res.reason != "" {
+		fmt.Fprintf(stdout, "NATIVE SILENT label=%s job=%s rc=%d reason=%s wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s%s\n",
+			oneline.Field(cfg.label), oneline.Field(res.job), res.rc, oneline.Field(res.reason), res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), usageSuffix(res.usageReason, res.usageState))
+		return 1
+	}
 	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s%s\n",
 		oneline.Field(cfg.label), oneline.Field(res.job), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), usageSuffix(res.usageReason, res.usageState))
 	if res.rc != 0 {
