@@ -296,7 +296,9 @@ carried through draft 25: typed data, stable-id indexes, recursive policies and 
 updates live in one process — **and Lisp is not itself the complexity guarantee**: the maintained
 indexes and the bounded access of *Cost* below are, imported s-expressions stay restricted data
 and never reach `eval` or reader evaluation by *The data* above, and the engine's runtime
-packaging and its supported platforms are pinned and tested before any release. The version line
+packaging and its supported platforms are pinned and tested before any release — **and for the
+first pilot they are pinned here, decided by Glenn, 2026-09-15**: the runtime is SBCL and the
+platforms are the E02-F06 matrix below. The version line
 is the client's; a session in another language answers `session
 status` with its own `SESSION OK … build=<identity>` field, so every running binary says
 which build it is. A session's identity, bounds, state, journal path, base revision and clip cadence are
@@ -306,6 +308,17 @@ explicit at start and readable at any time (`session status`, whose `SESSION OK`
 cadence, so every bound is read rather than remembered), and it is stopped explicitly;
 no always-on daemon is required, and a supervised session that a coordinator starts for a
 sitting and stops at its end is enough (Stella, *Keep the work set alive*).
+
+**The platform matrix (E02-F06), pinned** *(decided by Glenn, 2026-09-15)*. The runtime is SBCL on
+every cell; the first pilot's cells are the two supported rows; Windows is an out-of-scope cell by
+a recorded scope event until the measurement is in, and the named-pipe endpoint text of *The
+engine and its client* below stays as the Windows spelling for later.
+
+| cell | runtime | first pilot | endpoint |
+|---|---|---|---|
+| darwin-arm64 | SBCL | supported, tested before any release | Unix-domain socket |
+| linux-x64 | SBCL | supported, tested before any release | Unix-domain socket |
+| windows | SBCL | out of scope by a recorded scope event, until the measurement is in | named pipe `\\.\pipe\<name>`, the spelling kept for later |
 
 Every mutation is one typed event and carries a **request id**: `--request <id>` on every
 mutation verb, drawn by the caller (a friend's request arrives with one), or drawn by the tool
@@ -755,8 +768,8 @@ they are distinct kinds:
   feature cells / applicable rows". **A feature decomposes into sub-features recursively**, each a
   `:feature` under it, and the counting unit of every rollup stays the one `unit=` names.
 - `:roadmap` — a typed view over its cells: `:axes` (ordered, named members), `:cells` mapping
-  a coordinate to a `:ref`, `:scope-revision`, `:completion-policy` (`:all-required-features` is the only policy in this
-  draft). A cell references a node; it never contains state of its own. An unknown axis member and a
+  a coordinate to a `:ref`, `:scope-revision`, `:completion-policy` (`:all-required-features` is the only policy — **default by Rowan,
+  unobjected 2026-09-15**; a second policy is a later revision with its issue). A cell references a node; it never contains state of its own. An unknown axis member and a
   duplicate coordinate are refusals; **a missing cell is not**, and an omitted cell is never
   complete (5653990830). A cell may be marked `:out-of-scope` by a recorded scope event, which
   is distinct from unstarted and from unknown, and **an out-of-scope cell leaves that axis
@@ -764,9 +777,9 @@ they are distinct kinds:
   **The members of a roadmap's first axis are its rows, and a row is a node of the roadmap's
   declared `:row-kind`** — `:feature` by default, and `:epic` or `:work-set` where the roadmap
   declares it; **the two field names `:row-kind` and `:aggregation` are the spelling of Stella's
-  amendment and are Rowan's (Rowan's decision, for review)**, each with the `:aggregation` policy that says how a row of that kind rolls its
-  members up. **`:aggregation` is one of three values and no others** *(Rowan's decision, for
-  review)*: `:required-members`, the default, where a row is green when every direct required
+  amendment and are Rowan's (default by Rowan, unobjected 2026-09-15)**, each with the `:aggregation` policy that says how a row of that kind rolls its
+  members up. **`:aggregation` is one of three values and no others** *(default by Rowan, unobjected
+  2026-09-15)*: `:required-members`, the default, where a row is green when every direct required
   member of it is green; `:all-members`, where every member counts required or not; and
   `:leaves`, where the row folds to the required leaves beneath it and its own intermediate
   containers count for nothing. An unknown value is a refusal at load, never a guessed default. **This amends draft 24's feature-only rule** (Stella,
@@ -2257,8 +2270,13 @@ author, its request id and its expectation, and the fencing rules still decide (
 `endpoint-is-local-and-private`).
 
 **The wire is a versioned, bounded, length-prefixed UTF-8 JSON protocol, and this paragraph pins
-it** (Stella's requirement; **the exact schema below is Rowan's decision, for review**, since her
-text names the properties and leaves the spelling open). One message is a **4-byte big-endian
+it** (Stella's requirement; **the exact schema below is the contract, protocol version `"1"` —
+default by Rowan, unobjected 2026-09-15** — since her text names the properties and leaves the
+spelling open; it is pinned by **one generated schema file** listing every verb with its op, event
+kind, ordered fields and grammar line, and **one coverage test** that every verb-table row has a
+verb, every verb an op and a line, and each missing verb below is present or listed; Emma is
+building the file, and the file with its test is the lock gate's artifact for the verb and
+protocol schemas). One message is a **4-byte big-endian
 unsigned length** followed by that many bytes of one UTF-8 JSON object; a frame past
 `--max-frame-bytes` (defaulting to the session's `--max-bytes`) is refused with one framed error
 and the connection is then closed, never truncated and never partially applied. **Every integer
@@ -2674,20 +2692,18 @@ credential value and no secret-store content is in a manifest**, and sharing res
 the configuration names (replays `unchanged-config-is-one-bounded-answer`,
 `an-invalid-delta-leaves-the-old-config`, `a-partial-manifest-is-refused`).
 
-**What this section does not decide, and must not.** Whether friends participate in swarms at all,
-or whether pools hold model-only workers, is **an open design decision to be asked and recorded,
-not settled here**: a swarm is an execution capability holding jobs and **is neither a friend nor a
-model**; a swarm labelled with a friend's name does not make its workers that friend, carry that
-friend's continuity or speak for them; a model-only worker needs no invented friend identity; and
-the friend responsible for a pool and the actor executing a job are two references that are never
-double-counted. **A friend's own disposition is the only record of that friend's consent** — a
-worker's reply and a silence are not it — and the friend whose participation Stella's companion at
-`81c2885` names must be asked directly. **Until it is resolved, identity provenance stands as it is
-and no historical actor is renamed**; if model-only pools are chosen, the capability carries a
-model or route label and every past source label and attribution is preserved; if participation is
-supported, it needs an explicit participation record with its scope and revision and a withdrawal
-behaviour that reconciles running jobs. This is in *What this draft does not do* as well, so it is
-not read as settled.
+**Swarms are model-only** *(decided by Glenn, 2026-09-15, his words "for swarms only")*: a friend
+is never a pool worker; a friend's children are the friend's own and are not swarm members; the
+child capability is unchanged by this. A swarm is an execution capability holding jobs and **is
+neither a friend nor a model**; a swarm labelled with a friend's name does not make its workers
+that friend, carry that friend's continuity or speak for them; a model-only worker needs no
+invented friend identity; and the friend responsible for a pool and the actor executing a job are
+two references that are never double-counted. **Every worker carries a model or route label, no
+historical actor is renamed and every past source label and attribution is preserved.** There is
+no participation record for pools and no door into one: `friend --participation` and the
+`:participation` change are reserved as a pool door — they stay the spelling of the agreed
+participation of *A role is configured* above, and no value in them admits a friend as a pool
+worker.
 
 ## The fleet *(Rowan, on Glenn's word of 2026-09-15; a draft for Stella's review as the section's owner)*
 
@@ -4073,20 +4089,17 @@ section below; the adapter is its own spec), token and cost joins beyond the att
 each with its issue. Nothing here deletes, migrates or publishes an issue. Known work is not
 authorized, working, scheduled or public by being in O.
 
-**One design decision is deliberately open and this draft does not close it**: whether friends
-participate in swarms at all, or whether pools hold model-only workers. It is asked and recorded,
-not settled — **a friend's own disposition is the only record of that friend's consent, and a
-worker's reply or a silence is not it** — and until it is resolved, identity provenance stands as
-it is and no historical actor is renamed (Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`; *Friends,
-CONFIG and ACTIVE* above says the same in its own place).
+**The participation question is closed**: swarms are model-only and a friend is never a pool
+worker (decided by Glenn, 2026-09-15; *Friends, CONFIG and ACTIVE* above holds the rule), and no
+historical actor is renamed (Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`).
 
 **Nothing here is implemented, and the lock gate says what would have to be true before it is.**
 This document is integrated with both of Stella's companions into one revision, which is her first
 condition. The rest of her gate stands unmet and is named so it cannot be skipped: **each requested
 friend's explicit disposition at this exact revision**, with unresolved, unavailable and reserved
-reviewers recorded separately and **no reply never counted as approval**; a resolved participation
-policy; the complete verb and protocol schemas, including every **(Rowan's decision, for review)**
-above; the migration and round-trip acceptance coverage of *Preservation and recovery acceptance*
+reviewers recorded separately and **no reply never counted as approval**; the complete verb and
+protocol schemas as the generated schema file and its coverage test of *The engine and its client*
+above, with every remaining **(Rowan's decision, for review)** read; the migration and round-trip acceptance coverage of *Preservation and recovery acceptance*
 mapped to named scenarios, owners, commands and CI lanes; and named implementation slices. **Cold
 model reads supplement friend discussion and do not replace it.** The agreed revision is then
 locked and every later change is explicit, scoped and reviewed — and **recording a requirement or
@@ -4282,6 +4295,11 @@ receipt so later intake cannot recreate the work. A network failure or uncertain
 delete result preserves the archive and a pending reconciliation state. Do not
 claim atomicity between Git and GitHub or restore an issue by inventing an author.
 These semantics are a specification, not a request to absorb existing issues now.
+**For the v1 pilot, `absorb` is disabled and `link` is the default** *(default by Rowan, unobjected
+2026-09-15)*: migration is import without delete. Close-and-point — the source issue closed with a
+comment naming its node, the outbound action of link mode (roadmap E09-F02) — is the v1 shape, to be
+decided when E09-F02 exists. The read-only real-repository pilot grant remains Glenn's, asked when
+E09-F01 can run.
 
 ### Initial migration: preserve first, reconcile, then choose absorption
 
@@ -4428,7 +4446,8 @@ alone must never print that the whole goal is done.
 Useful focused views include remaining features in one repo, ideas for that repo, open bugs,
 work in a category, one language's unfinished cells, and a cell's nested tasks. A listing is
 compact and capped; it carries stable IDs and a way to focus further. Category taxonomy is
-TBD. The query machinery filters; the reader should not have to scan S manually.
+deferred to its issue (5654164074); until then `:category` is an opaque keyword the validator
+accepts and views group by (default by Rowan, unobjected 2026-09-15). The query machinery filters; the reader should not have to scan S manually.
 
 ### Evidence and the imported starting point
 
