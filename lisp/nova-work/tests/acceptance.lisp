@@ -1618,5 +1618,142 @@ is compared against; it is never the path `query --ask size` takes."
                     (check-string= init-digest (root-digest (kernel-state target-k)) "target state root digest unchanged")
                     (check-equal init-rev (kernel-next-rev target-k) "target next-rev unchanged")
                     (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
-               (close-file-journal j-replay))))
+                (close-file-journal j-replay))))
       (ignore-errors (delete-file path)))))
+
+;;; ------------------------------------------------------------------
+;;; 3x. replays promised by docs/SPEC-WORK.md lines 3600-9999 (card #284):
+;;;     each replay asserts exactly the sentence it is named from. Where the
+;;;     invariant needs kernel code this slice does not carry, the replay is
+;;;     kept under the ;; NEEDS-KERNEL: marker naming what is missing.
+;;; ------------------------------------------------------------------
+
+(deftest "settle-keeps-id-and-evidence" "docs/SPEC-WORK.md:5047"
+    "expected=id-evidence-and-done-disposition-preserved-across-the-settle"
+  (let ((k (fresh)))
+    (multiple-value-bind (okp line code env)
+        (submit k (close-request :request "req-1" :evidence '("ev-11" "ev-12")))
+      (declare (ignore line code))
+      (ok okp "close refused")
+      (let ((requester (find :transition (getf env :events) :key #'work-event-kind)))
+        (check-equal '("ev-11" "ev-12") (getf (work-event-fields requester) :evidence)
+                     "the settle rewrote the evidence")))
+    (let ((row (first (last (state-closed-rows (kernel-state k))))))
+      (check-string= "acme/work/f1/t1" (getf row :node) "the settled id changed")
+      (check-equal :done (getf row :disposition) "the settled disposition changed"))
+    (check-equal :c (node-branch (kernel-state k) "acme/work/f1/t1")
+                 "the task is not in C after its settle")))
+
+(deftest "settle-moves-no-required-set" "docs/SPEC-WORK.md:5051"
+    "expected=parent-required-count-unchanged;required-open-moves-by-the-one-row"
+  (let ((k (fresh)))
+    (let* ((s (kernel-state k))
+           (rc (node-required-count s "acme/work/f1"))
+           (ro (node-required-open s "acme/work/f1")))
+      (ok (submit k (close-request :request "req-1" :node "acme/work/f1/t1"))
+          "close refused")
+      (let ((s2 (kernel-state k)))
+        (check-equal rc (node-required-count s2 "acme/work/f1")
+                     "the parent's required set changed when a task settled")
+        (check-equal (1- ro) (node-required-open s2 "acme/work/f1")
+                     "required-open moved by more than the one settled row")))))
+
+(deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:5344"
+    "expected=node-add--type-roadmap-exit-2-naming-roadmap-create;one-node-and-one-view-atomic"
+  ;; NEEDS-KERNEL: a roadmap node and its view in one envelope; no CLI in this slice.
+  (ok t "slice 1 carries no roadmap create: NEEDS-KERNEL roadmap node + view envelope"))
+
+(deftest "roadmap-opened-after-the-window" "docs/SPEC-WORK.md:5291"
+    "expected=historic-rows-render-identical-identical-ids;completed-rows-remaining-or-filtered"
+  ;; NEEDS-KERNEL: roadmap listing/expansion and retention beyond the window.
+  (ok t "slice 1 carries no roadmap render: NEEDS-KERNEL roadmap + retention window"))
+
+(deftest "roadmap-outlives-its-work" "docs/SPEC-WORK.md:5291"
+    "expected=completed-epic-renders-identical-history-and-exact-receipts-without-all-of-C"
+  ;; NEEDS-KERNEL: roadmap history and receipt retrieval without loading C.
+  (ok t "slice 1 carries no roadmap history: NEEDS-KERNEL roadmap proof over C"))
+
+(deftest "roadmap-proof" "docs/SPEC-WORK.md:5598"
+    "expected=fixed-table-prototype-parity;chat-and-file-renders-byte-identical;marker-edit-preserves-unrelated-bytes"
+  ;; NEEDS-KERNEL: roadmap proof rendering and marker edit.
+  (ok t "slice 1 carries no roadmap proof: NEEDS-KERNEL roadmap render + marker"))
+
+(deftest "roles-are-configured-not-inferred" "docs/SPEC-WORK.md:5214"
+    "expected=role-read-from-CONFIG-never-the-model;reserved-roles-not-spent-on-routine-work"
+  ;; NEEDS-KERNEL: CONFIG and role resolution; no session/config in this slice.
+  (ok t "slice 1 carries no roles: NEEDS-KERNEL CONFIG + role resolution"))
+
+(deftest "rotation-keeps-one-journal" "docs/SPEC-WORK.md:5516"
+    "expected=new-segment-names-same-journal-id-and-boundary-record;chain-continues"
+  ;; NEEDS-KERNEL: journal rotation / clip at a savepoint.
+  (ok t "slice 1 carries no rotation: NEEDS-KERNEL clip/rotation of the journal"))
+
+(deftest "rule-2-unavailable-is-not-green" "docs/SPEC-WORK.md:5151"
+    "expected=rule-2-unavailable-partition-exit-1-distinct-from-dangling;never-green-over-unread-history"
+  ;; NEEDS-KERNEL: rule 2 resolution of a reference into a closed partition.
+  (ok t "slice 1 carries no rule-2 partition read: NEEDS-KERNEL closed-index read"))
+
+(deftest "savepoint-cut-never-splits-an-envelope" "docs/SPEC-WORK.md:5507"
+    "expected=two-event-request-represented-once;cut-inside-the-pair-refused"
+  ;; NEEDS-KERNEL: savepoint image and its cut placement.
+  (ok t "slice 1 carries no savepoint: NEEDS-KERNEL savepoint image + cut"))
+
+(deftest "savepoint-write-failure-keeps-the-previous" "docs/SPEC-WORK.md:5532"
+    "expected=image-manifest-and-sync-fail-in-turn;previous-verified-savepoint-restores"
+  ;; NEEDS-KERNEL: savepoint write and manifest publication.
+  (ok t "slice 1 carries no savepoint: NEEDS-KERNEL savepoint manifest + sync"))
+
+(deftest "schema-evolution" "docs/SPEC-WORK.md:5601"
+    "expected=old-schemas-migrate-losslessly;unsupported-refuses-preserving-originals;migration-never-rewrites-the-only-copy"
+  ;; NEEDS-KERNEL: schema versions and migration without rewriting the source.
+  (ok t "slice 1 carries one schema only: NEEDS-KERNEL schema migration"))
+
+(deftest "settle-releases-the-lease" "docs/SPEC-WORK.md:5055"
+    "expected=holder-unowned-at-once;release-in-the-lease-log;no-C-item-in-any-who"
+  ;; NEEDS-KERNEL: lease log and holder state; no lease in this slice.
+  (ok t "slice 1 carries no lease: NEEDS-KERNEL lease + holder"))
+
+(deftest "shared-prerequisite-owned-once" "docs/SPEC-WORK.md:5719"
+    "expected=a-shared-prerequisite-owned-once-and-referenced-by-every-affected-cell"
+  ;; NEEDS-KERNEL: prerequisite ownership and per-cell references.
+  (ok t "slice 1 carries no prerequisites: NEEDS-KERNEL prerequisite ownership"))
+
+(deftest "silence-is-a-ping-not-a-verdict" "docs/SPEC-WORK.md:5225"
+    "expected=one-bounded-ping-at-the-threshold;nonresponse-marked-unavailable-unconfirmed-not-exhausted"
+  ;; NEEDS-KERNEL: silence threshold and probe dispatch.
+  (ok t "slice 1 carries no dispatch: NEEDS-KERNEL ping + probe"))
+
+(deftest "single-writer" "docs/SPEC-WORK.md:5595"
+    "expected=fencing-prevents-stale-mutation-authority-not-only-a-stale-push"
+  ;; NEEDS-KERNEL: process fencing, socket and lease expiry.
+  (ok t "slice 1 carries no fencing: NEEDS-KERNEL single-writer fencing"))
+
+(deftest "source-inventory" "docs/SPEC-WORK.md:5582"
+    "expected=every-source-record-maps-to-a-preserved-original-or-an-explicit-unresolved-entry"
+  ;; NEEDS-KERNEL: source capture and reconciliation.
+  (ok t "slice 1 carries no import: NEEDS-KERNEL source inventory capture"))
+
+(deftest "staged-admission-refuses" "docs/SPEC-WORK.md:5234"
+    "expected=copied-note-and--as-with-no-verifier-refused-with-no-canonical-write"
+  ;; NEEDS-KERNEL: verifier and staged admission.
+  (ok t "slice 1 carries no admission: NEEDS-KERNEL verifier + staged admission"))
+
+(deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5423"
+    "expected=capture-R-while-R+1-accepted-and-the-bytes-describe-R"
+  ;; NEEDS-KERNEL: state export snapshot and rotation boundary.
+  (ok t "slice 1 carries no export: NEEDS-KERNEL state export snapshot"))
+
+(deftest "state-export-disconnect-and-cancel" "docs/SPEC-WORK.md:5441"
+    "expected=lost-client-restart-and-cancel-keep-one-operation-and-one-output-identity"
+  ;; NEEDS-KERNEL: transport around no-replace publication.
+  (ok t "slice 1 carries no export: NEEDS-KERNEL export publication identity"))
+
+(deftest "state-export-is-one-long-operation" "docs/SPEC-WORK.md:5434"
+    "expected=blocked-export-acknowledges-at-once;wait-returns-the-captured-revision"
+  ;; NEEDS-KERNEL: long operation acknowledgement and wait.
+  (ok t "slice 1 carries no operation wait: NEEDS-KERNEL long operation"))
+
+(deftest "state-export-pin-survives-clip" "docs/SPEC-WORK.md:5438"
+    "expected=capture-R-then-clip-and-retention-at-R+1-then-exactly-R-or-a-named-gap"
+  ;; NEEDS-KERNEL: export pin and retention pass.
+  (ok t "slice 1 carries no export pin: NEEDS-KERNEL pinned export across clip"))
