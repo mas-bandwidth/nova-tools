@@ -38,7 +38,7 @@ Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WOR
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | 52 | 6 | 0 | 0 | 1 | 57 |
 
-Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation, ten efficiency-policy, three recursive-grouping and one fleet acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
+Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation, ten efficiency-policy, three recursive-grouping, one fleet and two efficiency-lessons acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
 Do not count removal as completion. These counts track inventory movement, not estimated engineering effort.
 
 ## Open questions
@@ -51,7 +51,7 @@ Do not count removal as completion. These counts track inventory movement, not e
 
 ## Research and Development (R&D)
 
-All active engineering and research items outside the v1 product feature denominator are organized in this explicit R&D register. These items track active prototypes, compiler and runtime hardening, protocol companions, decision packets, and adapter explorations across the team. Items in this register do not grant completion credit toward the v1 product denominator (57 features and 201 acceptance items). Current evidence snapshot at 2026-09-15T01:40:00Z (main `16a1d479`, spec `efb6dbe7`); PR #335 (V2-F05 coordinator notes, draft 1) merged at 45b44bdb and has no register row.
+All active engineering and research items outside the v1 product feature denominator are organized in this explicit R&D register. These items track active prototypes, compiler and runtime hardening, protocol companions, decision packets, and adapter explorations across the team. Items in this register do not grant completion credit toward the v1 product denominator (57 features and 203 acceptance items). Current evidence snapshot at 2026-09-15T01:40:00Z (main `16a1d479`, spec `efb6dbe7`); PR #335 (V2-F05 coordinator notes, draft 1) merged at 45b44bdb and has no register row.
 
 | ID | Work Item | Status | Owner | Next Gate | Source / Evidence |
 |---|---|:---:|:---:|:---:|---|
@@ -73,13 +73,16 @@ All active engineering and research items outside the v1 product feature denomin
 | RD-16 | [PR #332](https://github.com/mas-bandwidth/nova-tools/pull/332): batch admission wire and recovery companion specification | `merged` | emma | implementation-gate | [PR #332](https://github.com/mas-bandwidth/nova-tools/pull/332) closed unmerged 2026-09-15T01:26:05Z when its base branch (PR #326) merged and was deleted; continued as [PR #342](https://github.com/mas-bandwidth/nova-tools/pull/342) head 48368158 merged as 861745e8 into main (2026-09-15T01:31:44Z); Stella scoped CLEAR 5672141578; Freddy APPROVE, no findings, at c6d6a558 (card 41, [comment 5673241357](https://github.com/mas-bandwidth/nova-tools/pull/332#issuecomment-5673241357)); proposal only, no implementation credit |
 | RD-17 | [PR #333](https://github.com/mas-bandwidth/nova-tools/pull/333): bounded durable journal persistence and replay adapter | `merged` | emma | integrated | [PR #333](https://github.com/mas-bandwidth/nova-tools/pull/333) head 6672cc9a merged as 99ca0afc into main (2026-09-15T01:32:58Z); 47/47 tests pass; Stella CLEAR for the fixture repair 5673066268; Freddy APPROVE at 6672cc9a (card 43b, [comment 5673307161](https://github.com/mas-bandwidth/nova-tools/pull/333#issuecomment-5673307161)) |
 | RD-18 | [PR #334](https://github.com/mas-bandwidth/nova-tools/pull/334): Previous roadmap refresh through 23:00:18Z | `merged` | unassigned | superseded | [PR #334](https://github.com/mas-bandwidth/nova-tools/pull/334) at 36efe4a9 into main |
-| RD-19 | [PRs #293-#295](https://github.com/mas-bandwidth/nova-tools/pull/293): nova-work structure/roadmap/export/priority; assignment/distributed execution; bounded history/savepoint contracts | `in-review` | rowan | schema-gates | [PR #293](https://github.com/mas-bandwidth/nova-tools/pull/293), [PR #294](https://github.com/mas-bandwidth/nova-tools/pull/294), [PR #295](https://github.com/mas-bandwidth/nova-tools/pull/295); proposed with scoped reviews; other gates remain |
+| RD-19 | [PR #231](https://github.com/mas-bandwidth/nova-tools/pull/231): nova-work spec lock (spec/nova-work merged to main) | `merged` | rowan | integrated | [PR #231](https://github.com/mas-bandwidth/nova-tools/pull/231) merged spec/nova-work into main at ab11a10 (2026-09-15T02:00:00Z); spec locked; implementation slices proceed |
 | RD-20 | [Issue #185](https://github.com/mas-bandwidth/nova-tools/issues/185): token ledger operational comparison, triage, and accounting | `in-progress` | unassigned | matched-operational-evidence | [Issue #185](https://github.com/mas-bandwidth/nova-tools/issues/185): 4 job rows (two card33, 35, 36) in 2 grouped rows; no valid matched token-saving result; exclude implementation cost; include retry/review/rescue |
-| RD-21 | [Issue #336](https://github.com/mas-bandwidth/nova-tools/issues/336): evaluate Herdr as an agent runtime adapter | `proposed` | unassigned | proposal-intake | [Issue #336](https://github.com/mas-bandwidth/nova-tools/issues/336): evaluation idea; no accepted implementation owner |
+| RD-21 | [Issue #336](https://github.com/mas-bandwidth/nova-tools/issues/336): evaluate Herdr as an agent runtime adapter | `parked` | unassigned | closed-not-planned | [Issue #336](https://github.com/mas-bandwidth/nova-tools/issues/336): evaluation parked; closed not planned |
 | RD-22 | [PR #338](https://github.com/mas-bandwidth/nova-tools/pull/338): Slice C: whole-package candidate and installed validator | `merged` | emma | integrated | [PR #338](https://github.com/mas-bandwidth/nova-tools/pull/338) head d90bae5c merged as c3586c51 into main (2026-09-15T01:32:45Z); Rowan delta CLEAR 5673191508; Freddy APPROVE at d90bae5c (card 42, [comment 5673300420](https://github.com/mas-bandwidth/nova-tools/pull/338#issuecomment-5673300420)) |
-| RD-23 | E10-F06: Operational adoption and continuous efficiency review | `open` | unassigned | owner-assignment | Feature defined in the original inventory at [248d85b](https://github.com/mas-bandwidth/nova-tools/commit/248d85b320923803a82f1f643e303bbf42d2c74a), moved out of the product denominator to the Now register; [PR #337](https://github.com/mas-bandwidth/nova-tools/pull/337) at 368bcbe4 deleted the Now register; re-homed here without completion credit |
+| RD-23 | E10-F06: Operational adoption and continuous efficiency review | `open` | rowan | owner-assignment | Feature defined in the original inventory at [248d85b](https://github.com/mas-bandwidth/nova-tools/commit/248d85b320923803a82f1f643e303bbf42d2c74a), moved out of the product denominator to the Now register; [PR #337](https://github.com/mas-bandwidth/nova-tools/pull/337) at 368bcbe4 deleted the Now register; re-homed here; Rowan assigned owner |
 | RD-24 | [PR #339](https://github.com/mas-bandwidth/nova-tools/pull/339): the fleet, a static description of the machines in the nova-work config | `merged` | unassigned | implementation-gate | [PR #339](https://github.com/mas-bandwidth/nova-tools/pull/339) head bfec9318 merged as efb6dbe7 into spec/nova-work (2026-09-15T01:34:48Z); Emma independent eye APPROVE/CLEAR at 40a691a ([comment 5673227670](https://github.com/mas-bandwidth/nova-tools/pull/339#issuecomment-5673227670)); Freddy APPROVE at 40a691a (card 44, [comment 5673300551](https://github.com/mas-bandwidth/nova-tools/pull/339#issuecomment-5673300551)); no implementation credit |
 | RD-25 | [PR #340](https://github.com/mas-bandwidth/nova-tools/pull/340): fold the current goal into SPEC-WORK (goal set/show/update, six replays) | `merged` | unassigned | implementation-gate | [PR #340](https://github.com/mas-bandwidth/nova-tools/pull/340) head 261f18cd merged as 2e306395 into spec/nova-work (2026-09-15T01:32:11Z); Emma independent eye APPROVE/CLEAR at 261f18cd ([comment 5673231987](https://github.com/mas-bandwidth/nova-tools/pull/340#issuecomment-5673231987)); Stella scoped fold CLEAR 5673267608; Freddy APPROVE at 261f18cd (card 44, [comment 5673300675](https://github.com/mas-bandwidth/nova-tools/pull/340#issuecomment-5673300675)); no implementation credit |
+| RD-26 | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780): MCP front vs thin client protocol comparison | `proposed` | unassigned | proposal-intake | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780) (ADAPT 1 / RD-26); evaluate token cost of MCP verb exposition vs CLI thin client across 10 sessions; falsifier: per-session schema injection exceeds bytes saved over CLI, or refusal loses reason |
+| RD-27 | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780): escalation with a recorded reason | `proposed` | unassigned | proposal-intake | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780) (ADAPT 2 / RD-27); 20 frozen cards on cheap model with :escalate verb vs strong model shadow run; falsifier: missed plus spurious escalations exceed 25%, or escalated set costs more than shadow run |
+| RD-28 | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780): fan-out width before synthesis eats the saving | `proposed` | unassigned | proposal-intake | [ideas#780](https://github.com/mas-bandwidth/ideas/issues/780) (ADAPT 2 / RD-28); objective tested at widths 1, 3, 6, 10 with coordinator synthesis tokens allocated separately; falsifier: total tokens per accepted unit fall monotonically to width 10 |
 
 ## Feature inventory
 
@@ -803,8 +806,9 @@ Prerequisites: E08-F05, E03-F04.
 - [ ] Pin rate/config revisions and include coordinator, review and rework overhead
 - [ ] complete-cost-lineage: join parent, child, retry and failed-attempt receipts once; avoid counting cache/reasoning subsets again, implementation cost separate and gaps unknown
 - [ ] cache-aware-context-choice: price cache read/write categories, service tiers and reset rebuilds; refuse missing decision, adapter or evidence inputs and compare matched accepted work
+- [ ] gas-town-efficiency-accounting: enforce root-only step records, inline checklists and durable next-triggers to eliminate empty pulse reruns and token burn
 
-Source sections: Cost; Model knowledge informs scheduling; Retrospective required before production implementation; Efficiency policy (SPEC-WORK.md@685b7c2).
+Source sections: Cost; Model knowledge informs scheduling; Retrospective required before production implementation; Efficiency policy (SPEC-WORK.md@685b7c2); Efficiency: lessons absorbed 2026-09-15.
 
 **E10-F03 — Generated, golden, property and fault suites**
 
@@ -835,8 +839,9 @@ Prerequisites: E07-F05, E10-F02, E10-F03.
 - [ ] Test lease-only answer for who is working on C and unsupported number detection
 - [ ] Pin scenarios, owners and commands before implementation; require exact-revision correctness and measured operational results before adoption
 - [ ] evidence-before-adoption: refuse automatic promotion on missing baseline or coverage, unmatched quality or retrospective correlation; require a qualified prospective result
+- [ ] efficiency-lessons-gate: enforce prime read-only projection under --max-bytes, decompose --pour inline checklists, tripped node reason fence, and delegate mode role restrictions
 
-Source sections: The measurement that decides; Agreement and lock gate; Efficiency policy (SPEC-WORK.md@685b7c2).
+Source sections: The measurement that decides; Agreement and lock gate; Efficiency policy (SPEC-WORK.md@685b7c2); Efficiency: lessons absorbed 2026-09-15.
 
 **E10-F07 — Validator and repair modes**
 
@@ -864,7 +869,7 @@ Source sections: Output grammar; The verbs; Required test suites.
 
 Issue [#321](https://github.com/mas-bandwidth/nova-tools/issues/321) (including coordinator delegation notes and shared goal requirements confirmed in [comment 5672006742](https://github.com/mas-bandwidth/nova-tools/issues/321#issuecomment-5672006742)) and [PR #335](https://github.com/mas-bandwidth/nova-tools/pull/335) define the scope for future v2 architecture: arbitrary real/virtual/mixed node hierarchies, durable repository-backed virtual nodes, mapped GitHub completion return paths, personal/group coordinator notes, and set/retrieve/update operations for the shared current goal across models and harnesses.
 
-All v2 capabilities are grouped into this explicit epic outside the v1 product feature denominator. The v1 denominator remains strictly **57 features and 201 acceptance items** (5 partial, 0 verified).
+All v2 capabilities are grouped into this explicit epic outside the v1 product feature denominator. The v1 denominator remains strictly **57 features and 203 acceptance items** (5 partial, 0 verified).
 
 | ID | Feature Area / Acceptance Item | Extends | Status | Owner | Next Gate | Source |
 |---|---|---|:---:|:---:|:---:|---|

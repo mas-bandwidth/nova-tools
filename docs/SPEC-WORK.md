@@ -3848,6 +3848,65 @@ safety margin for latency and head-of-line blocking rather than maximising batch
 These acceptance items belong to the existing configuration, execution, measurement and recovery
 roadmap features. They add no verified completion until implementation and failure replays pass.
 
+## Efficiency: lessons absorbed 2026-09-15 *(Glenn; Emma, Stella)*
+
+Before implementing the resident session and execution slices of `nova-work`, Glenn requires that
+all operational efficiency and token optimization lessons learned from Gas Town and real multi-agent
+coordination are absorbed as normative spec constraints and fences. These rules guard against token
+burn and serial bottlenecks below the model.
+
+### Rationale: Gas Town token facts
+
+The rationale rests on measured facts from Gas Town:
+- Root-only step records cut operational row counts fifteen-fold compared to fine-grained event emission.
+- Patrol agents cycling on an unconditional timer became the dominant serial token bottleneck.
+- Checklist steps read inline within task descriptions rather than materialized as full graph records conserve working memory and prevent graph explosion.
+
+### The absorbed contract rules
+
+1. **`prime` projection.** `prime` is a read-only projection (including current goal, applicable notes,
+   caller leases, and pending stop requests) bounded under `--max-bytes`, run by a configurable
+   harness hook at session start and immediately before compaction; it creates and maintains no shadow state.
+2. **`decompose --pour` discipline.** Subtasks remain inline checklists by default. A child node in O
+   materialises only for independent verification, independent worker assignment, an explicit dependency
+   edge, or an isolated recovery boundary; unpoured checklist items never count in `|O|` and never count
+   as verified.
+3. **`:max-attempts` and `tripped=`.** Node attempts are bounded by `:max-attempts`, surfacing `tripped=`
+   as a status reading; taking a lease on a tripped node requires an explicit `--reason`, which explains
+   the operator's intent and grants no execution authority by itself.
+4. **Delegate mode.** A declared harness role profile restricts the worker to designated verbs and
+   read-only git operations; file edits and build execution are refused below the model by the sandbox
+   and tool layer, with role transitions permitted strictly by configuration.
+5. **Stale pass fields.** The stale pass surfaces read-only inspection fields `escalated-age=` and
+   `reread=` derived from a persisted escalation event; these fields are strictly informational and never
+   perform automatic reassignment.
+6. **Durable triggers.** A durable `next-trigger` is maintained per waiting item (owner delivery, job handle,
+   review completion, or due checkpoint), ensuring that an empty pulse reruns nothing.
+7. **Scoped review coverage.** Review coverage is strictly bound to source revision and changed scope,
+   and is never carried across an unchecked rebase.
+8. **Implementation hygiene from W1 onward.** Every implementation slice from W1 onward adheres to
+   strict prompt and context hygiene: fresh minimal context per slice, discrete cards for bounded work,
+   exactly one read per exact commit head, machine-generated test receipts, and zero whole-history prompts.
+9. **`:effort` bound on every card and delegation packet.** Beside bytes, attempt count and milliseconds,
+   every card and delegated packet carries an explicit `:effort` bound (a small integer scale per task
+   class stating how many reads, tool calls and how wide a fan-out the objective is worth); it is stated
+   by the coordinator when the card is cut, and a packet lacking it is refused. A worker past its effort
+   limit stops and reports rather than widening on its own; widening requires an explicitly recorded reason.
+10. **Fleet-wide spend ceiling per day.** CONFIG maintains an explicit fleet-wide spend ceiling per day
+    and per model family. When an automatic or delegated dispatch would cross that ceiling, it is refused
+    with a line naming the configured ceiling and the current spend; it polices the local bench rather
+    than guessing other benches' spend.
+
+### Required enforcement replays
+
+| Replay | Required outcome |
+| --- | --- |
+| gas-town-efficiency-accounting | Root-only step records and inline checklists avoid node explosion; durable next-triggers ensure empty pulses cause zero model re-executions. |
+| efficiency-lessons-gate | Prime read-only projection respects `--max-bytes`, unpoured checklist items never count in `|O|`, tripped nodes require `--reason`, delegate mode refuses edits below the model, packets lacking `:effort` are refused, and dispatches crossing the configured daily fleet spend ceiling are refused. |
+
+These acceptance items belong to the existing measurement, configuration and release roadmap features
+(E10-F02 and E10-F05). They add no verified completion until implementation and failure replays pass.
+
 ## The hierarchy, the table and the roadmap's own record *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
 
 **Repository → epic → feature → subtasks is one example of Glenn's recursive hierarchy**,

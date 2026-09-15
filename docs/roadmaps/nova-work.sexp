@@ -1,6 +1,6 @@
 ; Proposed recursive roadmap data; not an implemented nova-work interchange schema.
 (  :schema "nova-work-roadmap-baseline-1"
-  :scope-revision 9
+  :scope-revision 10
   :inventory-status "proposed baseline; awaiting friend review"
   :sources (    :main-spec "SPEC-WORK.md@f36b85850620504a74e1229043c7cee2c14ea594"
     :companion "SPEC-WORK-PILOT.md@6e3413f"
@@ -43,16 +43,19 @@
     :pr-338 "https://github.com/mas-bandwidth/nova-tools/pull/338"
     :pr-339 "https://github.com/mas-bandwidth/nova-tools/pull/339"
     :fleet "spec/nova-work PR 339, docs/SPEC-WORK.md section The fleet"
+    :efficiency-lessons "spec/nova-work, docs/SPEC-WORK.md section Efficiency: lessons absorbed 2026-09-15"
     :pr-337 "https://github.com/mas-bandwidth/nova-tools/pull/337"
     :commit-248d85b "https://github.com/mas-bandwidth/nova-tools/commit/248d85b320923803a82f1f643e303bbf42d2c74a"
     :pr-340 "https://github.com/mas-bandwidth/nova-tools/pull/340"
     :pr-342 "https://github.com/mas-bandwidth/nova-tools/pull/342"
+    :pr-231 "https://github.com/mas-bandwidth/nova-tools/pull/231"
+    :ideas-780 "https://github.com/mas-bandwidth/ideas/issues/780"
     :production-inventory "ec01647")
   :baseline-features 52
   :baseline-items 171
   :discovered-features 6
   :current-features 57
-  :current-acceptance-items 201
+  :current-acceptance-items 203
   :events (    (      :kind "baseline"
       :feature-count 52
       :reason "Full initial nova-work source survey; implementation not started")
@@ -137,6 +140,16 @@
       :acceptance "fleet-is-static-config"
       :item-count 1
       :reason "Proposed PR 339 adds the fleet to CONFIG as static instance data with one verb and two asks; a recommendation is never a lease")
+    (      :kind "acceptance-discovery"
+      :feature "E10-F02"
+      :acceptance "gas-town-efficiency-accounting"
+      :item-count 1
+      :reason "Absorb Gas Town token facts: root-only step records, inline checklist steps, and durable next-trigger timing")
+    (      :kind "acceptance-discovery"
+      :feature "E10-F05"
+      :acceptance "efficiency-lessons-gate"
+      :item-count 1
+      :reason "Absorb Gas Town efficiency contract: prime projection, decompose --pour, tripped node reason, and delegate mode")
     (      :kind "organization"
       :feature-count 0
       :reason "Organize active work outside v1 denominator into explicit R&D register; preserve 57 features and 200 items")
@@ -377,11 +390,11 @@
       :next-gate "superseded"
       :source "pr-334")
     (      :id "RD-19"
-      :title "PRs #293-#295: nova-work structure/roadmap/export/priority; assignment/distributed execution; bounded history/savepoint contracts"
-      :status "in-review"
+      :title "PR #231: nova-work spec lock (spec/nova-work merged to main)"
+      :status "merged"
       :owner "rowan"
-      :next-gate "schema-gates"
-      :source "prs-293-295")
+      :next-gate "integrated"
+      :source "pr-231")
     (      :id "RD-20"
       :title "Issue #185: token ledger operational comparison, triage, and accounting"
       :status "in-progress"
@@ -390,9 +403,9 @@
       :source "issue-185")
     (      :id "RD-21"
       :title "Issue #336: evaluate Herdr as an agent runtime adapter"
-      :status "proposed"
+      :status "parked"
       :owner "unassigned"
-      :next-gate "proposal-intake"
+      :next-gate "closed-not-planned"
       :source "issue-336")
     (      :id "RD-22"
       :title "PR #338: Slice C: whole-package candidate and installed validator"
@@ -403,7 +416,7 @@
     (      :id "RD-23"
       :title "E10-F06: Operational adoption and continuous efficiency review"
       :status "open"
-      :owner "unassigned"
+      :owner "rowan"
       :next-gate "owner-assignment"
       :source "commit-248d85b")
     (      :id "RD-24"
@@ -417,7 +430,25 @@
       :status "merged"
       :owner "unassigned"
       :next-gate "implementation-gate"
-      :source "pr-340"))
+      :source "pr-340")
+    (      :id "RD-26"
+      :title "ideas#780: MCP front vs thin client protocol comparison"
+      :status "proposed"
+      :owner "unassigned"
+      :next-gate "proposal-intake"
+      :source "ideas-780")
+    (      :id "RD-27"
+      :title "ideas#780: escalation with a recorded reason"
+      :status "proposed"
+      :owner "unassigned"
+      :next-gate "proposal-intake"
+      :source "ideas-780")
+    (      :id "RD-28"
+      :title "ideas#780: fan-out width before synthesis eats the saving"
+      :status "proposed"
+      :owner "unassigned"
+      :next-gate "proposal-intake"
+      :source "ideas-780"))
   :epics (    (      :id "E01"
       :title "Canonical work data and restricted representation"
       :features (        (          :id "E01-F01"
@@ -1040,13 +1071,15 @@
             "Separate billed cash, estimated cash and virtual token cost"
             "Pin rate/config revisions and include coordinator, review and rework overhead"
             "complete-cost-lineage: join parent, child, retry and failed-attempt receipts once; avoid counting cache/reasoning subsets again, implementation cost separate and gaps unknown"
-            "cache-aware-context-choice: price cache read/write categories, service tiers and reset rebuilds; refuse missing decision, adapter or evidence inputs and compare matched accepted work")
+            "cache-aware-context-choice: price cache read/write categories, service tiers and reset rebuilds; refuse missing decision, adapter or evidence inputs and compare matched accepted work"
+            "gas-town-efficiency-accounting: enforce root-only step records, inline checklists and durable next-triggers to eliminate empty pulse reruns and token burn")
           :depends-on (            "E08-F05"
             "E03-F04")
           :source-sections (            "Cost"
             "Model knowledge informs scheduling"
             "Retrospective required before production implementation"
-            "Efficiency policy (SPEC-WORK.md@685b7c2)")
+            "Efficiency policy (SPEC-WORK.md@685b7c2)"
+            "Efficiency: lessons absorbed 2026-09-15")
           :state "missing"
           :evidence ())
         (          :id "E10-F03"
@@ -1079,13 +1112,15 @@
           :subfeatures (            "Compare update-and-render tokens/wall time with manual editing"
             "Test lease-only answer for who is working on C and unsupported number detection"
             "Pin scenarios, owners and commands before implementation; require exact-revision correctness and measured operational results before adoption"
-            "evidence-before-adoption: refuse automatic promotion on missing baseline or coverage, unmatched quality or retrospective correlation; require a qualified prospective result")
+            "evidence-before-adoption: refuse automatic promotion on missing baseline or coverage, unmatched quality or retrospective correlation; require a qualified prospective result"
+            "efficiency-lessons-gate: enforce prime read-only projection under --max-bytes, decompose --pour inline checklists, tripped node reason fence, and delegate mode role restrictions")
           :depends-on (            "E07-F05"
             "E10-F02"
             "E10-F03")
           :source-sections (            "The measurement that decides"
             "Agreement and lock gate"
-            "Efficiency policy (SPEC-WORK.md@685b7c2)")
+            "Efficiency policy (SPEC-WORK.md@685b7c2)"
+            "Efficiency: lessons absorbed 2026-09-15")
           :state "missing"
           :evidence ())
         (          :id "E10-F07"
