@@ -34,6 +34,30 @@ func mainGhFixture(t *testing.T, dir, jsonBody string) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
+func TestHelpListsOnlyBuiltVerbs(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"help"}, &out, &errb, time.Now().UTC()); code != 0 {
+		t.Fatalf("help exit = %d, stderr=%s", code, errb.String())
+	}
+	usage := out.String()
+	shipped := map[string]bool{"pool": true, "launch": true}
+	unshipped := map[string]bool{"cut": true, "harvest": true, "width": true}
+	for _, line := range strings.Split(usage, "\n") {
+		verb := strings.Fields(line)
+		if len(verb) < 2 || verb[0] != "nova-pulse" {
+			continue
+		}
+		name := verb[1]
+		marked := strings.Contains(line, "not yet implemented")
+		switch {
+		case unshipped[name] && !marked:
+			t.Errorf("help lists %q as available; it is unshipped and must read \"not yet implemented\": %q", name, line)
+		case shipped[name] && marked:
+			t.Errorf("help marks shipped verb %q as \"not yet implemented\": %q", name, line)
+		}
+	}
+}
+
 func TestPoolMaxFlagBoundsCandidates(t *testing.T) {
 	dir := t.TempDir()
 	jsonBody := writeMainFile(t, dir, "issues.json", `[
