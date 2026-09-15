@@ -2113,6 +2113,45 @@ func countListable(entries []bus.OpenEntry) int {
 // asynchronous wait with no deadline is a line that is stuck rather than waiting, and
 // nobody outside can tell the two apart. A timeout is not an error -- it is the answer
 // "nothing yet", exit 0, and the caller issues the next one.
+//
+// rearmCommand rebuilds `wait`'s re-arm line from the caller's own argv, shell-quoting each
+// argument so that what is printed is what the caller pasted. The failure it closes: the
+// command used to join the raw argv with spaces, so a --bus path holding a space came back
+// split in two -- --bus received the prefix through the space, and the remainder landed as a
+// separate argument -- and pasting it named a bus that does not exist instead of the one it
+// was waiting on.
+func rearmCommand(args []string) string {
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = shellQuote(a)
+	}
+	return "nova-bus wait " + strings.Join(quoted, " ")
+}
+
+// shellQuote quotes one argument for a POSIX shell: unchanged when it holds nothing the
+// shell would act on, otherwise single quotes with the one character that cannot live
+// inside them written the shell's own way. A value carrying a space, a dollar sign or a
+// semicolon unquoted would split the pasted command or run something the caller did not
+// write.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '/' || c == '.' || c == '_' || c == '-' || c == ':') {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("wait")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
@@ -2255,8 +2294,10 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	// The command the caller issues again to re-arm this wait: the next one, with the same
 	// flags, echoed back so a harness that does not wake on its own can paste it. A wait is
-	// ONE read, with one terminal line saying it ended and must be re-armed.
-	next := "nova-bus wait " + strings.Join(args, " ")
+	// ONE read, with one terminal line saying it ended and must be re-armed. Each argument
+	// is shell-quoted, not joined raw: a --bus path carrying a space must come back as the
+	// same one argument after a paste, not split in two.
+	next := rearmCommand(args)
 	return waitLoop(o, *timeout, *interval, next, stdout, stderr, now)
 }
 
