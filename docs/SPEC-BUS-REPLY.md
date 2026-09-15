@@ -590,7 +590,7 @@ total cost.
 
 **The before side is no longer a method to be run later. It has been run.** Four
 real coordination replies were measured out of one coordinating line's live
-session, 2026-09-13 22:55Z to 2026-09-14 01:10Z, against a live bus checkout —
+session, <from>..<to>, against a live bus checkout —
 every one of them an actual reply to an actual note, each with a clear `Re:`
 target, and not a synthetic exchange. This table is the baseline the after side
 is compared against.
@@ -599,10 +599,10 @@ is compared against.
 
 | reply id | target id | asst turns | tool calls | tool-result bytes | discovery calls (bytes) | wall clock |
 |---|---|---|---|---|---|---|
-| rowan-f61f36cf7f3f | stella-c1b4e36711c5 | 2 | 2 | 3,787 | 2 (10,492) | 4m 29s |
-| rowan-b55e2424667d | stella-69a04c2f42f3 | 3 | 3 | 7,134 | 2 (1,502) | 3m 12s |
-| rowan-ddfbbd2a2cf9 | stella-0c1bdfd61805 | 2 | 2 | 3,239 | 1 (410) | 6m 21s |
-| rowan-b2b8550843de | stella-d7257ff57d84 | 2 | 2 | 2,196 | 1 (410) | 1m 27s |
+| lane-a | lane-b | 2 | 2 | 3,787 | 2 (10,492) | 4m 29s |
+| lane-a | lane-b | 3 | 3 | 7,134 | 2 (1,502) | 3m 12s |
+| lane-a | lane-b | 2 | 2 | 3,239 | 1 (410) | 6m 21s |
+| lane-a | lane-b | 2 | 2 | 2,196 | 1 (410) | 1m 27s |
 | **total / mean** | | **9 / 2.25** | **9 / 2.25** | **16,356 / 4,089** | **6 (12,814)** | mean 3m 52s |
 
 **The method, in one sentence:** turns and calls are read out of the harness
@@ -825,11 +825,11 @@ two limits, one frame, one receipt line, one continuation input and one cursor
 rule.** No new binary, no
 new verb, and nothing here changes a byte of what `inbox` or `wait` print today.
 
-**Draft 7 (Stella).** Draft 6 cleared **R3** (item and summary bounds) and
+**Draft 7 (the draft's author).** Draft 6 cleared **R3** (item and summary bounds) and
 **R4** (exact frame separators). **R1/R2** it did not: across a real multi-page
 drain a cursor advanced by page 1 invalidated page 2, a later page forgot an
 earlier gap, legacy ids were not unique, and a lone oversized note had no honest
-terminal state. Stella's snapshot continuation contract below answers all four
+terminal state. The draft's author's snapshot continuation contract below answers all four
 and replaces the earlier `<commit>:<id>` scheme. It is the contract this section
 pins.
 
