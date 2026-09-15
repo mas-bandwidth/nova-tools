@@ -1204,13 +1204,18 @@ func TestNativeTmpDirIsOutsideAnyRepo(t *testing.T) {
 	}
 }
 
-// TestNativeNoWallWritesHarnessLog: the UNWALLED run captures the harness's own output to
-// <job>/harness.log, exactly as the walled run does. Before this, `native --no-wall` pinned
-// the child's stdout and stderr to <slot>/native.log alone and wrote no harness log at all,
-// so every unwalled Space card that produced no RESULT left NO evidence of what the harness
-// said -- the whole no-result class of 2026-09-16 was undiagnosable -- and `harness=silent`
-// (#604) could not tell a silent harness from a lost log (issue #608). The fake harness says
-// one line on each stream; both modes must hold both lines in the same file.
+// TestNativeNoWallWritesHarnessLog: the UNWALLED run captures the harness's output to
+// <job>/harness-output.log, exactly as the walled run does. Before this, `native --no-wall`
+// pinned the child's stdout and stderr to <slot>/native.log alone and wrote nothing under
+// the job, so every unwalled Space card that produced no RESULT left NO evidence of what the
+// harness said -- the whole no-result class of 2026-09-16 was undiagnosable -- and
+// `harness=silent` (#604) could not tell a silent harness from a lost log (issue #608).
+//
+// The capture is NOT `harness.log`: that file is the harness's own, and `harness=silent`
+// reads it to ask whether the harness itself wrote anything. The test asserts both -- the
+// capture holds the lines, and `harness.log` is left alone by this process.
+//
+// The fake harness says one line on each stream; both modes hold both lines in the file.
 func TestNativeNoWallWritesHarnessLog(t *testing.T) {
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
@@ -1242,14 +1247,19 @@ func TestNativeNoWallWritesHarnessLog(t *testing.T) {
 				t.Fatalf("the %s run exits 0, got %d:\n%s", tc.name, code, errOut.String())
 			}
 
-			logPath := filepath.Join(slot, "jobs", label, "harness.log")
+			logPath := filepath.Join(slot, "jobs", label, "harness-output.log")
 			raw, err := os.ReadFile(logPath)
 			if err != nil {
-				t.Fatalf("the %s run wrote no harness log at %s: %v", tc.name, logPath, err)
+				t.Fatalf("the %s run wrote no harness output log at %s: %v", tc.name, logPath, err)
+			}
+			// The harness's own file is not this process's to write: a capture landing there
+			// would answer `harness=silent` for a harness that said nothing at all (#604).
+			if _, err := os.Stat(filepath.Join(slot, "jobs", label, "harness.log")); err == nil {
+				t.Errorf("the %s run wrote the harness's own harness.log; the capture belongs in harness-output.log", tc.name)
 			}
 			for _, want := range []string{"the-harness-said-this", "touch " + touched} {
 				if !strings.Contains(string(raw), want) {
-					t.Errorf("the %s harness log %s does not carry %q:\n%s", tc.name, logPath, want, raw)
+					t.Errorf("the %s harness output log %s does not carry %q:\n%s", tc.name, logPath, want, raw)
 				}
 			}
 			// One capture path: whatever the harness log holds, the run log holds too, so a
@@ -1264,5 +1274,47 @@ func TestNativeNoWallWritesHarnessLog(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestNativeCaptureRefusesSymlink: the capture is the first file this process opens inside
+// the JOB, which is the card's own writable directory. A symlink planted there -- by an
+// earlier run of the same card, or by the card itself -- would carry the child's output to
+// wherever it points, written by a process that has no wall around it (security#30's class).
+// The open carries O_NOFOLLOW, so the run refuses by name and the target is untouched.
+func TestNativeCaptureRefusesSymlink(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "planted-capture"
+	jobDir := filepath.Join(slot, "jobs", label)
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(victim, []byte("the bytes outside the wall\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(jobDir, "harness-output.log")); err != nil {
+		t.Skipf("this platform will not plant a symlink: %v", err)
+	}
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-SAY planted\n"), slotDir: slot, root: root,
+		deadline: 30 * time.Second, noWall: true,
+	}, &errOut)
+	if code != 2 {
+		t.Fatalf("a planted symlink at the capture path is a refusal (exit 2), got %d:\n%s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Errorf("the refusal does not name itself:\n%s", errOut.String())
+	}
+	raw, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "the bytes outside the wall\n" {
+		t.Errorf("the run wrote through the planted symlink; the file outside now holds:\n%s", raw)
 	}
 }

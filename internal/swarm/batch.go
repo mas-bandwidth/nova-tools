@@ -179,8 +179,16 @@ func Batch(in BatchInput) int {
 		}
 		// A card's log is the runner's own stdout pinned to a regular file under the job, the
 		// way the spec records a job: harness.log. Idle means this file stopped growing.
+		//
+		// IT IS APPENDED TO, NEVER TRUNCATED (issue #608). Another process writes this same
+		// file for the same card -- the supervisor the runner starts pins the harness's own
+		// output to it -- and each holds its own offset. With O_TRUNC this file descriptor
+		// starts at offset 0 and the runner's first line lands on top of whatever the other
+		// writer has already put there, so the head of a card's evidence was overwritten by
+		// the line announcing the run. O_APPEND makes every write land at the end, whoever
+		// wrote last, and the file reads in the order it was written.
 		logPath := filepath.Join(job, "harness.log")
-		logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 		if err != nil {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 			return 2
