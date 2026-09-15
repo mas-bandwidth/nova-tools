@@ -191,6 +191,9 @@ func sumSwarmRoot(root, day, out string, stdout, stderr io.Writer, r *refusals) 
 // has so a second run never doubles them. The header is read and must match the canonical
 // order; a ledger whose header differs is refused rather than written around.
 func writeLedger(path, day string, names []string, models map[string]*cardSum) error {
+	if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+		return fmt.Errorf("--out is a directory; it must be a file, the ledger path (<ledger>.tsv), not a directory")
+	}
 	raw, err := os.ReadFile(path)
 	existed := err == nil
 	var kept []string
