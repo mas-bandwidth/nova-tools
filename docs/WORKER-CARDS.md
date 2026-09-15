@@ -222,6 +222,20 @@ profile may carry a purpose-specific one. **Measured:** nothing yet. **Expires**
 result is on the record. **Held by:** Stella (the design); Freddy by name, since his swarm's
 prefix is one arm.
 
+## 17. Numbered-steps shape for DeepSeek on OpenCode
+
+A card for a DeepSeek model states the working directory and the clone as step 1, with one
+command per line, numbered steps with one check each, the verdict vocabulary inside the step,
+the RESULT shape last and short, no capitalised contract block and no launcher text.
+**Measured:** 2026-09-15, three read cards in the capitalised-contract shape stalled 20
+minutes with no output on opencode/deepseek-v4-flash (cards 50, 51, 52); the same job in the
+numbered shape ran in 148 s for USD 0.007 with correct quoted evidence (card 55); four writing
+cards in the plain shape all ran; Mercury tolerates both. **Not measured:** the same numbered
+shape on another model family. **Expires** 2026-10-15 or on the next harness version,
+whichever comes first. **Rollback:** the capitalised-contract shape. **Held by:** Glenn,
+2026-09-15: "You are responsible for prompting. If we don't get the result we want, fix the
+prompt."
+
 ## Open
 
 - **The DeepSeek key route is a human's.** Unauthorized is verified for that credential
