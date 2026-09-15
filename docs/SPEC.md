@@ -3014,6 +3014,9 @@ a property of how a bus writes, not of this tool: a bus of two-line notes and
 a bus of essays do not share a threshold, and a number this tool supplied would
 make a guess look like a measurement. It is a heuristic and it is wrong sometimes
 in both directions — which is why `Kind:` exists, costs one line, and wins.
+When the flag is absent, the threshold is read from a `receipt-max-words=<n>`
+line in `<bus>/.nova-bus/defaults`, then from `NOVA_BUS_RECEIPT_MAX_WORDS`, and
+the run refuses only when neither supplies one.
 
 `inbox` lists in three groups, newest first within each: the notes that carry
 something, then what has been **heard and not answered**, then the bare

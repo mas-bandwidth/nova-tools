@@ -27,6 +27,7 @@ var messageBusAudit = audit.Config{
 		"main.go|parse|name":              "a required flag's name, a literal map key at every call site in this file",
 		"main.go|count|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|count|name":              "a required flag's name, a literal at every call site in this file",
+		"main.go|receiptMaxWords|f.verb":  "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|openBus|verb":            "the verb's own name, a literal at every call site in this file",
 		"main.go|printOpenEntries|token":  "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
 		"main.go|printBodyItem|kind":      "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned immediately above the site",
