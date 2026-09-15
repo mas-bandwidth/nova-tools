@@ -177,6 +177,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdQuickstart(rest, stdout, stderr)
 	case "native":
 		return cmdNative(rest, stdout, stderr)
+	case "bench":
+		return cmdBench(rest, stdout, stderr)
 	case "publish":
 		return cmdPublish(rest, stdout, stderr)
 	}
