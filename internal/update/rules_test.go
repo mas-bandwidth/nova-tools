@@ -381,7 +381,7 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	}
 	// The spec says nova-version's lines are the report line's flags under that
 	// name, so every flag the report line offers a plain report must appear.
-	for _, flag := range []string{"--file <path>", "--host <label>", "--snapshot <path>", "--max <n>", "--timeout <d>", "--budget <d>", "--kind <k>"} {
+	for _, flag := range []string{"--file <manifest: " + manifestShape + ">", "--host <label>", "--snapshot <path>", "--max <n>", "--timeout <d>", "--budget <d>", "--kind <k>"} {
 		if !strings.Contains(versionVerbs, flag) {
 			t.Errorf("nova-version's report line does not carry %s", flag)
 		}
@@ -390,6 +390,25 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 		if !strings.Contains(versionVerbs, flag) {
 			t.Errorf("nova-version's send line does not carry %s", flag)
 		}
+	}
+}
+
+// #406 item 2: the usage line says what --file is and its shape, so a reader of
+// the help is told the file is a manifest (one line per tool, six tab-separated
+// fields) before a run, and the missing-file refusal says the same sentence.
+func TestUsageAndRefusalSayWhatTheFileIs(t *testing.T) {
+	var printed bytes.Buffer
+	help("nova-version", &printed)
+	if !strings.Contains(printed.String(), manifestShape) {
+		t.Fatalf("nova-version's help does not carry the shape sentence:\n%s", printed.String())
+	}
+	var out, err bytes.Buffer
+	c := Main("nova-version", []string{"report", "--file", filepath.Join(t.TempDir(), "missing.tsv")}, "", &out, &err)
+	if c != 2 {
+		t.Fatalf("missing file exit = %d, want 2", c)
+	}
+	if !strings.Contains(err.String(), manifestShape) {
+		t.Fatalf("missing-file refusal does not carry the shape sentence:\n%s", err.String())
 	}
 }
 

@@ -503,6 +503,39 @@ func TestDarwinProfileIsGenerated(t *testing.T) {
 	}
 }
 
+// TestAncestorsGetMetadataOnly: the ancestor literals grant stat, never data. Every proper
+// ancestor of every --read, --write, --cwd and --tmp path gets one
+// (allow file-read-metadata (literal "<dir>")), so the harness's walk up from its cwd (lstat
+// of each ancestor looking for a project root and a config file) succeeds — while no
+// ancestor carries file-read-data or file-read*, so opening or listing an ancestor's
+// contents stays denied.
+func TestAncestorsGetMetadataOnly(t *testing.T) {
+	needUnixPaths(t)
+	write, read, home, _ := scratch(t)
+	p, bad := Build(in(t, write, read, home, anExecutable(t)))
+	if len(bad) > 0 {
+		t.Fatalf("refused: %v", bad)
+	}
+	text, _, err := DarwinProfile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants := grantLines(text)
+	want := Ancestors(p.Reads[0], p.Writes[0], p.Cwd, p.Tmp)
+	if len(want) == 0 {
+		t.Fatal("no ancestors to assert; a scratch path always has parents up to /")
+	}
+	for _, d := range want {
+		if !strings.Contains(grants, `(allow file-read-metadata (literal "`+d+`"))`) {
+			t.Errorf("no metadata literal for ancestor %s:\n%s", d, grants)
+		}
+		if strings.Contains(grants, `file-read-data (literal "`+d+`")`) ||
+			strings.Contains(grants, `file-read* (literal "`+d+`")`) {
+			t.Errorf("ancestor %s carries a data read grant; metadata only:\n%s", d, grants)
+		}
+	}
+}
+
 // grantLines is the filled profile with its comments removed: the template's header
 // documents the markers and the form this build rejected, and a test that searched the
 // whole text would be reading the documentation rather than the policy.

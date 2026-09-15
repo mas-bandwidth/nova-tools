@@ -29,7 +29,7 @@ var wakeAudit = audit.Config{
 		`main.go|cmdProbe|wake.HereLine(clock.Now(), wake.ReadBench(), *quietLoad)`: "the line is composed through oneline.Field inside internal/wake and carries only numbers the kernel gave",
 	},
 	Imports: []string{
-		`"context"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"strconv"`, `"strings"`, `"time"`,
+		`"context"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
 		// runtime, for the version verb's os/arch/toolchain, which are
 		// constants of the build and are printed through oneline.Field like
 		// everything else: it writes nothing and shadows nothing.
@@ -54,6 +54,11 @@ var wakeAudit = audit.Config{
 		// variable fields are a duration and two counts.
 		`"os/signal"`,
 		`"syscall"`,
+		// path/filepath, for the awake verb's from-<name>/BEAT read, which joins a
+		// lane path the same way cursorTime does. It reads a path that os.ReadFile could
+		// take as an already-joined string, and writes nothing, so it is here like the
+		// errors import above: a path joiner, not a source an escape can reach.
+		`"path/filepath"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/wake"`,

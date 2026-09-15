@@ -440,7 +440,10 @@ ignored there, so one caller has one script for three platforms.
 
 `check` reports what this machine can enforce — the backend, its version or
 ABI, and whether an enforced network denial is available — and exits 0 whether
-or not a sandbox is available, because it is a question, not an attempt.
+or not a sandbox is available, because it is a question, not an attempt. The
+`hosts=none` field is a fixed fixture: this tool has no per-host wall rule, so
+the token is always `none` and is printed only to keep the check line's shape
+beside the swarm's.
 
 The binary is `nova-sandbox`, and that is its only name (Glenn: "I like
 nova-sandbox").
@@ -513,7 +516,7 @@ Every line below goes to **stderr** except the body of `policy`,
 which is the thing asked for and goes to stdout.
 
 ```
-SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> read=<n> write=<n> net=<denied|nopromise> cwd=<dir> cmd=<name>
+SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> read=<n> write=<n> net=<denied|nopromise> cwd=<dir> ancestors=<n> cmd=<name>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
 PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
@@ -521,7 +524,7 @@ PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>
 POLICY OK backend=<name> read=<n> write=<n> bytes=<n>
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
-CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> note=<one clause|->
+CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> hosts=none note=<one clause|->
 SANDBOX VERSION tool=nova-sandbox version=<n> backend=<name> platform=<os>
 ```
 
@@ -684,7 +687,9 @@ read:
   generator emits one literal per proper ancestor of every `--read`, `--write`,
   `--cwd` and `--tmp` path (`/` excluded, it is granted above).
   `file-read-metadata` is `stat(2)` only: **listing** an ancestor stays denied,
-  and so does writing anywhere outside the write set.
+  and so does writing anywhere outside the write set. The rule in one sentence:
+  a generator grants **metadata on ancestors, never data** — `lstat`/`stat`/
+  `access` resolve, and no read of an ancestor's contents is ever allowed.
 
 **`profiles/darwin-check.sh`** is how that file is known to be right. It fills
 the template for a scratch write set beside itself (bash, `set -euo pipefail`,

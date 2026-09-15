@@ -1,6 +1,6 @@
 ; Proposed recursive roadmap data; not an implemented nova-work interchange schema.
 (  :schema "nova-work-roadmap-baseline-1"
-  :scope-revision 10
+  :scope-revision 11
   :inventory-status "proposed baseline; awaiting friend review"
   :sources (    :main-spec "SPEC-WORK.md@f36b85850620504a74e1229043c7cee2c14ea594"
     :companion "SPEC-WORK-PILOT.md@6e3413f"
@@ -50,12 +50,13 @@
     :pr-342 "https://github.com/mas-bandwidth/nova-tools/pull/342"
     :pr-231 "https://github.com/mas-bandwidth/nova-tools/pull/231"
     :ideas-780 "https://github.com/mas-bandwidth/ideas/issues/780"
-    :production-inventory "ec01647")
+    :production-inventory "ec01647"
+    :delegation-fold "spec: docs/SPEC-WORK.md section Delegation, folded from docs/SPEC-DELEGATION.md draft 3 on Glenn's word of 2026-09-15")
   :baseline-features 52
   :baseline-items 171
-  :discovered-features 6
-  :current-features 57
-  :current-acceptance-items 204
+  :discovered-features 12
+  :current-features 63
+  :current-acceptance-items 231
   :events (    (      :kind "baseline"
       :feature-count 52
       :reason "Full initial nova-work source survey; implementation not started")
@@ -65,6 +66,9 @@
     (      :kind "remove"
       :feature-count 1
       :reason "E10-F06 moved to the Now register outside the product feature denominator")
+    (      :kind "discovery"
+      :feature-count 6
+      :reason "Glenn 2026-09-15: DELEGATION folded into SPEC-WORK.md as section Delegation; epic E11 with six features and 27 acceptance items enters the product denominator; implementation not started")
     (      :kind "acceptance-discovery"
       :feature "E08-F02"
       :acceptance "pipeline-replies-are-correlated"
@@ -397,9 +401,9 @@
       :source "pr-231")
     (      :id "RD-20"
       :title "Issue #185: token ledger operational comparison, triage, and accounting"
-      :status "in-progress"
+      :status "measured"
       :owner "unassigned"
-      :next-gate "matched-operational-evidence"
+      :next-gate "integrated"
       :source "issue-185")
     (      :id "RD-21"
       :title "Issue #336: evaluate Herdr as an agent runtime adapter"
@@ -1153,5 +1157,93 @@
           :source-sections (            "Output grammar"
             "The verbs"
             "Required test suites")
+          :state "missing"
+          :evidence ())))
+    (      :id "E11"
+      :title "Delegation"
+      :features (        (          :id "E11-F01"
+          :title "Coordinator notes: record, identity and one writer"
+          :subfeatures (            "notes-refuse-missing-source-or-date: refuse a write without --source or --date, or with a :kind outside :instruction, :observation and :heuristic, at exit 2 naming the field, nothing written"
+            "notes-id-is-content-digest: assign :id as note:<sha256> over the canonical eight fields so two benches yield one id; refuse a second write of the same preimage as already written; never reuse an id"
+            "notes-writer-is-scoped: refuse a coordinator-scope note by another --as, a group-scope note by a non-member and an unregistered --as; a note grants no access"
+            "notes-bounds-refuse: refuse a write past :max-active, :max-text-bytes or :max-constraint-nodes naming the field and both numbers; refuse to guess a missing bound; a supersede never changes the active count"
+            "notes-supersede-is-one-envelope: write the replacement and the supersede as one validated envelope or neither; refuse the second of two competing supersedes as not active; never print a superseded note as active"
+            "notes-weaker-kind-cannot-supersede: refuse an :observation or :heuristic replacement for an :instruction; inherit :kind and :scope from the old note and require a new :source")
+          :depends-on (            "E01-F01"
+            "E03-F01"
+            "E08-F01")
+          :source-sections (            "Delegation"
+            "The data"
+            "Output grammar")
+          :state "missing"
+          :evidence ())
+        (          :id "E11-F02"
+          :title "The current goal across models and harnesses"
+          :subfeatures (            "goal-crosses-harness: a second build and harness reads the same goal, rev, stop=requested and the same note id and constraint row byte for byte, live and from the snapshot; its progress update on the stopped goal is refused"
+            "goal-stale-update-refuses: refuse goal update and goal set with a stale --expect as GOAL FAIL naming expect and current, nothing written; refuse goal set to a closed node by disposition whatever --expect says"
+            "goal-stop-is-a-request-not-evidence: goal update --stop writes only a :transition to :cancel-requested with :reason and no :evidence; show prints stop=requested; stop=cancelled only after event --kind cancel with evidence"
+            "goal-update-writes-only-existing-kinds: every goal update form writes a :transition or :evidence event with its kind's field list on the goal node and no other; goal set writes one :goal event; objective edits never go through update"
+            "goal-expect-is-required: refuse goal set and goal update without --expect at exit 2 naming the flag; --dry-run with a stale expectation prints the refusal and writes nothing")
+          :depends-on (            "E11-F01"
+            "E03-F02"
+            "E08-F01")
+          :source-sections (            "The current goal"
+            "Delegation"
+            "Acceptance replays")
+          :state "missing"
+          :evidence ())
+        (          :id "E11-F03"
+          :title "Admission gates 1 to 3: notes read, packet bounded, route eligible"
+          :subfeatures (            "applicable-before-route: route selection calls applicable first and prices only routes printed eligible; a card builder handed an excluded or unknown route refuses naming the note id or the reason"
+            "applicable-cap-never-hides-a-deny: with more active notes than --max and the only :deny in the note that sorts last, applicable prints excluded with that id and NOTES MORE; goal show prints the constraint row uncut"
+            "applicable-unknown-is-not-eligible: with no live session and no --snapshot, a snapshot past a bound, a missing notes index or an unregistered model, print NOTES FAIL and no eligible row"
+            "applicable-snapshot-is-planning-only: an answer from=snapshot admits no route; the admitting write carries --expect the live rev and a stop or deny written between check and admission refuses it stale"
+            "narrative-does-not-filter: a note with prose and no :constraint is printed and excludes nothing; a :deny excludes only a candidate matching every named axis; two disagreeing constraints print both and exclude"
+            "delegation-admission-gates: refuse a packet lacking objective, source revision, criteria, scope, result contract, checkpoint or :effort at gate 2; refuse a dispatch crossing the daily spend ceiling at gate 3 naming the ceiling; each refusal names its gate and reason at exit 2")
+          :depends-on (            "E11-F01"
+            "E08-F04"
+            "E10-F02")
+          :source-sections (            "Delegation"
+            "Admission and result gates"
+            "Efficiency: lessons absorbed 2026-09-15")
+          :state "missing"
+          :evidence ())
+        (          :id "E11-F04"
+          :title "Execution and result gates 4 to 6: real bounds, receipts by machinery, integration"
+          :subfeatures (            "delegation-result-gates: refuse an offer to a friend reading asleep or unknown at gate 4; record the requested execution limit and the observed expiry or stop outcome separately; never start a second attempt silently after uncertainty about the first"
+            "receipt-at-exact-head: book a child's result as a machinery receipt at the exact head it ran against; bind a review verdict to --head <sha> and never reuse it across a changed head or an unchecked rebase"
+            "partial-child-never-closes-parent: one child done beside one refused, blocked or asleep leaves the parent open with outstanding=<n> and the mapped external issue open; the outstanding count and the issue mapping survive the child's refusal unchanged")
+          :depends-on (            "E11-F03"
+            "E08-F05"
+            "E05-F02")
+          :source-sections (            "Delegation"
+            "Admission and result gates"
+            "Presence: who is awake and who is asleep"
+            "Assignment and execution control")
+          :state "missing"
+          :evidence ())
+        (          :id "E11-F05"
+          :title "Decision packets"
+          :subfeatures (            "decision-packet-per-item-revision: machinery builds one packet per item and revision; a newer revision supersedes it keeping its open findings; a busy reader's packet is amended, not duplicated; an empty pulse wakes no model"
+            "packet-is-smallest-sufficient: the packet carries the delta since this reader's recorded head, the rules it touches, open findings with dispositions, new behaviour with evidence pointers and links to full sources; the whole diff only on a first read"
+            "no-receipt-of-receipt: a worker returns one structured result; a verdict is keyed (reader, sha) and a gate (base, head, integration) in one durable home; an independent review is not re-routed through the coordinator; a receipt of a receipt is refused as a duplicate")
+          :depends-on (            "E11-F04"
+            "E08-F02")
+          :source-sections (            "Delegation"
+            "Efficiency: lessons absorbed 2026-09-15")
+          :state "missing"
+          :evidence ())
+        (          :id "E11-F06"
+          :title "The envelope up and escalation: the no survives the hop"
+          :subfeatures (            "no-survives-the-hop: a decline, refused offer, excluded route, asleep recipient, tripped node or effort limit reaches the parent as a named refusal with its reason and revision, never as silence or success"
+            "envelope-up-is-a-copy: the child's verdict, result pointer, evidence events, usage pointer and exact head arrive byte-copied by machinery beside its distilled learning in its own words; the parent can open the child's evidence from the envelope"
+            "finality-rises-with-tier: a child's done is a claim; the parent moves only after its own verification with evidence bound to its own criteria; a worker's success claim alone never moves a node below the seat"
+            "escalation-is-a-packet: a hold, question or exception the child cannot decide rises as a packet with reason and revision; escalated-age= and reread= are information and reassign nothing; an :effort widening or expensive-route exception carries the coordinator's recorded reason")
+          :depends-on (            "E11-F04"
+            "E11-F05"
+            "E08-F03")
+          :source-sections (            "Delegation"
+            "Efficiency: lessons absorbed 2026-09-15"
+            "Presence: who is awake and who is asleep")
           :state "missing"
           :evidence ())))))

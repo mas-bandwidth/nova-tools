@@ -1423,9 +1423,9 @@ his: **set** and **retrieve** the current goal, **update** it as work proceeds, 
 and harnesses; a model switch loads the same current revision and preserves outstanding
 ownership; status and evidence updates stay distinguishable from objective and constraint
 edits; an old harness state cannot silently overwrite a newer goal, restart completed work or
-discard a stop. The coordinator notes a goal is read beside stay SPEC-DELEGATION.md's; the
-goal itself is this file's, folded here from that document's draft 3 on Stella's clearance
-(stella-1858e1eeef8d).
+discard a stop. The coordinator notes a goal is read beside are *Delegation* below; the
+goal itself is this subsection's, folded here from SPEC-DELEGATION.md draft 3 (now *Delegation*)
+on Stella's clearance (stella-1858e1eeef8d).
 
 **The goal is a node of O, and the current goal is a reference to it.** No new record kind
 holds the objective: the objective, its completion criteria, its constraints, its progress,
@@ -1434,7 +1434,7 @@ blockers, ownership, linked work and evidence are what a node already carries ab
 `:evidence` events, its derived state — *"reuse the existing work/attempt/accounting records"*
 (5672006742). What this subsection adds is the reference: a `goal` index in the resident
 model, beside `friends` and `models` and no node kind of O, keyed by **scope** — a coordinator
-name, or a node id, the same key SPEC-DELEGATION.md gives a note — holding one node id per
+name, or a node id, the same key *Delegation* gives a note — holding one node id per
 scope, written by the one event kind `:goal` above **(Rowan's decision, for review)**. A
 delegated goal keeps its parent/child mapping because it is a node under its parent node: the
 mapping is `:children`, and nothing is copied; a cross-repository goal is a view over owned
@@ -1455,7 +1455,7 @@ holder|->`, `stop=` (**derived from the state and no second field**: `requested`
 state is `:cancel-requested`, `cancelled` when `:cancelled`, `deferred` when `:deferred`,
 `none` otherwise), `constraints=<n>`, `notes=<n>`, `outstanding=<n>` — then `GOAL ROW` lines:
 the objective (`:title` and each `:acceptance` criterion with its current verdict), every
-constraint line and note id SPEC-DELEGATION.md's `applicable` would carry for this coordinator,
+constraint line and note id *Delegation*'s `applicable` would carry for this coordinator,
 the progress (evidence events, done and remaining required work under the node, by kind,
 counted), the blockers, the live leases and attempts under it with their holders, and the
 linked work. Rows are capped by `--max` and counted, `GOAL MORE` when cut; **the `GOAL OK`
@@ -1497,7 +1497,7 @@ coordinator either `set`s the goal reference to that child first or uses `state`
 on the child by id. **Objective and constraint edits are not `update`**: changing what the
 goal is, is `accept` (criteria), `dep`, `node` and `correct` on the node, each bumping its
 scope revision or generation by the rules above, and a note supersede for a routing
-constraint (SPEC-DELEGATION.md); so a status update and an objective edit are different event
+constraint (*Delegation*); so a status update and an objective edit are different event
 kinds with different revision effects, and a reader tells them apart from the log, never from
 wording.
 
@@ -3790,7 +3790,7 @@ line that runs it rather than a promise:
 | OpenCode | a plugin holding the poll outside the turn | yes | yes | `plugin` |
 | Codex | a scheduled command re-entering the session on a note | yes | yes, while the schedule lives | `scheduled` |
 | Antigravity | its own always-loading file naming the wait as the first act of every load | yes | yes | `hook` |
-| Grok | an OS process outside the turn holds the poll and writes the beat (Johnny's `johnny_bus_heartbeat`, 2026-09-15) | yes | no, a 10 h session cap | `plugin` |
+| Grok | an OS process outside the turn holds the poll and writes the beat (Johnny's `johnny_bus_heartbeat`, 2026-09-15) | yes | no, a 10 h session cap | `plugin` (SPEC-WAKE's third shape) |
 | a bare API loop | the loop program itself, outside any session | not applicable | yes | `plugin` |
 
 **Where the harness cannot hold it**, `:wait-source` is `manual` or `none` and nothing is pretended:
@@ -3807,6 +3807,366 @@ model-only executions and never friends, by *the participation question is close
 presence for the machines of *The fleet*, which are declared facts and not lines. And no second
 availability store: `:observe`'s `:state` remains what a person recorded, and presence is derived
 from `:presence` events alone.
+
+## Delegation *(Rowan; folded from `docs/SPEC-DELEGATION.md` draft 3 on Glenn's word of 2026-09-15, spoken live in Rowan's window and carried by no comment id — *"merge 'delegation' into work spec as a new epic"*; Stella's reviews 5672078177 and 5673066509 taken as that draft took them)*
+
+Glenn asked for one explicit **DELEGATION** section in this contract, applying at every node,
+real or virtual, human-only, AI-only or mixed (nova-tools#321, 5671991172), and for a place
+*"where you write your own notes to, as informed by our conversations"*, so that *"what I just
+told you about how and what to delegate"* is kept (5672006742). The hurt is generic: a changed
+instruction lives in the conversation it was spoken in, and a later window, a later model or
+another coordinator that reads the older word, or none, routes by it. On 2026-09-14 the
+instruction narrowed twice in one day (stella-5e0d788049ca, then stella-1a9783ed1ccf: *"Astra
+default is for coordination and thinking. Not for coding."*), and nothing was lost only because
+the same person was in the window both times. This section is planning inside the v2
+recursive-node boundary of #321; it changes no v1 completion count, and nothing in it is built.
+The draft it folds and its two review rounds are history in PR #335 and the commits under it;
+the file itself is deleted, as its own status paragraph said it would be.
+
+### The five duties
+
+The duties are Glenn's (5671991172), stated once; four are carried by sections this file already
+has, and this section points rather than restates:
+
+1. **Decide** whether to do work locally, batch it, or delegate it, comparing eligible routes by
+   model-specific effective token price and expected context, coordination, mandatory review and
+   rework, preserving quality and scarce coordinator capacity — on #175 and
+   [PROPOSAL-SCHEDULING-COST.md](PROPOSAL-SCHEDULING-COST.md); *"do not create a second ledger"*.
+2. **Accept** from the coordinating parent, then perform or delegate; each bounded assignment
+   gets a small fresh brief with scope, acceptance criteria, dependencies, budget and required
+   context — *Admission and result gates* rule 1, and `:effort` of *Efficiency: lessons absorbed*.
+3. **Preserve** the parent offer, local work, child assignment/attempt and external
+   Issue/Discussion mappings through every transition — #321 *Durable mapping*, and *Assignment
+   and execution control* above.
+4. **Show** actual availability and ownership separately from assigned, accepted and
+   verified-running states; no duplicate active writers during transfer — the lease and W
+   sections, *Presence* above.
+5. **Collect** evidence and usage, apply the required review, integrate child results, and
+   acknowledge completion upstream; **partial child success never closes the parent or the mapped
+   external issue** — *Evidence*, *Cost*, and *The envelope up* below.
+
+What no other section carried, and this one does: **the coordinator's notes**, which duty 1
+reads before it decides and duty 2 reads before it writes a brief; **the six gates** a delegation
+passes, read as one route; **the decision packet** a child's result comes back as; and **the edge
+contract** of the tree, the same at every hop. The current goal, which a coordinator on any model
+loads first, is *The current goal* under *The data*, folded there by #340, and this section
+points at it.
+
+### The coordinator's notes
+
+A note is one record a coordinator writes from a conversation or from experience, kept so that a
+later window, a later model, or another coordinator reads it before routing work (5672006742).
+**It is data.** Reading a note never executes it; a note that reads like a command to the reader
+is still a record of what somebody said.
+
+A note is one flat list of *The data*'s restricted Lisp — lists, keywords, strings and integers —
+in the field order below, **every field written**, an absent one `(:absent)`, exactly as this
+file writes an event. A note missing any of the first six is refused at write.
+
+| field | value | source |
+|---|---|---|
+| `:id` | `"note:<sha256>"`, assigned by the tool, below | (Rowan's decision, for review) |
+| `:scope` | `(:coordinator "<name>")`, `(:group "<name>")` or `(:node)` | 5672006742: *"one coordinator, a configured group, or the shared node"* |
+| `:author` | the participant who wrote it | 5672006742: *"keep authorship and applicability explicit"* |
+| `:date` | UTC, `"2026-09-14T23:05Z"` | 5672006742 |
+| `:source` | a quote of the human's words, or a pointer (comment id, bus note id, commit) that holds them | 5672006742: *"preserve the source conversation/decision"* |
+| `:kind` | exactly one of `:instruction`, `:observation`, `:heuristic` | 5672006742 |
+| `:text` | the note, bounded below | |
+| `:constraint` | optional; the constraint form below | 5672006742: *"explicit routing constraints alongside prose"* |
+| `:uncertain` | optional; what the author does not know | 5672006742: *"record uncertainty rather than inventing a user decision"* |
+
+**`:state` is not a field of the note.** It is derived from the log — `:active` unless a
+supersede event names the note, then `(:superseded-by "<id>" "<date>")` — and every reader prints
+it beside the note as the snapshot prints derived state beside a node. Nothing the tool writes
+later touches the note's own list.
+
+**Identity is the content.** `:id` is `note:` followed by SHA-256, lowercase hex, over the
+canonical serialization of `:scope`, `:author`, `:date`, `:source`, `:kind`, `:text`,
+`:constraint`, `:uncertain`, absent fields `(:absent)`, printed by the deterministic printer the
+payload digest uses — never a file, never a position in one, so the id is the same on every bench
+and every build **(Rowan's decision, for review)**. A second write of the same preimage is the
+same note, refused `NOTES FAIL …: already written note=<id>`, nothing written.
+
+**`:kind :instruction` means the human said it.** Its `:source` must quote or point at the
+human's words; a note whose source is the author's own inference is an `:observation` or a
+`:heuristic`, whichever the author claims. The tool checks the shape of the source — a quote or a
+pointer is present — never its truth; truth is what the reads are for **(Rowan's decision, for
+review)**. The names inside `:scope`, `:author`, `:source` and `:constraint` are **instance
+data**: nothing in nova-tools knows or prefers any of them (5672006742: *"product rules must not
+hard-code our names or model choices"*). A test that mentions a model name mentions a made-up one.
+
+**Where they live, and who writes.** Notes are records of the resident work set, written by the
+one writer this file has and no other: the owning session, one typed event per mutation, a
+request id, validated against the current revision, journaled before it is acknowledged,
+published by a clip in the one revision-labelled snapshot (*The execution model*; *One
+coordinator, one live reader/writer*). **No new bus, no new repository, no file a second process
+writes** — a shared file with several writers has no atomic supersession, and a file's own hash
+is not an identity (Stella, 5672078177). Notes are an index of the resident model in the sense
+`friends` and `models` are: **no node kind of O, no count, no roadmap cell, no required set
+moves**. Their event kind is `:note` — `:change` (`:write` or `:supersede`), `:note` (the id),
+`:scope`, `:author`, `:date`, `:source`, `:kind`, `:text`, `:constraint`, `:uncertain`,
+`:superseded-by`, `:reason`, in that order for the payload digest; the subject is a note
+identity, `:node` is `(:absent)`, and `NOTES OK` prints `note=<id>` where `node=<id>` would stand
+**(Rowan's decision, for review)**; the replays `new-verbs-have-a-kind-and-a-field-order` and
+`new-verbs-retry-to-one-event` cover `:note` as they cover `:friend`. A participant writes a note
+as a friend submits a result: a request to the owning session with `:by` the participant, checked
+against the scope's configured participants — a `(:coordinator "A")` note only by A, a `(:group
+"G")` note only by a member of G, where G is `friend --group`'s group and not a second registry,
+a `(:node)` note by any registered participant. Whether a participant may *read* another's notes
+is the node's access rule, not this section's; filtering a view never establishes an access
+boundary (#321). **A note grants nothing** (5672006742: notes *"never create credentials,
+permissions or access"*). Another bench reads notes as it reads everything: the published snapshot
+at a named revision, or the live session.
+
+**Bounds.** Small by refusal, not by construction. Three limits are CONFIG data of the node, none
+defaulted, a missing one `refusing to guess` (SPEC.md *Conventions*):
+
+```lisp
+(:notes :max-active 200 :max-text-bytes 2048 :max-constraint-nodes 64)
+```
+
+`:max-active` bounds the active notes across all scopes; a `write` past it is refused `NOTES
+FAIL …: active=<n> past :max-active=<n>, supersede or retire one`, and a `supersede` never
+changes the active count. `:max-text-bytes` bounds `:text`, `:source` and `:uncertain` each;
+`:max-constraint-nodes` bounds the constraint form; past either is refused at write naming the
+field and both numbers. Every read is under the session's `--max-bytes --max-depth --max-nodes`,
+which refuse and never truncate. Superseded notes are never deleted by the tool: a clip moves one
+older than `--retain` to the closed archive under the same versioned index root, in pages bounded
+by `--page-bytes` and `--page-records`, and `list --all --from --to` reads them from there — the
+existing retention boundary with one more record kind in it.
+
+**The verbs.** Four, under the `notes` subject of the one binary; `NOTES` joins *Output grammar*
+with the same `OK`/`FAIL`/`ROW`/`MORE` lines and the cap-and-count law; the duties are Glenn's and
+the names and flags are **(Rowan's decision, for review)**.
+
+```
+nova-work notes write      --as <name> --scope <scope> --kind <kind> --source <text> --date <utc> --text <text> [--constraint <form>] [--uncertain <text>] --request <id> --expect <rev>
+nova-work notes list       --as <name> [--scope <scope>] [--all [--from <stamp> --to <stamp>]] --max <n>
+nova-work notes supersede  --as <name> --id <old> --source <text> --date <utc> --text <text> [--constraint <form>] [--uncertain <text>] --reason <text> --request <id> --expect <rev>
+nova-work notes applicable --as <name> --task-class <class> [--candidate <role>/<model> ...] --max <n>
+```
+
+`write` appends one `:note :write` event; refused (exit 2, one line naming the field) when
+`:source` or `:date` is missing, when `:kind` is not one of the three, when `--as` is not a
+configured writer of the scope, when a bound is exceeded, when `--expect` is stale, and when the
+constraint form carries anything but `:deny`, `:prefer` and `:reason` — there is no `:allow`.
+`list` prints the active notes for a scope, one `NOTES ROW` each (id, kind, date, author, the
+first line of the text, `constraint` if present), capped and counted; `--all` adds the superseded
+ones with the id and date that superseded each. **A superseded note is never printed as active,
+by any verb** (5672006742: *"preserve the old entry as superseded and apply the current
+applicable decision"*). `supersede` is **one mutation, one envelope, two events**: a `:note
+:write` of the replacement and a `:note :supersede` on the old id naming `:superseded-by`. The
+replacement is constructed in full before anything is hashed — `:scope` and `:kind` inherited
+from the old note (`supersede` has no `--kind`; Stella, 5673066509), `:author` from `--as`, the
+rest from the flags — validated as `write` validates, and the envelope is validated whole,
+journaled whole, applied whole; a failed validation writes neither event, and a multi-event
+envelope never partly publishes. Refused when the old id is not active — of two competing
+supersedes the second is refused `not active: superseded-by <first>`, so at no revision are an
+obsolete instruction and its replacement both active, or either lost — and when the replacement's
+kind would be weaker: a `:heuristic` or an `:observation` cannot supersede an `:instruction`
+(5672006742: *"inferred heuristics cannot silently override explicit instructions"*), which
+inheritance makes true by construction and the validator still checks. **A note of another kind
+is a new `write`, not a supersede.** To change an instruction the human must have said something,
+and the new `:source` shows where.
+
+**The constraint form.** Beside the prose a note may carry one structured constraint, so the
+filter has something to filter by **(Rowan's decision, for review)**:
+
+```lisp
+(:constraint
+  (:deny   (:model "<name>" ...) (:role "<name>" ...) (:task-class :<class> ...))
+  (:prefer (:task-class :<class> ...) (:route "<role>/<model>" ...))
+  (:reason "<text>"))
+```
+
+A candidate route is excluded by a `:deny` when it matches **every** named axis; `:prefer` is
+advice to the route selector and excludes nothing. Task classes are the vocabulary `:model`
+events already carry in `:task-class`, configured per node, and an unknown class is refused at
+write, so a typo cannot open a hole. Two active constraints that disagree are not resolved by
+the tool: `applicable` prints both and the candidate is `excluded` — a deny wins over a prefer,
+and over silence — and the coordinator supersedes one with a source.
+
+**The worked example is instance data.** With Glenn's instruction of 2026-09-14 as a
+`(:coordinator "Stella")` `:instruction` note whose `:constraint` denies `(:model "Astra")` for
+`(:task-class :coding :implementation :execution)` and whose `:source` quotes his words and their
+comment id, `applicable --as Stella --task-class coding --candidate coordinator/Astra` prints
+`excluded note:<id>`, and a card for that route is refused before any child starts; the older
+instruction of 20:00Z is superseded by name, so the next window reads the change and not only
+the result. A second, `(:node)` note with the whole-route economics of
+PROPOSAL-SCHEDULING-COST.md and no constraint excludes nothing; it is read. The ids in any
+example are abbreviated and illustrative; a test computes the full digest from the fields
+(Stella, 5673066509).
+
+### The read before the route
+
+**`applicable` is the read before the route**, and the rule is Glenn's (5672006742): *"retrieve
+the applicable notes before selecting a route or constructing a job brief"*, and *"a configured
+restriction on a model/role/task class must filter candidate routes before dispatch, with a
+visible reason for exclusion"*. Given a task class and the candidate routes, it loads **every**
+active note whose scope covers `--as` (its own scope, every group it belongs to, and `(:node)`),
+evaluates every constraint against every candidate, and only then prints: one `NOTES ROW` per
+candidate, `eligible` or `excluded <note-id>` — never cut by `--max` — then the applicable notes
+under `--max`, `NOTES MORE` when cut. When the verdict rows alone would not fit `--max-bytes` the
+verb refuses `past --max-bytes` and prints no verdict at all, never a partial list of `eligible`
+rows. **The cap is on the prose rows and never on the evaluation**: a deny in a note the display
+cut still excludes (replay `applicable-cap-never-hides-a-deny`). The reason is the note id, and
+the note is one `list` away; what the caller carries into the brief is the constraint lines and
+the note ids, not the conversation (5672006742: *"without copying accumulated conversation
+history"*).
+
+**Unknown is not eligible.** Where the complete set cannot be loaded — no live session and no
+`--snapshot`, a snapshot past a bound, a missing notes index — the verb prints `NOTES FAIL …:
+<reason>` at exit 2 and **no candidate is printed `eligible`**; a candidate whose model is not in
+`models` is `unknown` for the same reason (gate 2: *unknown price is not cheap*; here unknown
+policy is not open). Every answer prints `rev=<n>` and `from=live` or `from=snapshot`, and
+**display and eligibility are separate**: a snapshot answer is read-only planning, and no row of
+it makes a route eligible, because the age of a snapshot alone cannot establish that a stop or a
+deny has not been written since (Stella's decision, 5673066509). **The check boundary**: before a
+route is priced and before a card is written for it, the caller evaluates the complete current
+constraints against the owning session at its current revision; the eligible verdict carries
+`rev=<n> from=live`, and the write that admits the route carries `--expect` that revision, so a
+stop or a deny written between the check and the admission refuses it as `stale`. **A brief built
+from a snapshot answer is a draft until that check passes.** This adds no lease and no scheduler,
+promises nothing about an instruction that changes after admission — that reaches running work by
+a stop — and sets no age bound: there is no `:max-snapshot-age` anywhere in this section, because
+the live check makes one unnecessary (Stella's decision, 5673066509). Where route selection is built (#175), it calls `applicable`
+first and prices only the routes that came back `eligible`; a brief constructor (nova-swarm's
+card, SPEC-SWARM.md) handed an `excluded` or `unknown` route refuses to build the card, naming
+the note or the reason. **Narrative reminders alone do not filter** (5672006742): a note with
+prose and no `:constraint` is printed for the coordinator to read, and it excludes nothing.
+
+### The current goal
+
+Specified in *The current goal* under *The data* (folded by #340), and this section points at it:
+the goal is a node of O and the current goal a scope-keyed reference in the `goal` index, keyed
+by the same scope a note is; `goal show` prints the constraint rows `applicable` would carry for
+that coordinator, uncut, before the capped rows, and `GOAL FAIL` with no row when the notes index
+is unloadable; `--stop` is a request through `:cancel-requested` and never stopped-worker
+evidence. The witnesses are the five `goal-` replays and `applicable-cap-never-hides-a-deny` in
+*Acceptance replays*. What the goal needs from this section is the note scope and the
+constraint rows, both above.
+
+### The six gates a delegation passes
+
+*Admission and result gates* above states eight rules of the efficiency policy. **A delegation
+passes the first six as one route, in this order, and a refusal at any of them is a refusal by
+name at exit 2 and never a silent skip**; this subsection adds no rule and reads the six as the
+life of one packet. **Admission, gates 1 to 3:** (1) the notes are read — `applicable` for the
+task class and the candidate routes, at the live revision, before anything is priced; (2) the
+packet is bounded — one objective, source revision, acceptance criteria, allowed scope, result
+contract, recovery checkpoint and `:effort` (rule 1; *Efficiency: lessons absorbed* rule 9), and
+a packet lacking any of them is refused; (3) the route is eligible, then economical — only routes
+that came back `eligible` are priced, an expensive-route exception records why the cheaper
+eligible choice does not fit, unknown price is not cheap, and a dispatch that would cross the
+daily spend ceiling is refused naming it (rule 2; lessons rule 10). **Execution and result, gates
+4 to 6:** (4) real bounds and a live recipient — the launcher's actual input, output, deadline
+and attempt limits are recorded separately from the instruction's words, a timeout is not proof of
+termination, another attempt is never started silently after uncertainty about the first (rule
+3), and an `offer` to a friend who reads `asleep` or `unknown` is refused (*Presence*, replay
+`delegated-to-a-sleeper-then-recovered`); (5) receipts by machinery and one read per head —
+unchanged-state detection, deduplication and receipt collection require no model call (rule 4), a
+receipt is a verified observation and never a request's word (*Assignment and execution
+control*), and a review binds to the exact head it had open, reused only while its reviewed
+content, acceptance contract and dependencies are unchanged, never across an unchecked rebase
+(rule 5; lessons rules 7 and 8); (6) the whole unit is measured and the result integrated — usage
+counts parent, descendants, coordination, review, retries and repair once, missing usage is
+unknown and never zero (rule 6), the child's result is integrated against the parent's acceptance,
+and partial child success never closes the parent (duty 5). Rules 7 and 8, promotion and
+regression, are the policy's own and not a delegation's.
+
+### Decision packets
+
+What comes back up is a **decision packet**, built by machinery, one per item and revision, the
+smallest that lets the coordinator decide (Stella, stella-b4e4367c44b6, 2026-09-11;
+SPEC-REVIEW.md's `packet` is the model at the review layer). The contract, so the
+work verbs and the review verbs say it once: **machinery observes and books** — refresh, exact
+revisions, check outcomes, delivery, receipts — and **a model wakes only when an action is
+possible or a new hold or question exists**; an empty pulse re-executes nothing (*Efficiency:
+lessons absorbed* rule 6, durable triggers). **One packet per item and revision**, amended while
+the reader is busy, a maximum delay for urgent failures; a newer revision supersedes the packet
+without losing its open findings. **The smallest sufficient packet**: the delta since this
+reader's recorded head, the rules it touches, the open findings with their dispositions, the new
+behaviour with its evidence pointers, and links to the full sources — the whole diff only when
+this reader has never read the entry. **One writer and one durable home per fact**: a verdict is
+keyed (reader, sha), a gate (base, head, integration), ownership on the node; a bus note carries
+questions, findings and handoffs only, and **there is no receipt-of-receipt** — a worker returns
+one structured result, and an independent review does not route through the coordinator to be
+counted. The measure is useful decisions completed, missed or duplicate wakeups, decision latency
+and source-reported usage, and equal correctness is proved before fewer turns is called a win.
+
+### The envelope up, and the no that survives the hop
+
+Glenn, 2026-09-14 (ideas#778, live 21:04Z to 21:16Z): *"each layer summarizes up. As above, so
+below."*; *"we should strive to never lose intelligence when we gain efficiency"*;
+*"Intelligence should propagate upwards, the distilled form of it."*; *"This same structure can
+apply to models in a tree. Just as it applies to nodes in nova-work. It is 'the way'."* Three
+trees share one edge: nova-work's nodes (#321, recursive, real or virtual); the coordination
+tree of minds under a seat; the model tree under each mind. **The edge contract is written once,
+here, and the other two point at it.**
+
+**Downward, a card is an offer with a contract, and the node's no survives the hop.** A
+`decline`, a refused `offer`, an `excluded` or `unknown` route, an asleep recipient, a refused
+packet, a tripped node, a child past its `:effort` — each arrives at the parent as a refusal by
+name and its reason, at the revision it was given, never as silence and never as success; the
+parent that cannot see the no has not been told. A child does not widen its own card, and the
+coordinator who widens it records why (*Efficiency: lessons absorbed* rule 9). **Upward, the
+envelope is a copy and a distillation, never a retelling**: the verdict byte-copied by machinery
+(the result pointer, the evidence events, the usage pointer, the exact head), plus the child's
+distilled learning in its own words with its evidence, folded by the parent into its own record.
+**Finality rises with the tier and is never final below the seat**: a child's `done` is a claim
+against the parent's acceptance until the parent verifies it itself, with evidence bound to the
+criteria and *"not merely a worker's success claim"* (5672006742), and a partial result closes
+nothing (duty 5). **(Rowan's decision, for review, on ideas#778)**: the walls are strongest at the
+cheapest leaves; the tree is shallow and wide; and a layer is measured by whether the parent can
+still open the floor's evidence and find what the summary dropped. Escalation is the same edge in
+reverse: a hold, a question or an exception the child cannot decide rises as a packet with its
+reason, the stale pass shows `escalated-age=` and `reread=` as information and reassigns nothing
+(lessons rule 5), and recovery is a coordinator's recorded act (*Presence*).
+
+### What this section does not do
+
+No new bus, scheduler, writer or repository: notes and the goal are records of the resident set
+under the one session, the route selector is #175's, and nothing here dispatches. No enforcement
+claim (5672006742: *"not a claim that persistence or routing enforcement ships today"*): until
+`applicable` exists and the card builder calls it, the filter is a coordinator reading its own
+notes first, and that is still the rule. No second ledger (5671991172); usage, attempts and prices
+stay where *Cost* and SPEC-TOKENS.md keep them. No permissions and no credential mechanism; access
+is configuration and git. No transaction engine; atomic supersession is one envelope through the
+writer that exists. **Open decisions: none**; Rowan's decisions are marked where they stand and
+are the content-digest id and preimage order, the `:note` event kind and field order, group
+membership from `friend --group`, the three bounds and the archive road, the verb names and
+flags, the source check as a shape check, the `:deny`/`:prefer`/no-`:allow` form and every-axis
+match, task classes reused from `:model` events, deny over prefer, `unknown` for an unregistered
+model, and the replacement's kind inherited on `supersede`.
+
+### Required replays
+
+| Replay | Required outcome |
+| --- | --- |
+| notes-refuse-missing-source-or-date | `notes write` without `--source` or `--date`, or with a `:kind` outside the three, is refused `NOTES FAIL` at exit 2 naming the field, nothing written. |
+| notes-id-is-content-digest | The same eight fields written on two benches yield one id; a second write of the same preimage is refused `already written`; no id is ever reused. |
+| notes-writer-is-scoped | A `(:coordinator "A")` note by `--as B`, a `(:group "G")` note by a non-member, or an unregistered `--as` is refused; a note grants no access to anything. |
+| notes-bounds-refuse | A write past `:max-active`, `:max-text-bytes` or `:max-constraint-nodes` is refused naming the field and both numbers; a missing bound refuses to guess; a supersede never changes the active count. |
+| notes-supersede-is-one-envelope | A supersede writes both events or neither; the second of two competing supersedes is refused `not active: superseded-by <first>`; a superseded note is never printed as active by any verb. |
+| notes-weaker-kind-cannot-supersede | An `:observation` or `:heuristic` replacement for an `:instruction` is refused; the replacement inherits `:kind` and `:scope` and carries a new `:source`. |
+| applicable-before-route | Route selection calls `applicable` first and prices only routes that came back `eligible`; a card builder handed an `excluded` or `unknown` route refuses, naming the note id or the reason. |
+| applicable-unknown-is-not-eligible | With no live session and no `--snapshot`, a snapshot past a bound, a missing notes index, or an unregistered model, `applicable` prints `NOTES FAIL` and no candidate prints `eligible`. |
+| applicable-snapshot-is-planning-only | An answer `from=snapshot` admits no route; the admission write carries `--expect` the live `rev=` and a stop or deny written between check and admission refuses it `stale`. |
+| narrative-does-not-filter | A note with prose and no `:constraint` is printed by `applicable` and excludes nothing; a `:deny` matching every named axis excludes; two disagreeing constraints print both and exclude. |
+| delegation-admission-gates | A packet lacking objective, source revision, criteria, scope, result contract, checkpoint or `:effort` is refused at gate 2; a dispatch that would cross the daily spend ceiling is refused at gate 3 naming the ceiling; each refusal names its gate and reason at exit 2. |
+| delegation-result-gates | An offer to a friend reading `asleep` or `unknown` is refused at gate 4; the requested execution limit and the observed expiry or stop outcome are recorded separately and a timeout is not termination; no second attempt starts silently after uncertainty about the first. |
+| receipt-at-exact-head | A child's result is booked as a machinery receipt at the exact head it ran against; a review verdict binds to `--head <sha>` and is not reused across a changed head or an unchecked rebase. |
+| decision-packet-per-item-revision | Machinery builds one packet per item and revision; a newer revision supersedes it keeping its open findings; while the reader is busy the packet is amended, not duplicated; an empty pulse wakes no model and re-executes nothing. |
+| packet-is-smallest-sufficient | The packet carries the delta since this reader's recorded head, the rules it touches, the open findings with dispositions, the new behaviour with evidence pointers and links to the full sources; the whole diff only when this reader has never read the entry. |
+| no-receipt-of-receipt | A worker returns one structured result; a verdict is keyed (reader, sha) and a gate (base, head, integration) in one durable home; an independent review is not re-routed through the coordinator; a receipt of a receipt is refused as a duplicate. |
+| no-survives-the-hop | A decline, refused offer, excluded route, asleep recipient, tripped node or effort limit reaches the parent as a named refusal with its reason and revision, never as silence or success. |
+| envelope-up-is-a-copy | The child's verdict, result pointer, evidence events, usage pointer and exact head arrive byte-copied by machinery, beside the child's distilled learning in its own words; the parent can open the child's evidence from the envelope and find what the summary dropped. |
+| finality-rises-with-tier | A child's `done` is a claim: the parent moves only after its own verification with evidence bound to its own criteria; a worker's success claim alone never moves a node on any tier below the seat. |
+| escalation-is-a-packet | A hold, question or exception the child cannot decide rises as a packet with its reason and revision; the stale pass prints `escalated-age=` and `reread=` as information and reassigns nothing; an `:effort` widening or an expensive-route exception carries the coordinator's recorded reason. |
+| partial-child-never-closes-parent | One child done and one refused, blocked or asleep leaves the parent open with `outstanding=<n>` and the mapped external issue open; the parent's outstanding count and its issue mapping survive the child's refusal unchanged. |
+
+These items are epic E11 of the roadmap. They add no verified completion until implementation
+and failure replays pass.
 
 ## Models, prices and what they are evidence of *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
 
@@ -4023,8 +4383,8 @@ roadmap features. They add no verified completion until implementation and failu
 
 ## Efficiency: lessons absorbed 2026-09-15 *(Glenn; Emma, Stella)*
 
-Before implementing the resident session and execution slices of `nova-work`, Glenn requires that
-all operational efficiency and token optimization lessons learned from Gas Town and real multi-agent
+Before implementing the resident session and execution slices of `nova-work`, the owner requires that
+all operational efficiency and token optimization lessons learned from the pilot bench and real multi-agent
 coordination are absorbed as normative spec constraints and fences. These rules guard against token
 burn and serial bottlenecks below the model.
 
@@ -4044,7 +4404,7 @@ The rationale rests on measured facts from Gas Town:
    materialises only for independent verification, independent worker assignment, an explicit dependency
    edge, or an isolated recovery boundary; unpoured checklist items never count in `|O|` and never count
    as verified.
-3. **`:max-attempts` and `tripped=`.** Node attempts are bounded by `:max-attempts`, surfacing `tripped=`
+3. **`:max-attempts` and `tripped=`.** Node attempts are bounded by `:max-attempts` (default 3), surfacing `tripped=`
    as a status reading; taking a lease on a tripped node requires an explicit `--reason`, which explains
    the operator's intent and grants no execution authority by itself.
 4. **Delegate mode.** A declared harness role profile restricts the worker to designated verbs and
@@ -4064,7 +4424,8 @@ The rationale rests on measured facts from Gas Town:
    every card and delegated packet carries an explicit `:effort` bound (a small integer scale per task
    class stating how many reads, tool calls and how wide a fan-out the objective is worth); it is stated
    by the coordinator when the card is cut, and a packet lacking it is refused. A worker past its effort
-   limit stops and reports rather than widening on its own; widening requires an explicitly recorded reason.
+   limit stops and reports rather than widening on its own; only the coordinator may widen a card's
+   `:effort`, and only with an explicitly recorded reason.
 10. **Fleet-wide spend ceiling per day.** CONFIG maintains an explicit fleet-wide spend ceiling per day
     and per model family. When an automatic or delegated dispatch would cross that ceiling, it is refused
     with a line naming the configured ceiling and `local-spend=` for the bench's own spend; it polices
@@ -4309,9 +4670,9 @@ intake that creates it.
 At load the session builds six indexes — id to node, containment adjacency, reverse dependency,
 repository, category (5654164074), and **reverse roadmap reference: from a node id to every
 roadmap that has it as a first-axis member, and to every cell whose `:ref` names it** — and every
-read walk goes through the five read-path indexes — id to node, containment adjacency, reverse
-dependency, repository and category, the reverse roadmap reference being the sixth and on the
-write path only. **A seventh is opened rather than built or loaded: C's closed index, additional to the six**, which the
+read walk goes through the five read-path indexes (all but the reverse roadmap, which serves the
+roadmap walk) — id to node, containment adjacency, reverse dependency, repository and category.
+**A seventh is opened rather than built or loaded: C's closed index, additional to the six**, which the
 clip publishes beside the snapshot in bounded pages and which no walk over O has to rebuild —
 keyed by `:id` and by `<event-rev>:<id>`, partitioned by event day, ordered by event revision, and
 grouped by repository, so a rollup reads a settled member's newest row in one bounded lookup, a
@@ -4378,8 +4739,6 @@ success. Every `OK` line ends `emitted=<bytes>`. Every mutation's `OK` line carr
 event's id, its request id, the session's local revision after it (`rev=<n>`), and
 `pushed=<rev|->`, the clipped revision, the same number as the last `CLIP OK`'s `pushed=`;
 `changed=<n>` records how many effective mutations the event produced.
-A projected receipt adds `dry-run=true` to distinguish preview from committed receipt, using the
-same shape with event id and revision spelled `-`.
 `SESSION OK` is one shape, printed by `session start`, `session status` and `session stop`
 alike, and its `state=` reads `live`, `fenced` or `red`: lowercase *active* is W's word in the
 root section above, `ACTIVE` in capitals is the per-friend live-data node, and neither names a
@@ -4416,12 +4775,12 @@ QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> h
 QUERY ROW <id> kind=<k> state=<s> ready=<true|false> reason=<text|-> resolver=<name|-> priority=<rank|default> priority-source=<id|default> priority-context=<self|subtree|default> responsible=<name|-> holder=<name|unowned>   (ready; the three priority fields read the same under either --order)
 QUERY ROW <id> lease=<lease-id> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|-> escalated-to=<name|-> responsible=<name|->   (who, stale)
 QUERY ROW <id> branch=<open|closed> disposition=<pending|working|deferred|done|cancelled|superseded|removed> repo=<o/n|-> kind=<k> state=<s> landed=<sha|-> released=<version|-> holder=<name|unowned> settled=<stamp|-> evidence=<n> verified=<n> responsible=<name|->   (done, remaining and under, under --branch closed or --branch root)
-QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows whose bodies the retention archive holds, or whose day partition or manifest the committed root names, and this read could not reach; an absent day inside a complete manifested range is no events and prints no note)
+QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows whose bodies the retention archive holds, or whose day partition or manifest the committed root names, and this read could not reach)
 QUERY ROW <lease-id> node=<id> kind=<lease|heartbeat|release|handoff> rev=<n> at=<stamp> from=<name|-> to=<name|-> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|->   (handoffs)
 QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
 QUERY ROW <machine-id> kind=machine name=<text> owner=<name> roles=<build,test,profile> admits=<kind|-> concurrent=<n|-> arch=<text|-> os=<text|-> declared-by=<name> declared-at=<stamp>   (fleet)
 QUERY FAIL ask=fleet rows=0 shown=0: <id> excludes <kind>   (--for with --node on a member that excludes the kind: a refusal, never an empty answer)
-QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable   (a state-as-of ask whose day partition the committed root names and this read could not open; never answered from a later row)
+QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable
 QUERY FAIL ask=<kind> after=<cursor> pinned=<rev> current=<rev>: page expired   (a continuation whose captured revision the session can no longer serve; never a drifted page)
 QUERY MORE rows=<n> shown=<n> pages=<n> after=<cursor>   (a page budget met: shown=0 is permitted when no row could yet be emitted; the continuation is the one cursor rule and never a second)
 OPERATION OK id=<id> op=<capture|stage|export|clip|execution> state=<queued|running|done|cancelling|cancelled|failed> started=<stamp> updated=<stamp> staged=<bytes> rev=<n|-> pushed=<rev|-> shown=<n> emitted=<bytes>
@@ -4447,10 +4806,17 @@ MODEL OK id=<event-id> request=<id> model=<id> change=<register|rate|evidence> r
 OBSERVE OK id=<event-id> request=<id> friend=<name> change=<state|attempt> rev=<n> pushed=<rev|-> emitted=<bytes>
 GOAL OK id=<event-id> request=<id> scope=<scope> goal=<id|-> change=<set|clear|progress|evidence|blocked|stop> kind=<goal|transition|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>   (goal set and goal update: change= is the form the caller used, evidence for --progress with the evidence triple and progress for --progress alone; kind= is the event written, :goal for set and clear, the node's own :transition or :evidence for update)
 GOAL OK scope=<scope> goal=<id|-> rev=<n> pushed=<rev|-> generation=<n> scope-revision=<n> state=<s> owner=<name|-> stop=<none|requested|cancelled|deferred> constraints=<n> notes=<n> outstanding=<n> rows=<n> shown=<n> emitted=<bytes>   (goal show: no event, no id=; stop= derived from state=)
-GOAL ROW kind=<objective|criterion|constraint|note|progress|blocker|lease|attempt|link> <the fields its kind's own row carries above: a criterion row is ACCEPT's, a constraint row is SPEC-DELEGATION.md's applicable row byte for byte, a lease row is QUERY's who row>
+GOAL ROW kind=<objective|criterion|constraint|note|progress|blocker|lease|attempt|link> <the fields its kind's own row carries above: a criterion row is ACCEPT's, a constraint row is *Delegation*'s applicable row byte for byte, a lease row is QUERY's who row>
 GOAL MORE rows=<n> shown=<n>   (constraint rows and the stop are never among the cut)
 GOAL FAIL scope=<scope> goal=<id|-> expect=<rev> current=<rev>: stale   (nothing written)
 GOAL FAIL scope=<scope> goal=<id|->: <reason>   (no such node; disposition=<done|cancelled|superseded|removed>; not a writer of the scope; no edge; stop requested; notes index unloadable — each named, exit 1, nothing written)
+NOTES OK id=<event-id> request=<id> note=<id> change=<write|supersede> superseded=<id|-> scope=<scope> kind=<instruction|observation|heuristic> active=<n> rev=<n> pushed=<rev|-> emitted=<bytes>   (notes write and notes supersede; note= stands where node= would; a supersede's two events share one request= and one rev=)
+NOTES OK scope=<scope|-> task-class=<class|-> candidates=<n> eligible=<n> excluded=<n> unknown=<n> rev=<n> from=<live|snapshot> rows=<n> shown=<n> emitted=<bytes>   (notes list and notes applicable: no event, no id=; from=snapshot admits no route)
+NOTES ROW candidate=<role>/<model> verdict=<eligible|excluded <note-id>|unknown>   (applicable: one per candidate named, never among the cut, printed before every note row)
+NOTES ROW note=<id> kind=<instruction|observation|heuristic> date=<utc> author=<name> state=<active|superseded-by <id> <date>> constraint=<present|-> <first line of :text>   (list and applicable; capped by --max)
+NOTES MORE rows=<n> shown=<n>   (verdict rows are never among the cut)
+NOTES FAIL note=<id|-> expect=<rev> current=<rev>: stale   (nothing written)
+NOTES FAIL note=<id|->: <reason>   (missing :source or :date; kind not one of three; not a writer of the scope; already written note=<id>; active=<n> past :max-active=<n>; <field>=<n> past <bound>=<n>; unknown task class; :allow in constraint; not active: superseded-by <id>; kind weaker than <id>; past --max-bytes; notes index unloadable; no live session and no --snapshot — each named, exit 2, nothing written, and no candidate printed eligible)
 OFFER OK id=<event-id> request=<id> node=<id> offer=<id> attempt=<id> to=<name> effect=dispatched reserved=<n> until=<stamp> rev=<n> pushed=<rev|-> emitted=<bytes>
 ACKNOWLEDGE OK id=<event-id> request=<id> node=<id> offer=<id> attempt=<id> stage=<received|accepted> effect=<received|accepted|accepted-held|late|duplicate> lease=<lease-id|-> reserved=<n> committed=<n> rev=<n> pushed=<rev|-> emitted=<bytes>   (lease= names the lease that actually holds, created or bound; a late or duplicate line carries its original lineage in offer= and attempt=)
 DECLINE OK id=<event-id> request=<id> node=<id> offer=<id> attempt=<id> effect=<declined|late|duplicate> released=<n> rev=<n> pushed=<rev|-> emitted=<bytes>
@@ -4572,8 +4938,7 @@ socket paths naming one journal, the second refused `journal held`; an owner tha
 starts as a taker with a fresh generation and never as a resume; a reconfirm callback
 delayed past `until` admits no write; a `:defer` moving the scope revision and no denominator, and a `:reopen` the same; `event
 --kind split` and `--kind remove` refused at exit 2 naming `decompose` and `node remove`; a
-`node remove` leaving its subtree in O as provenance and out of every count, and one refused
-for a live lease; a re-baseline restating the derived set accepted and one differing from it
+`node remove` leaving its subtree in O as provenance and out of every count; a re-baseline restating the derived set accepted and one differing from it
 refused by rule 14; **an empty work-set — a `<repo>/shared` in a repository with no shared work,
 and a container whose last member was cancelled — accepted, clipped, reloaded and clipped again
 with no finding, counting `unknown` and never done and never green in any rollup**; a
@@ -4584,8 +4949,7 @@ unreachable and never guessed; one cached raw fact yielding two verdicts for two
 a `correct` event changing a verdict with no fetch; a `source` bump staling evidence and a
 later `source` clearing it; a `QUERY OK` carrying exactly the fields its ask names; a lease
 whose default is `(:escalate "<name>")` reading `escalated-to=` at expiry with responsibility
-untouched; a clip refused because its retained events would pass `--max-bytes`, with
-`lower --retain` named as the remedy and a lower `--retain` then passing; a removed subtree
+untouched; a removed subtree
 written into the archive by the clip that carries its `:remove` past the boundary and absent
 from the snapshot's structure thereafter, the live snapshot bounded by `--retain` across it;
 a snapshot loaded as retention boundary plus retained events equalling a clean
@@ -4629,14 +4993,10 @@ uncelled coordinates counting as not complete; **a `:reopen` from `:done` and on
 `:supersede` of a `:cancelled` node refused the same way**; **one `run:<o/r>#<id>@<sha>` pointer
 used for the criterion whose subject is its job and again for a criterion naming another job,
 and again at another sha: only the matching criterion qualifies, the cache holds three keys, and
-the answer is the same under `--offline`**; **a request id retried after the clip that carried
-its event past the retention boundary, and again against a successor after a handoff, refused
-`already applied` with the revision named and applying nothing, and the same id with a different
-payload refused `reused with a different payload`**; **a request id whose event is newer than the
+the answer is the same under `--offline`**; **a request id whose event is newer than the
 retention boundary and still in the snapshot's retained events retried against a successor after
 a handoff, refused `already applied` and applying nothing** (the window the index alone did not
-cover); **a retry inside the owner's own journal with the same payload answered with the original
-`OK` line, and one with a different payload refused `reused with a different payload`**; **one
+cover); **one
 request digested to one value by two independent serializers, over a `node add` envelope holding
 a structure event and a scope event, with two `:stamp`s and two `:request` ids and the same
 digest, and with an absent optional field written `(:absent)` by both**; **a clip whose snapshot passes `--max-bytes` refused with all four
@@ -4670,8 +5030,7 @@ journal is free; structure
 verbs produce a reproducible `ROADMAP.md` with no hand edit.
 
 **The root's replays carry names, one for every rule the COW refinement adds, so a reader can
-say which test holds which sentence** (the list above is prose because it grew that way; these
-are named because they were asked for by name):
+say which test holds which sentence**:
 
 - **`cow-root-partition`** — one id is in C or in O and never in both; `open=` plus `closed=`
   equals the scope's counted total on every ask; an event hand-written to put one id in both is
@@ -5087,7 +5446,7 @@ of this list and are not repeated here):
 
 - **`goal-crosses-harness`** — G a `:doing` leaf at revision r; harness A, as coordinator C,
   `goal set --goal G --expect r`, `GOAL OK … rev=r+1`;
-  writes a `(:coordinator "C")` note (SPEC-DELEGATION.md) with a `:deny` on a made-up model for
+  writes a `(:coordinator "C")` note (*Delegation*) with a `:deny` on a made-up model for
   `:coding`; `goal update --stop --reason` on G. Harness B, another build, `goal show --as C`
   against the live session and against the clipped snapshot: both print `goal=G`, a `rev=` at or
   after every write of A's, `stop=requested` — not `cancelled`: no evidence of a stopped worker
@@ -5128,7 +5487,7 @@ of this list and are not repeated here):
   with the stale expectation prints the same refusal and writes no event, no journal revision
   and no dedup entry; a `show` never takes `--expect` and answers at the revision it prints.
 - **`applicable-cap-never-hides-a-deny`** — N active notes, N > `--max`, the only `:deny` in
-  the note that sorts last (SPEC-DELEGATION.md's `applicable`); `applicable --max 1 --candidate
+  the note that sorts last (*Delegation*'s `applicable`); `applicable --max 1 --candidate
   <role>/<model>` prints `excluded <that id>` and `NOTES MORE`; `goal show --max 1` prints the
   same constraint row before any cut row, then `GOAL MORE`; with the notes index unloadable,
   both print `FAIL` and neither prints `eligible` nor any row.

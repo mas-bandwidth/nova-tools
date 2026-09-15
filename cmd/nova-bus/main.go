@@ -66,11 +66,13 @@ usage:
   nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]] [--full] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
+        [--diagnostics]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
         [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]]
         [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
+        [--diagnostics]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
   nova-bus names --bus <dir>
@@ -353,6 +355,80 @@ func (f *flags) count(name string, value int, stderr io.Writer) bool {
 		return false
 	}
 	return true
+}
+
+// set answers whether a flag was named on the command line at all, so a default source can
+// tell "absent" from "given a value that is not usable", which are different mistakes.
+func (f *flags) set(name string) bool {
+	given := false
+	f.fs.Visit(func(fl *flag.Flag) {
+		if fl.Name == name {
+			given = true
+		}
+	})
+	return given
+}
+
+// receiptMaxWords resolves the one count a body is a receipt under. The flag wins; when it
+// is absent, a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults is read, then the
+// NOVA_BUS_RECEIPT_MAX_WORDS environment variable. It refuses only when none of the three
+// yields a positive number, and the refusal names the two default sources as the remedy.
+func (f *flags) receiptMaxWords(flagValue int, flagWasSet bool, busDir string, stderr io.Writer) (int, bool) {
+	if !flagWasSet {
+		if v, ok := receiptMaxWordsFromDefaults(busDir); ok {
+			flagValue = v
+		} else if v, ok := receiptMaxWordsFromEnv(); ok {
+			flagValue = v
+		}
+	}
+	if flagValue < 1 {
+		fmt.Fprintf(stderr, "nova-bus %s: --receipt-max-words must be given and at least 1, got %d; refusing to guess; give it as a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults or the NOVA_BUS_RECEIPT_MAX_WORDS env var\n", f.verb, flagValue)
+		return 0, false
+	}
+	return flagValue, true
+}
+
+// receiptMaxWordsFromDefaults reads the `receipt-max-words=<n>` line out of
+// <bus>/.nova-bus/defaults, the file default source. The file is key=value lines; only this
+// one key matters. A missing file, a missing key, or an unusable value is "absent".
+func receiptMaxWordsFromDefaults(busDir string) (int, bool) {
+	if busDir == "" {
+		return 0, false
+	}
+	raw, err := os.ReadFile(filepath.Join(busDir, ".nova-bus", "defaults"))
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != "receipt-max-words" {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(val))
+		if err != nil || n < 1 {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
+}
+
+// receiptMaxWordsFromEnv reads NOVA_BUS_RECEIPT_MAX_WORDS, the environment default source.
+// An empty or unusable value is "absent".
+func receiptMaxWordsFromEnv() (int, bool) {
+	s := strings.TrimSpace(os.Getenv("NOVA_BUS_RECEIPT_MAX_WORDS"))
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
 }
 
 // defaultAttempts is the retry budget when the caller names none.
@@ -1014,6 +1090,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) are not carried on your open list, and are counted rather than listed")
 	legacyNow := f.fs.Bool("legacy-now", false, "draw the switch-day line at THIS run's UTC instant: exactly --legacy-before <now>, so everything already on the bus is history and everything after this moment is news")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
+	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
 	}
@@ -1050,7 +1127,8 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stderr, "nova-bus inbox: --legacy-before draws a switch-day line and --carry-history says there is none to draw; give one or the other\n")
 		return 2
 	}
-	if !f.count("receipt-max-words", *maxWords, stderr) {
+	maxWordsValue, ok := f.receiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir, stderr)
+	if !ok {
 		return 2
 	}
 	if !f.count("open-max", *openMax, stderr) {
@@ -1088,11 +1166,12 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	o := inboxOpts{
-		busDir: *busDir, as: *as, maxWords: *maxWords,
+		busDir: *busDir, as: *as, maxWords: maxWordsValue,
 		full: *full, openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
+		diagnostics: *diagnostics,
 	}
 	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --bus at a
 	// subdirectory of a bigger repository and the run refused with "participants.json: no
@@ -1149,6 +1228,15 @@ type inboxOpts struct {
 	maxNotes     int
 	maxBytes     int64
 	after        string
+	diagnostics  bool
+	// me is the reader resolved against the roster, carried so `wait` can write their beat
+	// without resolving the roster twice; beat is how often a wait pushes its BEAT file as
+	// its own commit; and lease is how far into the future each BEAT's until= promises the
+	// line is alive, so a duty cycle between two waits still reads awake. These are `wait`'s
+	// only; `inbox` leaves them zero.
+	me    bus.Participant
+	beat  time.Duration
+	lease time.Duration
 }
 
 // inboxReading is what one listing found, for the caller that has to act on it: `inbox`
@@ -1389,8 +1477,20 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// from the listing was the same failure as a lost push with a quieter cause. The one
 	// thing that is not named per file is a file dated BEHIND the switch-day line on an
 	// incremental run -- history, counted on the LEGACY line above; see bus.LegacyLine.
-	for _, n := range res.Unreadable {
-		fmt.Fprintf(stdout, "INBOX UNREADABLE path=%s: %s\n", oneline.Field(n.Path), oneline.Err(n.Parse.Err))
+	//
+	// An unreadable file that is CARRIED rather than new is unchanged since the cursor:
+	// the reader has already been shown it, and a long list of them printed on every poll
+	// buries the inbox above them. So the default collapses an unchanged set to one count
+	// line. The per-file lines stay for anything new -- which is news, and needs its reason
+	// before a reader can fix it -- for a full read, which lists everything on purpose,
+	// and for --diagnostics, which asks for the whole picture whatever the default is.
+	if len(res.Unreadable) > 0 && (o.diagnostics || res.UnreadableChanged || scope.Full) {
+		for _, n := range res.Unreadable {
+			fmt.Fprintf(stdout, "INBOX UNREADABLE path=%s: %s\n", oneline.Field(n.Path), oneline.Err(n.Parse.Err))
+		}
+	} else if len(res.Unreadable) > 0 {
+		fmt.Fprintf(stdout, "INBOX UNREADABLE count=%d unchanged=true first=%s\n",
+			len(res.Unreadable), oneline.Field(res.Unreadable[0].Path))
 	}
 	// And the notes that PARSE and reach nobody, which is the quieter half of the same
 	// failure: a file this tool cannot read is at least reported, and a note addressed to a
@@ -1640,7 +1740,7 @@ func legacyToken(l bus.LegacyLine) string {
 // it without the flag and everybody on the bus can see which notes this reader has taken
 // as read.
 func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
-	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane)}
+	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane), bus.BeatPath(me.Lane)}
 	if err := checkoutReady(busDir, branch, paths); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
@@ -1909,6 +2009,8 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	maxWords := f.fs.Int("receipt-max-words", 0, "a body under this many words may be a receipt (required, at least 1)")
 	timeout := f.fs.Duration("timeout", 0, "how long to wait before returning WAIT TIMEOUT (required; a duration like 25m, at most "+maxWaitTimeout.String()+")")
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
+	beat := f.fs.Duration("beat", defaultBeatInterval, "how often to push your BEAT liveness file as its own commit")
+	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "how far into the future each BEAT's until= promises the line is alive, so a duty cycle between waits still reads awake")
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
@@ -1924,6 +2026,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	noPush := f.fs.Bool("no-push", false, "with --advance, commit the cursor but do not push it")
 	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) are not carried on your open list, and are counted rather than listed")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
+	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
 	// --remote and --branch are required here and conditional on inbox, because a wait
 	// FETCHES: that is the difference between waiting and sleeping. A wait that read only
 	// what its checkout already held would wait out its whole timeout beside a bus full of
@@ -1939,7 +2042,8 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stderr, "nova-bus wait: --legacy-before draws a switch-day line and --carry-history says there is none to draw; give one or the other\n")
 		return 2
 	}
-	if !f.count("receipt-max-words", *maxWords, stderr) {
+	maxWordsValue, ok := f.receiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir, stderr)
+	if !ok {
 		return 2
 	}
 	if !f.count("open-max", *openMax, stderr) {
@@ -1986,6 +2090,14 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(interval.String()), oneline.Field(minWaitInterval.String()))
 		return 2
 	}
+	if *beat <= 0 {
+		fmt.Fprint(stderr, "nova-bus wait: --beat must be a positive duration like 60s\n")
+		return 2
+	}
+	if *beatLease <= 0 {
+		fmt.Fprint(stderr, "nova-bus wait: --beat-lease must be a positive duration like 10m\n")
+		return 2
+	}
 	// A wait always runs git, so the root check is unconditional -- see the same check, and
 	// the same reason for the order it is in, in cmdInbox.
 	if err := bus.IsRepoRoot(*busDir); err != nil {
@@ -2007,11 +2119,13 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	o := inboxOpts{
-		busDir: *busDir, as: *as, maxWords: *maxWords,
+		busDir: *busDir, as: *as, maxWords: maxWordsValue,
 		openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
+		me: me, beat: *beat, lease: *beatLease,
+		diagnostics: *diagnostics,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
@@ -2023,7 +2137,16 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// that has hung.
 	fmt.Fprintf(stdout, "WAIT as=%s timeout=%s interval=%s cursor=%s\n",
 		oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)))
-	return waitLoop(o, *timeout, *interval, stdout, stderr, now)
+	// THE ENTRY BEAT, written before the first poll, so a line that is about to wait
+	// already reads awake the moment its call begins, lease and all.
+	if err := bus.WriteBeat(*busDir, me.Lane, held.Commit, now, now.Add(*beatLease)); err != nil {
+		fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+	}
+	// The command the caller issues again to re-arm this wait: the next one, with the same
+	// flags, echoed back so a harness that does not wake on its own can paste it. A wait is
+	// ONE read, with one terminal line saying it ended and must be re-armed.
+	next := "nova-bus wait " + strings.Join(args, " ")
+	return waitLoop(o, *timeout, *interval, next, stdout, stderr, now)
 }
 
 // defaultWaitInterval is how long a wait leaves between polls when the caller names no
@@ -2036,12 +2159,34 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 // the round trip is what the number should be chosen for.
 const defaultWaitInterval = 10 * time.Second
 
+// defaultBeatInterval is how often a wait pushes its BEAT file as its own commit when the
+// reader names no --beat. It is Glenn's "a beat a minute" from docs/SPEC-WORK.md:
+// presence is a beat a minute, and no beat for five minutes is asleep. Sixty seconds is
+// the beat the whole Presence design is built on.
+const defaultBeatInterval = 60 * time.Second
+
+// defaultBeatLease is how far into the future a BEAT's until= promises the line is alive
+// when `wait` writes it on entry, every tick and on exit. It is longer than --window
+// (five minutes in SPEC-WORK's Presence) so that a duty cycle between two waits -- the
+// wait returns with a note and the harness works it before issuing the next -- reads awake
+// throughout, rather than ageing past --window into "asleep" while the process is alive.
+const defaultBeatLease = 10 * time.Minute
+
 // maxWaitTimeout is as long as `wait` will block, and it is a fact about HARNESSES rather
 // than about buses; see the refusal above.
 const maxWaitTimeout = 60 * time.Minute
 
 // minWaitInterval is as fast as a wait will poll, because a poll is a git fetch.
 const minWaitInterval = 100 * time.Millisecond
+
+// writeBeatLease writes the lane's BEAT carrying until=now+lease, so a line whose duty
+// process is alive but between waits still reads awake to `nova-wake awake`. It is called
+// on entry, every tick and on exit; the stamp and until come from the same Now so the
+// lease's length is exact.
+func writeBeatLease(o inboxOpts, cursor string) error {
+	now := time.Now()
+	return bus.WriteBeat(o.busDir, o.me.Lane, cursor, now, now.Add(o.lease))
+}
 
 // waitLoop is the clock: poll, and either return what arrived or sleep and poll again
 // until the deadline. It is apart from the flags so that what it does is readable without
@@ -2051,7 +2196,7 @@ const minWaitInterval = 100 * time.Millisecond
 // note that is already there -- the caller answered the last one and came straight back --
 // and making them wait an interval for news the bus already had would be a tool inventing
 // latency.
-func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Writer, now time.Time) int {
+func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout, stderr io.Writer, now time.Time) int {
 	start := time.Now()
 	deadline := start.Add(timeout)
 	// The moment this call cannot see past: a switch-day line drawn after it hides
@@ -2059,6 +2204,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 	horizon := now.Add(timeout)
 	polls := 0
 	cursor := ""
+	lastBeat := start
 	for {
 		polls++
 		elapsed := time.Since(start).Round(time.Millisecond)
@@ -2073,12 +2219,36 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 		if r.Cursor != "" {
 			cursor = r.Cursor
 		}
+		// The beat write, carried for every exit below: a wait that is handing the harness
+		// a note and stopping has a gap to the next wait, and the lease covers it.
+		writeBeat := func() {
+			if err := writeBeatLease(o, cursor); err != nil {
+				fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+			}
+		}
 		if code != 0 {
 			// The listing this poll had already printed, if it printed one, under the
 			// refusal that is on stderr: a reader who was shown their inbox has been shown
 			// it, whatever happened after.
+			writeBeat()
 			fmt.Fprint(stdout, lines)
+			fmt.Fprintf(stdout, "WAIT DONE reason=signal rearm=required next=%s\n", next)
 			return code
+		}
+		// THE BEAT. A waiting line's cursor does not move -- there was nothing to read, so
+		// nothing was recorded -- and a line whose cursor does not move reads asleep to
+		// `nova-wake awake`. So every poll rewrites the lane's BEAT file, and at most once
+		// per --beat the BEAT is committed and pushed on its own as "beat <name>", so the
+		// line's liveness lands on the bus even while it is simply waiting. The write is to
+		// the working tree on every tick; the push is the only part bounded, because it is
+		// the only part that costs somebody's server.
+		writeBeat()
+		if time.Since(lastBeat) >= o.beat {
+			lastBeat = time.Now()
+			if _, err := commit(o.busDir, o.me, []string{bus.BeatPath(o.me.Lane)},
+				bus.WithTrailer("beat "+o.me.Slug(), bus.TrailerBeat), o.remote, o.branch, o.attempts, false); err != nil {
+				fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
+			}
 		}
 		if keep(r) {
 			// Why this wait is not waiting, when the answer is not "a note arrived": the
@@ -2090,6 +2260,8 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 			}
 			fmt.Fprintf(stdout, "WAIT OK new=%d after=%s polls=%d\n", r.New, oneline.Field(elapsed.String()), polls)
 			fmt.Fprint(stdout, lines)
+			fmt.Fprintf(stdout, "WAIT DONE reason=new rearm=required next=%s\n", next)
+			writeBeat()
 			return 0
 		}
 		// A line drawn in the future that does NOT cover the whole wait is no reason to
@@ -2115,9 +2287,14 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 	// A TIMEOUT IS NOT AN ERROR. Nothing arrived, and nothing was written -- no cursor
 	// moves on a wait that found nothing, because there is nothing to record having read --
 	// and the caller's move is to issue the next wait. Exit 0, with the counts that say the
-	// tool was awake the whole time.
+	// tool was awake the whole time. The exit beat extends the lease over the gap to the
+	// next wait exactly as the entry and tick beats do.
+	if err := writeBeatLease(o, cursor); err != nil {
+		fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+	}
 	fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s\n",
 		oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
+	fmt.Fprintf(stdout, "WAIT DONE reason=timeout rearm=required next=%s\n", next)
 	return 0
 }
 
