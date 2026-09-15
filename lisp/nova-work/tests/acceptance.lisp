@@ -1618,5 +1618,193 @@ is compared against; it is never the path `query --ask size` takes."
                     (check-string= init-digest (root-digest (kernel-state target-k)) "target state root digest unchanged")
                     (check-equal init-rev (kernel-next-rev target-k) "target next-rev unchanged")
                     (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
-               (close-file-journal j-replay))))
-      (ignore-errors (delete-file path)))))
+ (close-file-journal j-replay))))
+       (ignore-errors (delete-file path)))))
+
+;;; ------------------------------------------------------------------
+;;; 50-71. replays promised by docs/SPEC-WORK.md:2400-3600 (part 3 of 4)
+;;;
+;;; Every one of these names a line of SPEC-WORK.md; the three the slice-1
+;;; kernel can already execute (an export via state-canonical-form and a load
+;;; via reconstruct-state) are green deftest forms. The rest describe CONFIG and
+;;; ACTIVE roles, the fleet, dispatch/ack/offers, model attribution, silence
+;;; pinging and the bounded config exchange -- none of which exists in slice 1
+;;; yet -- and are kept, marked NEEDS-KERNEL with the missing piece.
+;;; ------------------------------------------------------------------
+
+;;; 50. state-load-is-isolated   docs/SPEC-WORK.md:5445
+;;; ------------------------------------------------------------------
+
+(deftest "state-load-is-isolated" "docs/SPEC-WORK.md:5445"
+    "expected=loaded-snapshot-re-exports-equal;load-writes-nothing-to-source"
+  (let ((k (fresh)))
+    (ok (submit k (close-request :request "req-1")) "close refused")
+    (let* ((source (kernel-state k))
+           (exported (state-canonical-form source))
+           (rev-before (state-revision source))
+           (history-before (state-history source))
+           (rebuilt (reconstruct-state (canonical-string exported))))
+      ;; A load writes nothing back into the live source: no ownership change,
+      ;; no dispatch, no merge. Source revision and history are untouched.
+      (check-equal rev-before (state-revision source) "the load changed the source revision")
+      (check-equal history-before (state-history source) "the load changed the source history")
+      ;; And a re-export of the loaded snapshot compares equal in every field.
+      (check-equal exported (state-canonical-form rebuilt)
+                   "the loaded snapshot re-exports differently"))))
+
+;;; 51. full-round-trip   docs/SPEC-WORK.md:5587
+;;; ------------------------------------------------------------------
+
+(deftest "full-round-trip" "docs/SPEC-WORK.md:5587"
+    "expected=re-export=equal;ids-links-history-equal"
+  (let ((k (fresh)))
+    (ok (submit k (close-request :request "req-1" :evidence '("ev-1"))) "close refused")
+    (ok (submit k (reopen-request :request "req-2")) "reopen refused")
+    (ok (submit k (close-request :request "req-3" :node "acme/work/f1/t2" :evidence '("ev-2")))
+        "second close refused")
+    ;; Export a captured revision, load it into a fresh isolated engine, export
+    ;; again, and compare every semantic field the slice keeps: stable ids,
+    ;; links, O and C history, closed rows and the root digest.
+    (let* ((source (kernel-state k))
+           (exported (state-canonical-form source))
+           (rebuilt (reconstruct-state (canonical-string exported))))
+      (check-equal exported (state-canonical-form rebuilt)
+                   "the re-export compares different in some field")
+      (check-string= (root-digest source) (root-digest rebuilt) "the re-export root digest")
+      (check-equal (state-history source) (state-history rebuilt) "the re-export history")
+      (check-equal (state-closed-rows source) (state-closed-rows rebuilt)
+                   "the re-export closed rows"))))
+
+;;; 52. old-history   docs/SPEC-WORK.md:5589
+;;; ------------------------------------------------------------------
+
+(deftest "old-history" "docs/SPEC-WORK.md:5589"
+    "expected=full-history-in-export;oldest-record-included"
+  (let ((k (fresh)))
+    (ok (submit k (close-request :request "req-1" :evidence '("ev-1"))) "close refused")
+    (ok (submit k (reopen-request :request "req-2")) "reopen refused")
+    (ok (submit k (close-request :request "req-3" :node "acme/work/f1/t2" :evidence '("ev-2")))
+        "second close refused")
+    (let* ((source (kernel-state k))
+           (history (state-history source))
+           (exported-history (getf (state-canonical-form source) :history)))
+      ;; An export includes the whole archive: the oldest record is present, not
+      ;; pruned to a resident window, and the canonical bytes carry it whole.
+      (check-equal 3 (length history) "a record was dropped from the history")
+      (check-equal "req-1" (getf (first history) :request)
+                   "the oldest record is not the first transition")
+      (check-equal history exported-history "the export omitted the old history"))))
+
+;;; 53. fenced-export-can-finish   docs/SPEC-WORK.md:5451
+;;;
+;; NEEDS-KERNEL: a fenced session and the operation-id read/cancel of an export.
+;;   In a fenced session an export started, its status and terminal line read by
+;;   id, an unfinished one cancelled, an unknown/non-export id and every
+;;   canonical write refused `fenced`.
+
+;;; 54. roles-are-configured-not-inferred   docs/SPEC-WORK.md:3172
+;;;
+;; NEEDS-KERNEL: CONFIG role records with provenance and scope.
+;;   A role is read from CONFIG and never from the underlying model; agreed
+;;   limits are never raised silently; essential-security-only and reserved-plan
+;;   roles and agreed participation are each expressible.
+
+;;; 55. reserved-role-is-not-spent-on-routine-work   docs/SPEC-WORK.md:3173
+;;;
+;; NEEDS-KERNEL: role reservation enforced on the dispatch/work path.
+;;   A role reserved for essential security work on a paid plan is never spent
+;;   by routine work; a model capability never cancels an agreed limit.
+
+;;; 56. no-friend-name-in-the-tool   docs/SPEC-WORK.md:5209
+;;;
+;; NEEDS-KERNEL: shipped binary/defaults/fixtures carrying no friend, bench,
+;;   repository or house name. Every identity arrives as configuration.
+;;   (Not a test of this document, which cites friends by name for provenance.)
+
+;;; 57. four-capability-groups-and-three-fields   docs/SPEC-WORK.md:5280
+;;;
+;; NEEDS-KERNEL: child-agents, swarms, local-models and one-shots as capability
+;;   groups, each with stable id/source/stamp/availability/constraints, and
+;;   declared support, verified runtime and free capacity as three fields.
+
+;;; 58. dispatch-ack-and-ownership-are-three   docs/SPEC-WORK.md:5219
+;;;
+;; NEEDS-KERNEL: dispatch/delivery/acknowledgement and accepted-ownership as
+;;   distinct facts; a pending offer reserving only declared capacity; a timeout
+;;   alone launching no duplicate.
+
+;;; 59. requested-model-is-not-observed-model   docs/SPEC-WORK.md:5222
+;;;
+;; NEEDS-KERNEL: requested-model vs observed-model fields on attempts.
+;;   Unknown stays unknown; a friend's usual model never stands as proof of the
+;;   executor of a delegated task.
+
+;;; 60. a-retry-does-not-overwrite-its-attempt   docs/SPEC-WORK.md:5222
+;;;
+;; NEEDS-KERNEL: concurrent attempts keeping separate attempt records.
+;;   A retry never overwrites the attempt before it; separate model and usage
+;;   attribution per attempt.
+
+;;; 61. silence-is-a-ping-not-a-verdict   docs/SPEC-WORK.md:5225
+;;;
+;; NEEDS-KERNEL: --silence-ping threshold and the wake protocol.
+;;   A configured threshold triggers one bounded ping; a configured answer
+;;   window marks capacity unavailable with reason `unconfirmed`, never sleep
+;;   nor exhausted credit.
+
+;;; 62. explicit-rest-is-not-pinged   docs/SPEC-WORK.md:5225
+;;;
+;; NEEDS-KERNEL: observed explicit-rest state and ping gating on it.
+;;   Explicit rest is respected: a resting friend is not pinged by a silence
+;;   threshold.
+
+;;; 63. return-reconciles-before-dispatch   docs/SPEC-WORK.md:5226
+;;;
+;; NEEDS-KERNEL: return reconciling outstanding assignments and capacity.
+;;   A return reconciles outstanding assignments and observed capacity before
+;;   any new dispatch.
+
+;;; 64. unchanged-config-is-one-bounded-answer   docs/SPEC-WORK.md:5284
+;;;
+;; NEEDS-KERNEL: config exchange answering UNCHANGED with the named identity.
+;;   A request naming a friend and its last-known config hash/revision answers
+;;   UNCHANGED with that identity in one bounded reply, no roster/prose repeated.
+
+;;; 65. an-invalid-delta-leaves-the-old-config   docs/SPEC-WORK.md:5284
+;;;
+;; NEEDS-KERNEL: bounded config deltas validated atomically against the named
+;;   base. An invalid delta is applied to no fragment and leaves the old config.
+
+;;; 66. a-partial-manifest-is-refused   docs/SPEC-WORK.md:5285
+;;;
+;; NEEDS-KERNEL: manifest part handling with a completeness hash.
+;;   A partial config is never admitted as a complete replacement; no secret in
+;;   a manifest.
+
+;;; 67. fleet-is-static-config   docs/SPEC-WORK.md:3375
+;;;
+;; NEEDS-KERNEL: a static `fleet` section and the :machine event verb.
+;;   A :machine event moves no count and no roadmap; a heartbeat, an `observe`
+;;   and a probe change no member.
+
+;;; 68. no-machine-name-in-the-tool   docs/SPEC-WORK.md:3376
+;;;
+;; NEEDS-KERNEL: shipped defaults/fixtures carrying no machine or host name.
+;;   Machine identities arrive as configuration, never hardcoded in the tool.
+
+;;; 69. one-profile-one-unit   docs/SPEC-WORK.md:3376
+;;;
+;; NEEDS-KERNEL: --register refusing a --connect already held by a member.
+;;   One connection profile is one unit; a profile held by a member is refused.
+
+;;; 70. no-credential-in-a-member   docs/SPEC-WORK.md:3377
+;;;
+;; NEEDS-KERNEL: machine-record credential refusal.
+;;   A --connect that is not a profile: reference, or a key/token/password/secret
+;;   field, is refused whole and the value never echoed.
+
+;;; 71. unknown-owner-is-refused   docs/SPEC-WORK.md:3377
+;;;
+;; NEEDS-KERNEL: the owner-must-be-a-friend check on machine register.
+;;   A --register whose :owner is not a friend of `friends` is refused, nothing
+;;   written.
