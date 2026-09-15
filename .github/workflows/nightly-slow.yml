@@ -1,0 +1,138 @@
+# Nightly slow suite for nova-tools (#516).
+#
+# The CL tier (ci.yml) and the certification tier (certification.yml) run `go test`
+# without the `slow` build tag, so a test behind `//go:build slow` is compiled by
+# neither of them. This workflow is the one place those tests run: on a daily
+# schedule and on demand, it runs `go test -tags slow` over the same package matrix
+# ci.yml shards its fast tests into, and a red run opens (or updates) one issue
+# titled `nightly slow suite red <date>`.
+#
+# The PR test jobs are unchanged: they keep running without the tag, so they get
+# faster as tests move behind it, and nothing a CL is required to pass is gated on
+# the slow tier.
+
+name: nightly-slow
+
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-slow-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  test-packages:
+    # The same package matrix ci.yml's `test-packages` builds, listed with `-tags slow`
+    # so a package whose tests are ALL behind the slow tag is not dropped from the list.
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      packages: ${{ steps.list.outputs.packages }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          declare -A SLOW=(
+            [cmd/nova-wake]=1
+            [cmd/nova-merge]=1
+            [cmd/nova-swarm]=1
+            [cmd/nova-bus]=1
+          )
+          REST_SHARDS=2
+
+          slow=()
+          rest=()
+          while read -r pkg; do
+            [ -n "$pkg" ] || continue
+            short=${pkg#github.com/mas-bandwidth/nova-tools/}
+            if [ "${SLOW[$short]:-0}" = "1" ]; then slow+=("$short"); else rest+=("$short"); fi
+          done < <(go list -tags slow -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)
+
+          entries=()
+          for pkg in "${slow[@]}"; do
+            entries+=("{\"name\":\"$pkg\",\"packages\":\"./$pkg\"}")
+          done
+          for ((g=1; g<=REST_SHARDS; g++)); do
+            pkgs=()
+            for ((i=g-1; i<${#rest[@]}; i+=REST_SHARDS)); do
+              pkgs+=("./${rest[i]}")
+            done
+            if [ "${#pkgs[@]}" -gt 0 ]; then
+              joined=$(printf '%s ' "${pkgs[@]}")
+              entries+=("{\"name\":\"rest $g/$REST_SHARDS\",\"packages\":\"${joined% }\"}")
+            fi
+          done
+
+          packages=$(printf '%s\n' "${entries[@]}" | jq -s -c '.')
+          echo "$packages"
+          [ "$(echo "$packages" | jq 'length')" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: test slow (${{ matrix.entry.name }})
+    needs: test-packages
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.test-packages.outputs.packages) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: cache go build and module cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: test
+        run: go test -tags slow -count=1 ${{ matrix.entry.packages }}
+
+  report:
+    # A red run opens (or updates) one issue titled `nightly slow suite red <date>`,
+    # so a person finds the failure in the morning rather than behind a green badge.
+    # One issue per date, updated on a same-day rerun rather than duplicated.
+    needs: test
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: open or update the nightly slow issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          date=$(date -u +%Y-%m-%d)
+          title="nightly slow suite red $date"
+          url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" \
+              --body "The nightly slow suite failed again: $url"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" \
+              --body "The nightly slow suite (\`go test -tags slow ./...\`) failed: $url"
+          fi
