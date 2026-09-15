@@ -79,6 +79,46 @@ func push(dir string) error {
 	return nil
 }
 
+// WAIT DONE is the last line of every wait return, whatever the reason: new, timeout, or
+// signal. A wait returns ONCE and never re-arms itself -- a background process is not a
+// harness wake -- so the line names the reason and the exact command to re-issue, so a
+// caller who came back to three notes at once knows the wait must be armed again.
+func TestWaitEndsWithRearmLine(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, bare := busDir(t)
+	settled(t, checkout)
+
+	// Timeout: the deadline passed, and the last line says so and how to re-arm.
+	r := invoke(t, "", waitFlags(checkout, "Ada", "1s")...).mustCode(t, 0)
+	lines := strings.Split(strings.TrimRight(r.stdout, "\n"), "\n")
+	last := lines[len(lines)-1]
+	if !strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait ") {
+		t.Fatalf("timeout's last line is not the rearm line:\n%s", last)
+	}
+	if !strings.Contains(last, " --bus "+checkout) {
+		t.Fatalf("rearm line does not name the same flags:\n%s", last)
+	}
+
+	// News: a note arrived and the wait returned on it; the last line is still WAIT DONE.
+	other := bench(t, bare)
+	note(t, other, "bo-333333333333", "mid wait")
+	pushed := make(chan error, 1)
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		pushed <- push(other)
+	}()
+	r2 := invoke(t, "", waitFlags(checkout, "Ada", "30s")...).mustCode(t, 0)
+	if err := <-pushed; err != nil {
+		t.Fatal(err)
+	}
+	lines2 := strings.Split(strings.TrimRight(r2.stdout, "\n"), "\n")
+	last2 := lines2[len(lines2)-1]
+	if !strings.HasPrefix(last2, "WAIT DONE reason=new rearm=required next=nova-bus wait ") {
+		t.Fatalf("news's last line is not the rearm line:\n%s", last2)
+	}
+}
+
 // THE POINT OF THE VERB: a note pushed by somebody else, mid-call, ends the wait. The
 // caller is inside a tool call the whole time and gets the listing the moment it is true.
 func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {

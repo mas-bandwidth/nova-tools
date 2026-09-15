@@ -46,9 +46,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
@@ -2110,7 +2112,21 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// that has hung.
 	fmt.Fprintf(stdout, "WAIT as=%s timeout=%s interval=%s cursor=%s\n",
 		oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)))
-	return waitLoop(o, *timeout, *interval, stdout, stderr, now)
+	// next is the exact command to re-arm this wait with the same flags, echoed back on the
+	// terminal line so a caller who came back to news of any kind knows the one thing to
+	// paste. It is the caller's own args rather than this run's resolved flags: a wait
+	// returns once and must be re-issued, and the re-issue is the same wait, not a new one
+	// with a shifted default.
+	next := "nova-bus wait " + strings.Join(args, " ")
+	// A wait is interrupted by a signal at least as often as it returns: a harness that
+	// kills its tool calls, or a person at a keyboard. Either way it is one more reason a
+	// wait returns, and the caller is owed the same terminal line -- signal, and re-arm --
+	// rather than silence. The channel is stopped after the loop, so a signal delivered
+	// after the loop has not changed the returned reason for nothing.
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigc)
+	return waitLoop(o, *timeout, *interval, stdout, stderr, now, next, sigc)
 }
 
 // defaultWaitInterval is how long a wait leaves between polls when the caller names no
@@ -2144,7 +2160,7 @@ const minWaitInterval = 100 * time.Millisecond
 // note that is already there -- the caller answered the last one and came straight back --
 // and making them wait an interval for news the bus already had would be a tool inventing
 // latency.
-func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Writer, now time.Time) int {
+func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Writer, now time.Time, next string, sigc <-chan os.Signal) int {
 	start := time.Now()
 	deadline := start.Add(timeout)
 	// The moment this call cannot see past: a switch-day line drawn after it hides
@@ -2201,6 +2217,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 			}
 			fmt.Fprintf(stdout, "WAIT OK new=%d after=%s polls=%d\n", r.New, oneline.Field(elapsed.String()), polls)
 			fmt.Fprint(stdout, lines)
+			waitDone(stdout, "new", next)
 			return 0
 		}
 		// A line drawn in the future that does NOT cover the whole wait is no reason to
@@ -2217,11 +2234,21 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 		// The last sleep is the short one, so the LAST poll lands ON the deadline rather
 		// than before it: a note that arrives in the final interval is a note this call
 		// saw, and stopping early would hand it to the next call for no reason.
+		sleep := interval
 		if left < interval {
-			time.Sleep(left)
-			continue
+			sleep = left
 		}
-		time.Sleep(interval)
+		// A signal during the poll or the sleep is a return all the same -- the wait is
+		// done, for a reason that is not news and not the deadline -- and the caller is
+		// owed the same terminal line: signal, and re-arm. The select not only makes the
+		// sleep interruptible, it keeps the sleeps from running past a signal already
+		// delivered mid-poll.
+		select {
+		case <-sigc:
+			waitDone(stdout, "signal", next)
+			return 0
+		case <-time.After(sleep):
+		}
 	}
 	// A TIMEOUT IS NOT AN ERROR. Nothing arrived, and nothing was written -- no cursor
 	// moves on a wait that found nothing, because there is nothing to record having read --
@@ -2229,7 +2256,18 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 	// tool was awake the whole time.
 	fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s\n",
 		oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
+	waitDone(stdout, "timeout", next)
 	return 0
+}
+
+// waitDone is the terminal line of every wait return: the reason it returned, the fact
+// that a wait returns once and must be re-armed, and the exact command to re-issue. It is
+// the LAST line whatever the reason, so a caller scanning a transcript ends on "do this
+// next" and never on a listing line that says what just happened but not what to do about
+// it. A wait never re-arms itself: the polling moved inside the tool call, and the wake is
+// the tool call returning, which is this line's whole job to make legible.
+func waitDone(stdout io.Writer, reason, next string) {
+	fmt.Fprintf(stdout, "WAIT DONE reason=%s rearm=required next=%s\n", reason, oneline.Escape(next))
 }
 
 // waitPoll is ONE poll, under the checkout lock: the fetch, the listing, and -- only on the

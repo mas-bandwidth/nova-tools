@@ -2489,6 +2489,7 @@ WAIT POLL fetch: <reason one poll could not fetch, which was not fatal>
 WAIT OK new=<n> after=<d> polls=<n>
 WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
 WAIT REFUSED: <reason>
+WAIT DONE reason=<new|timeout|signal> rearm=required next=<the exact wait command line with the same flags>
 RECEIPT ALREADY note=<id or path> lane=<lane>
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 RECEIPT FAIL <name or path>: <reason>
@@ -3927,6 +3928,14 @@ fetch` against somebody's server.
 shows the call began and what it was told to do — a tool call that prints nothing
 for twenty minutes and then prints everything is, while it runs, indistinguishable
 from one that has hung.
+
+**A wait returns once and must be re-armed.** Every return ends in one terminal
+line — `WAIT DONE reason=<new|timeout|signal> rearm=required next=<command>` — and
+it is always last, whatever the reason, so a caller who came back to news of any
+kind ends on the thing to do next rather than the thing that just happened. A
+background process is not a harness wake callback: harnesses that can wake on a
+process exit list that in HARNESSES, and every other caller re-arms by issuing the
+`next` command as their own next call.
 
 **The lock is per POLL and not per call.** Every verb takes the checkout's lock
 and holds it to the end; a `wait` holding it for twenty minutes would refuse every

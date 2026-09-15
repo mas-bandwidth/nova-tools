@@ -44,6 +44,8 @@ var messageBusAudit = audit.Config{
 			"fold a whole listing into one unreadable line, which is the mistake printTranscript below documents. The buffer exists because a poll " +
 			"that finds nothing must print nothing, not because anything about the text changed. TestWaitReturnsWhenANoteArrivesDuringTheWait is the " +
 			"behavioural test for this site.",
+		"main.go|waitDone|reason": "the reason field of the terminal WAIT DONE line, one of the three literals \"new\", \"timeout\" and \"signal\" " +
+			"assigned at the three call sites in waitLoop; a value the tool chose, never a caller's argument.",
 		"main.go|hiddenReason|legacy.Text": "not an event line: this function BUILDS a sentence, and both sites that print it pass the whole of it through " +
 			"oneline.Escape, so the one-line guarantee is made once over the finished sentence rather than twice over its parts. The value itself is a " +
 			"switch-day line that has been through bus.NewLegacyLine, so it is a UTC date or an RFC 3339 instant and nothing else.",
@@ -99,6 +101,11 @@ var messageBusAudit = audit.Config{
 		// an INBOX BODIES GAP line into digits. It is a converter, it writes to no stream,
 		// and its result reaches the line through oneline.Field.
 		`"bytes"`, `"encoding/base64"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"time"`,
+		// os/signal and syscall are `wait`'s signal handling: signal.Notify and signal.Stop
+		// register and drop a channel, and write to no stream themselves. They reach stdout
+		// only through the reason literal printed by waitDone above, never through an
+		// argument they carried.
+		`"os/signal"`, `"syscall"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at
