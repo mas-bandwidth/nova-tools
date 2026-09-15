@@ -566,3 +566,33 @@ func TestARecoveredJobThatDiedOnTheInputLimitIsNamed(t *testing.T) {
 		t.Errorf("the `end` column is what the token ledger reads:\n%s", row)
 	}
 }
+
+// ISSUE #163: the structured signal the supervisor reads as a FIELD, not a heuristic over
+// the transcript. The adapter writes `INPUT LIMIT class=<token|bytes|files> value=<n>
+// limit=<n>`, and the reader parses the three named fields; a prose line that merely holds
+// the words -- no class, an unknown class, a value beside it -- is read as no signal, so the
+// fallback is the transcript heuristic and a false field cannot mint a class.
+func TestAStructuredSignalIsReadAsAField(t *testing.T) {
+	sig, ok := ReadInputLimitSignal([]byte("\x1b[91mINPUT LIMIT\x1b[0m class=token value=12345 limit=8192\n"))
+	if !ok {
+		t.Fatal("a structured line is a signal")
+	}
+	if sig.Class != LimitToken || sig.Value != 12345 || sig.Limit != 8192 {
+		t.Errorf("the fields read as named, got class=%s value=%d limit=%d", sig.Class, sig.Value, sig.Limit)
+	}
+	if got := InputLimitSignalLine(sig); got != "INPUT LIMIT class=token value=12345 limit=8192" {
+		t.Errorf("the re-emitted line carries the fields, got %q", got)
+	}
+}
+
+func TestAProseLineIsNotAStructuredSignal(t *testing.T) {
+	for _, c := range []string{
+		"Error: Rate limit reached: input token limit exceeded\n",
+		"INPUT LIMIT class=fizz value=1 limit=2\n",
+		"the task was too big for the model: INPUT LIMIT class=token value=1 limit=2\n",
+	} {
+		if _, ok := ReadInputLimitSignal([]byte(c)); ok {
+			t.Errorf("a prose line is not a structured signal: %q", c)
+		}
+	}
+}

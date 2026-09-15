@@ -201,7 +201,7 @@ jobs:
           (cd dist && sha256sum -c SHA256SUMS)
           cat dist/SHA256SUMS
 
-      - name: attach every artifact to the release, creating it if it does not exist
+      - name: attach every artifact to the release draft, never to a published release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -231,8 +231,8 @@ jobs:
             esac
           }
 
-          # THE TAG IS VERIFIED ON BOTH PATHS, not only the create one. `--verify-tag`
-          # below is gh refusing to invent a tag that does not exist, and the upload path
+          # THE TAG IS VERIFIED ON BOTH PATHS, not only the create one. `--verify-tag`, now
+          # inside release-upload.sh, is gh refusing to invent a tag that does not exist, and the upload path
           # takes no such flag -- so the guarantee has to come from somewhere else. It
           # cannot come from the trigger: this file also has `workflow_dispatch`, which
           # runs against whatever ref the person picked and may be a branch, and the shape
@@ -264,25 +264,10 @@ jobs:
             exit 1
           fi
 
-          # The release may already exist: v0.11.0 was published by hand before its tag's
-          # run reached this step, `gh release create` refused the duplicate tag name, and
-          # the release kept its notes and got none of its binaries. An existing release is
-          # therefore the case this branch handles rather than the case that fails -- the
-          # artifacts are the thing this job is for, and the notes are already right.
-          ask "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}"
-          if [ "$CODE" = 200 ]; then
-            # --clobber so a rerun replaces what a partial upload left, rather than erroring
-            # on the names already attached.
-            gh release upload "$TAG" --clobber dist/*
-          else
-            # --verify-tag: gh will otherwise CREATE a tag that does not exist, which on a
-            # rerun with a typo'd ref would publish a release for a commit nobody tagged.
-            # Kept even though the check above has already answered the same question: a
-            # flag that makes gh refuse is worth more than a flag this file's own reasoning
-            # says is redundant.
-            gh release create "$TAG" \
-              --verify-tag \
-              --title "$TAG" \
-              --generate-notes \
-              dist/*
-          fi
+          # THE RELEASE LOOKUP AND THE UPLOAD/CREATE DECISION LIVE IN release-upload.sh,
+          # not here, so the draft/published boundary is exercised by certification.yml's
+          # release dry-run through a fake `gh` (nova-tools#199). The tag checks above have
+          # already established that $TAG is this tree's tag; the script's only question is
+          # whether to upload to an existing draft, create a draft, or refuse a published
+          # release in one line.
+          .github/scripts/release-upload.sh

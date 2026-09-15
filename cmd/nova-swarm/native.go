@@ -65,15 +65,18 @@ type nativeRunResult struct {
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
 func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
-	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute at admission so a
-	// relative spelling cannot reach the wall (which refuses `--read ./x` and `--write x/...`).
-	abslot, err := filepath.Abs(cfg.slotDir)
+	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute AND symlink-resolved at
+	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
+	// `--write x/...`), and so the run's own paths cannot disagree with each other: on darwin
+	// `/var` is a symlink to `/private/var`, so an absolute spelling and a relative one of one
+	// directory came out as two different names (issue #578).
+	abslot, err := swarm.AbsResolved(cfg.slotDir)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the slot directory %s could not be made absolute: %s", oneline.Field(cfg.slotDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
 	cfg.slotDir = abslot
-	absroot, err := filepath.Abs(cfg.root)
+	absroot, err := swarm.AbsResolved(cfg.root)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the configured root %s could not be made absolute: %s", oneline.Field(cfg.root), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
@@ -149,11 +152,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// ollama, inception, zen -- is unknown to the harness and the run dies rc=1 in under a
 	// second. --config copies an opencode.json beside the carried auth file, mode 0600, so
 	// the harness resolves the provider exactly as it does when a person adds it to
-	// ~/.config/opencode. A config that names a provider whose key is absent from --auth is
-	// refused before anything runs, naming the provider and never the key.
+	// ~/.config/opencode. Only THE MODEL'S OWN provider is checked: a config whose entry for
+	// it has no key in --auth is refused before anything runs, naming the provider and never
+	// the key; a provider whose options carry a baseURL and no apiKey field has no key to be
+	// absent (ollama on localhost) and is admitted without one. Every other provider in the
+	// file is carried verbatim and not checked -- this run never calls them, and checking
+	// them refused local-model cards for an absent inception key on every adoption pass
+	// (#523 follow-up).
 	configSHA := ""
 	if cfg.configFile != "" {
-		sha8, reason := copyProviderConfig(cfg.configFile, cfg.authFile, dataHome)
+		sha8, reason := copyProviderConfig(cfg.configFile, cfg.authFile, provider, dataHome)
 		if reason != "" {
 			refuseNative(errOut, reason)
 			return nativeRunResult{}, 2
@@ -536,20 +544,19 @@ func copyAuth(src, provider, dataHome string) string {
 }
 
 // copyProviderConfig copies an opencode.json provider config beside the carried auth copy
-// in the job's own data home, mode 0600, and returns the sha8 the NATIVE OK line names. A
-// config that names a provider whose entry is absent from the auth file is refused before
-// anything runs: that provider is exactly the one the harness would call unknown, and the
-// refusal names the provider, never the key. The bytes are copied verbatim even when they
-// are not a JSON object this side can parse -- the refusal check is best-effort, the copy
-// is not.
-func copyProviderConfig(configPath, authPath, dataHome string) (sha8, reason string) {
+// in the job's own data home, mode 0600, and returns the sha8 the NATIVE OK line names. The
+// config's entry for THE MODEL'S provider is refused when its key is absent from the auth
+// file: that provider is exactly the one the harness is about to call, and the refusal names
+// the provider, never the key. The bytes are copied verbatim even when they are not a JSON
+// object this side can parse -- the refusal check is best-effort, the copy is not.
+func copyProviderConfig(configPath, authPath, provider, dataHome string) (sha8, reason string) {
 	raw, err := os.ReadFile(configPath)
 	if err != nil {
 		return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error()))
 	}
-	if missing := configProvidersMissingAuth(raw, authPath); missing != "" {
+	if modelProviderMissingAuth(raw, authPath, provider) {
 		return "", fmt.Sprintf("the config file %s names provider %s, whose key is absent from the auth file %s; add it to --auth or drop the provider from --config",
-			oneline.Field(configPath), oneline.Field(missing), oneline.Field(dash(authPath)))
+			oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(authPath)))
 	}
 	sum := sha256.Sum256(raw)
 	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")
@@ -562,36 +569,62 @@ func copyProviderConfig(configPath, authPath, dataHome string) (sha8, reason str
 	return hex.EncodeToString(sum[:])[:8], ""
 }
 
-// configProvidersMissingAuth returns the first provider an opencode.json config names whose
-// entry is absent from the auth file, or "" when every named provider has one (or when the
-// config does not parse into a "provider" object, which the copy still performs verbatim).
-// The provider names are the keys of the config's top-level "provider" object.
-func configProvidersMissingAuth(raw []byte, authPath string) string {
+// modelProviderMissingAuth reports whether the one provider this run will call -- the
+// --model's -- is named by the config and has no entry in the auth file. Only that provider
+// is asked about. A config is the whole of a person's ~/.config/opencode and names every
+// provider they keep; the ones this model does not use are never reached by the child, so
+// their keys are not this run's business, and refusing on them refused good cards (#523).
+//
+// It answers false when the config does not parse into a "provider" object (the copy is
+// still performed verbatim), when the config does not name this provider at all, and when
+// the entry's options carry a baseURL and no apiKey field -- ollama on localhost has no key
+// to be absent.
+func modelProviderMissingAuth(raw []byte, authPath, provider string) bool {
 	var cfg map[string]any
 	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return ""
+		return false
 	}
 	providers, ok := cfg["provider"].(map[string]any)
 	if !ok {
-		return ""
+		return false
 	}
-	entries := map[string]bool{}
-	if authPath != "" {
-		if authRaw, err := os.ReadFile(authPath); err == nil {
-			var a map[string]any
-			if json.Unmarshal(authRaw, &a) == nil {
-				for p := range a {
-					entries[p] = true
-				}
-			}
-		}
+	entry, named := providers[provider]
+	if !named || keylessProvider(entry) {
+		return false
 	}
-	for p := range providers {
-		if !entries[p] {
-			return p
-		}
+	if authPath == "" {
+		return true
 	}
-	return ""
+	authRaw, err := os.ReadFile(authPath)
+	if err != nil {
+		return true
+	}
+	var entries map[string]any
+	if json.Unmarshal(authRaw, &entries) != nil {
+		return true
+	}
+	_, has := entries[provider]
+	return !has
+}
+
+// keylessProvider reports whether a provider entry needs no key: its options carry a baseURL
+// and no apiKey field, so the harness reaches it (for example ollama on localhost) with no
+// credential to be absent.
+func keylessProvider(v any) bool {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	opts, ok := m["options"].(map[string]any)
+	if !ok {
+		return false
+	}
+	baseURL, _ := opts["baseURL"].(string)
+	if baseURL == "" {
+		return false
+	}
+	_, hasKey := opts["apiKey"]
+	return !hasKey
 }
 
 // fileSHA256 returns the lowercase hex sha256 of a file's bytes.
