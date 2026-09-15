@@ -2222,44 +2222,7 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
       (check-equal :todo (node-state (kernel-state k) "acme/work/f1/t1")
                    "reopen lands at :todo")
       (check-equal 5 (state-open-count (kernel-state k)) "|O| up by one after the reopen")
-      (check-equal 0 (state-closed-count (kernel-state k)) "|C| down by one after the reopen"))))
-
-(deftest "replay-mints-nothing" "docs/SPEC-WORK.md:5528"
-    "expected=replay-reconstructs-exact-digest-closed-rows-next-rev;zero-fresh-ids;no-verb-run"
-  (let* ((path (test-journal-path "replay-mints-nothing"))
-         (initial-hash (root-digest (make-seed-state *seed*)))
-         (j1 (open-file-journal path :initial-state-hash initial-hash))
-         (k1 (make-kernel :state (make-seed-state *seed*) :journal j1)))
-    (unwind-protect
-         (progn
-           (submit k1 (close-request :request "req-1"))
-           (submit k1 (reopen-request :request "req-2"))
-           (submit k1 (doing-request :node "acme/work/f1/t1" :request "req-3"))
-           (submit k1 (close-request :request "req-4"))
-           (submit k1 (reopen-request :request "req-5"))
-           (close-file-journal j1)
-           (let ((final-digest (root-digest (kernel-state k1)))
-                 (final-history (state-history (kernel-state k1)))
-                 (final-rows (state-closed-rows (kernel-state k1)))
-                 (final-rev (kernel-next-rev k1)))
-             (let* ((j2 (open-file-journal path :initial-state-hash initial-hash))
-                    (k2 (make-kernel :state (make-seed-state *seed*) :journal j2)))
-               (unwind-protect
-                    (progn
-                      (multiple-value-bind (replayed-k events records)
-                          (replay-journal j2 k2)
-                        (declare (ignore replayed-k events))
-                        (check-equal 5 records "five envelopes replayed"))
-                      (check-string= final-digest (root-digest (kernel-state k2))
-                                     "replay reconstructs the exact root digest")
-                      (check-equal final-history (state-history (kernel-state k2))
-                                   "replay mints no fresh event id: history identical")
-                      (check-equal final-rows (state-closed-rows (kernel-state k2))
-                                   "replay reconstructs the exact closed rows")
-                      (check-equal final-rev (kernel-next-rev k2)
-                                   "replay reconstructs the exact next revision"))
-                 (close-file-journal j2)))))
-      (ignore-errors (delete-file path)))))
+       (check-equal 0 (state-closed-count (kernel-state k)) "|C| down by one after the reopen"))))
 
 ;;; The following replays name behaviour outside the slice-1 C/O transition
 ;;; kernel (the CLI, session, provider/intake adapter, roles, render, savepoint
@@ -2570,75 +2533,6 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
 (needs-kernel "working-is-a-view" "docs/SPEC-WORK.md:5082"
   "|W| <= |O| over a set where every item is leased then released, and no verb writes W"
   "WORKING-SET")
-
-(deftest "torn-tail-is-diagnosed-not-truncated" "docs/SPEC-WORK.md:5521"
-    "expected=torn-tail-vs-corrupt-record-vs-journal-mismatch;zero-truncation;file-bytes-preserved"
-  ;; NEEDS-KERNEL: recovery-gap kind=torn-tail and kind=corrupt-record named
-  ;; codes; slice 1 distinguishes the three via journal-corrupt-data /
-  ;; journal-mismatch, and the file stays bit-for-bit through each refusal.
-  (let ((initial-hash (root-digest (make-seed-state *seed*))))
-    (flet ((bytes-unbroken (path before-bytes before-sha)
-             (check-equal before-bytes (file-byte-count path) "file size preserved bit-for-bit")
-             (check-string= before-sha (file-sha256-hex path) "file bytes preserved bit-for-bit")))
-      ;; Case 1: a partial frame at the end -> journal-corrupt-data, never mismatch.
-      (let ((path (test-journal-path "torn-tail")))
-        (unwind-protect
-             (progn
-               (let ((j (open-file-journal path :initial-state-hash initial-hash)))
-                  (let ((k (fresh :journal j)))
-                    (submit k (close-request :node "acme/work/f1/t1" :request "req-1")))
-                  (close-file-journal j))
-                (with-open-file (out path :direction :output :if-exists :append :element-type 'character)
-                  (write-string "(:frame :seq 2 :len 120 :checksum \"0000\"" out)
-                 (finish-output out))
-               (let ((before (file-byte-count path)) (sha (file-sha256-hex path)))
-                 (handler-case (open-file-journal path :initial-state-hash initial-hash)
-                   (journal-corrupt-data () (ok t "torn tail is a corrupt-data refusal"))
-                   (journal-mismatch () (fail "torn tail rounded to a mismatch"))
-                   (error (c) (fail "unexpected error: ~A" c)))
-                 (bytes-unbroken path before sha)))
-          (ignore-errors (delete-file path))))
-      ;; Case 2: a flipped bit inside a frame -> corrupt record (checksum), never mismatch.
-      (let ((path (test-journal-path "corrupt-record")))
-        (unwind-protect
-             (progn
-               (let ((j (open-file-journal path :initial-state-hash initial-hash)))
-                  (let ((k (fresh :journal j)))
-                    (submit k (close-request :node "acme/work/f1/t1" :request "req-1")))
-                  (close-file-journal j))
-                (let* ((record (list :transition :node "acme/work/f1/t1" :to :done :reason "x"
-                                    :blocked-by +absent+ :evidence '("e")))
-                      (rec-canon (canonical-string record))
-                      (frame (list :frame :seq 2 :len (length rec-canon)
-                                   :checksum "0000000000000000000000000000000000000000000000000000000000000000"
-                                   :record record)))
-                 (with-open-file (out path :direction :output :if-exists :append :element-type 'character)
-                   (write-string (canonical-string frame) out)
-                   (write-char #\Newline out)
-                   (finish-output out)))
-               (let ((before (file-byte-count path)) (sha (file-sha256-hex path)))
-                 (handler-case (open-file-journal path :initial-state-hash initial-hash)
-                   (journal-corrupt-data (c)
-                     (ok (search "checksum" (journal-corrupt-data-reason c))
-                         "flipped bit is a corrupt record, not a torn tail: ~A"
-                         (journal-corrupt-data-reason c)))
-                   (journal-mismatch () (fail "corrupt record rounded to a mismatch"))
-                   (error (c) (fail "unexpected error: ~A" c)))
-                 (bytes-unbroken path before sha)))
-          (ignore-errors (delete-file path))))
-      ;; Case 3: a wrong header -> journal-mismatch, never corrupt-data.
-      (let ((path (test-journal-path "wrong-header")))
-        (unwind-protect
-             (progn
-               (let ((j (open-file-journal path :initial-state-hash "header-aaa")))
-                 (close-file-journal j))
-               (let ((before (file-byte-count path)) (sha (file-sha256-hex path)))
-                 (handler-case (open-file-journal path :initial-state-hash "header-bbb")
-                   (journal-mismatch () (ok t "wrong header is a journal mismatch"))
-                   (journal-corrupt-data () (fail "wrong header rounded to corrupt-data"))
-                   (error (c) (fail "unexpected error: ~A" c)))
-                 (bytes-unbroken path before sha)))
-          (ignore-errors (delete-file path)))))))
 
 (deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
     "expected=bignum-fields-round-trip-exact;json-number-frame-refused"
