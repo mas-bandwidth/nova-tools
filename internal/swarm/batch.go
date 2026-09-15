@@ -287,6 +287,7 @@ func Batch(in BatchInput) int {
 		missing  bool   // RESULT.md was not there at all
 		jobDir   string // the job directory, for the missing-result reason
 		noResult bool   // missing RESULT.md on a clean exit (rc==0)
+		inLimit  bool   // the card's own usage row named end=input-limit
 	}
 	rows := make([]row, len(cards))
 	for i, c := range cards {
@@ -297,6 +298,10 @@ func Batch(in BatchInput) int {
 		totalOut += rows[i].out
 		total += rows[i].usd
 		rows[i].logLines = logOutputLines(cardLogPath(in.Root, c.slot, c.label))
+		// A card whose job was refused for size is its own score, `reason=input-limit`: the
+		// class is the provider's own structured signal, and the batch names it rather than
+		// reading a missing result as a plain abstain (issue #163).
+		rows[i].inLimit = cardEndsInputLimit(cardLogPath(in.Root, c.slot, c.label))
 		// A card the idle monitor killed is its own score, an ABSTAIN that names its reason,
 		// not a missing-result abstain: the card was not hung by its work but stopped growing.
 		if procs[i].idleKilled {
@@ -305,6 +310,11 @@ func Batch(in BatchInput) int {
 			rows[i].idleLog = procs[i].idleLog
 			abstain++
 			idle++
+			continue
+		}
+		if rows[i].inLimit {
+			rows[i].state = "abstain"
+			abstain++
 			continue
 		}
 		path := filepath.Join(in.Root, strconv.Itoa(c.slot), "jobs", c.label, "RESULT.md")
@@ -340,6 +350,9 @@ func Batch(in BatchInput) int {
 		if rows[i].state == "done" {
 			continue
 		}
+		if rows[i].inLimit {
+			continue
+		}
 		if rows[i].logLines == 0 {
 			rows[i].stalled = true
 			stalled++
@@ -358,6 +371,8 @@ func Batch(in BatchInput) int {
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
 	for _, r := range rows {
 		switch {
+		case r.inLimit:
+			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN reason=input-limit\n", oneline.Field(r.label), r.slot)
 		case r.idle:
 			fmt.Fprintf(in.Stdout, "%s slot=%d: ABSTAIN -- idle %ds (%s)\n", oneline.Field(r.label), r.slot, idleSeconds, r.idleLog)
 		case r.stalled:
@@ -476,6 +491,19 @@ func readCardUsage(path string) (in, out int, usd float64) {
 	out, _ = row.Int("tokens_out")
 	usd, _ = strconv.ParseFloat(strings.TrimSpace(row["usd"]), 64)
 	return in, out, usd
+}
+
+// cardEndsInputLimit reports whether a card's own log carries the structured signal the
+// supervisor recorded when the job was refused for size -- `INPUT LIMIT class=… value=…
+// limit=…` -- the FIELD the batch reads to score the card `reason=input-limit` rather than a
+// plain abstain (issue #163). No prose rule is asked to decide it.
+func cardEndsInputLimit(logPath string) bool {
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		return false
+	}
+	_, ok := ReadInputLimitSignal(raw)
+	return ok
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }

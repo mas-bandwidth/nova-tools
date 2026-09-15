@@ -789,3 +789,39 @@ func readTestFile(t *testing.T, path string) string {
 	}
 	return string(raw)
 }
+
+// ISSUE #163: a card whose job was refused for size is scored reason=input-limit, read from
+// the STRUCTURED signal the supervisor recorded, not from prose over the transcript. The
+// runner writes the one line -- `INPUT LIMIT class=token value=12345 limit=8192` -- into the
+// card's native.log and no RESULT.md, and the gather names the class instead of a plain
+// missing-result abstain.
+func TestBatchScoresInputLimit(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\ndone and green"},
+		{"b", "RESULT: b\nMISSING"},
+	})
+	runner := filepath.Join(dir, "runner-inputlimit.sh")
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"if [ \"$line2\" = \"MISSING\" ]; then printf '%s\\n' 'INPUT LIMIT class=token value=12345 limit=8192' > \"$root/$slot/native.log\"; exit 0; fi\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch with an input-limited card is not green, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "b slot=2: ABSTAIN reason=input-limit") {
+		t.Fatalf("an input-limited card scores reason=input-limit:\n%s", out)
+	}
+	if !strings.Contains(out, "a slot=1: done and green") {
+		t.Fatalf("a card that fits still scores its line 2:\n%s", out)
+	}
+}

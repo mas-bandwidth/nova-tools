@@ -151,6 +151,25 @@ func main() {
 	// on two of forty Freddy jobs (2026-09-12): the ANSI is there because the quote a
 	// triage line carries has to be readable with it in the log. The words `rate limit`
 	// are in the sentence, which is why this death was read as a 429 and retried.
+	// THE STRUCTURED SIGNAL (issue #163): a harness adapter records the provider's refusal as
+	// a FIELD -- class, value, limit -- instead of prose, and this line is what the supervisor
+	// reads and re-emits, so no heuristic over the transcript is asked to decide the class.
+	// It is checked BEFORE the prose directive, whose name is its own prefix.
+	if arg, ok := directive(prompt, "FAKE-INPUT-LIMIT-SIGNAL"); ok {
+		fields := strings.Fields(arg)
+		class, value, limit := "token", "12345", "8192"
+		if len(fields) > 0 {
+			class = fields[0]
+		}
+		if len(fields) > 1 {
+			value = fields[1]
+		}
+		if len(fields) > 2 {
+			limit = fields[2]
+		}
+		fmt.Fprintf(os.Stderr, "INPUT LIMIT class=%s value=%s limit=%s\n", class, value, limit)
+		os.Exit(1)
+	}
 	if _, ok := directive(prompt, "FAKE-INPUT-LIMIT"); ok {
 		fmt.Fprintf(os.Stderr, "\x1b[91m\x1b[1mError: \x1b[0mRate limit reached: input token limit exceeded\n")
 		os.Exit(1)
