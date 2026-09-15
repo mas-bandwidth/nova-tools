@@ -555,10 +555,10 @@ func TestWaitWritesBeatEachTick(t *testing.T) {
 
 // THE BEAT CARRIES A LEASE, and it is written on exit as well as on every tick. A wait
 // that returns hands the harness the note and then is done: between that return and the
-// next wait there is a gap where the duty process is alive but no beat is written, and
+// next wait there is a gap where the coordinator process is alive but no beat is written, and
 // over a slow note the gap outruns --window and the line reads asleep to `nova-wake
 // awake`. So the exit beat extends until=now+--beat-lease out over that gap, and the
-// lease is what keeps a working duty cycle reading awake.
+// lease is what keeps a working coordinator cycle reading awake.
 func TestWaitWritesLeaseOnExit(t *testing.T) {
 	t.Parallel()
 	hermetic(t)

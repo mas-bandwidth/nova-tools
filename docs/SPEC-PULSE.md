@@ -191,7 +191,7 @@ Those lines are the string `nova-pulse help` prints, byte for byte. `--timeout <
 
 ## Handoff
 
-The duty shift is the coordinator's turn on a queue, and it ends by handoff and begins again
+The coordinator shift is the coordinator's turn on a queue, and it ends by handoff and begins again
 by takeover. `handoff --to <name>` ends the shift: it writes the `SHIFT END` line, stops the
 loop, releases the `OWNER` lock (name, host, pid, since), writes a `HANDOFF` record (last
 `WIDTH`, in-flight cards by bench, pending, escalations open, benches and state) and posts
@@ -199,7 +199,7 @@ one bus note to the successor carrying the record. It refuses mid-harvest — it
 harvest first — and refuses when the successor is asleep by `nova-wake awake`, and then
 prints `HANDOFF OK`. `takeover --as <name>` refuses when `OWNER` names a live process on a
 reachable host (`TAKEOVER REFUSED owner=<name> pid=<n> host=<h>`); a stale lock is taken with
-one `NOTE` line, then the loop and a duty shift start on the same queue and it prints
+one `NOTE` line, then the loop and a coordinator shift start on the same queue and it prints
 `TAKEOVER OK`. When nova-work is open, `handoff` also moves the coordinator ownership record
 in the tree — generation, token, fencing, the `:handoff` event SPEC-WORK names.
 
@@ -319,18 +319,18 @@ after line 2. `<head>` is the repo's default-branch head at cut time, read once 
 - **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `--then`;
   the alarm is `width`, run by nova-wake or a person.
 
-## The duty tier
+## The coordinator tier
 
 Stella's answer to Glenn's *"I want the intelligence; I don't want to spend it sending out jobs
 and reading results"* is a third tier between planning and work. **Planning** is a person and
-the strong model: decisions, specs, rules; its output is cards and notes. **Duty** is a bounded
+the strong model: decisions, specs, rules; its output is cards and notes. **Coordinator** is a bounded
 controller on the cheapest qualified model: it owns the bus wait, harvests, triages abstains
 and HOLD reads by rewriting cards from templates, files dogfood issues, cuts fix cards, merges
 non-draft PRs on an approving read plus green CI, and escalates a decision as one line.
-**Work** is swarms and local models. Duty is where the intelligence is spent once and the
+**Work** is swarms and local models. Coordinator is where the intelligence is spent once and the
 scatter-gather is spent never.
 
-Duty executes an approved finite policy and never expands it; it is the single owner of the bus
+Coordinator executes an approved finite policy and never expands it; it is the single owner of the bus
 wait; it keeps one card per work item, deduplicated on the contract line; it revalidates the PR
 head before any side effect; it runs an explicit shift length and ends with a handoff line; quiet
 time makes no model call and sends no status note; state is published mechanically (the `WIDTH`
@@ -351,9 +351,9 @@ The handoff at the end of a shift:
 SHIFT END cycles=<n> decisions=<n> escalations=<n>
 ```
 
-Replays: `duty-never-expands-policy`, `duty-quiet-time-makes-no-call`,
-`duty-dedups-on-contract-line`, `duty-revalidates-head-before-merge`,
-`duty-never-merges-draft`, `duty-shift-ends-with-handoff`.
+Replays: `coordinator-never-expands-policy`, `coordinator-quiet-time-makes-no-call`,
+`coordinator-dedups-on-contract-line`, `coordinator-revalidates-head-before-merge`,
+`coordinator-never-merges-draft`, `coordinator-shift-ends-with-handoff`.
 
 ## Tests this spec demands
 
@@ -449,7 +449,7 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
 27. `takeover-refuses-live-owner`: `OWNER` names a live process on a reachable host —
     `TAKEOVER REFUSED owner=<name> pid=<n> host=<h>`, exit 2, nothing taken.
 28. `takeover-takes-stale-lock-with-note`: `OWNER` names a dead process or an unreachable
-    host — the lock is taken, one `NOTE` line says so, and the loop and a duty shift start on
+    host — the lock is taken, one `NOTE` line says so, and the loop and a coordinator shift start on
     the same queue.
 29. `takeover-inherits-queue`: the taken `HANDOFF` record's inflight, pending and
     escalations are inherited and printed as `TAKEOVER OK from=<name>

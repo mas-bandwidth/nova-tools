@@ -384,7 +384,7 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 		switch {
 		case haveBeat && until > 0 && until > now:
 			// The beat carries a lease that has not run out: the line is between two waits
-			// (or mid-wait), its cursor and beat stamp may both be old, but its duty
+			// (or mid-wait), its cursor and beat stamp may both be old, but its coordinator
 			// process promised to be alive until `until`, so it reads awake.
 			source = "bus-beat"
 			ageText = strconv.FormatInt(now-bt, 10)

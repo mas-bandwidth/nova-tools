@@ -3845,8 +3845,8 @@ has, and this section points rather than restates:
    acknowledge completion upstream; **partial child success never closes the parent or the mapped
    external issue** — *Evidence*, *Cost*, and *The envelope up* below.
 
-What no other section carried, and this one does: **the coordinator's notes**, which duty 1
-reads before it decides and duty 2 reads before it writes a brief; **the six gates** a delegation
+What no other section carried, and this one does: **the coordinator's notes**, which the coordinator
+reads before it decides and before it writes a brief; **the six gates** a delegation
 passes, read as one route; **the decision packet** a child's result comes back as; and **the edge
 contract** of the tree, the same at every hop. The current goal, which a coordinator on any model
 loads first, is *The current goal* under *The data*, folded there by #340, and this section
@@ -4071,7 +4071,7 @@ content, acceptance contract and dependencies are unchanged, never across an unc
 (rule 5; lessons rules 7 and 8); (6) the whole unit is measured and the result integrated — usage
 counts parent, descendants, coordination, review, retries and repair once, missing usage is
 unknown and never zero (rule 6), the child's result is integrated against the parent's acceptance,
-and partial child success never closes the parent (duty 5). Rules 7 and 8, promotion and
+and partial child success never closes the parent (Collect above). Rules 7 and 8, promotion and
 regression, are the policy's own and not a delegation's.
 
 ### Decision packets
@@ -4116,7 +4116,7 @@ distilled learning in its own words with its evidence, folded by the parent into
 **Finality rises with the tier and is never final below the seat**: a child's `done` is a claim
 against the parent's acceptance until the parent verifies it itself, with evidence bound to the
 criteria and *"not merely a worker's success claim"* (5672006742), and a partial result closes
-nothing (duty 5). **(Rowan's decision, for review, on ideas#778)**: the walls are strongest at the
+nothing (Collect above). **(Rowan's decision, for review, on ideas#778)**: the walls are strongest at the
 cheapest leaves; the tree is shallow and wide; and a layer is measured by whether the parent can
 still open the floor's evidence and find what the summary dropped. Escalation is the same edge in
 reverse: a hold, a question or an exception the child cannot decide rises as a packet with its
