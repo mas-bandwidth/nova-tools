@@ -74,6 +74,7 @@ usage:
         [--advance [--attempts <n>] [--no-push]]
         [--diagnostics]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
+  nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
   nova-bus names --bus <dir>
 
@@ -259,6 +260,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdInbox(rest, stdout, stderr, now)
 	case "receipt":
 		return cmdReceipt(rest, stdout, stderr, now)
+	case "close":
+		return cmdClose(rest, stdout, stderr, now)
 	case "wait":
 		return cmdWait(rest, stdout, stderr, now)
 	case "check":
@@ -1068,6 +1071,117 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return 0
 }
 
+// cmdClose is `close --before`, the whole backlog at once: every open note dated before the
+// stamp is closed by one receipt note each, batched in one commit. It is the other end of
+// the INBOX OPEN `remedy=inbox --advance` line -- `--advance` draws a line past the history
+// and leaves the notes behind it; `close` answers them, each with a Re line that removes it
+// from the reader's open list for good.
+func cmdClose(args []string, stdout, stderr io.Writer, now time.Time) int {
+	f := newFlags("close")
+	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
+	as := f.fs.String("as", "", "which participant you are (required)")
+	beforeFlag := f.fs.String("before", "", "every open note addressed to you and dated before this RFC 3339 instant is closed by a receipt (required)")
+	dryRun := f.fs.Bool("dry-run", false, "report what would be closed and write nothing")
+	remote := f.fs.String("remote", "", "the git remote to push to (required to write)")
+	branch := f.fs.String("branch", "", "the branch the bus lives on (required to write)")
+	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
+	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
+	noPush := f.fs.Bool("no-push", false, "commit but do not push")
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "before": beforeFlag}) {
+		return 2
+	}
+	if !f.attempts(*attempts, stderr) {
+		return 2
+	}
+	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
+		return 2
+	}
+	before, err := time.Parse(time.RFC3339, *beforeFlag)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-bus close: --before %q is not an RFC 3339 instant; refusing to guess\n", *beforeFlag)
+		return 2
+	}
+	if !*dryRun {
+		if !f.gitArgs(*remote, *branch, stderr) {
+			return 2
+		}
+		if strings.TrimSpace(*remote) == "" || strings.TrimSpace(*branch) == "" {
+			fmt.Fprint(stderr, "nova-bus close: writing onto the bus needs --remote and --branch; refusing to guess (or pass --dry-run)\n")
+			return 2
+		}
+	}
+	if err := bus.IsRepoRoot(*busDir); err != nil {
+		fmt.Fprintf(stderr, "nova-bus close: %s\n", oneline.Err(err))
+		return 2
+	}
+	t, ok := openBus("close", *busDir, stderr)
+	if !ok {
+		return 2
+	}
+	me, found := t.Config.Lookup(*as)
+	if !found {
+		fmt.Fprintf(stderr, "nova-bus close: --as %q names no one on this bus (known: %s)\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
+		return 2
+	}
+	plan, err := bus.PlanClose(t, me, before, now)
+	if err != nil {
+		fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(err))
+		return 1
+	}
+	if *dryRun {
+		fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=-\n", len(plan.Prepared), plan.Kept)
+		return 0
+	}
+	if len(plan.Prepared) == 0 {
+		fmt.Fprintf(stdout, "CLOSE OK closed=0 kept=%d commit=-\n", plan.Kept)
+		return 0
+	}
+	if err := checkoutReady(*busDir, *branch, nil); err != nil {
+		fmt.Fprintf(stderr, "CLOSE FAIL: %s\n", oneline.Err(err))
+		return 1
+	}
+	if err := levelWithRemote(*busDir, *remote, *branch, *noPush); err != nil {
+		fmt.Fprintf(stderr, "CLOSE REFUSED: %s\n", oneline.Err(err))
+		return 1
+	}
+	paths := make([]string, 0, len(plan.Prepared)+1)
+	for i := range plan.Prepared {
+		p := &plan.Prepared[i]
+		if err := p.Save(*busDir); err != nil {
+			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
+			return 1
+		}
+		if err := p.AppendIndex(*busDir); err != nil {
+			fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(p.Path), oneline.Err(err))
+			return 1
+		}
+		paths = append(paths, p.Path)
+	}
+	paths = append(paths, bus.IndexPath(me.Lane))
+	wroteAttrs, err := bus.EnsureMergeAttributes(*busDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "CLOSE FAIL %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
+		return 1
+	}
+	if wroteAttrs {
+		paths = append(paths, bus.AttributesName)
+	}
+	res, err := commit(*busDir, me, paths,
+		bus.WithTrailer(plan.Message(me), bus.TrailerClose),
+		*remote, *branch, *attempts, *noPush)
+	if err != nil {
+		fmt.Fprintf(stderr, "CLOSE FAIL: %s\n", oneline.Err(err))
+		printTranscript(stderr, err)
+		return 1
+	}
+	sha8 := res.Commit
+	if len(sha8) > 8 {
+		sha8 = sha8[:8]
+	}
+	fmt.Fprintf(stdout, "CLOSE OK closed=%d kept=%d commit=%s\n", len(plan.Prepared), plan.Kept, oneline.Field(sha8))
+	return 0
+}
+
 func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("inbox")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
@@ -1593,8 +1707,13 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// THEN ONE LINE FOR THE BACKLOG, whichever way the run was asked. It was printed only on
 	// the runs that did NOT list, which meant the two shapes of return had no line in common
 	// and a reader parsing `--open` output could not find the count at all. One line, always,
-	// under one name.
-	fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d\n", len(res.Open), heard)
+	// under one name. The large-list sentence used to be a SECOND line, past a size, with a
+	// whole command pasted into it; a reader parsing OPEN could not tell small from large
+	// without knowing the threshold, and the command duplicated every run's own flags. One
+	// line carries both now: `large=` is the sentence, and `remedy=` names the one whole-
+	// backlog way out without spelling a command the caller already built.
+	fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d large=%t remedy=inbox --advance\n",
+		len(res.Open), heard, len(res.Open) > o.openWarn)
 	// LISTING THE CARRIED NOTES IS A CHOICE, and the default is not to. A reader carrying five
 	// hundred notes gets five hundred lines on every run, and the one new note is in the
 	// middle of them -- which is the listing-nobody-reads failure the switch-day line exists
@@ -1620,16 +1739,8 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// growing: `carrying=74` is a number, and a number is not a sentence. The line that
 	// carried 74 was answering every one of those notes by hand -- and none of the answers
 	// carried a Re line, so none of them closed anything, and nothing anywhere said so.
-	//
-	// It is a NOTE and not a refusal, like INBOX SWITCH above and for the same reason: the
-	// run does what it was asked, and the three ways out are named with this run's own
-	// values in them. Two of them are per note -- answer it, or say heard -- and the third
-	// is the whole backlog at once, which is the switch-day line drawn now.
-	if len(res.Open) > o.openWarn {
-		fmt.Fprintf(stdout, "INBOX OPEN carrying=%d is large; answer with Re: <id>, receipt --note <id>, or start over: nova-bus inbox --bus %s --as %s --receipt-max-words %d --full --legacy-now --advance --remote %s --branch %s\n",
-			len(res.Open), oneline.Quote(o.busDir), oneline.Quote(me.Name), o.maxWords,
-			oneline.Quote(orPlaceholder(o.remote, "<remote>")), oneline.Quote(orPlaceholder(o.branch, "<branch>")))
-	}
+	// The word for it is now `large=` on the one OPEN line above, and the remedy is a verb:
+	// `nova-bus close --before` receipts a whole backlog in one commit.
 	// THE TWO NUMBERS, and why they are both here under the names they are printed under
 	// elsewhere. `carrying=` on the SCOPE and OPEN lines is the size of the OPEN LIST -- every
 	// entry on it, the heard and the unreadable included -- and `open=` is what is still
