@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -39,6 +40,14 @@ func refuse(w io.Writer, reason string) int {
 	fmt.Fprintf(w, "PACKET REFUSED: %s\n", oneline.Escape(reason))
 	return 2
 }
+
+type foldErr struct {
+	file string
+	err  error
+}
+
+func (e *foldErr) Error() string { return e.err.Error() }
+func (e *foldErr) Unwrap() error { return e.err }
 
 func run(args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -254,6 +263,11 @@ func packet(args []string, out, errOut io.Writer) int {
 	allVerdictsSec, priorCount := formatAllVerdicts(entry.Reads, *maxFlag, *lane, *pr, *branch)
 	openFindingsSec, openCount, err := formatOpenFindings(*lane, id, *maxFlag, *pr, *branch)
 	if err != nil {
+		var fe *foldErr
+		if errors.As(err, &fe) {
+			fmt.Fprintf(errOut, "PACKET FOLD file=%s: %s\n", oneline.Field(fe.file), oneline.Escape(fe.err.Error()))
+			return 2
+		}
 		return refuse(errOut, err.Error())
 	}
 	rulesTouchedSec := fmt.Sprintf("## Rules touched\n%s\n", ruleText)
@@ -282,6 +296,15 @@ func packet(args []string, out, errOut io.Writer) int {
 	_, _, cut, body, err := buildDiffAndNotIncluded(fileDiffs, rangeText, *maxBytes, assembleBody)
 	if err != nil {
 		return refuse(errOut, err.Error())
+	}
+	if *maxFlag > 0 && priorCount > *maxFlag {
+		entryFlag := ""
+		if *pr > 0 {
+			entryFlag = fmt.Sprintf("--pr %d", *pr)
+		} else {
+			entryFlag = fmt.Sprintf("--branch %s", shellQuote(*branch))
+		}
+		fmt.Fprintf(out, "PACKET MORE kind=prior shown=%d total=%d nova-review packet --lane %s %s --max 0\n", *maxFlag, priorCount, shellQuote(*lane), entryFlag)
 	}
 	return writePacket(*dest, body, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(body), cut, false)
 }
@@ -1110,7 +1133,7 @@ func formatOpenFindings(lane, entryID string, max int, pr int, branch string) (s
 		if strings.HasPrefix(e.Name(), "answer-") {
 			var ans rawAnswerRecord
 			if err := json.Unmarshal(b, &ans); err != nil {
-				return "", 0, fmt.Errorf("could not decode answer record %s: %w", e.Name(), err)
+				return "", 0, &foldErr{file: p, err: fmt.Errorf("could not decode answer record: %w", err)}
 			}
 			answers[ans.Finding] = ans
 		} else {
@@ -1126,7 +1149,7 @@ func formatOpenFindings(lane, entryID string, max int, pr int, branch string) (s
 		}
 		var rec rawReviewRecord
 		if err := json.Unmarshal(b, &rec); err != nil {
-			return "", 0, fmt.Errorf("could not decode review record %s: %w", p, err)
+			return "", 0, &foldErr{file: p, err: fmt.Errorf("could not decode review record: %w", err)}
 		}
 		verdicts = append(verdicts, rec)
 	}
