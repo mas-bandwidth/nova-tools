@@ -179,6 +179,7 @@ nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <di
 nova-pulse handoff --to <name> --root <dir>
 nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>
+nova-pulse status  --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse version
 nova-pulse help
 ```
@@ -206,6 +207,39 @@ The `OWNER` lock and the `HANDOFF` record live under `<root>/queue/` as files, b
 tab-separated. `OWNER` is `name`, `host`, `pid`, `since`. `HANDOFF` is `to`, `from`,
 `width` (the last `PULSE WIDTH` line), `in-flight` (cards by bench), `pending`, `escalations`,
 `benches` and `state`.
+
+## Status
+
+`nova-pulse status --queue <dir> --roots <dirs> [--day <d>]` is the one-verb answer to the
+all-day questions — what runs where, how wide, at max throughput, what landed and who adopted
+it, what is in flight and what remains and how long, what new work appeared, are we converging.
+It prints, no model, at most 20 lines, eight line kinds, each one line, counts not lists:
+
+- `WIDTH <bench>`, one per bench in scope — `running` jobs, `slots`, `load`, `headroom`.
+- `QUEUE` — `pending`, `gated` (waiting on a merge or a hold), `launched`, `done`, `failed`.
+- `RATE` — `cards_per_hour`, `p50_s`, `p90_s`, `usd_per_card`, `parallelism`, from `usage.tsv`.
+- `REMAINING` — `queue` rows, `unread_prs`, `dirty_prs`, `uncarded_issues`, `hours`, in scope only.
+- `CONTRACTION` — cards `cut/done`, prs `opened/merged`, issues `filed/closed`, for the last hour and the day, counted, never from a report body.
+- `ADOPTION <friend>`, one per friend, coordinator included — `version`, `receipt`, `edges`, from the ADOPT files and bus receipts.
+- `OPEN` — `dogfood`, `holds`, `escalations`.
+- `TOOLS` — `merged_since_adoption` and the names, from `gh` cached per tick.
+
+Sources: the queue, `usage.tsv`, the ADOPT files, bus receipts, `gh` (cached per tick). In
+nova-work, `check` carries the same lines from the tree and the journal (nodes minted per node
+closed, remaining by depth, completion by epic) once the tree is the pool (#500). Prototype:
+`bin/status.sh`. The grammar, one line each, counts not lists:
+
+```
+STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
+STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
+STATUS RATE cards_per_hour=<n> p50_s=<n> p90_s=<n> usd_per_card=<n> parallelism=<n>
+STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
+STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed>
+STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed>
+STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
+STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
+STATUS TOOLS merged_since_adoption=<n> <names>
+```
 
 ## Exit codes and the output grammar
 
@@ -420,6 +454,19 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
 29. `takeover-inherits-queue`: the taken `HANDOFF` record's inflight, pending and
     escalations are inherited and printed as `TAKEOVER OK from=<name>
     inherited=<inflight/pending/escalations>`.
+30. `status-is-bounded`: at the largest plausible state — every bench and every friend in
+    scope — `status` prints at most `--max` lines over both streams with one `MORE` line per
+    capped kind; every value is one `internal/oneline` token.
+31. `status-contraction-from-counts`: the `CONTRACTION` hour and day lines equal the counted
+    cards `cut/done`, prs `opened/merged` and issues `filed/closed` from the queue,
+    `usage.tsv` and `gh`; a line built from a list or a report body is the mutation that
+    matters.
+32. `status-adoption-includes-coordinator`: the `ADOPTION` lines name every friend, the
+    coordinator included, one line each with `version`, `receipt` and `edges`; a missing
+    coordinator line is red.
+33. `status-remaining-counts-in-scope-only`: `REMAINING` counts queue rows, unread PRs, dirty
+    PRs and uncarded issues in scope only — a bench or friend outside `--roots <dirs>` is
+    nowhere on the line.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 
