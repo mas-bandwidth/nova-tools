@@ -38,7 +38,7 @@ Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WOR
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | 52 | 6 | 0 | 0 | 1 | 57 |
 
-Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation, ten efficiency-policy, three recursive-grouping and one fleet acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
+Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation, ten efficiency-policy, three recursive-grouping, one fleet and two efficiency-lessons acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
 Do not count removal as completion. These counts track inventory movement, not estimated engineering effort.
 
 ## Open questions
@@ -51,7 +51,7 @@ Do not count removal as completion. These counts track inventory movement, not e
 
 ## Research and Development (R&D)
 
-All active engineering and research items outside the v1 product feature denominator are organized in this explicit R&D register. These items track active prototypes, compiler and runtime hardening, protocol companions, decision packets, and adapter explorations across the team. Items in this register do not grant completion credit toward the v1 product denominator (57 features and 201 acceptance items). Current evidence snapshot at 2026-09-15T01:40:00Z (main `16a1d479`, spec `efb6dbe7`); PR #335 (V2-F05 coordinator notes, draft 1) merged at 45b44bdb and has no register row.
+All active engineering and research items outside the v1 product feature denominator are organized in this explicit R&D register. These items track active prototypes, compiler and runtime hardening, protocol companions, decision packets, and adapter explorations across the team. Items in this register do not grant completion credit toward the v1 product denominator (57 features and 203 acceptance items). Current evidence snapshot at 2026-09-15T01:40:00Z (main `16a1d479`, spec `efb6dbe7`); PR #335 (V2-F05 coordinator notes, draft 1) merged at 45b44bdb and has no register row.
 
 | ID | Work Item | Status | Owner | Next Gate | Source / Evidence |
 |---|---|:---:|:---:|:---:|---|
@@ -803,8 +803,9 @@ Prerequisites: E08-F05, E03-F04.
 - [ ] Pin rate/config revisions and include coordinator, review and rework overhead
 - [ ] complete-cost-lineage: join parent, child, retry and failed-attempt receipts once; avoid counting cache/reasoning subsets again, implementation cost separate and gaps unknown
 - [ ] cache-aware-context-choice: price cache read/write categories, service tiers and reset rebuilds; refuse missing decision, adapter or evidence inputs and compare matched accepted work
+- [ ] gas-town-efficiency-accounting: enforce root-only step records, inline checklists and durable next-triggers to eliminate empty pulse reruns and token burn
 
-Source sections: Cost; Model knowledge informs scheduling; Retrospective required before production implementation; Efficiency policy (SPEC-WORK.md@685b7c2).
+Source sections: Cost; Model knowledge informs scheduling; Retrospective required before production implementation; Efficiency policy (SPEC-WORK.md@685b7c2); Efficiency: lessons absorbed 2026-09-15.
 
 **E10-F03 — Generated, golden, property and fault suites**
 
@@ -835,8 +836,9 @@ Prerequisites: E07-F05, E10-F02, E10-F03.
 - [ ] Test lease-only answer for who is working on C and unsupported number detection
 - [ ] Pin scenarios, owners and commands before implementation; require exact-revision correctness and measured operational results before adoption
 - [ ] evidence-before-adoption: refuse automatic promotion on missing baseline or coverage, unmatched quality or retrospective correlation; require a qualified prospective result
+- [ ] efficiency-lessons-gate: enforce prime read-only projection under --max-bytes, decompose --pour inline checklists, tripped node reason fence, and delegate mode role restrictions
 
-Source sections: The measurement that decides; Agreement and lock gate; Efficiency policy (SPEC-WORK.md@685b7c2).
+Source sections: The measurement that decides; Agreement and lock gate; Efficiency policy (SPEC-WORK.md@685b7c2); Efficiency: lessons absorbed 2026-09-15.
 
 **E10-F07 — Validator and repair modes**
 
@@ -864,7 +866,7 @@ Source sections: Output grammar; The verbs; Required test suites.
 
 Issue [#321](https://github.com/mas-bandwidth/nova-tools/issues/321) (including coordinator delegation notes and shared goal requirements confirmed in [comment 5672006742](https://github.com/mas-bandwidth/nova-tools/issues/321#issuecomment-5672006742)) and [PR #335](https://github.com/mas-bandwidth/nova-tools/pull/335) define the scope for future v2 architecture: arbitrary real/virtual/mixed node hierarchies, durable repository-backed virtual nodes, mapped GitHub completion return paths, personal/group coordinator notes, and set/retrieve/update operations for the shared current goal across models and harnesses.
 
-All v2 capabilities are grouped into this explicit epic outside the v1 product feature denominator. The v1 denominator remains strictly **57 features and 201 acceptance items** (5 partial, 0 verified).
+All v2 capabilities are grouped into this explicit epic outside the v1 product feature denominator. The v1 denominator remains strictly **57 features and 203 acceptance items** (5 partial, 0 verified).
 
 | ID | Feature Area / Acceptance Item | Extends | Status | Owner | Next Gate | Source |
 |---|---|---|:---:|:---:|:---:|---|
