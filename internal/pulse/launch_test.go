@@ -3,6 +3,7 @@ package pulse
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -77,7 +78,7 @@ func TestLaunchRefusesUnderSlots(t *testing.T) {
 	cards, _ := writeCards(t, root, 8)
 
 	code, out, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 4, Deadline: "120",
+		Cards: cards, Root: root, Slots: 4, Deadline: "120", Files: 8, Tokens: "unmetered",
 		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
 	})
 
@@ -105,7 +106,7 @@ func TestLaunchQueuesRemainder(t *testing.T) {
 	cards, paths := writeCards(t, root, 8)
 
 	code, out, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 4, Deadline: "120", Queue: true,
+		Cards: cards, Root: root, Slots: 4, Deadline: "120", Files: 8, Tokens: "unmetered", Queue: true,
 		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
 	})
 
@@ -154,8 +155,17 @@ func TestLaunchQueuesRemainder(t *testing.T) {
 	if !strings.Contains(lines[0], "--label pulse-"+id) {
 		t.Fatalf("argv lacks --label pulse-%s: %q", id, lines[0])
 	}
-	if !strings.Contains(lines[0], "--then nova-pulse harvest --id "+id+" --root "+root) {
-		t.Fatalf("argv lacks --then harvest: %q", lines[0])
+	if !strings.Contains(lines[0], "--files 8") {
+		t.Fatalf("argv lacks --files 8: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "--tokens unmetered") {
+		t.Fatalf("argv lacks --tokens unmetered: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "--deadline 2m0s") {
+		t.Fatalf("argv lacks duration-form --deadline: %q", lines[0])
+	}
+	if strings.Contains(lines[0], "--then") {
+		t.Fatalf("argv still carries the removed --then: %q", lines[0])
 	}
 
 	// queue.tsv holds the other four cards.
@@ -180,5 +190,42 @@ func TestLaunchQueuesRemainder(t *testing.T) {
 	}
 	if !strings.Contains(string(pulses), "pulse-"+id+"\tpro\t4") {
 		t.Fatalf("pulses/%s.tsv does not name the batch: %q", id, pulses)
+	}
+}
+
+// TestLaunchInvokesRealSwarmBatchFlags builds the real nova-swarm binary and runs launch's
+// batch invocation through it, asserting the constructed argv is accepted rather than
+// refused as `flag provided but not defined`. The fake nova-swarm above exits 0 on any argv,
+// so it cannot catch an interface mismatch with the real flag set; this one can.
+func TestLaunchInvokesRealSwarmBatchFlags(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	realSwarm := filepath.Join(binDir, "nova-swarm")
+	build := exec.Command("go", "build", "-o", realSwarm, "./cmd/nova-swarm")
+	build.Dir = filepath.Join(wd, "..", "..")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build real nova-swarm: %v\n%s", err, out)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "pool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cards, _ := writeCards(t, root, 1)
+
+	code, out, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Slots: 1, Deadline: "120", Files: 8, Tokens: "unmetered",
+		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
+	})
+
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stderr=%s\nstdout=%s", code, errb, out)
+	}
+	if strings.Contains(errb, "flag provided but not defined") {
+		t.Fatalf("real nova-swarm refused launch's argv: %s", errb)
 	}
 }

@@ -20,7 +20,7 @@ const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> --files <n> --tokens <n>|unmetered [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>
 nova-pulse version
@@ -33,8 +33,8 @@ free slots it may use, and --deadline is the whole pulse's one deadline in whole
 seconds. It makes no model call itself: nova-swarm must be on your PATH.
 
 example:
-  nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
-  nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
+  nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --files 8 --tokens unmetered --queue
+  nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120 --files 8 --tokens unmetered
 
 ./cards.tsv and . there are a pulse root of your own; cmd/nova-pulse/testdata/example-pulse
 in this repo is a fixture the size of a first run, and every line above is run
@@ -164,6 +164,8 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	root := f.fs.String("root", "", "")
 	slots := f.fs.Int("slots", 0, "")
 	deadline := f.fs.String("deadline", "", "")
+	files := f.fs.Int("files", 0, "")
+	tokens := f.fs.String("tokens", "", "")
 	queue := f.fs.Bool("queue", false, "")
 	max := f.fs.Int("max", bounded.Default, "")
 
@@ -178,6 +180,12 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !isDeadlineSeconds(*deadline) {
 		f.add(fmt.Sprintf("--deadline is required and wants a whole number of seconds, got %q", *deadline))
 	}
+	if *files < 1 {
+		f.add(fmt.Sprintf("--files is required and is at least 1, got %d; it is the file budget each batch carries, threaded to nova-swarm batch --files", *files))
+	}
+	if !isTokens(*tokens) {
+		f.add(fmt.Sprintf("--tokens is required; it wants a token budget for each batch, or the word `unmetered` when the provider has no live accounting, got %q", *tokens))
+	}
 	if *max < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
 	}
@@ -185,9 +193,29 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	return pulse.Launch(pulse.LaunchInput{
-		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline, Queue: *queue,
+		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline,
+		Files: *files, Tokens: *tokens, Queue: *queue,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
 	})
+}
+
+// isTokens reports whether s is a positive token budget or the explicit word `unmetered`,
+// matching nova-swarm batch's own --tokens reading.
+func isTokens(s string) bool {
+	if s == "unmetered" {
+		return true
+	}
+	if s == "" {
+		return false
+	}
+	n := 0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n >= 1
 }
 
 func isDeadlineSeconds(s string) bool {
