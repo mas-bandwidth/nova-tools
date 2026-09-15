@@ -28,7 +28,7 @@ BUS OK notes=4 lanes=2 receipts=1 participants=3 warn=0
 
 $ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --full --open
 INBOX SCOPE mode=full cursor=- changed=0 carrying=1
-INBOX OPEN carrying=1 heard=0
+INBOX OPEN carrying=1 heard=0 large=false remedy=inbox --advance
 INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
 INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unreadable=0
 
@@ -45,7 +45,7 @@ we were trying to close.
 Ada
 INBOX BODY END id=ada-0f1e2d3c4b5a
 INBOX BODIES printed=1 bytes=195 oversize=0 gaps=0 drained=true complete=true next=-
-INBOX OPEN carrying=1 heard=0
+INBOX OPEN carrying=1 heard=0 large=false remedy=inbox --advance
 INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
 INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unreadable=0
 
@@ -55,21 +55,21 @@ RECEIPT OK recorded=1 already=0 commit=9750ba9617d4a42a5fdedf372ec70132aa46f936 
 $ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --advance --legacy-now --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=0
 INBOX LEGACY before=2026-09-12T20:15:33Z notes=1 unreadable=0
-INBOX OPEN carrying=0 heard=0
+INBOX OPEN carrying=0 heard=0 large=false remedy=inbox --advance
 INBOX OK as=Bo carrying=0 open=0 notes=0 receipts=0 heard=0 unaddressed=0 unreadable=0
 INBOX CURSOR commit=9750ba9617d4a42a5fdedf372ec70132aa46f936 carrying=0 pushed=true attempts=1
 
 $ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
 
 $ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
-SEND OK id=bo-8405301fd99d path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md commit=57dc978d3ad645788c4236b0da99b1c59f89282d pushed=true attempts=1
+SEND OK id=bo-8405301fd99d path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md commit=57dc978d3ad645788c4236b0da99b1c59f89282d pushed=true attempts=1 wakes=1
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
 INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=3
-INBOX OPEN carrying=3 heard=1
+INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
 INBOX NOTE id=bo-8405301fd99d from=Bo addr=to at=2026-09-12T20:15:41Z path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md: gate
 INBOX HEARD id=bo-222222222222 from=Bo addr=to at=2026-09-09T14:00:00Z path=from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md: The Windows runner skips three steps
 INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-09T13:00:00Z path=from-bo/2026-09-09T1300Z-heard-111111111111.md: Heard
@@ -78,7 +78,7 @@ INBOX CURSOR commit=57dc978d3ad645788c4236b0da99b1c59f89282d carrying=3 pushed=t
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40
 INBOX SCOPE mode=since cursor=57dc978d3ad645788c4236b0da99b1c59f89282d changed=2 carrying=3
-INBOX OPEN carrying=3 heard=1
+INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
 INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
 
 $ nova-bus draft --bus ./bus --as Ada --reply-to gate --body-file reply.md --draft-dir ./drafts --remote origin --branch main
@@ -513,11 +513,11 @@ Cut one card of each kind out of the fixture pool, into a fresh `./cards` and
 two-line `pool.tsv` (a read and a fix candidate) and a `templates` directory
 with `models.tsv`, `read.md` and `fix.md`.
 
-From the nova-tools checkout, against the pool source fixture
-`cmd/nova-pulse/testdata/`: a `sources.tsv` declaring one `roadmap` source, and
-that roadmap — two cells naming a card and one naming none. `pool` reads the
-roadmap, skips the cell without a card, and writes the two candidates it found
-to `./root/pool.tsv`. No network, no model call.
+`pool` runs against the same directory from the other end: a `sources.tsv`
+declaring one `roadmap` source, and that roadmap — two cells naming a card and
+one naming none. It reads the roadmap, skips the cell without a card, and writes
+the two candidates it found to `./root/pool.tsv`. Neither verb reaches a network
+and neither makes a model call.
 
 ```text
 $ nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
