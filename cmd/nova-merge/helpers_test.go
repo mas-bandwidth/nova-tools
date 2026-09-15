@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,6 +43,9 @@ func TestMain(m *testing.M) {
 	for _, name := range []string{"EMAIL", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
 		os.Unsetenv(name)
 	}
+	// The lab fixture newLab copies is built under this directory too, so it is
+	// removed with it.
+	labFixtureRoot = dir
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
@@ -76,18 +81,76 @@ func newLab(t *testing.T) *lab {
 		now:    time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC),
 		build:  "aaaaaaaaaaaa",
 	}
-	l.git(dir, "init", "--bare", "-b", "main", l.remote)
-	l.git(dir, "clone", l.remote, l.work)
-	l.write("README.md", "the fixture\n")
-	l.commit("the first commit")
-	l.git(l.work, "push", "origin", "HEAD:refs/heads/main")
+	// The bare repository, its first commit and the clone are BUILT ONCE for the
+	// process and COPIED here. Building them is six git subprocesses, and 82 newLab
+	// calls in this package made that roughly five hundred git spawns and 98 s of
+	// `go test ./cmd/nova-merge/` (#516, Glenn's two-minute rule). The copy hands out
+	// the same bytes -- same first commit, same update hook -- and each test then owns
+	// its copy outright: it pushes, merges and corrupts it with nothing shared.
+	labFixtureOnce.Do(func() { labFixtureDir, labFixtureErr = buildLabFixture() })
+	if labFixtureErr != nil {
+		t.Fatalf("the lab fixture: %v", labFixtureErr)
+	}
+	if err := os.CopyFS(dir, os.DirFS(labFixtureDir)); err != nil {
+		t.Fatalf("copying the lab fixture: %v", err)
+	}
+	// The copied clone still names the TEMPLATE's bare repository; origin has to be
+	// this test's own copy or a push would reach the fixture every other test reads.
+	l.git(l.work, "remote", "set-url", "origin", l.remote)
+	return l
+}
+
+// The process-wide fixture newLab copies: a `remote.git` with one commit on main and
+// its `work` clone. Built under TestMain's directory and removed with it.
+var (
+	labFixtureOnce sync.Once
+	labFixtureDir  string
+	labFixtureErr  error
+	labFixtureRoot string // set by TestMain, the parent the fixture is built under
+)
+
+// buildLabFixture builds that template with the same git calls newLab used to make per
+// test. It takes no *testing.T: it runs under sync.Once, where the caller that loses
+// the race is not the test whose failure it would be.
+func buildLabFixture() (string, error) {
+	dir, err := os.MkdirTemp(labFixtureRoot, "merge-fixture-")
+	if err != nil {
+		return "", err
+	}
+	remote, work := filepath.Join(dir, "remote.git"), filepath.Join(dir, "work")
+	var fail error
+	git := func(at string, args ...string) {
+		if fail != nil {
+			return
+		}
+		cmd := exec.Command("git", args...)
+		cmd.Dir = at
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@localhost",
+			"GIT_COMMITTER_NAME=fixture", "GIT_COMMITTER_EMAIL=fixture@localhost",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			fail = fmt.Errorf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	git(dir, "init", "--bare", "-b", "main", remote)
+	git(dir, "clone", remote, work)
+	if fail == nil {
+		fail = os.WriteFile(filepath.Join(work, "README.md"), []byte("the fixture\n"), 0o644)
+	}
+	git(work, "add", "-A")
+	git(work, "-c", "user.name=fixture", "-c", "user.email=fixture@localhost", "commit", "-q", "-m", "the first commit")
+	git(work, "push", "origin", "HEAD:refs/heads/main")
 	// The update hook records every push the remote received, so a test can assert that
 	// the base only ever moved forward by exactly one commit (demanded test 4).
-	hook := filepath.Join(l.remote, "hooks", "update")
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho \"$1 $2 $3\" >> \"$GIT_DIR/pushes\"\n"), 0o755); err != nil {
-		t.Fatal(err)
+	if fail == nil {
+		fail = os.WriteFile(filepath.Join(remote, "hooks", "update"),
+			[]byte("#!/bin/sh\necho \"$1 $2 $3\" >> \"$GIT_DIR/pushes\"\n"), 0o755)
 	}
-	return l
+	if fail != nil {
+		return "", fail
+	}
+	return dir, nil
 }
 
 func (l *lab) git(dir string, args ...string) string {

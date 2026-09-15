@@ -272,78 +272,6 @@ func (r reporter) deliveredID(t *testing.T) string {
 	return ""
 }
 
-// ------------------------------------------------------------------- the cases
-
-// The join at its plainest: a real prepare, a real push, and the two deciding
-// facts -- one note plus one INDEX row on the remote, and zero bus invocations
-// on the next run of a report that has not changed.
-func TestJoinRealBusPublishesOneNoteAndOneIndexRow(t *testing.T) {
-	r := newReporter(t, "v1.2.3")
-	code, out, errs := r.send(t, r.bin)
-	if code != 0 {
-		t.Fatalf("%d\n%s\n%s", code, out, errs)
-	}
-	id := r.deliveredID(t)
-	note := r.bus.exactlyOneContribution(t, id)
-	if !strings.Contains(out, "REPORT SENT") {
-		t.Fatalf("no REPORT SENT line: %s", out)
-	}
-	before := git(t, r.bus.bare, "rev-parse", "main")
-	code, out, errs = r.send(t, r.bin)
-	if code != 0 {
-		t.Fatalf("%d\n%s\n%s", code, out, errs)
-	}
-	if !strings.Contains(out, "nothing sent") {
-		t.Fatalf("a confirmed unchanged report was sent again: %s", out)
-	}
-	if after := git(t, r.bus.bare, "rev-parse", "main"); after != before {
-		t.Fatal("a confirmed unchanged report moved the remote")
-	}
-	if n, _ := r.bus.published(t); len(n) != 1 || n[0] != note {
-		t.Fatalf("the note changed under an unchanged report: %v", n)
-	}
-}
-
-// A refused push must not cost the report its identity. The remote refuses every
-// push while the hook is installed; the caller keeps the prepared artifact; the
-// hook comes off and the SAME snapshot is sent again, and exactly one note with
-// the original identity lands.
-func TestJoinRefusedPushRecoversToOneNoteWithTheSameID(t *testing.T) {
-	r := newReporter(t, "v1.2.3")
-	restore, how := r.bus.refusePushes(t)
-	t.Logf("pushes are refused by %s", how)
-	started := time.Now()
-	code, out, errs := r.send(t, r.bin)
-	refusedIn := time.Since(started)
-	if code != 1 {
-		t.Fatalf("a refused push was not reported as a failure: %d\n%s\n%s", code, out, errs)
-	}
-	if !strings.Contains(errs+out, "sent=uncertain") {
-		t.Fatalf("a refused push was not reported as uncertain:\n%s\n%s", out, errs)
-	}
-	id := r.pendingID(t)
-	restore()
-	if notes, index := r.bus.published(t); len(notes) != 0 || len(index) != 0 {
-		t.Fatalf("a refused push published something: %v %v", notes, index)
-	}
-	// The reporter hands the bus finite --attempts and --git-timeout out of its
-	// own remaining budget, so a remote that refuses every push costs seconds
-	// rather than the bus's implicit twenty-five tries. The witness is printed
-	// because the seconds are the point.
-	t.Logf("a remote refusing every push was reported uncertain in %s", refusedIn.Round(time.Millisecond))
-	if refusedIn > 30*time.Second {
-		t.Fatalf("a refused push took %s, which is not a bound anybody chose", refusedIn)
-	}
-	code, out, errs = r.send(t, r.bin)
-	if code != 0 {
-		t.Fatalf("%d\n%s\n%s", code, out, errs)
-	}
-	if got := r.deliveredID(t); got != id {
-		t.Fatalf("the retry delivered %q, not the prepared %q", got, id)
-	}
-	r.bus.exactlyOneContribution(t, id)
-}
-
 // refusePushes makes the named remote refuse, and reports how. A pre-receive
 // hook is the truer seam -- the push arrives and is rejected -- and it needs a
 // shell, so where there is none the remote is moved aside instead, which is the
@@ -456,8 +384,16 @@ func joinWrapper() {
 			b, _ := os.ReadFile(filepath.Join(lane, "INDEX"))
 			return a.ID != "" && bytes.Contains(b, []byte(a.ID))
 		case killAfterAttrs:
-			out, err := exec.Command("git", "-C", checkout, "diff", "--cached", "--name-only").Output()
-			return err == nil && bytes.Contains(out, []byte(".gitattributes"))
+			// The staged state is transient -- git add stages .gitattributes and the
+			// immediately following git commit unstages it -- so a subprocess probe
+			// (`git diff --cached`) polls slower than the window it observes and can miss
+			// the kill entirely. Reading the index directly names the same fact -- the
+			// path is present in the index exactly when it is staged -- in a single fast
+			// read, which is the sync point that makes the boundary reliably observable.
+			// The hermetic git here always writes a v2 index whose paths are stored as
+			// full null-terminated names, so a byte match is exact.
+			b, err := os.ReadFile(filepath.Join(checkout, ".git", "index"))
+			return err == nil && bytes.Contains(b, []byte(".gitattributes"))
 		case killAfterCmt:
 			h := headOf(checkout)
 			return h != "" && h != baseHead
@@ -556,26 +492,6 @@ func clearWrapper(t *testing.T) {
 	t.Setenv("NOVA_UPDATE_JOIN_REAL", "")
 }
 
-// A child killed at each of the named write boundaries, for real, with SIGKILL.
-// The saved artifact has to recover the SAME identity, and each final remote has
-// to hold one complete contribution -- one note and one INDEX row -- no matter
-// which boundary the death landed on.
-func TestJoinChildDeathAtWriteBoundariesRecoversOneContribution(t *testing.T) {
-	for _, boundary := range []string{killBeforeNote, killAfterNote, killAfterIndex, killAfterAttrs, killAfterCmt} {
-		t.Run(boundary, func(t *testing.T) {
-			missed := 0
-			for attempt := 1; attempt <= stagingAttempts; attempt++ {
-				if stagedADeath(t, boundary, attempt) {
-					return
-				}
-				missed++
-				t.Logf("%s: the bus finished before the kill landed (miss %d of %d allowed); staging it again", boundary, missed, stagingAttempts)
-			}
-			t.Skipf("%s: no kill landed on a live bus in %d staged attempts, so this boundary is UNPROVEN in this run rather than green", boundary, stagingAttempts)
-		})
-	}
-}
-
 // stagingAttempts bounds how many times a boundary is staged before the case
 // calls itself unproven. A death has to be caught on a LIVE process to be a
 // death, catching it races a local push, and a skip nobody counted would let a
@@ -645,48 +561,6 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 	return true
 }
 
-// A lost confirmation needs no signal at all: the bus is allowed to finish and
-// its answer is thrown away, which is what a reporter that dies between the push
-// and reading the answer leaves behind. Nothing here is platform-specific, so
-// this case runs on Windows too.
-func TestJoinLostConfirmationRecoversWithoutASecondNote(t *testing.T) {
-	r := newReporter(t, "v1.2.3")
-	wrap, record := r.wrapperOnPath(t, killLostResult)
-	code, out, errs := r.send(t, wrap)
-	if code != 1 {
-		t.Fatalf("a lost answer was not reported as a failure: %d\n%s\n%s", code, out, errs)
-	}
-	if !strings.Contains(errs+out, "sent=uncertain") {
-		t.Fatalf("a lost answer was not reported as uncertain:\n%s\n%s", out, errs)
-	}
-	id := r.pendingID(t)
-	if b, err := os.ReadFile(record); err != nil {
-		t.Fatalf("the wrapper left no record: %v", err)
-	} else if !strings.Contains(string(b), "boundary="+killLostResult) {
-		t.Fatalf("the wrapper staged something else: %s", b)
-	}
-	notes, _ := r.bus.published(t)
-	if len(notes) != 1 {
-		t.Fatalf("the bus was allowed to finish, so the note should be published: %v", notes)
-	}
-	head := git(t, r.bus.bare, "rev-parse", "main")
-	clearWrapper(t)
-	code, out, errs = r.send(t, r.bin)
-	if code != 0 {
-		t.Fatalf("recovery failed: %d\n%s\n%s\nthe bus, asked directly: %s", code, out, errs, r.busAskedDirectly(t))
-	}
-	if got := r.deliveredID(t); got != id {
-		t.Fatalf("recovery confirmed %q, not the pending %q", got, id)
-	}
-	r.bus.exactlyOneContribution(t, id)
-	if after := git(t, r.bus.bare, "rev-parse", "main"); after != head {
-		t.Fatalf("recovery published a second time: %s became %s", head, after)
-	}
-	if !strings.Contains(out, "already-published") {
-		t.Fatalf("recovery republished instead of finding its own note: %s", out)
-	}
-}
-
 // leftInTheLane describes what the killed bus left in the checkout, measured
 // against the prepared bytes the caller retained. The distinction the contract
 // turns on is whether an interrupted write left a PREFIX of the prepared note
@@ -730,7 +604,7 @@ func (r reporter) leftInTheLane(t *testing.T) string {
 // index; this list is intentionally narrower than a wildcard lock cleanup.
 func staleGitTransactionLocks(gitDir string) []string {
 	var found []string
-	for _, pattern := range []string{"index.lock", "HEAD.lock", "next-index-*.lock"} {
+	for _, pattern := range []string{"index.lock", "HEAD.lock", "next-index-*.lock", "refs/heads/*.lock", "logs/HEAD.lock", "logs/refs/heads/*.lock"} {
 		matches, _ := filepath.Glob(filepath.Join(gitDir, pattern))
 		found = append(found, matches...)
 	}
@@ -758,11 +632,17 @@ func removeStaleGitTransactionLocks(t *testing.T, gitDir string) []string {
 
 func TestRemoveStaleGitTransactionLocksNamesOnly(t *testing.T) {
 	gitDir := filepath.Join(t.TempDir(), ".git")
-	if err := os.Mkdir(gitDir, 0o755); err != nil {
-		t.Fatal(err)
+	for _, dir := range []string{gitDir, filepath.Join(gitDir, "refs", "heads"), filepath.Join(gitDir, "logs", "refs", "heads")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _, name := range []string{"HEAD.lock", "index.lock", "next-index-11397.lock", "config.lock", "next-index.lock"} {
-		if err := os.WriteFile(filepath.Join(gitDir, name), nil, 0o600); err != nil {
+	for _, name := range []string{
+		"HEAD.lock", "index.lock", "next-index-11397.lock",
+		"refs/heads/main.lock", "logs/HEAD.lock", "logs/refs/heads/main.lock",
+		"config.lock", "next-index.lock",
+	} {
+		if err := os.WriteFile(filepath.Join(gitDir, filepath.FromSlash(name)), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -770,10 +650,14 @@ func TestRemoveStaleGitTransactionLocksNamesOnly(t *testing.T) {
 	removed := removeStaleGitTransactionLocks(t, gitDir)
 	var names []string
 	for _, path := range removed {
-		names = append(names, filepath.Base(path))
+		rel, err := filepath.Rel(gitDir, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, filepath.ToSlash(rel))
 	}
 	sort.Strings(names)
-	want := []string{"HEAD.lock", "index.lock", "next-index-11397.lock"}
+	want := []string{"HEAD.lock", "index.lock", "logs/HEAD.lock", "logs/refs/heads/main.lock", "next-index-11397.lock", "refs/heads/main.lock"}
 	if strings.Join(names, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("removed %v, want %v", names, want)
 	}

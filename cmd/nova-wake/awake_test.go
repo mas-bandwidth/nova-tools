@@ -170,7 +170,7 @@ func TestAwakeBoundsLines(t *testing.T) {
 }
 
 // THE BEAT CARRIES A LEASE, and it outruns both the cursor and the window. A line whose
-// duty process is alive but between two waits stops writing a beat while it works the note
+// manager process is alive but between two waits stops writing a beat while it works the note
 // it was just handed, and over a slow note that gap outruns --window, so by cursor age
 // alone it reads asleep. The exit beat wrote until=now+--beat-lease, so the friend stays
 // awake inside the lease even though both its cursor and its beat stamp are old.

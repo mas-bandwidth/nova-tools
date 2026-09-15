@@ -19,7 +19,7 @@ import (
 const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]  (not yet implemented)
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
@@ -57,6 +57,9 @@ The line above runs "nova-pulse pool" from the repo root — it reads the roadma
 skips the cell without a card, and writes the two candidates to ./root/pool.tsv.
 That is a whole first run of the pool verb, no network and no model call, and
 docs/TESTS.md carries the transcript it prints.
+
+example:
+  nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
 `
 
 // refuse is what an unusable invocation costs: one line naming what was wrong and the door
@@ -84,11 +87,13 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdPool(rest, stdout, stderr)
 	case "launch":
 		return cmdLaunch(rest, stdout, stderr, now)
+	case "cut":
+		return cmdCut(rest, stdout, stderr)
 	case "harvest":
 		return cmdHarvest(rest, stdout, stderr)
 	case "manager":
 		return cmdManager(rest, stdout, stderr)
-	case "cut", "width":
+	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
 	}
@@ -281,4 +286,37 @@ func isDeadlineSeconds(s string) bool {
 		n = n*10 + int(r-'0')
 	}
 	return n >= 1
+}
+
+func cmdCut(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("cut")
+	pool := f.fs.String("pool", "", "")
+	templates := f.fs.String("templates", "", "")
+	out := f.fs.String("out", "", "")
+	root := f.fs.String("root", "", "")
+	local := f.fs.String("local", "", "")
+	max := f.fs.Int("max", bounded.Default, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*pool, "pool", "the pool.tsv of candidates to cut")
+	f.want(*templates, "templates", "the directory holding the typed templates and models.tsv")
+	f.want(*out, "out", "the directory the cut cards go into")
+	f.want(*root, "root", "the state root; skipped.tsv is written here")
+	if *max < 0 {
+		f.problems = append(f.problems, fmt.Sprintf("--max is 0 or more, got %d; 0 already means all, so a negative ceiling is a typo with two readings", *max))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.Cut(pulse.CutInput{
+		Pool:      *pool,
+		Templates: *templates,
+		Out:       *out,
+		Root:      *root,
+		Local:     *local,
+		Max:       *max,
+		Stdout:    stdout,
+		Stderr:    stderr,
+	})
 }

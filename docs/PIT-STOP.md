@@ -33,7 +33,7 @@ A contraction phase is bugs only (SPEC-PULSE **Rate and convergence** 7):
   23), reads, rebases;
 - every fix is one PR, one fault, the test named after the sentence it broke; no assertion is
   weakened, a flaky test gets a sync point, never a sleep;
-- tests answer inside the fast tier, one minute per package, two at most (#516);
+- tests answer inside the fast tier, one minute per package, two at most (#516, landed in #606);
 - anything expansionary is labelled `next-push` in its issue and never carded; the manager's
   `scope-regex` admits nothing else;
 - the loop keeps running, narrower: the fixes are cards too, and the queue floor is held with
@@ -66,15 +66,14 @@ slots (#536); nine faults were paying for the gap. The stop was called on the ev
 | `--config` refused a keyless local provider, then every unrelated provider | #523 | landed, #586 |
 | the bench pull copied before the file landed, filtered to nothing, missed `repo/RESULT.md` | — | landed, #581 |
 | `wait` left a beat that made the next `send` refuse, for every friend | #488 | landed, #588 |
-| `TMPDIR` under the job repo turned a "not a repo" test red on every card | #460 | open |
-| the idle watch killed cards whose `go test` printed nothing | #593 | open |
-| `RESULT.md` written under `repo/` on the local bench scored `no-result` | #594 | open |
-| a silent harness scored `NATIVE OK rc=0`; the local route was unproven | #591 | open |
-| `go test ./cmd/nova-bus/` at 148 s paid by every card and CI job | #516 | open |
+| `TMPDIR` under the job repo turned a "not a repo" test red on every card | #460 | landed, #558 |
+| the idle watch killed cards whose `go test` printed nothing | #593 | landed, #603 |
+| `RESULT.md` written under `repo/` on the local bench scored `no-result` | #594 | landed, #603 |
+| a silent harness scored `NATIVE OK rc=0`; the local route was unproven | #591 | PR #604 open |
+| `go test ./cmd/nova-bus/` at 148 s paid by every card and CI job | #516 | landed, #606 |
 
 The rules the stop wrote are in their specs: the nine rate and convergence rules (#553,
 SPEC-PULSE **Rate and convergence**), the status and progress verbs (#549, #536), the bench
 width (#528, SPEC-SWARM **Benches**), the swarm's per-card admission, slot locks and reason
 tokens (SPEC-SWARM **scatter** and **gather**), and practices 22-25 of WORKER-CARDS. The trust
-batch that closes this stop is owed: it runs when the four open rows land, and its `BATCH` line
-goes here.
+batch that closes this stop is owed: it runs when #604 lands, and its `BATCH` line goes here.

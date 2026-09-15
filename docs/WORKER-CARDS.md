@@ -34,8 +34,11 @@ itself (12). **Rollback:** the previous card. **Held by:** Rowan (measured); Emm
 
 ## 2. RULES first, and the wall
 
-The first block is RULES and its first sentence is the wall: the job directory, `./scratch` as
-`TMPDIR`, never `/tmp`, `~` or `..`, no stdlib or toolchain source, a key file read as data
+The first block is RULES and its first sentence is the wall: the job directory, the `TMPDIR`
+the runner already exported (a native card never sets one: the runner hands it
+`<slot>/tmp/<label>`, outside every repo, and a card that re-exported `$PWD/scratch` put its
+temp dir inside the job's repo and failed nova-wake's `TestAwakeRefusesNonBus` for a reason it
+did not cause, #460), never `/tmp`, `~` or `..`, no stdlib or toolchain source, a key file read as data
 and never sourced, the deadline held by the machinery and named in the card, and a refused
 read is not the end of the run. **Measured:** seven of seven Mercury jobs rc 0 with a report
 in shape, none ended on a refused read; the four of 15:27Z ran with no rephrasing, no
@@ -286,8 +289,8 @@ job.
 
 Line 1 is identity and nothing else — `RESULT <label> sha=<sha12>`, the label and the hash of
 the text below it; the verdict is line 2 and the findings come after. Since `gather` scores a
-`RESULT.md` **done on line 1 alone, whatever the harness exit code** (SPEC-SWARM, **gather**,
-landed in #577), a line 1 that stated the expected verdict, the expected count or the fix
+`RESULT.md` **done on line 1 alone when the harness exited 0** (SPEC-SWARM, **gather**,
+landed in #577; a non-zero rc is `reason=rc=<n>` first, #604), a line 1 that stated the expected verdict, the expected count or the fix
 would be a card a worker completes by echoing it. The contract line says only "this is the
 card I was given"; everything that must be earned sits below it, where the reader reads.
 **Measured:** 2026-09-15, the practice-17 shape on 326 cards, line 1 never holding a verdict,
@@ -302,7 +305,8 @@ test prints on the broken revision, and the friend sequence the verb sits in (21
 becomes carries the `red:` line and the test file, and the manager refuses a fix PR that
 carries neither before the push (landed in #587, `manager-refuses-fix-pr-without-test`). The
 test answers inside the fast tier — under one minute per package, two at most; a timing-shaped
-test takes a fake clock or a sync point, or the `slow` tag and the nightly job (#516, open).
+test takes a fake clock or a sync point, or the `slow` tag and the nightly job (#516, landed
+in #606).
 **Measured:** 2026-09-15/16, every pit-stop fix landed red first, named after the sentence it
 broke: #577 (three tests), #586 (`TestNativeConfigChecksOnlyTheModelsProvider` and the
 absolutize pair, resolved rather than weakened), #581 (three, each run red against a mutated
@@ -329,16 +333,16 @@ when the probe is in the adopt step and every local route on the table has a pro
 ## 25. The runner owns `TMPDIR`; `RESULT.md` lives at the job root; a checkout may pre-exist
 
 Three places a card must not choose for itself. `TMPDIR` is exported by `native` outside every
-repository and printed as `tmp=<path>`; a card exports none (#460, open — until it lands the
-`STEP 1` export in SPEC-PULSE **The card** stands, and a test that asserts "not a repo" under
-it is a red the card did not cause). `RESULT.md` is written at the job root, never under
-`repo/`; `gather` copies a misplaced one up and says so, and the card is still wrong (#594,
-open; the bench pull already does it, #581). `STEP 1` tolerates an existing checkout, because
+repository and printed as `tmp=<path>`; a card exports none (#460, landed in #558; the `STEP 1`
+export in SPEC-PULSE **The card** is now redundant and comes out with the template, and a test
+that asserts "not a repo" under the old export was a red the card did not cause). `RESULT.md`
+is written at the job root, never under `repo/`; `gather` copies a misplaced one up and says
+so, and the card is still wrong (#594, landed in #603; the bench pull first, #581). `STEP 1` tolerates an existing checkout, because
 a pre-cloned `repo/` from a bench mirror is how no card pays a clone (#553 rule 3, open).
 **Measured:** 2026-09-15, cards 247, 266 and 353 reported `TestAwakeRefusesNonBus` red under
 `TMPDIR=<job>/scratch`; on the same day several cards wrote `RESULT.md` into `repo/` and were
 scored `no-result`. **Not measured:** a card that set its own `TMPDIR` outside the job.
-**Expires** when #460 and #594 land and the template changes with them. **Rollback:** the
+**Expires** when the `STEP 1` template loses the export and #553's pre-clone lands. **Rollback:** the
 `STEP 1` export. **Held by:** Rowan.
 
 ## Open
