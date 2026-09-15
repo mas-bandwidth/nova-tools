@@ -22,6 +22,7 @@ type PoolInput struct {
 	Root    string        // root directory holding seen.tsv and the default pool.tsv
 	Out     string        // path pool.tsv is written to; empty means <root>/pool.tsv
 	Timeout time.Duration // bound on every gh child, default 120s
+	Max     int           // bound on admitted candidates; 0 means no bound
 	Stdout  io.Writer
 	Stderr  io.Writer
 }
@@ -82,6 +83,9 @@ func Pool(in PoolInput) int {
 		seenCount += cseen
 		planCount += plan
 		for _, r := range cands {
+			if in.Max > 0 && len(rows) >= in.Max {
+				break
+			}
 			rows = append(rows, r)
 			counts[r.Kind]++
 		}
