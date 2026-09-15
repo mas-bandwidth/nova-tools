@@ -92,20 +92,29 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 	if code == 2 {
 		t.Fatalf("the batch refused admission: %s", errb.String())
 	}
-	lines := readLines(t, sshLog)
-	if len(lines) == 0 {
-		t.Fatalf("the fake ssh saw nothing; the remote card never ran")
-	}
-	for _, l := range lines {
-		if !strings.Contains(l, "taskset") {
-			t.Fatalf("every remote argv carries taskset, got %q", l)
+	// The RUN argv lines, which are the ones that pin: an ssh that asks the bench a
+	// question -- the pull's `test -f`, the idle watch's `stat` -- runs no card and pins
+	// nothing. Selecting them by the command they carry is what keeps this assertion about
+	// pinning rather than about how many other things a batch asks a bench.
+	var runs []string
+	for _, l := range readLines(t, sshLog) {
+		if strings.Contains(l, "nova-swarm native") {
+			runs = append(runs, l)
 		}
 	}
-	if !strings.Contains(lines[0], "taskset -c 3") {
-		t.Fatalf("slot 3 on 1-15 runs under taskset -c 3, got %q", lines[0])
+	if len(runs) == 0 {
+		t.Fatalf("the fake ssh saw no run; the remote card never ran")
 	}
-	if !strings.Contains(lines[1], "taskset -c 4") {
-		t.Fatalf("slot 4 on 1-15 runs under taskset -c 4, got %q", lines[1])
+	for _, l := range runs {
+		if !strings.Contains(l, "taskset") {
+			t.Fatalf("every remote run argv carries taskset, got %q", l)
+		}
+	}
+	if !strings.Contains(runs[0], "taskset -c 3") {
+		t.Fatalf("slot 3 on 1-15 runs under taskset -c 3, got %q", runs[0])
+	}
+	if !strings.Contains(runs[1], "taskset -c 4") {
+		t.Fatalf("slot 4 on 1-15 runs under taskset -c 4, got %q", runs[1])
 	}
 }
 

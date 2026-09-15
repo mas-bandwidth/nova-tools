@@ -768,6 +768,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
 | `admission` | was refused at admission; the reason follows the token |
 | `input-limit` | was refused for size, by the provider's own structured signal (issue #163) |
+| `bench-unreachable` | ran on a bench the pull could not reach, so nothing about it is known here |
 
 The card's line carries the token and its own log count —
 `<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
@@ -790,7 +791,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit> log=<n> [watched=<path>|job=<dir>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -897,10 +898,29 @@ runs under, printed before any card work so the batch can name it. **The
 card is the only file copied out**, to `<root>/cards/<label>.md` by `rsync`
 (or `scp`), before the run; the repository is cloned by the card on the bench
 as today, and no runner script, config or key crosses the wire. **Three files
-come back** after the run, by `rsync`, into the local root at
+come back** after the run, into the local root at
 `<root>/<bench>-<n>/jobs/<label>/`: `RESULT.md`, `usage.tsv`, and the last
 64 KiB of `native.log` — so `gather` reads what it reads today, one directory
 per card, and nothing in `gather` knows a bench exists.
+
+**The pull is three rules, and a bench run lost its results to each of them on
+2026-09-15.** (1) The pull **waits up to 30 s for `RESULT.md` to exist on the
+bench**, asking once a second: the remote slot's shell returns before the
+harness's last write has landed, and a pull that copies at once copies nothing.
+(2) Each file is **its own explicit `scp`**, named on both sides — never one
+`rsync` with an include filter, because a filter that matches nothing exits 0
+and a copy of nothing then reads as a card that abstained. (3) When `RESULT.md`
+is absent from the job but present under `repo/`, or one directory below it, it
+is **copied up into the job** and the batch prints
+
+```
+SPACE NOTE RESULT.md copied up from <path>
+```
+
+so the card's mistake is on the record and its work is not lost to it. A pull
+that cannot reach the bench at all — `ssh`'s own exit 255, not a remote command
+saying no — scores the card `ABSTAIN reason=bench-unreachable`; a bench that
+answers and holds no result is the ordinary missing-result abstain and not that.
 
 **Deadline and idle are held here, on the local machine, as today.** The batch
 process owns the batch deadline and the per-card `--idle`. The local wrapper
@@ -914,7 +934,8 @@ counted in `idle=<n>`. If `ssh` itself is unreachable then, the slot is
 network drop after `RESULT.md` was written is recovered by a second pull at
 gather: one retry, 30 s, none after. The reason in `ABSTAIN reason=<token>` is
 one token, the set issue #461 gives every card: `line1-mismatch | no-result |
-rc=<n> | idle=<s> | deadline | card-abstain | bench-unreachable`. The idle watch on a
+rc=<n> | idle=<s> | deadline | card-abstain | admission <why> | input-limit |
+bench-unreachable`, and the card's line carries its own `log=<n>` after it. The idle watch on a
 remote card asks `ssh <host> stat -c %s <root>/<n>/jobs/<label>/native.log` —
 bytes, the growth a local log is measured by, never an mtime (rule 16) — no
 more than once per `--idle/3` seconds. A bench unreachable at a poll is not a
@@ -1005,6 +1026,15 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 13. `bench-name-is-not-a-friend` — a `--bench` name on the bus's friends list is `ADMIT REFUSED bench=<name> is a friend`, and the fake bus sees no line.
 14. `gather-retries-pull-once` — a pull that fails after `RESULT.md` exists on the bench is retried once at gather, 30 s later, and folds as done; a second failure is `no-result`.
 15. `pin-none-row-admits-without-taskset` — `cores=-` on a bench whose fake `PATH` lacks `taskset` probes `pin=none`, admits, and its argv carries no `taskset`; `cores=1-15` on the same bench is `BENCH REFUSED check=pin`.
+16. `pull-waits-for-result` — the bench holds `RESULT.md` back until the third ask; the pull
+    waits, then copies, and each of the three files is its own `scp` naming one file, with no
+    filter and no pattern on any argv (`TestPullWaitsForResult`).
+17. `pull-copies-result-up-from-repo` — a card that wrote `RESULT.md` under `repo/` one level
+    down has it copied up into the job, pulled back, and `SPACE NOTE RESULT.md copied up from
+    <path>` printed (`TestPullCopiesResultUpFromRepo`).
+18. `pull-scores-bench-unreachable` — a bench whose `ssh` exits 255 scores its card `ABSTAIN
+    reason=bench-unreachable`, not a plain abstain and not a stall
+    (`TestPullScoresBenchUnreachable`).
 
 ## Exit codes
 
@@ -1036,7 +1066,7 @@ BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=
 BATCH NOTE slot=<n> stale-lock id=<id> taken
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit> log=<n> [watched=<path>|job=<dir>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
