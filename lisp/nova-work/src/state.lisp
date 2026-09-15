@@ -18,18 +18,23 @@
   ;; SPEC-WORK.md:1222 -- the newest row of an id carries revived=<rev|-> and
   ;; settles=<n>. Both are kept on the node and moved on write, like every
   ;; other counter here, so a row is written and never computed by a scan.
-  settles revived)
+  settles revived
+  ;; SPEC-WORK.md:1354-1385 -- execution lease and worker ownership (E02-F07).
+  holder lease-id deadline (default-action :release) last-heartbeat heartbeat-evidence)
 
 (defstruct (wstate (:conc-name wstate-))
-  seed       ; the seed forest, verbatim, so a reconstruction starts where this did
-  nodes      ; id -> wnode
-  order      ; ids in seed order
-  root-open  ; |O|
-  closed     ; |C|
-  leaf-open  ; the open leaf-task counter -- separate, and never labelled |O|
-  issue-open ; the open linked-issue counter -- separate, and never labelled |O|
-  history    ; envelope records, newest first
-  rows       ; closed-index rows, newest first
+  seed          ; the seed forest, verbatim, so a reconstruction starts where this did
+  nodes         ; id -> wnode
+  order         ; ids in seed order
+  root-open     ; |O|
+  closed        ; |C|
+  leaf-open     ; the open leaf-task counter -- separate, and never labelled |O|
+  issue-open    ; the open linked-issue counter -- separate, and never labelled |O|
+  working-count ; |W| - the working counter, maintained on write!
+  working       ; hash-table of working node-ids (id -> t) for O(1) resident lookup
+  lease-log     ; list of lease events, newest first
+  history       ; envelope records, newest first
+  rows          ; closed-index rows, newest first
   revision)
 
 (defun %node (state id)
@@ -77,7 +82,13 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :open-count 0
                           :links (getf spec :links)
                           :settles 0
-                          :revived "-"))))
+                          :revived "-"
+                          :holder nil
+                          :lease-id nil
+                          :deadline nil
+                          :default-action :release
+                          :last-heartbeat nil
+                          :heartbeat-evidence nil))))
     (setf order (nreverse order))
     ;; Containment edges, in seed order.
     (dolist (id order)
@@ -109,6 +120,9 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                      (setf cur (wnode-parent node)))))))
     (let ((state (make-wstate :seed (copy-tree nodes) :nodes table :order order
                               :root-open 0 :closed 0 :leaf-open 0 :issue-open 0
+                              :working-count 0
+                              :working (make-hash-table :test #'equal)
+                              :lease-log '()
                               :history '() :rows '() :revision 0)))
       ;; Seed the counters once, on the write path that builds the set.
       (dolist (id order)
@@ -158,6 +172,19 @@ own id would not be the same counting rule one level down. Decision for review."
 (defun state-revision (state) (wstate-revision state))
 (defun state-history (state) (reverse (wstate-history state)))
 (defun state-closed-rows (state) (reverse (wstate-rows state)))
+(defun state-working-count (state)
+  "|W|: read, never computed. SPEC-WORK.md:1702-1709: zero unrelated visits."
+  (wstate-working-count state))
+
+(defun is-working-p (state id)
+  "Constant-time resident lookup of working membership.
+SPEC-WORK.md:1702-1709: zero unrelated visits, zero walk of O."
+  (and (gethash id (wstate-working state)) t))
+
+(defun working-ids (state)
+  "O(k) enumeration of working IDs. Visits zero nodes in O."
+  (sort (loop for k being the hash-keys of (wstate-working state) collect k) #'string<))
+
 
 ;;; Reads of one node. These do visit.
 
@@ -206,9 +233,12 @@ own id would not be the same counting rule one level down. Decision for review."
 ;;; installed only when the whole of it succeeded.
 
 (defun copy-state (state)
-  (let ((table (make-hash-table :test #'equal :size (hash-table-count (wstate-nodes state)))))
+  (let ((table (make-hash-table :test #'equal :size (hash-table-count (wstate-nodes state))))
+        (working (make-hash-table :test #'equal :size (max 16 (hash-table-count (wstate-working state))))))
     (maphash (lambda (id node) (setf (gethash id table) (copy-wnode node)))
              (wstate-nodes state))
+    (maphash (lambda (id val) (setf (gethash id working) val))
+             (wstate-working state))
     (make-wstate :seed (wstate-seed state)
                  :nodes table
                  :order (wstate-order state)
@@ -216,6 +246,9 @@ own id would not be the same counting rule one level down. Decision for review."
                  :closed (wstate-closed state)
                  :leaf-open (wstate-leaf-open state)
                  :issue-open (wstate-issue-open state)
+                 :working-count (wstate-working-count state)
+                 :working working
+                 :lease-log (copy-list (wstate-lease-log state))
                  :history (wstate-history state)
                  :rows (wstate-rows state)
                  :revision (wstate-revision state))))
@@ -233,6 +266,40 @@ own id would not be the same counting rule one level down. Decision for review."
        (setf (wnode-state node) (getf (work-event-fields event) :to)))
       (:reopen
        (setf (wnode-state node) :todo))
+      (:lease
+       (let* ((fields (work-event-fields event))
+              (lid (getf fields :id))
+              (deadline (getf fields :deadline))
+              (def-action (getf fields :default :release))
+              (holder (work-event-by event)))
+         (setf (wnode-holder node) holder
+               (wnode-lease-id node) lid
+               (wnode-deadline node) deadline
+               (wnode-default-action node) def-action)
+         (unless (gethash id (wstate-working state))
+           (setf (gethash id (wstate-working state)) t)
+           (incf (wstate-working-count state)))
+         (push event (wstate-lease-log state))))
+      (:heartbeat
+       (let* ((fields (work-event-fields event))
+              (evidence (getf fields :evidence)))
+         (setf (wnode-last-heartbeat node) (work-event-stamp event)
+               (wnode-heartbeat-evidence node) evidence)
+         (push event (wstate-lease-log state))))
+      (:release
+       (let* ((fields (work-event-fields event))
+              (handed (getf fields :handed +absent+)))
+         (if (and (not (absentp handed)) handed)
+             (setf (wnode-holder node) handed)
+             (progn
+               (setf (wnode-holder node) nil
+                     (wnode-lease-id node) nil
+                     (wnode-deadline node) nil
+                     (wnode-default-action node) :release)
+               (when (gethash id (wstate-working state))
+                 (remhash id (wstate-working state))
+                 (decf (wstate-working-count state)))))
+         (push event (wstate-lease-log state))))
       (:settle
        (unless (eq :o (wnode-branch node))
          (error 'unsupported-input :what (format nil "rule 18: ~A is already in C" id)))
@@ -240,6 +307,15 @@ own id would not be the same counting rule one level down. Decision for review."
        (%adjust-counters state id -1)
        (incf (wnode-settles node))
        (setf (wnode-revived node) "-")
+       ;; If node had an active lease, settling ends the claim and clears W
+       (when (wnode-holder node)
+         (setf (wnode-holder node) nil
+               (wnode-lease-id node) nil
+               (wnode-deadline node) nil
+               (wnode-default-action node) :release))
+       (when (gethash id (wstate-working state))
+         (remhash id (wstate-working state))
+         (decf (wstate-working-count state)))
        (push (list :key (closed-row-key event) :kind :settle :node id
                    :rev (work-event-rev event)
                    :disposition (getf (work-event-fields event) :disposition)

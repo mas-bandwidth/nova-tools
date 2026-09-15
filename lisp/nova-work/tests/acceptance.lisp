@@ -1620,3 +1620,343 @@ is compared against; it is never the path `query --ask size` takes."
                     (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
                (close-file-journal j-replay))))
       (ignore-errors (delete-file path)))))
+
+(deftest "session-ownership-taking-and-generation-bump"
+  "docs/SPEC-WORK.md:202-214"
+  "expected=vacant-or-expired-owner-takes-and-bumps-generation"
+  ;; 1. Taking on vacant/nil record
+  (multiple-value-bind (action record line)
+      (evaluate-ownership-claim nil "emma"
+                                :now "2026-09-14T12:00:00Z"
+                                :every "30s"
+                                :skew "5s"
+                                :token "tok-init-1")
+    (declare (ignore line))
+    (check-equal :take action "vacant claim is take")
+    (check-equal "emma" (owner-owner record) "owner is emma")
+    (check-equal 1 (owner-generation record) "initial generation is 1")
+    (check-string= "tok-init-1" (owner-token record) "token matches")
+    (check-string= "2026-09-14T12:01:00Z" (owner-until record) "until is now + 2*every"))
+
+  ;; 2. Taking on expired record (until + skew < now)
+  (let ((expired (make-ownership-record
+                  :owner "stella"
+                  :generation 4
+                  :token "tok-stella"
+                  :stamp "2026-09-14T10:00:00Z"
+                  :until "2026-09-14T10:01:00Z")))
+    (multiple-value-bind (action record line)
+        (evaluate-ownership-claim expired "emma"
+                                  :now "2026-09-14T12:00:00Z"
+                                  :every "30s"
+                                  :skew "5s"
+                                  :token "tok-emma-2")
+      (declare (ignore line))
+      (check-equal :take action "expired claim is take")
+      (check-equal "emma" (owner-owner record) "new owner is emma")
+      (check-equal 5 (owner-generation record) "generation bumped to 5")
+      (check-string= "tok-emma-2" (owner-token record) "token matches")
+      (check-string= "2026-09-14T12:01:00Z" (owner-until record) "until is now + 2*every"))))
+
+(deftest "session-ownership-resume-with-token"
+  "docs/SPEC-WORK.md:202-214"
+  "expected=matching-token-resumes-generation-and-advances-until"
+  (let ((current (make-ownership-record
+                  :owner "emma"
+                  :generation 3
+                  :token "tok-emma-secret"
+                  :stamp "2026-09-14T11:59:00Z"
+                  :until "2026-09-14T12:01:00Z")))
+    ;; Resuming with matching journal token
+    (multiple-value-bind (action record line)
+        (evaluate-ownership-claim current "emma"
+                                  :now "2026-09-14T12:00:30Z"
+                                  :every "30s"
+                                  :skew "5s"
+                                  :journal-token "tok-emma-secret")
+      (declare (ignore line))
+      (check-equal :resume action "matching token resumes")
+      (check-equal "emma" (owner-owner record) "owner is emma")
+      (check-equal 3 (owner-generation record) "generation preserved (not bumped)")
+      (check-string= "tok-emma-secret" (owner-token record) "token preserved")
+      (check-string= "2026-09-14T12:01:30Z" (owner-until record) "until advanced to now + 2*every"))))
+
+(deftest "session-competing-owner-fenced"
+  "docs/SPEC-WORK.md:213-214"
+  "expected=competing-live-owner-refused-exit-1"
+  (let ((live (make-ownership-record
+               :owner "stella"
+               :generation 2
+               :token "tok-stella-live"
+               :stamp "2026-09-14T12:00:00Z"
+               :until "2026-09-14T12:05:00Z")))
+    (multiple-value-bind (action record line exit-code)
+        (evaluate-ownership-claim live "emma"
+                                  :now "2026-09-14T12:01:00Z"
+                                  :every "30s"
+                                  :skew "5s"
+                                  :token "tok-emma-new")
+      (declare (ignore record))
+      (check-equal :fenced action "competing live owner is refused")
+      (check-equal 1 exit-code "exit code is 1")
+      (ok (search "SESSION FAIL" line) "line contains SESSION FAIL")
+      (ok (search "stella" line) "line names current owner")
+      (ok (search "held" line) "line says held"))))
+
+(deftest "session-self-fencing-on-expired-until"
+  "docs/SPEC-WORK.md:234-238"
+  "expected=clock-past-until-fences-session-and-refuses-mutation"
+  (let* ((seed '((:id "t1" :type :task :state :todo)))
+         (k (make-kernel :state (make-seed-state seed) :journal (make-ordering-journal)))
+         (sess (make-session :owner "emma"
+                             :generation 1
+                             :token "tok-sess-1"
+                             :until "2026-09-14T12:01:00Z"
+                             :kernel k
+                             :state :live
+                             :file "work.s"
+                             :base "sha-base-1"
+                             :journal "work.journal"
+                             :every "30s"
+                             :skew "5s")))
+    ;; 1. Request arrived before until -> admitted
+    (multiple-value-bind (admitted-p reason exit-code)
+        (session-check-admission sess :state-to-doing :now "2026-09-14T12:00:50Z")
+      (declare (ignore reason exit-code))
+      (ok admitted-p "admitted before until"))
+    ;; 2. Request arrived after until -> self-fenced!
+    (multiple-value-bind (admitted-p reason exit-code)
+        (session-check-admission sess :state-to-doing :now "2026-09-14T12:01:05Z")
+      (ok (not admitted-p) "refused after until")
+      (check-equal 1 exit-code "exit code is 1")
+      (ok (search "fenced" reason) "refusal says fenced"))
+    (check-equal :fenced (session-state sess) "session state transitioned to fenced")
+    ;; 3. Submit mutation on fenced session is refused
+    (multiple-value-bind (ok-p line exit-code)
+        (session-submit sess
+                        '(:verb :state-to-doing :node "t1" :by "emma" :request "r-fence-1"
+                          :stamp "2026-09-14T12:01:10Z" :clock :tool :generation-owner "emma")
+                        :now "2026-09-14T12:01:10Z")
+      (ok (not ok-p) "submit refused while fenced")
+      (check-equal 1 exit-code "exit code is 1")
+      (ok (search "fenced" line) "submit line says fenced"))))
+
+(deftest "session-status-inspects-live-and-fenced"
+  "docs/SPEC-WORK.md:234-238,4155"
+  "expected=status-answers-exit-0-live-and-fenced"
+  (let* ((seed '((:id "t1" :type :task :state :todo)))
+         (k (make-kernel :state (make-seed-state seed) :journal (make-ordering-journal)))
+         (sess (make-session :owner "emma"
+                             :generation 2
+                             :token "tok-sess-status"
+                             :until "2026-09-14T12:01:00Z"
+                             :kernel k
+                             :state :live
+                             :file "work.s"
+                             :base "abc1234"
+                             :journal "work.journal"
+                             :every "30s"
+                             :skew "5s")))
+    ;; 1. Status while live
+    (multiple-value-bind (ok-p line exit-code)
+        (session-status sess)
+      (ok ok-p "status succeeds")
+      (check-equal 0 exit-code "status exits 0")
+      (ok (search "SESSION OK" line) "line begins with SESSION OK")
+      (ok (search "owner=emma" line) "status carries owner")
+      (ok (search "state=live" line) "status carries state=live"))
+    ;; 2. Transition to fenced
+    (setf (session-state sess) :fenced)
+    ;; 3. Status while fenced MUST still succeed with exit 0
+    (multiple-value-bind (ok-p line exit-code)
+        (session-status sess)
+      (ok ok-p "status succeeds while fenced")
+      (check-equal 0 exit-code "status exits 0 while fenced")
+      (ok (search "state=fenced" line) "status carries state=fenced"))))
+
+(deftest "execution-lease-take-and-materialized-w"
+  "docs/SPEC-WORK.md:1354-1358,1682-1709"
+  "expected=take-acquires-lease-and-materializes-w-counter"
+  (let* ((seed '((:id "t1" :type :task :state :todo)
+                 (:id "t2" :type :task :state :todo)))
+         (k (make-kernel :state (make-seed-state seed) :journal (make-ordering-journal))))
+    ;; Baseline working view
+    (check-equal 0 (state-working-count (kernel-state k)) "initial |W| is 0")
+    (ok (not (is-working-p (kernel-state k) "t1")) "t1 not working")
+    (check-equal '() (working-ids (kernel-state k)) "working-ids empty")
+    ;; Submit take on t1
+    (multiple-value-bind (ok-p line exit-code env)
+        (submit k '(:verb :take
+                    :node "t1"
+                    :by "emma"
+                    :deadline "2026-09-14T18:00:00Z"
+                    :default :release
+                    :request "req-take-t1"
+                    :stamp "2026-09-14T12:00:00Z"
+                    :clock :tool
+                    :generation-owner "emma"))
+      (declare (ignore env))
+      (ok ok-p "take succeeded")
+      (check-equal 0 exit-code "exit 0")
+      (ok (search "LEASE OK" line) "line is LEASE OK")
+      (ok (search "holder=emma" line) "line names holder")
+      (ok (search "live=1" line) "line names live count"))
+    ;; Materialized working view updated eagerly
+    (check-equal 1 (state-working-count (kernel-state k)) "|W| is 1")
+    (ok (is-working-p (kernel-state k) "t1") "t1 is working")
+    (ok (not (is-working-p (kernel-state k) "t2")) "t2 is not working")
+    (check-equal '("t1") (working-ids (kernel-state k)) "working-ids has t1")
+    ;; Node state inspectable
+    (let ((node (nova-work::%node-quiet (kernel-state k) "t1")))
+      (check-string= "emma" (wnode-holder node) "holder is emma")
+      (check-string= "2026-09-14T18:00:00Z" (wnode-deadline node) "deadline matches")
+      (check-equal :release (wnode-default-action node) "default action is release"))))
+
+(deftest "execution-lease-competing-take-refuses-held"
+  "docs/SPEC-WORK.md:1379-1382"
+  "expected=second-take-on-active-lease-refused"
+  (let* ((seed '((:id "t1" :type :task :state :todo)))
+         (k (make-kernel :state (make-seed-state seed) :journal (make-ordering-journal))))
+    ;; 1. Emma takes lease
+    (submit k '(:verb :take :node "t1" :by "emma" :deadline "2026-09-14T18:00:00Z"
+                :default :release :request "req-take-emma" :stamp "2026-09-14T12:00:00Z"
+                :clock :tool :generation-owner "emma"))
+    ;; 2. Rowan attempts to take same node while active
+    (multiple-value-bind (ok-p line exit-code env)
+        (submit k '(:verb :take :node "t1" :by "rowan" :deadline "2026-09-14T19:00:00Z"
+                    :default :release :request "req-take-rowan" :stamp "2026-09-14T12:05:00Z"
+                    :clock :tool :generation-owner "emma"))
+      (declare (ignore env))
+      (ok (not ok-p) "competing take refused")
+      (check-equal 1 exit-code "exit 1")
+      (ok (search "LEASE FAIL" line) "line is LEASE FAIL")
+      (ok (search "holder=emma" line) "line names current holder emma")
+      (ok (search "held" line) "line says held"))
+    ;; 3. Holder and |W| remain intact
+    (check-equal 1 (state-working-count (kernel-state k)) "|W| still 1")
+    (let ((node (nova-work::%node-quiet (kernel-state k) "t1")))
+      (check-string= "emma" (wnode-holder node) "holder still emma"))))
+
+(deftest "execution-lease-heartbeat-updates-evidence"
+  "docs/SPEC-WORK.md:1359-1362"
+  "expected=holder-heartbeat-updates-evidence-third-party-refused"
+  (let* ((seed '((:id "t1" :type :task :state :todo)))
+         (k (make-kernel :state (make-seed-state seed) :journal (make-ordering-journal))))
+    (submit k '(:verb :take :node "t1" :by "emma" :deadline "2026-09-14T18:00:00Z"
+                :default :release :request "req-take-hb" :stamp "2026-09-14T12:00:00Z"
+                :clock :tool :generation-owner "emma"))
+    ;; 1. Third party heartbeat refused
+    (multiple-value-bind (ok-p line exit-code env)
+        (submit k '(:verb :heartbeat :node "t1" :by "stella" :evidence "note:bus:stella-1"
+                    :request "req-hb-stella" :stamp "2026-09-14T12:10:00Z"
+                    :clock :tool :generation-owner "emma"))
+      (declare (ignore env))
+      (ok (not ok-p) "third party heartbeat refused")
+      (check-equal 1 exit-code "exit 1")
+      (ok (search "HEARTBEAT FAIL" line) "HEARTBEAT FAIL line")
+      (ok (search "not held by stella" line) "line says not held by stella"))
+    ;; 2. Holder heartbeat succeeds
+    (multiple-value-bind (ok-p line exit-code env)
+        (submit k '(:verb :heartbeat :node "t1" :by "emma" :evidence "note:bus:emma-123"
+                    :request "req-hb-emma" :stamp "2026-09-14T12:15:00Z"
+                    :clock :tool :generation-owner "emma"))
+      (declare (ignore env))
+      (ok ok-p "holder heartbeat succeeded")
+      (check-equal 0 exit-code "exit 0")
+      (ok (search "HEARTBEAT OK" line) "HEARTBEAT OK line"))
+    ;; Verify node heartbeat fields updated
+    (let ((node (nova-work::%node-quiet (kernel-state k) "t1")))
+      (check-string= "2026-09-14T12:15:00Z" (wnode-last-heartbeat node) "heartbeat stamp updated")
+      (check-string= "note:bus:emma-123" (wnode-heartbeat-evidence node) "evidence updated"))))
+
+(deftest "execution-lease-release-clears-w"
+  "docs/SPEC-WORK.md:1379-1382,1682-1709"
+  "expected=release-clears-lease-and-working-view"
+  (let* ((seed '((:id "t1" :type :task :state :todo)))
+         (k (make-kernel :state (make-seed-state seed) :journal (make-ordering-journal))))
+    (submit k '(:verb :take :node "t1" :by "emma" :deadline "2026-09-14T18:00:00Z"
+                :default :release :request "req-take-rel" :stamp "2026-09-14T12:00:00Z"
+                :clock :tool :generation-owner "emma"))
+    (check-equal 1 (state-working-count (kernel-state k)) "|W| is 1")
+    ;; 1. Third party release refused
+    (multiple-value-bind (ok-p line exit-code env)
+        (submit k '(:verb :release :node "t1" :by "stella"
+                    :request "req-rel-stella" :stamp "2026-09-14T12:30:00Z"
+                    :clock :tool :generation-owner "emma"))
+      (declare (ignore env))
+      (ok (not ok-p) "third party release refused")
+      (check-equal 1 exit-code "exit 1")
+      (ok (search "LEASE FAIL" line) "line is LEASE FAIL"))
+    ;; 2. Holder release succeeds
+    (multiple-value-bind (ok-p line exit-code env)
+        (submit k '(:verb :release :node "t1" :by "emma"
+                    :request "req-rel-emma" :stamp "2026-09-14T12:31:00Z"
+                    :clock :tool :generation-owner "emma"))
+      (declare (ignore env))
+      (ok ok-p "holder release succeeded")
+      (check-equal 0 exit-code "exit 0")
+      (ok (search "RELEASE OK" line) "line is RELEASE OK"))
+    ;; Working view and node state cleared
+    (check-equal 0 (state-working-count (kernel-state k)) "|W| cleared to 0")
+    (ok (not (is-working-p (kernel-state k) "t1")) "t1 no longer working")
+    (check-equal '() (working-ids (kernel-state k)) "working-ids empty")
+    (let ((node (nova-work::%node-quiet (kernel-state k) "t1")))
+      (ok (null (wnode-holder node)) "holder is nil/unowned")
+      (ok (null (wnode-deadline node)) "deadline is nil"))))
+
+(deftest "settle-releases-the-lease"
+  "docs/SPEC-WORK.md:1674-1680,4453"
+  "expected=settling-node-with-live-lease-releases-lease-and-clears-w"
+  (let* ((seed '((:id "t1" :type :task :state :todo)))
+         (k (make-kernel :state (make-seed-state seed) :journal (make-ordering-journal))))
+    ;; 1. Take lease and transition to doing
+    (submit k '(:verb :take :node "t1" :by "emma" :deadline "2026-09-14T18:00:00Z"
+                :default :release :request "req-take-settle" :stamp "2026-09-14T12:00:00Z"
+                :clock :tool :generation-owner "emma"))
+    (submit k '(:verb :state-to-doing :node "t1" :by "emma" :reason "starting"
+                :request "req-doing-settle" :stamp "2026-09-14T12:01:00Z"
+                :clock :tool :generation-owner "emma"))
+    (check-equal 1 (state-working-count (kernel-state k)) "|W| is 1")
+    (ok (is-working-p (kernel-state k) "t1") "t1 is working")
+    ;; 2. Settle the node
+    (multiple-value-bind (ok-p line exit-code env)
+        (submit k '(:verb :state-to-done :node "t1" :by "emma" :evidence ("ev1")
+                    :request "req-done-settle" :stamp "2026-09-14T12:02:00Z"
+                    :clock :tool :generation-owner "emma"))
+      (declare (ignore line env))
+      (ok ok-p "settle succeeded")
+      (check-equal 0 exit-code "exit 0"))
+    ;; 3. Node is settled in C, and lease is RELEASED
+    (check-equal :c (node-branch (kernel-state k) "t1") "t1 is in C")
+    (check-equal 0 (state-working-count (kernel-state k)) "|W| is 0")
+    (ok (not (is-working-p (kernel-state k) "t1")) "t1 is not in working view")
+    (let ((node (nova-work::%node-quiet (kernel-state k) "t1")))
+      (ok (null (wnode-holder node)) "holder reads unowned/nil")
+      (ok (null (wnode-deadline node)) "deadline reads nil"))))
+
+(deftest "working-set-reads-visit-zero-nodes"
+  "docs/SPEC-WORK.md:1702-1709,4995"
+  "expected=is-working-and-working-count-visit-zero-nodes"
+  (let* ((seed '((:id "ws" :type :work-set)
+                 (:id "feat" :type :feature :parent "ws")
+                 (:id "t1" :type :task :parent "feat" :state :todo)
+                 (:id "t2" :type :task :parent "feat" :state :todo)
+                 (:id "t3" :type :task :parent "feat" :state :todo)))
+         (k (make-kernel :state (make-seed-state seed) :journal (make-ordering-journal))))
+    (submit k '(:verb :take :node "t2" :by "emma" :deadline "2026-09-14T18:00:00Z"
+                :default :release :request "req-take-inst" :stamp "2026-09-14T12:00:00Z"
+                :clock :tool :generation-owner "emma"))
+    (check-equal 1 (state-working-count (kernel-state k)) "|W| is 1")
+    ;; Invariant: reading |W| and is-working-p visits ZERO nodes!
+    (with-instrumentation
+      (let ((w-count (state-working-count (kernel-state k)))
+            (t1-w (is-working-p (kernel-state k) "t1"))
+            (t2-w (is-working-p (kernel-state k) "t2"))
+            (t3-w (is-working-p (kernel-state k) "t3"))
+            (w-ids (working-ids (kernel-state k))))
+        (check-equal 1 w-count "|W| read")
+        (ok (not t1-w) "t1 not working")
+        (ok t2-w "t2 working")
+        (ok (not t3-w) "t3 not working")
+        (check-equal '("t2") w-ids "working-ids is t2")
+        (check-equal 0 *visits* "ZERO nodes in O visited for working-set queries")))))
