@@ -329,6 +329,74 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	}
 }
 
+// TestIdleWatchesNativeLog: a runner appends a line to <slot>/native.log every 200 ms for
+// longer than --idle=1s. The idle monitor must watch the child's own log (native.log once it
+// exists), not harness.log, so the card is never killed.
+func TestIdleWatchesNativeLog(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := filepath.Join(dir, "native-writes.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"i=0\n" +
+		"while [ $i -lt 12 ]; do echo \"line $i\" >> \"$root/$slot/native.log\"; sleep 0.2; i=$((i+1)); done\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, 1*time.Second)
+	if code != 0 {
+		t.Fatalf("a card writing native.log is never idle-killed, exits 0, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 in=0 out=0 usd=0.0000 idle=0") {
+		t.Fatalf("a card whose native.log grows is done, not idle-killed:\n%s", out)
+	}
+	if !strings.Contains(out, "a slot=1: all green") {
+		t.Fatalf("the native-writing card's line 2 is gathered verbatim:\n%s", out)
+	}
+}
+
+// TestIdleKillsWhenNativeLogStops: a runner appends to native.log for ~600 ms then goes
+// quiet. The monitor, watching native.log, kills the card after --idle=1s and names the file
+// it watched in the ABSTAIN reason.
+func TestIdleKillsWhenNativeLogStops(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := filepath.Join(dir, "native-stops.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; root=\"$5\"\n" +
+		"i=0\n" +
+		"while [ $i -lt 3 ]; do echo \"line $i\" >> \"$root/$slot/native.log\"; sleep 0.2; i=$((i+1)); done\n" +
+		"sleep 30\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	if code != 1 {
+		t.Fatalf("a card whose native.log stops growing is idle-killed, exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
+		t.Fatalf("the stopped native.log card is counted idle:\n%s", out)
+	}
+	if !strings.Contains(out, "a slot=1: ABSTAIN -- idle 1s ("+filepath.Join(root, "1", "native.log")+")") {
+		t.Fatalf("the ABSTAIN reason names the child's log it watched:\n%s", out)
+	}
+}
+
 func TestBatchOutputBounded(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
