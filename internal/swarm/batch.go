@@ -78,6 +78,12 @@ const idlePollInterval = 100 * time.Millisecond
 // 0 only when every card was done and none held, 1 otherwise, 2 when the admission could
 // not even be read.
 func Batch(in BatchInput) int {
+	absroot, err := filepath.Abs(in.Root)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
+		return 2
+	}
+	in.Root = absroot
 	cards, err := readCards(in.Cards)
 	if err != nil {
 		var ae *admitError

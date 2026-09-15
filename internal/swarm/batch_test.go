@@ -723,3 +723,69 @@ func TestGatherStallOnlyWithoutResult(t *testing.T) {
 		t.Fatalf("a valid RESULT.md is never stalled by an empty log:\n%s", out)
 	}
 }
+
+// TestBatchRelativeRootIsAbsolutized: the batch absolutizes --root at admission, so the
+// runner's fifth argument ($5) and NOVA_SWARM_ROOT both name the root in absolute form --
+// a relative root passed on to the wall was the refusal Emma met (the wall refused
+// `--read ./root/1` and `--write root/1/...`). The runner records both and the test asserts
+// each is the absolute root, never the relative spelling it was handed.
+func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+	})
+	// The runner records $5 and NOVA_SWARM_ROOT beside the root, then publishes RESULT.md.
+	runner := filepath.Join(dir, "record.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"printf '%s\\n' \"$5\" > \"$root/.arg5\"\n" +
+		"printf '%s\\n' \"$NOVA_SWARM_ROOT\" > \"$root/.envroot\"\n" +
+		"path=\"$root/$slot/jobs/$label/RESULT.md\"\n" +
+		"mkdir -p \"$(dirname \"$path\")\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$path\"\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Run from a foreign working directory so a relative root is meaningful: relRoot is the
+	// same directory as root, spelled without its leading path.
+	foreign := t.TempDir()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(foreign); err != nil {
+		t.Fatalf("chdir to a foreign directory: %v", err)
+	}
+	defer func() { _ = os.Chdir(orig) }()
+	relRoot, err := filepath.Rel(foreign, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatch(t, tsv, relRoot, runner, 5*time.Second)
+	if code != 0 {
+		t.Fatalf("a clean batch exits 0, got %d; stderr: %s:\n%s", code, errs, out)
+	}
+	arg5 := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".arg5")))
+	if arg5 != root {
+		t.Errorf("the runner's $5 is %q, want the absolute root %q; a relative root reached the runner", arg5, root)
+	}
+	envRoot := strings.TrimSpace(readTestFile(t, filepath.Join(root, ".envroot")))
+	if envRoot != root {
+		t.Errorf("NOVA_SWARM_ROOT is %q, want the absolute root %q; a relative root reached the environment", envRoot, root)
+	}
+}
+
+func readTestFile(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	return string(raw)
+}

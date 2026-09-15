@@ -817,3 +817,50 @@ func TestNativeRunWritesUsageInJobDirectory(t *testing.T) {
 		t.Fatalf("usage.tsv not found in slot directory %s: %v", slotUsage, err)
 	}
 }
+
+// TestNativeRelativeSlotIsAbsolutized: the native run absolutizes --slot and --root at
+// admission, so the wall's argv reads the slot and writes the job by absolute path -- the
+// wall's refusal of `--read ./root/1` and `--write root/1/...` is what this absolutization
+// exists to prevent. The run starts from a foreign working directory with the slot and root
+// spelled relatively, and the test asserts the wall argv carries the absolute slot.
+func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	foreign := t.TempDir()
+	root := filepath.Join(foreign, "root")
+	slot := filepath.Join(root, "slot-1")
+	if err := os.MkdirAll(slot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(foreign); err != nil {
+		t.Fatalf("chdir to a foreign directory: %v", err)
+	}
+	defer func() { _ = os.Chdir(orig) }()
+	relRoot, err := filepath.Rel(foreign, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relSlot, err := filepath.Rel(foreign, slot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	label := "rel-slot"
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("a card\n"), slotDir: relSlot, root: relRoot, deadline: 30 * time.Second,
+		sandbox: sandbox,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+	}
+	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
+	if !hasFlagPair(strings.Fields(argv), "--read", slot) {
+		t.Errorf("the wall argv does not read the slot by absolute path %s:\n%s", slot, argv)
+	}
+}
