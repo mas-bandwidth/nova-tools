@@ -68,8 +68,17 @@ func main() {
 			return true
 		}
 		record := func() {
-			if pidfile != "" {
-				_ = os.WriteFile(pidfile+".bytes", []byte(strconv.Itoa(written)), 0o644)
+			if pidfile == "" {
+				return
+			}
+			// The reader reads .bytes the moment the read returns, which can be
+			// while this process is still streaming and rewriting the count. A
+			// plain os.WriteFile truncates before it writes, so a concurrent
+			// reader can see a zero-length file; write to a temp file and rename
+			// so the file always holds a complete previous or new count.
+			tmp := pidfile + ".bytes.tmp"
+			if err := os.WriteFile(tmp, []byte(strconv.Itoa(written)), 0o644); err == nil {
+				_ = os.Rename(tmp, pidfile+".bytes")
 			}
 		}
 		// The count is written AS IT GOES, because the reader closing the pipe

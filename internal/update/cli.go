@@ -64,8 +64,15 @@ nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update help`
 
-const versionVerbs = `nova-version report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-version send --file <path> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
+// manifestShape is the one sentence that says what the file --file names holds:
+// the rule-2 manifest, one tab-separated line per tool, written by hand in git.
+// The usage line and the refusal on a missing file both carry it, so neither
+// reads as if --file were an output. No verb writes the file, so no verb is
+// named; the spec carries the same shape once (SPEC-UPDATE rule 2).
+const manifestShape = "one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand"
+
+const versionVerbs = `nova-version report --file <manifest: ` + manifestShape + `> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-version send --file <manifest: ` + manifestShape + `> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
 nova-version help`
 
 func help(name string, w io.Writer) {
@@ -138,6 +145,12 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		}
 		fmt.Fprintln(out, buildinfo.Line(name, stamp))
 		return 0
+	}
+	if verb == "snapshot" {
+		if name != "nova-version" {
+			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
+		}
+		return snapshotVerb(name, args, out, errs)
 	}
 	impliedSend := name == "nova-version" && verb == "send"
 	if impliedSend {
@@ -222,7 +235,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	}
 	file, err := os.Open(o.file)
 	if err != nil {
-		return refusal(errs, token, fmt.Errorf("cannot open %s (supply a readable --file)", o.file))
+		return refusal(errs, token, fmt.Errorf("cannot open %s (supply a readable --file: %s)", o.file, manifestShape))
 	}
 	entries, err := Load(file)
 	file.Close()

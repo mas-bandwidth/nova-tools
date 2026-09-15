@@ -26,8 +26,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -73,6 +77,7 @@ usage:
         [--receipt] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
   nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
         [--on-note-idempotent]
+  nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]
   nova-wake version
   nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
         [--reports <dir> ...] [--bus <dir> --as <name> --receipt-max-words <n>]
@@ -206,6 +211,64 @@ const DefaultGHTimeout = 45
 // literal could not follow locked nova-wake out of its own nova-bus.
 func Version() string { return buildVersion() }
 
+// wakeConfig is the key=value file read BEFORE flags: <cwd>/.nova-wake/config
+// or the path in NOVA_WAKE_CONFIG. It holds the flags the coordinator retypes
+// every turn -- bus, window, max for awake; bus, state, as for watch -- so a
+// call that gives none of them still has an answer. A flag given on the
+// command line wins, and nothing here is printed: reading the file is not a
+// change to report.
+type wakeConfig struct {
+	path   string
+	values map[string]string
+}
+
+// configPath is the file a caller may set bus=, window=, max=, state= and as= in.
+func configPath() string {
+	if p := os.Getenv("NOVA_WAKE_CONFIG"); p != "" {
+		return p
+	}
+	return ".nova-wake/config"
+}
+
+// loadWakeConfig reads the config file, or returns an empty config when it is
+// absent or unreadable: a missing file is the normal first run, not an error.
+func loadWakeConfig() *wakeConfig {
+	cfg := &wakeConfig{path: configPath(), values: map[string]string{}}
+	data, err := os.ReadFile(cfg.path)
+	if err != nil {
+		return cfg
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		cfg.values[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	return cfg
+}
+
+// get is the value for key, empty when the file did not name it.
+func (c *wakeConfig) get(key string) string { return c.values[key] }
+
+// cfgInt is a config value read as a small whole number, falling back to def
+// when it is absent or not a number: a wrong window is a flag's problem, not
+// a reason to die before the flags parse.
+func (c *wakeConfig) cfgInt(key string, def int) int {
+	s := c.get(key)
+	if s == "" {
+		return def
+	}
+	if v, err := strconv.Atoi(s); err == nil {
+		return v
+	}
+	return def
+}
+
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -213,18 +276,21 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+	cfg := loadWakeConfig()
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; watch is the blocking call, serve is the process outside a session")
 	}
 	switch args[0] {
 	case "watch":
-		return cmdWatch(args[1:], stdout, stderr, clock, false)
+		return cmdWatch(cfg, args[1:], stdout, stderr, clock, false)
 	case "quickstart":
-		return cmdWatch(args[1:], stdout, stderr, clock, true)
+		return cmdWatch(cfg, args[1:], stdout, stderr, clock, true)
 	case "probe":
 		return cmdProbe(args[1:], stdout, stderr, clock)
 	case "serve":
 		return cmdServe(args[1:], stdout, stderr, clock)
+	case "awake":
+		return cmdAwake(cfg, args[1:], stdout, stderr, clock)
 	case "version":
 		// The first question after a table misbehaves is which build each line
 		// is running, and a tool that cannot answer it costs a person the
@@ -258,6 +324,169 @@ func refused(stderr io.Writer, what string) int {
 	return 2
 }
 
+// DefaultAwakeWindow is Glenn's five minutes: presence is the newest record a
+// source saw, and no record inside this window is asleep (docs/SPEC-WORK.md,
+// Presence). It is a number of seconds because the flag is a number of seconds.
+const DefaultAwakeWindow = 300
+
+// DefaultAwakeMax is how many FRIEND lines print before one "... and N more"
+// stands for the rest.
+const DefaultAwakeMax = 50
+
+// awakeRefused is the AWAKE REFUSED shape: the things that are wrong about the
+// world rather than the invocation, exactly as refused is for watch.
+func awakeRefused(stderr io.Writer, what string) int {
+	fmt.Fprintf(stderr, "AWAKE REFUSED %s\n", oneline.Escape(what))
+	return 2
+}
+
+// cmdAwake is the presence reader over bus cursors: for every lane from-<name>/
+// in the bus clone, the newest commit touching from-<name>/CURSOR is that
+// friend's last beat (docs/SPEC-WORK.md, Presence, source bus-cursor).
+func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+	fs := flag.NewFlagSet("awake", flag.ContinueOnError)
+	busDir := fs.String("bus", cfg.get("bus"), "")
+	window := fs.Int("window", cfg.cfgInt("window", DefaultAwakeWindow), "")
+	maxN := fs.Int("max", cfg.cfgInt("max", DefaultAwakeMax), "")
+	if !parseFlags(fs, args, stderr) {
+		return 2
+	}
+	if *busDir == "" {
+		return awakeRefused(stderr, "no --bus named; refusing to guess; set bus= in "+cfg.path+" as a second remedy")
+	}
+	if *window <= 0 {
+		return awakeRefused(stderr, "--window must be a positive number of seconds")
+	}
+	if *maxN < 0 {
+		return awakeRefused(stderr, "--max may not be negative")
+	}
+	if st, err := os.Stat(*busDir); err != nil || !st.IsDir() {
+		return awakeRefused(stderr, "the bus checkout "+*busDir+" is not a directory")
+	}
+	if !isGitRepo(*busDir) {
+		return awakeRefused(stderr, *busDir+" is not a git repository")
+	}
+
+	names, err := laneNames(*busDir)
+	if err != nil {
+		return awakeRefused(stderr, oneline.Err(err))
+	}
+
+	now := clock.Now().Unix()
+	var awake, asleep, unknown int
+	total := len(names)
+	for i, name := range names {
+		state := "unknown"
+		ageText := "-"
+		source := "bus-cursor"
+		ct, haveCursor := cursorTime(*busDir, name)
+		bt, haveBeat := beatTime(*busDir, name)
+		switch {
+		case haveBeat && (!haveCursor || bt > ct):
+			// The beat is newer than the cursor (or there is no cursor at all), so it is
+			// the friend's last sign of life: a line whose cursor has not moved but whose
+			// BEAT file keeps advancing is still awake.
+			source = "bus-beat"
+			age := now - bt
+			ageText = strconv.FormatInt(age, 10)
+			if age < int64(*window) {
+				state = "awake"
+				awake++
+			} else {
+				state = "asleep"
+				asleep++
+			}
+		case haveCursor:
+			age := now - ct
+			ageText = strconv.FormatInt(age, 10)
+			if age < int64(*window) {
+				state = "awake"
+				awake++
+			} else {
+				state = "asleep"
+				asleep++
+			}
+		default:
+			unknown++
+		}
+		if i < *maxN {
+			fmt.Fprintf(stdout, "FRIEND %s %s age=%s source=%s\n",
+				oneline.Field(name), oneline.Field(state), oneline.Field(ageText), oneline.Field(source))
+		}
+	}
+	if total > *maxN {
+		fmt.Fprintf(stdout, "... and %d more\n", total-*maxN)
+	}
+	fmt.Fprintf(stdout, "AWAKE OK friends=%d awake=%d asleep=%d unknown=%d window=%d\n",
+		total, awake, asleep, unknown, *window)
+	return 0
+}
+
+// isGitRepo reports whether dir is a git working tree, the one thing that makes
+// a directory a bus rather than a directory.
+func isGitRepo(dir string) bool {
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "--git-dir")
+	return cmd.Run() == nil
+}
+
+// laneNames is every from-<name>/ directory in the bus clone, sorted by name.
+func laneNames(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "from-") {
+			continue
+		}
+		if name := strings.TrimPrefix(e.Name(), "from-"); name != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// cursorTime is the committer unix time of the newest commit touching
+// from-<name>/CURSOR, and false when no such commit exists.
+func cursorTime(dir, name string) (int64, bool) {
+	cmd := exec.Command("git", "-C", dir, "log", "-1", "--format=%ct", "--", "from-"+name+"/CURSOR")
+	raw, err := cmd.Output()
+	if err != nil {
+		return 0, false
+	}
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// beatTime is the stamp carried INSIDE from-<name>/BEAT, parsed from the file's own
+// content rather than any commit time, and false when no such file exists or it does not
+// parse. A waiting line's cursor does not move, so the beat is the liveness signal that
+// moves while the line merely waits; see docs/SPEC-WORK.md, Presence, source bus-beat.
+func beatTime(dir, name string) (int64, bool) {
+	raw, err := os.ReadFile(filepath.Join(dir, "from-"+name, "BEAT"))
+	if err != nil {
+		return 0, false
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) < 1 {
+		return 0, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, fields[0])
+	if err != nil {
+		return 0, false
+	}
+	return t.Unix(), true
+}
+
 // repeated is a flag that may be given more than once: --entry, --reports,
 // --line. A comma-separated list would make a name holding a comma
 // unspellable, and the prototype's --prs 942,951 is exactly the shape this
@@ -287,6 +516,12 @@ func (p *problems) missing(flag string) {
 	p.add("--"+flag+" is required; refusing to guess", hintFor(flag))
 }
 
+// missingCfg is missing for the flags a config file may name (bus, state,
+// as): the refusal offers the file as a second remedy after the flag.
+func (p *problems) missingCfg(flag string, cfg *wakeConfig) {
+	p.add("--"+flag+" is required; refusing to guess; set "+flag+"= in "+cfg.path+" as a second remedy", hintFor(flag))
+}
+
 func (p *problems) print(stderr io.Writer, verb string) int {
 	for i, what := range p.list {
 		fmt.Fprintf(stderr, "nova-wake %s: %s; run: nova-wake help\n", oneline.Escape(verb), oneline.Escape(what))
@@ -310,21 +545,21 @@ type polled struct {
 	due time.Time
 }
 
-func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickstart bool) int {
+func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock, quickstart bool) int {
 	verb := "watch"
 	if quickstart {
 		verb = "quickstart"
 	}
 	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	var (
-		state        = fs.String("state", "", "")
+		state        = fs.String("state", cfg.get("state"), "")
 		maxDur       = fs.String("max", "", "")
 		onDeadline   = fs.String("on-deadline", "", "")
 		interval     = fs.String("interval", "", "")
 		maxLines     = fs.Int("max-lines", DefaultMaxLines, "")
 		baseline     = fs.Bool("baseline", false, "")
-		busDir       = fs.String("bus", "", "")
-		as           = fs.String("as", "", "")
+		busDir       = fs.String("bus", cfg.get("bus"), "")
+		as           = fs.String("as", cfg.get("as"), "")
 		words        = fs.Int("receipt-max-words", 0, "")
 		refresh      = fs.Bool("refresh", false, "")
 		remote       = fs.String("remote", "", "")
@@ -360,7 +595,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 
 	var p problems
 	if *state == "" {
-		p.missing("state")
+		p.missingCfg("state", cfg)
 	}
 	if quickstart {
 		if *maxDur == "" {
@@ -475,7 +710,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 	}
 	if *busDir != "" {
 		if *as == "" {
-			p.missing("as")
+			p.missingCfg("as", cfg)
 		}
 		if *words <= 0 {
 			p.missing("receipt-max-words")
@@ -483,7 +718,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 	}
 	if *busDir == "" {
 		if *as != "" || *refresh || *advance {
-			p.missing("bus")
+			p.missingCfg("bus", cfg)
 		}
 		if len(lines) > 0 {
 			p.add("--line needs --bus; refusing to guess", "  a line's last sign is a commit on the bus checkout's branch, so there is nothing to read it from without one\n")

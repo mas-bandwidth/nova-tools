@@ -41,6 +41,7 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
+  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--benches <file> --bench <name>[,<name>...]]
   nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
   nova-swarm status    --pool <dir> [--max <n>]
@@ -56,6 +57,8 @@ usage:
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>]
+  nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher
 that exited with tasks pending and nothing running, a reclaim with no usage file
@@ -172,6 +175,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdReclaim(rest, stdout, stderr)
 	case "quickstart":
 		return cmdQuickstart(rest, stdout, stderr)
+	case "native":
+		return cmdNative(rest, stdout, stderr)
+	case "publish":
+		return cmdPublish(rest, stdout, stderr)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
 }
@@ -192,6 +199,18 @@ func newFlags(verb string) *flags {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	return &flags{verb: verb, fs: fs}
+}
+
+// stringListValue is a repeatable flag: every occurrence appends to the slice, so --repo a
+// --repo b gives ["a" "b"]. It backs a list-valued frozen-config field (the native run's
+// repos and recipients) with no default.
+type stringListValue struct{ dst *[]string }
+
+func (s stringListValue) String() string { return strings.Join(*s.dst, ",") }
+
+func (s stringListValue) Set(v string) error {
+	*s.dst = append(*s.dst, v)
+	return nil
 }
 
 // parse runs the flag set. It reports nothing about required flags: those are checked by
@@ -381,11 +400,14 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	runner := f.fs.String("runner", "", "")
 	id := f.fs.String("id", "", "")
 	root := f.fs.String("root", "", "")
+	idle := f.fs.Int("idle", 300, "")
+	benches := f.fs.String("benches", "", "")
+	bench := f.fs.String("bench", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	if *cards != "" {
-		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, stdout, stderr)
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, stdout, stderr)
 	}
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	f.want(*tasks, "tasks", "a directory holding one task file per job")
@@ -456,11 +478,16 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 // TSV. It has no pool and no admission queue: it starts one runner process per card, waits
 // until they all end or the batch's deadline, and folds every card's RESULT.md into one
 // bounded packet.
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, stdout, stderr io.Writer) int {
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench string, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
 	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
 	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
-	f.want(runner, "runner", "the command to start once per card, given label slot model card-path root as arguments")
+	if bench == "" {
+		f.want(runner, "runner", "the command to start once per card, given label slot model card-path root as arguments")
+	}
+	if bench != "" {
+		f.want(benches, "benches", "a table of one bench per row: name host root cores harness auth wall")
+	}
 	f.want(root, "root", "the directory a card's RESULT.md hangs under (<root>/<slot>/jobs/<label>/RESULT.md)")
 	seconds := 0
 	if deadline != "" {
@@ -471,12 +498,17 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, stdout, 
 			seconds = n
 		}
 	}
+	if idle < 1 {
+		f.add(fmt.Sprintf("--idle wants a whole number of seconds, got %d; a card whose log has not grown this long is killed", idle))
+	}
 	if f.refused(stderr) {
 		return 2
 	}
 	return swarm.Batch(swarm.BatchInput{
 		ID: id, Deadline: time.Duration(seconds) * time.Second,
+		Idle:  time.Duration(idle) * time.Second,
 		Cards: cards, Root: root, Runner: runner,
+		Benches: benches, Bench: bench,
 		Stdout: stdout, Stderr: stderr,
 	})
 }
@@ -1237,6 +1269,81 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func cmdNative(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("native")
+	harness := f.fs.String("harness", "", "")
+	model := f.fs.String("model", "", "")
+	cardPath := f.fs.String("card", "", "")
+	slot := f.fs.String("slot", "", "")
+	root := f.fs.String("root", "", "")
+	deadline := f.fs.String("deadline", "", "")
+	label := f.fs.String("label", "", "")
+	auth := f.fs.String("auth", "", "")
+	config := f.fs.String("config", "", "")
+	sandbox := f.fs.String("sandbox", "", "")
+	noWall := f.fs.Bool("no-wall", false, "")
+	var repos, recipients []string
+	f.fs.Var(stringListValue{&repos}, "repo", "")
+	f.fs.Var(stringListValue{&recipients}, "recipient", "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	if *noWall && *sandbox != "" {
+		f.add("--no-wall and --sandbox together: one asks for no containment at all and the other names the wall to use; pass at most one")
+	}
+	f.want(*harness, "harness", "the harness binary path, checked for existence and execution")
+	f.want(*model, "model", "the model to run: provider/model, one slash, both sides nonempty")
+	f.want(*cardPath, "card", "the path to the card file")
+	f.want(*slot, "slot", "the slot directory this run executes in")
+	f.want(*root, "root", "the configured root the slot directory must sit under")
+	f.want(*deadline, "deadline", "the wall duration that kills the child (e.g. 60s, 5m)")
+	if f.refused(stderr) {
+		return 2
+	}
+	d, err := time.ParseDuration(*deadline)
+	if err != nil || d <= 0 {
+		fmt.Fprintf(stderr, "nova-swarm native: --deadline wants a positive duration: %s\n", oneline.Err(err))
+		return 2
+	}
+	cardRaw, err := os.ReadFile(*cardPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-swarm native: --card wants a readable file: %s\n", oneline.Err(err))
+		return 2
+	}
+	lbl := *label
+	if lbl == "" {
+		lbl = strings.TrimSuffix(filepath.Base(*cardPath), filepath.Ext(*cardPath))
+	}
+	cfg := nativeRunConfig{
+		binary:     *harness,
+		model:      *model,
+		label:      lbl,
+		card:       cardRaw,
+		slotDir:    *slot,
+		root:       *root,
+		authFile:   *auth,
+		configFile: *config,
+		deadline:   d,
+		repos:      repos,
+		recipients: recipients,
+		sandbox:    *sandbox,
+		noWall:     *noWall,
+	}
+	res, code := nativeRun(cfg, stderr)
+	if code != 0 {
+		return code
+	}
+	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s%s\n",
+		oneline.Field(cfg.label), oneline.Field(res.job), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), usageSuffix(res.usageReason, res.usageState))
+	if res.rc != 0 {
+		if res.rc > 0 {
+			return res.rc
+		}
+		return 1
+	}
+	return 0
+}
+
 // ------------------------------------------------------------------------------- helpers
 
 func readTask(path string, useStdin bool, stdin io.Reader) ([]byte, error) {
@@ -1265,6 +1372,17 @@ func dash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// usageSuffix renders the usage status the NATIVE OK line carries: the empty string when a
+// store answered, otherwise ` usage=none reason=<r> path=<looked>` with the looked path put
+// through oneline.Field inside itself before returning, so the tail it adds is one safe token.
+// The reason is the literal one of no-rows, no-store or no-sqlite3 the reader reported.
+func usageSuffix(reason, path string) string {
+	if reason == "" {
+		return ""
+	}
+	return " usage=none reason=" + oneline.Field(reason) + " path=" + oneline.Field(path)
 }
 
 func orElse(a, b string) string {

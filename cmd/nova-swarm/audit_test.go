@@ -37,7 +37,14 @@ var swarmAudit = audit.Config{
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
-	Escapers: []string{"buildinfo.Line"},
+	Escapers: []string{
+		"buildinfo.Line",
+		// usageSuffix (main.go) renders the NATIVE OK suffix and puts the looked-for store
+		// path through oneline.Field inside itself before returning, so the ` usage=none
+		// path=<looked>` tail it adds is already one safe token. Only the empty string (a
+		// store answered) and an oneline.Field-escaped path can come back.
+		"usageSuffix",
+	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
@@ -69,6 +76,15 @@ var swarmAudit = audit.Config{
 		// and writes only dataHome/auth.json, which is the child's credential, not this
 		// binary's line.
 		`"context"`, `"crypto/sha256"`, `"encoding/hex"`, `"encoding/json"`,
+		// publish.go (slice 7) needs bytes and it writes to no stream. bytes.Buffer only
+		// holds the trimmed stdout/stderr of the git and gh children it samples, and every
+		// one of those strings is put through oneline.Field or oneline.Err before this
+		// package prints it, so none of it can write past the escape.
+		`"bytes"`,
+		// strconv (native.go, slice 10) only turns the child's exit code into the one
+		// column it occupies: Itoa of an int cannot hold a control character, and it
+		// holds no writer of its own.
+		`"strconv"`,
 	},
 	MinClassified: 40,
 }

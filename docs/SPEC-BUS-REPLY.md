@@ -124,6 +124,12 @@ scheme exists to remove, arriving through the reader's own door.
 3. **fast-forward the checkout**, never merge and never rebase — which is the
    main specification's own account of `wait`'s poll restated here, and is
    pinned by the existing wait tests rather than asserted fresh: every read in
+
+1. take the checkout lock, as every verb does;
+2. `git fetch <remote> <branch>` under `--git-timeout`;
+3. **fast-forward the checkout**, never merge and never rebase — which is the
+   main specification's own account of `wait`'s poll restated here, and is
+   pinned by the existing wait tests rather than asserted fresh: every read in
    this tool reads the working tree, so a fetch that stopped at `FETCH_HEAD`
    would resolve against the same stale tree it was run to replace;
 4. a checkout that is **ahead** — holding a commit of its own that has not been
@@ -146,6 +152,8 @@ thread.
 
 `--reply-to` takes the three shapes `--re` already takes — an **id**, a **path**,
 or the **exact subject** of a note on your live listing — resolved by the rules
+
+or the **exact subject** of a note on your open list — resolved by the rules
 already written for `--re`, with one addition and one restriction.
 
 **The addition: it is resolved after the refresh**, against the tree the fetch
@@ -174,21 +182,38 @@ it targetable for the same one.
 A note that is on the bus but on neither half of that listing is refused, and the
 refusal says which of the reasons it is:
 
+**The restriction: the target must be on the caller's own open list.** A note
+that is on the bus but not on your open list is refused, and the refusal says
+which of the reasons it is:
+
 - you have already answered it — a note of yours carries its id on a `Re:` line;
 - it was never addressed to you, `To:` or `Cc:`;
 - it is behind your switch-day line, so this reader has taken it as read;
+- the target is not on the listing this run can see;
 - you have no cursor yet, so there is no listing for it to be on.
+
+- you have no cursor yet, so you have no open list at all.
 
 The reason for the restriction is what this form is for: it answers what you are
 carrying. A target you are not carrying is far more often a stale id copied out
 of an older listing than a deliberate second reply — and a second reply that
 nobody is waiting for costs a reader a turn to work out why it arrived. **It is
 a restriction with a door in it**, and the refusal names the door. For the first
-three reasons the door is the existing `draft --re` form, which resolves against
+four reasons the door is the existing `draft --re` form, which resolves against
 the whole bus and is untouched, so a deliberate reply to a closed thread is one
-flag away and always was. For the fourth the door is not `--re` at all: a reader
+flag away and always was. For the fifth the door is not `--re` at all: a reader
 with no cursor needs an `inbox` run, which is what gives them a cursor and a
 listing, and the refusal names that instead.
+
+**A subject that matches two notes resolves to the newest and says so**, which
+is **the same rule** `send` already applies to a `Re:` line naming a subject.
+The rule is what is kept, not the wording: `send` says it closed the newest and
+today's `draft` says the skeleton names the newest, and this line is this verb's
+own spelling of the one rule, which is what must not disagree:
+
+a restriction with a door in it**, and the refusal names the door: the existing
+`draft --re` form resolves against the whole bus and is untouched, so a
+deliberate reply to a closed thread is one flag away and always was.
 
 **A subject that matches two notes resolves to the newest and says so**, which
 is **the same rule** `send` already applies to a `Re:` line naming a subject.
@@ -219,7 +244,7 @@ from somewhere and the somewhere is not always a person.
 | `From` | `--as`, in the roster's own spelling |
 | `To` | `--to` when given; otherwise the resolved sender of the target note |
 | `Cc` | `--cc` when given; otherwise **absent**, never inherited from the target |
-| `Re` | the resolved target's id, or its path for a note written before ids |
+| `Re` | the resolved target's id, or its path for a note written before ids; a target may carry an `Id:` that the open list cannot carry, it is resolved by PATH, and the `Re:` line takes the open entry's target name |
 | `Subject` | `--subject` when given; otherwise the target's subject with one `Re: ` in front, and an existing `Re: ` is not stacked |
 | `Kind` | absent — a reply is a note, and the receipt heuristic is the reader's |
 
@@ -304,11 +329,12 @@ filesystem support:
    The link call is atomic and fails with an already-exists error rather than
    replacing, on every POSIX filesystem and on NTFS, so this is the primary path
    on all three platforms the family builds for.
-2. **the operating system's own no-replace rename**, where the filesystem
-   refuses hard links — some network mounts, some container overlays, FAT:
-   `renameat2` with `RENAME_NOREPLACE` on Linux, `renamex_np` with `RENAME_EXCL`
-   on macOS, and `MoveFileEx` **without** `MOVEFILE_REPLACE_EXISTING` on
-   Windows, which is refusal-by-default and not a flag that has to be added.
+2. **the operating system's own no-replace rename**, where the call is
+   reachable from the language's standard library without cgo; where it is
+   not, the third branch refuses and names the call: `renameat2` with
+   `RENAME_NOREPLACE` on Linux, `renamex_np` with `RENAME_EXCL` on macOS,
+   and `MoveFileEx` **without** `MOVEFILE_REPLACE_EXISTING` on Windows, which
+   is refusal-by-default and not a flag that has to be added.
 3. **where neither is available** — an old kernel, or a filesystem that
    implements neither, seen as the call reporting that it is not supported — the
    tool **refuses to publish**: exit 2, naming the directory, the call it tried
@@ -321,6 +347,11 @@ filesystem support:
 The temporary is removed on every failing path — the already-exists refusal and
 the unsupported-filesystem refusal alike — so a refused run leaves `--draft-dir`
 holding exactly what it held before, and no stray `.tmp` beside it.
+
+land on one path; the minute is there for a person reading the directory. **An
+existing file at that path is a refusal, never an overwrite** — exit 1, naming
+the path — because the one thing that can be at that path is a draft of this
+same reply that somebody is editing in another window.
 
 The path is printed, once, on the receipt line. Nothing else goes to stdout in
 this form.
@@ -401,11 +432,27 @@ bus state in that form to say anything — and this table is the reply form only
 | the fetch failed, timed out, or named a remote or branch that is not there | the remote, the branch, and git's transcript under the event line | 1 |
 | the checkout has diverged from the named branch | the recovery command, and that nothing was written | 1 |
 | `--reply-to` names no id, no path and no listed subject on the refreshed bus | that threads are named by id, and that a slug is not a thread | 1 |
-| `--reply-to` resolves on the bus but is not on this reader's live listing | which of the four reasons it is, and the door: `draft --re` for a closed thread, an `inbox` run for a reader with no cursor | 1 |
+| `--reply-to` resolves on the bus but is not on this reader's live listing | which of the five reasons it is, and the door: `draft --re` for a closed thread, an `inbox` run for a reader with no cursor | 1 |
 | the target's sender is `--as` and no `--to` was given | a reply to your own note needs an explicit `--to` | 1 |
 | the body is empty, or over `--max-body-bytes` | the budget and the size, read at budget+1 and no further | 1 |
 | a file already exists at the draft path | the path, and that this tool never overwrites a draft | 1 |
 | the draft directory's filesystem offers no create-exclusive publish | the directory, the call tried, what it said, and to name a `--draft-dir` on a filesystem that has one | 2 |
+| another `nova-bus` holds this checkout | the existing lock refusal, unchanged | 1 |
+
+**No refusal writes a partial draft, and no publish replaces one.** The file is
+written once, complete, into a unique temporary and then published onto its
+final name by the create-exclusive step set out under the filename above, after
+every check in this table has passed. Two reasons, and the second is not the
+first: a kill between a truncate and a write leaves a file that is neither the
+old one nor the new one, and here that would be half a reply that looks
+sendable; and a rename that replaces silently loses a whole draft that another
+checkout sharing this directory created in the meantime.
+
+| `--reply-to` names no id, no path and no open subject on the refreshed bus | that threads are named by id, and that a slug is not a thread | 1 |
+| `--reply-to` resolves on the bus but is not on this reader's open list | which of the four reasons it is, and that `draft --re` answers a closed thread | 1 |
+| the target's sender is `--as` and no `--to` was given | a reply to your own note needs an explicit `--to` | 1 |
+| the body is empty, or over `--max-body-bytes` | the budget and the size, read at budget+1 and no further | 1 |
+| a file already exists at the draft path | the path, and that this tool never overwrites a draft | 1 |
 | another `nova-bus` holds this checkout | the existing lock refusal, unchanged | 1 |
 
 **No refusal writes a partial draft, and no publish replaces one.** The file is
@@ -437,6 +484,8 @@ The path from here is the one that already exists and is already reviewed:
 
 ```
 nova-bus draft ... --reply-to <id> --body-file reply.txt --draft-dir <scratch dir> ...
+
+nova-bus draft ... --reply-to <id> --body-file reply.txt --draft-dir /tmp/drafts ...
 nova-bus prepare --bus <dir> --as <name> --file <the path it printed>
 nova-bus send    --bus <dir> --as <name> --prepared <artifact> --remote <r> --branch <b>
 ```
@@ -462,6 +511,9 @@ holds each one:
   carried `OPEN` plus the change set since the cursor, which is the O(new) read
   and not a walk of the bus — so a reply on a bus of ten thousand notes costs
   what a reply on a bus of ten costs.
+
+  through the open list and the catalogue the reading verbs already use, so a
+  reply on a bus of ten thousand notes costs what a reply on a bus of ten costs.
   Where the existing resolution does read more than that, this slice **preserves
   correctness and measures it** rather than introducing a second index whose
   freshness nobody can vouch for; any indexing change is a separate, separately
@@ -491,6 +543,13 @@ with the alternative and what it would cost.
    alone — is not on the table: it would refuse the note the fetch was run to
    find. If reviewers would rather have the looser rule, the change is to the
    refusal table and to two tests, and nothing else.
+
+2. **The target must be on the caller's open list.** The proposal resolves an
+   exact id against the bus. The restriction catches a stale id copied out of an
+   older listing, which is the failure this form is most likely to produce; it
+   refuses a deliberate second reply to a closed thread, which `draft --re`
+   still does. If reviewers would rather have the looser rule, the change is to
+   the refusal table and to two tests, and nothing else.
 3. **The draft is a file, not stdout.** The proposal prints the draft on stdout.
    A file that the tool names, refuses to overwrite and refuses to put inside
    the bus is what closes the in-checkout refusal at the start of the job rather
@@ -531,17 +590,19 @@ total cost.
 
 **The before side is no longer a method to be run later. It has been run.** Four
 real coordination replies were measured out of one coordinating line's live
-session, 2026-09-13 22:55Z to 2026-09-14 01:10Z, against a live bus checkout —
+session, <from>..<to>, against a live bus checkout —
 every one of them an actual reply to an actual note, each with a clear `Re:`
 target, and not a synthetic exchange. This table is the baseline the after side
 is compared against.
 
 | reply id | target id | asst turns | tool calls | tool-result chars (proxy) | discovery calls (chars) | wall clock |
+
+| reply id | target id | asst turns | tool calls | tool-result bytes | discovery calls (bytes) | wall clock |
 |---|---|---|---|---|---|---|
-| rowan-f61f36cf7f3f | stella-c1b4e36711c5 | 2 | 2 | 3,787 | 2 (10,492) | 4m 29s |
-| rowan-b55e2424667d | stella-69a04c2f42f3 | 3 | 3 | 7,134 | 2 (1,502) | 3m 12s |
-| rowan-ddfbbd2a2cf9 | stella-0c1bdfd61805 | 2 | 2 | 3,239 | 1 (410) | 6m 21s |
-| rowan-b2b8550843de | stella-d7257ff57d84 | 2 | 2 | 2,196 | 1 (410) | 1m 27s |
+| lane-a | lane-b | 2 | 2 | 3,787 | 2 (10,492) | 4m 29s |
+| lane-a | lane-b | 3 | 3 | 7,134 | 2 (1,502) | 3m 12s |
+| lane-a | lane-b | 2 | 2 | 3,239 | 1 (410) | 6m 21s |
+| lane-a | lane-b | 2 | 2 | 2,196 | 1 (410) | 1m 27s |
 | **total / mean** | | **9 / 2.25** | **9 / 2.25** | **16,356 / 4,089** | **6 (12,814)** | mean 3m 52s |
 
 **The method, in one sentence:** turns and calls are read out of the harness
@@ -570,6 +631,13 @@ statement of what share of each side's total those counters cover. Until then
 the after side is compared against this proxy, in proxy units, on both sides —
 comparing a proxy on one side against counters on the other is the one thing
 that would make the number worse than no number.
+
+transcript rather than estimated, bytes are the character length of the
+`tool_result` text returned to the model, and tokens are those bytes at about
+four bytes to a token — **an estimate, labelled as one, and never a tokenizer
+count**. On that estimate the reply path is about 4,100 tok over the four
+replies (~1,020 each) and discovery about 3,200 tok (~800 each): about 7,300 tok
+in all, **about 1,800 tok per answered note**.
 
 Three caveats, in the section and not in a footnote, because each one narrows
 what the numbers may be used to claim:
@@ -600,6 +668,13 @@ read of the target note's file, often batched with a sibling note; and then
 **one** call that runs `draft` into a file, appends the body by heredoc and runs
 `send`, returning about 250 characters. Every size in this paragraph is the same
 text-volume proxy as the table's, and carries the word with it.
+
+whose own return is 410 b — the *running in background* line and nothing else;
+one later read of that wait's output file, to learn that a note landed, at 410 b
+in the cheap case and 10,082 b in the expensive one; one read of the target
+note's file, often batched with a sibling note; and then **one** call that runs
+`draft` into a file, appends the body by heredoc and runs `send`, returning
+about 250 b.
 
 So the composing step this document specifies is **already one turn and one
 call**, and the cheapest two of the four replies are two turns end to end. The
@@ -646,6 +721,41 @@ on the real bus to produce a number.** Where a real reply does go out it goes
 out once, by whichever form is in use that day, and the other form is the dry
 run beside it.
 
+The claim under test is narrow: **this form removes turns from answering a note,
+and its own output does not cost back what it saved.** Nothing here claims a
+percentage, and shorter output on its own proves nothing about total cost.
+
+**The after side must reduce the discovery-and-read bytes and turns — the 6
+calls and 12,814 b of the discovery column, and the note-body reads inside the
+16,356 b reply column — and it may not count as a saving anything it takes off
+the draft step.** There is one turn and one call there and about 250 b of
+output; a form that halved that would have halved nothing a line can feel. A
+report that shows the composing step got cheaper and the read-and-discover side
+did not has measured the wrong half, and says so in place of a number.
+
+**Only operational tokens are compared: the same work before and after
+adoption, at equivalent accepted quality.** What it cost to build this form and
+to review it is sunk and is **excluded entirely** — not folded into the
+per-reply figure, not reported beside it, and above all not turned into a count
+of replies at which it pays for itself. A build cost is spent whatever happens
+next, so a payback threshold measures nothing anybody can act on. The question
+is only whether a line that has the form spends fewer tokens than a line that
+does not, on the same work, for a reply of the same accepted quality —
+"accepted" because a draft that needed a second pass before it could be sent did
+not do the same work as one that did not, and must carry that pass in its own
+column rather than in neither.
+
+**The two forms are compared without the same live reply being delivered
+twice.** The before side above is real coordination replies for exactly this
+reason — a synthetic reply has no stale checkout and no ambiguous subject, which
+is where the cost actually goes — and the after side is gathered the same way,
+over comparable real replies, by the same rules. Then compare at draft time: the other side is
+composed as a draft and stopped there, or both sides are replayed as a fixture
+exchange against a disposable local bare remote. **A duplicate note is never put
+on the real bus to produce a number.** Where a real reply does go out it goes
+out once, by whichever form is in use that day, and the other form is the dry
+run beside it.
+
 What is counted, per reply:
 
 - **coordinator turns**, before and after, read out of the harness transcript
@@ -655,6 +765,21 @@ What is counted, per reply:
   kept separate from the composing call. That is the half the baseline says the
   cost is in, and a total that folds the two together cannot show whether it
   moved;
+- **the coordinator's own input, output and cache-read tokens per reply**, where
+  the harness reports them, because a turn is mostly a cache read and a count of
+  turns alone would hide the category the saving actually lands in;
+- **the tokens of the tool's own output**, before and after: stdout plus stderr,
+  measured **at the largest plausible state** — a reader carrying several
+  hundred open notes — because a receipt that is bounded at ten notes and
+  unbounded at six hundred is unbounded. The tool's output is an operational
+  cost like any other, counted on the after side and never netted out;
+- **operational review and retry overhead**: the turns and tokens spent reading
+  a generated draft before it is sent, every refusal met on the way, and every
+  re-run. A form that halves the composing turns and adds a review pass has
+  moved the cost rather than removed it;
+- **errors and wall time**, for that same reason;
+
+
 - **the coordinator's own input, output and cache-read tokens per reply**, where
   the harness reports them, because a turn is mostly a cache read and a count of
   turns alone would hide the category the saving actually lands in;
@@ -679,6 +804,12 @@ token comparison, and the summary says so in the same sentence as the number,
 not in a footnote. A saving claimed over a total that is largely unknown is not
 a saving claimed.
 
+**Implementation and review cost is excluded from the per-reply figure and
+reported beside it**, as its own number, with the count of replies at which it
+pays for itself. Folding it into the per-reply figure would hide the steady
+state; leaving it out entirely would hide the bill. Both numbers, separately, is
+the only honest shape.
+
 Raw transcripts and the exact revision each side was measured at are retained,
 and the report names the harnesses and models involved without treating any of
 them as the standard: a measurement taken on one harness is evidence about that
@@ -694,13 +825,39 @@ two limits, one frame, one receipt line, one continuation input and one cursor
 rule.** No new binary, no
 new verb, and nothing here changes a byte of what `inbox` or `wait` print today.
 
-**Draft 7 proposal (Stella):** draft 6 cleared R3 (item/summary bounds) and
-R4 (exact frame separators). R1/R2 still failed across real multi-page drains:
-a cursor advanced by page1 invalidated page2; a later page forgot an earlier
-gap; legacy IDs were not unique; a lone oversized note had no honest terminal
-state. The snapshot continuation contract below replaces the earlier commit:id
-scheme. It is awaiting independent friend review; reply-side approval remains
-scoped to the unchanged reply contract.
+**Draft 7 (the draft's author).** Draft 6 cleared **R3** (item and summary bounds) and
+**R4** (exact frame separators). **R1/R2** it did not: across a real multi-page
+drain a cursor advanced by page 1 invalidated page 2, a later page forgot an
+earlier gap, legacy ids were not unique, and a lone oversized note had no honest
+terminal state. The draft's author's snapshot continuation contract below answers all four
+and replaces the earlier `<commit>:<id>` scheme. It is the contract this section
+pins.
+
+**Draft 8.** Draft 7's rules stand unchanged; draft 8 restores what it dropped
+on its way to them. **S1** — every read-half test carries its `expected=`
+observable again, the draft-6 strings verbatim where the test still stands and
+one written from the rule for each test draft 7 added. **S2** — the two output
+lines that had become prose get their grammar back: `INBOX BODY OVERSIZE`, and
+the gapped-terminal remedy as `INBOX BODIES GAP` with its stated position.
+**S3** — token refusals print `INBOX REFUSED: <reason>`, the shape the limits
+already use. **S4** — the status text and the nine cramped words this section
+carried are gone. **S5** — this ledger.
+
+
+a shape rather than a direction. It is deliberately small: **one additive flag,
+two limits, one frame, one receipt line and one cursor rule.** No new binary, no
+new verb, and nothing here changes a byte of what `inbox` or `wait` print today.
+
+**Four repairs at draft 6.** The read half was held on four read-side holds.
+Each is fixed by id, in the section that states the rule, and each names the
+test that fails if the rule is broken:
+
+| id | the hold at draft 5 | fixed in | test |
+|---|---|---|---|
+| **R1** | continuation named a commit, so a commit holding two new notes lost the second, and display order was assumed to be commit order | *The limits* (the scan order), *The receipt* (`next=<commit>:<id>`), *The cursor* (`--after`) | `TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither` |
+| **R2** | a first body larger than any allowed `--max-bytes` printed nothing, said `next=-`, and the same command looped forever | *The limits* (the named gap), *The receipt* (`oversize=`), *The cursor* | `TestASingleOversizeBodyIsANamedGapAndNeverALoop` |
+| **R3** | "bounded listing" was claimed over a NEW half that only bodies were bounded on | *The flag* (the guarantee), *The limits* (the cap) | `TestBodiesModeCapsTheNewSummaryLinesToo` |
+| **R4** | no separator was stated between a body with no final newline and the line after it | *The frame* (the exact bytes) | `TestTheFrameSeparatorIsExactBytesIncludingAnEmptyBody` |
 
 ### The flag, and why it is a flag
 
@@ -738,6 +895,10 @@ still additive in the only sense that was ever promised to the released tool —
 it reorders nothing, renames nothing and changes no run that does not pass it —
 and `TestBodiesModeCapsTheNewSummaryLinesToo` asserts the counts on both sides.
 
+`--bodies` is only ever additive: it adds frames after `INBOX NOTE` lines that
+were going to be printed anyway, and adds one receipt line at the end. It
+removes nothing, reorders nothing and renames nothing.
+
 ### The limits
 
 Bodies are the first thing on a bus whose size is the *sender's* choice rather
@@ -747,6 +908,8 @@ required to have a default:
 | flag | default | ceiling | what it bounds |
 |---|---|---|---|
 | `--max-notes <n>` | 20 | 1000 | how many NEW items print at all in one return — summary line and frame together (**R3**) |
+
+| `--max-notes <n>` | 20 | 1000 | how many NEW notes get a body in one return |
 | `--max-bytes <n>` | 65536 | 1048576 | the total body bytes printed in one return |
 
 **Zero is not "unlimited" and over-ceiling is not "as much as you can".** Either
@@ -775,6 +938,73 @@ The snapshot continuation section below defines page selection, gaps and
 resume. Its item accounting includes gap lines in the note cap. Body framing
 remains exactly the R4 contract that follows.
 
+reaches first.
+
+**R3 — the cap is the NEW half, not the bodies alone.** With `--bodies`,
+`--max-notes` counts **NEW items printed at all**. An item's `INBOX NOTE` line
+and its frame print together or not at all, and an item past the cap prints no
+line of any kind: it is left for the next call, whole, and the return says
+`complete=false`. This is the one place the flag withholds something the same
+run without it would have printed, and it is what makes *The flag*'s guarantee
+true rather than a phrase. `TestBodiesModeCapsTheNewSummaryLinesToo` asserts
+both sides: the capped counts with the flag, and every line still printed
+without it.
+
+**R1 — the next call resumes at an item, not at a commit.** The NEW half is
+taken in one **fixed scan order** and the printed set is a **prefix** of it:
+commits in the lane's first-parent order forward from the cursor, and within one
+commit **the note files that commit added under `from-<line>/`, by path,
+compared bytewise**, then **the lines that commit appended to
+`from-<line>/RECEIPTS`, in file order**. That is #239's K3b order taken as it
+stands rather than spelled a second way, so one bookmark names the same item in
+both tools. Two consequences, and the second is the hold:
+
+- **the display is not reordered, and nothing depends on its order.** The three
+  groups `inbox` prints today — `INBOX NOTE`, `INBOX HEARD`, `INBOX RECEIPT` —
+  print exactly as they print today. The scan order decides **which** items are
+  in the return; the display decides only where each appears in it. Display
+  order and scan order may therefore differ, and no rule here assumes they
+  agree;
+- **a commit holding several items is cut between them, never at its edge.** A
+  commit that adds notes A and B, read with `--max-notes 1`, prints A and leaves
+  B, and the continuation names **A**, not the commit. Draft 5 named the commit,
+  so advancing to it stepped over B and B was never NEW again — the hold, and
+  the reason continuation is snapshot-qualified from here on.
+  `TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither` is the test, and it
+  carries the display-order mismatch as its second fixture.
+
+**R2 — a body no allowed budget can hold is a named gap, never a loop.** Where
+the **first** body of a return is larger than this run's `--max-bytes`, no frame
+is opened and the item prints once, outside any frame, as its own line. It is
+only ever the first: a later body that does not fit is simply the point the
+return stops at, left whole for the next call by the rule above, and it becomes
+a gap only on the call where it is first and still does not fit — so the two
+rules meet and neither covers the other's case.
+
+```
+INBOX BODY OVERSIZE id=<id|-> bytes=<n> max-bytes=<m> path=<path>
+```
+
+That line **is** the remedy and it names the raised bound: `<m>` is what this run
+allowed, `<n>` is what the body actually is, and raising `--max-bytes` to at
+least `<n>` carries it — up to the ceiling of 1048576, above which no value
+does, and `path=` is then the file to open. The item is a **gap**, and a gap is
+never a consumed item:
+
+- it is counted in the receipt's `oversize=`, and in **neither** `printed=` nor
+  `bytes=`;
+- the return is `complete=false`;
+- the continuation steps **past** it, so a caller draining the backlog makes
+  progress on every pass and no command repeats itself;
+- the **cursor does not** step past it, so the note keeps its turn at being NEW
+  and no run ever reports it as read. *The cursor* states that split and why the
+  two differ.
+
+`TestASingleOversizeBodyIsANamedGapAndNeverALoop` asserts every one of those,
+and the no-frame rule with them, including
+the case Stella named: a first body over the hard ceiling, where draft 5 printed
+`printed=0 next=-` and the same command ran forever.
+
 ### The frame
 
 For each NEW note within budget, in the order `inbox` already prints:
@@ -783,14 +1013,16 @@ For each NEW note within budget, in the order `inbox` already prints:
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX BODY id=<id|-> bytes=<n>
 <the body, exactly n bytes, verbatim>
+
+<the body, n bytes, verbatim>
 INBOX BODY END id=<id|->
 ```
 
 `INBOX BODY` is the fixed opening line and carries the note's id and the exact
-byte count of what follows. The `<n>` bytes after it are the body as the sender
-wrote it: **no escaping, no re-wrapping, no trailing-newline normalisation and
-no substitution of any kind.** `INBOX BODY END` is the fixed closing line and
-carries the same id.
+byte count of what follows. The `<n>` bytes after it are the body as this tool
+parses it, CRLF folded to LF: **no escaping, no re-wrapping, no trailing-newline
+normalisation, and the count and the bytes agree.** `INBOX BODY END` is the
+fixed closing line and carries the same id.
 
 **R4 — the exact bytes, and the separator is outside the count.** A body the
 sender did not end in a newline would otherwise run into the closing line and
@@ -837,7 +1069,7 @@ nothing a body holds can be read as an event line, and that property comes from
 the byte count, which a sender cannot forge, and not from a delimiter, which a
 sender can type.
 
-### Snapshot continuation and the read cursor (draft 7 proposal)
+### Snapshot continuation and the read cursor
 
 A continuation is a position in one immutable listing snapshot. It is not a
 receipt, a reply, permission to read another lane, or proof that a person read a
@@ -854,14 +1086,22 @@ Id and two items in one commit remain distinct by path/record offset; `id=-` is
 never a continuation identity.
 
 **Token.** `next=` is a bounded, versioned, opaque URL-safe token, passed back
-unchanged as `--after <token>`. Version1 carries C0, H, reader/selector identity,
+unchanged as `--after <token>`. Version 1 carries C0, H, reader/selector identity,
 the last accounted item identity, the earliest unresolved gap (or none), cumulative
 gap count, the whole-commit safe frontier, and the expected persisted cursor after
 this call. No body, subject, secret, unbounded item list, or absolute path belongs
-in it. Encoding and decoding use a single schema; malformed, oversized (over8KiB),
+in it. Encoding and decoding use a single schema; malformed, oversized (over 8 KiB),
 unknown-version, mismatched reader/selector, unavailable snapshot, non-ancestor
-range, invalid item position, or inconsistent frontier/gap fields refuse at exit2.
-A token is client-supplied query state, not authentication: its checksum, if any,
+range, invalid item position, or inconsistent frontier/gap fields refuse at exit 2.
+Every refusal in this section — a token that does not decode or does not match,
+and a persisted cursor that is not the token's expected one — prints
+`INBOX REFUSED: <reason>` in the shape **SPEC.md:2485** fixes and the limits
+above already use: the reason names what did not match and carries one remedy.
+Where the reason mentions `<token>`, that placeholder is printed literally as the
+flag's metavariable, not replaced by the caller's input (up to 8 KiB), so the
+bounded-output law is respected.
+which is the same command without `--after`. `TestSnapshotTokenValidationAndBound`
+is the test. A token is client-supplied query state, not authentication: its checksum, if any,
 only detects accidental corruption. Never use it to bypass roster/path checks or
 claim a read receipt. Cursor update authority comes from `--advance` alone.
 
@@ -920,6 +1160,104 @@ do not lose their NEW turn. Failure writing stdout must not advance past the las
 fully emitted safe prefix. Network/publish recovery follows the existing bus
 rules; retry may re-show a body and is not an exactly-once human-delivery promise.
 
+### The receipt
+
+A continuation is a position in one immutable listing snapshot. It is not a
+receipt, a reply, permission to read another lane, or proof that a person read a
+body. `--advance` remains the explicit request to update this reader's bus state.
+
+**Snapshot.** The first call captures the reader's base cursor C0 and refreshed
+bus tip H, plus the canonical reader identity and listing selector. The existing
+inbox listing implementation defines eligible NEW items in that range. Pagination
+uses a stable internal ordering of those same items: first-parent commit order,
+then bytewise repository-relative note path, then appended receipt-record offset
+within its path. It does not borrow nova-wake's narrower lane selection. Within
+each page, the existing display groups keep their order. Legacy notes without an
+Id and two items in one commit remain distinct by path/record offset; `id=-` is
+never a continuation identity.
+
+**Token.** `next=` is a bounded, versioned, opaque URL-safe token, passed back
+unchanged as `--after <token>`. Version1 carries C0, H, reader/selector identity,
+the last accounted item identity, the earliest unresolved gap (or none), cumulative
+gap count, the whole-commit safe frontier, and the expected persisted cursor after
+this call. No body, subject, secret, unbounded item list, or absolute path belongs
+in it. Encoding and decoding use a single schema; malformed, oversized (over8KiB),
+unknown-version, mismatched reader/selector, unavailable snapshot, non-ancestor
+range, invalid item position, or inconsistent frontier/gap fields refuse at exit2.
+A token is client-supplied query state, not authentication: its checksum, if any,
+only detects accidental corruption. Never use it to bypass roster/path checks or
+claim a read receipt. Cursor update authority comes from `--advance` alone.
+
+**Resume.** Validate the token against its original C0..H snapshot, not the new
+CURSOR..HEAD range. A normal prior page may have advanced CURSOR to the commit
+containing the token's item; that does not invalidate the token. The current
+persisted cursor must equal the token's expected cursor. A different cursor means
+another read changed this reader's state: refuse with an explicit fresh-read
+remedy rather than moving it backward or silently changing the snapshot. New
+commits after H wait for a fresh chain. A missing or rewritten snapshot likewise
+refuses without mutation. No continuation token requires a hidden server ledger
+or writes from a read-only invocation.
+
+**Page accounting.** `--max-notes` caps all NEW items emitted, including gap
+lines and summaries of receipt/heard items. `--max-bytes` caps the sum of emitted
+body bytes. A summary and its body frame are emitted together. Stop before an
+item that would exhaust the remaining body budget; the next token points to the
+last item already accounted for, so the omitted item is first on the next page.
+If the first candidate's body exceeds the full per-call budget, emit one bounded
+gap line, count one gap/item, and account for that position:
+
+```
+INBOX BODY OVERSIZE id=<id|-> bytes=<n> max-bytes=<m> path=<path>
+```
+
+`<n>` is what the body actually is, `<m>` is what this run allowed, and `path=`
+is the repository-relative file to open. It consumes no body bytes.
+The following candidate may fit on this page if item and byte budgets remain.
+The token carries the earliest gap across every later page, even when later
+pages print ordinary bodies. A later page cannot forget a skipped first body.
+
+**Completion.** The receipt is:
+
+```
+INBOX BODIES printed=<n> bytes=<b> oversize=<k> gaps=<g> drained=<true|false> complete=<true|false> next=<token|->
+```
+
+`printed` counts body frames and `bytes` their body bytes only; `oversize` counts
+new gap lines on this page, `gaps` all unresolved gaps in this chain. `drained`
+means no eligible items remain after this page in C0..H. `complete` means drained
+AND gaps=0. `next` is present exactly when another page remains; terminal pages
+have `next=-`. Thus empty snapshots are drained/complete, while a lone oversized
+body is drained but incomplete. There is no command to repeat indefinitely.
+At a gapped terminal page print one bounded remedy naming the first unresolved
+gap, immediately before the `INBOX BODIES` line and nowhere else:
+
+```
+INBOX BODIES GAP id=<id|-> kind=<over-budget|over-ceiling> retry-max-bytes=<n|-> path=<path>
+```
+
+`kind=over-budget` carries `retry-max-bytes=<n>`, the smallest `--max-bytes`
+that carries that body: restart without `--after` at or above it.
+`kind=over-ceiling` carries `retry-max-bytes=-`, because no value under the
+1048576 ceiling does, and `path=` is then the file to open explicitly. It is one
+line at every state: a chain holding many gaps names the earliest one and prints
+no list. A fresh chain starts
+from the persisted cursor and may re-show bodies; it never silently marks a gap
+consumed. Do not loop on `complete=false`: drain only while `next` is present.
+
+**Cursor and OPEN.** Without `--advance`, no CURSOR, OPEN, RECEIPTS, INDEX,
+commit or push changes. With it, the safe frontier is the greatest whole commit
+whose entire eligible prefix in this snapshot has been emitted in full across
+this chain, strictly before the earliest unresolved gap or partially emitted
+commit. Do not infer this frontier from display order or from the last printed
+body. The token carries the prefix accounting needed to resume inside a commit;
+validate its internal ordering and snapshot identities before accepting it.
+Advance only monotonically from the expected current cursor to that frontier.
+An entirely empty return or one containing only gaps does not advance it. OPEN
+updates use the same emitted set and existing bookkeeping rules; excluded bodies
+do not lose their NEW turn. Failure writing stdout must not advance past the last
+fully emitted safe prefix. Network/publish recovery follows the existing bus
+rules; retry may re-show a body and is not an exactly-once human-delivery promise.
+
 ### One reader, not two
 
 `nova-wake` (#239) needs to correlate an answer to a ping, and its **draft 7**
@@ -945,6 +1283,12 @@ and the second is a standing constraint rather than a claim:
   own budget, its own `drained=`/`complete=`/`next=`/`--after` continuation and its
   own read-only default. One listing path, one set of limits, one continuation grammar.
 
+  own budget, its own `complete=`/`next=` continuation and its own read-only
+  default. One listing path, one set of limits, one continuation grammar.
+
+  own budget, its own `complete=`/`next=`/`--after` continuation (**R1**) and its
+  own read-only default. One listing path, one set of limits, one continuation grammar.
+
 ### What this half does not do
 
 - **it changes no existing output.** Without `--bodies`, `inbox` and `wait` are
@@ -957,6 +1301,8 @@ and the second is a standing constraint rather than a claim:
 - **it consumes nothing it did not print.** `printed=`, the cursor and
   `oversize=` are three separate statements and none of them stands in for
   another: a gap is counted, is not printed, and is not passed by the cursor;
+
+  the budget decides **how many whole notes** print, never how much of one;
 - **it is no new binary and no new verb**, and it adds no state: no index, no
   cache, no file of its own;
 - **it does not touch the carried list.** `--open`, `--open-max` and
@@ -976,6 +1322,19 @@ call, with no output file to read afterwards. That half is `--bodies` on
 above: one opt-in flag, `--max-notes` and `--max-bytes`, the counted
 `INBOX BODY` frame with its stated separator, the `INBOX BODIES` receipt, the
 `--after <token>` snapshot continuation and the cursor rule that never advances
+past what was printed in full.** The paragraphs below are why that half goes
+first; the section above is what is built.
+
+The released listing supplies eligibility and bookkeeping; this opt-in flag adds
+the NEW-output bounds, so it extends `inbox` rather than creating a second reader.
+
+call, with no output file to read afterwards.**
+
+above: one additive flag, `--max-notes` and `--max-bytes`, the counted
+`INBOX BODY` frame, the `INBOX BODIES` receipt and the cursor rule that never
+advances past what was printed.** The paragraphs below are why that half goes
+
+`--after <commit>:<id>` continuation and the cursor rule that never advances
 past what was printed in full.** The paragraphs below are why that half goes
 first; the section above is what is built.
 
@@ -1043,6 +1402,129 @@ existing fast tier's budget — one minute ideally, two at most — with anythin
 declared in the certification tier rather than deleted.
 
 **That the read half is bounded, framed and loses no note** — each fixture
+uses the actual shared inbox selector, and each one names its fixture and its
+observable. Tokens are asserted by decoding the one schema, never by inventing
+abbreviated commit strings: where `next=` is opaque the receipt is quoted up to
+`next=` and the token is asserted by decode.
+
+- `TestBodiesWithinBudgetPrintsEveryNewNoteAndSaysComplete`: three bodies, one
+  per commit, inside both limits; each `INBOX NOTE` line is followed by its
+  frame with the true byte count and a byte-equal body, and the run ends with
+  one receipt,
+  `expected=INBOX BODIES printed=3 bytes=612 oversize=0 gaps=0 drained=true complete=true next=-`.
+- `TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse`: exercise
+  both limits and invalid zero/over-ceiling values; no partial frame; page 1 is
+  `expected=INBOX BODIES printed=2 bytes=408 oversize=0 gaps=0 drained=false complete=false next=`
+  followed by a token that decodes to the second item and carries no gap, and
+  the remaining item is delivered whole on page 2. The two bad values are
+  refusals,
+  `expected=INBOX REFUSED: --max-notes 0 is not unlimited; give 1 to 1000` and
+  `expected=INBOX REFUSED: --max-bytes 4194304 is over the ceiling 1048576`.
+- `TestABodyHoldingFakeStatusLinesIsDeliveredVerbatimAndParsedCorrectly`:
+  fake INBOX NOTE/BODIES/END lines inside body bytes remain body data; only exact
+  byte count plus separator and closing-line validation establish a frame, and
+  the note printed after such a body is parsed as the next note,
+  `expected=INBOX BODIES printed=2 bytes=290 oversize=0 gaps=0 drained=true complete=true next=-`.
+- `TestRetryAfterAPartialResumesAtNext`: drain a fixed snapshot with and without
+  `--advance`; each accounted item appears once in that chain. **Growing tip:**
+  commits pushed after H are not in this chain, so its last page is still
+  `expected=drained=true complete=true next=-` with the post-H note absent from
+  it and first on the fresh chain that follows. A malformed or mismatched token
+  refuses and writes nothing,
+  `expected=INBOX REFUSED: --after <token> names no item in this range; rerun without --after`.
+- `TestBodiesWithoutAdvanceMovesNoCursor`: complete, partial, empty and gapped
+  returns leave every lane's `CURSOR`, `OPEN`, `RECEIPTS` and `INDEX` unchanged,
+  with no commit and no push, and the partial return still carries a usable
+  continuation, `expected=next=` followed by a token that decodes to the last
+  accounted item (the last printed one in this no-gap fixture), so the next call
+  starts after it. **Read-only resume:** that token is accepted by the
+  next read-only call and the chain reaches
+  `expected=drained=true complete=true next=-` with no `--advance` on any call,
+  `CURSOR` byte-identical to its value before the first, and no hidden writable
+  ledger anywhere.
+- `TestInboxAndWaitWithoutBodiesAreByteIdenticalToTodays`: the existing
+  fixtures over both verbs with the flag absent — stdout, stderr and exit code
+  unchanged, including at 600 carried items and with `--open`, `--open-max` and
+  `--full`, `expected=` the recorded golden output of today's binary, byte for
+  byte, with no `INBOX BODIES` line anywhere in it.
+- `TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither`: **one commit adds two
+  notes**, `a-note.md` then `b-note.md`, ids `nA` and `nB`. Read with
+  `--max-notes 1`, page 1 prints A and exactly one `INBOX NOTE` line,
+  `expected=INBOX BODIES printed=1 bytes=140 oversize=0 gaps=0 drained=false complete=false next=`
+  followed by a token that decodes to A; page 2 prints B whole,
+  `expected=INBOX BODIES printed=1 bytes=155 oversize=0 gaps=0 drained=true complete=true next=-`.
+  **Final partial commit:** with `--advance`, page 1's safe frontier is `c1`'s
+  parent — the fixture gives `c1` one — and never `c1` itself, because `c1` was
+  cut inside, `expected=INBOX CURSOR commit=<c1's parent>`. **CE3:** repeat with
+  legacy `id=-` notes and with display-group order differing from scan order,
+  `expected=` each item's path exactly once across the chain and no `next=` token
+  whose item identity is `id=-`.
+- `TestContinuationSurvivesOrdinaryCursorAdvance` (**CE1**): `c1:A`, `c2:B`,
+  `--max-notes 1`, `--advance`: page 1 moves `CURSOR` to `c1` and its token is
+  still valid for B, so page 2, given that token verbatim, is
+  `expected=INBOX BODIES printed=1 bytes=<b> oversize=0 gaps=0 drained=true complete=true next=-`.
+  A distinct external cursor change instead refuses and never rewinds state,
+  `expected=INBOX REFUSED: --after names cursor <sha> and this reader's cursor is <other>; rerun without --after`.
+- `TestASingleOversizeBodyIsANamedGapAndNeverALoop`: the only item's body is
+  2,097,152 bytes, over the 1048576 ceiling, so no `--max-bytes` carries it. No
+  frame is opened and the gap is named once,
+  `expected=INBOX BODY OVERSIZE id=nBig bytes=2097152 max-bytes=65536 path=from-x/2026-09-13-big.md`,
+  then the remedy immediately before the receipt,
+  `expected=INBOX BODIES GAP id=nBig kind=over-ceiling retry-max-bytes=- path=from-x/2026-09-13-big.md`,
+  then
+  `expected=INBOX BODIES printed=0 bytes=0 oversize=1 gaps=1 drained=true complete=false next=-`.
+  No cursor advance, and no drain call to repeat.
+- `TestEarlierGapSurvivesLaterPages` (**CE2**): oversized `c1:A`, then `c2:B`
+  and `c3:C` with `--max-notes 1`. Each later token retains the `c1` gap while
+  printing an ordinary body,
+  `expected=INBOX BODIES printed=1 bytes=<b> oversize=0 gaps=1 drained=false complete=false next=`
+  on page 2, and the terminal page keeps it,
+  `expected=INBOX BODIES printed=1 bytes=<b> oversize=0 gaps=1 drained=true complete=false next=-`
+  preceded by its one `INBOX BODIES GAP` line naming `nA`. `CURSOR` never
+  crosses `c1`. A fresh raised-budget run re-shows A if it fits; a hard-ceiling
+  gap stays explicit. Repeat with several gaps and assert constant-size
+  earliest-gap state rather than an unbounded list.
+- `TestSnapshotTokenValidationAndBound`: unknown versions, over 8 KiB, wrong
+  reader or selector, non-ancestor or unavailable snapshot, invalid path/offset,
+  and a frontier past a gap or past an unaccounted partial commit all refuse at
+  exit 2 in one shape,
+  `expected=INBOX REFUSED: --after <token> is not a continuation for this read: <what did not match>; rerun without --after`.
+  No token confers new read or write authority, and none is asserted to
+  authenticate a prior human read.
+- `TestBodiesModeCapsTheNewSummaryLinesToo`: fifty eligible items, `--bodies
+  --max-notes 5`: at most five NEW summaries or gap lines with their frames on
+  stdout and no sixth line of either kind,
+  `expected=INBOX BODIES printed=5 bytes=1020 oversize=0 gaps=0 drained=false complete=false next=`.
+  The same fixture without `--bodies` prints all fifty lines and no
+  `INBOX BODIES` line at all. Include heard/receipt-only and mixed pages.
+- `TestTheFrameSeparatorIsExactBytesIncludingAnEmptyBody`: three bodies in one
+  return — `ok\n` (ends in a newline), `ok` (does not), and the empty body.
+  Stdout is asserted byte for byte, and the separator is present for the last
+  two and absent for the first:
+  `expected=INBOX BODY id=n1 bytes=3\nok\nINBOX BODY END id=n1\nINBOX BODY id=n2 bytes=2\nok\nINBOX BODY END id=n2\nINBOX BODY id=n3 bytes=0\n\nINBOX BODY END id=n3\n`.
+  The reader's consume-and-assert sequence is exercised rather than a search for
+  the closing line, and the receipt counts body bytes only,
+  `expected=INBOX BODIES printed=3 bytes=5 oversize=0 gaps=0 drained=true complete=true next=-`.
+- `TestBrokenOutputCannotAcknowledgeUnprintedBodies`: inject stdout failure
+  before and inside frames; no cursor advancement crosses unprinted data,
+  `expected=INBOX CURSOR commit=<the last fully emitted safe prefix>` and never
+  past it; retry may re-show a body but cannot skip it. Preserve existing
+  publish-retry rules.
+
+
+## The tests, by name
+
+Every MUST above has a test, and the name says which one. **Thirty tests
+
+Every MUST above has a test, and the name says which one. **Thirty-six tests
+
+Every MUST above has a test, and the name says which one. **Forty tests
+are named below**, and each one names its fixture and its observable. They are
+ordinary package tests against disposable local bare git remotes, inside the
+existing fast tier's budget — one minute ideally, two at most — with anything heavier
+declared in the certification tier rather than deleted.
+
+**That the read half is bounded, framed and loses no note** — each fixture
 uses the actual shared inbox selector. Tokens are asserted by decoding the one
 schema, never by inventing abbreviated commit strings.
 
@@ -1104,6 +1586,9 @@ schema, never by inventing abbreviated commit strings.
   `prepare` with no tolerance applied: it validates as an ordinary draft, and
   the prepared-artifact tests pass unmodified beside it.
 
+- `TestPrepareAndSendAreUnchangedByThisSlice` — the prepared-artifact tests pass
+  unmodified, and a draft this form wrote is an ordinary input to them.
+
 **That it is fresh**
 
 - `TestReplyRefreshesBeforeItResolves` — **the fixture is a target note that
@@ -1115,6 +1600,11 @@ schema, never by inventing abbreviated commit strings.
   incidental. A second fixture asserts the other half of the set: a note the
   reader is carrying on `OPEN` and has already receipted is still a legal
   target, because heard is not answered.
+
+  exists only on the remote.** The checkout is stale, the id is unknown locally,
+  and the run resolves it and writes the draft. The same run with the fetch
+  disabled at the seam refuses, which is what proves the fetch is load-bearing
+  rather than incidental.
 - `TestRefreshFailureIsARefusalAndNeverAStaleAnswer` — an unreachable remote, a
   branch nobody has, and a fetch that times out: exit 1 each, no draft written,
   and git's transcript under the event line.
@@ -1124,6 +1614,8 @@ schema, never by inventing abbreviated commit strings.
   `OPEN`, `RECEIPTS` and `INDEX` unchanged on every lane, including after a run
   whose target was found only in the new-since-the-cursor half of the listing:
   computing that listing is a read and leaves no trace.
+
+  `OPEN`, `RECEIPTS` and `INDEX` unchanged on every lane.
 
 **That it resolves the right note**
 
@@ -1135,10 +1627,18 @@ schema, never by inventing abbreviated commit strings.
   and says how to be exact.
 - `TestTargetNotOnTheOpenListIsItsOwnRefusal` — the refused target is a note
   that is on the refreshed bus and on **neither** half of the live listing:
-  not carried on `OPEN`, and not new since the cursor. Four fixtures, one per
+  not carried on `OPEN`, and not new since the cursor. Five fixtures, one per
   reason: already answered, never addressed to this reader, behind the
-  switch-day line, and no cursor at all. Each refusal names its own reason and
-  its door — `draft --re` for the first three, an `inbox` run for the fourth.
+  switch-day line, the target not on the listing this run can see, and no cursor at all. Each refusal names its own reason and
+  its door — `draft --re` for the first four, an `inbox` run for the fifth.
+- `TestReplyResolvesAPathForANoteWrittenBeforeIds` — a legacy target is answered
+  by path, and the path is what lands on the `Re:` line, while the draft's
+  filename is the derived `legacy-<12 hex>` id and holds no `/`; two legacy
+  targets in one directory produce two names.
+
+- `TestTargetNotOnTheOpenListIsItsOwnRefusal` — four fixtures, one per reason:
+  already answered, never addressed to this reader, behind the switch-day line,
+  and no cursor at all. Each refusal names its own reason and the `--re` door.
 - `TestReplyResolvesAPathForANoteWrittenBeforeIds` — a legacy target is answered
   by path, and the path is what lands on the `Re:` line, while the draft's
   filename is the derived `legacy-<12 hex>` id and holds no `/`; two legacy

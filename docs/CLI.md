@@ -437,6 +437,22 @@ readiness receipt carries the numbers it was decided on. The word READY appears
 nowhere in this tool's output: the receipt is yours, and it is a promise about
 the next ten minutes.
 
+There is another that asks who is awake rather than watching who changes.
+`nova-wake awake --bus <dir>` reads presence over the bus cursors: for every
+`from-<name>/CURSOR` lane, the newest commit touching the cursor is that
+friend's last beat, `awake` inside `--window` (default 300s), `asleep` past it,
+`unknown` where no cursor was ever written, one `FRIEND` line each capped by
+`--max` (default 50) and one `AWAKE OK` verdict (docs/SPEC-WORK.md, **Presence**,
+source `bus-cursor`):
+
+```
+$ nova-wake awake --bus ./bus
+FRIEND alice awake age=10 source=bus-cursor
+FRIEND bob asleep age=600 source=bus-cursor
+FRIEND carol unknown age=- source=bus-cursor
+AWAKE OK friends=3 awake=1 asleep=1 unknown=1 window=300
+```
+
 ### First run
 
 Point it at a directory holding `RESULT.md` files and give it a state file of
