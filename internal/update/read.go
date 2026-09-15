@@ -238,9 +238,35 @@ func clip(s string, max int) string {
 	}
 	return s[:max] + "..."
 }
+
+// recordedVersion reports the version an installed column HOLDS rather than names a
+// command to read: one token, beginning with a digit, carrying a dotted number, and no
+// path separator. It is what `nova-version snapshot` writes -- a reading taken at a
+// moment -- and it is unambiguous against every argv a manifest can hold: `go version` is
+// two tokens, `nova-bus` carries no dotted number, and a path to a binary carries a
+// separator (#571).
+func recordedVersion(installed []string) (string, bool) {
+	if len(installed) != 1 {
+		return "", false
+	}
+	tok := installed[0]
+	if tok == "" || !digit.MatchString(tok[:1]) || !dotted.MatchString(tok) {
+		return "", false
+	}
+	if strings.ContainsAny(tok, `/\`) {
+		return "", false
+	}
+	return tok, true
+}
+
 func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool) Read {
 	if ctx.Err() != nil {
 		return Read{Reason: "budget", Remedy: "increase --budget"}
+	}
+	// A version already in the file is not read again: no process is started, nothing is
+	// searched for on PATH, and the reading the snapshot took is what is reported.
+	if v, ok := recordedVersion(e.Installed); ok {
+		return Read{Raw: v, Version: v, Source: "manifest"}
 	}
 	child, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

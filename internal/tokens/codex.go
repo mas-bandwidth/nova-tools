@@ -211,6 +211,20 @@ type CodexDecoding struct {
 // so the mapping_id every record carries is the digest of the decisions on disk rather than
 // a number somebody typed beside them.
 func ReadCodexMapping(path string) (*CodexMapping, error) {
+	m, err := readCodexManifest(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(m.EventKey) != 1 || m.EventKey[0] != "response_id" {
+		// This decoder's identity path is written for the decided key. A manifest that
+		// decided a different one is a mapping revision and a different decoder, not a
+		// shape to guess at.
+		return nil, errors.New("the mapping manifest's event key is not [response_id]")
+	}
+	return m, nil
+}
+
+func readCodexManifest(path string) (*CodexMapping, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -289,12 +303,6 @@ func ReadCodexMapping(path string) (*CodexMapping, error) {
 	}
 	if len(out.Fields) == 0 {
 		return nil, errors.New("the mapping manifest declares no field rule, so no source field is supported")
-	}
-	if len(out.EventKey) != 1 || out.EventKey[0] != "response_id" {
-		// This decoder's identity path is written for the decided key. A manifest that
-		// decided a different one is a mapping revision and a different decoder, not a
-		// shape to guess at.
-		return nil, errors.New("the mapping manifest's event key is not [response_id]")
 	}
 	return out, nil
 }

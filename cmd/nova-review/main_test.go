@@ -631,6 +631,204 @@ func TestPacketRefetchesMovedHead(t *testing.T) {
 	}
 }
 
+func TestPacketFetchesBaseBeforeRange(t *testing.T) {
+	dir := t.TempDir()
+	remote := filepath.Join(dir, "remote.git")
+	seed := filepath.Join(dir, "seed")
+	if e := os.MkdirAll(seed, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt := func(d string, args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	gitAt(dir, "init", "-q", "--bare", remote)
+	gitAt(seed, "init", "-q", "-b", "main")
+	gitAt(seed, "config", "user.email", "t@example.invalid")
+	gitAt(seed, "config", "user.name", "t")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "base")
+	gitAt(seed, "push", "-q", remote, "main:refs/heads/main")
+	gitAt(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	lane := filepath.Join(dir, "lane")
+	if e := os.MkdirAll(lane, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(dir, "clone", "-q", remote, filepath.Join(lane, merge.RepoDir))
+
+	// Advance origin/main past the clone's idle local main. A range built on the
+	// stale local branch would count these unrelated files in the packet (#418).
+	for _, f := range []string{"b.txt", "c.txt"} {
+		if e := os.WriteFile(filepath.Join(seed, f), []byte(f+"\n"), 0o644); e != nil {
+			t.Fatal(e)
+		}
+		gitAt(seed, "add", f)
+	}
+	gitAt(seed, "commit", "-qm", "unrelated base moves")
+	gitAt(seed, "push", "-q", remote, "main:refs/heads/main")
+
+	// The feature branches off the advanced main and touches one file.
+	gitAt(seed, "checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(seed, "feat.txt"), []byte("one file\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "feat.txt")
+	gitAt(seed, "commit", "-qm", "feature")
+	head := gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-q", remote, "feature:refs/heads/feature")
+
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: "main", LaneBranch: "lane", Branches: []*merge.Entry{{Branch: "feature", OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", filepath.Join(lane, "packet.md")}, &out, &errb); code != 0 {
+		t.Fatalf("packet code=%d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), " files=1 ") {
+		t.Fatalf("a one-file PR with a stale base must yield files=1; got %q", out.String())
+	}
+}
+
+func TestPacketFetchesPRHeadFromGitHubNotLaneRemote(t *testing.T) {
+	dir := t.TempDir()
+	rehearsal := filepath.Join(dir, "rehearsal.git")
+	ghremote := filepath.Join(dir, "ghremote.git")
+	seed := filepath.Join(dir, "seed")
+	if e := os.MkdirAll(seed, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt := func(d string, args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	gitAt(dir, "init", "-q", "--bare", rehearsal)
+	gitAt(dir, "init", "-q", "--bare", ghremote)
+	gitAt(seed, "init", "-q", "-b", "main")
+	gitAt(seed, "config", "user.email", "t@example.invalid")
+	gitAt(seed, "config", "user.name", "t")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "base")
+	gitAt(seed, "push", "-q", rehearsal, "main:refs/heads/main")
+	gitAt(seed, "push", "-q", ghremote, "main:refs/heads/main")
+	gitAt(rehearsal, "symbolic-ref", "HEAD", "refs/heads/main")
+	gitAt(ghremote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	gitAt(seed, "checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\nchanged\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "change")
+	head := gitAt(seed, "rev-parse", "HEAD")
+	// The PR head lives only on the fake GitHub remote, never on the lane remote.
+	gitAt(seed, "push", "-q", ghremote, "feature:refs/pull/1/head")
+
+	lane := filepath.Join(dir, "lane")
+	if e := os.MkdirAll(lane, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	repo := filepath.Join(lane, merge.RepoDir)
+	gitAt(dir, "clone", "-q", rehearsal, repo)
+	// Point the GitHub URL the --repo name resolves to at the fake remote.
+	gitAt(repo, "config", "url."+ghremote+".insteadOf", "https://github.com/test/repo.git")
+
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: "main", LaneBranch: "lane", PRs: []*merge.Entry{{PR: 1, OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--pr", "1", "--who", "emma", "--out", filepath.Join(lane, "packet.md")}, &out, &errb); code != 0 {
+		t.Fatalf("packet for a PR on a local rehearsal remote code=%d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), " files=1 ") {
+		t.Fatalf("PR packet must diff one file; got %q", out.String())
+	}
+}
+
+func TestPacketFetchesBaseFromGitHubNotLaneRemote(t *testing.T) {
+	dir := t.TempDir()
+	rehearsal := filepath.Join(dir, "rehearsal.git")
+	ghremote := filepath.Join(dir, "ghremote.git")
+	seed := filepath.Join(dir, "seed")
+	if e := os.MkdirAll(seed, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt := func(d string, args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	gitAt(dir, "init", "-q", "--bare", rehearsal)
+	gitAt(dir, "init", "-q", "--bare", ghremote)
+	gitAt(seed, "init", "-q", "-b", "main")
+	gitAt(seed, "config", "user.email", "t@example.invalid")
+	gitAt(seed, "config", "user.name", "t")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "base")
+	// main lives only on the fake GitHub remote; the rehearsal remote is bare
+	// and has no main ref, so the base can only come from the GitHub remote.
+	gitAt(seed, "push", "-q", ghremote, "main:refs/heads/main")
+	gitAt(ghremote, "symbolic-ref", "HEAD", "refs/heads/main")
+	gitAt(rehearsal, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	gitAt(seed, "checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\nchanged\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "change")
+	head := gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-q", ghremote, "feature:refs/pull/1/head")
+
+	lane := filepath.Join(dir, "lane")
+	if e := os.MkdirAll(lane, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	repo := filepath.Join(lane, merge.RepoDir)
+	gitAt(dir, "clone", "-q", rehearsal, repo)
+	gitAt(repo, "config", "url."+ghremote+".insteadOf", "https://github.com/test/repo.git")
+
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: "main", LaneBranch: "lane", PRs: []*merge.Entry{{PR: 1, OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--pr", "1", "--who", "emma", "--out", filepath.Join(lane, "packet.md")}, &out, &errb); code != 0 {
+		t.Fatalf("packet for a PR whose base lives only on the GitHub remote code=%d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), " files=1 ") {
+		t.Fatalf("PR packet must diff one file; got %q", out.String())
+	}
+}
+
 func TestLaneRefusalNamesRemedy(t *testing.T) {
 	plain := t.TempDir()
 	var out, errb bytes.Buffer
@@ -640,5 +838,93 @@ func TestLaneRefusalNamesRemedy(t *testing.T) {
 	want := "a lane is a directory made by nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>"
 	if !strings.Contains(errb.String(), want) {
 		t.Fatalf("refusal does not name the remedy; got %q want %q", errb.String(), want)
+	}
+}
+
+func packetLabPR(t *testing.T) (lane, base, head string) {
+	t.Helper()
+	dir := t.TempDir()
+	lane = filepath.Join(dir, "lane")
+	remote := filepath.Join(dir, "remote.git")
+	seed := filepath.Join(dir, "seed")
+	gitAt := func(d string, args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	gitAt(dir, "init", "-q", "--bare", remote)
+	if e := os.MkdirAll(seed, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "init", "-q", "-b", "main")
+	gitAt(seed, "config", "user.email", "t@example.invalid")
+	gitAt(seed, "config", "user.name", "t")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "base")
+	base = gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\nchanged\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "change")
+	head = gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-q", remote, "main:refs/heads/main", "feature:refs/heads/feature")
+	gitAt(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	if e := os.MkdirAll(lane, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(dir, "clone", "-q", remote, filepath.Join(lane, merge.RepoDir))
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: base, LaneBranch: "lane", PRs: []*merge.Entry{{PR: 411, OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+	return lane, base, head
+}
+
+func TestPacketHeadBypassBuildsWhenTheEntryHeadFetchFails(t *testing.T) {
+	lane, base, head := packetLabPR(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--pr", "411", "--who", "Johnny", "--head", head, "--out", "pkt.md"}, &out, &errb); code != 0 {
+		t.Fatalf("packet --head (no pull ref) code=%d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "PACKET NOTE fetch failed, using --head") {
+		t.Fatalf("missing note %q in %q", "PACKET NOTE fetch failed, using --head", errb.String())
+	}
+	body, e := os.ReadFile("pkt.md")
+	if e != nil {
+		t.Fatal(e)
+	}
+	got := string(body)
+	if !strings.Contains(got, "head="+head) {
+		t.Fatalf("packet lacks head=%s:\n%s", head, got)
+	}
+	if !strings.Contains(got, "range="+merge.Short(base)+"...") {
+		t.Fatalf("packet lacks range against base %s:\n%s", merge.Short(base), got)
+	}
+}
+
+func TestPacketRefusalNamesAddRemedy(t *testing.T) {
+	lane, _ := packetLab(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "nosuch", "--who", "emma", "--out", "p.md"}, &out, &errb); code != 2 {
+		t.Fatalf("unknown entry code=%d, want 2", code)
+	}
+	want := "the lane does not hold this entry; add it with nova-merge add --lane <dir> --pr <n> --needs-read (or add-branch --branch <name>)"
+	if !strings.Contains(errb.String(), want) {
+		t.Fatalf("refusal does not name the add remedy; got %q want %q", errb.String(), want)
 	}
 }

@@ -141,3 +141,39 @@ func writtenProbeFolds(dir string, unanswerable bool) bool {
 	other, err := os.Lstat(filepath.Join(d, recased(filepath.Base(name))))
 	return err == nil && os.SameFile(orig, other)
 }
+
+// AbsResolved is a path made absolute and then symlink-resolved: the one spelling admission
+// records for a slot or a root, so every later compare -- the wall's argv, a containment
+// check, a test's expectation -- is against the same name the filesystem itself uses.
+//
+// Absolute alone is not enough. On darwin `t.TempDir()` and `$TMPDIR` are handed out under
+// `/var`, which IS a symlink to `/private/var`, so `filepath.Abs` of a relative spelling
+// resolves it (the cwd `os.Getwd` returns is already resolved) while an absolute spelling
+// passes through unresolved -- one directory under two names, and a run's own paths
+// disagreeing with each other depending on how the caller typed them (issue #578).
+//
+// A path that does not exist YET -- the slot a run is about to create -- cannot be resolved
+// whole, so its deepest existing ancestor is resolved and the rest of the spelling is kept.
+// That is the same answer the path will have once it is made, short of a symlink introduced
+// later inside it.
+func AbsResolved(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	rest := ""
+	for cur := abs; ; {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			if rest == "" {
+				return filepath.Clean(real), nil
+			}
+			return filepath.Join(real, rest), nil
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs, nil // nothing on the way up exists; the absolute spelling is the answer
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
+}

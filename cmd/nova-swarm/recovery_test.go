@@ -481,7 +481,13 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		exit, stdout, _ := b.swarm(withSandbox([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.1",
 			"--worker", b.worker, "--launch-timeout", "1"})...)
 		b.extraEnv = nil
-		mustContain(t, "stdout", stdout, "RUN LAUNCH-FAILED id="+taskID+" slot=1 after=1s: no identity within 1s")
+		// after=<elapsed> is a MEASURED wall clock, rounded: it reads 1s on a quiet
+		// machine and 2s or more on a loaded one, so pinning it turned this into a
+		// timing assertion about the runner rather than a statement about the
+		// launch transaction (run 35025207396, test (4/8 space)). The id, the slot
+		// and the reason are what the case is about; the elapsed time is not.
+		mustContain(t, "stdout", stdout, "RUN LAUNCH-FAILED id="+taskID+" slot=1 after=")
+		mustContain(t, "stdout", stdout, ": no identity within 1s")
 		if _, err := os.Stat(filepath.Join(b.pool, "failed", taskID+".task")); err != nil {
 			t.Errorf("task must be in failed/: %v", err)
 		}

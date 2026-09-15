@@ -180,6 +180,16 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			if rc != 0 {
 				end = EndFailed
 			}
+			// ISSUE #163: A STRUCTURED SIGNAL BEFORE THE HEURISTIC. A harness adapter records
+			// the provider's refusal as a field -- class, value, limit -- and this
+			// supervisor reads that field and re-emits it as one line the next reader
+			// trusts, instead of re-reading the transcript like everybody else. No mark, no
+			// bare-word bound, no list-marker or event-prefix rule is asked to decide it.
+			if sig, ok := inputLimitSignalFromJob(jobDir); ok {
+				fmt.Fprintln(in.Stderr, InputLimitSignalLine(sig))
+				reason := fmt.Sprintf("%s limit: a request of %d did not fit a %d ceiling", sig.Class, sig.Value, sig.Limit)
+				return ExitRecord{RC: rc, Signal: signal, End: EndInputLimit, Spent: spent, Observed: observed, Partial: partial, Reason: reason}
+			}
 			// AND A PROVIDER'S INPUT LIMIT IS ITS OWN CLASS, named by the process that
 			// watched the harness say it (#103). Two Freddy reads of whole specs died
 			// `rc=1 end=failed` on 2026-09-12 and the dispatcher had only the rc; the
