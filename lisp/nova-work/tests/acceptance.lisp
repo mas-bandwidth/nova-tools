@@ -1620,3 +1620,120 @@ is compared against; it is never the path `query --ask size` takes."
                     (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
                (close-file-journal j-replay))))
       (ignore-errors (delete-file path)))))
+
+;;; ------------------------------------------------------------------
+;;; lines 3600-end part 1 of 8 (rowan/replays-278)
+;;; ------------------------------------------------------------------
+
+(deftest "activity-and-state-are-two-counts" "docs/SPEC-WORK.md:5144"
+    "expected=settles-in=1,revives-in=1,items-in=1,closed-in=0,open=5"
+  (let ((k (fresh)))
+    (ok (submit k (close-request :request "req-a")) "settle refused")
+    (ok (submit k (reopen-request :request "req-b")) "revive refused")
+    (let* ((rows (state-closed-rows (kernel-state k)))
+           (settles (count :settle rows :key (lambda (r) (getf r :kind))))
+           (revives (count :revive rows :key (lambda (r) (getf r :kind))))
+           (items (length (remove-duplicates (mapcar (lambda (r) (getf r :node)) rows)
+                                             :test #'string=))))
+      (check-equal 1 settles "settles-in counts the settle that happened")
+      (check-equal 1 revives "revives-in counts the revive that happened")
+      (check-equal 1 items "items-in counts the distinct ids touched")
+      (check-equal 0 (state-closed-count (kernel-state k))
+                   "closed-in stays 0 after the reopen")
+      (check-equal 5 (state-open-count (kernel-state k)) "open= counts the id once"))))
+
+;; NEEDS-KERNEL: launcher/deadline dispatch (execution control); no launcher exists yet.
+;; a-broken-assertion-must-fail (SPEC-WORK.md:5725) --- a test that still passes with its
+;; asserted behaviour deliberately broken is not regression evidence; the specific criterion,
+;; revision coverage and remaining uncertainty are preserved, not a green badge.
+
+;; NEEDS-KERNEL: manifest exchange and roster validation; no config manifest exists yet.
+;; a-partial-manifest-is-refused (SPEC-WORK.md:5285) --- the exchange bounded, validated and
+;; atomic, no roster, no prose repeated per poll, no secret in a manifest.
+
+;; NEEDS-KERNEL: verifier/payload reader and staged admission; no verify verb exists yet.
+;; a-receipt-needs-a-verifier (SPEC-WORK.md:5234) --- a copied note and an --as <recipient>
+;; with no verifier result refused with no canonical write; a verifier returning after a
+;; conflicting revision or failing validation writes no reservation, receipt, lease or W change.
+
+;; NEEDS-KERNEL: attempt/usage attribution records; no attempt model exists yet.
+;; a-retry-does-not-overwrite-its-attempt (SPEC-WORK.md:5222) --- unknown staying unknown,
+;; concurrent attempts keeping separate model and usage attribution, a friend's usual model
+;; never standing as proof of a delegated task's executor.
+
+;; NEEDS-KERNEL: render-root mapping and file renderer; no render verb exists yet.
+;; a-root-id-grants-nothing (SPEC-WORK.md:5402) --- a stored permitted root with no
+;; --render-root mapping refusing file mode while --chat renders; escaping/symlink/target-identity
+;; refusals; the cooperative lock and external-editor limit retained.
+
+;; NEEDS-KERNEL: savepoint/checkpoint distinction; no savepoint exists yet.
+;; a-savepoint-is-not-a-shared-backup (SPEC-WORK.md:5308) --- restore takes no ownership,
+;; reanimates no assignment, replays no message; savepoint age, local and shared revisions,
+;; unshared work and failed backups readable; a savepoint never printed where a checkpoint asked.
+
+;; NEEDS-KERNEL: distributed execution reachability; no distributed worker exists yet.
+;; a-stop-reaches-distributed-work (SPEC-WORK.md:5728) --- a priority change, correction, pause
+;; or stop across already-distributed tasks, with durable request identity, delivery,
+;; acknowledgement and reconciled handles; blocked questions and bounded fallbacks persisted.
+
+;; NEEDS-KERNEL: as-of query over day partitions; no state-as-of exists yet.
+;; absent-day-is-not-a-gap (SPEC-WORK.md:5130) --- a day with no manifest inside a complete
+;; manifested range answering its rows with gap=0 and no note.
+
+;; NEEDS-KERNEL: lease creation/binding and W entry; no lease or W index exists yet.
+;; accepted-creates-one-lease-or-binds (SPEC-WORK.md:5238) --- an accepted receipt after
+;; received creating exactly one :lease and one W entry, or binding a second attempt to the same
+;; holder's lease unchanged; converting and never doubling capacity.
+
+;; NEEDS-KERNEL: node add verb with twelve fields; no node-add exists yet.
+;; add-field-order-is-complete (SPEC-WORK.md:5337) --- a node add with every one of the twelve
+;; fields, one with each absent, one with --links-empty and one with --clear-links, digested by
+;; two serializers to four distinct values; a pre-fold-order fixture refused at load.
+
+;; NEEDS-KERNEL: configuration delta validation; no config exists yet.
+;; an-invalid-delta-leaves-the-old-config (SPEC-WORK.md:5284) --- the exchange bounded,
+;; validated and atomic; an invalid delta leaving the old config untouched.
+
+;; NEEDS-KERNEL: delegation notes and --max cap; no constraint-note verb exists yet.
+;; applicable-cap-never-hides-a-deny (SPEC-WORK.md:5498) --- N active notes, N > --max, the only
+;; :deny in the note that sorts last; the deny is never cut by --max and never printed as eligible.
+
+;; NEEDS-KERNEL: intake archive absorption; no import/adapter exists yet.
+;; archive-completeness (SPEC-WORK.md:5586) --- a missing attachment, an unavailable comment,
+;; unsupported fields, size truncation, a rate limit and a mid-page failure each remaining
+;; explicit gaps and prohibiting absorption.
+
+;; NEEDS-KERNEL: state-as-of reconstruction over settle/revive chains; no as-of query exists yet.
+;; as-of-reconstructs-settle-revive-settle (SPEC-WORK.md:5137) --- one id settled on day A,
+;; revived on day B, settled again on day C: each interval's ask answering that state, the three
+;; answers different, the earlier two unchanged by later events.
+
+;; NEEDS-KERNEL: state-as-of partition refusal; no as-of query exists yet.
+;; as-of-refuses-unavailable-partition (SPEC-WORK.md:5135) --- a state-as-of ask whose day
+;; partition cannot be opened refused at exit 1 naming that partition, never answered from a later row.
+
+;; NEEDS-KERNEL: async operation control plane; no operation/wait/cancel exists yet.
+;; async-operations (SPEC-WORK.md:5593) --- status, wait and cancel under a busy import, export
+;; and clip; no double launch, no false cancellation success, no control plane stalled behind I/O.
+
+;; NEEDS-KERNEL: roadmap row ordering and completion; no roadmap verb exists yet.
+;; axisless-history (SPEC-WORK.md:5383) --- two ordered rows, one finished, exported/loaded and
+;; reopened past the window: both rows and evidence present, denominator not reduced by completion.
+
+;; NEEDS-KERNEL: correct/execution-correct barrier; no correct verb exists yet.
+;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) --- the bare correct refused by name
+;; while an attempt is live and admitted once none is.
+
+;; NEEDS-KERNEL: batch coalescing by byte/record/delay bounds; no batch mode exists yet.
+;; batch-with-bounds-and-urgency (SPEC-WORK.md:4376) --- independent results coalescing within
+;; bounds, unchanged batches causing no call, unreferenced padding refusing, urgent corrections
+;; bypassing delay.
+
+;; NEEDS-KERNEL: batch modes and pipeline revision semantics; no batch mode exists yet.
+;; batches-and-pipelines (SPEC-WORK.md:5594) --- atomic batches all-or-none, independent batches
+;; preserving their exact accepted prefix and marking the remainder not attempted.
+
+;; NEEDS-KERNEL: launcher hard-limit enforcement; no launcher exists yet.
+;; bounds-are-not-prompts (SPEC-WORK.md:4372) --- a launcher lacking a required hard limit
+;; refusing automatic dispatch; a supported deadline returning a terminal or unresolved handle
+;; without duplicate execution.
