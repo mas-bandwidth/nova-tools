@@ -397,9 +397,9 @@
       :source "pr-231")
     (      :id "RD-20"
       :title "Issue #185: token ledger operational comparison, triage, and accounting"
-      :status "in-progress"
+      :status "measured"
       :owner "unassigned"
-      :next-gate "matched-operational-evidence"
+      :next-gate "integrated"
       :source "issue-185")
     (      :id "RD-21"
       :title "Issue #336: evaluate Herdr as an agent runtime adapter"
