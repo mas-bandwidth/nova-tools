@@ -404,12 +404,14 @@ content semantics; anything about the session that pastes the line.
 ### links — every internal reference resolves
 
 ```
-nova-check links --dir <dir> [--fail-max <n>]
+nova-check links --dir <dir> [--exclude <prefix>] [--fail-max <n>]
 ```
 
 **Asserts.** Every relative link target in every `.md` file under `--dir`
 resolves to an existing file or directory inside the tree. Walks the whole
-tree, skipping `.git`.
+tree, skipping `.git`. A repeatable `--exclude <prefix>` leaves a subtree
+unscanned and skips any link into it, reporting the skipped files as
+`excluded=<n>` on the LINKS line.
 
 **What counts as a link.** Inline links and images: `[text](target)` and
 `![alt](target)`, with an optional title in any of the three CommonMark forms

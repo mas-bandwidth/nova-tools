@@ -466,6 +466,50 @@ func TestLinksRefusesBadDir(t *testing.T) {
 	}
 }
 
+// --exclude is the Stella item 4 seam: a testdata subtree holds deliberately
+// partial fixture references (links that only resolve inside the subtree's own
+// now-absent files), so scoping it out must both stop scanning those files and
+// stop checking links into them, and the run must report how many files it
+// left unscanned as Excluded.
+func TestLinksExcludeSubtreeCounted(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"main.md":                 "see [fixture](testdata/fixture.md) and [real](real.md)\n",
+		"real.md":                 "x",
+		"testdata/fixture.md":     "[partial](missing.md)\n",
+		"testdata/partial-two.md": "text",
+	})
+	res, err := LinksExcluding(dir, []string{"testdata"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.MDFiles != 2 {
+		t.Errorf("MDFiles = %d, want 2 (main.md and real.md; the testdata subtree is not scanned)", res.MDFiles)
+	}
+	if res.Checked != 1 {
+		t.Errorf("Checked = %d, want 1 (the link into testdata is skipped, the link to real.md is checked)", res.Checked)
+	}
+	if res.Excluded != 2 {
+		t.Errorf("Excluded = %d, want 2 files under testdata", res.Excluded)
+	}
+	if len(res.Broken) != 0 {
+		t.Errorf("Broken = %v, want none: the broken link lives under the excluded subtree and the link into it is skipped", res.Broken)
+	}
+	mdFiles, checked, broken, err := Links(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mdFiles != 4 {
+		t.Errorf("without --exclude, MDFiles = %d, want 4", mdFiles)
+	}
+	if checked != 3 {
+		t.Errorf("without --exclude, Checked = %d, want 3", checked)
+	}
+	if len(broken) != 1 {
+		t.Errorf("without --exclude the partial reference inside testdata must be reported; got %v", broken)
+	}
+}
+
 // --dir naming a SYMLINK to the tree. os.Stat follows the link, so the
 // directory check passed and WalkDir then saw the root as a single non-dir
 // entry: LINKS OK files=0 links=0, exit 0 — a clean pass over a tree never
