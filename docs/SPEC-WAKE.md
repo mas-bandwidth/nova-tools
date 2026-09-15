@@ -482,20 +482,16 @@ WAKE BUS STANDING <the bus's own line, verbatim>
 WAKE ENTRY <repo>#<n> state=<state> fail=<n> pending=<n> pass=<n> final=<true|false> failing=<names|->
 WAKE ENTRY <repo>#<n> unreadable: <reason>
 WAKE REPORT path=<path> lines=<n> bytes=<n> <new|modified>
-WAKE PR <owner/repo>#<n> comments=<n> reviews=<n> threads=<n> self=<n> rescan=<true|false> push=<true|false> head=<sha|-> newest=<comment|review|thread>:<id|-> by=<login|-> review=<APPROVED|CHANGES_REQUESTED|COMMENTED|DISMISSED|-> at=<stamp> url=<url>   (rescan=, and updated= in the value: draft 4; push=, head=: draft 5)
-WAKE PR <owner/repo>#<n> unreadable: <reason>
-WAKE RUN <owner/repo>@<sha> fail=<n> pending=<n> pass=<n> final=<true|false> failing=<names|->
-WAKE RUN <owner/repo>@<sha> unreadable: <reason>
-WAKE BRANCH <owner/repo>:<name> head=<sha|-> was=<sha|->
-WAKE BRANCH <owner/repo>:<name> unreadable: <reason>
+WAKE PR <owner>/<repo>#<n> comments=<n> reviews=<n> threads=<n> self=<n> rescan=<true|false> push=<true|false> head=<sha|-> newest=<comment|review|thread>:<id|-> by=<login|-> review=<word|-> at=<stamp|-> url=<url>
+WAKE PR <owner>/<repo>#<n> unreadable: <reason>
+WAKE RUN <owner>/<repo>@<sha> fail=<n> pending=<n> pass=<n> final=<true|false> failing=<names|->
+WAKE RUN <owner>/<repo>@<sha> unreadable: <reason>
+WAKE BRANCH <owner>/<repo>:<name> head=<sha|-> was=<sha|->
+WAKE BRANCH <owner>/<repo>:<name> unreadable: <reason>
 WAKE LOCK path=<path> state=<free|held|absent> was=<free|held|absent|->
 WAKE LOCK path=<path> unreadable: <reason>
 WAKE LINE name=<name> state=<OFFLINE|BACK> last=<stamp|-> silent=<d> commit=<sha|->
-WAKE PR <owner>/<repo>#<n> comments=<n> reviews=<n> threads=<n> self=<login|-> rescan=<n> push=<n> head=<sha|-> newest=<stamp|-> by=<name|-> review=<word|-> at=<stamp|-> url=<url>
-WAKE RUN <owner>/<repo>@<sha> fail=<n> pending=<n> pass=<n> final=<true|false> failing=<names|->
-WAKE BRANCH <owner>/<repo>:<name> head=<sha|-> was=<sha|->
-WAKE LOCK path=<path> state=<held|free|-> was=<state|->
-WAKE SOURCE <bus|entries|reports> read=<n> suppressed=<n> relayed=<n> standing=<n> head=<sha|-> head-at=<stamp|->
+WAKE SOURCE bus read=<n> suppressed=<n> relayed=<n> standing=<n> head=<sha|-> head-at=<stamp|->
 WAKE SOURCE bus ... cc=<n>                    (with --to-only; appended, and part of suppressed=, draft 2)
 WAKE SOURCE prs read=<n> changed=<n> unreadable=<n> calls=<n> self=<n> login=<login|->   (self=: draft 3; self= is --not-mine's and login= is --owned-prs's: draft 4)
 WAKE SOURCE <runs|branches> read=<n> changed=<n> unreadable=<n> calls=<n>
@@ -503,7 +499,7 @@ WAKE SOURCE locks read=<n> changed=<n> unreadable=<n>              (no calls=, n
 WAKE NOTE <something true about this run that is not a change>
 WAKE POLL <source>: <reason one poll failed, which was not fatal>
 WAKE PING id=<id> to=<name> commit=<sha|-> pushed=<true|false> attempt=<n>: one prepared note (--ping-draft) offered to the bus, printed per attempt until it lands
-WAKE MORE kind=<bus|entry|report|pr|run|branch|lock> shown=<n> total=<t> n=<k> <remedy>
+WAKE MORE kind=<bus|entry|report|line|pr|run|branch|lock> shown=<n> total=<t> n=<k> <remedy>
 WAKE REFUSED: <reason>
 WAKE HERE at=<stamp> load=<load|-> cpus=<n> procs=<n|->
 WAKE PROBE name=<name> state=<state> contact=<name|-> last=<stamp|-> silent=<d> commit=<sha|-> pinged=<stamp|-> pinged-id=<id|-> rest=<d> reconciled=<true|false> correlation=<id|-> remaining=<n> gaps=<n> silent-after=<d> answer-within=<d> head-at=<stamp|->
@@ -4293,3 +4289,7 @@ be grateful to. These are the places it is **not** a model, each with the reason
 | Rowan, 2026-09-10 (the nineteen shells) | every wait ends on its own; never pgrep yourself | rule 15 (`WAKE STOPPED`), rule 16 (probe never holds), rule 4 unchanged |
 | Rowan, 2026-08-25 | absence of a process is not absence of a session | `probe` never reads a process table to judge a line; `--here` counts processes on this bench only, as a load number |
 | the amendment's brief | exit code says change, deadline or refusal | declined in part: refusal is 2, ran is 0, the token says which; `probe` takes the reserved 1 as a gate — **Exit codes** |
+
+## What this draft does not do
+
+This draft does not carry a second, conflicting spelling of the four forge item lines: `WAKE PR` with `self=<login|->`, `rescan=<n>`, `push=<n>` and `newest=<stamp|->`, nor a bare second `WAKE RUN` or `WAKE BRANCH`, nor a `WAKE LOCK` with `state=<held|free|->`; each line appears once, in the `<owner>/<repo>` form with the fields the tool prints.
