@@ -2394,6 +2394,7 @@ nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duratio
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
+nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
 nova-bus names --bus <dir>
 
@@ -2470,9 +2471,8 @@ SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
 INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
-INBOX OPEN carrying=<n> heard=<m>
+INBOX OPEN carrying=<n> heard=<m> large=<true|false> remedy=inbox --advance
 INBOX OPEN listed=<n> and <k> more (--open-max to widen)
-INBOX OPEN carrying=<n> is large; answer with Re: <id>, receipt --note <id>, or start over: <command>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
 INBOX SWITCH your switch-day line is the date <date>, which hides every note dated <date-1> or earlier; draw it at an instant, once: <command>
@@ -2493,6 +2493,9 @@ RECEIPT ALREADY note=<id or path> lane=<lane>
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 RECEIPT FAIL <name or path>: <reason>
 RECEIPT REFUSED: <reason>
+CLOSE OK closed=<n> kept=<n> commit=<sha8|->
+CLOSE FAIL <name or path>: <reason>
+CLOSE REFUSED: <reason>
 BUS SCOPE mode=<full|since> cursor=<sha|-> changed=<n>
 BUS INDEX lane=<lane> notes=<n>
 BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n> warn=<n>
