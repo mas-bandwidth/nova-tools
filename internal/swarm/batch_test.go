@@ -38,6 +38,32 @@ func fakeRunner(t *testing.T, dir string) string {
 	return path
 }
 
+// fakeRunnerLog is fakeRunner plus a run log: it publishes the card's first two lines as
+// RESULT.md (or nothing when line 2 is MISSING), and copies a fixed log body into the job's
+// native.log for every card it did publish. The log a stalled card would have written is
+// absent, exactly like a worker that opened the wall and wrote nothing after it.
+func fakeRunnerLog(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	logSrc := filepath.Join(dir, name)
+	if err := os.WriteFile(logSrc, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "runner-log.sh")
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"if [ \"$line2\" = \"MISSING\" ]; then exit 0; fi\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n" +
+		"cp " + strconv.Quote(logSrc) + " \"$job/native.log\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func writeCard(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -116,8 +142,8 @@ func TestBatchAbstainsMissingResult(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1") {
 		t.Fatalf("the missing result is an abstain row:\n%s", out)
 	}
-	if !strings.Contains(out, "b abstain") {
-		t.Fatalf("an abstained card is named, never folded:\n%s", out)
+	if !strings.Contains(out, "b: ABSTAIN -- stalled (no output after the wall opened)") {
+		t.Fatalf("a card that ended with no output is named stalled, never folded:\n%s", out)
 	}
 }
 
@@ -299,5 +325,61 @@ func TestBatchOutputBounded(t *testing.T) {
 	}
 	if !strings.HasPrefix(out, "BATCH B1 n=20 done=20 abstain=0") {
 		t.Fatalf("the BATCH line names the counts:\n%s", out)
+	}
+}
+
+func TestStalledCardIsNamed(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nMISSING"},
+	})
+	runner := fakeRunnerLog(t, dir, "a.log", "SANDBOX OK backend=fake-wall cmd=opencode\n")
+	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch with a stalled card exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "a: ABSTAIN -- stalled (no output after the wall opened)") {
+		t.Fatalf("a card that ended with no output after the wall opened is named stalled, not a slow model:\n%s", out)
+	}
+}
+
+func TestWorkingCardCountsLogLines(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+	})
+	runner := fakeRunnerLog(t, dir, "a.log",
+		"SANDBOX OK backend=fake-wall cmd=opencode\nline one\nline two\nline three\n")
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 0 {
+		t.Fatalf("a clean card exits 0, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "a all green log=3") {
+		t.Fatalf("the card line counts its log lines after the sandbox header:\n%s", out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=1 done=1 abstain=0 usd=0.0000 stalled=0") {
+		t.Fatalf("a working card is not a stall:\n%s", out)
+	}
+}
+
+func TestBatchLineCountsStalled(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\nMISSING"},
+	})
+	runner := fakeRunnerLog(t, dir, "log", "SANDBOX OK backend=fake-wall cmd=opencode\nline one\nline two\n")
+	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch with one stalled card exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 usd=0.0000 stalled=1") {
+		t.Fatalf("the BATCH line counts the stalled cards:\n%s", out)
+	}
+	if !strings.Contains(out, "b: ABSTAIN -- stalled (no output after the wall opened)") {
+		t.Fatalf("the stalled card is named:\n%s", out)
 	}
 }
