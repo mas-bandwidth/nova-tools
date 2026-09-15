@@ -739,23 +739,28 @@ quotes a report body.
 
 ## Benches: a remote bench reached by ssh, with pinned cores
 
-A **bench** is a machine that runs slots. The local machine is one bench; a
-second is reached by `ssh`. The Studio ran 40 cards at once and its load
+A **bench** is a machine that runs slots: the local machine, or any machine
+the caller can `ssh` to, with no assumption about our fleet (Glenn,
+2026-09-15: "we can help people, and ourselves, by extending nova-swarm to
+support remote swarms"). The Studio ran 40 cards at once and its load
 average reached 47 (2026-09-15): one bench is the width of a pulse, and a
-second bench doubles it. Space is the first remote bench: `ssh space`, 16
-cores, core 0 is the OS's, and every other core is used only by a process
-pinned to it with `taskset -c <n>` (Glenn, 2026-09-15). Nothing here changes
+second bench doubles it. Nothing here changes
 what a card is, what a slot is, or what `gather` reads.
 
-**The benches table** is `--benches <file>` (default `./benches.tsv`), one
-header line and one row per bench, tab-separated, these columns in this order:
+**The benches table** is `--benches <file>`, one header line and one row per
+bench, tab-separated, these columns in this order. There is no default path,
+and nova-tools keeps no host name in source or in a committed file: without
+`--benches` the row `local` is the only row that exists. The coordinator's
+bench writes the file, or nova-work's fleet registry emits it — the fleet
+registry is nova-work's; when it exists, `nova-work fleet --benches-out
+<file>` writes this file and swarm reads it; until then a person writes it.
 
 | column | what it holds |
 |---|---|
 | `name` | one word; the local machine is the row `local` |
 | `host` | an ssh alias from the caller's own ssh config, or `local` |
 | `root` | the swarm root on that host, absolute there |
-| `cores` | a `taskset` list, `1-15` or `2,4,6`, or `-` for no pinning |
+| `cores` | a `taskset` list, `1-15` or `2,4,6`, or `-` for no pinning: every darwin bench, and a linux bench without `taskset` |
 | `harness` | the harness binary on that host, absolute there |
 | `auth` | the harness auth file on that host, absolute there, mode `0600` |
 | `wall` | `sandbox` or `none`: what `bench probe` found, and what a batch may run |
@@ -766,6 +771,11 @@ runs on and behaves exactly as a batch with no table: `--runner` runs its
 cards and no `ssh`, `taskset`, copy or pull happens. A relative `root`,
 `harness` or `auth`, a `cores` list that does not parse, a `wall` that is
 neither word, or a name used twice is `BATCH REFUSED` at exit 2 naming the row.
+One row, as an example only — the tool ships none:
+
+```
+b2	b2	/home/me/swarm	1-15	/home/me/.local/bin/opencode	/home/me/.config/nova/auth	none
+```
 
 **The auth file is placed by a person, never by the tool.** The tool never
 reads, prints or copies `auth`; it names the path on the bench's `native`
@@ -780,21 +790,26 @@ unassigned card is dealt in `--bench` order — `local` first when it is named,
 then the others round-robin — each bench giving the lowest slot number it has
 not yet given; a bench whose cores are all taken leaves the rotation, and a
 bench with `cores=-` never does. A card naming a bench not in `--bench` is
-`BATCH REFUSED` at exit 2 naming the card and the bench.
+`BATCH REFUSED` at exit 2 naming the card and the bench. A friend is never a
+bench: names are checked against the friends list the bus knows, a match is
+`ADMIT REFUSED bench=<name> is a friend`, and `--bench` sends nothing on the bus.
 
-**Every remote slot is pinned.** Slot `n` on a bench runs on the `n`-th core
-of its `cores` list (`1-15`: slot 1 on core 1, slot 15 on core 15); more slots
-than cores is `ADMIT REFUSED bench=<name> slots=<n> cores=<n>` before any card
-starts, because an ssh session lands on core 0 and an unpinned process would
-share the OS's core. On a remote bench `--runner` is not used: the batch builds
+**Pinning is a per-row fact, not a swarm constant.** Where `cores` is a list,
+slot `n` runs on the `n`-th core (`1-15`: slot 1 on core 1, slot 15 on core
+15), admission requires `taskset` on the bench, and more slots than cores is
+`ADMIT REFUSED bench=<name> slots=<n> cores=<n>` before any card starts,
+because an ssh session lands on core 0 and an unpinned process would share
+the OS's core. Where `cores` is `-` (darwin, or linux without `taskset`) no
+`taskset` is required or invoked, and the local darwin row is byte-for-byte
+today's behaviour. On a remote bench `--runner` is not used: the batch builds
 the `native` command itself from the bench row and the card row, and the run is
 
 ```
-ssh <host> setsid taskset -c <core> <root>/bin/nova-swarm native --harness <harness> --model <model> --label <label> --card <root>/cards/<label>.md --slot <root>/<n>/jobs/<label> --root <root> --deadline <s> --auth <auth> [--no-wall]
+ssh <host> setsid [taskset -c <core>] <root>/bin/nova-swarm native --harness <harness> --model <model> --label <label> --card <root>/cards/<label>.md --slot <root>/<n>/jobs/<label> --root <root> --deadline <s> --auth <auth> [--no-wall]
 ```
 
-with the remote pid written by the wrap into `<root>/<n>/jobs/<label>/pid`
-before `native` starts, so the process group is one the batch can name. **The
+whose first output line is `RUN pgid=<n>`, the remote process group `native`
+runs under, printed before any card work so the batch can name it. **The
 card is the only file copied out**, to `<root>/cards/<label>.md` by `rsync`
 (or `scp`), before the run; the repository is cloned by the card on the bench
 as today, and no runner script, config or key crosses the wire. **Three files
@@ -804,15 +819,23 @@ come back** after the run, by `rsync`, into the local root at
 per card, and nothing in `gather` knows a bench exists.
 
 **Deadline and idle are held here, on the local machine, as today.** The batch
-process owns the batch deadline and the per-card `--idle`; a remote card past
-either is ended through one `ssh <host> kill -TERM -- -<pgid>`, then `-KILL`
-after 5s, and is scored exactly as a local card: the deadline's abstain row,
-or `<label>: ABSTAIN -- idle <n>s` counted in `idle=<n>`. The idle watch on a
+process owns the batch deadline and the per-card `--idle`. The local wrapper
+holds its `ssh` child in a process group of its own; on deadline or idle it
+sends `SIGTERM` to that group, then `ssh <host> pkill -TERM -g <pgid>` with
+the pgid from the `RUN pgid=<n>` line, then `-KILL` after 5 s, and the card is
+scored as a local card: `<label>: ABSTAIN -- deadline`, or `-- idle=<s>`
+counted in `idle=<n>`. If `ssh` itself is unreachable then, the slot is
+`<label>: ABSTAIN -- bench-unreachable` and gather records what was pulled
+(`RESULT.md` absent, `usage.tsv` absent) with the last local log line. A
+network drop after `RESULT.md` was written is recovered by a second pull at
+gather: one retry, 30 s, none after. The reason after `ABSTAIN --` is one
+token, the set issue #461 gives every card: `line1-mismatch | no-result |
+rc=<n> | idle=<s> | deadline | card-abstain | bench-unreachable`. The idle watch on a
 remote card asks `ssh <host> stat -c %s <root>/<n>/jobs/<label>/native.log` —
 bytes, the growth a local log is measured by, never an mtime (rule 16) — no
 more than once per `--idle/3` seconds. A bench unreachable at a poll is not a
-dead card: the card stays `unknown` until the batch deadline, when it is an
-abstain row (**wait**: missing contact is `unknown`, not failure).
+dead card: the card stays `unknown` until the batch deadline, when it is
+`ABSTAIN -- bench-unreachable` (**wait**: missing contact is `unknown`, not failure).
 
 **The cost of a bench, per card:** one `ssh` and one `rsync` at the start,
 one `rsync` at the end, one `ssh stat` per `--idle/3` while it runs, and
@@ -841,13 +864,15 @@ batch is pointed at it: one line per check, each bounded, every check run, in
 this order — ssh reachable; `root` writable (one probe file written and
 removed); `<harness> --version` runs; `<root>/bin/nova-swarm version` on the
 bench equals this binary's own `version` line, refused on a mismatch naming
-both; `cores` valid against `nproc --all` there; `auth` present with mode
-`0600`, never read; the wall as `nova-sandbox check` reports there. It ends
-with one line, exit 0 or 1:
+both; `cores` valid against `nproc --all` there, or `-`; pin, `pin=taskset`
+when `taskset` is on the bench's `PATH` and `pin=none` when not, a refusal only
+when `cores` is a list and `pin=none`; `auth` present with mode `0600`, never
+read; the wall as `nova-sandbox check` reports there. It ends with one line,
+exit 0 or 1:
 
 ```
-BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|auth|wall> ok=<true|false> [<one bounded value>]
-BENCH OK name=<name> cores=<n> wall=<sandbox|none>
+BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall> ok=<true|false> [<one bounded value>]
+BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>
 BENCH REFUSED name=<name> check=<first failing check>: <reason> (more <n>)
 ```
 
@@ -864,9 +889,12 @@ BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 
 ### What this draft does not do
 
-- **No bench discovery.** Every bench is a row a person wrote.
+- **No bench discovery, no registry.** Every bench is a row a person wrote or
+  nova-work's fleet registry emitted; swarm keeps no hosts of its own.
+- **No bus traffic.** `batch --bench <name>` wakes nobody: a friend's name is
+  refused at admission, and no line is written to the bus.
 - **No scheduling by load.** Slots go by core count and `--bench` order, never
-  by a load average; a person stops the game server on Space before a batch,
+  by a load average; a person stops what else runs on a bench before a batch,
   and the tool never touches it.
 - **No key handling.** The auth file is placed by a person; ssh keys are the
   caller's own ssh config.
@@ -882,14 +910,17 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 2. `bench-probe-refuses-version-mismatch` — `BENCH REFUSED check=version` names both identities.
 3. `bench-probe-never-reads-auth` — the fake ssh sees `stat` on the auth path and never a read of it; mode `0644` is a refusal.
 4. `batch-pins-slot-to-core` — slot 3 on `cores=1-15` runs under `taskset -c 3`, and every remote argv carries `taskset`.
-5. `batch-refuses-more-slots-than-cores` — 16 slots on `1-15` is `ADMIT REFUSED bench=space slots=16 cores=15` and no card starts.
+5. `batch-refuses-more-slots-than-cores` — 16 slots on `1-15` is `ADMIT REFUSED bench=b2 slots=16 cores=15` and no card starts.
 6. `batch-copies-card-only` — exactly one file crosses before the run, and it is the card.
 7. `batch-pulls-result-and-usage` — `RESULT.md`, `usage.tsv` and a bounded `native.log` land under `<root>/<bench>-<n>/jobs/<label>/`, and `gather` folds them unchanged.
 8. `batch-line-has-bench-lines` — `benches=2` and two `BENCH` lines whose `done` sum to the `BATCH` line's.
-9. `remote-deadline-kills-process-group` — at the deadline the fake ssh sees `kill -TERM -- -<pgid>` with the recorded pgid, then `-KILL`, and the card is an abstain row.
+9. `deadline-kills-remote-group` — at the deadline the local ssh child's group gets `SIGTERM`, the fake ssh sees `pkill -TERM -g <pgid>` with the pgid from the `RUN pgid=` line, then `-KILL`, and the card is `ABSTAIN -- deadline`.
 10. `unwalled-bench-needs-no-wall-and-marks-result` — `wall=none` without `--no-wall` is refused; with it the `RUN UNSANDBOXED` line prints, `native` gets `--no-wall`, and the `CARD` line carries `wall=none`.
 11. `local-row-unchanged-behaviour` — a cards file of bare slot numbers and no `--bench` gives the same argv, files and packet as before this section, byte for byte.
-12. `remote-idle-watch-reads-size` — the idle poll is `stat -c %s`, at most once per `--idle/3`, and an unreachable bench leaves the card `unknown` until the deadline.
+12. `remote-idle-watch-reads-size` — the idle poll is `stat -c %s`, at most once per `--idle/3`, and an unreachable bench leaves the card `unknown` until the deadline, then `ABSTAIN -- bench-unreachable` with both files absent and the last local log line recorded.
+13. `bench-name-is-not-a-friend` — a `--bench` name on the bus's friends list is `ADMIT REFUSED bench=<name> is a friend`, and the fake bus sees no line.
+14. `gather-retries-pull-once` — a pull that fails after `RESULT.md` exists on the bench is retried once at gather, 30 s later, and folds as done; a second failure is `no-result`.
+15. `pin-none-row-admits-without-taskset` — `cores=-` on a bench whose fake `PATH` lacks `taskset` probes `pin=none`, admits, and its argv carries no `taskset`; `cores=1-15` on the same bench is `BENCH REFUSED check=pin`.
 
 ## Exit codes
 
@@ -921,8 +952,8 @@ BATCH <id> n=<n> done=<n> abstain=<n> usd=<sum> idle=<n> [benches=<n>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 HOLD: <one bounded quoted line>
-BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|auth|wall> ok=<true|false> [<one bounded value>]
-BENCH OK name=<name> cores=<n> wall=<sandbox|none>
+BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall> ok=<true|false> [<one bounded value>]
+BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>
 BENCH REFUSED name=<name> check=<first failing check>: <reason> (more <n>)
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|false> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path> [profile=<id> model_requested=<id> model_observed=<id>]
