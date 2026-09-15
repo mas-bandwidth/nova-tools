@@ -257,6 +257,14 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir string)
 		"--write", dataHome,
 		"--cwd", jobDir,
 	}
+	// The shell launcher read the harness's own directory and /opt/homebrew so git and the
+	// harness's libraries resolve inside the wall; the native path does the same (run 7).
+	// Without the harness directory the wall denies even the resolver's own files, and
+	// without /opt/homebrew the common toolchain roots are invisible.
+	argv = append(argv, "--read", filepath.Dir(bin))
+	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
+		argv = append(argv, "--read", "/opt/homebrew")
+	}
 	for _, r := range cfg.repos {
 		argv = append(argv, "--repo", r)
 	}

@@ -61,6 +61,39 @@ func sandboxArgv(t *testing.T, jobDir string) string {
 	return string(raw)
 }
 
+// TestNativeArgvReadsHarnessDir: the wall's argv reads the harness binary's own directory
+// and /opt/homebrew (when it exists), so git and the harness's libraries resolve inside the
+// wall — the reads the shell launcher made, which the native path of run 7 must make too.
+func TestNativeArgvReadsHarnessDir(t *testing.T) {
+	bin := nativeHarness(t)
+	_, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "a-label")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir)
+	harnessDir := filepath.Dir(bin)
+	if !hasFlagPair(argv, "--read", harnessDir) {
+		t.Errorf("the wall argv does not read the harness directory %s:\n%s", harnessDir, strings.Join(argv, " "))
+	}
+	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
+		if !hasFlagPair(argv, "--read", "/opt/homebrew") {
+			t.Errorf("the wall argv does not read /opt/homebrew, which exists:\n%s", strings.Join(argv, " "))
+		}
+	} else if hasFlagPair(argv, "--read", "/opt/homebrew") {
+		t.Errorf("the wall argv reads /opt/homebrew, which is absent:\n%s", strings.Join(argv, " "))
+	}
+}
+
+func hasFlagPair(argv []string, flag, val string) bool {
+	for i, a := range argv {
+		if a == flag && i+1 < len(argv) && argv[i+1] == val {
+			return true
+		}
+	}
+	return false
+}
+
 // aSlot returns a slot dir and the root it is under, both fresh.
 func aSlot(t *testing.T) (root, slot string) {
 	t.Helper()

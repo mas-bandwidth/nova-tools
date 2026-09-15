@@ -46,10 +46,8 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	// Without these every absolute path into the write set fails at its leading
 	// components: git init is "cannot mkdir: Operation not permitted" and mkdir -p dies
 	// at /private. file-read-metadata is stat(2) only — listing an ancestor stays denied.
-	ancestorOf := append(append([]string{}, p.Reads...), p.Writes...)
-	ancestorOf = append(ancestorOf, p.Cwd, p.Tmp)
 	var ancestors []string
-	for _, d := range Ancestors(ancestorOf...) {
+	for _, d := range Ancestors(p.ancestorPaths()...) {
 		ancestors = append(ancestors, fmt.Sprintf("(allow file-read-metadata (literal %q))", d))
 	}
 
