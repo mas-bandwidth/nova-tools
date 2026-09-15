@@ -26,6 +26,7 @@ const (
 	RulePackageStrayFile         = "package_stray_file"
 	RuleMarkerMissing            = "marker_missing"
 	RuleMarkerExists             = "marker_exists"
+	RuleEnvelopeMalformed        = "envelope_malformed"
 	RuleObservationMalformed     = "observation_malformed"
 	RuleRecordPathOriginMismatch = "record_path_origin_mismatch"
 	RuleMappingClosureViolation  = "mapping_closure_violation"
@@ -37,14 +38,14 @@ const (
 	RuleCountEquationMismatch    = "count_equation_mismatch"
 
 	// Granular rule aliases aligning with the proposal specifications and test suites.
-	RulePackageOrphanMapping        = RuleMappingClosureViolation
-	RulePackageMissingMapping       = RuleMappingClosureViolation
+	RulePackageOrphanMapping         = RuleMappingClosureViolation
+	RulePackageMissingMapping        = RuleMappingClosureViolation
 	RuleObservationUndeclaredMapping = RuleMappingClosureViolation
-	RuleCoverageUnusedMapping       = RuleMappingClosureViolation
-	RuleInventoryEncoding           = RuleInventoryMismatch
-	RuleCoverageGapsInvariant       = RuleCountEquationMismatch
-	RuleCountMismatch               = RuleCountEquationMismatch
-	RulePackageFileMode             = RulePermissionsInvalid
+	RuleCoverageUnusedMapping        = RuleMappingClosureViolation
+	RuleInventoryEncoding            = RuleInventoryMismatch
+	RuleCoverageGapsInvariant        = RuleCountEquationMismatch
+	RuleCountMismatch                = RuleCountEquationMismatch
+	RulePackageFileMode              = RulePermissionsInvalid
 )
 
 // RefusalExitCode is the exit status (2) mandated for all package refusals.
@@ -139,6 +140,9 @@ func EnsureDestinationFresh(dir string) error {
 }
 
 // AtomicNoReplaceRename renames tmpPath to targetPath without replacing targetPath.
+// On POSIX platforms, this implements the portable link/unlink no-replace idiom:
+// os.Link atomically fails with EEXIST if targetPath already exists, ensuring no
+// pre-existing marker is ever clobbered.
 // If targetPath already exists, it atomically fails and returns a PackageRefusal with RuleMarkerExists.
 func AtomicNoReplaceRename(tmpPath, targetPath string) error {
 	err := os.Link(tmpPath, targetPath)
@@ -150,10 +154,18 @@ func AtomicNoReplaceRename(tmpPath, targetPath string) error {
 				Detail: "destination marker already exists",
 			}
 		}
-		return err
+		return &PackageRefusal{
+			Rule:   RuleMarkerMissing,
+			Path:   targetPath,
+			Detail: fmt.Sprintf("cannot link marker: %v", err),
+		}
 	}
 	if err := syscall.Unlink(tmpPath); err != nil {
-		return err
+		return &PackageRefusal{
+			Rule:   RuleTemporaryFilePresent,
+			Path:   tmpPath,
+			Detail: fmt.Sprintf("cannot unlink temporary marker: %v", err),
+		}
 	}
 	return nil
 }
@@ -333,6 +345,10 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 			return err
 		}
 
+		if strings.HasPrefix(entryFi.Name(), ".") {
+			return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "hidden entries are forbidden in package: " + relPath}
+		}
+
 		if entryFi.Mode()&os.ModeSymlink != 0 {
 			return &PackageRefusal{Rule: RuleSymlinkForbidden, Path: relPath, Detail: "symlinks are forbidden in package"}
 		}
@@ -407,11 +423,12 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 			if ref.Rule == records.RuleShardReference {
 				return &PackageRefusal{Rule: RuleShardCountMismatch, Path: "batch.json", Detail: ref.Error()}
 			}
+			return &PackageRefusal{Rule: ref.Rule, Path: "batch.json", Detail: ref.Error()}
 		}
-		return &PackageRefusal{Rule: RuleObservationMalformed, Path: "batch.json", Detail: err.Error()}
+		return &PackageRefusal{Rule: RuleEnvelopeMalformed, Path: "batch.json", Detail: err.Error()}
 	}
 	if env.Coverage == nil || env.Coverage.Schema != records.SchemaCoverage {
-		return &PackageRefusal{Rule: RuleObservationMalformed, Path: "batch.json", Detail: "envelope is not nova.tokens.coverage/2"}
+		return &PackageRefusal{Rule: RuleEnvelopeMalformed, Path: "batch.json", Detail: "envelope is not nova.tokens.coverage/2"}
 	}
 	cov := env.Coverage
 
@@ -429,6 +446,9 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 		if err != nil {
 			return err
 		}
+		if strings.HasPrefix(e.Name(), ".") {
+			return &PackageRefusal{Rule: RulePackageStrayFile, Path: mRelPath, Detail: "hidden entries forbidden in mappings"}
+		}
 		if mFi.IsDir() {
 			return &PackageRefusal{Rule: RulePackageStrayFile, Path: mRelPath, Detail: "subdirectories forbidden in mappings"}
 		}
@@ -445,10 +465,14 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 		}
 		mEnv, err := covValidator.ValidateEnvelope(rawMapping)
 		if err != nil {
-			return &PackageRefusal{Rule: RuleObservationMalformed, Path: mRelPath, Detail: err.Error()}
+			var ref *records.Refusal
+			if errors.As(err, &ref) {
+				return &PackageRefusal{Rule: ref.Rule, Path: mRelPath, Detail: ref.Error()}
+			}
+			return &PackageRefusal{Rule: RuleEnvelopeMalformed, Path: mRelPath, Detail: err.Error()}
 		}
 		if mEnv.Mapping == nil || mEnv.Mapping.Schema != records.SchemaMapping {
-			return &PackageRefusal{Rule: RuleObservationMalformed, Path: mRelPath, Detail: "envelope is not nova.tokens.mapping/2"}
+			return &PackageRefusal{Rule: RuleEnvelopeMalformed, Path: mRelPath, Detail: "envelope is not nova.tokens.mapping/2"}
 		}
 		wantHex := strings.TrimPrefix(mEnv.ID, "sha256:")
 		if mHex != wantHex {
@@ -484,6 +508,7 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 	// Validate records/ layout and collect shard files
 	recordsDir := filepath.Join(dir, "records")
 	foundShards := make(map[string]string) // shardID -> relPath
+	dirsFound := make(map[string]bool)
 
 	err = filepath.WalkDir(recordsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -493,40 +518,66 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 		if relFromRecords == "." {
 			return nil
 		}
+		relPath := filepath.Join("records", relFromRecords)
+		if strings.HasPrefix(d.Name(), ".") {
+			return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "hidden entries forbidden in records tree"}
+		}
 		parts := strings.Split(relFromRecords, string(filepath.Separator))
 		entryFi, err := os.Lstat(path)
 		if err != nil {
 			return err
 		}
 
-		relPath := filepath.Join("records", relFromRecords)
-		if len(parts) < 4 {
-			if !entryFi.IsDir() {
-				return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "stray file in records before day level"}
-			}
-		} else if len(parts) == 4 {
-			if entryFi.IsDir() {
+		if entryFi.IsDir() {
+			dirsFound[relFromRecords] = true
+			if len(parts) >= 4 {
 				return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "subdirectories forbidden in shard day level"}
 			}
-			if !strings.HasSuffix(entryFi.Name(), ".jsonl") {
-				return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "shard file must end with .jsonl"}
-			}
-			shardHex := strings.TrimSuffix(entryFi.Name(), ".jsonl")
-			if len(shardHex) != 64 || !isLowercaseHex(shardHex) {
-				return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "shard filename must be 64-hex digits"}
-			}
-			shardID := "sha256:" + shardHex
-			if _, exists := foundShards[shardID]; exists {
-				return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "duplicate shard file on disk: " + shardID}
-			}
-			foundShards[shardID] = relPath
 		} else {
-			return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "records directory exceeds maximum depth"}
+			if len(parts) < 4 {
+				return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "stray file in records before day level"}
+			} else if len(parts) == 4 {
+				if !strings.HasSuffix(entryFi.Name(), ".jsonl") {
+					return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "shard file must end with .jsonl"}
+				}
+				shardHex := strings.TrimSuffix(entryFi.Name(), ".jsonl")
+				if len(shardHex) != 64 || !isLowercaseHex(shardHex) {
+					return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "shard filename must be 64-hex digits"}
+				}
+				shardID := "sha256:" + shardHex
+				if _, exists := foundShards[shardID]; exists {
+					return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "duplicate shard file on disk: " + shardID}
+				}
+				foundShards[shardID] = relPath
+			} else {
+				return &PackageRefusal{Rule: RulePackageStrayFile, Path: relPath, Detail: "records directory exceeds maximum depth"}
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		return err
+	}
+
+	// Verify all directories found under records/ correspond to valid directory prefixes of foundShards
+	validRecordsDirs := make(map[string]bool)
+	for _, relPath := range foundShards {
+		shardRelFromRecords, _ := filepath.Rel("records", relPath)
+		pParts := strings.Split(filepath.Dir(shardRelFromRecords), string(filepath.Separator))
+		if len(pParts) == 3 {
+			validRecordsDirs[pParts[0]] = true
+			validRecordsDirs[filepath.Join(pParts[0], pParts[1])] = true
+			validRecordsDirs[filepath.Join(pParts[0], pParts[1], pParts[2])] = true
+		}
+	}
+	for dRel := range dirsFound {
+		if !validRecordsDirs[dRel] {
+			return &PackageRefusal{
+				Rule:   RulePackageStrayFile,
+				Path:   filepath.Join("records", dRel),
+				Detail: "undeclared or empty directory in records tree: " + dRel,
+			}
+		}
 	}
 
 	// Check shard reference completeness and orphan shard detection
@@ -828,6 +879,12 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 		}
 		for _, e := range entries {
 			relInv := filepath.Join("inventories", e.Name())
+			if strings.HasPrefix(e.Name(), ".") {
+				return &PackageRefusal{Rule: RulePackageStrayFile, Path: relInv, Detail: "hidden entries forbidden in inventories"}
+			}
+			if e.IsDir() {
+				return &PackageRefusal{Rule: RulePackageStrayFile, Path: relInv, Detail: "subdirectories forbidden in inventories"}
+			}
 			if !strings.HasSuffix(e.Name(), ".json") {
 				return &PackageRefusal{Rule: RulePackageStrayFile, Path: relInv, Detail: "stray file in inventories"}
 			}

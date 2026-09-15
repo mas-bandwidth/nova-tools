@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,10 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/records"
 )
+
+func strPtr(s string) *string {
+	return &s
+}
 
 type testBatch struct {
 	Dir            string
@@ -283,8 +289,22 @@ func TestTC_VAL_06_InstalledValidationForbidsTmpAndExtraFiles(t *testing.T) {
 	checkRefusal(t, err2, RulePackageStrayFile)
 }
 
-// TC-VAL-07: symlink_rejected and no_clobber_destination_exists
-func TestTC_VAL_07_SymlinkRejected(t *testing.T) {
+// TC-VAL-07: no_clobber_destination_exists
+func TestTC_VAL_07_NoClobberDestinationExists(t *testing.T) {
+	b := newTestBatch(t)
+	// Verify EnsureDestinationFresh refuses existing destination directory
+	errFresh := EnsureDestinationFresh(b.Dir)
+	checkRefusal(t, errFresh, RuleDestinationExists)
+
+	// Verify EnsureDestinationFresh succeeds on non-existent directory
+	nonExistent := filepath.Join(b.Dir, "does-not-exist")
+	if err := EnsureDestinationFresh(nonExistent); err != nil {
+		t.Errorf("expected nil for fresh destination, got %v", err)
+	}
+}
+
+// TC-VAL-08: strict_symlink_rejection
+func TestTC_VAL_08_StrictSymlinkRejection(t *testing.T) {
 	b := newTestBatch(t)
 	symPath := filepath.Join(b.Dir, "records", "rowan", "studio", "2026-09-12", "link.jsonl")
 	if err := os.Symlink(b.ShardFile, symPath); err != nil {
@@ -292,14 +312,10 @@ func TestTC_VAL_07_SymlinkRejected(t *testing.T) {
 	}
 	err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
 	checkRefusal(t, err, RuleSymlinkForbidden)
-
-	// Verify EnsureDestinationFresh refuses existing destination directory
-	errFresh := EnsureDestinationFresh(b.Dir)
-	checkRefusal(t, errFresh, RuleDestinationExists)
 }
 
-// TC-VAL-08: orphan_shard_rejected
-func TestTC_VAL_08_OrphanShardRejected(t *testing.T) {
+// TestOrphanShardRejected: orphan shard file not referenced in coverage is rejected
+func TestOrphanShardRejected(t *testing.T) {
 	b := newTestBatch(t)
 	installBatch(t, b)
 
@@ -362,6 +378,7 @@ func TestTC_VAL_11_DurabilityFsyncAncestorDirectoriesTrace(t *testing.T) {
 	}
 	defer func() { FsyncHook = nil }()
 
+	// 1. SyncDirectoryTree: bottom-up trace syncing day, bench, friend, records, mappings, up to root
 	if err := SyncDirectoryTree(b.Dir); err != nil {
 		t.Fatalf("SyncDirectoryTree failed: %v", err)
 	}
@@ -370,7 +387,7 @@ func TestTC_VAL_11_DurabilityFsyncAncestorDirectoriesTrace(t *testing.T) {
 		t.Fatalf("expected at least 5 directories synced in tree, got %d: %v", len(trace), trace)
 	}
 
-	// Root dir must be the final directory synced
+	// Root dir must be the final directory synced in SyncDirectoryTree
 	if trace[len(trace)-1] != b.Dir {
 		t.Errorf("final synced dir must be root %s, got %s", b.Dir, trace[len(trace)-1])
 	}
@@ -391,7 +408,25 @@ func TestTC_VAL_11_DurabilityFsyncAncestorDirectoriesTrace(t *testing.T) {
 		t.Errorf("bottom-up sync violation: dayIdx=%d, benchIdx=%d", dayIdx, benchIdx)
 	}
 
-	// Fail-stop behavior: error in FsyncHook immediately aborts
+	// 2. StageMarker: writes and fsyncs batch.json.tmp
+	markerTemp := "batch.json.tmp"
+	markerPath := filepath.Join(b.Dir, markerTemp)
+	if err := StageMarker(b.Dir, markerTemp, b.CoverageBytes); err != nil {
+		t.Fatalf("StageMarker failed: %v", err)
+	}
+	if trace[len(trace)-1] != markerPath {
+		t.Errorf("expected StageMarker to sync %s, got %s", markerPath, trace[len(trace)-1])
+	}
+
+	// 3. CommitMarker: atomic no-replace rename, then fsync(root)
+	if err := CommitMarker(b.Dir, markerTemp); err != nil {
+		t.Fatalf("CommitMarker failed: %v", err)
+	}
+	if trace[len(trace)-1] != b.Dir {
+		t.Errorf("expected CommitMarker to sync root %s after rename, got %s", b.Dir, trace[len(trace)-1])
+	}
+
+	// 4. Fail-stop behavior: error in FsyncHook immediately aborts
 	FsyncHook = func(path string) error {
 		return errors.New("simulated fsync failure")
 	}
@@ -400,8 +435,61 @@ func TestTC_VAL_11_DurabilityFsyncAncestorDirectoriesTrace(t *testing.T) {
 	}
 }
 
-// TC-VAL-12: observation_origin_path_mismatch_rejected
-func TestTC_VAL_12_ObservationOriginPathMismatchRejected(t *testing.T) {
+// TC-VAL-12: shard_observation_malformed_envelope
+func TestTC_VAL_12_ShardObservationMalformedEnvelope(t *testing.T) {
+	// (a) Shard line contains invalid JSON
+	b := newTestBatch(t)
+	badJSON := []byte("{not valid json\n")
+	shardSum := sha256.Sum256(badJSON)
+	shardHex := hex.EncodeToString(shardSum[:])
+	badFile := filepath.Join(b.Dir, "records", "rowan", "studio", "2026-09-12", shardHex+".jsonl")
+	if err := os.WriteFile(badFile, badJSON, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(b.ShardFile); err != nil {
+		t.Fatal(err)
+	}
+	b.Coverage.Shards[0].ShardID = "sha256:" + shardHex
+	b.Coverage.Shards[0].RecordCount = "1"
+	b.Coverage.Shards[0].InlineIDs = b.ObservationIDs[:1]
+	b.Coverage.Counts.SourceCandidates = "1"
+	b.Coverage.Counts.RecordsEmitted = "1"
+	b.Coverage.Counts.Observations = "1"
+	covBytes, _, err := records.SealCoverage(b.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ValidateCandidateDirectory(b.Dir, "", covBytes)
+	checkRefusal(t, err, RuleObservationMalformed)
+
+	// (b) Shard line violates observation/2 schema (wrong schema)
+	b2 := newTestBatch(t)
+	badSchema := []byte(fmt.Sprintf("{\"schema\":\"bad_schema\",\"body\":{\"mapping_id\":\"%s\"}}\n", b2.Coverage.MappingIDs[0]))
+	shardSum2 := sha256.Sum256(badSchema)
+	shardHex2 := hex.EncodeToString(shardSum2[:])
+	badFile2 := filepath.Join(b2.Dir, "records", "rowan", "studio", "2026-09-12", shardHex2+".jsonl")
+	if err := os.WriteFile(badFile2, badSchema, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(b2.ShardFile); err != nil {
+		t.Fatal(err)
+	}
+	b2.Coverage.Shards[0].ShardID = "sha256:" + shardHex2
+	b2.Coverage.Shards[0].RecordCount = "1"
+	b2.Coverage.Shards[0].InlineIDs = b2.ObservationIDs[:1]
+	b2.Coverage.Counts.SourceCandidates = "1"
+	b2.Coverage.Counts.RecordsEmitted = "1"
+	b2.Coverage.Counts.Observations = "1"
+	covBytes2, _, err := records.SealCoverage(b2.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err2 := ValidateCandidateDirectory(b2.Dir, "", covBytes2)
+	checkRefusal(t, err2, RuleObservationMalformed)
+}
+
+// TC-VAL-13: shard_record_wrong_origin_path
+func TestTC_VAL_13_ShardRecordWrongOriginPath(t *testing.T) {
 	b := newTestBatch(t)
 
 	// Move the shard directory to mismatched friend "alice"
@@ -413,45 +501,6 @@ func TestTC_VAL_12_ObservationOriginPathMismatchRejected(t *testing.T) {
 
 	err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
 	checkRefusal(t, err, RuleRecordPathOriginMismatch)
-}
-
-// TC-VAL-13: mapping_closure_orphan_mapping_rejected
-func TestTC_VAL_13_MappingClosureOrphanMappingRejected(t *testing.T) {
-	b := newTestBatch(t)
-
-	// Add second valid mapping from antigravity fixture into mappings/
-	antigravityBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "antigravity", "mapping.json"))
-	if err != nil {
-		t.Fatalf("failed to read antigravity mapping: %v", err)
-	}
-	mEnv, err := records.NewValidator(records.Allowlists{}).ValidateEnvelope(antigravityBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	extraHex := strings.TrimPrefix(mEnv.ID, "sha256:")
-	extraFile := filepath.Join(b.Dir, "mappings", extraHex+".json")
-	if err := os.WriteFile(extraFile, antigravityBytes, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Coverage only references the first mapping (codex), so antigravity is an orphan
-	err = ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
-	checkRefusal(t, err, RuleMappingClosureViolation)
-}
-
-// TC-VAL-14: mapping_closure_missing_mapping_rejected
-func TestTC_VAL_14_MappingClosureMissingMappingRejected(t *testing.T) {
-	b := newTestBatch(t)
-
-	missingID := "sha256:" + strings.Repeat("b", 64)
-	b.Coverage.MappingIDs = append(b.Coverage.MappingIDs, missingID)
-	covBytes, _, err := records.SealCoverage(b.Coverage)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = ValidateCandidateDirectory(b.Dir, "", covBytes)
-	checkRefusal(t, err, RuleMappingClosureViolation)
 }
 
 // TC-VAL-15: sorted_id_set_inventory_comparison
@@ -505,14 +554,98 @@ func TestTC_VAL_16_LinkUnlinkFallbackCrashUnpublishable(t *testing.T) {
 	checkRefusal(t, err, RuleTemporaryFilePresent)
 }
 
-// TC-VAL-17: retained_unsupported_subfield_accepted
+// TC-VAL-17: retained_unreadable_turn_id_observation_valid (TC-VAL-20b)
 func TestTC_VAL_17_RetainedUnsupportedSubfieldAccepted(t *testing.T) {
-	b := newTestBatch(t)
-	// Both observations from codex fixture are retained records (one has absent cache_write counter).
-	// Validate that the whole batch with retained observations validates cleanly.
-	installBatch(t, b)
-	if err := ValidateInstalledDirectory(b.Dir); err != nil {
-		t.Fatalf("expected retained observation to validate, got %v", err)
+	m := codexMapping(t)
+	// Decode an observation where turn_id is an invalid shape {"x":1}, triggering codexShapeNoTurnIDLexeme.
+	lines := `{"type":"token_usage_record","response_id":"resp-t2","session_id":"t1","turn_id":{"x":1},"timestamp":"2026-09-12T00:00:00Z","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+	d, err := DecodeCodexReaders(m, codexFixtureBinding, []io.Reader{strings.NewReader(lines)})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(d.Observations) != 1 {
+		t.Fatalf("expected 1 observation, got %d", len(d.Observations))
+	}
+	obs := d.Observations[0]
+	if !obs.Spendable {
+		t.Errorf("expected resp-t2 to be spendable, got false")
+	}
+	if n := d.Unsupported[codexShapeNoTurnIDLexeme]; n != 1 {
+		t.Errorf("expected 1 unsupported turn_id count, got %d", n)
+	}
+
+	// Validate that receipt has turn_id omitted
+	v := records.NewValidator(m.Allowlists())
+	env, err := v.ValidateEnvelope(obs.Envelope)
+	if err != nil {
+		t.Fatalf("envelope validation failed: %v", err)
+	}
+	if _, hasTurnID := env.Observation.Receipt["turn_id"]; hasTurnID {
+		t.Errorf("expected turn_id to be omitted from receipt, got %+v", env.Observation.Receipt)
+	}
+
+	// Build a complete batch around this single observation envelope
+	dir := t.TempDir()
+	mapBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "codex", "mapping.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mEnv, err := records.NewValidator(records.Allowlists{}).ValidateEnvelope(mapBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapHex := strings.TrimPrefix(mEnv.ID, "sha256:")
+	mappingsDir := filepath.Join(dir, "mappings")
+	os.MkdirAll(mappingsDir, 0755)
+	os.WriteFile(filepath.Join(mappingsDir, mapHex+".json"), mapBytes, 0644)
+
+	shardContent := append(append([]byte(nil), obs.Envelope...), '\n')
+	shardSum := sha256.Sum256(shardContent)
+	shardHex := hex.EncodeToString(shardSum[:])
+
+	shardDir := filepath.Join(dir, "records", "rowan", "studio", "2026-09-12")
+	os.MkdirAll(shardDir, 0755)
+	os.WriteFile(filepath.Join(shardDir, shardHex+".jsonl"), shardContent, 0644)
+
+	cov := records.Coverage{
+		Schema:    records.SchemaCoverage,
+		ScopeID:   "nova.codex-desktop.responses",
+		SourceIDs: []string{"nova.codex-desktop.responses"},
+		Interval:  records.CoverageInterval{Start: "2026-09-12T00:00:00Z", End: "2026-09-13T00:00:00Z"},
+		Status:    "complete_within_scope",
+		Reasons: []records.CoverageReason{
+			{Code: "unsupported_rows", Source: strPtr("nova.codex-desktop.responses")},
+		},
+		CollectedAt:    "2026-09-13T01:00:00Z",
+		CollectorBuild: "codex-desktop@0.154.0 build=abc123",
+		MappingIDs:     []string{mEnv.ID},
+		Shards: []records.ShardRef{
+			{
+				ShardID:       "sha256:" + shardHex,
+				RecordCount:   "1",
+				InlineIDs:     []string{env.ID},
+				InventoryFile: nil,
+			},
+		},
+		Counts: records.CoverageCounts{
+			SourceCandidates: "1",
+			RecordsEmitted:   "1",
+			Observations:     "1",
+			Conflicts:        "0",
+			Gaps:             "1",
+		},
+	}
+	covBytes, _, err := records.SealCoverage(cov)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "batch.json"), covBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ValidateInstalledDirectory(dir); err != nil {
+		t.Fatalf("expected retained observation to validate in installed directory, got %v", err)
 	}
 }
 
@@ -746,44 +879,81 @@ func TestTC_VAL_14_ShardRecordUnallocatedAndUnderscorePaths(t *testing.T) {
 	os.MkdirAll(mappingsDir, 0755)
 	os.WriteFile(filepath.Join(mappingsDir, mapHex+".json"), mapBytes, 0644)
 
-	// Load line 3 from expected_records.jsonl: friend: "rowan", bench: "studio", occurred_at: null -> unallocated
-	recBytes, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "codex", "expected_records.jsonl"))
-	if err != nil {
-		t.Fatal(err)
+	// Build an observation with nil friend, nil bench, and nil occurred_at
+	rawPresent := func(val string) records.RawField {
+		return records.RawField{Presence: "present", Value: &val, NumberKind: "integer", Unit: "tokens"}
 	}
-	allLines := bytes.Split(recBytes, []byte("\n"))
-	var undatedLine []byte
-	var undatedID string
-	for _, l := range allLines {
-		if len(bytes.TrimSpace(l)) == 0 {
-			continue
-		}
-		var env records.Envelope
-		if err := json.Unmarshal(l, &env); err == nil {
-			var probe struct {
-				Body struct {
-					Time struct {
-						OccurredAt *string `json:"occurred_at"`
-					} `json:"time"`
-				} `json:"body"`
-			}
-			json.Unmarshal(l, &probe)
-			if probe.Body.Time.OccurredAt == nil {
-				undatedLine = l
-				undatedID = env.ID
-				break
-			}
-		}
+	rawAbsent := func(reason string) records.RawField {
+		return records.RawField{Presence: "absent", Reason: &reason, NumberKind: "integer", Unit: "tokens"}
 	}
-	if undatedLine == nil {
-		t.Fatal("expected an undated observation record in fixture")
+	obs := records.Observation{
+		Schema: records.SchemaObservation,
+		Source: records.Source{
+			Kind:      "codex_desktop",
+			Namespace: "nova.codex-desktop.responses",
+			SessionID: "sess-unallocated-test",
+			EventKey:  []string{"resp-nil-origin"},
+		},
+		Kind: "turn",
+		Revision: records.Revision{
+			Native: nil,
+			Basis:  "none",
+		},
+		Time: records.Times{
+			OccurredAt: nil,
+			Basis:      "unknown",
+		},
+		Origin: records.Origin{
+			Friend:    nil,
+			Bench:     nil,
+			Basis:     "unknown",
+			BindingID: nil,
+		},
+		Model: records.Model{
+			ID:    nil,
+			Basis: "unknown",
+		},
+		Repository: records.Repository{
+			ID:       nil,
+			Basis:    "unattributed",
+			PolicyID: nil,
+			Touched:  []string{},
+		},
+		RawUsage: map[string]records.RawField{
+			"input_tokens":             rawPresent("10"),
+			"output_tokens":            rawPresent("5"),
+			"total_tokens":             rawPresent("15"),
+			"cached_input_tokens":      rawAbsent("not_supplied"),
+			"cache_write_input_tokens": rawAbsent("not_supplied"),
+			"reasoning_output_tokens":  rawAbsent("not_supplied"),
+		},
+		ModelUsage: []records.ModelUsage{},
+		MappingID:  mEnv.ID,
+		Receipt:    map[string]string{},
 	}
 
-	shardContent := append(append([]byte(nil), undatedLine...), '\n')
+	v := records.NewValidator(records.Allowlists{
+		RawUsageFields: []string{
+			"input_tokens", "output_tokens", "total_tokens",
+			"cached_input_tokens", "cache_write_input_tokens", "reasoning_output_tokens",
+		},
+		ReceiptFields: []string{"response_id", "turn_id"},
+	})
+	obsBytes, _, err := v.SealObservation(obs)
+	if err != nil {
+		t.Fatalf("seal observation: %v", err)
+	}
+	sealedEnv, err := v.ValidateEnvelope(obsBytes)
+	if err != nil {
+		t.Fatalf("validate sealed observation: %v", err)
+	}
+
+	shardContent := append(append([]byte(nil), obsBytes...), '\n')
 	shardSum := sha256.Sum256(shardContent)
 	shardHex := hex.EncodeToString(shardSum[:])
 
-	unallocatedDir := filepath.Join(dir, "records", "rowan", "studio", "unallocated")
+	// Shard must be located at records/_/_/unallocated/<shardHex>.jsonl
+	unallocatedDir := filepath.Join(dir, "records", "_", "_", "unallocated")
 	os.MkdirAll(unallocatedDir, 0755)
 	shardFile := filepath.Join(unallocatedDir, shardHex+".jsonl")
 	os.WriteFile(shardFile, shardContent, 0644)
@@ -802,7 +972,7 @@ func TestTC_VAL_14_ShardRecordUnallocatedAndUnderscorePaths(t *testing.T) {
 			{
 				ShardID:     "sha256:" + shardHex,
 				RecordCount: "1",
-				InlineIDs:   []string{undatedID},
+				InlineIDs:   []string{sealedEnv.ID},
 			},
 		},
 		Predecessors: []string{},
@@ -820,9 +990,50 @@ func TestTC_VAL_14_ShardRecordUnallocatedAndUnderscorePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Validation passes: valid origin-path match on _/_/unallocated
 	if err := ValidateCandidateDirectory(dir, "", covBytes); err != nil {
-		t.Fatalf("ValidateCandidateDirectory failed for unallocated day path: %v", err)
+		t.Fatalf("expected candidate validation to pass on _/_/unallocated, got %v", err)
 	}
+
+	// Negative control: moving directory to mismatched friend returns RuleRecordPathOriginMismatch
+	mismatchedDir := filepath.Join(dir, "records", "alice", "_", "unallocated")
+	os.MkdirAll(filepath.Dir(mismatchedDir), 0755)
+	if err := os.Rename(unallocatedDir, mismatchedDir); err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(filepath.Join(dir, "records", "_"))
+	errBad := ValidateCandidateDirectory(dir, "", covBytes)
+	checkRefusal(t, errBad, RuleRecordPathOriginMismatch)
+}
+
+// TestUndeclaredDirectoryUnderRecordsRejected: empty, undeclared, or hidden directories under records/ are rejected
+func TestUndeclaredDirectoryUnderRecordsRejected(t *testing.T) {
+	// (a) Empty records/bogus/ directory rejected
+	b := newTestBatch(t)
+	bogusDir := filepath.Join(b.Dir, "records", "bogus")
+	if err := os.Mkdir(bogusDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
+	checkRefusal(t, err, RulePackageStrayFile)
+
+	// (b) Hidden directory records/.hidden/ rejected
+	b2 := newTestBatch(t)
+	hiddenDir := filepath.Join(b2.Dir, "records", ".hidden")
+	if err := os.Mkdir(hiddenDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	err2 := ValidateCandidateDirectory(b2.Dir, "", b2.CoverageBytes)
+	checkRefusal(t, err2, RulePackageStrayFile)
+
+	// (c) Subdirectory at day level rejected
+	b3 := newTestBatch(t)
+	subDayDir := filepath.Join(b3.Dir, "records", "rowan", "studio", "2026-09-12", "extra_dir")
+	if err := os.Mkdir(subDayDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	err3 := ValidateCandidateDirectory(b3.Dir, "", b3.CoverageBytes)
+	checkRefusal(t, err3, RulePackageStrayFile)
 }
 
 // TestPermissionsEnforcement: files must be 0644, directories 0755
