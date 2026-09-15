@@ -3915,6 +3915,12 @@ WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
 the caller issues the next one; nothing is written to the bus by a wait that
 found nothing, because there is nothing to record having read.
 
+**`wait` returns once and must be re-armed.** Every return is one read, ended
+by one terminal `WAIT DONE reason=<new|timeout|signal> rearm=required next=<command>`
+line that hands back the exact command to issue again to keep listening. A
+background process is not a harness wake callback — the harnesses that can wake
+on a process exit, and so re-arm on their own, are listed in HARNESSES.
+
 **The ceiling is 60m, and it is a fact about harnesses rather than about buses.**
 A wait runs inside a tool call, and every harness kills a call that runs too
 long — so a timeout above the harness's limit does not wait longer, it is killed

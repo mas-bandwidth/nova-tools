@@ -2110,7 +2110,11 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// that has hung.
 	fmt.Fprintf(stdout, "WAIT as=%s timeout=%s interval=%s cursor=%s\n",
 		oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)))
-	return waitLoop(o, *timeout, *interval, stdout, stderr, now)
+	// The command the caller issues again to re-arm this wait: the next one, with the same
+	// flags, echoed back so a harness that does not wake on its own can paste it. A wait is
+	// ONE read, with one terminal line saying it ended and must be re-armed.
+	next := "nova-bus wait " + strings.Join(args, " ")
+	return waitLoop(o, *timeout, *interval, next, stdout, stderr, now)
 }
 
 // defaultWaitInterval is how long a wait leaves between polls when the caller names no
@@ -2144,7 +2148,7 @@ const minWaitInterval = 100 * time.Millisecond
 // note that is already there -- the caller answered the last one and came straight back --
 // and making them wait an interval for news the bus already had would be a tool inventing
 // latency.
-func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Writer, now time.Time) int {
+func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout, stderr io.Writer, now time.Time) int {
 	start := time.Now()
 	deadline := start.Add(timeout)
 	// The moment this call cannot see past: a switch-day line drawn after it hides
@@ -2172,6 +2176,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 			// refusal that is on stderr: a reader who was shown their inbox has been shown
 			// it, whatever happened after.
 			fmt.Fprint(stdout, lines)
+			fmt.Fprintf(stdout, "WAIT DONE reason=signal rearm=required next=%s\n", next)
 			return code
 		}
 		// THE BEAT. A waiting line's cursor does not move -- there was nothing to read, so
@@ -2201,6 +2206,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 			}
 			fmt.Fprintf(stdout, "WAIT OK new=%d after=%s polls=%d\n", r.New, oneline.Field(elapsed.String()), polls)
 			fmt.Fprint(stdout, lines)
+			fmt.Fprintf(stdout, "WAIT DONE reason=new rearm=required next=%s\n", next)
 			return 0
 		}
 		// A line drawn in the future that does NOT cover the whole wait is no reason to
@@ -2229,6 +2235,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 	// tool was awake the whole time.
 	fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s\n",
 		oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
+	fmt.Fprintf(stdout, "WAIT DONE reason=timeout rearm=required next=%s\n", next)
 	return 0
 }
 
