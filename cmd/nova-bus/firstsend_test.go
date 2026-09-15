@@ -156,8 +156,8 @@ func TestDraftPrintsASkeletonTheParserReadsBack(t *testing.T) {
 	checkout, _ := busDir(t)
 	r := invoke(t, "", "draft", "--bus", checkout, "--as", "the archivist",
 		"--to", "Bo", "--cc", "Dana", "--subject", "The gate", "--re", "bo-abcdef012345").mustCode(t, 0)
-	if r.stderr != "" {
-		t.Fatalf("draft wrote to stderr: %q", r.stderr)
+	if want := "DRAFT NOTE redirect this to a file, then nova-bus send --file <that file> --as \"Ada\" --remote <remote> --branch <branch>\n"; r.stderr != want {
+		t.Fatalf("draft stderr is %q, want the one hint %q", r.stderr, want)
 	}
 	n, err := bus.ParseNote("", r.stdout)
 	if err != nil {

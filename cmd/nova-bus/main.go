@@ -727,6 +727,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 0
 	}
 	fmt.Fprint(stdout, skeleton)
+	fmt.Fprintf(stderr, "DRAFT NOTE redirect this to a file, then nova-bus send --file <that file> --as %s --remote <remote> --branch <branch>\n", oneline.Quote(me.Name))
 	return 0
 }
 
