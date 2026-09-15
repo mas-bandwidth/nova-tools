@@ -145,11 +145,20 @@ func TestPreparationRefusalStillMonitorsAdoptedJob(t *testing.T) {
 	if err := p.Claim(liveID, swarm.Pending, swarm.Running); err != nil {
 		t.Fatal(err)
 	}
-	liveCmd := exec.Command("sleep", "1")
+	// The adopted job has to be ALIVE for the whole run, because the run adopting
+	// it is the thing under test. `sleep 1` made that a race against however long
+	// the setup below plus b.run() takes -- fine on a quiet machine, and on a
+	// loaded studio runner the process was gone before the dispatcher looked, so
+	// there was nothing to adopt and no RUN ADOPT line (run 35023183602, test
+	// (4/8 studio)). Its siblings in recovery_test.go already use 15 and 20
+	// seconds for exactly this; the test does not wait on it, so a long sleep
+	// costs nothing and is killed on the way out.
+	liveCmd := exec.Command("sleep", "30")
 	if err := liveCmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	go func() { _ = liveCmd.Wait() }()
+	t.Cleanup(func() { _ = liveCmd.Process.Kill() })
 	if err := swarm.WriteJSON(filepath.Join(b.pool, "slots", "1.json"), swarm.SlotFile{
 		Job: liveID, JobDir: liveJob, State: swarm.SlotLaunched, Pid: liveCmd.Process.Pid,
 		PidStarted: swarm.StartStamp(liveCmd.Process.Pid), RunnerPid: 0, Nonce: "adopted-nonce",

@@ -58,6 +58,22 @@ func TestSumSwarmRootIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestSumRefusesOutDirectory pins that --out for the swarm-root form is the ledger
+// FILE, so an existing directory at --out is refused by name (file vs directory),
+// not by the raw OS rename error. Before #496 the tmp-rename leaked "file exists".
+func TestSumRefusesOutDirectory(t *testing.T) {
+	dir := t.TempDir()
+	root := mkdir(t, filepath.Join(dir, "root"))
+	out := mkdir(t, filepath.Join(dir, "swarm-sum-out"))
+
+	r := invoke(t, "sum", "--swarm-root", root, "--day", "2026-09-11", "--out", out)
+	wantExit(t, r, 2)
+	wantContains(t, r.stderr, "SUM REFUSED")
+	wantContains(t, r.stderr, "not a directory")
+	wantContains(t, r.stderr, "ledger")
+	wantNotContains(t, r.stderr, "file exists")
+}
+
 func TestSumSwarmMixedKnownUnknownDailyAggregate(t *testing.T) {
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))

@@ -57,7 +57,7 @@ Sending a prepared artifact is also its explicit retry and confirmation:
 
 1. Under the checkout lock, fetch/query the named remote branch and locate the
    exact note by ID. If note bytes and its INDEX record agree, return
-   `SEND OK id=<id> path=<path> commit=<remote-containing-commit> pushed=true attempts=0 state=already-published`.
+   `SEND OK id=<id> path=<path> commit=<remote-containing-commit> pushed=true attempts=0 state=already-published wakes=<n>`.
    No new note, commit or push is made. Remote INDEX alone is insufficient proof.
 2. A same-ID different-content note, unsafe path, inconsistent INDEX, or different
    note at the prepared path is refused. Preserve all evidence; never overwrite.

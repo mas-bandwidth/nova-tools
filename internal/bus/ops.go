@@ -68,6 +68,13 @@ func PrepareDraft(t *Bus, text string, now time.Time, slugOverride, as string) (
 	if n.Header.ID != "" {
 		problems = append(problems, fmt.Errorf("this draft already carries an %s line (%q); send assigns the id, and a note is sent once", KeyID, n.Header.ID))
 	}
+	sender, senderKnown := c.ResolveOne(n.Header.From)
+	// Broadcast aliases resolve against the roster at send time. Expand them to the
+	// concrete participants they name BEFORE anything validates or hashes the To line, so
+	// the stored note names its readers and a reader never resolves the alias. Anything a
+	// person wrote that is not the alias is kept verbatim, and a name nobody holds still
+	// reaches the refusal below untouched.
+	n.Header.To = c.ExpandBroadcast(n.Header.To, sender)
 	header := n.Header.Problems(c)
 	for i, e := range header {
 		// The one refusal send says more about than a reader does: there is a flag that
@@ -77,7 +84,6 @@ func PrepareDraft(t *Bus, text string, now time.Time, slugOverride, as string) (
 		}
 	}
 	problems = append(problems, header...)
-	sender, senderKnown := c.ResolveOne(n.Header.From)
 	if senderKnown && sender.Lane == "" {
 		problems = append(problems, fmt.Errorf("%s: %q has no lane on this bus, so has nowhere to send from", KeyFrom, sender.Name))
 	}
@@ -307,9 +313,9 @@ func (plan ReceiptPlan) Message(me Participant) string {
 
 // ClosePlan is what a `close --before` run will record: one receipt note per open note
 // dated before the stamp, each carrying a Re line that closes the original and a body that
-// says why. `close` is the whole backlog at once -- the one-command way out that the
-// INBOX OPEN line's `remedy=inbox --advance` names, but as a real hand rather than a line
-// drawn past the history.
+// says why. `close` is the whole backlog at once -- the explicit opt-in bulk cutoff that
+// the INBOX OPEN line's large-list remedy names beside the normal reply-or-receipt path,
+// but as a real hand rather than the cursor advance that leaves the notes carried.
 type ClosePlan struct {
 	// Prepared is the receipt notes to write, one per open note older than Before.
 	Prepared []Prepared

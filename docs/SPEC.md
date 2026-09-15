@@ -123,7 +123,7 @@ SELFTALK OK files=<n> claims=<n> standing=0 installations=0 dated=<n>
 SELFTALK FAIL <file>: STANDING: <claim>
 SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
 SELFTALK FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> shown=<n>
-SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n>
 SEND FAIL <path or (stdin)>: <reason>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> ...
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
@@ -2468,12 +2468,12 @@ SEND NOTE <what a tolerance did to this draft>
 SEND NOTE this note answers nothing (no Re: line); if it is a reply, name the note: Re: <id>
 SEND NOTE Re: subject matched <n> notes; closed the newest <id>; name the id to be exact
 DRAFT NOTE <what --re resolved, on stderr, because draft's stdout is a file>
-SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
 INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
-INBOX OPEN carrying=<n> heard=<m> large=<true|false> remedy=inbox --advance
+INBOX OPEN carrying=<n> heard=<m> large=<true|false> remedy=inbox --advance|reply or receipt each note, or close --before <instant> as an explicit bulk cutoff
 INBOX OPEN listed=<n> and <k> more (--open-max to widen)
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNREADABLE count=<n> unchanged=<true|false> first=<path>
@@ -3496,7 +3496,7 @@ goes open. A run parses the notes that are NEW and nothing else.
 | `from-<me>/CURSOR` | one reader's | one line: the commit I last read to, and when |
 | `from-<me>/OPEN` | one reader's | one line per note I have been shown and have not answered — its whole display line, and whether I have heard it |
 | `from-<lane>/INDEX` | one lane's | one line per note that lane has sent: id, path, date, To, Re |
-| `from-<me>/BEAT` | one reader's | one line, an RFC 3339 UTC stamp, the cursor sha, and a `until=<stamp>` lease, rewritten on `wait` entry, every poll tick, and exit so a waiting line's cursor that does not move still records that the line is alive — and the lease keeps a duty cycle between two waits reading awake |
+| `from-<me>/BEAT` | one reader's | one line, an RFC 3339 UTC stamp, the cursor sha, and a `until=<stamp>` lease, rewritten on `wait` entry, every poll tick, and exit so a waiting line's cursor that does not move still records that the line is alive — and the lease keeps a duty cycle between two waits reading awake — and `send`, `receipt` and `inbox --advance` tolerate the caller's own beat, uncommitted in the tree or committed and not yet pushed, folding it into their own commit rather than refusing over it |
 
 They are files a person can read, like everything else on the bus. Blank lines
 and `#` comments are ignored in all three.
@@ -4117,10 +4117,14 @@ them is missing.
 harness itself wakes the session when the call returns, on every harness there
 is, because that is what a tool call *is*. So the polling moves inside the tool.
 `wait` blocks, fetches every `--interval`, and returns the moment the inbox would
-list something new. With `--advance`, a wait that would otherwise return on notes
-the reader has already heard — receipted, not answered — instead moves the cursor
-to the head over them, prints one `WAIT ADVANCED from=<sha8> to=<sha8> heard=<n>`
-line, and keeps blocking for a genuinely new note.
+list something new. Without `--advance` the cursor does not move, so an
+**unadvanced cursor makes `wait` return at once** with the same listing `inbox`
+would print, on every call, for as long as it stays where it is: a caller with a
+backlog runs `inbox` first to clear it, or passes `--advance` so the second wait is
+a real wait for a note newer than the start. With `--advance`, a wait that would
+otherwise return on notes the reader has already heard — receipted, not answered —
+instead moves the cursor to the head over them, prints one `WAIT ADVANCED
+from=<sha8> to=<sha8> heard=<n>` line, and keeps blocking for a genuinely new note.
 
 **It is `inbox`, on a clock.** The same rules about what is addressed to you, the
 same open list, the same switch-day line, the same `INBOX` lines on stdout in the
