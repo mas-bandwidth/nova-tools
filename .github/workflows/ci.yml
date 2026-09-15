@@ -186,6 +186,34 @@ jobs:
       - name: test
         run: go test -count=1 ${{ matrix.entry.packages }}
 
+  e2e:
+    # THE FRIEND-SEQUENCE TIER. Every tool card names the sequence a friend runs
+    # through the changed verb and adds Test<Sequence>RoundTrip; this job runs
+    # those, matched by name, across every cmd package on the same runner matrix
+    # as the unit tests. A sequence that crosses verbs and leaves a dirty
+    # checkout hides from a per-verb unit test but not from here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: cache go build and module cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: friend sequences
+        run: go test -run 'TestFriendSequence' ./cmd/...
+
   lisp:
     # THE LISP TIER, and it is one job because it is one system. `lisp/nova-work`
     # is the engine's own tree (docs/SPEC-WORK.md:290 fixes the language); its

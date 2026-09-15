@@ -261,6 +261,20 @@ merged on a chain while its card had abstained; corrected by #415. **Not measure
 that gates on the verdict from the start. **Expires** on a chain rule change. **Rollback:**
 gating on mergeability alone. **Held by:** Rowan.
 
+## 21. Friend sequences: a card tests the verbs a friend runs through, not the verb alone
+
+Every tool card names the sequence a friend runs through the changed verb and adds
+`Test<Sequence>RoundTrip`; the test runs the whole sequence and asserts each verb's OK line
+and a clean checkout after each step. Two regressions sat between verbs each tested alone —
+nova-bus `wait`'s beat left a dirty file the next `send` refused, and nova-version
+`snapshot` wrote a manifest `report` refused — because the verb was tested alone and the
+neighbour it must leave ready for was not in the test. The CI `e2e` job runs
+`go test -run 'TestFriendSequence' ./cmd/...`. **Measured:** 2026-09-15: the two
+between-verb regressions above (bus wait/send, version snapshot/report) found in review.
+**Not measured:** a sequence a friend runs through more than two verbs. **Expires** on a
+tool whose changed verb has no friend sequence. **Rollback:** per-verb unit tests alone.
+**Held by:** Rowan.
+
 ## Open
 
 - **The DeepSeek key route is a human's.** Unauthorized is verified for that credential
