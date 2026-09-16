@@ -306,6 +306,35 @@ func TestLinksSameLengthRunWithTrailingTextDoesNotClose(t *testing.T) {
 	}
 }
 
+// A --file review naming a table file in a subdirectory must still resolve
+// repo-root-level links: the checked file's directory is NOT the tree root, so
+// a link like ../README.md (or a repo-relative /README.md) from docs/table.md
+// must pass, not be reported as escaping the tree.
+func TestLinksFilesSubdirLinkToRepoRootPasses(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"README.md":     "# readme\n",
+		"docs/table.md": "[up](../README.md) and [root](/README.md)\n",
+	})
+	res, err := LinksFiles([]string{filepath.Join(dir, "docs", "table.md")}, dir, nil)
+	if err != nil {
+		t.Fatalf("LinksFiles: %v", err)
+	}
+	if res.Checked != 2 {
+		t.Errorf("Checked = %d, want 2 (both repo-root links are checked)", res.Checked)
+	}
+	if len(res.Broken) != 0 {
+		t.Errorf("Broken = %v, want none: a repo-root link from a subdir file must resolve, not escape", res.Broken)
+	}
+}
+
+// LinksFiles with an empty file slice must error, not panic on abs[0].
+func TestLinksFilesEmptySliceErrors(t *testing.T) {
+	if _, err := LinksFiles(nil, "", nil); err == nil {
+		t.Error("expected an error for an empty file slice, not a pass and not a panic")
+	}
+}
+
 func TestLinksReportsLineNumbers(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.md": "fine\n\n[gone](missing.md)\n"})

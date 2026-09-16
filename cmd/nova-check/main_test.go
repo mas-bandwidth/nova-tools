@@ -559,6 +559,7 @@ func TestLinksFileFlagChecksOnlyNamedFiles(t *testing.T) {
 	mustWrite(t, dir, "c.md", "[other](also-missing.md)\n")
 	var stdout, stderr bytes.Buffer
 	got := run([]string{"links",
+		"--dir", dir,
 		"--file", filepath.Join(dir, "a.md"),
 		"--file", filepath.Join(dir, "b.md")}, &stdout, &stderr)
 	if got != 1 {

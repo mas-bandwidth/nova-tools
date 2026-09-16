@@ -423,15 +423,14 @@ resolves to an existing file or directory inside the tree. Walks the whole
 tree, skipping `.git`. A repeatable `--file <path>` narrows the walk to just
 those files — a two-file review does not expand to the whole tree — while
 `--dir` remains the resolution root for root-relative targets and the
-"escapes the tree" judgement; a relative `--file` path is joined to `--dir`,
-an absolute one used as-is, and the reported paths stay repo-relative. A
+"escapes the tree" judgement; when `--dir` is omitted the root is the git
+worktree root (or the working directory when there is none), never the common
+ancestor of the named files, so a repo-level link like `../README.md` from a
+subdirectory file still resolves. A relative `--file` path is joined to the
+root, an absolute one used as-is, and the reported paths stay repo-relative. A
 repeatable `--exclude <prefix>` leaves a subtree
 unscanned and skips any link into it, reporting the skipped files as
-`excluded=<n>` on the LINKS line. A repeatable `--file <file>` is the
-alternative to `--dir`: it checks exactly the named files and nothing else, so
-a two-file review does not expand to the whole tree; the named files' common
-ancestor directory is the root for repo-root-relative links and the
-escapes-the-tree check.
+`excluded=<n>` on the LINKS line.
 
 **What counts as a link.** Inline links and images: `[text](target)` and
 `![alt](target)`, with an optional title in any of the three CommonMark forms
