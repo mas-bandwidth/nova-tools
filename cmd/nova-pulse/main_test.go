@@ -125,8 +125,27 @@ func TestPoolReadsOpenNonDraftPRs(t *testing.T) {
 	if err != nil || !strings.Contains(string(calls), "gh pr list --repo mas-bandwidth/nova-tools") {
 		t.Fatalf("the fake gh recorded %q (err=%v); want one `gh pr list --repo mas-bandwidth/nova-tools`", calls, err)
 	}
-	if !strings.Contains(out.String(), "candidates=2") || !strings.Contains(out.String(), "prs=2") {
+	fields := strings.Fields(strings.TrimSpace(out.String()))
+	wantFields := []string{
+		"POOL", "OK",
+		"sources=1", "candidates=2",
+		"issues=0", "audits=0", "slices=0", "roadmap=0", "prs=0",
+		"next=0", "plan=0", "seen=0",
+		"took=", "out=" + filepath.Join(root, "pool.tsv"),
+	}
+	if len(fields) != len(wantFields) {
 		t.Fatalf("POOL OK line wrong: %q", out.String())
+	}
+	for i, w := range wantFields {
+		if w == "took=" {
+			if !strings.HasPrefix(fields[i], "took=") || fields[i] == "took=" {
+				t.Fatalf("POOL OK field %d = %q, want took=<duration>: %q", i, fields[i], out.String())
+			}
+			continue
+		}
+		if fields[i] != w {
+			t.Fatalf("POOL OK field %d = %q, want %q: %q", i, fields[i], w, out.String())
+		}
 	}
 	raw, err := os.ReadFile(filepath.Join(root, "pool.tsv"))
 	if err != nil {
