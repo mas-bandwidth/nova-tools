@@ -102,13 +102,36 @@
    #:sync-directory
    ;; kernel
    #:make-kernel
-   #:kernel-state
-   #:kernel-journal
-   #:kernel-next-rev
-   #:submit
-   #:ask-size
-   #:open-issue-count
-   #:open-leaf-count))
+    #:kernel-state
+    #:kernel-journal
+    #:kernel-next-rev
+    #:submit
+    #:ask-size
+    #:open-issue-count
+    #:open-leaf-count
+    ;; replays-l3600-4 (docs/SPEC-WORK.md:3600-99999, batch 4)
+    #:goal-node #:make-goal-node #:goal-node-id #:goal-node-state
+    #:goal-node-generation #:goal-node-scope-revision
+    #:kind-field-list #:fields-write-exactly-kind #:goal-edge-admitted-p
+    #:goal-update-event #:goal-set-event
+    #:export-member #:make-export-member #:export-member-path #:export-member-kind
+    #:export-member-content #:export-member-digest #:export-member-required-p
+    #:export-member-symlink-p
+    #:split-path #:path-escapes-root-p #:export-refusals #:historical-proof-gap
+    #:cost-value #:make-cost-value #:cost-value-label #:cost-value-amount
+    #:cost-values #:three-costs-separately-labelled-p #:reference-token-cost
+    #:reference-cost-kept-under-subscription
+    #:resolved-price
+    #:config-identity #:make-config-identity #:config-identity-revision
+    #:config-identity-content-hash
+    #:config-unchanged-p #:config-answer
+    #:reversible-verb-p
+    #:edit-entry #:make-edit-entry #:edit-entry-id #:edit-entry-verb
+    #:edit-entry-preimage #:edit-entry-postimage
+    #:history-with-undo #:redo-applies-p #:conflict-is-explicit
+    #:proof-scope #:make-proof-scope #:proof-scope-paths #:proof-scope-criteria
+    #:receipt #:make-receipt #:receipt-id #:receipt-scope
+    #:unrelated-receipts-stay-reusable))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
