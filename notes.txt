@@ -1,0 +1,23 @@
+card-8050 / issue #612
+
+RED test (added to internal/pulse/pool_test.go: TestPoolRoadmapKindIsCardKind):
+
+running: go test -run TestPoolRoadmapKindIsCardKind ./internal/pulse/
+
+verbatim failing output:
+
+--- FAIL: TestPoolRoadmapKindIsCardKind (0.02s)
+    pool_test.go:159: row "roadmap\tpulse-read\troadmap\tpulse-read\tread" kind = "roadmap", want "read" (card kind, not source kind)
+FAIL
+FAIL	github.com/mas-bandwidth/nova-tools/internal/pulse	0.554s
+FAIL
+
+diagnosis:
+internal/pulse/pool.go: poolRoadmap hard-codes Kind: "roadmap" at line 310. SPEC-PULSE
+rule 2 says the kind column is the card kind (routing in cut.go:198 and 203 keys off
+row.Kind), so a "roadmap" kind drives the text-only read candidate into the
+writing-template branch and rule 6 refusals it for lacking the red/green line;
+fixing the kind (the template name) makes cut pass.
+
+smallest fix: change Kind: "roadmap" -> Kind: tpl in poolRoadmap, and adjust Pool's
+source-kind counter so the POOL line still prints roadmap=<n> by source kind.
