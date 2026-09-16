@@ -195,7 +195,10 @@ nova-pulse version
 nova-pulse help
 ```
 
-Those lines are the string `nova-pulse help` prints, byte for byte. `--timeout <s>` (default
+Those lines are the string `nova-pulse help` must print, byte for byte — the parity is a
+demand on `internal/pulse/cli.go`'s `pulseVerbs`, which carries the same claim in a comment,
+and a replay walks it (replay 38). The shipped string is behind this draft and the gap is
+named in the open questions, not papered over here. `--timeout <s>` (default
 120) bounds every `gh`, `git` and `nova-swarm` child, for SPEC-MERGE's reason
 (SPEC-MERGE.md:458). `harvest` takes `--sources` and `--templates` because its last act is
 `pool` and `cut` again (rule 15). There is no `--model`, no `--priority`, no `--retry`.
@@ -517,6 +520,11 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
 37. `under-width-counts-admitted-only`: a pool of one admitted and one gate-refused card with
     free slots is `PULSE UNDER-WIDTH pool=1 free=<f>: launch`, exit 2 — the refused card is
     not counted.
+38. `help-is-the-verbs-block-byte-for-byte`: `nova-pulse help` prints this file's **The
+    verbs** block byte for byte — the test reads the fenced block out of
+    `docs/SPEC-PULSE.md` and compares, so `--spend-max`, `--max-attempts` and `--scope` are
+    red until `launch` carries them and `[--queue]` is red until it is gone; the mutation
+    that matters: a verb line edited on one side only.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 
@@ -533,3 +541,13 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
 4. **This spec needs `nova-swarm batch --then` (card 269) first.** Until it lands, `launch`
    admits and prints its line, and `harvest` is run by a person after `nova-swarm wait`;
    nothing else in this draft depends on it.
+5. **Retiring `UNDER-SLOTS` is owed against the shipped `launch`, and named here.** This is
+   a draft, and `## Tests this spec demands` says so: the replays are demanded of the
+   implementation, not read off it. Rule 9 removes a refusal the shipped tool still prints —
+   `internal/pulse/launch.go` writes `PULSE REFUSED UNDER-SLOTS` and `launch_test.go` pins
+   it, `pulseVerbs` still offers `[--queue]` and carries none of the three gate flags, and
+   `width` is a line in `pulseVerbs` with nothing behind it. Default: the spec leads and one
+   card retires the refusal, turns that test into replay 9, drops `[--queue]` and adds the
+   gates — in that order, so the red is the removal and never a silent behaviour change.
+   Rejected: keeping `UNDER-SLOTS` in the grammar so the file matches today's binary, which
+   would leave rule 9 contradicting the page it is printed on.
