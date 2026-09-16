@@ -137,6 +137,9 @@ func (d *Dir) Events() (Log, error) {
 			return Log{}, fmt.Errorf("%s does not begin with its version line %q; a later format read as this one would be entries nobody wrote", name, Version)
 		}
 		log.Lines = append(log.Lines, lines[1:]...)
+		for range lines[1:] {
+			log.Authors = append(log.Authors, "")
+		}
 	}
 	return log, nil
 }

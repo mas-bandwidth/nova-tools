@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/dispatch"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
@@ -176,13 +177,14 @@ func cmdServe(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		idempotent: *idempotent, receipt: *receipt, remote: *remote, branch: *branch,
 		words: *words, timeout: time.Duration(*gitTimeout) * time.Second,
 		inOrder: map[string]bool{},
+		ledger:  dispatch.New(st, "serve:"),
 	}
 	s.busSrc = &wake.Bus{
 		Dir: *busDir, As: *as, ReceiptMaxWords: *words, Timeout: s.timeout,
 		Seen: func(line string) bool { _, ok := st.Get("bus:line:" + line); return ok },
 		// The one suppression serve's own state decides: a note this receiver
 		// already holds a delivery record for has been handed to the mind.
-		Printed: func(id string) bool { _, ok := st.Get(serveKey(id)); return ok },
+		Printed: func(id string) bool { return s.ledger.Has(id) },
 	}
 	ctx := context.Background()
 	if *redeliver != "" {
@@ -210,6 +212,11 @@ type server struct {
 	maxWait                       time.Duration
 	saidBlocked                   bool
 
+	// ledger is the queued|dispatching|delivered|uncertain file discipline,
+	// taken from internal/dispatch rather than re-spelled here (SPEC-CHAT
+	// work-list item 13).
+	ledger *dispatch.Ledger
+
 	// busSrc is the WATCH verb's classifier, reused rather than re-spelled:
 	// rule 7 is about the bus source and serve reads the same bus with the
 	// same program. Its counts are this run's WAKE SOURCE line.
@@ -220,9 +227,6 @@ type server struct {
 	order   []string
 	inOrder map[string]bool
 }
-
-// serveKey is one note's delivery record.
-func serveKey(id string) string { return "serve:" + id }
 
 // loop is the process outside a session.
 func (s *server) loop(ctx context.Context, every, hours time.Duration) int {
@@ -260,9 +264,9 @@ func (s *server) loop(ctx context.Context, every, hours time.Duration) int {
 	queued, uncertain := 0, 0
 	for _, id := range s.ids() {
 		switch s.stateOf(id) {
-		case "queued":
+		case dispatch.Queued:
 			queued++
-		case "uncertain":
+		case dispatch.Uncertain:
 			uncertain++
 		}
 	}
@@ -282,11 +286,11 @@ func (s *server) loop(ctx context.Context, every, hours time.Duration) int {
 func (s *server) recover(ctx context.Context) {
 	for _, id := range s.ids() {
 		state, stamp, attempt, _ := s.record(id)
-		if state != "dispatching" {
+		if state != dispatch.Dispatching {
 			continue
 		}
 		_ = stamp
-		s.st.Set(serveKey(id), wake.Compose("uncertain", wake.Stamp(s.clock.Now()), "attempt="+strconv.Itoa(attempt)))
+		s.ledger.Recover(id, wake.Stamp(s.clock.Now()), attempt)
 		fmt.Fprintf(s.stdout, "WAKE UNCERTAIN id=%s attempt=%d: dispatch interrupted; %s\n",
 			oneline.Field(id), attempt, oneline.Escape(s.remedy(id)))
 		if s.idempotent && attempt == 1 {
@@ -311,7 +315,7 @@ func (s *server) recover(ctx context.Context) {
 // is redelivered while one exists.
 func (s *server) blocked() string {
 	for _, id := range s.ids() {
-		if s.stateOf(id) == "uncertain" {
+		if s.stateOf(id) == dispatch.Uncertain {
 			return id
 		}
 	}
@@ -400,13 +404,13 @@ func (s *server) recordNote(it wake.Item, now time.Time) {
 	case "to":
 		// To means must act.
 		s.notes++
-		s.st.Set(serveKey(id), wake.Compose("queued", wake.Stamp(now)))
+		s.ledger.Queue(id, wake.Stamp(now))
 	case "cc":
 		// Cc means should know: recorded, counted, never a turn, and read by
 		// the line at its next natural turn. A broadcast to five is five turns.
 		s.notes++
 		s.cc++
-		s.st.Set(serveKey(id), wake.Compose("cc", wake.Stamp(now)))
+		s.ledger.CC(id, wake.Stamp(now))
 	default:
 		// A note addressed to ANOTHER NAME, which a bus does not normally list
 		// for this reader at all. It is not this receiver's note: not
@@ -416,7 +420,7 @@ func (s *server) recordNote(it wake.Item, now time.Time) {
 		// list decides what is hidden -- the unsafe direction here is not
 		// silence, it is starting somebody's command over a note nobody
 		// addressed to them.
-		s.st.Set(serveKey(id), wake.Compose("cc", wake.Stamp(now)))
+		s.ledger.CC(id, wake.Stamp(now))
 	}
 }
 
@@ -460,7 +464,7 @@ func (s *server) dispatch(ctx context.Context, now time.Time) {
 	if id := s.blocked(); id != "" {
 		queued := 0
 		for _, other := range s.ids() {
-			if s.stateOf(other) == "queued" {
+			if s.stateOf(other) == dispatch.Queued {
 				queued++
 			}
 		}
@@ -469,7 +473,7 @@ func (s *server) dispatch(ctx context.Context, now time.Time) {
 	}
 	var batch []string
 	for _, id := range s.ids() {
-		if s.stateOf(id) != "queued" {
+		if s.stateOf(id) != dispatch.Queued {
 			continue
 		}
 		if _, stamp, _, _ := s.record(id); stamp != "" {
@@ -505,7 +509,7 @@ func (s *server) blockedOnce(id string, queued int) {
 func (s *server) runBatch(ctx context.Context, ids []string, attempt int, redelivered bool) {
 	stamp := wake.Stamp(s.clock.Now())
 	for _, id := range ids {
-		s.st.Set(serveKey(id), wake.Compose("dispatching", stamp, "attempt="+strconv.Itoa(attempt)))
+		s.ledger.MarkDispatching(id, stamp, attempt)
 	}
 	s.save()
 	if serveKillPoint == "before-spawn" {
@@ -531,7 +535,7 @@ func (s *server) runBatch(ctx context.Context, ids []string, attempt int, redeli
 			// acceptance boundary an arbitrary command offers, so anything else
 			// is uncertain and a person's; "never a silent duplicate, and never
 			// a silent loss".
-			s.st.Set(serveKey(id), wake.Compose("uncertain", done, "attempt="+strconv.Itoa(attempt), "rc="+strconv.Itoa(rc)))
+			s.ledger.MarkUncertain(id, done, attempt, rc)
 			s.failed++
 			why := "dispatch did not accept"
 			if redelivered {
@@ -541,7 +545,7 @@ func (s *server) runBatch(ctx context.Context, ids []string, attempt int, redeli
 				oneline.Field(id), attempt, rc, oneline.Escape(why), oneline.Escape(s.remedy(id)))
 			continue
 		}
-		s.st.Set(serveKey(id), wake.Compose("delivered", done, "rc="+strconv.Itoa(rc), "redelivered="+mark))
+		s.ledger.MarkDelivered(id, done, rc, redelivered)
 	}
 	s.save()
 	s.fired++
@@ -604,7 +608,7 @@ func (s *server) sendReceipts(ctx context.Context, ids []string) {
 // its handler. It is refused unless the state is uncertain.
 func (s *server) redeliverOne(ctx context.Context, id string) int {
 	state, _, attempt, _ := s.record(id)
-	if state != "uncertain" {
+	if state != dispatch.Uncertain {
 		return refused(s.stderr, "--redeliver "+id+" is "+dash(state)+", not uncertain; a redelivery is for a dispatch this tool could not prove had finished, and nothing else")
 	}
 	s.runBatch(ctx, []string{id}, attempt+1, true)
@@ -625,7 +629,7 @@ func (s *server) ids() []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, id := range s.order {
-		if _, ok := s.st.Get(serveKey(id)); ok {
+		if s.ledger.Has(id) {
 			out = append(out, id)
 			seen[id] = true
 		}
@@ -633,8 +637,8 @@ func (s *server) ids() []string {
 	// A restart has records before it has a listing. State order is SORTED
 	// order, which is not bus order -- the first poll re-lists what this
 	// receiver still carries and puts them right.
-	for _, k := range s.st.Keys() {
-		if id, ok := strings.CutPrefix(k, "serve:"); ok && !seen[id] {
+	for _, id := range s.ledger.IDs() {
+		if !seen[id] {
 			out = append(out, id)
 		}
 	}
@@ -642,32 +646,11 @@ func (s *server) ids() []string {
 }
 
 func (s *server) record(id string) (state, stamp string, attempt, rc int) {
-	raw, ok := s.st.Get(serveKey(id))
-	if !ok {
-		return "", "", 0, 0
-	}
-	p := wake.Decompose(raw)
-	state = p[0]
-	if len(p) > 1 {
-		stamp = p[1]
-	}
-	for _, f := range p[2:] {
-		if v, ok := strings.CutPrefix(f, "attempt="); ok {
-			attempt, _ = strconv.Atoi(v)
-		}
-		if v, ok := strings.CutPrefix(f, "rc="); ok {
-			rc, _ = strconv.Atoi(v)
-		}
-	}
-	if attempt == 0 {
-		attempt = 1
-	}
-	return state, stamp, attempt, rc
+	return s.ledger.Record(id)
 }
 
 func (s *server) stateOf(id string) string {
-	state, _, _, _ := s.record(id)
-	return state
+	return s.ledger.StateOf(id)
 }
 
 func (s *server) save() {

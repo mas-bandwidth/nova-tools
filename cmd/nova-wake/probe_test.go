@@ -239,7 +239,7 @@ func TestAProbeMeasuresBeforeItPings(t *testing.T) {
 		if r.exit != 1 {
 			t.Errorf("exit %d, want 1:\n%s", r.exit, r.all())
 		}
-		hasFields(t, probeLine(t, r.stdout), "state=SILENT contact=NONE last=- commit=-")
+		hasFields(t, probeLine(t, r.stdout), "state=SILENT contact=NONE last=- silent=- commit=-")
 	})
 
 	t.Run("a rest is never probed", func(t *testing.T) {
@@ -296,6 +296,9 @@ func TestAProbeMeasuresBeforeItPings(t *testing.T) {
 // The bounded correlation read: draft 7's K3, draft 8's K3a-c, draft 9's K4a-c.
 
 func TestTheBoundedCorrelationRead(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: spawns repeated probes over a built lane; runs on the self-hosted legs and nightly")
+	}
 	t.Run("the empty lane times out", func(t *testing.T) {
 		busDir, anchor := newLaneBus(t)
 		state := filepath.Join(t.TempDir(), "probe.state")

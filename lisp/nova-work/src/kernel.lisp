@@ -127,7 +127,7 @@ reason or evidence; done/deferred leave only via reopen, never state.")
          (node (%node-quiet state id)))
     (unless node
       (return-from %validate (values 2 (format nil "no such node ~A" id))))
-    (unless (eq :task (wnode-type node))
+    (unless (member (wnode-type node) '(:task :bug))
       (error 'unsupported-input
              :what (format nil "unsupported: ~A is a ~A; slice 1 containers change branch with their members, not through direct task-state requests"
                            id (string-downcase (symbol-name (wnode-type node))))))

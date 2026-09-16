@@ -187,7 +187,7 @@ func TestModelDigestAndPinIdentity(t *testing.T) {
 	}
 	for _, s := range []string{"v0.12.0", "devel", "v0.12.1-0.foo"} {
 		r := entryRead{Entry: Entry{Kind: "pin"}, Installed: identity(Entry{Kind: "pin"}, "nova-wake "+s, false), Latest: identity(Entry{Kind: "pin"}, "nova-bus "+s, false)}
-		if verdict(r) != "EQUAL" {
+		if v, _ := verdict(r); v != "EQUAL" {
 			t.Fatal(r)
 		}
 	}
