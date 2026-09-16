@@ -1302,3 +1302,40 @@ and explicit argv; paths or arguments containing spaces belong in a wrapper scri
 `--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
 `--remote` and `--branch`. A busy snapshot wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
+
+## nova-work
+
+`nova-work` is the thin client of the resident work session ([docs/SPEC-WORK.md](SPEC-WORK.md), "The engine and its client"): it sends one request line over the Unix socket `--session` names and prints the session's one answer line, byte for byte. The session is the engine — Common Lisp in the first pilot — and it owns every fact: the state, the journal, the indexes, the ordering. The client owns none of them, and a fresh CLI process is never a fresh parse.
+
+```
+nova-work: the thin client of the resident work session (see docs/SPEC-WORK.md)
+
+usage:
+  nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --cache <path> --repo <path> --remote <name> --branch <name>
+                           --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --skew <duration> --clip-every <duration> --clip-after <n> --retain <duration>
+                           --savepoint-every <duration> --savepoint-after <n> --max-frame-bytes <n> --silence-ping <duration>
+                           --index-cache <n> --page-bytes <n> --page-records <n> [--closed-window <duration>] [--render-root <root-id>=<owner/name>:<directory> ...]
+                           [--resolver <scheme>=<command> ...] --git-timeout <seconds> [--attempts <n>] [--repair] [--foreground] [--max <n>] [--now <stamp>]
+  nova-work session status --session <path>
+  nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
+  nova-work version        print this build identity (--version also accepted)
+  nova-work help
+
+wire:
+  one line in, one line out over the Unix socket --session names. The request
+  line is the verb and its flags in the order above, each as --name <value>,
+  values escaped through internal/oneline's field form (one token per value:
+  a space is \x20, an equals is \x3d), bools as --name true, the whole line
+  newline-terminated. The reply is the session's own answer line, printed byte
+  for byte: OK, ROW, NOTE and MORE to stdout, exit 0; FAIL, RACED and REFUSED
+  to stderr, exit 1. What cannot run at all is one WORK REFUSED line on
+  stderr, exit 2, ending "run: nova-work help". Values travel as given: the
+  session validates every one and refuses with its own naming.
+
+example:
+  nova-work session status --session ./sessions/alpha.sock
+  nova-work session stop --session ./sessions/alpha.sock --git-timeout 30
+  nova-work version
+```
+
+`session start`, `session status` and `session stop` are the socket verbs of the first pilot, and `SESSION OK` is one shape printed by all three alike. The session validates every value itself and refuses with its own naming, so the client refuses to guess and second-guesses nothing: a missing `--session` (the socket has no default path) or a socket nothing answers is one `WORK REFUSED` line on stderr, exit 2, ending `run: nova-work help`. The session's own refusals — `FAIL`, `RACED`, `REFUSED` — reach stderr and exit 1. Use `nova-work version` for this build's identity before asking anything else.
