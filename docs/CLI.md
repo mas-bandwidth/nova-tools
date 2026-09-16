@@ -1193,6 +1193,34 @@ What a first run gets wrong, and what each one wants:
 `nova-sandbox policy` prints what would be generated without running anything,
 which is the fastest way to see the wall a set of flags actually makes.
 
+## nova-secrets
+
+One binary at the credential layer: a thin wrapper over sops and age that reads one sealed yaml
+out of a git working copy by running `sops` at a path the caller named, keeps the plaintext in
+its own memory for the length of one call, and then execs, prints, proves or writes one key. It
+links no cryptography, opens no network socket, starts no shell, writes no state of its own and
+reads no Keychain. The contract is [docs/SPEC-SECRETS.md](SPEC-SECRETS.md).
+
+Verbs today: `version`, `exec`, `names`, `check`, `keygen`, `help`. Two more are
+**SPEC-AHEAD: #764** — rules, not code yet:
+
+```
+nova-secrets place  --machine <name> --secret <name> [--path <remote path>] [--host <ssh host>] [--replace]   # SPEC-AHEAD: #764
+nova-secrets placed --machine <name> [--host <ssh host>]                                                       # SPEC-AHEAD: #764
+```
+
+`place` copies one secret from the local store to a fleet machine over ssh — the machine from
+the fleet registry (nova-work CONFIG machines) or `--host <ssh host>` until the registry exists
+— writes it mode `0600`, owned by the bench user, at `<bench root>/<secret>.env` by default or
+`--path <remote path>` when given, and never prints, logs or receipts the value: the receipt is
+`PLACE OK machine=<m> secret=<name> path=<p> sha256=<hash of the value> at=<stamp>`. A different
+value already at the path is `PLACE REFUSED reason=differs`, never a silent overwrite, and
+`--replace` names the intent. `placed` lists what a machine holds by name, path, mode and hash
+(`PLACED OK machine=<m> n=<k>` then one line each), reading the remote hashes over ssh and never
+the values. A model route whose key is not placed on a machine is benched there: a bench that
+runs a card on that route reports `ABSTAIN reason=key-missing route=<r> machine=<m>`, never
+`rc=1`.
+
 ## nova-tokens
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
