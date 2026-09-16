@@ -2,9 +2,9 @@
 
 Glenn's two-minute rule (2026-09-10, reaffirmed 2026-09-15): anything we call out to
 answers in one minute ideally, two at most. This file is the MEASUREMENT that rule is
-enforced against -- `tools/testdur`'s `TestFastSuiteUnderOneMinute` reads it and fails
-when a package's total crosses 60 s, so a package that slows down is a red on the
-change that slowed it rather than a CI everyone waits on.
+enforced against -- `.github/workflows/ci.yml` pipes each run through `tools/testdur`,
+which fails the step when a package's total crosses 60 s, so a package that slows down
+is a red on the change that slowed it rather than a CI everyone waits on.
 
 Regenerate it after any change to a test's cost:
 

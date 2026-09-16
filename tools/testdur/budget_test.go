@@ -19,7 +19,7 @@ func TestRun(t *testing.T) {
 		{
 			name:   "one package over the minute bar",
 			in:     `{"Action":"pass","Package":"example.com/slow","Elapsed":61}` + "\n",
-			want:   "TESTDUR FAIL pkg=example.com/slow s=61 bar=60\n",
+			want:   "TESTDUR FAIL pkg=example.com/slow s=61 bar=60 -- sync-point the slow tests or move them behind //go:build slow (#516)\n",
 			failed: true,
 		},
 		{
@@ -32,8 +32,8 @@ func TestRun(t *testing.T) {
 			name: "two packages, the step total crosses two minutes",
 			in: `{"Action":"pass","Package":"example.com/a","Elapsed":70}` + "\n" +
 				`{"Action":"pass","Package":"example.com/b","Elapsed":51}` + "\n",
-			want: "TESTDUR FAIL pkg=example.com/a s=70 bar=60\n" +
-				"TESTDUR FAIL pkg=<total> s=121 bar=120\n",
+			want: "TESTDUR FAIL pkg=example.com/a s=70 bar=60 -- sync-point the slow tests or move them behind //go:build slow (#516)\n" +
+				"TESTDUR FAIL pkg=<total> s=121 bar=120 -- sync-point the slow tests or move them behind //go:build slow (#516)\n",
 			failed: true,
 		},
 		{

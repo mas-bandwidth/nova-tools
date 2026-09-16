@@ -62,12 +62,12 @@ func run(in io.Reader, out io.Writer) (failed bool) {
 
 	for _, p := range pkgs {
 		if p.secs > packageBar {
-			fmt.Fprintf(out, "TESTDUR FAIL pkg=%s s=%d bar=%d\n", p.pkg, int(p.secs), int(packageBar))
+			fmt.Fprintf(out, "TESTDUR FAIL pkg=%s s=%d bar=%d -- sync-point the slow tests or move them behind //go:build slow (#516)\n", p.pkg, int(p.secs), int(packageBar))
 			failed = true
 		}
 	}
 	if total > totalBar {
-		fmt.Fprintf(out, "TESTDUR FAIL pkg=<total> s=%d bar=%d\n", int(total), int(totalBar))
+		fmt.Fprintf(out, "TESTDUR FAIL pkg=<total> s=%d bar=%d -- sync-point the slow tests or move them behind //go:build slow (#516)\n", int(total), int(totalBar))
 		failed = true
 	}
 
