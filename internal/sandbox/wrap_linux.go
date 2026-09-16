@@ -49,8 +49,12 @@ var linuxReadRoots = []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc",
 // Permission denied", which is a wall that denies the work.
 var linuxWriteFiles = []string{"/dev/null", "/dev/tty"}
 
-// available is the seam rule 1's refusal is tested through, as on darwin: a test sets it
-// to a function that says no, and the tool must then REFUSE rather than run.
+// available is the seam the ABI refusals are tested through, as on darwin: a test replaces
+// it and the tool must then REFUSE rather than run. What it carries here is the DISCOVERED
+// ABI rather than a yes-or-no, so the refusal it is actually reached for is rule 11's --
+// TestUnknownLandlockABIRefusesOnLinux forces an ABI ABOVE maxKnownABI, which no kernel on
+// the fleet reports and which Run below must refuse. Rule 1's own no_sandbox refusal goes
+// through the same seam and has no linux test of its own; darwin's covers that rule.
 var available = landlockABI
 
 // Available answers rule 1's question for this machine. The string is what the check
