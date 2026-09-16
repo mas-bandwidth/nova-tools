@@ -362,6 +362,25 @@ $ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queu
 PULSE OK id=20260915T161450Z-pulse-600cc3 n=3 free-before=2 queued=1 batches=1 deadline=120
 ```
 
+Cut one card of each kind out of the fixture pool, into a fresh `./cards` and
+`./root` in the checkout. The fixture lives at `cmd/nova-pulse/testdata/`: a
+two-line `pool.tsv` (a read and a fix candidate) and a `templates` directory
+with `models.tsv`, `read.md` and `fix.md`.
+
+`pool` runs against the same directory from the other end: a `sources.tsv`
+declaring one `roadmap` source, and that roadmap — two cells naming a card and
+one naming none. It reads the roadmap, skips the cell without a card, and writes
+the two candidates it found to `./root/pool.tsv`. Neither verb reaches a network
+and neither makes a model call.
+
+```text
+$ nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
+CUT OK cards=2 skipped=0 flash=1 pro=1 out=./cards
+
+$ nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
+POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
+```
+
 ## nova-board
 
 Fixture: `cmd/nova-board/testdata/example-board`.
@@ -502,27 +521,4 @@ $ nova-version report --file cmd/nova-version/testdata/example.tsv
 REPORT at=2026-09-12T17:29:33Z file=cmd/nova-version/testdata/example.tsv host=- as=- entries=1 kinds=engine,harness,model,pin,tool timeout=5s budget=1m0s max=20 snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-version/testdata/example.tsv
-```
-
-## nova-pulse
-
-### First run
-
-Cut one card of each kind out of the fixture pool, into a fresh `./cards` and
-`./root` in the checkout. The fixture lives at `cmd/nova-pulse/testdata/`: a
-two-line `pool.tsv` (a read and a fix candidate) and a `templates` directory
-with `models.tsv`, `read.md` and `fix.md`.
-
-`pool` runs against the same directory from the other end: a `sources.tsv`
-declaring one `roadmap` source, and that roadmap — two cells naming a card and
-one naming none. It reads the roadmap, skips the cell without a card, and writes
-the two candidates it found to `./root/pool.tsv`. Neither verb reaches a network
-and neither makes a model call.
-
-```text
-$ nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
-CUT OK cards=2 skipped=0 flash=1 pro=1 out=./cards
-
-$ nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
-POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
 ```
