@@ -37,6 +37,7 @@ var dotted = regexp.MustCompile(`[0-9]\.[0-9]`)
 var digit = regexp.MustCompile(`[0-9]`)
 var bareCommit = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 var release = regexp.MustCompile(`^[0-9]+(\.[0-9]+)+$`)
+var pseudoVer = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.([0-9]+)-0\.[0-9]{14}-([0-9a-f]{7,40})`)
 var digest = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 var pseudo = regexp.MustCompile(`^([0-9]+\.[0-9]+\.[0-9]+)-0\.[0-9]+-([0-9a-f]{7,40})(\+.*)?$`)
 
@@ -322,6 +323,28 @@ func Compare(a, b string) string {
 		}
 	}
 	return "DIFFERENT"
+}
+
+// Ahead names an installed pseudo-version whose commit descends from the release
+// tag. A Go pseudo-version vX.Y.(Z+1)-0.<stamp>-<sha> is, by construction, a
+// commit after the release vX.Y.Z and before vX.Y.(Z+1), so when the latest
+// release equals that base the installed build reports AHEAD, never DIFFERENT.
+// SAME-COMMIT names two strings that carry the same commit.
+func Ahead(installed, latest string) string {
+	im := pseudoVer.FindStringSubmatch(installed)
+	lm := pseudoVer.FindStringSubmatch(latest)
+	if im != nil && lm != nil && im[4] == lm[4] {
+		return "SAME-COMMIT"
+	}
+	if im != nil && release.MatchString(latest) {
+		z := new(big.Int)
+		if _, ok := z.SetString(im[3], 10); ok && z.Sign() > 0 {
+			if im[1]+"."+im[2]+"."+new(big.Int).Sub(z, big.NewInt(1)).String() == latest {
+				return "AHEAD"
+			}
+		}
+	}
+	return ""
 }
 
 // ahead reports the pseudo-version's commit when installed names a build the Go toolchain

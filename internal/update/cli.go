@@ -360,6 +360,9 @@ func verdict(r entryRead) (string, string) {
 	if c, ok := ahead(r.Installed.Version, r.Latest.Version); ok {
 		return "AHEAD", c
 	}
+	if s := Ahead(r.Installed.Version, r.Latest.Version); s != "" {
+		return s, ""
+	}
 	v := Compare(r.Installed.Version, r.Latest.Version)
 	if v == "OLDER" {
 		return "STALE", ""

@@ -421,6 +421,19 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 		release()
 	}
 }
+func TestPseudoVersionDescendingFromReleaseTagReportsAhead(t *testing.T) {
+	installed := printer(t, "v0.15.3-0.20260913120000-0459069\n")
+	latest := printer(t, "v0.15.2\n")
+	p := manifest(t, row("nova-tools", "tool", installed, "local:"+latest, "none"))
+	c, out, errs := run(t, Environment{}, "check", "--file", p)
+	if c != 1 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	need(t, out, "UPDATE AHEAD ", "installed=0.15.3-0.20260913120000-0459069", "latest=0.15.2")
+	if strings.Contains(out+errs, "DIFFERENT") {
+		t.Fatalf("pseudo-version descendant reported DIFFERENT:\n%s%s", out, errs)
+	}
+}
 func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 	rows := []string{}
 	installed := printer(t, "1.0.0")
