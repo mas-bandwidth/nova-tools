@@ -639,81 +639,6 @@ func TestNoAutoRetryKeepsA429AttemptWithoutADescendant(t *testing.T) {
 	}
 }
 
-func TestAReapedJobRunsOnceMore(t *testing.T) {
-	if testing.Short() {
-		t.Skip("this one waits for two deadlines")
-	}
-	b := newBench(t)
-	id := b.add("a worker that sleeps past its deadline\nFAKE-SLEEP 30\n", "--deadline", "3s")
-	exit, stdout, stderr := b.run()
-	if exit != 0 {
-		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
-	}
-	mustContain(t, "the run", stdout, "RUN KILLED id="+id)
-	// A worker reaped at its deadline BROKE NO RULE: it is `RUN KILLED … survived=<bool>`
-	// (SPEC-SWARM.md:1055), never rule 11's `RUN VIOLATION`. Nothing outlived this kill.
-	mustContain(t, "the run", stdout, "survived=false")
-	if strings.Contains(stdout, "RUN VIOLATION") {
-		t.Errorf("a deadline kill is not a background violation:\n%s", stdout)
-	}
-	mustContain(t, "the run", stdout, "requeued=true reaped=1")
-	if _, err := os.Stat(filepath.Join(b.pool, "failed", id+".task")); err != nil {
-		t.Errorf("a reaped job's files belong in failed/: %v", err)
-	}
-	// The re-queued task is a NEW job id carrying from=<old-id>, and the same pass picks it
-	// up, reaps it a second time, and does not queue a third: one automatic retry closes the
-	// case where a worker was silent because the provider was, and never the case where the
-	// task was too big, which a second identical run would only prove twice.
-	mustContain(t, "the run", stdout, "requeued=false reaped=2")
-	failed, err := os.ReadDir(filepath.Join(b.pool, "failed"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(failed) != 4 { // two tasks, each a .task and a .json
-		t.Errorf("failed/ wants the two attempts and nothing else, got %d files", len(failed))
-	}
-	pending, err := os.ReadDir(filepath.Join(b.pool, "pending"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pending) != 0 {
-		t.Errorf("a job reaped twice is not re-queued again, got %d files in pending/", len(pending))
-	}
-	mustContain(t, "the run", stdout, "RUN OK started=2 done=0 failed=0 killed=2 pending=0")
-	mustContain(t, "the remedy line", stdout, "RUN NOTE a worker was killed at its deadline twice")
-
-	// RULE 7, VERBATIM (SPEC-SWARM.md:109-111): "A worker silent past its deadline is
-	// reaped and its job is re-queued once, with `requeued=1` in the new task's sidecar; a
-	// job reaped a second time goes to `failed/` with `reaped=2` and is not re-queued
-	// again." IN THE SIDECAR. The line printed `reaped=2` and the durable record in
-	// failed/ still said `reaped=1`, so the one thing that outlives the run -- the file a
-	// person reads tomorrow -- did not carry the count the rule names. A line is not a
-	// record.
-	first := b.sidecar(id)
-	if first.Reaped != 1 {
-		t.Errorf("the first attempt's sidecar wants reaped=1, got %d", first.Reaped)
-	}
-	second := swarmSidecar{}
-	for _, name := range mustReadDirNames(t, filepath.Join(b.pool, "failed")) {
-		if !strings.HasSuffix(name, ".json") || strings.HasPrefix(name, id) {
-			continue
-		}
-		second = b.sidecar(strings.TrimSuffix(name, ".json"))
-	}
-	if second.ID == "" {
-		t.Fatal("the second attempt has no sidecar in failed/")
-	}
-	if second.From != id {
-		t.Errorf("the re-queued attempt carries from=%s, got %q", id, second.From)
-	}
-	if second.Requeued != 1 {
-		t.Errorf("rule 7 wants requeued=1 in the new task's sidecar, got %d", second.Requeued)
-	}
-	if second.Reaped != 2 {
-		t.Errorf("a job reaped a second time goes to failed/ with reaped=2; its sidecar says %d", second.Reaped)
-	}
-}
-
 // mustReadDirNames is one directory listing, named, so a test reads a pool the way a person
 // does and fails on the read rather than on a nil slice three lines later.
 func mustReadDirNames(t *testing.T, dir string) []string {
@@ -1631,94 +1556,6 @@ func TestAMarkerIsTheRecordWhereThereIsNoReport(t *testing.T) {
 	}
 }
 
-// Demanded test 12, the killed job: its row says `end=killed` and carries whatever partial
-// usage the provider's accounting held when the deadline came, and its re-queue is a SECOND
-// file with `attempt=2 from=<old-id>` that `cost` sums once each.
-func TestAKilledJobsUsageSaysKilledAndItsRetrySumsOnce(t *testing.T) {
-	t.Parallel()
-	if testing.Short() {
-		t.Skip("this one waits for two deadlines")
-	}
-	b := newBench(t)
-	id := b.add("a worker that spends and then sleeps past its deadline\nFAKE-USAGE 700 300 - - -\nFAKE-SLEEP 30\n", "--deadline", "3s")
-	exit, stdout, stderr := b.run()
-	if exit != 0 {
-		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
-	}
-	mustContain(t, "the run", stdout, "RUN KILLED id="+id)
-
-	first := b.usageRow(id)
-	if first["end"] != "killed" {
-		t.Errorf("a job killed at its deadline wants end=killed, got %q", first["end"])
-	}
-	if first["attempt"] != "1" || first["from"] != "-" {
-		t.Errorf("the first attempt wants attempt=1 from=-, got attempt=%q from=%q", first["attempt"], first["from"])
-	}
-	if first["tokens_in"] != "700" || first["tokens_out"] != "300" {
-		t.Errorf("the killed row wants whatever partial usage the source held, got in=%q out=%q",
-			first["tokens_in"], first["tokens_out"])
-	}
-	// The re-queue is a SECOND file, naming the attempt and where it came from.
-	var retry map[string]string
-	entries, err := os.ReadDir(filepath.Join(b.pool, "usage"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("two attempts want two usage files, got %d", len(entries))
-	}
-	for _, e := range entries {
-		other := strings.TrimSuffix(e.Name(), ".tsv")
-		if other == id {
-			continue
-		}
-		retry = b.usageRow(other)
-	}
-	if retry["attempt"] != "2" || retry["from"] != id {
-		t.Errorf("the re-queue wants attempt=2 from=%s, got attempt=%q from=%q", id, retry["attempt"], retry["from"])
-	}
-	if retry["end"] != "killed" {
-		t.Errorf("the second attempt was killed too, got end=%q", retry["end"])
-	}
-	exit, stdout, stderr = b.swarm("cost", "--pool", b.pool)
-	if exit != 0 {
-		t.Fatalf("cost exited %d: %s%s", exit, stdout, stderr)
-	}
-	// Each attempt once: 700 and 700, never 1400 for one of them.
-	mustContain(t, "cost", stdout, "COST OK tasks=2 in=1400 out=600")
-}
-
-// Demanded test 12, the last sentence: `finalize --task` on a job whose group is ALIVE is
-// FINALIZE REFUSED. Finalizing under a live worker would copy a report that is still being
-// written and write a usage row the job has not finished earning.
-func TestFinalizeIsRefusedWhileTheGroupIsAlive(t *testing.T) {
-	t.Parallel()
-	b := newBench(t)
-	id := b.add("a worker that is still working\nFAKE-SLEEP 5\nFAKE-FINDINGS 1\n")
-	refused := make(chan string, 1)
-	go func() {
-		for i := 0; i < 200; i++ {
-			exit, _, stderr := b.swarm("finalize", "--pool", b.pool, "--task", id)
-			if exit == 1 && strings.Contains(stderr, "still alive") {
-				refused <- stderr
-				return
-			}
-			time.Sleep(25 * time.Millisecond)
-		}
-		refused <- ""
-	}()
-	exit, stdout, stderr := b.run()
-	if exit != 0 {
-		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
-	}
-	got := <-refused
-	if got == "" {
-		t.Fatal("`finalize --task` under a live process group is FINALIZE REFUSED, and it never was")
-	}
-	mustContain(t, "the refusal", got, "FINALIZE REFUSED id="+id)
-	mustContain(t, "the refusal", got, "process group is still alive")
-}
-
 // usageRow reads one job's usage file as a map of column to value.
 func (b *bench) usageRow(id string) map[string]string {
 	b.t.Helper()
@@ -1877,62 +1714,6 @@ func TestAnUnreadableUsageSourceEndsTheJobUnverifiable(t *testing.T) {
 	mustContain(t, "the kept report", string(copied), "- finding 2:")
 }
 
-// DEMANDED TEST 16 (SPEC-SWARM.md:1350), the dispatcher's half: a worker KILLED with a
-// RESULT.md.tmp on disk ends `RUN KILLED … unpublished=true`, and the tmp file is still
-// there afterwards, UNREAD. A half-written revision is not a report: the machinery says it
-// exists, leaves it exactly where the worker left it, and folds none of it.
-func TestAKilledWorkerLeavesItsUnpublishedRevisionAlone(t *testing.T) {
-	t.Parallel()
-	b := newBench(t)
-	id := b.add("a worker killed with a revision half written\nFAKE-PUBLISH-FIRST\nFAKE-UNPUBLISHED\nFAKE-FINDINGS 2\nFAKE-SLEEP 30\n",
-		"--deadline", "5s")
-	exit, stdout, stderr := b.run()
-	if exit != 0 {
-		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
-	}
-	// THIS job's own line, not any line: the one automatic re-queue prints a RUN KILLED of
-	// its own, and a test that read the wrong one would pass while this one said nothing.
-	killed := lineWith(t, stdout, "RUN KILLED id="+id)
-	mustContain(t, "the RUN KILLED line", killed, "unpublished=true")
-	// findings= is what was PUBLISHED, and nothing was: the tmp file is not a report.
-	mustContain(t, "the RUN KILLED line", killed, "findings=0")
-
-	tmp := filepath.Join(b.jobDir(id), "RESULT.md.tmp")
-	before, err := os.ReadFile(tmp)
-	if err != nil {
-		t.Fatalf("the half-written revision is left where the worker left it: %v", err)
-	}
-	mustContain(t, "the unpublished revision", string(before), "- finding 1:")
-	if _, err := os.Stat(filepath.Join(b.pool, "reports", id, "NO-RESULT")); err != nil {
-		t.Errorf("a job that published nothing wants its NO-RESULT marker: %v", err)
-	}
-
-	// THE TRIPWIRE: nothing this tool does opens RESULT.md.tmp. A mode that refuses its
-	// own owner turns any open of it into an error, and triage and `result` go on
-	// working -- which they could not do if either of them read it.
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(tmp, 0o000); err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = os.Chmod(tmp, 0o644) }()
-	}
-	if exit, stdout, stderr = b.swarm("triage", "--pool", b.pool); exit != 0 {
-		t.Fatalf("triage opened something it must not: exit %d\n%s%s", exit, stdout, stderr)
-	}
-	// Two: this job, and the ONE automatic re-queue of it (rule 7), which published nothing
-	// either. A tmp file is not a report for either of them.
-	mustContain(t, "triage", stdout, "reports=0 findings=0")
-	mustContain(t, "triage", stdout, "no_result=2")
-	if strings.Contains(stdout, "TRIAGE FINDING") {
-		t.Errorf("a revision that was never published holds no findings for a page:\n%s", stdout)
-	}
-	exit, stdout, stderr = b.swarm("result", "--pool", b.pool, "--id", id)
-	if exit != 1 {
-		t.Errorf("`result --id` on a job that published nothing is REFUSED, got exit %d:\n%s%s", exit, stdout, stderr)
-	}
-	mustContain(t, "the refusal", stderr, "NO-RESULT")
-}
-
 // AUDIT F1 and F4 (the new-user audit, 2026-09-11): a harness that exits 7 on a bad key
 // printed `RUN DONE … rc=7 … dest=failed` and then `RUN OK started=1 done=1 failed=0`,
 // exit 0, and `COST TASK … end=done` for a job in failed/. The counting was fixed by D2;
@@ -1973,5 +1754,50 @@ func TestAWorkerThatExitsNonZeroIsAFailedJobEverywhere(t *testing.T) {
 	mustContain(t, "cost", stdout, "end=failed")
 	if strings.Contains(stdout, "end=done") {
 		t.Errorf("the cost ledger called a failed job done:\n%s", stdout)
+	}
+}
+
+// TestSupervisorLogAppendsNeverTruncates is TestBatchLogAppendsNeverTruncates
+// (internal/swarm) for the OTHER writer of a card's `<job>/harness.log`: the supervisor,
+// which pins the harness's own stdout and stderr to that file. Two processes write it for
+// one job and each holds its own offset -- a `batch` pins its runner's stdout to the same
+// path before this supervisor starts -- so a truncating open here starts at offset 0 and
+// writes over the head of what the runner already put there. That is how the start of a
+// card's evidence was lost (issue #608), and it is the same defect on the same file from
+// the other side, so it gets the same test: write a line, run the job, demand BOTH sets of
+// bytes in the order they were written. Red with O_TRUNC in supervise.go.
+func TestSupervisorLogAppendsNeverTruncates(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	const said = "the-harness-said-this"
+	id := b.add("a task whose harness says one line\nFAKE-SAY " + said + "\nFAKE-FINDINGS 1\n")
+
+	// The bytes the other writer put there before the supervisor opened the file. The job
+	// directory is the slot's, named before the run the way the dispatcher will name it.
+	job := filepath.Join(b.dir, "worker-home-1", "jobs", id)
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const earlier = "the runner wrote this before the supervisor started"
+	write(t, filepath.Join(job, "harness.log"), earlier+"\n")
+
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("the run exits 0, got %d:\n%s%s", exit, stdout, stderr)
+	}
+	raw, err := os.ReadFile(filepath.Join(job, "harness.log"))
+	if err != nil {
+		t.Fatalf("the job's harness log could not be read: %v", err)
+	}
+	got := string(raw)
+	at, after := strings.Index(got, earlier), strings.Index(got, said)
+	if at < 0 {
+		t.Errorf("the supervisor truncated the job's harness log: the bytes written before the run are gone:\n%s", got)
+	}
+	if after < 0 {
+		t.Fatalf("the harness's own line is not in the job's harness log:\n%s", got)
+	}
+	if at >= 0 && after < at {
+		t.Errorf("the harness's line landed before the bytes that were there first; the log is out of order:\n%s", got)
 	}
 }

@@ -97,6 +97,26 @@ func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) 
 	return code, out.String(), errb.String()
 }
 
+// testIdleBudget is the --idle every test in the idle family passes, and the
+// margin is the point. These tests drive a /bin/sh runner that writes every 150
+// to 200 ms and then assert either that it was left alone or that a silent one
+// was killed. A one-second budget makes the nominal margin 5x, which is not a
+// margin on a SHARED runner: `sleep 0.2` in a shell loop is 200 ms of sleeping
+// plus however long the machine takes to schedule the process again, and four
+// runners share each of these machines. Run 35019905236 caught
+// it both ways at once — in test (3/8 studio) a card that kept writing was
+// idle-killed, and in an earlier local run a card that publishes immediately
+// was killed before it could. Four seconds is a 20-27x margin on the same tick,
+// so a failure means the monitor watched the wrong file, not that the runner
+// was slow. It costs the three tests that DO expect a kill their budget each,
+// about nine seconds, and buys a test that means what it says.
+const testIdleBudget = 4 * time.Second
+
+// idleReason is the ABSTAIN token the batch prints for an idle kill -- batch.go
+// formats it as "idle=<seconds>" -- derived from the budget so the two cannot
+// drift apart when the budget is retuned.
+var idleReason = "ABSTAIN reason=idle=" + itoa(int(testIdleBudget.Seconds()))
+
 func runBatchIdle(t *testing.T, cards, root, runner string, deadline, idle time.Duration) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
@@ -209,12 +229,13 @@ func TestBatchAbstainsWrongLine1(t *testing.T) {
 	}
 }
 
-// THE CARD WROTE IT INSIDE THE REPO IT CLONED, and the file is plainly there. A model whose
-// cwd after STEP 1 is repo/ sometimes writes RESULT.md there, not in the job directory; a
-// gather that reads only the job root scores that work as no-result and loses it. The gather
-// looks at repo/RESULT.md and one directory below, copies the file up to the job root, and
-// says so (issue #594) -- the card is wrong and a reader is told where the result was found.
-func TestGatherCopiesResultUpFromRepo(t *testing.T) {
+// THE CARD WROTE IT INSIDE THE REPO IT CLONED, one directory below repo/ itself, and the file
+// is plainly there. A model whose cwd after STEP 1 is repo/ sometimes writes RESULT.md inside
+// the repository it cloned, not in the job directory; a gather that reads only the job root
+// scores that work as no-result and loses it. The gather looks at repo/RESULT.md and one
+// directory below, copies the file up to the job root, and says so (issue #594) -- the card
+// is wrong and a reader is told where the result was found.
+func TestGatherCopiesResultUpFromRepoSubdir(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -301,7 +322,7 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if time.Since(start) > 10*time.Second {
 		t.Fatalf("the wait ends when the idle card is killed, it does not burn the deadline")
 	}
@@ -311,7 +332,7 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the idle kill is counted as an abstain and the idle count:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN reason=idle=1 log=0") {
+	if !strings.Contains(out, "a slot=1: "+idleReason+" log=0") {
 		t.Fatalf("an idle-killed card names its idle reason token:\n%s", out)
 	}
 }
@@ -339,7 +360,7 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, 2*time.Second)
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
 	if code != 0 {
 		t.Fatalf("a batch over a card that keeps writing exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -371,14 +392,14 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if code != 1 {
 		t.Fatalf("a batch with one idle kill exits 1, got %d:\n%s", code, out)
 	}
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the BATCH line counts the idle kill in its own idle=<n> field:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN reason=idle=1") || !strings.Contains(out, "b slot=2: done and clean") {
+	if !strings.Contains(out, "a slot=1: "+idleReason) || !strings.Contains(out, "b slot=2: done and clean") {
 		t.Fatalf("the idle card is named with its reason and the done card is folded:\n%s", out)
 	}
 }
@@ -407,7 +428,7 @@ func TestIdleWatchesNativeLog(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, 1*time.Second)
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
 	if code != 0 {
 		t.Fatalf("a card writing native.log is never idle-killed, exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -439,14 +460,14 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if code != 1 {
 		t.Fatalf("a card whose native.log stops growing is idle-killed, exits 1, got %d:\n%s", code, out)
 	}
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the stopped native.log card is counted idle:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN reason=idle=1 log=3 watched="+filepath.Join(resolvedPath(t, root), "1", "native.log")) {
+	if !strings.Contains(out, "a slot=1: "+idleReason+" log=3 watched="+filepath.Join(resolvedPath(t, root), "1", "native.log")) {
 		t.Fatalf("the ABSTAIN reason names the child's log it watched:\n%s", out)
 	}
 }
@@ -903,5 +924,273 @@ func TestBatchScoresInputLimit(t *testing.T) {
 	}
 	if !strings.Contains(out, "a slot=1: done and green") {
 		t.Fatalf("a card that fits still scores its line 2:\n%s", out)
+	}
+}
+
+// TestBatchThenRunsOnlyWhenAllDone: the --then follow-on runs only when every card is done.
+// All done runs the command and records its rc; one abstain prints SKIPPED and exits 3.
+func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
+	// all done: the follow-on runs in the batch's root and its rc is recorded on the line.
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\ndone and clean"},
+	})
+	runner := fakeRunner(t, dir)
+	var out, errb bytes.Buffer
+	code := Batch(BatchInput{
+		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Then:   `[ "$BATCH_ID" = "B1" ] && [ "$BATCH_DONE" = "$BATCH_N" ] && exit 7`,
+		Stdout: &out, Stderr: &errb,
+	})
+	if code != 0 {
+		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "BATCH THEN rc=7") {
+		t.Fatalf("all done runs the follow-on and records its rc:\n%s", out.String())
+	}
+
+	// one abstain: the follow-on is skipped and the batch exits 3.
+	dir = t.TempDir()
+	root = filepath.Join(dir, "root")
+	tsv = writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\nMISSING"},
+	})
+	runner = fakeRunner(t, dir)
+	out.Reset()
+	var out2, errb2 bytes.Buffer
+	code = Batch(BatchInput{
+		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Then:   `exit 0`,
+		Stdout: &out2, Stderr: &errb2,
+	})
+	if code != 3 {
+		t.Fatalf("a batch with an abstain skips the follow-on and exits 3, got %d; stderr: %s", code, errb2.String())
+	}
+	if !strings.Contains(out2.String(), "BATCH THEN SKIPPED done=1 n=2 abstain=1 stalled=1") {
+		t.Fatalf("a skipped follow-on prints the counts:\n%s", out2.String())
+	}
+	if strings.Contains(out2.String(), "BATCH THEN rc=") {
+		t.Fatalf("the follow-on must not run on an abstain:\n%s", out2.String())
+	}
+}
+
+// ISSUE #593: IDLE MEANS NO CHILD ACTIVITY, NOT ONLY NO LOG GROWTH. On 2026-09-15 cards
+// 664-670 were killed "idle 300s" while their harness sat in a `go test` that prints nothing
+// for minutes: the work was alive, the log was not. A card is active while its process tree
+// is alive and its CPU time advanced since the last sample -- a grandchild's CPU counts, the
+// way a harness's own child counts -- and idle only when NEITHER the log NOR the tree moved
+// for --idle. The fake harness here spins in a grandchild and writes nothing at all; the
+// other one sleeps and writes nothing, and only that one is killed.
+func TestIdleWatchCountsChildActivity(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"spin", "RESULT: spin\nbusy and silent"},
+		{"sleeps", "RESULT: sleeps\nMISSING"},
+	})
+	// One runner, two cards: `spin` starts a silent grandchild that burns CPU for far longer
+	// than --idle and then publishes its result; `sleeps` sleeps past the idle window. Neither
+	// writes one byte to its log.
+	runner := filepath.Join(dir, "silent.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"if [ \"$label\" = \"sleeps\" ]; then sleep 30; exit 0; fi\n" +
+		// The spinner burns CPU and writes nothing, and it carries its own deadline so that a
+		// red run of this test leaves no process behind: it ends on its own at 20 s whatever
+		// happens to its parent.
+		"/bin/sh -c 'end=$(($(date +%s)+20)); while [ $(date +%s) -lt $end ]; do i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done; done' &\n" +
+		"spin=$!\n" +
+		"sleep 5\n" +
+		"kill $spin 2>/dev/null\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 30*time.Second, 2*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch holding one idle card exits 1, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "spin slot=1: busy and silent") {
+		t.Fatalf("a card whose process tree is burning CPU is never idle-killed, however silent its log:\n%s", out)
+	}
+	if !strings.Contains(out, "sleeps slot=2: ABSTAIN reason=idle=2") {
+		t.Fatalf("a card whose log and process tree both sat still for --idle is idle-killed:\n%s", out)
+	}
+	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
+		t.Fatalf("exactly one of the two silent cards is counted idle:\n%s", out)
+	}
+}
+
+// ISSUE #594: A RESULT.MD WRITTEN INSIDE repo/ IS THE CARD'S RESULT, NOT A MISSING ONE.
+// A model's cwd after STEP 1 is the clone, so it publishes RESULT.md there; gather scored
+// the card reason=no-result and the work was lost. Gather reads the job root first, else
+// repo/RESULT.md or one directory down, copies it up to the job root and says so once on
+// stderr. The RESULT contract is unchanged: line 1 is still the card's contract line.
+func TestGatherCopiesResultUpFromRepo(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green from the clone"},
+	})
+	runner := filepath.Join(dir, "runner-in-repo.sh")
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job/repo\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/repo/RESULT.md\"\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatch(t, tsv, root, runner, 10*time.Second)
+	if code != 0 {
+		t.Fatalf("a card that published inside repo/ is done, got exit %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "a slot=1: all green from the clone") {
+		t.Fatalf("the result written inside repo/ is folded, line 2 verbatim:\n%s", out)
+	}
+	job := filepath.Join(resolvedPath(t, root), "1", "jobs", "a")
+	if !strings.Contains(errs, "BATCH NOTE a RESULT.md copied up from "+filepath.Join(job, "repo", "RESULT.md")) {
+		t.Fatalf("the copy up is said once on stderr, naming where it came from:\n%s", errs)
+	}
+	if got := readTestFile(t, filepath.Join(job, "RESULT.md")); got != "RESULT: a\nall green from the clone\n" {
+		t.Fatalf("the result is copied to the job root byte for byte, got %q", got)
+	}
+}
+
+// TestBatchScoresHarnessSilent: a card whose runner said the harness wrote nothing at all --
+// `harness=silent` on its own `NATIVE OK` line -- is `ABSTAIN reason=harness-silent`, never
+// `no-result` (issue #591). The difference is the whole point of the token: `no-result` is a
+// harness that ran and published nothing, which is the model's own doing; `harness-silent` is
+// a harness that never ran the card, which is the machinery's, and the two remedies are not
+// the same: a harness that SPOKE and published nothing is `harness=ok` on its own line and
+// scores `no-result` (card b, 37 bytes in its capture), and a runner that says nothing about
+// its harness at all still scores `no-result` (card d), so the pinned semantics of a silent
+// RUNNER (as against a silent harness) are untouched.
+//
+// AND IT COMES BEFORE `rc=<n>`: a harness that never ran the card has an exit code that is
+// nothing to go and read -- 0 in the fault that wrote the rule, and any number in the next
+// one. The exit code is still on the card's own NATIVE OK line for whoever wants it.
+func TestBatchScoresHarnessSilent(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nMISSING"},
+		{"b", "RESULT: b\nMISSING"},
+		{"c", "RESULT: c\nMISSING"},
+		{"d", "RESULT: d\nMISSING"},
+	})
+	runner := filepath.Join(dir, "silent-harness.sh")
+	// The runner is the native command's stand-in: its stdout is the job's harness.log, and
+	// the NATIVE OK line it prints there is where the gather reads the harness's state --
+	// the token `native` decided by looking at its own capture, never a file this batch
+	// wrote. Card a's harness was silent and the runner exited 0; card b's harness SPOKE
+	// (37 bytes of the child's words in the capture) and published nothing; card c's harness
+	// was silent and the runner then exited 3; card d's runner prints no NATIVE OK line at
+	// all, the way any runner but `native` behaves.
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"state=silent\n" +
+		"if [ \"$label\" = \"b\" ]; then\n" +
+		"  state=ok\n" +
+		"  printf 'fake harness: twenty-two-characters!\\n' > \"$job/harness-output.log\"\n" +
+		"fi\n" +
+		"if [ \"$label\" != \"d\" ]; then\n" +
+		"  echo \"NATIVE OK label=$label job=$job rc=0 wall=0.42s sandbox=none-by-flag " +
+		"card_sha256=- binary_sha256=- config=- harness=$state\"\n" +
+		"fi\n" +
+		"if [ \"$label\" = \"c\" ]; then exit 3; fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runBatch(t, tsv, root, runner, 10*time.Second)
+	if code != 1 {
+		t.Fatalf("four abstaining cards exit 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=harness-silent log=1 job="+filepath.Join(resolvedPath(t, root), "1", "jobs", "a")) {
+		t.Fatalf("a silent harness is reason=harness-silent and names the job:\n%s", out)
+	}
+	if strings.Contains(out, "a slot=1: ABSTAIN reason=no-result") {
+		t.Fatalf("a silent harness is never no-result: it is no run at all:\n%s", out)
+	}
+	if !strings.Contains(out, "b slot=2: ABSTAIN reason=no-result") || strings.Contains(out, "b slot=2: ABSTAIN reason=harness-silent") {
+		t.Fatalf("a harness that SPOKE and published nothing scores no-result, not harness-silent:\n%s", out)
+	}
+	if got := readTestFile(t, filepath.Join(root, "2", "jobs", "b", "harness-output.log")); len(got) != 37 {
+		t.Fatalf("the spoken card's capture holds %d bytes, want the 37 the harness said: %q", len(got), got)
+	}
+	if !strings.Contains(out, "d slot=4: ABSTAIN reason=no-result log=0") {
+		t.Fatalf("a card whose runner said nothing about its harness still scores no-result:\n%s", out)
+	}
+	if !strings.Contains(out, "c slot=3: ABSTAIN reason=harness-silent log=1") || strings.Contains(out, "reason=rc=3") {
+		t.Fatalf("a silent harness is named before the exit code of the run that never happened:\n%s", out)
+	}
+}
+
+// TestBatchLogAppendsNeverTruncates: the batch pins its runner's stdout to <job>/harness.log
+// with O_APPEND, so bytes already in that file survive the run and the runner's own lines
+// land after them, in order. Two processes write a card's harness log -- the batch's runner
+// here, and the supervisor the runner starts, which pins the harness's own output to the
+// same path -- and each holds its own offset. Opened O_TRUNC, this descriptor starts at
+// offset 0 and the runner's first line overwrites the head of what the other writer already
+// put there: the start of a card's evidence was destroyed by the line announcing the run
+// (issue #608). The test writes a line, runs the batch, and demands BOTH, in that order.
+func TestBatchLogAppendsNeverTruncates(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	cards := writeCards(t, dir, [][2]string{{"c1", "the item\nDONE\n"}})
+
+	// The bytes another writer put there before the batch opened the file.
+	job := filepath.Join(root, "1", "jobs", "c1")
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const earlier = "the harness said this before the runner started"
+	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(earlier+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A runner that publishes the card and says one line of its own on stdout.
+	const later = "RUNNER SAID THIS"
+	runner := filepath.Join(dir, "runner-say.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"sed -n 1,2p \"$card\" > \"$job/RESULT.md\"\n" +
+		"echo " + strconv.Quote(later) + "\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, out, errb := runBatch(t, cards, root, runner, 30*time.Second); code != 0 {
+		t.Fatalf("the batch exits 0, got %d:\n%s\n%s", code, out, errb)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(job, "harness.log"))
+	if err != nil {
+		t.Fatalf("the card's harness log could not be read: %v", err)
+	}
+	got := string(raw)
+	at, after := strings.Index(got, earlier), strings.Index(got, later)
+	if at < 0 {
+		t.Errorf("the batch truncated the card's harness log: the bytes written before the run are gone:\n%s", got)
+	}
+	if after < 0 {
+		t.Fatalf("the runner's own line is not in the card's harness log:\n%s", got)
+	}
+	if at >= 0 && after < at {
+		t.Errorf("the runner's line landed before the bytes that were there first; the log is out of order:\n%s", got)
 	}
 }
