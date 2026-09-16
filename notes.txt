@@ -1,0 +1,11 @@
+# CARD-8035 nova-tools #677
+
+## Red test (before fix)
+Test: TestBootLoadsExactlyThePinnedFiles (cmd/nova-memory/boot_test.go)
+    boot_test.go:39: exit = 2, want 0; stdout:  stderr: nova-memory: unknown subcommand "boot"; run: nova-memory help
+
+Design: add a `nova-memory boot --root <dir> --pin <file>` verb. The pin file
+names the few memories a session loads (one slash path per line relative to
+--root, # comments and blank lines ignored, order = boot order). Boot reads
+exactly the named files and reports `BOOT OK files=<n> bytes=<n>`; it never
+walks the directory, so memory/*.md concatenation is replaced by the pin.
