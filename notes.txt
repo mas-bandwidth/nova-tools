@@ -1,0 +1,20 @@
+#462 findings — red test first, then fix
+
+RED TEST OUTPUT (before fix):
+=== RUN   TestSpecWakeThirdShape
+=== PAUSE TestSpecWakeThirdShape
+=== CONT  TestSpecWakeThirdShape
+    spec_findings_test.go:47: SPEC-WAKE.md says 'two shapes' and 'no third' but also names nova-bus wait as the third shape
+--- FAIL: TestSpecWakeThirdShape (0.00s)
+FAIL
+FAIL	github.com/mas-bandwidth/nova-tools/internal/bus	0.003s
+FAIL
+
+FINDING: SPEC-WAKE.md line 329-336 says "The two shapes are exactly two" and "There is no third", but line 35's lessons table already names `nova-bus wait` as the third shape. Contradiction.
+
+FIX: Replace the "two shapes / no third" paragraph with one that acknowledges the third shape (nova-bus wait as OS process outside the turn, per the lessons table and SPEC-WORK's per-harness table).
+
+Already fixed in this codebase:
+- BEAT blocking send (#459/#488): code at cmd/nova-bus/main.go:967-978, tests in beat_test.go
+- SPEC-LOCAL.md pinned paths: Sources section uses "private checkout" instead of /Users/glenn/...
+- SPEC-WORK.md six/five indexes: five are named (id to node, containment adjacency, reverse dependency, repository, category), sixth is reverse roadmap

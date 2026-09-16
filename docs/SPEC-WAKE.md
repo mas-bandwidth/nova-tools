@@ -326,10 +326,13 @@ One verb that watches, one that serves, one that asks who is awake, one that
 shows a first run, one that asks whether a line may be handed work, `version`,
 and `help`. `probe` is a one-question call that reports and gates nothing;
 `version` names this build.
-The two shapes are exactly two: `watch` is a **blocking tool call** inside a
-turn the session is already spending, and `serve` is a **process outside any
-session** that starts a turn only when a note has landed (rule 10). There is no
-third: `watch` has no `--detach` and no background mode, and an in-session
+Three shapes: `watch` is a **blocking tool call** inside a
+turn the session is already spending, `serve` is a **process outside any
+session** that starts a turn only when a note has landed (rule 10),
+and `nova-bus wait` run by the harness's own background mechanism outside
+the turn is the third shape, allowed where the harness cannot run serve
+(SPEC-WORK's per-harness table names which; lessons table, second row).
+`watch` has no `--detach` and no background mode, and an in-session
 poll — a harness `/loop`, a scheduler prompt, a heartbeat that runs a model on
 an interval — is not a wake and is not `serve`; it is the five-minute sleep of
 the first lesson, a load per tick, and this tool offers no verb for it (Johnny,
