@@ -305,7 +305,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if wall != "" {
 		backend, cwd, reason := wallNamed(wallOut.String())
 		if reason != "" {
-			refuseNative(errOut, fmt.Sprintf("%s wall %s; the run is refused rather than silently unwalled", oneline.Field(cfg.label), reason))
+			refuseNative(errOut, fmt.Sprintf("%s wall %s; the run is refused rather than silently unwalled", oneline.Field(cfg.label), oneline.Escape(reason)))
 			return nativeRunResult{}, 2
 		}
 		res.wall = backend
