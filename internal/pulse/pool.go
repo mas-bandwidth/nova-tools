@@ -94,7 +94,7 @@ func Pool(in PoolInput) int {
 				break
 			}
 			rows = append(rows, r)
-			counts[r.Kind]++
+			counts[sourceCountKey(s.kind)]++
 		}
 	}
 
@@ -331,7 +331,7 @@ func poolRoadmap(s source, seen map[string]bool) ([]PoolRow, int, int, error) {
 			if seen[key] {
 				seenCount++
 			} else {
-				rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: "roadmap", Title: id, Template: tpl})
+				rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: tpl, Title: id, Template: tpl})
 			}
 		}
 		idx = start + len(":card")
@@ -479,4 +479,24 @@ func writePool(path string, rows []PoolRow) error {
 		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\t%s\n", r.Source, r.ID, r.Kind, r.Title, r.Template)
 	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+// sourceCountKey maps a source kind (declared in the sources TSV: issues, audits,
+// bus, roadmap, work) to the count slot the POOL line prints (issues=, audits=,
+// slices=, roadmap=). The row's Kind is the card kind for the routing, the source
+// kind is the count: poolRoadmap writes the cell's :card as row.Kind, so cuts can
+// key rule 6 on row.Kind even when the cell's :card does not match the source kind;
+// we count by source kind because that is what the line says.
+func sourceCountKey(kind string) string {
+	switch kind {
+	case "issues":
+		return "issue"
+	case "audits":
+		return "audit"
+	case "bus":
+		return "slice"
+	case "roadmap":
+		return "roadmap"
+	}
+	return kind
 }
