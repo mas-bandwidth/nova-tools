@@ -354,7 +354,9 @@ lines: `bus=` for every verb, `window=` and `max=` for `awake`, and `state=`,
 the keys the coordinator retypes every turn. A flag given on the command line
 wins, nothing is printed for the read, and a required value named by neither
 the file nor a flag is the same refusal, now naming the config file as a second
-remedy.
+remedy. A key outside that set is refused rather than ignored: a `buss=` typo
+would otherwise silently drop the one flag that would have made the call work,
+so the refusal names the unknown key and the config file.
 
 **At least one source, named.** A `watch` with no `--bus`, no `--entry`, no
 `--reports`, no `--pr`, no `--owned-prs`, no `--run`, no `--ref` and no

@@ -218,11 +218,31 @@ func Version() string { return buildVersion() }
 // an answer. A flag given on the command line wins, and nothing here is
 // printed: reading the file is not a change to report.
 type wakeConfig struct {
-	path   string
-	values map[string]string
+	path    string
+	values  map[string]string
+	unknown []string
 }
 
-// configPath is the file a caller may set bus=, window=, max=, state= and as= in.
+// configKeys is the whole key grammar: bus for every verb, window and max for
+// awake, and state, as, on-deadline and receipt-max-words for watch and
+// quickstart. A key outside this set is a typo and refuses rather than
+// vanishing, because a config with buss= would otherwise silently drop the one
+// flag that would have made the call work.
+var configKeys = map[string]bool{
+	"bus": true, "window": true, "max": true, "state": true, "as": true,
+	"on-deadline": true, "receipt-max-words": true,
+}
+
+// unknownKey is the first config key this build does not recognise, empty when
+// every key is known.
+func (c *wakeConfig) unknownKey() string {
+	if len(c.unknown) == 0 {
+		return ""
+	}
+	return c.unknown[0]
+}
+
+// configPath is the file a caller may set the known config keys in.
 func configPath() string {
 	if p := os.Getenv("NOVA_WAKE_CONFIG"); p != "" {
 		return p
@@ -247,7 +267,11 @@ func loadWakeConfig() *wakeConfig {
 		if !ok {
 			continue
 		}
-		cfg.values[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		k = strings.TrimSpace(k)
+		cfg.values[k] = strings.TrimSpace(v)
+		if !configKeys[k] {
+			cfg.unknown = append(cfg.unknown, k)
+		}
 	}
 	return cfg
 }
@@ -354,6 +378,9 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 	maxN := fs.Int("max", cfg.cfgInt("max", DefaultAwakeMax), "")
 	if !parseFlags(fs, args, stderr) {
 		return 2
+	}
+	if key := cfg.unknownKey(); key != "" {
+		return awakeRefused(stderr, `unknown config key "`+key+`" in `+cfg.path)
 	}
 	if *busDir == "" {
 		return awakeRefused(stderr, "no --bus named; refusing to guess; set bus= in "+cfg.path+" as a second remedy")
@@ -620,6 +647,9 @@ func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 	}
 
 	var p problems
+	if key := cfg.unknownKey(); key != "" {
+		p.add(`unknown config key "`+key+`" in `+cfg.path, "")
+	}
 	if *state == "" {
 		p.missingCfg("state", cfg)
 	}

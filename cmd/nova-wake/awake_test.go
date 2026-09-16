@@ -126,6 +126,24 @@ func TestFlagBeatsConfig(t *testing.T) {
 	}
 }
 
+func TestAwakeRefusesUnknownConfigKey(t *testing.T) {
+	dir := awakeBus(t)
+	cfgPath := filepath.Join(t.TempDir(), "config")
+	write(t, cfgPath, "bus="+dir+"\nbuss="+dir+"\n")
+	t.Setenv("NOVA_WAKE_CONFIG", cfgPath)
+
+	r := wakeRun(t, "awake")
+	if r.exit != 2 {
+		t.Fatalf("unknown config key: exit %d, want 2\nstderr=%s", r.exit, r.stderr)
+	}
+	if !strings.Contains(r.stderr, "AWAKE REFUSED") {
+		t.Fatalf("missing AWAKE REFUSED\nstderr=%s", r.stderr)
+	}
+	if !strings.Contains(r.stderr, `unknown config key "buss"`) {
+		t.Fatalf("refusal should name the unknown key\nstderr=%s", r.stderr)
+	}
+}
+
 func TestAwakeRefusesNonBus(t *testing.T) {
 	r := wakeRun(t, "awake")
 	if r.exit != 2 || !strings.Contains(r.stderr, "AWAKE REFUSED") {
