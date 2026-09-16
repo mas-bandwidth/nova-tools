@@ -791,8 +791,23 @@ func (r reporter) indexShape(t *testing.T) string {
 // finish the same report, and the remote has to end with one contribution.
 
 // killReporterWhen runs the real nova-update as a child and SIGKILLs its process
-// group the moment the named condition is observed from outside it.
-func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached func() bool) {
+// group the moment the named condition is observed from outside it, and reports
+// whether a death was actually STAGED.
+//
+// THE OBSERVER RACES THE REPORTER AND DOES NOT ALWAYS WIN, which is why this
+// answers rather than asserts. The condition is watched from OUTSIDE the
+// reporter's process -- `remoteHasANote` spawns a `git ls-tree`, so the real
+// sampling interval is a process spawn, not the millisecond this loop sleeps --
+// and on a loaded machine the reporter can run to completion inside one sample.
+// That stages nothing: the case under test never occurred, so there is nothing
+// to conclude about the product, and the caller stages it again rather than
+// reading a lost race as a failure. Measured on the linux bench under a load
+// average near 20: one miss in twenty runs of the two tests below.
+//
+// The two things that stay FATAL are the two that are the product's: a
+// condition never reached while the reporter is still alive, and a process
+// group that will not go empty after the kill.
+func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached func() bool) bool {
 	t.Helper()
 	t.Setenv("PATH", pathDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	c := exec.Command(filepath.Join(r.bin, exeName("nova-update")), r.args()...)
@@ -815,7 +830,9 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 		}
 		select {
 		case <-done:
-			t.Fatalf("the reporter finished before %s could be observed", what)
+			// The reporter finished inside one sample of the condition. No
+			// death was staged, so this attempt proves nothing either way.
+			return false
 		default:
 		}
 		time.Sleep(time.Millisecond)
@@ -823,8 +840,19 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 	if !observed {
 		t.Fatalf("%s was never observed", what)
 	}
+	// THE KILL AND THE OBSERVATION ARE NOT ONE INSTANT. `reached()` spawns a git
+	// to answer, and the reporter can finish inside that answer -- so the signal
+	// lands on a group that is already gone and killGroup returns ESRCH. That is
+	// the observer's lost race again, not a product fault, and it stages nothing.
+	// A reporter that is neither killable NOR finished is the real fault, and
+	// stays fatal.
 	if err := killGroup(c); err != nil {
-		t.Fatalf("could not kill the reporter: %v", err)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("the reporter could not be killed and did not finish either: %v", err)
+		}
+		return false
 	}
 	<-done
 	gone := false
@@ -838,6 +866,57 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 	if !gone {
 		t.Fatalf("the reporter process group was not confirmed empty after kill")
 	}
+	return true
+}
+
+// repairAfterStagedDeath performs the operator's NAMED repair on the disposable
+// checkout after a staged reporter death. It is only ever reached where the killed
+// process group has already been verified empty -- killReporterWhen fails the test
+// outright when it is not -- which is the precondition removeStaleGitTransactionLocks
+// documents: the tool itself has no business removing these, because it cannot prove
+// they are unowned, so it names them and stops, and the repair is an operator's.
+//
+// It is the WHOLE named set rather than index.lock alone. A reporter killed while its
+// bus child was committing or updating a ref leaves HEAD.lock, refs/heads/main.lock or
+// logs/HEAD.lock behind just as readily, and the retry's git then fails for a reason
+// that has nothing to do with the case being staged -- which is what "the report did
+// not finish" is when it appears with no product change behind it.
+func (r reporter) repairAfterStagedDeath(t *testing.T, attempt int) {
+	t.Helper()
+	if removed := removeStaleGitTransactionLocks(t, filepath.Join(r.bus.checkout, ".git")); len(removed) > 0 {
+		t.Logf("attempt %d: the killed reporter's bus child left stale git transaction locks %v; with the whole process group verified gone, the test performed the operator's named repair before retrying", attempt, removed)
+	}
+	if r.removeStaleBusLock(t) {
+		t.Logf("attempt %d: the killed reporter's bus child left .git/nova-bus.lock.held; the test performed the bus's named repair before retrying", attempt)
+	}
+}
+
+// stagedPendingID is pendingID for a staged death: it ANSWERS whether the snapshot
+// holds the one unconfirmed report the case needs, where pendingID fails.
+//
+// A kill that lands after the reporter has already recorded its confirmation
+// leaves a DELIVERED report and no pending one -- a different case than the one
+// being staged, and a case with its own test. The observation and the SIGKILL are
+// not one instant, so that ordering is the observer's race and not the product's
+// behaviour, and the caller stages it again. It is the identity being retained
+// that this does not let slide: a pending report with no ID is a product fault at
+// any time, so it still fails here.
+func (r reporter) stagedPendingID(t *testing.T) (string, bool) {
+	t.Helper()
+	s, err := readSnapshot(r.snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Pending) != 1 || len(s.Delivered) != 0 {
+		return "", false
+	}
+	for _, p := range s.Pending {
+		if p.ID == "" {
+			t.Fatal("pending report retained no identity")
+		}
+		return p.ID, true
+	}
+	return "", false
 }
 func (r reporter) snapshotHasPending() bool {
 	b, err := os.ReadFile(r.snapshot)
@@ -874,18 +953,40 @@ func (r reporter) remoteHasANote(t *testing.T) bool {
 
 // Killed once the prepared artifact is on disk and nothing is confirmed: the
 // next reporter must finish THAT report rather than prepare a new one.
+//
+// Staged up to stagingAttempts times for killReporterWhen's reason: the kill has
+// to land inside a window the observer does not own. Every assertion below is the
+// one it always was -- only an attempt in which the window was MISSED is retried,
+// and a run that never catches it says so rather than passing.
 func TestJoinReporterDeathWithPendingSavedFinishesTheSameReport(t *testing.T) {
+	for attempt := 1; attempt <= stagingAttempts; attempt++ {
+		if reporterDeathWithPendingSaved(t, attempt) {
+			return
+		}
+	}
+	t.Skipf("no reporter death landed with a pending artifact saved and nothing confirmed in %d staged attempts, so this case is UNPROVEN in this run rather than green", stagingAttempts)
+}
+
+// No t.Helper(): a failure here must report ITS OWN line. The attempt loop is one
+// line and the assertions are twenty, and a file:line pointing at the loop is what
+// sent the first report of this flake to the wrong test's name.
+func reporterDeathWithPendingSaved(t *testing.T, attempt int) bool {
 	r := newReporter(t, "v1.2.3")
-	r.killReporterWhen(t, r.bin, "a pending artifact saved to the snapshot", r.snapshotHasPending)
-	id := r.pendingID(t)
+	if !r.killReporterWhen(t, r.bin, "a pending artifact saved to the snapshot", r.snapshotHasPending) {
+		t.Logf("attempt %d of %d: the reporter finished before the kill could be staged; staging it again", attempt, stagingAttempts)
+		return false
+	}
+	id, staged := r.stagedPendingID(t)
+	if !staged {
+		t.Logf("attempt %d of %d: the kill landed after the report was already confirmed, which is not the case this stages; staging it again", attempt, stagingAttempts)
+		return false
+	}
 	// The snapshot lock is kernel-owned, so a killed holder releases it and the
 	// leftover sibling file means nothing. This is that clarification, tested.
 	if _, err := os.Stat(r.snapshot + ".lock"); err == nil {
 		t.Log("the killed reporter left its sibling lock file behind, as expected; only the kernel lock meant ownership")
 	}
-	if r.removeStaleBusLock(t) {
-		t.Log("the killed reporter left .git/nova-bus.lock.held; cleaned up before retry")
-	}
+	r.repairAfterStagedDeath(t, attempt)
 	code, out, errs := r.send(t, r.bin)
 	if code != 0 {
 		t.Fatalf("the report did not finish: %d\n%s\n%s", code, out, errs)
@@ -894,25 +995,46 @@ func TestJoinReporterDeathWithPendingSavedFinishesTheSameReport(t *testing.T) {
 		t.Fatalf("a new identity was prepared: %q, not the saved %q", got, id)
 	}
 	r.bus.exactlyOneContribution(t, id)
-	t.Logf("reporter death with pending saved verified: finished report for %s", id)
+	t.Logf("reporter death with pending saved verified on attempt %d: finished report for %s", attempt, id)
+	return true
 }
 
 // Killed after the note is ON the remote but before the confirmation is
 // recorded: the retry must find that same note and must not publish a second.
+//
+// This is the narrowest window in the package -- between the push landing and
+// the reporter writing the confirmation down -- and it is watched by spawning a
+// `git ls-tree` against the bare repo, so it is also the one the observer loses
+// most often. Staged up to stagingAttempts times for that reason; the
+// assertions are untouched.
 func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.T) {
+	for attempt := 1; attempt <= stagingAttempts; attempt++ {
+		if reporterDeathAfterRemoteConfirmation(t, attempt) {
+			return
+		}
+	}
+	t.Skipf("no reporter death landed between the note reaching the remote and the confirmation being recorded in %d staged attempts, so this case is UNPROVEN in this run rather than green", stagingAttempts)
+}
+
+// No t.Helper(): a failure here must report ITS OWN line. The attempt loop is one
+// line and the assertions are twenty, and a file:line pointing at the loop is what
+// sent the first report of this flake to the wrong test's name.
+func reporterDeathAfterRemoteConfirmation(t *testing.T, attempt int) bool {
 	r := newReporter(t, "v1.2.3")
-	r.killReporterWhen(t, r.bin, "the note reaching the remote", func() bool { return r.remoteHasANote(t) })
+	if !r.killReporterWhen(t, r.bin, "the note reaching the remote", func() bool { return r.remoteHasANote(t) }) {
+		t.Logf("attempt %d of %d: the reporter finished before the kill could be staged; staging it again", attempt, stagingAttempts)
+		return false
+	}
 	notes, _ := r.bus.published(t)
 	if len(notes) != 1 {
 		t.Fatalf("want the one published note, got %v", notes)
 	}
-	id := r.pendingID(t)
-	if r.removeStaleIndexLock(t) {
-		t.Log("the killed reporter's bus child left .git/index.lock; the test performed the bus's named repair before retrying")
+	id, staged := r.stagedPendingID(t)
+	if !staged {
+		t.Logf("attempt %d of %d: the reporter recorded the confirmation before the kill landed, which is not the case this stages; staging it again", attempt, stagingAttempts)
+		return false
 	}
-	if r.removeStaleBusLock(t) {
-		t.Log("the killed reporter's bus child left .git/nova-bus.lock.held; the test performed the bus's named repair before retrying")
-	}
+	r.repairAfterStagedDeath(t, attempt)
 	head := git(t, r.bus.bare, "rev-parse", "main")
 	code, out, errs := r.send(t, r.bin)
 	if code != 0 {
@@ -928,7 +1050,8 @@ func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.
 	if !strings.Contains(out, "already-published") {
 		t.Fatalf("recovery did not recognise the note it had already published: %s", out)
 	}
-	t.Logf("reporter death after remote confirmation verified: recovered single note %s without republishing", id)
+	t.Logf("reporter death after remote confirmation verified on attempt %d: recovered single note %s without republishing", attempt, id)
+	return true
 }
 
 // TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers closes Item 2 of #206:

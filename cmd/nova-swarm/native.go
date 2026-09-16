@@ -59,6 +59,7 @@ type nativeRunResult struct {
 	usageReason  string  // no-rows | no-store | no-sqlite3, "" when the store answered
 	configSHA    string  // sha8 of the carried provider config, "" when --config named none
 	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
+	harness      string  // ok | silent: silent when the capture holds no words of the child's and no result was found
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -243,12 +244,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// left no evidence of what the harness said: the whole no-result class of 2026-09-16
 	// could not be diagnosed, and a silent harness and a lost log read the same.
 	//
-	// IT IS NOT `harness.log`, DELIBERATELY. `harness.log` is THE HARNESS'S OWN FILE: the
-	// legacy supervisor pins the harness's output to it, and `harness=silent` (#604) asks
-	// whether the harness itself wrote anything by asking whether that file holds bytes.
-	// A capture written there by this process would answer `ok` for a harness that said
-	// nothing -- the wall's own lines alone would do it -- and defeat the detection this
-	// evidence exists to feed. Two files, two writers, one sentence of spec apart.
+	// IT IS NOT `harness.log`, DELIBERATELY. That name has two owners already -- the legacy
+	// supervisor pins the harness's output to it, and a `batch` pins its runner's stdout to
+	// it, which is where the NATIVE OK line lands -- and a third writer at one path is how
+	// evidence gets cut out from under a reader. This capture has its own name and one
+	// writer, and `harness=silent` (#604) is asked OF THIS FILE: whether the child itself
+	// said anything at all.
 	//
 	// It is opened O_APPEND and never truncated, so a second writer at the same path (a
 	// retried run, a batch that opened it first) appends rather than cutting bytes out
@@ -294,6 +295,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	res.wallSeconds = time.Since(start).Seconds()
 	log.Close()
 	harnessOut.Close()
+	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
+	// logs are closed, so every byte the child wrote is on disk -- and carried on the OK line.
+	res.harness = harnessState(jobDir)
 
 	if wall != "" {
 		backend, cwd, ok := wallNamed(wallOut.String())
@@ -312,6 +316,80 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// can fold the card's tokens and dollars without re-reading the harness.
 	res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], start, time.Now(), res.rc, errOut)
 	return res, 0
+}
+
+// harnessState is the `harness=<ok|silent>` token the NATIVE OK line always carries. ONE
+// DEFINITION, and this is it (issues #591, #594, #608 folded): a run is `silent` when the
+// capture above holds nothing the child said AND no `RESULT.md` is found anywhere the gather
+// looks for one. Anything else is `ok`.
+//
+// A SILENT HARNESS IS NOT A QUIET MODEL. The run this closes was a local model whose tool
+// calls the harness never parsed: the child emitted them as raw text, no tool ran, nothing
+// was written, and the process exited 0, so the one line a coordinator reads said OK and the
+// batch behind it scored `no-result` -- the token for a model that chose to publish nothing.
+// The two are different faults with different remedies (a harness that cannot drive this
+// model; a model that had nothing to say), and the line now tells them apart. A harness that
+// SPOKE and published nothing is `ok` and scores `no-result`: there is evidence to read.
+//
+// THE FILE IS THE RUN'S OWN CAPTURE, `<job>/harness-output.log` (issue #608) -- never
+// `harness.log`, which the legacy supervisor and a `batch`'s runner pin already own. Reading
+// the capture rather than a file this process does not write is what keeps the token honest
+// on a bench, where the batch's own runner pin may not exist at all.
+//
+// THE WALL'S OWN LINES ARE NOT THE HARNESS SPEAKING. The wall prints `SANDBOX ...` on the
+// child's stderr, which this capture also holds, and counting those bytes would make a WALLED
+// run -- the very run that wrote issue #591 -- impossible to call silent. They are skipped
+// here exactly as the gather's own `log=<n>` count skips them (internal/swarm/batch.go).
+//
+// THE RESULT IS LOOKED FOR WHERE THE GATHER LOOKS FOR IT, by the gather's own lookup
+// (swarm.FindCardResult): the job root, then `repo/` and one directory below it (issue #594).
+// A card's STEP 1 makes `repo/` the model's cwd, so a working run publishes there and the
+// batch copies it up; a shallower lookup here would print `harness=silent` about a run that
+// worked, which is the same class of fault this token exists to end.
+func harnessState(jobDir string) string {
+	if harnessSpoke(filepath.Join(jobDir, "harness-output.log")) {
+		return "ok"
+	}
+	if result, ok := swarm.FindCardResult(jobDir); ok && wroteBytes(result) {
+		return "ok"
+	}
+	return "silent"
+}
+
+// captureHeadBytes bounds what harnessSpoke reads of a capture: a wall's own header is a
+// handful of lines, so a capture larger than this holds words of the child's whatever its
+// head says, and a run's capture can be megabytes that nobody needs read to answer a yes/no.
+const captureHeadBytes = 64 << 10
+
+// harnessSpoke says whether the capture holds a line the CHILD wrote: any non-blank line that
+// is not one of the wall's own `SANDBOX ` lines. An absent or empty file is a harness that
+// said nothing, and so is one holding the wall's header alone.
+func harnessSpoke(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() == 0 {
+		return false
+	}
+	if fi.Size() > captureHeadBytes {
+		return true
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "SANDBOX ") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// wroteBytes says whether a path is a regular file holding at least one byte: the test
+// harnessState applies to a result, so an empty RESULT.md is nothing published.
+func wroteBytes(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
 }
 
 // refuseNative writes the one REFUSED line the run owes its caller.

@@ -1014,6 +1014,78 @@ func TestGatherCopiesResultUpFromRepo(t *testing.T) {
 	}
 }
 
+// TestBatchScoresHarnessSilent: a card whose runner said the harness wrote nothing at all --
+// `harness=silent` on its own `NATIVE OK` line -- is `ABSTAIN reason=harness-silent`, never
+// `no-result` (issue #591). The difference is the whole point of the token: `no-result` is a
+// harness that ran and published nothing, which is the model's own doing; `harness-silent` is
+// a harness that never ran the card, which is the machinery's, and the two remedies are not
+// the same: a harness that SPOKE and published nothing is `harness=ok` on its own line and
+// scores `no-result` (card b, 37 bytes in its capture), and a runner that says nothing about
+// its harness at all still scores `no-result` (card d), so the pinned semantics of a silent
+// RUNNER (as against a silent harness) are untouched.
+//
+// AND IT COMES BEFORE `rc=<n>`: a harness that never ran the card has an exit code that is
+// nothing to go and read -- 0 in the fault that wrote the rule, and any number in the next
+// one. The exit code is still on the card's own NATIVE OK line for whoever wants it.
+func TestBatchScoresHarnessSilent(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nMISSING"},
+		{"b", "RESULT: b\nMISSING"},
+		{"c", "RESULT: c\nMISSING"},
+		{"d", "RESULT: d\nMISSING"},
+	})
+	runner := filepath.Join(dir, "silent-harness.sh")
+	// The runner is the native command's stand-in: its stdout is the job's harness.log, and
+	// the NATIVE OK line it prints there is where the gather reads the harness's state --
+	// the token `native` decided by looking at its own capture, never a file this batch
+	// wrote. Card a's harness was silent and the runner exited 0; card b's harness SPOKE
+	// (37 bytes of the child's words in the capture) and published nothing; card c's harness
+	// was silent and the runner then exited 3; card d's runner prints no NATIVE OK line at
+	// all, the way any runner but `native` behaves.
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"state=silent\n" +
+		"if [ \"$label\" = \"b\" ]; then\n" +
+		"  state=ok\n" +
+		"  printf 'fake harness: twenty-two-characters!\\n' > \"$job/harness-output.log\"\n" +
+		"fi\n" +
+		"if [ \"$label\" != \"d\" ]; then\n" +
+		"  echo \"NATIVE OK label=$label job=$job rc=0 wall=0.42s sandbox=none-by-flag " +
+		"card_sha256=- binary_sha256=- config=- harness=$state\"\n" +
+		"fi\n" +
+		"if [ \"$label\" = \"c\" ]; then exit 3; fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runBatch(t, tsv, root, runner, 10*time.Second)
+	if code != 1 {
+		t.Fatalf("four abstaining cards exit 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=harness-silent log=1 job="+filepath.Join(resolvedPath(t, root), "1", "jobs", "a")) {
+		t.Fatalf("a silent harness is reason=harness-silent and names the job:\n%s", out)
+	}
+	if strings.Contains(out, "a slot=1: ABSTAIN reason=no-result") {
+		t.Fatalf("a silent harness is never no-result: it is no run at all:\n%s", out)
+	}
+	if !strings.Contains(out, "b slot=2: ABSTAIN reason=no-result") || strings.Contains(out, "b slot=2: ABSTAIN reason=harness-silent") {
+		t.Fatalf("a harness that SPOKE and published nothing scores no-result, not harness-silent:\n%s", out)
+	}
+	if got := readTestFile(t, filepath.Join(root, "2", "jobs", "b", "harness-output.log")); len(got) != 37 {
+		t.Fatalf("the spoken card's capture holds %d bytes, want the 37 the harness said: %q", len(got), got)
+	}
+	if !strings.Contains(out, "d slot=4: ABSTAIN reason=no-result log=0") {
+		t.Fatalf("a card whose runner said nothing about its harness still scores no-result:\n%s", out)
+	}
+	if !strings.Contains(out, "c slot=3: ABSTAIN reason=harness-silent log=1") || strings.Contains(out, "reason=rc=3") {
+		t.Fatalf("a silent harness is named before the exit code of the run that never happened:\n%s", out)
+	}
+}
+
 // TestBatchLogAppendsNeverTruncates: the batch pins its runner's stdout to <job>/harness.log
 // with O_APPEND, so bytes already in that file survive the run and the runner's own lines
 // land after them, in order. Two processes write a card's harness log -- the batch's runner
