@@ -2571,17 +2571,6 @@ way to refuse it. The cap counts entries PRINTED, so a capped listing is the
 first `<n>` of the order a full one would have printed — the notes first and the
 bare acknowledgements last, which is the right end to lose.
 
-**Past `--open-warn` carried, default 40, every return adds one line saying the
-list is large and the three ways out**: `INBOX OPEN carrying=<n> is large; answer
-with Re: <id>, receipt --note <id>, or start over: <command>`, where the command
-is `inbox … --full --legacy-now --advance` with this run's own values in it,
-quoted the way `INBOX SWITCH` quotes them. Two of the three are per note and the
-third is the whole backlog at once. It is a **note and not a refusal**: the run
-does what it was asked, exit codes are untouched, and nothing moves until the
-reader runs the command it names. A backlog grows one unanswered note at a time
-and no single run says it is growing — `carrying=74` is a number, and a number is
-not a sentence.
-
 `INBOX UNREADABLE` is printed whichever way the run was
 asked, because a file nobody can read is not a listing choice — the one exception
 being a file dated behind the switch-day line, which is history and is counted
