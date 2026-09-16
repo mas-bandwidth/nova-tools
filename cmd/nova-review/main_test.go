@@ -52,6 +52,87 @@ func packetLab(t *testing.T) (lane, head string) {
 	return lane, head
 }
 
+func packetLabTwoFiles(t *testing.T) (lane, head string) {
+	t.Helper()
+	lane = t.TempDir()
+	repo := filepath.Join(lane, merge.RepoDir)
+	git := func(args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	if e := os.MkdirAll(repo, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	git("init", "-q", "-b", "main")
+	git("config", "user.email", "test@example.invalid")
+	git("config", "user.name", "test")
+	git("remote", "add", "origin", repo)
+	if e := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("alpha\nbeta\ngamma\ndelta\nepsilon\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("one\ntwo\nthree\nfour\nfive\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	git("add", "a.txt", "b.txt")
+	git("commit", "-qm", "base")
+	base := git("rev-parse", "HEAD")
+	git("checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("alpha\nbeta\nGAMMA\ndelta\nepsilon\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("one\ntwo\nTHREE\nfour\nfive\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	git("add", "a.txt", "b.txt")
+	git("commit", "-qm", "change two files")
+	head = git("rev-parse", "HEAD")
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: base, LaneBranch: "lane", Branches: []*merge.Entry{{Branch: "feature", OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+	return lane, head
+}
+
+func TestPacketDiffOnlyStripsUnchangedContext(t *testing.T) {
+	lane, _ := packetLabTwoFiles(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", "packet.md", "--diff-only"}, &out, &errb); code != 0 {
+		t.Fatalf("packet exit=%d stderr=%s", code, errb.String())
+	}
+	body, e := os.ReadFile("packet.md")
+	if e != nil {
+		t.Fatal(e)
+	}
+	got := string(body)
+	start := strings.Index(got, "```diff\n")
+	if start == -1 {
+		t.Fatalf("no diff fence in packet:\n%s", got)
+	}
+	end := strings.Index(got[start:], "\n```")
+	diff := got[start:]
+	if end != -1 {
+		diff = got[start : start+end+1]
+	}
+	for _, unchanged := range []string{"alpha", "beta", "delta", "epsilon", "one", "two", "four", "five"} {
+		if strings.Contains(diff, unchanged) {
+			t.Errorf("--diff-only packet diff contains unchanged line %q:\n%s", unchanged, diff)
+		}
+	}
+	for _, changed := range []string{"-gamma", "+GAMMA", "-three", "+THREE"} {
+		if !strings.Contains(diff, changed) {
+			t.Errorf("--diff-only packet diff dropped changed line %q:\n%s", changed, diff)
+		}
+	}
+}
+
 func TestPacketOutUsageStatesRelativeToCwd(t *testing.T) {
 	if !strings.Contains(usage, "relative to the cwd") {
 		t.Fatalf("--out usage does not state it is relative to the cwd:\n%s", usage)
