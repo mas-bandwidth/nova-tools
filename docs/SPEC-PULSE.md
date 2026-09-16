@@ -47,12 +47,13 @@ The loop ends only when the pool and the queue are both empty, and then it says 
 ## The rules, numbered
 
 1. **Sources are declared in one file, named by a flag, kept in git.** `--sources <file>` is
-   a tab-separated file, one source per line: `kind`, `locator`, `template`. Four kinds:
+   a tab-separated file, one source per line: `kind`, `locator`, `template`. Six kinds:
    `issues` (`owner/repo` — open issues carrying label `card`, or the dogfood shape: tool,
    command, verbatim output, expected, smallest fix), `audits` (`owner/repo` — open issues
    whose body has a `MISSING:` or `DRIFT` line, one candidate per such line), `bus` (a
    nova-bus checkout — open notes whose body has a `slices:` block, one candidate per slice),
    `roadmap` (a lisp file under `docs/roadmaps/` — every cell whose `:card` names a template),
+   `prs` (`owner/repo` — open, non-draft pull requests, one read candidate per PR),
    `work` (a nova-work checkout — bug nodes and item nodes that are open, unleased and
    unblocked, one candidate per node). A `work` node is unleased when no `launch` currently
    holds it and unblocked when it is not waiting on a merge; the node id rides on the card's
@@ -63,15 +64,15 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    a pool with a source silently missing would read as *no work* (the same law as nova-update
    rule 7: a dead source is never green).
 2. **`pool.tsv` is five fields, one candidate per line, in source order.** `source`, `id`,
-   `kind`, `title`, `template`. `id` is the issue number, the audit line's `<issue>#<n>`,
-   the note id and slice ordinal, the roadmap cell name, or the work node id. `template` is
+   `kind`, `title`, `template`. `id` is the issue number, the PR number, the audit line's
+   `<issue>#<n>`, the note id and slice ordinal, the roadmap cell name, or the work node id. `template` is
    the source's unless
    the item names one: an issue body line `template: <name>`, a slice's `template:` word, or
    the cell's `:card`. A candidate whose (`source`,`id`) is already in `<root>/seen.tsv` with
    state `carded`, `running` or `pr` is not re-pooled; a `retry` state is, so a rewritten
    card can go out (rule 14). Priority is source order and nothing else.
-3. **Bounded work only.** A candidate is one issue, one audit line, one slice, one cell:
-   one bounded item, one card. `pool` never splits an item and never merges two; an issue
+3. **Bounded work only.** A candidate is one issue, one PR, one audit line, one slice, one
+   cell: one bounded item, one card. `pool` never splits an item and never merges two; an issue
    whose body says it is a plan (no `expected`, no `smallest fix`, a `slices:` block of its
    own) is counted in `plan=<n>` on the `POOL` line and not pooled — a plan is the bus's, and
    its slices arrive by the `bus` source.
@@ -363,7 +364,7 @@ coordinator must act on, and it exits like a refusal so a wake fires on it). An
 `ADMIT REFUSED` line is an event, not a verdict: it leaves the exit code alone (rule 9).
 
 ```
-POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> work=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
+POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> prs=<n> work=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
 POOL REFUSED source=<kind>:<locator>: <reason> (<remedy>)
 CUT OK cards=<n> skipped=<n> zero=<n> flat=<n> metered=<n> out=<dir>
 CUT ROUTE route=<model> reason=<class>
@@ -675,6 +676,10 @@ handoff (rule **The manager tier**).
     sets a `TMPDIR` is `CUT REFUSED` naming the rule, no card written — the runner exports
     `TMPDIR` outside every repo (#460), and a card that set its own put its temp dir inside
     the job's repo, the red cards 247, 266 and 353 reported and did not cause.
+50. `pool-reads-open-non-draft-prs`: a `prs` source with two open non-draft PRs and one open
+    draft yields `prs=2` on the `POOL` line and two `pool.tsv` rows of kind `read`, template
+    `read`, one candidate per PR — the draft is nowhere, and the read candidate is the same
+    shape harvest's own read card has (rule 13).
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 
