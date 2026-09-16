@@ -785,6 +785,12 @@ rules below still decide. The fold itself is:
   transcript, never a report body, never a finding's wording;
 - usage per card and the batch total;
 - bytes bounded: counts, not lists; the packet does not grow with the batch.
+- `--then <command>` (optional) names a follow-on that runs only when every
+  card is done and none stalled or idle-killed: the command runs once, with
+  `sh -c`, in the batch's root, with `BATCH_ID`, `BATCH_DONE` and `BATCH_N`
+  in its environment, and the packet prints `BATCH THEN rc=<n>`. A batch that
+  is not all done prints `BATCH THEN SKIPPED done=<d> n=<n> abstain=<a>
+  stalled=<s>` and exits 3, so the follow-on never runs on an abstain.
 
 **A card whose `RESULT.md` line 1 is not its contract line is refused.** Line
 1 is the card's contract line, the line by which it was admitted; a line 1
@@ -1109,6 +1115,8 @@ ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
+BATCH THEN rc=<n>
+BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
