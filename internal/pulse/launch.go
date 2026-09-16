@@ -24,6 +24,7 @@ type LaunchInput struct {
 	Slots    int    // the ceiling on free slots launch considers
 	Deadline string // the whole pulse's deadline, whole seconds
 	Queue    bool   // true keeps the overflow in queue.tsv instead of refusing
+	QueueDir string // the queue directory STOP lives in; empty falls back to Root (admission.go)
 	Stdout   io.Writer
 	Stderr   io.Writer
 	Now      func() time.Time
@@ -46,6 +47,19 @@ func Launch(in LaunchInput) int {
 		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s holds no card; a pulse of no cards is a typo\n", oneline.Field(in.Cards))
 		return 2
 	}
+	// STOP admission (SPEC-PULSE class C): while the bench is red, only the cards whose
+	// line 1 names the red launch. No STOP is no filtering and no line -- the launch path
+	// before this card, unchanged.
+	if stop := readStopFor(in); len(stop) > 0 {
+		admitted, refused := admitCards(cards, stop, in.Stderr)
+		if refused > 0 && len(admitted) == 0 {
+			fmt.Fprintf(in.Stdout, "PULSE STOP admitted=0 refused=%d admit=%s (the gate's STOP admits only the red's own card)\n",
+				refused, oneline.Field(dash(AdmissionName(stop))))
+			return 0
+		}
+		cards = admitted
+	}
+
 	free := freeSlots(in.Root, in.Slots, in.Now())
 	n := len(cards)
 	if n > free && !in.Queue {
