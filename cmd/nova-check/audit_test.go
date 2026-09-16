@@ -50,6 +50,15 @@ var checkAudit = audit.Config{
 		// writing them. It writes to the stream the caller hands it and to nothing else.
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/check"`,
+		// edges.go, and the reason it cannot write past the escape: internal/edges writes
+		// only to the two streams this package hands it, and every field of the two lines
+		// it prints -- EDGE FILED and the EDGES count line -- goes through oneline.Field
+		// or oneline.Err inside that package, where its own tests pin them. The issue body
+		// it renders never reaches a stream here: it is handed to a Creator, and the real
+		// Creator writes it to `gh issue create` over stdin, not to stdout.
+		`"github.com/mas-bandwidth/nova-tools/internal/edges"`,
+		// time.Duration for the one bounded `gh issue create`; it holds no writer.
+		`"time"`,
 	},
 	MinClassified: 30,
 }

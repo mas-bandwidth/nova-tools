@@ -20,10 +20,19 @@ const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--base <branch>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--prior-card <card-N>] [--names <a,b>] [--spec-lines <L1-L2>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--unstamped-ok] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
-nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>]
+nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeout <s>] [--max <n>]
+nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>]
+nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--max <n>]
+nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>]
+nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
+nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
+nova-pulse rules   --queue <dir> [--check] [--seed-from <POLICY.md>] [--max <n>]
+nova-pulse routes  --queue <dir> [--class text|code] [--bench <model>] [--unbench <model>]
+nova-pulse brief   --as <name> --queue <dir> [--roots <dirs>] [--bus <clone>] [--friend]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -61,7 +70,91 @@ docs/TESTS.md carries the transcript it prints.
 
 example:
   nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
-`
+
+run holds the loop so the coordinator's turns are decisions and never ticks. Each
+tick is gate, harvest, sweep, reap, refill, launch and one PULSE WIDTH line, all
+mechanical; it makes no model call, and it writes ONE bus note -- carrying the
+triage packet of nova-pulse triage -- only when a rule cannot decide, once per
+(case, ref). --once runs exactly one tick. With no --bus a note is appended to
+<queue>/ESCALATE with its packet beside it.
+
+Every step is the verb of the same name, wired: the gate over --branch, the
+harvest of every bench with cards in flight, the sweep of the approvals ledger,
+the reap of what the benches leak, the refill that cuts a read card per unread PR
+head and a fix card per uncut issue in <queue>/WORKSET, and the launch that fills
+the free slots (while a STOP stands, only the red's own card). Each verb's one
+line goes to <queue>/pulse.log; the console keeps the WIDTH line. <queue>/pulse.toml
+is re-read every tick -- a changed value takes effect on the next one and is named
+on one CONFIG line, with no restart -- and the counters live in <queue>/pulse.state,
+so a restart carries on rather than starting again.
+
+example:
+  nova-pulse run --queue ./queue --roots ./swarm-root,./swarm-root-space --repo mas-bandwidth/nova-tools --branch dev --hours 6
+
+triage cuts the decision packet for one undecided case to a card for the text
+route: the RESULT lines, the refusal line and the candidate rows of
+<queue>/RULES.tsv, under 5000 bytes, demanding one line back --
+TRIAGE <case> <verdict> <rule-row-or-NEW>. The seven cases are signature, scope,
+docs-only, nosha, orphan, fence and hold-line.
+
+example:
+  nova-pulse triage --case nosha --queue ./queue --out ./cards/triage-nosha.md --ref card-892
+
+rules is the rule table: nova-pulse rules --queue <dir> prints its one line, --check
+refuses a row no verb can execute, and --seed-from <POLICY.md> turns every dated line of
+the prose into a row -- kind guessed from its words, source the line's own date, and
+kind=record for a line that records what happened rather than ruling what happens. Class M
+(#828): a rule lives in pulse.toml, in RULES.tsv or in a test; POLICY.md keeps the record.
+
+example:
+  nova-pulse rules --queue ./queue --seed-from ./queue/POLICY.md
+  nova-pulse rules --queue ./queue --check
+
+routes is the [routes] table of pulse.toml and its only editor: it prints the live
+rotation per class (the class list minus what a probe benched) and the route cut
+rewrites a card's MODEL: line to. --bench takes a route out of every class's rotation and
+--unbench puts it back, each one line, each written into pulse.toml.
+
+example:
+  nova-pulse routes --queue ./queue
+  nova-pulse routes --queue ./queue --bench opencode/kimi-k2.7-code
+
+brief renders the one-pulse brief from the configuration and the rule table, so the page a
+fresh pulse reads never drifts from the bench it describes: the commands to run, the rows
+of kind stop, hold and admission it may decide, and the one line it answers with. --friend
+renders a friend's shape (wake, the one note, the one thing, the reply). No line is over
+200 bytes, and the log is read with tail -n and never by a clock.
+
+example:
+  nova-pulse brief --as Rowan --queue ./queue --roots ./swarm-root,./swarm-root-space
+  nova-pulse brief --as Stella --queue ./queue --friend
+
+status --oneline is the whole day in one line under 400 bytes: width per bench,
+pool, STOP, the day's reds, merges, cards done and failed, spend, and the pit-stop
+note when <queue>/PITSTOP exists. A fresh window needs that line and the policy,
+never the transcript.
+cut --kind is the typed cutter and the only numberer: the card number comes from
+the queue state file's next_card under the queue's lock, so two cutters never
+share one and there is no --number flag to pass. cut without --kind is unchanged.
+
+example:
+  nova-pulse cut --kind read --repo mas-bandwidth/nova-tools --pr 812 --head 5f544272a1b0 --out ./queue/pending --queue ./queue
+
+sweep walks the approvals ledger: every read verdict is a row in <queue>/ledger.tsv,
+and each sweep enqueues the approved, green, undrafted, unheld ones exactly once,
+marks a moved head stale, and closes a merged or closed PR. --source replays it
+from a file of PR states instead of gh, and enqueues into <queue>/enqueued.tsv.
+
+example:
+  nova-pulse sweep --repo mas-bandwidth/nova-tools --queue ./queue
+
+reap collects what the benches leak: processes under a swarm root older than the
+deadline, slot locks whose pid is dead, launched cards whose job directory is gone
+(requeued once, then failed) and swarm test directories older than 30 minutes.
+--dry-run changes nothing and prints the same counts.
+
+example:
+  nova-pulse reap --roots ./swarm-root,./swarm-root-space --queue ./queue --deadline 1800 --dry-run`
 
 // refuse is what an unusable invocation costs: one line naming what was wrong and the door
 // to the usage.
@@ -78,6 +171,10 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
+	// Class J (#828): this tool files its own edges. The queue comes off the invocation, and
+	// the streams are watched for a bounded listing that had to elide. See edges.go.
+	edgeq := edgeQueue(rest)
+	stdout, stderr = watchOutput(edgeq, cmd, stdout, stderr)
 	switch cmd {
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
@@ -89,6 +186,9 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case "launch":
 		return cmdLaunch(rest, stdout, stderr, now)
 	case "cut":
+		if hasKindFlag(rest) {
+			return cmdCutKind(rest, stdout, stderr)
+		}
 		return cmdCut(rest, stdout, stderr)
 	case "harvest":
 		return cmdHarvest(rest, stdout, stderr)
@@ -96,10 +196,27 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdManager(rest, stdout, stderr)
 	case "status":
 		return cmdStatus(rest, stdout, stderr)
+	case "gate":
+		return cmdGate(rest, stdout, stderr)
+	case "run":
+		return cmdRun(rest, stdout, stderr, now)
+	case "triage":
+		return cmdTriage(rest, stdout, stderr)
+	case "sweep":
+		return cmdSweep(rest, stdout, stderr)
+	case "reap":
+		return cmdReap(rest, stdout, stderr)
+	case "rules":
+		return cmdRules(rest, stdout, stderr)
+	case "routes":
+		return cmdRoutes(rest, stdout, stderr)
+	case "brief":
+		return cmdBrief(rest, stdout, stderr)
 	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
 	}
+	recordEdge(edgeq, cmd, fmt.Sprintf("nova-pulse: unknown subcommand %q", cmd), expectFlag)
 	fmt.Fprintf(stderr, "nova-pulse: unknown subcommand %q\n", cmd)
 	return 2
 }
@@ -109,6 +226,7 @@ type flags struct {
 	verb     string
 	fs       *flag.FlagSet
 	problems []string
+	queue    string // the queue this invocation's edge rows go to (edges.go); "" files nothing
 }
 
 func newFlags(verb string) *flags {
@@ -119,12 +237,19 @@ func newFlags(verb string) *flags {
 }
 
 func (f *flags) parse(args []string, stderr io.Writer) bool {
+	f.queue = edgeQueue(args)
 	if err := f.fs.Parse(args); err != nil {
-		fmt.Fprintf(stderr, "nova-pulse %s: %s\n", f.verb, err)
+		// Refusal point one: a flag that is not there. The line is filed verbatim, so the
+		// issue carries what the caller actually saw.
+		line := fmt.Sprintf("nova-pulse %s: %s", f.verb, err)
+		recordEdge(f.queue, f.verb, line, expectFlag)
+		fmt.Fprintf(stderr, "%s\n", line)
 		return false
 	}
 	if n := f.fs.NArg(); n > 0 {
-		fmt.Fprintf(stderr, "nova-pulse %s: takes no positional arguments, got %d (flags come before arguments)\n", f.verb, n)
+		line := fmt.Sprintf("nova-pulse %s: takes no positional arguments, got %d (flags come before arguments)", f.verb, n)
+		recordEdge(f.queue, f.verb, line, expectFlag)
+		fmt.Fprintf(stderr, "%s\n", line)
 		return false
 	}
 	return true
@@ -140,7 +265,11 @@ func (f *flags) add(problem string) { f.problems = append(f.problems, problem) }
 
 func (f *flags) refused(stderr io.Writer) bool {
 	for _, p := range f.problems {
-		fmt.Fprintf(stderr, "nova-pulse %s: %s\n", f.verb, p)
+		line := fmt.Sprintf("nova-pulse %s: %s", f.verb, p)
+		// Refusal point two: a missing input. One row per distinct line, so a bench that
+		// forgets the same flag every tick files one issue and not one per tick.
+		recordEdge(f.queue, f.verb, line, expectWant)
+		fmt.Fprintf(stderr, "%s\n", line)
 	}
 	return len(f.problems) > 0
 }
@@ -184,6 +313,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	slots := f.fs.Int("slots", 0, "")
 	deadline := f.fs.String("deadline", "", "")
 	queue := f.fs.Bool("queue", false, "")
+	unstamped := f.fs.Bool("unstamped-ok", false, "")
 	max := f.fs.Int("max", bounded.Default, "")
 
 	if !f.parse(args, stderr) {
@@ -205,7 +335,8 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	return pulse.Launch(pulse.LaunchInput{
 		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline, Queue: *queue,
-		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
+		UnstampedOK: *unstamped,
+		Stdout:      stdout, Stderr: stderr, Now: func() time.Time { return now },
 	})
 }
 
@@ -282,6 +413,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 	queue := f.fs.String("queue", "", "")
 	roots := f.fs.String("roots", "", "")
 	day := f.fs.String("day", "", "")
+	oneLine := f.fs.Bool("oneline", false, "")
 	timeout := f.fs.Int("timeout", 120, "")
 	max := f.fs.Int("max", bounded.Default, "")
 
@@ -298,6 +430,20 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 	}
 	if f.refused(stderr) {
 		return 2
+	}
+	// --oneline is G4 of pit stop 3 (#828): the same day in one line under 400 bytes, for a
+	// fresh window that needs the state and not the report. The eight-line default is
+	// untouched.
+	if *oneLine {
+		return pulse.StatusLine(pulse.StatusInput{
+			Queue:   *queue,
+			Roots:   *roots,
+			Day:     *day,
+			Max:     *max,
+			Timeout: time.Duration(*timeout) * time.Second,
+			Stdout:  stdout,
+			Stderr:  stderr,
+		})
 	}
 	return pulse.Status(pulse.StatusInput{
 		Queue:   *queue,
