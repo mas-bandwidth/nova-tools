@@ -870,6 +870,7 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/fake-gh"
           cat > "${RUNNER_TEMP}/fake-gh/gh" <<'GH'
           #!/usr/bin/env bash
+          set -euo pipefail
           printf 'HTTP/2 200 OK\r\n'
           printf 'date: a-fake-gh-does-not-have-dates\r\n\r\n'
           cat "$RELEASE_CERT_RESPONSE"
