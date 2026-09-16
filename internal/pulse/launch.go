@@ -46,6 +46,31 @@ func Launch(in LaunchInput) int {
 		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s holds no card; a pulse of no cards is a typo\n", oneline.Field(in.Cards))
 		return 2
 	}
+
+	stop := readStop(in.Root)
+	admitted := make([]CardRow, 0, len(cards))
+	refused := 0
+	for _, c := range cards {
+		raw, err := os.ReadFile(c.Card)
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+			return 2
+		}
+		if ok, reason := Admit(stop, cardLine1(raw)); !ok {
+			refused++
+			if refused <= 5 {
+				fmt.Fprintf(in.Stderr, "ADMIT REFUSED card=%s gate=stop %s (the pit stop is open; only cards naming its issue or test admit)\n",
+					oneline.Field(c.Label), oneline.Escape(reason))
+			}
+			continue
+		}
+		admitted = append(admitted, c)
+	}
+	if refused > 5 {
+		fmt.Fprintf(in.Stderr, "ADMIT MORE kind=refused shown=5 total=%d (the pit stop is open; only cards naming its issue or test admit)\n", refused)
+	}
+	cards = admitted
+
 	free := freeSlots(in.Root, in.Slots, in.Now())
 	n := len(cards)
 	if n > free && !in.Queue {
