@@ -23,7 +23,9 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
-nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>]
+nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeout <s>] [--max <n>]
+nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--bus <clone>] [--as <name>] [--max <n>]
+nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -61,6 +63,30 @@ docs/TESTS.md carries the transcript it prints.
 
 example:
   nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
+
+run holds the loop so the coordinator's turns are decisions and never ticks. Each
+tick is gate, harvest, sweep, reap, refill, launch and one PULSE WIDTH line, all
+mechanical; it makes no model call, and it writes ONE bus note -- carrying the
+triage packet of nova-pulse triage -- only when a rule cannot decide, once per
+(case, ref). --once runs exactly one tick. With no --bus a note is appended to
+<queue>/ESCALATE with its packet beside it.
+
+example:
+  nova-pulse run --queue ./queue --roots ./swarm-root,./swarm-root-space --repo mas-bandwidth/nova-tools --branch dev --hours 6
+
+triage cuts the decision packet for one undecided case to a card for the text
+route: the RESULT lines, the refusal line and the candidate rows of
+<queue>/RULES.tsv, under 5000 bytes, demanding one line back --
+TRIAGE <case> <verdict> <rule-row-or-NEW>. The seven cases are signature, scope,
+docs-only, nosha, orphan, fence and hold-line.
+
+example:
+  nova-pulse triage --case nosha --queue ./queue --out ./cards/triage-nosha.md --ref card-892
+
+status --oneline is the whole day in one line under 400 bytes: width per bench,
+pool, STOP, the day's reds, merges, cards done and failed, spend, and the pit-stop
+note when <queue>/PITSTOP exists. A fresh window needs that line and the policy,
+never the transcript.
 `
 
 // refuse is what an unusable invocation costs: one line naming what was wrong and the door
@@ -96,6 +122,10 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdManager(rest, stdout, stderr)
 	case "status":
 		return cmdStatus(rest, stdout, stderr)
+	case "run":
+		return cmdRun(rest, stdout, stderr, now)
+	case "triage":
+		return cmdTriage(rest, stdout, stderr)
 	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
@@ -282,6 +312,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 	queue := f.fs.String("queue", "", "")
 	roots := f.fs.String("roots", "", "")
 	day := f.fs.String("day", "", "")
+	oneLine := f.fs.Bool("oneline", false, "")
 	timeout := f.fs.Int("timeout", 120, "")
 	max := f.fs.Int("max", bounded.Default, "")
 
@@ -298,6 +329,20 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 	}
 	if f.refused(stderr) {
 		return 2
+	}
+	// --oneline is G4 of pit stop 3 (#828): the same day in one line under 400 bytes, for a
+	// fresh window that needs the state and not the report. The eight-line default is
+	// untouched.
+	if *oneLine {
+		return pulse.StatusLine(pulse.StatusInput{
+			Queue:   *queue,
+			Roots:   *roots,
+			Day:     *day,
+			Max:     *max,
+			Timeout: time.Duration(*timeout) * time.Second,
+			Stdout:  stdout,
+			Stderr:  stderr,
+		})
 	}
 	return pulse.Status(pulse.StatusInput{
 		Queue:   *queue,
