@@ -23,6 +23,9 @@ import (
 // dest=failed`, under a RUN OK byte-identical to a successful pass. The suite could not see
 // it because every test used an absolute t.TempDir().
 func TestARelativeWorkerDirWorksFromTheSlot(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a worker under a relative worker_dir\nFAKE-FINDINGS 1\n")
@@ -41,6 +44,9 @@ func TestARelativeWorkerDirWorksFromTheSlot(t *testing.T) {
 }
 
 func TestMissingWorkerDirRefusesBeforeTaskAdmission(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a task must remain recoverable when preparation cannot start\nFAKE-FINDINGS 1\n")
@@ -77,6 +83,9 @@ func TestMissingWorkerDirRefusesBeforeTaskAdmission(t *testing.T) {
 }
 
 func TestPreparationFailureRollsTaskBackBeforeSupervisor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a task must roll back when slot preparation fails\nFAKE-FINDINGS 1\n")
@@ -128,6 +137,9 @@ func TestPreparationFailureRollsTaskBackBeforeSupervisor(t *testing.T) {
 }
 
 func TestPreparationRefusalStillMonitorsAdoptedJob(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	p, err := swarm.OpenPool(b.pool)
@@ -237,6 +249,9 @@ func TestAddEchoesBothBudgets(t *testing.T) {
 // S6 / lesson 119: "Two shapes may never share one token." `TRIAGE BATCH … reports=6`
 // printed three lines above `TRIAGE OK reports=2`, counting two different things.
 func TestOneTokenHasOneMeaningOnAPage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	b.add("a job that is folded\nFAKE-FINDINGS 1\n")
@@ -264,6 +279,9 @@ func TestOneTokenHasOneMeaningOnAPage(t *testing.T) {
 // printed them, and `reclaim` removes the log with the directory. A line whose key is wrong
 // had no printed route to the word `unauthorized`.
 func TestAFailedJobPrintsTheHarnesssOwnWords(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a worker whose provider refuses its key\nFAKE-SAY error: 401 unauthorized\nFAKE-NORESULT\n")
@@ -290,6 +308,9 @@ func TestAFailedJobPrintsTheHarnesssOwnWords(t *testing.T) {
 // F9: the failure path leaked disk. `reclaim --done` swept only done/, so a pass where
 // everything failed needed one `reclaim --task <id>` per failure.
 func TestReclaimSweepsTheFailedJobsToo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	ok := b.add("a job that finishes\nFAKE-FINDINGS 1\n")
@@ -316,6 +337,9 @@ func TestReclaimSweepsTheFailedJobsToo(t *testing.T) {
 // `template --name worker` prints a complete worker description, and the tool runs the one
 // it prints.
 func TestTemplateWorkerPrintsADescriptionThisToolAccepts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	exit, stdout, stderr := b.swarm("template", "--name", "worker")
@@ -382,6 +406,9 @@ func TestTheCommandReferenceCarriesTheHarnessContract(t *testing.T) {
 // printed the identical refusal, and no verb could drop the task. The only exit was `rm`.
 // THIS TEST RUNS THE SENTENCE THE REFUSAL PRINTS.
 func TestTheRefusalsOwnRemedyUnwedgesThePool(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	metered := b.add("a task carrying a number nothing can watch\nFAKE-FINDINGS 1\n", "--tokens", "5000")

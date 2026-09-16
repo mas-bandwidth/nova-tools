@@ -5,13 +5,13 @@ what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
 instrument at the **register layer** — it classifies self-claims in prose, in two
-disjoint classes. `nova-memory`: six verbs at the **retrieval layer** — it answers *do I
+disjoint classes. `nova-memory`: seven verbs at the **retrieval layer** — it answers *do I
 already know this?* from an index rebuilt out of the record, so the mind's
 judgment budget per new learning stops scaling with the size of the self — the
 tool's own run cost does not, and every run pays the build. Every check can say
 NO, and the test suite proves each one saying it. A check never seen failing is
 not a check. Two of nova-memory's verbs are checks in that sense; the other
-four assert nothing at all, and its section says which is which and why.
+five assert nothing at all, and its section says which is which and why.
 `nova-bus`: six verbs at the **bus layer** — the only binary here that
 writes outside its own state, and the only one that runs another program (`git`).
 The bus it works on is a shared git repository of notes between several lines;
@@ -1926,6 +1926,7 @@ nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                    [--fail-max <n>]
 nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--exclude <glob>]...
                    [--fail-max <n>] <gold.tsv>
+nova-memory boot   --root <dir> --pin <file>
 nova-memory version
 ```
 
@@ -1955,8 +1956,8 @@ and the tool assumes nothing whatever about layout. Frontmatter `name:` and
 `type:` are carried into receipts when a file has them, surfaced and never
 invented.
 
-**Two verbs are checks; four assert nothing.** `verify` and `eval` are walls
-and exit 1 when they fail. `quickstart`, `stats`, `search`, and `check` are reports: they
+**Two verbs are checks; five assert nothing.** `verify` and `eval` are walls
+and exit 1 when they fail. `quickstart`, `stats`, `search`, `check`, and `boot` are reports: they
 exit 0 whenever they ran, exactly as `nova-fuse status` does, and for the same
 reason — answering IS the job. **Never gate on the exit code of `check`.** It
 hands you k receipts; the verdict is yours, and a tool that turned "this
@@ -2052,6 +2053,33 @@ is the sentence a reader is meant to leave with. **Refuses (exit 2) when**
 `--root` is missing or unreadable, `--draft` is empty, a positional argument
 is given (the query words go after `--words`), or the corpus holds no
 indexable paragraph.
+
+### boot — the session loads a pin, never walks the directory
+
+**Report.** The boot path is the linear read of the SELF — the few memories a
+session holds for the whole conversation — and it used to be a walk: every
+`memory/*.md` under the root, concatenated, paid for whether the session needed
+it or not. `boot` replaces that walk with a **pin**: a file naming the few
+memories this session loads, one slash path per line **relative to `--root`**,
+`#` comments and blank lines ignored, and **order matters** (it is the boot
+order). Boot reads exactly those files and prints one line:
+
+```
+BOOT OK files=<n> bytes=<n>
+```
+
+The load is the named files' byte total, never the directory's: search (bm25,
+with the cairn as a second root) answers the rest on demand, so a session pays
+only for the memories it pinned and retrieves the rest as receipts. `--root`
+and `--pin` are both required, the usual no-guessing law.
+
+**Asserts nothing**, and exits 0 when the pin loaded. **Refuses (exit 2) when**
+`--root` or `--pin` is missing, the pin is unreadable or names no files, or a
+pinned entry is non-canonical (`./`, `//`, `..`, trailing `/`), absolute, escapes
+`--root`, appears twice, or names a file that is missing, empty, or not a
+regular file — a boot that silently skipped a named memory is a self that
+loaded less than it thinks it did, which is the exact failure this verb exists
+to remove.
 
 ### The channels, and why the second one is off unless you ask
 
@@ -4532,8 +4560,8 @@ the callers, and it is the part of this design most likely to rot quietly.
 
 `nova-memory` is a lens on the record, not a memory. It bounds what a mind
 must read before deciding; it decides nothing, writes nothing, and proves
-nothing about whether the corpus it indexed is worth remembering. Four of
-its six verbs cannot fail by design, and the two that can — `verify` and
+nothing about whether the corpus it indexed is worth remembering. Five of
+its seven verbs cannot fail by design, and the two that can — `verify` and
 `eval` — are only as good as the globs and the gold rows a line writes for
 itself. Its own STATUS paragraph says the rest: run-proven on one line, value
 unproven as a general claim, and the harness ships so the next line can
