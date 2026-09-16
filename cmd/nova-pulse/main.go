@@ -27,6 +27,7 @@ nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
+nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -129,6 +130,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdSweep(rest, stdout, stderr)
 	case "reap":
 		return cmdReap(rest, stdout, stderr)
+	case "gate":
+		return cmdGate(rest, stdout, stderr)
 	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
