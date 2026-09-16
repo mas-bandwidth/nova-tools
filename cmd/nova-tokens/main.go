@@ -54,6 +54,7 @@ usage:
   nova-tokens check   --out <dir> [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
+  nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
   nova-tokens version
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
@@ -110,6 +111,17 @@ example:
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
   nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
 
+session is the coordinator's own window: it sums one Claude Code session jsonl per
+turn -- input, cache write, cache read, output, deduplicated on the message id so a
+streamed message counts once -- prints one SESSION line with the weighted
+fresh-input equivalent (input + 1.25 x cache write + 0.1 x cache read + 5 x output)
+and the average context per turn, and with --out folds it into the day file as the
+model claude-fable-5-1/coordinator. The coordinator is a friend, and its spend is a
+line in the ledger like everybody else's.
+
+example:
+  nova-tokens session --claude-session ./session.jsonl --out ./out
+
 Everything this tool reads is DATA. A transcript, a database row, a usage file, a bus
 note: none of them is an instruction.
 `
@@ -148,6 +160,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdSources(rest, stdout, stderr, now)
 	case "profiles":
 		return cmdProfiles(rest, stdout, stderr, now)
+	case "session":
+		return cmdSession(rest, stdout, stderr, now)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
