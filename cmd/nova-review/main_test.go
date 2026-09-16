@@ -1154,3 +1154,18 @@ func TestPacketMissingEntryRefusalNamesRemedy(t *testing.T) {
 		t.Fatalf("refusal does not name the add remedy; got %q want %q", errb.String(), want)
 	}
 }
+
+func TestPacketMissingEntryRefusalLineMatchesSpec(t *testing.T) {
+	lane, _ := packetLab(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--pr", "415", "--who", "Rowan", "--out", "p.md"}, &out, &errb); code != 2 {
+		t.Fatalf("unknown entry code=%d, want 2", code)
+	}
+	want := "PACKET REFUSED: the lane does not hold this entry; add it with nova-merge add --lane <dir> --pr <n> --needs-read (or add-branch --branch <name>)\n"
+	if got := errb.String(); got != want {
+		t.Fatalf("refusal is not the SPEC-REVIEW.md line byte for byte; got %q want %q", got, want)
+	}
+}
