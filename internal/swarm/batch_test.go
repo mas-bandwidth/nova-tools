@@ -192,6 +192,72 @@ func TestBatchAbstainsWrongLine1(t *testing.T) {
 	}
 }
 
+func TestBatchPrefixLine1WithLongerTailAccepted(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A worker that printed the full title: the card's contract line 1 is a prefix of the
+	// RESULT's line 1, so it is done and the longer tail is named as tail=<n>.
+	runner := runnerDoing(t, dir, "prefix",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "write", Path: "{job}/RESULT.md", Body: "{line1}: extra\n{line2}\n"},
+	)
+	code, out, _ := runBatch(t, tsv, root, runner, 30*time.Second)
+	if code != 0 {
+		t.Fatalf("a prefix line 1 is done, exits 0, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "a slot=1: all green log=0 tail=7") {
+		t.Fatalf("a longer tail is named tail=<n> on the card line:\n%s", out)
+	}
+}
+
+func TestBatchChangedWordBeforeEndStillMismatches(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: alpha beta\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A word changed before the end: the card line 1 is NOT a prefix of the RESULT line 1.
+	runner := runnerDoing(t, dir, "changed",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "write", Path: "{job}/RESULT.md", Body: "RESULT: alpha gamma\n{line2}\n"},
+	)
+	code, out, _ := runBatch(t, tsv, root, runner, 30*time.Second)
+	if code != 1 {
+		t.Fatalf("a changed word before the end is line1-mismatch, exits 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=line1-mismatch log=0") {
+		t.Fatalf("a differing line 1 is refused, not folded:\n%s", out)
+	}
+}
+
+func TestBatchIdenticalLine1PrintsNoTail(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := fakeRunner(t, dir)
+	code, out, _ := runBatch(t, tsv, root, runner, 30*time.Second)
+	if code != 0 {
+		t.Fatalf("an identical line 1 is done, exits 0, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "a slot=1: all green log=0") {
+		t.Fatalf("an identical line 1 is done with its line 2 verbatim:\n%s", out)
+	}
+	if strings.Contains(out, "tail=") {
+		t.Fatalf("an identical line 1 prints no tail field:\n%s", out)
+	}
+}
+
 func TestBatchKillsAtDeadline(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
