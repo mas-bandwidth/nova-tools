@@ -24,6 +24,21 @@ import (
 // an INHERITED descriptor, which Landlock does not govern, so a byte in the buffer means
 // the tool reached `cmd.Start` whether or not the wall went up -- which is what must not
 // happen, rather than "it ran but was walled".
+//
+// THIS TEST IS GREEN ON MAIN ON PURPOSE, AND HERE IS HOW TO SEE IT RED. It pins a refusal
+// the code already performs and no test reached: the spec demanded it (test 7, "the only
+// thing that makes landlock_abi_unknown more than a word in the exit table") and #605
+// shipped the refusal without it. So its red is a MUTATION red, not a green-to-red on the
+// branch that adds it. To see the red, disable the guard in Run below -- rewrite
+// `if abi > maxKnownABI {` as `if false && abi > maxKnownABI {` -- and run
+// `go test -run TestUnknownLandlockABIRefusesOnLinux ./internal/sandbox/` on a linux
+// machine. Measured on the fleet's linux bench at abi 4, forced to 7:
+//
+//	err = sandbox_failed: the landlock ruleset could not be created at abi 7:
+//	argument list too long, want a landlock_abi_unknown refusal
+//
+// That is the guard being the only thing between this kernel and a ruleset built from
+// accesses it does not define -- which is the hole the refusal exists to refuse.
 func TestUnknownLandlockABIRefusesOnLinux(t *testing.T) {
 	saved := available
 	forced := maxKnownABI + 1
