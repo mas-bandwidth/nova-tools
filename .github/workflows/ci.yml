@@ -384,7 +384,12 @@ jobs:
         run: |
           pkgs=$(go list ./... | awk -v n=4 -v i=${{ matrix.shard }} 'NR % n == i - 1')
           echo "$pkgs"
-          go test -count=1 $pkgs
+          # -timeout 20m is the hosted windows leg's reality, not a target: cmd/nova-bus
+          # took 439 s there on the branch and hit Go's 10 m default on main (run
+          # 35052889521, panic: test timed out after 10m0s). The two-minute rule is met
+          # by gating the multi-process bus tests behind -short on hosted legs (issue
+          # filed); until that lands, a slow package must not panic the leg.
+          go test -count=1 -timeout 20m $pkgs
 
   e2e:
     # THE SEQUENCES A FRIEND RUNS, end to end, one job. The sharded `test` job above runs
