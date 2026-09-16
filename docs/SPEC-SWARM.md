@@ -1014,6 +1014,16 @@ again and displayed them identically, so a job that had already completed its
 replayed. The containment check is unchanged: a cwd that is not the job directory
 still refuses, and only the one field the comparison reads is decoded.
 
+**The deadline ends the whole tree, and a TERM from outside is the same cleanup (issue
+#779).** The native harness runs as the leader of its own process group, so at
+`--deadline` the machinery kills the entire tree the card started — grandchildren
+included, never just the leader — and folds the usage from what the harness had reported up
+to the kill, so the spend is never unknown. A `SIGTERM` from outside (the manager) is
+handled the same way rather than a silent exit: the tree is reaped, `usage.tsv` is written,
+and the `NATIVE OK` line carries `reason=terminated`. A harness that ignores `SIGTERM` is
+still gone at the deadline, because the wall is a kill of the group, not a request it may
+decline.
+
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
 `requeue`, `note`, `finalize` and `reclaim` are the verbs that act; `supervise`

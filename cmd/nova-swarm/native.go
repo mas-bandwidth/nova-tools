@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -73,6 +72,7 @@ type nativeRunResult struct {
 	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
 	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
+	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -377,39 +377,69 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if cfg.noWall {
 		res.wall = "none-by-flag"
 	}
-
 	// THE LAUNCH GRACE (issue #900). A harness that dies inside this window with a
 	// provider server error in its own output is a launch that did not take: the provider
 	// answered before the request began, and the slot was spent on nothing. The SAME card
 	// is retried -- 5-20s jittered, then 30-60s -- and each launch writes its own usage row
 	// (attempt=1,2,3). A failure past the grace is a real run that failed and is not
 	// retried.
+	//
+	// EACH LAUNCH OWNS ITS PROCESS GROUP (issue #779). The child is the leader of a group
+	// of its own, so the deadline -- and a TERM from outside -- kill the WHOLE tree the card
+	// started, not merely the leader while its grandchildren keep running past the wall. A
+	// TERM from outside is the same cleanup as the deadline: reap the group, fold the usage
+	// row, and mark the run terminated so the NATIVE OK line carries `reason=terminated`.
 	grace := swarm.DefaultLaunchGrace
 	if cfg.worker != nil {
 		grace = swarm.LaunchGrace(*cfg.worker)
 	}
+	termCh := nativeTermCh()
+	defer stopNativeTerm(termCh)
 	for attempt := 1; ; attempt++ {
 		before := fileSize(outLog)
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.deadline)
-		cmd := exec.CommandContext(ctx, runPath, runArgv...)
+		cmd := exec.Command(runPath, runArgv...)
+		ownChildGroup(cmd)
 		cmd.Env = childEnv
 		cmd.Dir = jobDir
 		cmd.Stdin = devNull
 		cmd.Stdout = capture
 		cmd.Stderr = io.MultiWriter(capture, &wallOut)
 		attemptStart := time.Now()
-		runErr := cmd.Run()
-		elapsed := time.Since(attemptStart)
-		cancel()
-		res.wallSeconds += elapsed.Seconds()
-		switch ee := runErr.(type) {
-		case nil:
-			res.rc = 0
-		case *exec.ExitError:
-			res.rc = ee.ExitCode()
-		default:
-			res.rc = -1
+		if err := cmd.Start(); err != nil {
+			log.Close()
+			harnessOut.Close()
+			refuseNative(errOut, fmt.Sprintf("the child could not be started: %s", oneline.Escape(err.Error())))
+			return nativeRunResult{}, 2
 		}
+		pgid := cmd.Process.Pid
+		started := swarm.StartStamp(pgid)
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		deadline := time.NewTimer(cfg.deadline)
+		select {
+		case runErr := <-done:
+			deadline.Stop()
+			switch ee := runErr.(type) {
+			case nil:
+				res.rc = 0
+			case *exec.ExitError:
+				res.rc = ee.ExitCode()
+			default:
+				res.rc = -1
+			}
+		case <-deadline.C:
+			swarm.KillGroup(pgid, started)
+			<-done
+			res.rc = -1
+		case <-termCh:
+			deadline.Stop()
+			swarm.Reap(pgid, started, swarm.TerminateGrace)
+			<-done
+			res.rc = -1
+			res.terminated = true
+		}
+		elapsed := time.Since(attemptStart)
+		res.wallSeconds += elapsed.Seconds()
 		// THE END WORD FOR THIS LAUNCH: the row names how the attempt ended, and the wall
 		// block below refines it to `wall` when the machinery, not the model, stopped the
 		// card (issue #644's follow-up).
@@ -420,6 +450,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
 		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, res.end, errOut)
+		// A TERM FROM OUTSIDE ENDS THE RUN, NEVER RETRIES IT: the spend is folded once and
+		// the terminated reason is carried out on the OK line.
+		if res.terminated {
+			break
+		}
 		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
