@@ -5634,8 +5634,9 @@ index's admission** (where #333 at `79277f05` already has a built witness, it is
 
 - **`duty-tier-executes-not-authors`** — a duty-tier session loads an approved finite policy record
   from C with `:by` on every rule, never writes one, answers with the cheapest qualified model or
-  none, and every judgment it cannot make becomes an escalation; a session holding no approved
-  record reads `authority=-` and is a reader and a client, never a duty tier.
+   none, and every judgment it cannot make becomes an escalation; a session holding no approved
+   record reads `authority=-` (a proposed field, not shipped — no `SESSION OK` grammar line carries
+   it) and is a reader and a client, never a duty tier.
 - **`escalation-is-a-node-with-rule-default-and-age`** — an escalation node carries the policy rule
   that could not decide it, the default that fires on silence, and its age; the coordinator's stale
   pass reads the three and reassigns nothing.
@@ -5901,9 +5902,11 @@ renumbered.
    `SPEC-AHEAD: #500`. The duty tier executes an **approved finite policy record** — a versioned
    record in **C**, `:by` on every rule, by the root section above — with **the cheapest qualified
    model or none**; it **never authors policy**; every judgment it cannot make becomes an
-   **escalation** (point 2). This is the session's authority, stated as such: `SESSION OK` carries
-   `authority=duty` beside the policy record's revision, and a session that holds no approved record
-   to execute is a reader and a client of the kernel, never a duty tier. Replay
+    **escalation** (point 2). This is the session's authority, stated as such — save that the
+    `authority=` field it names is **proposed, not shipped**: the *Output grammar*'s `SESSION OK`
+    line carries no such field, so a duty session would print `authority=duty` beside the policy
+    record's revision only once that field is added (`SPEC-AHEAD: #500`), and a session that holds
+    no approved record to execute is a reader and a client of the kernel, never a duty tier. Replay
    **`duty-tier-executes-not-authors`**.
 2. **Escalation becomes a node kind (or the row gains the fields).** `SPEC-AHEAD: #500`. An
    escalation names **the policy rule that could not decide it**, **the default that fires on
