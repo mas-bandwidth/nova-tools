@@ -1,12 +1,14 @@
 package pulse
 
 // CardRow is one row of cards.tsv: the label the card was admitted under, the slot it
-// holds ("-" until launch allocates one), the model, and the card file's path.
+// holds ("-" until launch allocates one), the model, the card's admission token bound, and
+// the card file's path.
 type CardRow struct {
-	Label string
-	Slot  string
-	Model string
-	Card  string
+	Label  string
+	Slot   string
+	Model  string
+	Tokens int
+	Card   string
 }
 
 // Candidate is one row of bounded work: a source kind, an item id, a card kind,

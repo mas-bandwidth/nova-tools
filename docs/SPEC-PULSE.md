@@ -135,15 +135,16 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    slots it can and exits 0. There is no `UNDER-SLOTS` refusal any more — a pulse never
    refuses for being wider than the bench; the remainder queues, always.
 10. **Every card goes through `batch`, never a single `add`.** `launch` runs exactly one
-    `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>
-    --files <n> --tokens <n> --then "nova-pulse harvest --id <id> --root <root>"` per model
-    route present, so at most two admissions, both under one pulse id recorded in
-    `<root>/pulses/<id>.tsv` (`batch id`, `model`, `n`). `<n>` on `--files` and `--tokens` is
-    that route's card count and summed token bound taken from its `cards.tsv` columns, so the
-    admission is bounded exactly as the cards say. The `--then` argv is `nova-swarm batch`'s
-    (card 269): it runs when the batch's wait ends — every card ended or the deadline — and
-    never earlier. A `BATCH REFUSED` line from the swarm is relayed as `PULSE REFUSED` with
-    the swarm's reason and nothing is queued.
+    `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>s
+    --files <n> --tokens <n>` per model route present, so at most two admissions, both under
+    one pulse id recorded in `<root>/pulses/<id>.tsv` (`batch id`, `model`, `n`). `<n>` on
+    `--files` and `--tokens` is that route's card count and summed token bound taken from its
+    `cards.tsv` columns, so the admission is bounded exactly as the cards say; `--deadline`
+    is the pulse's whole-seconds deadline in the swarm's duration form (`<s>s`). The
+    pool/tasks admission mode has no `--then`; until `nova-swarm batch --then` (card 269)
+    lands, `launch` admits and prints its line, and `harvest` is run by a person after
+    `nova-swarm wait` (open question 4). A `BATCH REFUSED` line from the swarm is relayed as
+    `PULSE REFUSED` with the swarm's reason and nothing is queued.
 11. **`--then` is gated on the verdict, never on mergeability.** `harvest` disposes a card by
     its own two lines — line 1 the contract, line 2 the verdict — and by the `BRANCH` line.
     It never asks `nova-merge` whether the PR can merge, never reads a hosted check, never

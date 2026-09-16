@@ -63,7 +63,7 @@ func addCard(t *testing.T, root, label, slot, model, contract, result string) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	f.WriteString(label + "\t" + slot + "\t" + model + "\t" + cardPath + "\n")
+	f.WriteString(label + "\t" + slot + "\t" + model + "\t100\t" + cardPath + "\n")
 }
 
 func runHarvest(t *testing.T, root string) (string, string) {

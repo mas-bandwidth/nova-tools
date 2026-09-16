@@ -715,6 +715,23 @@ through `nova-swarm batch`, and fold what comes back. It makes no model call.
 `pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
 `status` below is the one-verb answer to the all-day questions.
 
+### launch
+
+`launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>tokens<TAB>card`),
+counts the free slots in `<root>/pool`, and admits the cards that fit — one
+model route at a time — through `nova-swarm batch`, queueing the rest only
+when `--queue` is set. Each route is one admission under the pool/tasks
+contract the same-revision binary defines:
+
+```
+nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>s --files <n> --tokens <n>
+```
+
+`--files` is the route's card count and `--tokens` its summed token bound,
+both taken from `cards.tsv`; `--deadline` is the pulse's whole-seconds deadline
+in duration form. There is no `--then`: `launch` admits and prints its line,
+and `harvest` is run by a person after `nova-swarm wait`.
+
 ### status
 
 ```

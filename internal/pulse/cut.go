@@ -80,7 +80,7 @@ func Cut(in CutInput) int {
 		} else {
 			pro++
 		}
-		cards = append(cards, CardRow{Label: row.ID, Slot: SlotDash, Model: model, Card: filepath.Join(in.Out, cardName)})
+		cards = append(cards, CardRow{Label: row.ID, Slot: SlotDash, Model: model, Tokens: tokenBound(card), Card: filepath.Join(in.Out, cardName)})
 	}
 	skipList.More()
 
@@ -231,6 +231,18 @@ func branchOf(row PoolRow) string {
 	return "rowan/" + strings.ReplaceAll(row.ID, " ", "-")
 }
 
+// tokenBound is the admission token bound a card carries: its own rendered byte length,
+// floored at one. A worker reads the whole card (one token per roughly four bytes) and
+// writes a bounded reply of comparable size, so a bound of the card's length never invents
+// headroom the card did not name and never leaves the budget unstated. It is deliberately
+// never `unmetered`: accounting-free is a caller's claim, not a card's.
+func tokenBound(card string) int {
+	if n := len(card); n > 0 {
+		return n
+	}
+	return 1
+}
+
 func writeCardsTSV(path string, cards []CardRow) error {
 	var b strings.Builder
 	for _, c := range cards {
@@ -238,7 +250,11 @@ func writeCardsTSV(path string, cards []CardRow) error {
 		if slot == "" {
 			slot = SlotDash
 		}
-		b.WriteString(fmt.Sprintf("%s\t%s\t%s\t%s\n", c.Label, slot, c.Model, c.Card))
+		tokens := c.Tokens
+		if tokens < 1 {
+			tokens = 1
+		}
+		b.WriteString(fmt.Sprintf("%s\t%s\t%s\t%d\t%s\n", c.Label, slot, c.Model, tokens, c.Card))
 	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }

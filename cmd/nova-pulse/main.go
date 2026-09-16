@@ -28,7 +28,7 @@ nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
 
-launch reads a cards.tsv of label<TAB>slot<TAB>model<TAB>card, counts the free
+launch reads a cards.tsv of label<TAB>slot<TAB>model<TAB>tokens<TAB>card, counts the free
 slots in <root>/pool, and hands the cards that fit one model at a time to nova-swarm
 batch, queueing the rest only when --queue is set. --slots is the ceiling on the
 free slots it may use, and --deadline is the whole pulse's one deadline in whole
@@ -189,7 +189,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	f.want(*cards, "cards", "a cards.tsv of label, slot, model, card path")
+	f.want(*cards, "cards", "a cards.tsv of label, slot, model, tokens, card path")
 	f.want(*root, "root", "the pulse root this pulse's state hangs under")
 	if *slots < 1 {
 		f.add(fmt.Sprintf("--slots is required and is at least 1, got %d; it is the ceiling on the free slots this pulse may use", *slots))

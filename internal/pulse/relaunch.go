@@ -32,10 +32,11 @@ func relaunch(in HarvestInput) int {
 	for i, c := range ordered {
 		label := sanitizeID(c.ID)
 		cardPath := filepath.Join(cardsDir, fmt.Sprintf("%03d-%s.md", i, label))
-		if err := os.WriteFile(cardPath, []byte(render(c, in.Templates)), 0o644); err != nil {
+		cardText := render(c, in.Templates)
+		if err := os.WriteFile(cardPath, []byte(cardText), 0o644); err != nil {
 			return refusal(in.Stderr, "HARVEST", fmt.Errorf("cannot cut %s: %s", label, oneline.Err(err)))
 		}
-		rows = append(rows, CardRow{Label: label, Slot: "-", Model: modelFor(c.Kind, "", relaunchTiers), Card: cardPath})
+		rows = append(rows, CardRow{Label: label, Slot: "-", Model: modelFor(c.Kind, "", relaunchTiers), Tokens: tokenBound(cardText), Card: cardPath})
 	}
 	if err := writeCardsTSV(filepath.Join(in.Root, "cards.tsv"), rows); err != nil {
 		return refusal(in.Stderr, "HARVEST", err)

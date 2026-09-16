@@ -84,7 +84,11 @@ func Launch(in LaunchInput) int {
 				return 2
 			}
 		}
-		if !runBatch(in, id, b.Model, tasksDir) {
+		tokens := 0
+		for _, c := range b.Cards {
+			tokens += c.Tokens
+		}
+		if !runBatch(in, id, b.Model, tasksDir, len(b.Cards), tokens) {
 			return 2
 		}
 		record(in.Root, id, b.Model, len(b.Cards))
@@ -103,17 +107,20 @@ func Launch(in LaunchInput) int {
 }
 
 // runBatch admits one model route as one nova-swarm batch and relays a swarm refusal as a
-// PULSE REFUSED, queueing nothing.
-func runBatch(in LaunchInput, id, model, tasksDir string) bool {
-	then := fmt.Sprintf("nova-pulse harvest --id %s --root %s", id, in.Root)
+// PULSE REFUSED, queueing nothing. It speaks the pool/tasks admission contract the
+// same-revision binary defines: --pool, --tasks, --label, a duration-form --deadline, and
+// the explicit --files and --tokens budgets the cards carry -- never --then, which belongs
+// to the gather mode and names a harvest that is not yet shipped.
+func runBatch(in LaunchInput, id, model, tasksDir string, files, tokens int) bool {
 	pool := filepath.Join(in.Root, "pool")
 	var out, errb bytes.Buffer
 	cmd := exec.Command("nova-swarm", "batch",
 		"--pool", pool,
 		"--tasks", tasksDir,
 		"--label", "pulse-"+id,
-		"--deadline", in.Deadline,
-		"--then", then)
+		"--deadline", in.Deadline+"s",
+		"--files", strconv.Itoa(files),
+		"--tokens", strconv.Itoa(tokens))
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {

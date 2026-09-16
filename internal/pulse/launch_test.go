@@ -36,7 +36,7 @@ func writeCards(t *testing.T, root string, n int) (string, []string) {
 			t.Fatal(err)
 		}
 		paths[i] = path
-		sb.WriteString(label + "\t-\tpro\t" + path + "\n")
+		sb.WriteString(label + "\t-\tpro\t100\t" + path + "\n")
 	}
 	cards := filepath.Join(root, "cards.tsv")
 	if err := os.WriteFile(cards, []byte(sb.String()), 0o644); err != nil {
@@ -152,8 +152,17 @@ func TestLaunchQueuesRemainder(t *testing.T) {
 	if !strings.Contains(lines[0], "--label pulse-"+id) {
 		t.Fatalf("argv lacks --label pulse-%s: %q", id, lines[0])
 	}
-	if !strings.Contains(lines[0], "--then nova-pulse harvest --id "+id+" --root "+root) {
-		t.Fatalf("argv lacks --then harvest: %q", lines[0])
+	if !strings.Contains(lines[0], "--files 4") {
+		t.Fatalf("argv lacks --files 4 (the route's card count): %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "--tokens 400") {
+		t.Fatalf("argv lacks --tokens 400 (the route's summed token bound): %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "--deadline 120s") {
+		t.Fatalf("argv lacks a duration-form --deadline 120s: %q", lines[0])
+	}
+	if strings.Contains(lines[0], "--then") {
+		t.Fatalf("argv must not carry --then (gather mode, unimplemented harvest): %q", lines[0])
 	}
 
 	// queue.tsv holds the other four cards.

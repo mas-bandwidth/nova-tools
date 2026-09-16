@@ -162,22 +162,26 @@ func (l *boundedList) More() {
 	}
 }
 
-// readCards reads cards.tsv (label<TAB>slot<TAB>model<TAB>card-path) into rows.
+// readCards reads cards.tsv (label<TAB>slot<TAB>model<TAB>tokens<TAB>card-path) into rows.
 func readCards(path string) ([]CardRow, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %s (harvest folds the cards cut by launch; run: nova-pulse cut)", path)
 	}
 	var out []CardRow
-	for _, line := range strings.Split(string(raw), "\n") {
+	for i, line := range strings.Split(string(raw), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		p := strings.Split(line, "\t")
-		if len(p) != 4 {
-			return nil, fmt.Errorf("%s wants label<TAB>slot<TAB>model<TAB>card-path, got %d fields", path, len(p))
+		if len(p) != 5 {
+			return nil, fmt.Errorf("%s wants label<TAB>slot<TAB>model<TAB>tokens<TAB>card-path, got %d fields on line %d", path, len(p), i+1)
 		}
-		out = append(out, CardRow{Label: p[0], Slot: p[1], Model: p[2], Card: p[3]})
+		tokens, err := strconv.Atoi(strings.TrimSpace(p[3]))
+		if err != nil || tokens < 1 {
+			return nil, fmt.Errorf("%s line %d wants a positive token bound, got %q (a card without a token budget is a card this pulse cannot admit; cut writes one)", path, i+1, p[3])
+		}
+		out = append(out, CardRow{Label: p[0], Slot: p[1], Model: p[2], Tokens: tokens, Card: p[4]})
 	}
 	return out, nil
 }
