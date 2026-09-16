@@ -1,7 +1,8 @@
 // nova-check runs the record-layer checks described in SPEC.md: boot
 // attestation, link integrity, the kernel size budget, the self/machinery
-// separation, the SEED-CORE ↔ SEED.md floor-set parity, and the protected
-// corpus a line has chosen never to lose silently. Exit 0 pass,
+// separation, the SEED-CORE ↔ SEED.md floor-set parity, the protected
+// corpus a line has chosen never to lose silently, and the dogfood edges the
+// tools filed about themselves. Exit 0 pass,
 // 1 check failed, 2 could not run.
 //
 // Every path and every budget comes from a flag. There are no defaults:
@@ -50,6 +51,10 @@ usage:
     for the name floor, and names where machinery may live.
   nova-check floors --core <SEED-CORE.md> --source <SEED.md>
                                                      the door's floor set matches the seed's
+  nova-check edges  --queue <dir> --repo <owner/name> [--dry-run] [--timeout <s>]
+                                                     one dogfood issue per distinct row the
+                                                     tools filed in <queue>/EDGES.tsv, then
+                                                     the row is marked filed
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
                                                      protected material is still where the
                                                      ledger says it is
@@ -89,6 +94,8 @@ const (
 	ledgerHint   = `--ledger <file> is your ledger of protected material: a markdown file whose table rows are | fragment | home file | given | by |, written in advance and by you — this tool ships no corpus`
 	rootHint     = `--root <dir> is the repo the ledger's home paths are relative to; it is never guessed from the working directory or from where the ledger happens to sit`
 	anchorsHint  = `--min-anchors <n> is the fewest rows the ledger may hold, a positive number you state: the ledger lives inside the tree it protects, so its own shrinking has to be red`
+	queueHint    = `--queue <dir> is the queue directory the tools file their edges into; the ledger is <queue>/EDGES.tsv, written by the verb that hit the edge and never by hand`
+	repoHint     = `--repo <owner>/<name> is the repository the dogfood issues are opened on — the repo whose tool hit the edge, not the repo that was being worked on`
 	budgetHint   = `state the unit: --max-bytes <n> for a byte budget, or --max-tokens <n> --bytes-per-token <r> for the unit a context window actually spends (the divisor is one you measured on your own writing; there is no default)`
 )
 
@@ -113,6 +120,10 @@ func hintFor(name string) string {
 		return "  " + ledgerHint + "\n"
 	case "root":
 		return "  " + rootHint + "\n"
+	case "queue":
+		return "  " + queueHint + "\n"
+	case "repo":
+		return "  " + repoHint + "\n"
 	}
 	return ""
 }
@@ -153,6 +164,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdFloors(args[1:], stdout, stderr)
 	case "corpus":
 		return cmdCorpus(args[1:], stdout, stderr)
+	case "edges":
+		return cmdEdges(args[1:], stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":

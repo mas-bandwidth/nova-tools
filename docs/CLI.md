@@ -16,6 +16,7 @@ nova-check nocode --dir <dir>                      # no code, executables, scrip
 nova-check nocode --print-deny-list                # both floors actually in force: the extension list and the name list
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
+nova-check edges  --queue <dir> --repo <owner>/<name> [--dry-run]  # one dogfood issue per distinct row the tools filed about themselves in <queue>/EDGES.tsv, then the row is marked filed
 ```
 
 ### First run
