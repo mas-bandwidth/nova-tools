@@ -100,6 +100,11 @@ type InboxResult struct {
 	Unaddressed []Unaddressed
 	// New is how many notes this run added to the open list.
 	New int
+	// NoteChanges is how many of the changed lane paths were NOTE files, as opposed to a
+	// lane's state files (BEAT, CURSOR, OPEN, INDEX, RECEIPTS) or README. It is how `wait
+	// --quiet-beats` tells a change that is only beats and cursors apart from one that
+	// carried a note addressed anywhere; a beat/cursor-only change is NoteChanges == 0.
+	NoteChanges int
 	// Fresh is those notes THEMSELVES, in listing order: the entries this run put on the
 	// open list that were not on it before, and nothing that was already there.
 	//
@@ -264,6 +269,9 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 	answered := map[string]bool{}
 	heard := map[string]bool{}
 	for _, path := range changed {
+		if isNotePath(path) {
+			res.NoteChanges++
+		}
 		if path == me.Lane+"/"+ReceiptsName {
 			targets, err := readReceiptTargets(root, me.Lane)
 			if err != nil {

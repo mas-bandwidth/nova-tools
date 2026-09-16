@@ -137,18 +137,37 @@ func packageConsts(files []source) map[string]bool {
 	return consts
 }
 
-// verbsOf returns the verbs of a format string in order, skipping the flags, width and
-// precision in front of each. It refuses a `*` width or precision, which consumes an
-// argument and would mis-pair everything after it, and a classifier that quietly
-// mis-pairs arguments would be worse than one that stops.
-func verbsOf(t *testing.T, format string) []byte {
+// verbsOf returns the verb that formats each argument, indexed by the argument it
+// consumes rather than by where the directive appears: verbs[i] is the verb applied to
+// argument i. A verb of 0 marks an argument no directive reads -- an extra operand an
+// indexed format leaves on the side. Explicit argument indexes (%[2]s reads the second
+// argument) are honoured, and an implicit verb after one continues from that index, the
+// way package fmt counts. It refuses a `*` width or precision, which consumes a further
+// argument and would mis-pair everything after it, and a classifier that quietly mis-pairs
+// arguments would be worse than one that stops.
+func verbsOf(t *testing.T, format string) ([]byte, int) {
 	t.Helper()
-	var verbs []byte
+	verbs := []byte{}
+	next := 0
+	directives := 0
 	for i := 0; i < len(format); i++ {
 		if format[i] != '%' {
 			continue
 		}
 		i++
+		idx := -1
+		if i < len(format) && format[i] == '[' {
+			end := strings.IndexByte(format[i:], ']')
+			if end < 0 {
+				t.Fatalf("format %q has a '[' with no closing ']'", format)
+			}
+			n, err := strconv.Atoi(format[i+1 : i+end])
+			if err != nil || n < 1 {
+				t.Fatalf("format %q names no argument in its explicit index", format)
+			}
+			idx = n - 1
+			i += end + 1
+		}
 		for i < len(format) && strings.IndexByte("+-# 0123456789.", format[i]) >= 0 {
 			i++
 		}
@@ -161,9 +180,17 @@ func verbsOf(t *testing.T, format string) []byte {
 		case '*':
 			t.Fatalf("format %q uses a * width or precision; this classifier does not model those", format)
 		}
-		verbs = append(verbs, format[i])
+		if idx < 0 {
+			idx = next
+		}
+		for len(verbs) <= idx {
+			verbs = append(verbs, 0)
+		}
+		verbs[idx] = format[i]
+		next = idx + 1
+		directives++
 	}
-	return verbs
+	return verbs, directives
 }
 
 // printers are the fmt functions that take a format or a list, with the index of the first
@@ -232,6 +259,7 @@ func PrintedArguments(t *testing.T, cfg Config) {
 				}
 				args := call.Args[p.first:]
 				var verbs []byte
+				var directives int
 				if p.formatted {
 					format, err := strconv.Unquote(f.text(args[0]))
 					if err != nil {
@@ -240,19 +268,24 @@ func PrintedArguments(t *testing.T, cfg Config) {
 						t.Errorf("%s: format string is not a single literal: %s", f.at(call), f.text(args[0]))
 						return true
 					}
-					verbs = verbsOf(t, format)
+					verbs, directives = verbsOf(t, format)
 					args = args[1:]
-					if len(verbs) != len(args) {
-						t.Errorf("%s: %d verbs but %d arguments; the classifier cannot pair them", f.at(call), len(verbs), len(args))
+					if directives != len(args) {
+						t.Errorf("%s: %d verbs but %d arguments; the classifier cannot pair them", f.at(call), directives, len(args))
 						return true
 					}
 				}
 				for i, arg := range args {
-					classified++
 					verb := byte('s')
-					if i < len(verbs) {
+					if len(verbs) != 0 {
+						// A formatted call: the verb at position i, or nothing when no
+						// directive reads this argument (an indexed format's leftover).
+						if i >= len(verbs) || verbs[i] == 0 {
+							continue
+						}
 						verb = verbs[i]
 					}
+					classified++
 					if verb == 'q' || strings.IndexByte("dbcoxXUeEfFgGtp", verb) >= 0 {
 						continue // quoted, or not text
 					}

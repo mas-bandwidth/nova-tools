@@ -68,6 +68,9 @@ func read(t *testing.T, checkout, path string) string {
 // price of instrumentation that is process-wide, and they are named here rather than left
 // as an unexplained omission.
 func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: builds a ten-thousand-note fixture; runs on the self-hosted legs and nightly")
+	}
 	hermetic(t)
 	checkout, _ := busDir(t)
 

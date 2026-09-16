@@ -257,6 +257,9 @@ func advanceArgs(state, bus string, rest ...string) []string {
 // under it -- once --advance has moved the cursor past a note, a plain inbox
 // prints INBOX OPEN carrying=<n> and no NOTE line for it.
 func TestTheRealBusRelaysNewMailWithinTwoAdvancingPolls(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: spawns repeated watcher and bus processes; runs on the self-hosted legs and nightly")
+	}
 	rowan, stella := synthBus(t)
 	push(t, stella, "stella-aaaaaaaaaaaa", "the first note")
 	gitAt(t, rowan, "pull", "-q", "--ff-only")
@@ -368,6 +371,9 @@ func TestTheRealBusCursorWaitsBehindThePrint(t *testing.T) {
 // are on the reader's OPEN list and on no listing a plain inbox makes. Only the
 // recovery reaches them.
 func TestTheRealBusAdvanceRecoversAnInterruptedRead(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: pushes twenty-five notes in a loop and replays a recovery; runs on the self-hosted legs and nightly")
+	}
 	rowan, stella := synthBus(t)
 	// A backlog above nova-bus's default OPEN display cap of 20.
 	for i := 0; i < 25; i++ {
@@ -470,6 +476,9 @@ func assertOpenMax(t *testing.T, calls []string, want int) {
 // The other half of "never a constant": a second recovery, carrying a different
 // number. A hardcoded --open-max of ANY value fails one of the two.
 func TestTheRecoveryReadsTheCountAndNeverAConstant(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: pushes carried notes in a loop over two recoveries; runs on the self-hosted legs and nightly")
+	}
 	for _, carried := range []int{7, 23} {
 		t.Run(fmt.Sprintf("carrying %d", carried), func(t *testing.T) {
 			rowan, stella := synthBus(t)

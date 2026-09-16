@@ -44,6 +44,12 @@ var swarmAudit = audit.Config{
 		// path=<looked>` tail it adds is already one safe token. Only the empty string (a
 		// store answered) and an oneline.Field-escaped path can come back.
 		"usageSuffix",
+		// fenceSuffix (main.go, issue #644) renders the other NATIVE OK tail and puts the
+		// rejected path through oneline.Field inside itself before returning, so the
+		// ` fence=rejected path=<p>` it adds is already one safe token. The path comes from
+		// the harness's own capture -- a file a card can write -- so nothing but the empty
+		// string and an oneline.Field-escaped path can come back.
+		"fenceSuffix",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
