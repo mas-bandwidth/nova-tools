@@ -47,7 +47,17 @@ const (
 	DefaultTickSeconds       = 60
 	DefaultRefillCadence     = 5
 	DefaultRunnersPerMachine = 8
+	// DefaultLaunchFiles is the file budget every launched card carries. `nova-swarm batch`
+	// requires --files and refuses to guess one (issue #869): a launch that names none is
+	// refused before a single card starts, so the loop carries the documented number.
+	DefaultLaunchFiles = 40
 )
+
+// DefaultLaunchTokens is the token budget the launch names. The native runner the bench's
+// shim has always used has no live token accounting -- the deadline is the stop -- and
+// `unmetered` is the word nova-swarm requires a caller to say out loud rather than a number
+// nothing observes.
+const DefaultLaunchTokens = "unmetered"
 
 // DefaultIntegrationBranches is the one list of integration branches (class B, bug 8: dev
 // inherited main's cancellation bug because the branch name was written twice).
@@ -59,12 +69,16 @@ var Benches = []string{"studio", "space", "local"}
 // Config is the loop's whole configuration: slots and headroom per bench, the tick, the
 // refill cadence, the integration branches and the runners each machine runs.
 type Config struct {
-	Slots               map[string]int
-	Headroom            map[string]int
+	Slots map[string]int
+	// Headroom is a ratio of the bench's cores, so it is a decimal: the spec writes it
+	// `cores x 1.5` and 2.5 is a value a person writes (issue #869).
+	Headroom            map[string]float64
 	TickSeconds         int
 	RefillCadence       int
 	IntegrationBranches []string
 	RunnersPerMachine   int
+	Files               int    // the --files budget every launched card carries
+	Tokens              string // the --tokens budget: a number, or the word `unmetered`
 }
 
 // configKeys is every key the file may carry, in the order the CONFIG line and the
@@ -75,6 +89,7 @@ var configKeys = []string{
 	"slots.studio", "slots.space", "slots.local",
 	"headroom.studio", "headroom.space", "headroom.local",
 	"tick.seconds", "refill.cadence", "integration.branches", "runners.per-machine",
+	"launch.files", "launch.tokens",
 }
 
 // defaultValues is each key's documented default, as the file would have written it.
@@ -90,6 +105,8 @@ func defaultValues() map[string]string {
 		"refill.cadence":       strconv.Itoa(DefaultRefillCadence),
 		"integration.branches": strings.Join(DefaultIntegrationBranches, ","),
 		"runners.per-machine":  strconv.Itoa(DefaultRunnersPerMachine),
+		"launch.files":         strconv.Itoa(DefaultLaunchFiles),
+		"launch.tokens":        DefaultLaunchTokens,
 	}
 }
 
@@ -168,11 +185,20 @@ func LoadConfig(dir string, out io.Writer, max int) (Config, error) {
 // configFrom turns the effective key=value map into the typed configuration, refusing a
 // value that is not what its key wants.
 func configFrom(v map[string]string, path string) (Config, error) {
-	cfg := Config{Slots: map[string]int{}, Headroom: map[string]int{}}
+	cfg := Config{Slots: map[string]int{}, Headroom: map[string]float64{}}
 	num := func(key string, least int) (int, error) {
 		n, err := strconv.Atoi(strings.TrimSpace(v[key]))
 		if err != nil || n < least {
 			return 0, fmt.Errorf("%s: %s wants a whole number %d or more, got %q", path, key, least, v[key])
+		}
+		return n, nil
+	}
+	// headroom is a RATIO of cores, so it is read as a decimal: an integer parser refused
+	// the spec's own example with "wants a whole number" (issue #869).
+	dec := func(key string, least float64) (float64, error) {
+		n, err := strconv.ParseFloat(strings.TrimSpace(v[key]), 64)
+		if err != nil || n < least {
+			return 0, fmt.Errorf("%s: %s wants a number %g or more (a decimal like 2.5 is fine), got %q", path, key, least, v[key])
 		}
 		return n, nil
 	}
@@ -181,7 +207,7 @@ func configFrom(v map[string]string, path string) (Config, error) {
 		if cfg.Slots[b], err = num("slots."+b, 0); err != nil {
 			return Config{}, err
 		}
-		if cfg.Headroom[b], err = num("headroom."+b, 0); err != nil {
+		if cfg.Headroom[b], err = dec("headroom."+b, 0); err != nil {
 			return Config{}, err
 		}
 	}
@@ -193,6 +219,15 @@ func configFrom(v map[string]string, path string) (Config, error) {
 	}
 	if cfg.RunnersPerMachine, err = num("runners.per-machine", 1); err != nil {
 		return Config{}, err
+	}
+	if cfg.Files, err = num("launch.files", 1); err != nil {
+		return Config{}, err
+	}
+	cfg.Tokens = strings.TrimSpace(v["launch.tokens"])
+	if cfg.Tokens != "unmetered" {
+		if n, e := strconv.Atoi(cfg.Tokens); e != nil || n < 1 {
+			return Config{}, fmt.Errorf("%s: launch.tokens wants a token budget of 1 or more, or the word `unmetered` when the runner has no live accounting, got %q", path, v["launch.tokens"])
+		}
 	}
 	cfg.IntegrationBranches = splitList(v["integration.branches"])
 	if len(cfg.IntegrationBranches) == 0 {

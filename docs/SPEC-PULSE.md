@@ -140,7 +140,12 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     route present, so at most two admissions, both under one pulse id recorded in
     `<root>/pulses/<id>.tsv` (`batch id`, `model`, `n`). `<n>` on `--files` and `--tokens` is
     that route's card count and summed token bound taken from its `cards.tsv` columns, so the
-    admission is bounded exactly as the cards say. The `--then` argv is `nova-swarm batch`'s
+    admission is bounded exactly as the cards say. Where `cards.tsv` carries no budget column,
+    the budgets come from the configuration -- `[launch] files` (default 40) and
+    `[launch] tokens` (default the explicit word `unmetered`, which is what a native runner
+    with no live token accounting has always meant). Neither is ever omitted: `nova-swarm
+    batch` requires both and refuses to guess, so a launch that names none is refused before
+    a card starts (issue #869). The `--then` argv is `nova-swarm batch`'s
     (card 269): it runs when the batch's wait ends — every card ended or the deadline — and
     never earlier. A `BATCH REFUSED` line from the swarm is relayed as `PULSE REFUSED` with
     the swarm's reason and nothing is queued.
@@ -333,7 +338,9 @@ depth and headroom, never from slot count alone.
    than the bench's width, a measured power of two (SPEC-SWARM, **Benches**, `bench size`,
    #528; 1.25 was the first setting, Glenn raised it: be aggressive); a loaded or less
    capable bench drops down by its load without changing its width. `PULSE WIDTH` gains `headroom=<n>`
-   per bench.
+   per bench. Headroom is a RATIO of cores, so `[headroom] studio = 2.5` is a value a person
+   writes and the loader reads it as 2.5; the cap is the whole cards that fit under it, since
+   half a card is not a card (issue #869).
 4. **A gated card launches itself.** A card carrying `AFTER: PR<n> merged` stays `gated` on
    the `QUEUE` line and is launched by the first cycle in which `gh` reports that PR merged —
    never by a person noticing. Replay: `gated-card-launches-on-merge`.
