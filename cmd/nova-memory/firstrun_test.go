@@ -630,10 +630,10 @@ func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("help failed: %d", exit)
 	}
-	// All twelve flags supported by nova-memory subcommands.
+	// All thirteen flags supported by nova-memory subcommands.
 	flags := []string{
 		"root", "channels", "k", "exclude", "floor", "links",
-		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft",
+		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft", "pin",
 	}
 	for _, f := range flags {
 		target := "  --" + f + " "

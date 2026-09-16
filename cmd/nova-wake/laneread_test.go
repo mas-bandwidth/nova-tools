@@ -47,6 +47,9 @@ func alive(pid int) bool {
 // Opus 1 and Fable F3: the fourth bound is a real deadline on a real process.
 
 func TestAWedgedGitCannotHoldThePollOpen(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: wedges git and waits a real deadline for it to be killed; runs on the self-hosted legs and nightly")
+	}
 	busDir, anchor := newLaneBus(t)
 	addLaneCommit(t, busDir, "from-peer", at.Add(-time.Minute),
 		note{name: "a.md", from: peer, to: caller, subject: "the answer"})

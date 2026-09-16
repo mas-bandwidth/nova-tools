@@ -192,17 +192,25 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
 17. **The tool stamps, and nothing read from a file or a server is a clock.** The opening
     `at=` is the tool's own. **A version is its whole identity string** after rule 4's read
     or 4a's, and two of them compare to exactly one of: **EQUAL**, the same bytes, current;
-    **OLDER** or **NEWER**, an order this tool has *verified*; **DIFFERENT**, unequal with
-    no order known. Order is known in one case only: both sides are release tags of the same
-    entry — a release tag being, after the one leading `v`, nothing but `\d+(\.\d+)+` — of
-    equal length, compared as integers component by component, so `1.10.0` is after `1.9.0`;
-    unequal strings that come out equal that way are DIFFERENT (`1.09.0` against `1.9.0`);
-    tags of unequal length are DIFFERENT, never ordered: `1.9` against `1.9.0` or `1.9.1` is
-    DIFFERENT. Order is never known between a tag and a pseudo-version (Go would place
-    `v0.12.1-0.<stamp>-<commit>` between two tags; this tool has not verified that and says
-    DIFFERENT), never between two pseudo-versions, never for a digest, never across two
-    tools (rule 15). **STALE is the line for verified OLDER and for nothing else**; NEWER
-    and DIFFERENT print under their own names; a person looks; not EQUAL is 1.
+    **OLDER** or **NEWER**, an order this tool has *verified*; **AHEAD**, an installed
+    pseudo-version whose commit the tool reads as on main after the release tag;
+    **DIFFERENT**, unequal with no order known. Order is known in one case only: both sides
+    are release tags of the same entry — a release tag being, after the one leading `v`,
+    nothing but `\d+(\.\d+)+` — of equal length, compared as integers component by
+    component, so `1.10.0` is after `1.9.0`; unequal strings that come out equal that way
+    are DIFFERENT (`1.09.0` against `1.9.0`); tags of unequal length are DIFFERENT, never
+    ordered: `1.9` against `1.9.0` or `1.9.1` is DIFFERENT. Between a tag and a
+    pseudo-version one order is known: a pseudo-version `vX.Y.Z-0.<stamp>-<commit>` is the
+    Go toolchain's own record that the build's nearest preceding release tag is `vX.Y.(Z-1)`,
+    so an installed pseudo-version whose base decrements one patch to the release is AHEAD
+    `<commit>` — that build is on main after the release, never DIFFERENT; DIFFERENT stays
+    for an installed build that is neither the release nor that descendant. Otherwise order
+    is never known between a tag and a pseudo-version (Go would place
+    `v0.12.1-0.<stamp>-<commit>` between two tags; this tool has not verified any other
+    case and says DIFFERENT), never between two pseudo-versions, never for a digest, never
+    across two tools (rule 15). **STALE is the line for verified OLDER and for nothing
+    else**; NEWER, AHEAD and DIFFERENT print under their own names; a person looks; not
+    EQUAL is 1.
 18. **Every refusal names its remedy.** No refusal here ends at the reason: the
     missing flag, the malformed line, the script to wrap the command in, the owner's own
     pull of the weights — the next thing to type is on the line.
@@ -350,7 +358,10 @@ Those three usage lines are the string `nova-update help` prints, byte for byte:
 in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
-name, `send` implying `--send` (rule 20); its `help` prints those two lines the same way.
+name, `send` implying `--send` (rule 20), and `nova-version snapshot --bin <dir> --out
+<manifest> [--owner <name>]` writes the manifest `report` reads (the opening paragraph);
+its `help` prints those three lines the same way, snapshot's `--out` distinct from
+report's `--snapshot <path>` option.
 `nova-version report --as x --to y` prints the inventory and composes nothing (rule 26);
 Emma's ready-to-send draft (#121) is `nova-version report --draft …`, the flag typed.
 
@@ -365,9 +376,10 @@ confirm (`sent=uncertain`); **2** could not run, every refusal the rules name.
 ```
 UPDATE at=<stamp> file=<path> entries=<n> kinds=<k,k,k> timeout=<d> budget=<d> max=<n>
 UPDATE <STALE|NEWER|DIFFERENT> name=<name> kind=<kind> installed=<v> latest=<v> path=<path> source=<source> owner=<owner>
+UPDATE AHEAD name=<name> kind=<kind> installed=<v> latest=<v> ahead=<commit> path=<path> source=<source> owner=<owner>
 UPDATE UNKNOWN name=<name> kind=<kind> installed=<v|-> path=<path|-> source=<source>: <reason> (<remedy>)
-UPDATE <OK|FAIL> checked=<n> current=<n> stale=<n> newer=<n> differ=<n> unknown=<n> pins=<n> took=<d> file=<path>
-UPDATE MORE kind=<stale|newer|differ|unknown> shown=<n> total=<t> <remedy>
+UPDATE <OK|FAIL> checked=<n> current=<n> stale=<n> newer=<n> ahead=<n> differ=<n> unknown=<n> pins=<n> took=<d> file=<path>
+UPDATE MORE kind=<stale|newer|ahead|differ|unknown> shown=<n> total=<t> <remedy>
 UPDATE NOTE <something true about this run that is not a finding>
 UPDATE REFUSED: <reason> (<remedy>)
 APPLY BEFORE name=<name> kind=<kind> installed=<v|-> path=<path|-> latest=<v> source=<source>
@@ -503,6 +515,10 @@ install` or `npm install`.
     `v0.12.1-0.20260912135226-0459069` against the same with `88f0b0d` is
     DIFFERENT; `0.12.0` against `0.12.1-0.20260912135226-0459069` is DIFFERENT and `STALE`
     is nowhere in the output — the mutation that matters; `at=` is the clock, never a body.
+    `TestDevBuildAheadOfReleaseReportsAhead`: an installed `v0.15.3-0.<date>-<sha>` against
+    a latest `0.15.2`, `<sha>` descending from the tag, prints `UPDATE AHEAD … ahead=<sha>`
+    and never `UPDATE DIFFERENT` — a dev build on main after the release, the mutation that
+    matters being the old DIFFERENT line.
 18. `TestEveryRefusalNamesItsRemedy`: every refusal in the package lives in one table, which
     the test walks: each ends in a parenthesised remedy naming a command, a file, a URL,
     or the values allowed, and removing one turns the test red.
