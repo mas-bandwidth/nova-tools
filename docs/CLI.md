@@ -897,6 +897,10 @@ nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)      
 
 routes: see docs/MODELS.md
 
+`native --config` copies the named `opencode.json` into the job's data home. Only the
+provider `--model` names is checked against `--auth`; a provider whose options carry
+`baseURL` and no `apiKey` (ollama on localhost) needs no key and is admitted without one.
+
 ### First run
 
 `quickstart` needs nothing but a directory: it makes the pool's structure and names the
