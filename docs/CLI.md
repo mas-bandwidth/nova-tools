@@ -1179,8 +1179,11 @@ never means zero or current. Use your own explicit six-column manifest for your
 bench. There is no quickstart: a manifest and any snapshot path belong to the caller.
 
 Use `nova-version help` for filters, optional draft/delivery and limits. A plain report
-needs no bus. Updates require an explicit `nova-update apply --file ... name`;
-models are listed for the owner to evaluate and pull themselves. No timer is installed.
+needs no bus. `nova-version snapshot --bin <dir> --out <manifest> [--owner <name>]`
+writes the six-column manifest a report reads, one line per `nova-*` executable in
+`--bin`; promote its `kind` by hand. Updates require an explicit
+`nova-update apply --file ... name`; models are listed for the owner to evaluate and
+pull themselves. No timer is installed.
 For recovery across process death, name `--snapshot`; retries retain the prepared
 note. Version statuses should go to your chosen integrator, with optional Cc;
 participation and updates remain voluntary.
