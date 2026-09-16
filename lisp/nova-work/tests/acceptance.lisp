@@ -3752,3 +3752,46 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
       (check-equal 0 code "bug reopen exit code"))
     (check-equal 2 (open-leaf-count k) "open leaf count after bug reopen")
     (check-equal :o (node-branch (kernel-state k) "root/f/b1") "bug moved back to O")))
+
+;;; ------------------------------------------------------------------
+;;; ownership record (SPEC-WORK.md:202-214)
+;;; ------------------------------------------------------------------
+
+(deftest "ownership-record-round-trips" "docs/SPEC-WORK.md:202-214"
+  "expected=format-then-parse-preserves-owner-generation-token-stamp-until-successor"
+  (let* ((rec (make-ownership-record
+               :owner "emma"
+               :generation 7
+               :token "tok-abc"
+               :stamp "2026-09-14T12:00:00Z"
+               :until "2026-09-14T12:01:00Z"
+               :successor "stella"))
+         (parsed (parse-ownership-record (format-ownership-record rec))))
+    (check-string= (owner-owner rec) (owner-owner parsed) "owner round-trips")
+    (check-equal (owner-generation rec) (owner-generation parsed) "generation round-trips")
+    (check-string= (owner-token rec) (owner-token parsed) "token round-trips")
+    (check-string= (owner-stamp rec) (owner-stamp parsed) "stamp round-trips")
+    (check-string= (owner-until rec) (owner-until parsed) "until round-trips")
+    (check-string= (owner-successor rec) (owner-successor parsed) "successor round-trips")))
+
+(deftest "handoff-successor-takes-next-generation" "docs/SPEC-WORK.md:202-214"
+  "expected=successor-takes-next-generation-immediately-without-waiting-for-expiry"
+  (let ((current (make-ownership-record
+                  :owner "emma"
+                  :generation 3
+                  :token "tok-emma"
+                  :stamp "2026-09-14T11:59:00Z"
+                  :until "2026-09-14T12:30:00Z"
+                  :successor "stella")))
+    (multiple-value-bind (action record line exit-code)
+        (evaluate-ownership-claim current "stella"
+                                  :now "2026-09-14T12:01:00Z"
+                                  :every "30s"
+                                  :skew "5s"
+                                  :token "tok-stella-new")
+      (declare (ignore line exit-code))
+      (check-equal :take action "successor handoff is a take")
+      (check-string= "stella" (owner-owner record) "owner is stella")
+      (check-equal 4 (owner-generation record) "generation bumped to 4")
+      (check-string= "tok-stella-new" (owner-token record) "new token")
+      (check-string= "2026-09-14T12:02:00Z" (owner-until record) "until is now + 2*every"))))
