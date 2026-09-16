@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,6 +46,13 @@ func fakePrIssueGh(t *testing.T, specs, prs, issues string) {
 		{Arg: 1, Equals: "issue", Stdout: issues},
 		{Arg: 1, Equals: "pr", Stdout: prs},
 	}})
+	if runtime.GOOS == "windows" {
+		bat := "@echo off\r\ngoto :match\r\n:match\r\nset ARGS= %*\r\nif \"%ARGS: issue =%\" neq \"%ARGS%\" (\r\necho " + issues + "\r\n) else (\r\necho " + prs + "\r\n)\r\nexit /b 0\r\n"
+		if err := os.WriteFile(filepath.Join(specs, "gh.bat"), []byte(bat), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 }
 
 func writeStatusFile(t *testing.T, base, rel, body string) {
