@@ -941,6 +941,8 @@ the natural `&&` chain would file exactly the duplicates.
 ```
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--max-input <bytes>]   # queue one task from a file, never from an argument
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--max-input <bytes>]           # queue a directory of them under one batch id
+nova-swarm bench    probe --benches <file> --bench <name>                                       # prove one bench before a batch is pointed at it
+nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]                           # measure the bench's width, a power of two, and record it on the row
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sandbox <path>] [--no-sandbox]   # the dispatcher: one slot, one data home, one deadline, one WALL per worker
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
@@ -959,6 +961,21 @@ routes: see docs/MODELS.md
 `native --config` copies the named `opencode.json` into the job's data home. Only the
 provider `--model` names is checked against `--auth`; a provider whose options carry
 `baseURL` and no `apiKey` (ollama on localhost) needs no key and is admitted without one.
+
+### Benches
+
+A bench is one machine named by a row of a tab-separated table (`--benches
+<file>`): `name`, `host`, `root`, `cores`, `harness`, `auth`, `wall`. `bench
+probe` proves one bench before a batch is pointed at it, one `BENCH CHECK` line
+per fact and a final `BENCH OK` or `BENCH REFUSED`. `bench size` measures the
+bench's width — a power of two, found by running the known-answer card
+concurrently and doubling while the machine holds, and written back to the row as
+three trailing columns `width`, `measured`, `version`:
+
+```
+$ nova-swarm bench size --benches ./benches.tsv --bench b2
+BENCH WIDTH bench=b2 width=8 cores=15 rows=3
+```
 
 ### First run
 

@@ -27,6 +27,13 @@ type Bench struct {
 	Harness string // the harness binary on that host, absolute there
 	Auth    string // the harness auth file on that host, absolute there, mode 0600
 	Wall    string // "sandbox" or "none": what bench probe found
+
+	// The three optional trailing columns a measured bench carries (bench size,
+	// #528): its width, the stamp it was measured, and the measuring tool's sha8.
+	// A row without them is unmeasured and fills by cores.
+	Width    int
+	Measured string
+	Version  string
 }
 
 // Pinned reports whether the row pins cores (a list) rather than "-". A pinned row
@@ -89,14 +96,23 @@ func LoadBenchTable(path string) ([]Bench, error) {
 			continue
 		}
 		cols := strings.Split(line, "\t")
-		if len(cols) != 7 {
-			return nil, fmt.Errorf("row %q has %d columns, wants 7 (name host root cores harness auth wall)", line, len(cols))
+		if len(cols) < 7 || len(cols) > 10 {
+			return nil, fmt.Errorf("row %q has %d columns, wants the seven name host root cores harness auth wall and at most three trailing width measured version", line, len(cols))
 		}
 		if !seenHeader {
 			seenHeader = true
 			continue
 		}
 		b := Bench{Name: cols[0], Host: cols[1], Root: cols[2], Cores: cols[3], Harness: cols[4], Auth: cols[5], Wall: cols[6]}
+		if len(cols) > 7 {
+			b.Width, _ = strconv.Atoi(strings.TrimSpace(cols[7]))
+		}
+		if len(cols) > 8 {
+			b.Measured = strings.TrimSpace(cols[8])
+		}
+		if len(cols) > 9 {
+			b.Version = strings.TrimSpace(cols[9])
+		}
 		if err := b.validate(names); err != nil {
 			return nil, err
 		}
@@ -107,6 +123,32 @@ func LoadBenchTable(path string) ([]Bench, error) {
 		return nil, err
 	}
 	return benches, nil
+}
+
+// WriteBenchTable writes the benches table back through a temp and rename, so a
+// reader never sees a half-written row. It writes the header then one row per bench:
+// the seven columns, and the three optional trailing columns for any bench that has
+// been measured (a non-zero width). The original file mode is preserved.
+func WriteBenchTable(path string, benches []Bench) error {
+	mode := os.FileMode(0o600)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	var b strings.Builder
+	b.WriteString("name\thost\troot\tcores\tharness\tauth\twall\n")
+	for _, bench := range benches {
+		b.WriteString(bench.Name + "\t" + bench.Host + "\t" + bench.Root + "\t" + bench.Cores + "\t" +
+			bench.Harness + "\t" + bench.Auth + "\t" + bench.Wall)
+		if bench.Width > 0 {
+			b.WriteString("\t" + strconv.Itoa(bench.Width) + "\t" + bench.Measured + "\t" + bench.Version)
+		}
+		b.WriteString("\n")
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // validate refuses one row: a name used twice, a host that is empty, a relative

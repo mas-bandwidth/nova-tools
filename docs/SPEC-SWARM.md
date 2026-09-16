@@ -1157,8 +1157,9 @@ card's `CARD` line in the packet carries `wall=none`, so the packet a reader
 holds says which cards ran unwalled.
 
 **A bench's width is a measured power of two, and the loop fills to it and
-drops down under load** (Glenn, 2026-09-15, #528, open; the same rule is
-SPEC-PULSE **Rate and convergence** 3). `bench size --benches <file> --bench
+drops down under load** (Glenn, 2026-09-15, #528; `bench size` and the width
+column landed in this card; the loop's fill-to-width headroom is
+SPEC-PULSE **Rate and convergence** 3, open). `bench size --benches <file> --bench
 <name> [--max <n>]` runs the known-answer card `W` times concurrently for
 `W = 1, 2, 4, ...` and keeps doubling while three rules hold at the end of each
 round: (a) the one-minute load is at most `1.25 x cores`; (b) throughput

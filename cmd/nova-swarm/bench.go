@@ -27,11 +27,13 @@ type benchCheck struct {
 // cmdBench dispatches the bench verb's subcommands. probe is the only one.
 func cmdBench(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " bench", "wants a subcommand: probe (bench probe --benches <file> --bench <name>)")
+		return refuse(stderr, " bench", "wants a subcommand: probe (bench probe --benches <file> --bench <name>) or size (bench size --benches <file> --bench <name> [--max <n>])")
 	}
 	switch args[0] {
 	case "probe":
 		return cmdBenchProbe(args[1:], stdout, stderr)
+	case "size":
+		return cmdBenchSize(args[1:], stdout, stderr)
 	}
 	return refuse(stderr, " bench", fmt.Sprintf("unknown subcommand %q", args[0]))
 }

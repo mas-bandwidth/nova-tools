@@ -57,6 +57,40 @@ func Version(stamped string) string {
 	return Resolve(stamped, info, ok)
 }
 
+// ShortSHA is the identity a swarm bench row records as its `version` column
+// (SPEC-SWARM, "Benches"): the first eight characters of the build's vcs revision.
+// A build with no vcs revision yields the same short form of its resolved identity,
+// and never invents a number: two builds whose rows record the same sha8 are the
+// same tool, which is the fact the adopt step compares.
+func ShortSHA(stamped string) string {
+	id := Version(stamped)
+	if r := vcsRevision(); r != "" {
+		id = r
+	}
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	if id == "" {
+		id = Unknown
+	}
+	return id
+}
+
+// vcsRevision is the recorded vcs revision of this build, "" when the toolchain
+// recorded none.
+func vcsRevision() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info == nil {
+		return ""
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" {
+			return s.Value
+		}
+	}
+	return ""
+}
+
 // Resolve takes the stamp and the build information as ARGUMENTS rather than reading
 // them, so that the order above is testable: a test cannot install itself from a module
 // proxy or rebuild itself from a dirty tree, and an order asserted only by the build it

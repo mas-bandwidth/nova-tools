@@ -1,0 +1,30 @@
+# CARD-8009 notes — issue #528: bench width (bench size verb)
+
+Red test (written first): TestSizeDoublesUntilARuleBreaks, recorded verbatim with
+SizeWidth stubbed to 0:
+
+    --- FAIL: TestSizeDoublesUntilARuleBreaks (0.00s)
+        --- FAIL: TestSizeDoublesUntilARuleBreaks/load-crosses-at-16 (0.00s)
+            bensize_test.go:29: load crossing 1.25x cores at W=16 records width=8, got 0
+        --- FAIL: TestSizeDoublesUntilARuleBreaks/throughput-under-scale-at-8 (0.00s)
+            bensize_test.go:42: throughput under 1.5x at W=8 records width=4, got 0
+        --- FAIL: TestSizeDoublesUntilARuleBreaks/abstain-ends-doubling (0.00s)
+            bensize_test.go:53: one abstain at W=2 records width=1, got 0
+    FAIL
+    FAIL    github.com/mas-bandwidth/nova-tools/internal/swarm        0.007s
+
+Green after the fix: SizeWidth (internal/swarm/bensize.go) implements the doubling
+loop; cmdBenchSize (cmd/nova-swarm/bensize.go) measures, records width/measured/version
+and prints BENCH WIDTH.
+
+What landed: the `bench size` verb, the optional width/measured/version columns on the
+bench table (LoadBenchTable now accepts 7-10 columns, WriteBenchTable writes them back),
+buildinfo.ShortSHA for the tool's sha8, and the BENCH WIDTH output line.
+
+What is NOT landed (follow-up, still open in the spec): the launch loop's fill-to-width /
+headroom ("cores x 1.5 - load" per tick) in batch (replays 21-22
+launch-fills-to-width, launch-drops-down-under-load).
+
+Pre-existing, unrelated to this card: TestPullWaitsForResult fails in this checkout
+because the working path contains "swarm-root", whose "-r" matches the test's filter
+substring probe; it fails identically on a clean checkout (git stash verified).
