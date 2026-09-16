@@ -432,6 +432,12 @@ func budgetWord(sc Sidecar, rec ExitRecord) string {
 }
 
 // remedy is RUN NOTE: EXACTLY ONE line, naming the one thing to do next.
+//
+// A STOPPED POOL IS ITS OWN CASE, and it wins over every "run again" (issue #180): a
+// recovering dispatcher that ends over a pool a person asked to hold still must not
+// mis-advise another run with more hours, and a stopped, drained pool is not an ordinary
+// drain. The stop is the concrete unavailable function, named here because silence does
+// not identify the cause.
 func remedy(p *Pool, failed, killed, pending, quarantined int) string {
 	switch {
 	case quarantined > 0:
@@ -440,6 +446,10 @@ func remedy(p *Pool, failed, killed, pending, quarantined int) string {
 		return "a worker was killed at its deadline twice; re-queue it with a smaller file budget: nova-swarm requeue --pool " + p.Dir + " --task <id> --task-file <file> --files <n> --tokens <n>"
 	case failed > 0 || killed > 0:
 		return "something failed; read it down in one line: nova-swarm triage --pool " + p.Dir
+	case p.Stopped() && pending > 0:
+		return fmt.Sprintf("the pool is stopped; %d task(s) stay pending until the stop file is removed: rm %s && nova-swarm run --pool %s --workers <n> --hours <h> --worker <file>", pending, p.Path(StopFile), p.Dir)
+	case p.Stopped():
+		return "the pool is stopped and drained; remove the stop file to resume: rm " + p.Path(StopFile)
 	case pending > 0:
 		return fmt.Sprintf("%d task(s) are still pending; run again with more hours: nova-swarm run --pool %s --workers <n> --hours <h> --worker <file>", pending, p.Dir)
 	}
