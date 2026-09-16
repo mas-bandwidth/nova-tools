@@ -37,6 +37,12 @@ var workAudit = audit.Config{
 		// worklang is the bounded plan reader; it parses bytes into values and every
 		// field it yields is printed through oneline.
 		`"github.com/mas-bandwidth/nova-tools/internal/worklang"`,
+		// net is the Unix-socket dial of the resident session's one-line wire. It
+		// writes only the request line, already rendered through oneline.Field by
+		// the verb builder, and reads one bounded reply line the caller prints
+		// through oneline.Escape: it writes nothing of its own and reaches no host
+		// but the socket path --session names.
+		`"net"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,
