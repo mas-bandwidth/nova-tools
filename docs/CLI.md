@@ -713,7 +713,14 @@ The things a first run gets wrong, and what each one wants:
 One tool for parallel work: enumerate bounded work, cut cards, admit them
 through `nova-swarm batch`, and fold what comes back. It makes no model call.
 `pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
-`status` below is the one-verb answer to the all-day questions.
+`status` below is the one-verb answer to the all-day questions. `width`, the
+drift alarm rule 16 of [SPEC-PULSE.md](SPEC-PULSE.md) names, is planned but
+not shipped, and `nova-pulse help` says so on its own line — a verb the help
+lists as available must run, or be marked (issue #515):
+
+```
+nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
+```
 
 ### version
 
