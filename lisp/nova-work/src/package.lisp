@@ -1994,7 +1994,67 @@
     #:state-export-wait
     #:snapshot-state-export
     #:export-wire-op
-    #:state-export-cancel-ack))
+    #:state-export-cancel-ack
+   ;; slice 7 --- the roadmap regenerates (own files, pure functions and records)
+   #:s7-roadmap
+   #:make-s7-roadmap
+   #:s7-roadmap-id
+   #:s7-roadmap-title
+   #:s7-roadmap-under
+   #:s7-roadmap-row-kind
+   #:s7-roadmap-aggregation
+   #:s7-roadmap-completion-policy
+   #:s7-roadmap-axes
+   #:s7-roadmap-members
+   #:s7-roadmap-permitted-roots
+   #:s7-roadmap-projections
+   #:s7-roadmap-cells
+   #:s7-roadmap-scope-revision
+   #:s7-roadmap-baseline-members
+   #:s7-roadmap-since-baseline
+   #:s7-roadmap-closed
+   #:s7-roadmap-retired
+   #:s7-roadmap-archived
+   #:s7-axis
+   #:make-s7-axis
+   #:s7-axis-id
+   #:s7-axis-members
+   #:s7-cell-slot
+   #:make-s7-cell-slot
+   #:s7-cell-row
+   #:s7-cell-column
+   #:s7-cell-ref
+   #:s7-cell-out-of-scope
+   #:s7-cell-in-scope
+   #:s7-projection
+   #:make-s7-projection
+   #:s7-proj-id
+   #:s7-proj-root
+   #:s7-proj-repo
+   #:s7-proj-path
+   #:s7-proj-start
+   #:s7-proj-end
+   #:s7-proj-policy
+   #:s7-proj-row-axis
+   #:s7-proj-column-axis
+   #:s7-proj-fixed
+   #:s7-roadmap-create
+   #:s7-roadmap-configure
+   #:s7-roadmap-row-add
+   #:s7-roadmap-row-remove
+   #:s7-roadmap-projection-add
+   #:s7-roadmap-projection-remove
+   #:s7-axis-add
+   #:s7-axis-remove
+   #:s7-cell-set
+   #:s7-mark-member-closed
+   #:s7-query-percent
+   #:s7-query-roadmap
+   #:s7-render-body
+   #:s7-render-chat
+   #:s7-render-file
+   #:s7-render-check
+   #:s7-ask-applicable))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
