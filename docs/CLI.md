@@ -715,6 +715,21 @@ through `nova-swarm batch`, and fold what comes back. It makes no model call.
 `pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
 `status` below is the one-verb answer to the all-day questions.
 
+### version
+
+`nova-pulse version` (and `--version`) prints which build is running, one line,
+four tokens, exit 0:
+
+```
+nova-pulse <build identity> <goos>/<goarch> <go version>
+```
+
+Field two is the release's `-ldflags "-X main.version=<tag>"` stamp when there
+is one, the module version the toolchain recorded when there is not, then the
+vcs stamp `<utc revision time>-<12 hex of the revision>[-dirty]`, and the word
+`devel` for a build with none of those. It takes no flags and no arguments and
+refuses, exit 2, when given any.
+
 ### status
 
 ```
