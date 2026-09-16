@@ -1994,7 +1994,72 @@
     #:state-export-wait
     #:snapshot-state-export
     #:export-wire-op
-    #:state-export-cancel-ack))
+    #:state-export-cancel-ack
+    ;; S5: evidence, attempts, generation and the models index
+    #:make-criterion
+    #:criterion-id
+    #:criterion-kind
+    #:criterion-subject
+    #:criterion-predicate
+    #:make-evidence
+    #:evidence-pointer
+    #:evidence-criterion
+    #:evidence-against
+    #:evidence-generation
+    #:evidence-attempt
+    #:evidence-five-fields
+    #:make-s5-attempt
+    #:s5-attempt-model
+    #:s5-attempt-bench
+    #:s5-attempt-started
+    #:s5-attempt-ended
+    #:s5-attempt-result
+    #:s5-attempt-usage
+    #:s5-attempt-generation
+    #:make-attest
+    #:attest-criterion
+    #:attest-result
+    #:attest-against
+    #:attest-generation
+    #:attest-by
+    #:correct-generation
+    #:resolve-reference
+    #:s5-pointer-scheme
+    #:note-pointer-p
+    #:older-generation-evidence-p
+    #:criteria-cover-p
+    #:make-s5-finding
+    #:finding-rule
+    #:finding-reason
+    #:done-finding
+    #:rule-15-finding
+    #:accept-add-finding
+    #:settle-to-done
+    #:count-dispositions
+    #:make-model-index
+    #:index-get
+    #:model-register
+    #:model-rate
+    #:model-evidence
+    #:model-three-fields
+    #:query-models
+    #:make-rate-record
+    #:rate-pricing-id
+    #:rate-pricing
+    #:rate-effective
+    #:rate-source
+    #:make-measurement-record
+    #:measurement-task-class
+    #:measurement-result
+    #:measurement-samples
+    #:measurement-source
+    #:model-id
+    #:model-provider
+    #:model-route
+    #:model-billing
+    #:model-capabilities
+    #:model-assessments
+    #:model-measurements))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
