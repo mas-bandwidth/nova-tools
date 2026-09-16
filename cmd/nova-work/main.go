@@ -355,7 +355,7 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 		return refused(stderr, "--session is required; refusing to guess (the socket has no default path)")
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s", oneline.Field(verb))
+	fmt.Fprintf(&b, "%s", oneline.Escape(verb))
 	for _, s := range specs {
 		switch {
 		case s.bool:

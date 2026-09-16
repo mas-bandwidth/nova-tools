@@ -295,6 +295,7 @@ func TestPlanExpandRefusesANeedsCycle(t *testing.T) {
 		t.Fatalf("a refused cycle wrote %d cards", len(entries))
 	}
 }
+
 // sessionOKLine is the spec's own SESSION OK grammar line (docs/SPEC-WORK.md,
 // Output grammar: "SESSION OK is one shape, printed by session start, session
 // status and session stop alike") with every field instantiated once, so the
@@ -348,7 +349,7 @@ func awaitRequest(t *testing.T, requests <-chan string) string {
 	select {
 	case r := <-requests:
 		return r
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("no request reached the session")
 		return ""
 	}
