@@ -538,7 +538,7 @@ nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files 
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles>
+nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
@@ -1778,6 +1778,117 @@ tool's to salvage, because a tool that quoted half a malformed report into a
 page would be choosing which half, and a report with no head at all is
 `plan-only` (rule 8), never `malformed`.
 
+## The `setup` agreement form (issue #184)
+
+Printed by `nova-swarm template --name setup` and refused by `add --template`,
+as `result` is: it is a form a person and a friend fill together, not a task's
+conditions. It is the near-term endpoint of the per-friend safety-setup
+coordination issue #184 asks for — review and agreement only, with
+implementation, credential migration and deployment as separate staged work —
+and it publishes the generic configuration examples and the agreement/evidence
+template rather than any private security detail: every value in it is a
+placeholder, no secret, key, token or private path is ever printed, and an
+agreed form supplies no account access. A friend may agree, propose an
+alternative, decline, or stay silent, and missing feedback is pending, never
+assent. The guarantee table is the point of the form: each row says **who
+enforces it** — the OS wall, a cooperating harness, or the launcher outside
+the wall — so a guarantee the kernel keeps is never mistaken for one that
+depends on a harness honouring its fence, and a harness row stays `unproven`
+until the friend's build is shown to honour it.
+
+```
+setup — one friend's safety setup, proposed, reviewed, agreed (#184)
+
+One form per friend, agreed before it is enforced, because a blanket restrictive
+setup prevents useful work and ignores each friend's chosen harness, while a
+blanket permissive one hands every friend every other friend's secrets. Print
+it, fill it with the friend who would run under it, and paste the FILLED form
+where the review happened; the private configuration it describes is never
+pasted anywhere. Names, models, harnesses and bench layouts are not constants
+of this form: every value below is a placeholder, and a friend's own choices
+fill their own copy. A friend may propose an alternative, decline, or stay
+silent, and missing feedback is pending, never assent. An agreed form is an
+agreement and nothing more: it supplies no account access, and implementation,
+credential migration and deployment are separate staged work with their own
+authorization.
+
+## The proposal (written with the friend)
+
+friend: <name>
+bench: <the machine or hosted runner this friend works on>
+harness: <the harness this friend chose, and its version>
+model: <the model this friend chose; never this form's business>
+proposal by: <who wrote this form, and where the review is recorded>
+reviewed with: <the friend's own read of this form, or pending>
+
+read scope: <the shared inputs this friend needs to read, named once>
+write scope: <this friend's own directories, and nothing above them>
+execution boundaries: <one task, one process tree, one deadline, or the
+  friend's own boundary and who holds it>
+secret use: <the ONE seat file that holds this friend's keys, and the ONE
+  variable name the harness reads; a value is never written here>
+destructive controls: <what a delete, a force-push or a repository
+  destruction must be unable to reach, and which ruleset forbids it>
+recoverability: <what is pushed where on every exit, so a delete is a
+  re-clone>
+unresolved concerns: <what this friend has not agreed to, in their own words>
+
+## The agreement (the friend's own half)
+
+status: agree | alternative | decline | pending
+alternative proposed: <the friend's own setup, in their own words, or ->
+declined because: <the reason, kept honestly, or ->
+pending since: <the date feedback was asked for>
+
+## The guarantee table (filled together, one row per guarantee)
+
+| guarantee | who enforces it | supported here | evidence |
+| --- | --- | --- | --- |
+| a read outside the named lists is denied | the OS wall | yes / no | nova-sandbox probe |
+| a write outside the write set is denied | the OS wall | yes / no | probe step write_outside |
+| no credential file is readable inside the wall | the OS wall and the caller's placement | yes / no | probe --secret <path> |
+| no agent socket or agent address reaches the child | the OS wall and the environment scrub | yes / no | SPEC-SANDBOX rules 7 and 9 |
+| a push from inside the job fails | the OS wall | yes / no | the four mechanisms of SPEC-SANDBOX test 27 |
+| the harness asks before an outside path | a cooperating harness | yes / no / unproven | the fence example below |
+| the friend's work survives a delete | the launcher, outside the wall | yes / no | the push on exit, a re-clone recovers |
+| the friend's secrets stay the friend's | the seat file's own recipients | yes / no | nova-secrets check |
+
+A row the OS wall enforces is a fact the kernel keeps on the machine this form
+names. A row a cooperating harness enforces is a row the wall must not be
+asked to prove: mark it unproven until the friend's harness build is shown to
+honour it, and call a row supported only on the machine and the build this
+form names.
+
+## The generic examples (placeholder values only, never a private one)
+
+the wall, one job, its lists written down in one place and never guessed:
+  HOME=<data home> nova-sandbox --read <the shared reference checkout>
+    --read <the worker home> --write <the job directory>
+    --write <the data home> -- <the friend's harness> <args...>
+
+the fence, the harness's own permission block, allow or deny, never ask:
+  {"permission": {"external_directory": "deny", "webfetch": "<the friend's choice>"}}
+
+the seat, one file per friend, sealed to that friend's bench key alone:
+  nova-secrets exec --store <the store's working copy> --as <this friend>
+    --key <the key path> --sops <the sops binary>
+    --only <ONE variable name> --require <ONE variable name> -- <launcher>
+
+the launcher, outside the wall, the friend's own lists:
+  sets HOME inside a --write, passes the credential by environment read as
+  data before the wrap, and pushes the friend's directories to their remote
+  on every exit, clean or not.
+
+## What is never in this form
+
+No secret, no key, no token and no private path is ever written into this
+form, a task card, a bus note, an issue or a token ledger: a name or a path
+is not a secret, but a value is, and this form carries values for nobody.
+Before any staged implementation is built on an agreed form, validate it on
+synthetic secrets and disposable repositories and record both runs:
+a denied destructive operation and successful permitted work.
+```
+
 ## `triage` — one page
 
 `triage` walks the job directories, takes every `RESULT.md` **whose revision
@@ -2479,10 +2590,12 @@ verb, and tests that pin all three by executing them.
    wait, kill, report `survived`. Tests: a child that ignores terminate is
    killed; the report says so; the watcher never matches a process by its command
    line.
-6. **`internal/swarm/templates.go`** — the three task templates and the
-   `RESULT.md` template, as embedded text, each with its conditions and the
-   number that produced it. Tests: `template --name` prints each; `add
-   --template` wraps a task and the result contains every condition.
+6. **`internal/swarm/templates.go`** — the three task templates, the
+   `RESULT.md` template and the `setup` agreement form (#184), as embedded
+   text, each with its conditions and the number that produced it. Tests:
+   `template --name` prints each; `add --template` wraps a task and the
+   result contains every condition; `add --template setup` is refused and
+   the setup form carries no private name, path or value.
 7. **`internal/swarm/result.go`** — the `RESULT.md` parser: the three states,
    the Per item and Gates tables, `Left owed`, `One line`, the finding lines
    with their `dup:` marks and their verbatim quotes, the owed-list match, the

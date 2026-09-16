@@ -79,11 +79,13 @@ func (c *Card) Open() bool { return c.State == "OPEN" }
 // Owed reports whether this card is a row of the owed ledger that has not been probed.
 func (c *Card) Owed() bool { return c.Row && c.Open() }
 
-// Log is what a backend hands back: the event lines it holds, and how many files in it
-// were not cards at all. The second number is here rather than behind a type assertion so
-// that nothing above the Backend interface learns which backend it has.
+// Log is what a backend hands back: the event lines it holds, the author of each line
+// (empty for the file backend, the comment author for the issue backend), and how many
+// files in it were not cards at all. The second number is here rather than behind a type
+// assertion so that nothing above the Backend interface learns which backend it has.
 type Log struct {
 	Lines         []string
+	Authors       []string // comment author per line; empty for the file backend
 	UnparsedFiles int
 }
 
@@ -102,6 +104,17 @@ type Board struct {
 // than read, so that every derivation in the tests is a pure function of its arguments.
 func Derive(log Log, now time.Time, stale time.Duration) *Board {
 	b := &Board{UnparsedFiles: log.UnparsedFiles}
+
+	// Build a map from event line to its author (from the issue backend's comment author).
+	// The file backend leaves Authors empty, so the map will have no entries and the fold
+	// falls back to as= as before. The issue backend carries the comment author, and the
+	// fold uses it for ownership (security#30, finding 6).
+	authorOf := map[string]string{}
+	if len(log.Authors) == len(log.Lines) {
+		for i, line := range log.Lines {
+			authorOf[line] = log.Authors[i]
+		}
+	}
 
 	// A union merge can hold one line twice, and two events equal in all five keys of the
 	// total order ARE one line. Fold it once.
@@ -134,7 +147,7 @@ func Derive(log Log, now time.Time, stale time.Duration) *Board {
 	}
 
 	for _, id := range order {
-		card := foldCard(id, byCard[id], b, now, stale)
+		card := foldCard(id, byCard[id], authorOf, b, now, stale)
 		if card != nil {
 			b.Cards = append(b.Cards, card)
 		}
@@ -164,8 +177,10 @@ func trimmedNonBlank(line string) bool {
 	return false
 }
 
-// foldCard is the walk for one card's events.
-func foldCard(id string, events []Event, b *Board, now time.Time, stale time.Duration) *Card {
+// foldCard is the walk for one card's events. authorOf maps each event line to its
+// comment author (issue backend) or is empty (file backend). When an author is present,
+// it is used for ownership instead of the as= label (security#30, finding 6).
+func foldCard(id string, events []Event, authorOf map[string]string, b *Board, now time.Time, stale time.Duration) *Card {
 	var roots []Event
 	var later []Event
 	for _, e := range events {
@@ -289,11 +304,19 @@ func foldCard(id string, events []Event, b *Board, now time.Time, stale time.Dur
 		if e.AtOK && e.At.After(card.LatestAt) {
 			card.LatestAt = e.At
 		}
+		// When the backend carries a comment author (issue backend), use it for ownership
+		// instead of the as= label. The as= is still the display label on the event.
+		// The file backend leaves authorOf empty, so it falls back to as= as before.
+		actor := e.As
+		if a, ok := authorOf[e.Line]; ok && a != "" {
+			actor = a
+		}
 		switch {
 		case e.Verb == "taken":
-			card.Owner, card.TakenAt, card.HasTake = e.As, e.At, true
+			card.Owner, card.TakenAt, card.HasTake = actor, e.At, true
 		case Closing(e.Verb) && card.Close == nil:
 			closing := e
+			closing.As = actor // use the comment author if available
 			card.Close = &closing
 			card.State = "CLOSED"
 			card.Probed = e.Verb == "probed"

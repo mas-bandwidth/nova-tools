@@ -47,12 +47,13 @@ The loop ends only when the pool and the queue are both empty, and then it says 
 ## The rules, numbered
 
 1. **Sources are declared in one file, named by a flag, kept in git.** `--sources <file>` is
-   a tab-separated file, one source per line: `kind`, `locator`, `template`. Four kinds:
+   a tab-separated file, one source per line: `kind`, `locator`, `template`. Six kinds:
    `issues` (`owner/repo` — open issues carrying label `card`, or the dogfood shape: tool,
    command, verbatim output, expected, smallest fix), `audits` (`owner/repo` — open issues
    whose body has a `MISSING:` or `DRIFT` line, one candidate per such line), `bus` (a
    nova-bus checkout — open notes whose body has a `slices:` block, one candidate per slice),
    `roadmap` (a lisp file under `docs/roadmaps/` — every cell whose `:card` names a template),
+   `prs` (`owner/repo` — open, non-draft pull requests, one read candidate per PR),
    `work` (a nova-work checkout — bug nodes and item nodes that are open, unleased and
    unblocked, one candidate per node). A `work` node is unleased when no `launch` currently
    holds it and unblocked when it is not waiting on a merge; the node id rides on the card's
@@ -63,15 +64,15 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    a pool with a source silently missing would read as *no work* (the same law as nova-update
    rule 7: a dead source is never green).
 2. **`pool.tsv` is five fields, one candidate per line, in source order.** `source`, `id`,
-   `kind`, `title`, `template`. `id` is the issue number, the audit line's `<issue>#<n>`,
-   the note id and slice ordinal, the roadmap cell name, or the work node id. `template` is
+   `kind`, `title`, `template`. `id` is the issue number, the PR number, the audit line's
+   `<issue>#<n>`, the note id and slice ordinal, the roadmap cell name, or the work node id. `template` is
    the source's unless
    the item names one: an issue body line `template: <name>`, a slice's `template:` word, or
    the cell's `:card`. A candidate whose (`source`,`id`) is already in `<root>/seen.tsv` with
    state `carded`, `running` or `pr` is not re-pooled; a `retry` state is, so a rewritten
    card can go out (rule 14). Priority is source order and nothing else.
-3. **Bounded work only.** A candidate is one issue, one audit line, one slice, one cell:
-   one bounded item, one card. `pool` never splits an item and never merges two; an issue
+3. **Bounded work only.** A candidate is one issue, one PR, one audit line, one slice, one
+   cell: one bounded item, one card. `pool` never splits an item and never merges two; an issue
    whose body says it is a plan (no `expected`, no `smallest fix`, a `slices:` block of its
    own) is counted in `plan=<n>` on the `POOL` line and not pooled — a plan is the bus's, and
    its slices arrive by the `bus` source.
@@ -207,29 +208,27 @@ The loop ends only when the pool and the queue are both empty, and then it says 
 ## The verbs
 
 ```
-nova-pulse pool    --sources <file> --work <nova-work root> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--benches <benches.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--spend-max <usd>] [--max-attempts <n>] [--scope <file>] [--timeout <s>] [--max <n>]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--timeout <s>] [--max <n>]
-nova-pulse handoff --to <name> --root <dir> [--timeout <s>]
-nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--timeout <s>] [--max <n>]
+nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse width   --root <dir> --pool <pool.tsv>
-nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>]
 nova-pulse version
 nova-pulse help
 ```
 
 Those lines are the string `nova-pulse help` must print, byte for byte — the parity is a
 demand on `internal/pulse/cli.go`'s `pulseVerbs`, which carries the same claim in a comment,
-and a replay walks it (replay 36). The shipped string is behind this draft and the gap is
-named in the open questions, not papered over here. `--timeout <s>` (default
-120) bounds every `gh`, `git`, `nova-bus`, `nova-wake` and `nova-swarm` child, for
-SPEC-MERGE's reason (SPEC-MERGE.md:458), and every verb that spawns one carries the flag —
-`pool`, `cut`, `launch`, `harvest`, `handoff`, `takeover` and `status`. `width` spawns
-nothing and carries none; `manager` takes its bound from the policy's `wait-timeout` and
-carries none either. `harvest` takes `--sources` and `--templates` because its last act is
-`pool` and `cut` again (rule 15). There is no `--model`, no `--priority`, no `--retry`.
+and a replay walks it (replay 36). The rules name verbs and flags the shipped block does not
+yet offer — `handoff`, `takeover`, `status`, rule 9's admission gates, `--work`, `--benches`
+and `--timeout` on every spawning verb — and each of those gaps is named in the open
+questions, not listed here, so a reader who types a line in this block never gets a flag
+error. `--timeout <s>` (default 120) bounds every `gh`, `git`, `nova-bus`, `nova-wake` and
+`nova-swarm` child, for SPEC-MERGE's reason (SPEC-MERGE.md:458); `pool` is the one verb that
+carries it today, and the rest take it when they land. `harvest` takes `--sources` and
+`--templates` because its last act is `pool` and `cut` again (rule 15). There is no
+`--model`, no `--priority`, no `--retry`.
 
 ## Handoff
 
@@ -259,7 +258,7 @@ It prints, no model, at most 20 lines, eight line kinds, each one line, counts n
 
 - `WIDTH <bench>`, one per bench in scope — `running` jobs, `slots`, `load`, `headroom`.
 - `QUEUE` — `pending`, `gated` (waiting on a merge or a hold), `launched`, `done`, `failed`.
-- `RATE` — `cards_per_hour`, `p50_s`, `p90_s`, `usd_per_card`, `parallelism`, from `usage.tsv`.
+- `RATE` — `cards_per_hour`, `p50_s`, `p90_s`, `usd_per_card`, `parallelism`, from `usage.tsv`; with no measured usage in the window every metric reads `-` — a cost or latency never measured is unknown, never zero.
 - `REMAINING` — `queue` rows, `unread_prs`, `dirty_prs`, `uncarded_issues`, `hours`, in scope only.
 - `CONTRACTION` — cards `cut/done`, prs `opened/merged`, issues `filed/closed`, for the last hour and the day, counted, never from a report body, with one verdict.
 - `ADOPTION <friend>`, one per friend, coordinator included — `version`, `receipt`, `edges`, from the ADOPT files and bus receipts.
@@ -274,7 +273,7 @@ closed, remaining by depth, completion by epic) once the tree is the pool (#500)
 ```
 STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
-STATUS RATE cards_per_hour=<n> p50_s=<n> p90_s=<n> usd_per_card=<n> parallelism=<n>
+STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
 STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
 STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
@@ -363,7 +362,7 @@ coordinator must act on, and it exits like a refusal so a wake fires on it). An
 `ADMIT REFUSED` line is an event, not a verdict: it leaves the exit code alone (rule 9).
 
 ```
-POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> work=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
+POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> prs=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
 POOL REFUSED source=<kind>:<locator>: <reason> (<remedy>)
 CUT OK cards=<n> skipped=<n> zero=<n> flat=<n> metered=<n> out=<dir>
 CUT ROUTE route=<model> reason=<class>
@@ -675,6 +674,10 @@ handoff (rule **The manager tier**).
     sets a `TMPDIR` is `CUT REFUSED` naming the rule, no card written — the runner exports
     `TMPDIR` outside every repo (#460), and a card that set its own put its temp dir inside
     the job's repo, the red cards 247, 266 and 353 reported and did not cause.
+50. `pool-reads-open-non-draft-prs`: a `prs` source with two open non-draft PRs and one open
+    draft yields `prs=2` on the `POOL` line and two `pool.tsv` rows of kind `read`, template
+    `read`, one candidate per PR — the draft is nowhere, and the read candidate is the same
+    shape harvest's own read card has (rule 13).
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 

@@ -147,6 +147,9 @@ func TestACappedListingIsAPrefixWithAMoreLine(t *testing.T) {
 
 // RUN NOTE is EXACTLY ONE remedy line.
 func TestRunNoteIsExactlyOneLine(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	b.add("a task that finishes\nFAKE-FINDINGS 1\n")
 	exit, stdout, stderr := b.run()
@@ -167,6 +170,9 @@ func TestRunNoteIsExactlyOneLine(t *testing.T) {
 // `triage --batch` of an id no sidecar carries is a refusal at exit 1, and a task queued by
 // `add` beside a batch is not in it.
 func TestBatchMembershipIsTheSidecar(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	tasks := filepath.Join(b.dir, "tasks")
 	write(b.t, filepath.Join(tasks, "one.md"), "first task\nFAKE-FINDINGS 1\n")

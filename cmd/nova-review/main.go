@@ -208,16 +208,16 @@ func packet(args []string, out, errOut io.Writer) int {
 		fullRange = base + ".." + current
 		diffBase = base
 	} else {
-		rangeText = merge.Short(base) + "..." + merge.Short(current)
+		rangeText = merge.Short(baseSHA) + "..." + merge.Short(current)
 		fullRange = baseSHA + "..." + current
 	}
-	packetID := packetID(id, current, base, rangeText)
+	packetID := packetID(id, current, baseSHA, rangeText)
 	if *reuse != "" {
 		hdr, content, e := readReusePacket(*reuse, *maxBytes)
 		if e != nil {
 			return refuse(errOut, e.Error())
 		}
-		if hdr.ID != packetID || hdr.Entry != id || hdr.Head != current || hdr.Base != base || hdr.Range != rangeText {
+		if hdr.ID != packetID || hdr.Entry != id || hdr.Head != current || hdr.Base != baseSHA || hdr.Range != rangeText {
 			fmt.Fprintf(errOut, "PACKET REUSE asked=%s found=%s file=%s: that packet was built for another (entry, head, range); build this reader's own\n", packetID, oneline.Field(hdr.ID), oneline.Field(*reuse))
 			return 2
 		}
@@ -308,7 +308,7 @@ func packet(args []string, out, errOut io.Writer) int {
 			ID:    packetID,
 			Entry: id,
 			Head:  current,
-			Base:  base,
+			Base:  baseSHA,
 			Range: rangeText,
 			Who:   *who,
 			Built: time.Now().UTC().Format(time.RFC3339),
