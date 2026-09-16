@@ -644,7 +644,11 @@ first line, which is the sha the reader then hands to `verdict`. A sha read
 from the host is a read, not a guess. A PR entry's head is fetched as
 `pull/<n>/head` from the GitHub remote the lane's `--repo` names, never from the
 lane's `--remote` (which may be a local rehearsal with no pull refs); a branch
-entry's head is fetched from the lane remote (#449). The merge base (`main`,
+entry's head is fetched from the lane remote (#449). When the head fetch fails —
+a local rehearsal remote has no `pull/*/head` — a given `--head` of a full
+40-character sha still builds the packet for that sha and prints `PACKET NOTE
+fetch failed, using --head`: the fetch exists only to detect a moved head, and
+`PACKET STALE` is a refusal only when the fetch succeeds and disagrees (#476). The merge base (`main`,
 or whatever `--base` names) is fetched from the same GitHub remote as the PR
 head, never from the lane's `--remote` when that remote is a local rehearsal
 with no `main` (#493); a branch entry keeps fetching its base from the lane

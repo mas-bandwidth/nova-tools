@@ -779,7 +779,9 @@ immutable, and an `--out` that already exists is a refusal — and prints one
 receipt line: `PACKET OK entry=… id=… head=… base=… range=… files=… hunks=…
 rules=… prior=… open=… bytes=… cut=… reused=… out=…`. A `--head` that is no
 longer the entry's head prints `PACKET STALE entry=… asked=… current=…`, exit 1,
-naming the head it moved to. Every refusal is one `PACKET REFUSED: …` line,
+naming the head it moved to. A `--head` of a full sha still builds when the
+entry-head fetch fails — a local rehearsal remote has no `pull/*/head` — printing
+`PACKET NOTE fetch failed, using --head`. Every refusal is one `PACKET REFUSED: …` line,
 exit 2, and a `--reuse` candidate built for another (entry, head, range) is a
 `PACKET REUSE` line naming what it was built for.
 

@@ -1029,6 +1029,78 @@ func TestPacketHeadBypassBuildsWhenTheEntryHeadFetchFails(t *testing.T) {
 	}
 }
 
+func TestPacketHeadBypassBuildsWhenPullRefMissing(t *testing.T) {
+	dir := t.TempDir()
+	rehearsal := filepath.Join(dir, "rehearsal.git")
+	ghremote := filepath.Join(dir, "ghremote.git")
+	seed := filepath.Join(dir, "seed")
+	if e := os.MkdirAll(seed, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt := func(d string, args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	gitAt(dir, "init", "-q", "--bare", rehearsal)
+	gitAt(dir, "init", "-q", "--bare", ghremote)
+	gitAt(seed, "init", "-q", "-b", "main")
+	gitAt(seed, "config", "user.email", "t@example.invalid")
+	gitAt(seed, "config", "user.name", "t")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "base")
+	base := gitAt(seed, "rev-parse", "HEAD")
+	// The lane's --remote is a local rehearsal: it has the objects but no pull/*/head refs.
+	gitAt(seed, "push", "-q", rehearsal, "main:refs/heads/main")
+	gitAt(rehearsal, "symbolic-ref", "HEAD", "refs/heads/main")
+	gitAt(seed, "checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\nchanged\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "change")
+	head := gitAt(seed, "rev-parse", "HEAD")
+	// --head's commit must be present in the lane clone's object store.
+	gitAt(seed, "push", "-q", rehearsal, "feature:refs/heads/feature")
+	// The GitHub remote the lane's --repo names has no pull/411/head either.
+	gitAt(seed, "push", "-q", ghremote, "main:refs/heads/main")
+	gitAt(ghremote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	lane := filepath.Join(dir, "lane")
+	if e := os.MkdirAll(lane, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	repo := filepath.Join(lane, merge.RepoDir)
+	gitAt(dir, "clone", "-q", rehearsal, repo)
+	gitAt(repo, "config", "url."+ghremote+".insteadOf", "https://github.com/test/repo.git")
+
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: base, LaneBranch: "lane", PRs: []*merge.Entry{{PR: 411, OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--pr", "411", "--who", "Johnny", "--head", head, "--out", "pkt-head.md"}, &out, &errb); code != 0 {
+		t.Fatalf("packet --head on a local rehearsal remote (no pull ref) code=%d stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "PACKET NOTE fetch failed, using --head") {
+		t.Fatalf("missing note %q in %q", "PACKET NOTE fetch failed, using --head", errb.String())
+	}
+	if _, e := os.Stat("pkt-head.md"); e != nil {
+		t.Fatalf("packet was not written: %v", e)
+	}
+}
+
 func TestPacketRefusalNamesAddRemedy(t *testing.T) {
 	lane, _ := packetLab(t)
 	old, _ := os.Getwd()
