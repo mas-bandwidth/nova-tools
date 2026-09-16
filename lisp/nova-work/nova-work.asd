@@ -17,11 +17,17 @@
                (:file "src/event")
                (:file "src/state")
                (:file "src/journal")
-               (:file "src/kernel")))
+               (:file "src/kernel")
+               (:file "src/s6-operation")
+               (:file "src/s6-partition")
+               (:file "src/s6-snapshot")
+               (:file "src/s6-clip")
+               (:file "src/s6-savepoint")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
   :depends-on ("nova-work")
   :serial t
   :components ((:file "tests/harness")
-               (:file "tests/acceptance")))
+               (:file "tests/acceptance")
+               (:file "tests/s6")))
