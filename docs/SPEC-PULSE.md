@@ -201,7 +201,10 @@ nova-pulse version
 nova-pulse help
 ```
 
-Those lines are the string `nova-pulse help` prints, byte for byte. `--timeout <s>` (default
+Those lines are the string `nova-pulse help` must print, byte for byte — the parity is a
+demand on `internal/pulse/cli.go`'s `pulseVerbs`, which carries the same claim in a comment,
+and a replay walks it (replay 36). The shipped string is behind this draft and the gap is
+named in the open questions, not papered over here. `--timeout <s>` (default
 120) bounds every `gh`, `git`, `nova-bus`, `nova-wake` and `nova-swarm` child, for
 SPEC-MERGE's reason (SPEC-MERGE.md:458), and every verb that spawns one carries the flag —
 `pool`, `cut`, `launch`, `harvest`, `handoff`, `takeover` and `status`. `width` spawns
@@ -524,6 +527,11 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
 35. `status-remaining-counts-in-scope-only`: `REMAINING` counts queue rows, unread PRs, dirty
     PRs and uncarded issues in scope only — a bench or friend outside `--roots <dirs>` is
     nowhere on the line.
+36. `help-is-the-verbs-block-byte-for-byte`: `nova-pulse help` prints this file's **The
+    verbs** block byte for byte — the test reads the fenced block out of
+    `docs/SPEC-PULSE.md` and compares, so a flag added here and not there is red, and so is
+    a flag added there and not here; the mutation that matters: a verb line edited on one
+    side only.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 
@@ -540,3 +548,13 @@ tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`
 4. **This spec needs `nova-swarm batch --then` (card 269) first.** Until it lands, `launch`
    admits and prints its line, and `harvest` is run by a person after `nova-swarm wait`;
    nothing else in this draft depends on it.
+5. **What the shipped tool is behind on, named rather than assumed.** This is a draft, and
+   `## Tests this spec demands` says so: the replays are demanded of the implementation, not
+   read off it. Three deltas are open against `internal/pulse` at this draft's head, each one
+   card's work: `pulseVerbs` lacks `--work` on `pool`, the `handoff`, `takeover` and `status`
+   lines, and this draft's `--benches` and `--timeout`; `cut.go` prints `flash=<n> pro=<n>` on
+   `CUT OK` where rule 7's cost table gives `zero=<n> flat=<n> metered=<n>`, and writes
+   `cards.tsv` with four fields where rule 7 gives five; and `TestCutModelByKind` pins the
+   routing replay 8 replaces. Default: the spec leads, the cards follow, and no rule here is
+   softened to match code that has not been written. Rejected: documenting the code as it is,
+   which is how a draft stops being a design.
