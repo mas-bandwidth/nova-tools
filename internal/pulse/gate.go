@@ -132,7 +132,7 @@ func Gate(in GateInput) int {
 		}
 		fmt.Fprintf(in.Stdout, "GATE RED repo=%s branch=%s sha=%s run=%d job=%s test=%s admit=%s stop=written\n",
 			oneline.Field(in.Repo), oneline.Field(in.Branch), sha12(run.HeadSHA), run.ID,
-			oneline.Field(name), oneline.Field(test), oneline.Field(dash(admit)))
+			oneline.Field(name), oneline.Field(test), oneline.Field(dashOr(admit)))
 		return 1
 
 	case "green":
@@ -209,7 +209,7 @@ func admissionName(log, test string) string {
 	return ""
 }
 
-func dash(s string) string {
+func dashOr(s string) string {
 	if s == "" {
 		return "-"
 	}

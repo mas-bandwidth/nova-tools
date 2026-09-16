@@ -54,7 +54,7 @@ func Launch(in LaunchInput) int {
 		admitted, refused := admitCards(cards, stop, in.Stderr)
 		if refused > 0 && len(admitted) == 0 {
 			fmt.Fprintf(in.Stdout, "PULSE STOP admitted=0 refused=%d admit=%s (the gate's STOP admits only the red's own card)\n",
-				refused, oneline.Field(dash(AdmissionName(stop))))
+				refused, oneline.Field(dashOr(AdmissionName(stop))))
 			return 0
 		}
 		cards = admitted
