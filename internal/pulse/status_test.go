@@ -266,3 +266,136 @@ func TestStatusRemainingCountsInScopeOnly(t *testing.T) {
 		t.Errorf("REMAINING wants the in-scope queue and PR counts, got:\n%s", out)
 	}
 }
+
+// statusLine returns the one full line beginning with prefix, so a grammar change is a
+// red test rather than a substring that still matches.
+func statusLine(t *testing.T, out, prefix string) string {
+	t.Helper()
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			return l
+		}
+	}
+	t.Fatalf("no %q line in:\n%s", prefix, out)
+	return ""
+}
+
+// status-contraction-window-and-threshold-stay-visible (#177: "Avoid reacting to one
+// arbitrary sampling instant; configurable windows and thresholds must stay visible"):
+// every CONTRACTION line names the sustained window and the threshold that produced its
+// verdict; one above-threshold hour is never enough, two consecutive ticks are; the day
+// line prints the same sustained verdict as the hour line (the two windows shared one
+// marker before, and the second read of a tick could never see the run the first wrote);
+// a marker in the old shape -- one bare hour key -- is a run of one; and
+// --expanding-hours changes the hours the verdict requires and the window the line names.
+func TestStatusContractionWindowAndThresholdStayVisible(t *testing.T) {
+	base := t.TempDir()
+	rootA, rootB := filepath.Join(base, "a"), filepath.Join(base, "b")
+	queueA, roots, specs, now := setupStatus(t, rootA)
+	writeSlots(t, rootA, []string{"free"})
+	writeUsage(t, rootA, "j1", "2026-09-15T11:40:00Z", "2026-09-15T11:50:00Z", "0", "0.1")
+	writeSlots(t, rootB, []string{"free"})
+	writeUsage(t, rootB, "j0", "2026-09-15T10:40:00Z", "2026-09-15T10:50:00Z", "0", "0.1")
+	writeUsage(t, rootB, "j1", "2026-09-15T11:40:00Z", "2026-09-15T11:50:00Z", "0", "0.1")
+	tick1, _ := time.Parse(time.RFC3339, "2026-09-15T11:00:00Z")
+	// Two PRs opened to one merged in the 11:00 hour, none anywhere else.
+	prs11 := `[{"number":3,"title":"t3","createdAt":"2026-09-15T11:30:00Z","mergedAt":"2026-09-15T11:55:00Z"},{"number":4,"title":"t4","createdAt":"2026-09-15T11:31:00Z","mergedAt":null}]`
+	prs1011 := `[{"number":1,"title":"t1","createdAt":"2026-09-15T10:30:00Z","mergedAt":"2026-09-15T10:55:00Z"},{"number":2,"title":"t2","createdAt":"2026-09-15T10:31:00Z","mergedAt":null},` + prs11[1:]
+
+	// A ratio at 1 is CONVERGING, and the line names the window and the threshold.
+	writeStatusFile(t, queueA, "REPO", "owner/repo\n")
+	fakePrIssueGh(t, specs, "[]", "[]")
+	out, _, code := runStatus(t, queueA, roots, now, 20)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if got := statusLine(t, out, "STATUS CONTRACTION hour"); got != "STATUS CONTRACTION hour cards=1/1 prs=0/0 issues=0/0 verdict=CONVERGING window=2h above=1" {
+		t.Errorf("a balanced hour must read CONVERGING with its window and threshold visible:\n%s", out)
+	}
+	if got := statusLine(t, out, "STATUS CONTRACTION day"); got != "STATUS CONTRACTION day cards=1/1 prs=0/0 issues=0/0 verdict=CONVERGING window=2h above=1" {
+		t.Errorf("a balanced day must read CONVERGING with its window and threshold visible:\n%s", out)
+	}
+
+	// One above-threshold hour is not divergence: still CONVERGING, window visible.
+	fakePrIssueGh(t, specs, prs11, "[]")
+	out, _, code = runStatus(t, queueA, roots, now, 20)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if got := statusLine(t, out, "STATUS CONTRACTION hour"); got != "STATUS CONTRACTION hour cards=1/1 prs=2/1 issues=0/0 verdict=CONVERGING window=2h above=1" {
+		t.Errorf("one above-threshold hour is not sustained and must read CONVERGING:\n%s", out)
+	}
+
+	// A marker in the old shape -- one bare hour key from before this change -- is a run
+	// of one, so the second consecutive above-threshold hour is EXPANDING on both lines.
+	queueC := filepath.Join(base, "queue-c")
+	if err := os.MkdirAll(queueC, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeStatusFile(t, queueC, "REPO", "owner/repo\n")
+	writeStatusFile(t, queueC, "EXPANDING", "2026-09-15T11\n")
+	out, _, code = runStatus(t, queueC, roots, now, 20)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if got := statusLine(t, out, "STATUS CONTRACTION hour"); got != "STATUS CONTRACTION hour cards=1/1 prs=2/1 issues=0/0 verdict=EXPANDING window=2h above=1" {
+		t.Errorf("two consecutive above-threshold hours must read EXPANDING on the hour line:\n%s", out)
+	}
+	if got := statusLine(t, out, "STATUS CONTRACTION day"); got != "STATUS CONTRACTION day cards=1/1 prs=2/1 issues=0/0 verdict=EXPANDING window=2h above=1" {
+		t.Errorf("the sustained verdict is one fact and must read EXPANDING on the day line too:\n%s", out)
+	}
+
+	// Two ticks in a row above the threshold, remembered between them by the marker the
+	// tool itself writes: the second tick is EXPANDING on both lines.
+	queueD := filepath.Join(base, "queue-d")
+	if err := os.MkdirAll(queueD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeStatusFile(t, queueD, "REPO", "owner/repo\n")
+	fakePrIssueGh(t, specs, prs1011, "[]")
+	out, _, code = runStatus(t, queueD, rootB, tick1, 20)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if got := statusLine(t, out, "STATUS CONTRACTION hour"); got != "STATUS CONTRACTION hour cards=1/1 prs=2/1 issues=0/0 verdict=CONVERGING window=2h above=1" {
+		t.Errorf("the first above-threshold tick must read CONVERGING:\n%s", out)
+	}
+	out, _, code = runStatus(t, queueD, rootB, now, 20)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if got := statusLine(t, out, "STATUS CONTRACTION hour"); got != "STATUS CONTRACTION hour cards=1/1 prs=2/1 issues=0/0 verdict=EXPANDING window=2h above=1" {
+		t.Errorf("the second consecutive above-threshold tick must read EXPANDING on the hour line:\n%s", out)
+	}
+	if got := statusLine(t, out, "STATUS CONTRACTION day"); got != "STATUS CONTRACTION day cards=2/2 prs=4/2 issues=0/0 verdict=EXPANDING window=2h above=1" {
+		t.Errorf("the day line carries its own counts and the same sustained verdict:\n%s", out)
+	}
+
+	// --expanding-hours changes the window the verdict requires and the window the line
+	// names; a window that is not a whole number of hours is refused.
+	queueE, rootE := filepath.Join(base, "queue-e"), filepath.Join(base, "e")
+	if err := os.MkdirAll(queueE, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeStatusFile(t, queueE, "REPO", "owner/repo\n")
+	if err := os.MkdirAll(rootE, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeGh(t, specs, "[]")
+	var flagOut, flagErrs bytes.Buffer
+	code = Main("nova-pulse", []string{"status", "--queue", queueE, "--roots", rootE, "--expanding-hours", "3"}, "test", &flagOut, &flagErrs)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", code, flagErrs.String())
+	}
+	if got := statusLine(t, flagOut.String(), "STATUS CONTRACTION hour"); got != "STATUS CONTRACTION hour cards=0/0 prs=0/0 issues=0/0 verdict=CONVERGING window=3h above=1" {
+		t.Errorf("--expanding-hours 3 must name window=3h on the hour line:\n%s", flagOut.String())
+	}
+	if got := statusLine(t, flagOut.String(), "STATUS CONTRACTION day"); got != "STATUS CONTRACTION day cards=0/0 prs=0/0 issues=0/0 verdict=CONVERGING window=3h above=1" {
+		t.Errorf("--expanding-hours 3 must name window=3h on the day line:\n%s", flagOut.String())
+	}
+	flagOut.Reset()
+	code = Main("nova-pulse", []string{"status", "--queue", queueE, "--roots", rootE, "--expanding-hours", "0"}, "test", &flagOut, &flagErrs)
+	if code != 2 {
+		t.Errorf("--expanding-hours 0 is not a whole number of hours and must be refused at exit 2, got %d; stderr: %s", code, flagErrs.String())
+	}
+}

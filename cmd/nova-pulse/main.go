@@ -23,7 +23,7 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
-nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>]
+nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -284,6 +284,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 	day := f.fs.String("day", "", "")
 	timeout := f.fs.Int("timeout", 120, "")
 	max := f.fs.Int("max", bounded.Default, "")
+	expandingHours := f.fs.Int("expanding-hours", 2, "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -296,17 +297,21 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 	if *max < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
 	}
+	if *expandingHours < 1 {
+		f.add(fmt.Sprintf("--expanding-hours wants a whole number of hours, got %d", *expandingHours))
+	}
 	if f.refused(stderr) {
 		return 2
 	}
 	return pulse.Status(pulse.StatusInput{
-		Queue:   *queue,
-		Roots:   *roots,
-		Day:     *day,
-		Max:     *max,
-		Timeout: time.Duration(*timeout) * time.Second,
-		Stdout:  stdout,
-		Stderr:  stderr,
+		Queue:          *queue,
+		Roots:          *roots,
+		Day:            *day,
+		Max:            *max,
+		Timeout:        time.Duration(*timeout) * time.Second,
+		ExpandingHours: *expandingHours,
+		Stdout:         stdout,
+		Stderr:         stderr,
 	})
 }
 

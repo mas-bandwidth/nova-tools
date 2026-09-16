@@ -251,7 +251,8 @@ tab-separated. `OWNER` is `name`, `host`, `pid`, `since`. `HANDOFF` is `to`, `fr
 
 ## Status
 
-`nova-pulse status --queue <dir> --roots <dirs> [--day <d>]` is the one-verb answer to the
+`nova-pulse status --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>]
+[--expanding-hours <n>]` is the one-verb answer to the
 all-day questions — what runs where, how wide, at max throughput, what landed and who adopted
 it, what is in flight and what remains and how long, what new work appeared, are we converging.
 It prints, no model, at most 20 lines, eight line kinds, each one line, counts not lists:
@@ -260,7 +261,7 @@ It prints, no model, at most 20 lines, eight line kinds, each one line, counts n
 - `QUEUE` — `pending`, `gated` (waiting on a merge or a hold), `launched`, `done`, `failed`.
 - `RATE` — `cards_per_hour`, `p50_s`, `p90_s`, `usd_per_card`, `parallelism`, from `usage.tsv`; with no measured usage in the window every metric reads `-` — a cost or latency never measured is unknown, never zero.
 - `REMAINING` — `queue` rows, `unread_prs`, `dirty_prs`, `uncarded_issues`, `hours`, in scope only.
-- `CONTRACTION` — cards `cut/done`, prs `opened/merged`, issues `filed/closed`, for the last hour and the day, counted, never from a report body, with one verdict.
+- `CONTRACTION` — cards `cut/done`, prs `opened/merged`, issues `filed/closed`, for the last hour and the day, counted, never from a report body, with one verdict on both lines, and the sustained window and the threshold that produced it beside it (`window=<n>h above=1`).
 - `ADOPTION <friend>`, one per friend, coordinator included — `version`, `receipt`, `edges`, from the ADOPT files and bus receipts.
 - `OPEN` — `dogfood`, `holds`, `escalations`.
 - `TOOLS` — `merged_since_adoption` and the names, from `gh` cached per tick.
@@ -275,8 +276,8 @@ STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
 STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
-STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
-STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
+STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
+STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
 STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
 STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
 STATUS TOOLS merged_since_adoption=<n> <names>
@@ -285,10 +286,22 @@ STATUS TOOLS merged_since_adoption=<n> <names>
 **The verdict is the health metric** (Glenn, 2026-09-15, #549, #553). Contraction is tracked
 every tick, and the `CONTRACTION` line's `verdict` is `CONVERGING`, or `EXPANDING` when any one
 stream's ratio — cards `cut/done`, prs `opened/merged`, issues `filed/closed` — has been above
-1 for two consecutive hours. `EXPANDING` means the spec work up front was not done properly or
-the engineering practice is lax, and the coordinator names which, on the record, before another
-implementation card goes out. The same verdict belongs on nova-work `check`, from the journal,
-under #500. Replay: `status-expanding-after-two-hours-above-one`.
+the threshold for the sustained window's consecutive sampled hours. The verdict is computed once
+per run from the hourly samples and printed on both the hour and the day line, and the line
+carries the window and the threshold that produced it — `window=<n>h above=1` — because a
+divergence signal whose window and threshold a reader has to infer is a signal nobody can check
+(nova-tools #177: *avoid reacting to one arbitrary sampling instant; configurable windows and
+thresholds must stay visible*). `--expanding-hours <n>` (default 2, whole hours, refused below
+1) is that window; the run of consecutive above-threshold hours is remembered between runs in
+the queue's `EXPANDING` marker — `<hour> <run>`, and a marker in the old shape, one bare hour
+key from before the run was counted, is a run of one — so one sampling instant never decides
+the verdict and a balanced window never erases the trend. The threshold stays 1: *faster than
+completion* is #177's own definition of divergence, and a threshold a coordinator could raise
+would be the signal tuned into silence. `EXPANDING` means the spec work up front was not done
+properly or the engineering practice is lax, and the coordinator names which, on the record,
+before another implementation card goes out. The same verdict belongs on nova-work `check`,
+from the journal, under #500. Replays: `status-expanding-after-two-hours-above-one`,
+`status-contraction-window-and-threshold-stay-visible`.
 
 ## Progress
 
@@ -678,6 +691,15 @@ handoff (rule **The manager tier**).
     draft yields `prs=2` on the `POOL` line and two `pool.tsv` rows of kind `read`, template
     `read`, one candidate per PR — the draft is nowhere, and the read candidate is the same
     shape harvest's own read card has (rule 13).
+51. `status-contraction-window-and-threshold-stay-visible` (#177: *avoid reacting to one
+    arbitrary sampling instant; configurable windows and thresholds must stay visible*): every
+    `CONTRACTION` line names the sustained window and the threshold that produced its verdict
+    (`window=2h above=1` by default); a ratio at 1 and a single above-threshold hour are
+    `CONVERGING`; two consecutive above-threshold ticks — the run remembered between them by the
+    marker the tool itself writes, and a marker in the old shape, one bare hour key, reading as
+    a run of one — print `EXPANDING` on the hour line and on the day line alike, the day line
+    carrying its own counts and the same sustained verdict; `--expanding-hours 3` names
+    `window=3h` on both lines, and `--expanding-hours 0` is refused at exit 2.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 

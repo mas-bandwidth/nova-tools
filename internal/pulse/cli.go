@@ -87,7 +87,8 @@ func statusVerb(args []string, out, errs io.Writer) int {
 	o := struct {
 		queue, roots, day string
 		timeout, max      int
-	}{timeout: 120, max: 20}
+		expandingHours    int
+	}{timeout: 120, max: 20, expandingHours: 2}
 	f := flag.NewFlagSet("status", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	f.StringVar(&o.queue, "queue", "", "the queue directory")
@@ -95,6 +96,7 @@ func statusVerb(args []string, out, errs io.Writer) int {
 	f.StringVar(&o.day, "day", "", "the day the window starts at, YYYY-MM-DD")
 	f.IntVar(&o.timeout, "timeout", 120, "bound on each gh child, seconds")
 	f.IntVar(&o.max, "max", 20, "per-kind output cap")
+	f.IntVar(&o.expandingHours, "expanding-hours", 2, "hours above the threshold before the verdict reads EXPANDING")
 	if err := f.Parse(args); err != nil {
 		return refusal(errs, "STATUS", fmt.Errorf("%s (run nova-pulse help)", err))
 	}
@@ -107,11 +109,12 @@ func statusVerb(args []string, out, errs io.Writer) int {
 	if o.roots == "" {
 		return refusal(errs, "STATUS", fmt.Errorf("missing --roots; refusing to guess (supply the benches, comma separated)"))
 	}
-	if o.max < 0 || o.timeout < 1 {
-		return refusal(errs, "STATUS", fmt.Errorf("invalid bound (use --max >= 0 and --timeout >= 1)"))
+	if o.max < 0 || o.timeout < 1 || o.expandingHours < 1 {
+		return refusal(errs, "STATUS", fmt.Errorf("invalid bound (use --max >= 0, --timeout >= 1 and --expanding-hours >= 1)"))
 	}
 	return Status(StatusInput{
 		Queue: o.queue, Roots: o.roots, Day: o.day, Max: o.max,
-		Timeout: time.Duration(o.timeout) * time.Second, Stdout: out, Stderr: errs,
+		Timeout: time.Duration(o.timeout) * time.Second, ExpandingHours: o.expandingHours,
+		Stdout: out, Stderr: errs,
 	})
 }

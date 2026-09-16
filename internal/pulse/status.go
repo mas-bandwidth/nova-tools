@@ -31,14 +31,15 @@ import (
 // StatusInput is everything the status verb needs, apart from flag parsing so a test can
 // drive it against fake directories and a fake gh on PATH.
 type StatusInput struct {
-	Queue   string // the queue directory: pending, launched, done, failed and the state files
-	Roots   string // comma-separated bench roots, the benches in scope
-	Day     string // YYYY-MM-DD the day window starts at; empty means today (UTC)
-	Max     int
-	Timeout time.Duration
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Now     func() time.Time
+	Queue          string // the queue directory: pending, launched, done, failed and the state files
+	Roots          string // comma-separated bench roots, the benches in scope
+	Day            string // YYYY-MM-DD the day window starts at; empty means today (UTC)
+	Max            int
+	Timeout        time.Duration
+	ExpandingHours int // the sustained window the EXPANDING verdict requires, in whole hours; <= 0 means 2
+	Stdout         io.Writer
+	Stderr         io.Writer
+	Now            func() time.Time
 }
 
 // usageRow is one usage.tsv row reduced to the columns status reads.
@@ -61,6 +62,9 @@ func Status(in StatusInput) int {
 	}
 	if in.Timeout <= 0 {
 		in.Timeout = 120 * time.Second
+	}
+	if in.ExpandingHours <= 0 {
+		in.ExpandingHours = 2
 	}
 	for _, r := range []struct{ v, name, wants string }{
 		{in.Queue, "queue", "the queue directory holding pending, launched, done and the state files"},
@@ -111,6 +115,15 @@ func Status(in StatusInput) int {
 	fmt.Fprintf(out, "STATUS REMAINING queue=%d unread_prs=%d dirty_prs=%d uncarded_issues=%d hours=%d\n",
 		remaining.queue, remaining.unreadPrs, remaining.dirtyPrs, remaining.uncardedIssues, remaining.hours)
 
+	// One verdict per tick, from the hourly samples: the sustained window and the
+	// threshold that produced it print on both CONTRACTION lines, so a reader never has
+	// to infer what the verdict required (#177: configurable windows and thresholds must
+	// stay visible; avoid reacting to one arbitrary sampling instant).
+	hourCut, hourDone := countStarted(rows, hourStart, now), countEnded(rows, hourStart, now)
+	hourOpened, hourMerged := prsOpenedMerged(prs, hourStart, now)
+	hourFiled, hourClosed := issuesFiledClosed(issues, hourStart, now)
+	verdict := contractionVerdict(in.Queue,
+		hourCut > hourDone || hourOpened > hourMerged || hourFiled > hourClosed, now, in.ExpandingHours)
 	for _, w := range []struct {
 		name  string
 		start time.Time
@@ -121,9 +134,8 @@ func Status(in StatusInput) int {
 		done := countEnded(rows, w.start, now)
 		opened, merged := prsOpenedMerged(prs, w.start, now)
 		filed, closed := issuesFiledClosed(issues, w.start, now)
-		v := contractionVerdict(in.Queue, cut > done || opened > merged || filed > closed, now)
-		fmt.Fprintf(out, "STATUS CONTRACTION %s cards=%d/%d prs=%d/%d issues=%d/%d verdict=%s\n",
-			w.name, cut, done, opened, merged, filed, closed, v)
+		fmt.Fprintf(out, "STATUS CONTRACTION %s cards=%d/%d prs=%d/%d issues=%d/%d verdict=%s window=%dh above=1\n",
+			w.name, cut, done, opened, merged, filed, closed, verdict, in.ExpandingHours)
 	}
 
 	// ADOPTION, one per friend (coordinator included), capped.
@@ -422,21 +434,37 @@ func issuesFiledClosed(issues []ghIssueStatus, start, end time.Time) (filed, clo
 	return filed, closed
 }
 
-// contractionVerdict is EXPANDING only when the day's ratio has been above one for two
-// consecutive hours; the last above-one hour is remembered between ticks.
-func contractionVerdict(queue string, expanding bool, now time.Time) string {
+// contractionVerdict is EXPANDING only when the stream ratios have been above the
+// threshold for the sustained window's consecutive sampled hours; the run of
+// above-threshold hours is remembered between ticks, so no one sampling instant decides
+// it (#177). The marker holds the latest above-threshold hour and the run length as
+// "<hour> <n>"; a marker in the old shape -- one bare hour key from before the run was
+// counted -- is a run of one.
+func contractionVerdict(queue string, above bool, now time.Time, hours int) string {
 	path := filepath.Join(queue, "EXPANDING")
-	if !expanding {
+	if !above {
 		_ = os.Remove(path)
 		return "CONVERGING"
 	}
 	key := now.Format("2006-01-02T15")
 	prevHour := now.Add(-time.Hour).Format("2006-01-02T15")
-	if firstLine(path) == prevHour {
-		_ = os.WriteFile(path, []byte(key+"\n"), 0o644)
+	run := 1
+	if line := firstLine(path); line != "" {
+		f := strings.Fields(line)
+		n := 1
+		if len(f) == 2 {
+			if v, err := strconv.Atoi(f[1]); err == nil && v >= 1 {
+				n = v
+			}
+		}
+		if f[0] == prevHour {
+			run = n + 1
+		}
+	}
+	_ = os.WriteFile(path, []byte(key+" "+strconv.Itoa(run)+"\n"), 0o644)
+	if run >= hours {
 		return "EXPANDING"
 	}
-	_ = os.WriteFile(path, []byte(key+"\n"), 0o644)
 	return "CONVERGING"
 }
 

@@ -709,7 +709,7 @@ through `nova-swarm batch`, and fold what comes back. It makes no model call.
 ### status
 
 ```
-nova-pulse status --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>]
+nova-pulse status --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 ```
 
 `status` prints, no model, counted from the queue, `usage.tsv`, the ADOPT
@@ -721,8 +721,8 @@ STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
 STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
-STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
-STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
+STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
+STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
 STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
 STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
 STATUS TOOLS merged_since_adoption=<n> <names>
@@ -735,6 +735,15 @@ flight in scope only. `ADOPTION` prints one line per friend, the coordinator
 included (its `version=` reads `-` until there is an ADOPT file for it).
 With no `usage.tsv` rows in the window every `RATE` metric reads `-` — a cost
 or latency never measured is unknown, never zero.
+The `CONTRACTION` verdict is one sustained fact per run, computed from the
+hourly samples once and printed on both the hour and the day line, and the line
+names the sustained window and the threshold that produced it (`window=<n>h
+above=1`), because a divergence signal whose window and threshold a reader has
+to infer is a signal nobody can check (#177: configurable windows and
+thresholds must stay visible). `--expanding-hours <n>` (default 2, whole hours)
+is that window: the verdict reads `EXPANDING` only after that many consecutive
+sampled hours above the threshold, the run remembered between runs in the
+queue's `EXPANDING` marker, so no one sampling instant decides it.
 Sources: the queue directory (`pending`, `launched`, `done`, `failed`, and the
 `COORDINATOR`, `REPO`, `UNREAD`, `DIRTY`, `UNCARDED`, `HOLD`, `ESCALATE`,
 `DOGFOOD` state files), each bench's `pool/slots/*.json` and `usage.tsv` rows,
