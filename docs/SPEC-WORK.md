@@ -3310,8 +3310,8 @@ copying a definition into every activity record; and its updates and observation
 retained under the event and accounting contracts this document already has.
 
 **A manager's prompt is CONFIG data, tracked per model as a `prompt profile`, and never as memory.**
-Glenn, 2026-09-16: *"prompt engineering is a major part of getting the right results, so the prompt
-per model is tracked as data, not memory."* SPEC-AHEAD: #500. A **prompt profile** is a CONFIG
+(Paraphrasing Glenn, 2026-09-16: prompt engineering is a major part of getting the right results,
+so the prompt per model is tracked as data, not memory.) SPEC-AHEAD: #500. A **prompt profile** is a CONFIG
 member **keyed by manager model** — for example `sonnet`, `opus`, `sol` and `deepseek-v4-pro`, each
 name a team's own configuration and none of them the tool's, by the rule that names no model in
 nova-work — and each profile holds five things: a **pointer to the prompt text**, a file path in the
@@ -5975,20 +5975,7 @@ being the amendment's additions to *Output grammar*:**
   even though fourteen cores sit idle, because slots are bounded by declared concurrency and cores
   are a separate constraint validated independently.
 
-**The replays of the prompt profile (#500), for the manager prompt as CONFIG data, the status-line
-stale profile, the coordinator-only edit and the versioned `:by` record.** The roadmap acceptance
-rows below join the six fleet allocation rows of PR678, each **SPEC-AHEAD: #500** with its replay
-name; the fleet rows stand as appended there and are not renumbered:
-
-| rule | replay |
-|---|---|
-| machines as CONFIG, equipment never completes | SPEC-AHEAD: #500 — `machine-is-config-and-never-a-work-tree-node` |
-| ACTIVE allocation binds machine, slot and generation | SPEC-AHEAD: #500 — `allocation-binds-machine-slot-generation` |
-| `take` is atomic and idempotent | SPEC-AHEAD: #500 — `allocation-take-is-atomic-and-idempotent` |
-| expiry marks an allocation suspect | SPEC-AHEAD: #500 — `expiry-marks-suspect-reuse-needs-fencing` |
-| probes record observed ACTIVE and never CONFIG | SPEC-AHEAD: #500 — `probe-records-observed-active-and-touches-no-config` |
-| one allocator per machine | SPEC-AHEAD: #500 — `one-allocator-per-machine-aliases-share-nested-conserve` |
-| prompt profile as CONFIG, keyed by manager model | SPEC-AHEAD: #500 — `prompt-profile-expired-shows-on-the-status-line` |
+**The prompt profile replay (#500).**
 
 - **`prompt-profile-expired-shows-on-the-status-line`** — a manager whose profile expired yesterday:
   `session status` prints `SESSION OK … profile=sonnet profile-state=stale profile-expired=2026-09-15
