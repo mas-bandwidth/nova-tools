@@ -285,6 +285,66 @@ it changes and not a catalogue. **Expires** on a change to how the tools compose
 dogfood breakage with new tests"; the sequences are `-run TestFriendSequence` in CI's `e2e`
 job.
 
+## 22. A card's line-1 contract never carries the answer
+
+Line 1 is identity and nothing else — `RESULT <label> sha=<sha12>`, the label and the hash of
+the text below it; the verdict is line 2 and the findings come after. Since `gather` scores a
+`RESULT.md` **done on line 1 alone, whatever the harness exit code** (SPEC-SWARM, **gather**,
+landed in #577, pinned by `done-whatever-the-exit-code`; the rc is recorded on the line), a line 1 that stated the expected verdict, the expected count or the fix
+would be a card a worker completes by echoing it. The contract line says only "this is the
+card I was given"; everything that must be earned sits below it, where the reader reads.
+**Measured:** 2026-09-15, the practice-17 shape on 326 cards, line 1 never holding a verdict,
+and `harvest` disposing every card by line 2 (SPEC-PULSE rule 11). **Not measured:** a card
+whose line 1 carried the answer. **Expires** on a change to the contract-line grammar.
+**Rollback:** none; this is what line 1 is for. **Held by:** Rowan.
+
+## 23. A fix card names its reproducing test, quotes its red line, and names the sequence
+
+A card that fixes a fault names the test that reproduces it before the fix, the red line the
+test prints on the broken revision, and the friend sequence the verb sits in (21); the PR it
+becomes carries the `red:` line and the test file, and the manager refuses a fix PR that
+carries neither before the push (landed in #587, `manager-refuses-fix-pr-without-test`). The
+test answers inside the fast tier — under one minute per package, two at most; a timing-shaped
+test takes a fake clock or a sync point, or the `slow` tag and the nightly job (#516, landed
+in #606).
+**Measured:** 2026-09-15/16, every pit-stop fix landed red first, named after the sentence it
+broke: #577 (three tests), #586 (`TestNativeConfigChecksOnlyTheModelsProvider` and the
+absolutize pair, resolved rather than weakened), #581 (three, each run red against a mutated
+pull), #588 (`TestWaitLeavesCheckoutClean`, `TestSendAfterWaitBeatSucceeds`); and the false
+reds those tests replaced cost retries all day. **Not measured:** a fix card without a named
+test that landed clean. **Expires** when the push tool refuses a test-less fix by
+construction. **Rollback:** practice 4 as prose. **Held by:** Rowan; Glenn, 2026-09-15:
+"make sure to capture the dogfood breakage with new tests".
+
+## 24. Hedged cards and unproven routes stay off the critical path
+
+A card on the critical path says one thing and expects one outcome: no "if possible", no "or
+else do X", no route whose harness has not been proven to parse the model's tool calls. A
+hedge is a second card hidden inside the first, and the worker picks the cheaper branch. A
+local model is one slot and never a card the day waits on: the adoption probe records which
+local models the harness can drive (`probe-local-model-supports-tools`, SPEC-SWARM, **The
+verbs**, `native`). **Measured:** 2026-09-15/16, a walled local run reported `NATIVE OK rc=0`
+having written nothing — the model emitted its tool calls as raw text the harness did not
+parse (#591); the coordinator's first diagnosis blamed the wall, a second read found the
+route. **Not measured:** a hedged card that returned the branch the writer meant. **Expires**
+when the probe is in the adopt step and every local route on the table has a probe line.
+**Rollback:** none. **Held by:** Rowan; Glenn's one-slot rule for local models.
+
+## 25. The runner owns `TMPDIR`; `RESULT.md` lives at the job root; a checkout may pre-exist
+
+Three places a card must not choose for itself. `TMPDIR` is exported by `native` outside every
+repository and printed as `tmp=<path>`; a card exports none (#460, landed in #558; the `STEP 1`
+export in SPEC-PULSE **The card** is now redundant and comes out with the template, and a test
+that asserts "not a repo" under the old export was a red the card did not cause). `RESULT.md`
+is written at the job root, never under `repo/`; `gather` copies a misplaced one up and says
+so, and the card is still wrong (#594, landed in #603; the bench pull first, #581). `STEP 1` tolerates an existing checkout, because
+a pre-cloned `repo/` from a bench mirror is how no card pays a clone (#553 rule 3, open).
+**Measured:** 2026-09-15, cards 247, 266 and 353 reported `TestAwakeRefusesNonBus` red under
+`TMPDIR=<job>/scratch`; on the same day several cards wrote `RESULT.md` into `repo/` and were
+scored `no-result`. **Not measured:** a card that set its own `TMPDIR` outside the job.
+**Expires** when the `STEP 1` template loses the export and #553's pre-clone lands. **Rollback:** the
+`STEP 1` export. **Held by:** Rowan.
+
 ## Open
 
 - **The DeepSeek key route is a human's.** Unauthorized is verified for that credential

@@ -41,7 +41,7 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
-  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--benches <file> --bench <name>[,<name>...]]
+  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
   nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
   nova-swarm status    --pool <dir> [--max <n>]
@@ -405,11 +405,12 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	idle := f.fs.Int("idle", 300, "")
 	benches := f.fs.String("benches", "", "")
 	bench := f.fs.String("bench", "", "")
+	then := f.fs.String("then", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	if *cards != "" {
-		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, stdout, stderr)
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, stdout, stderr)
 	}
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	f.want(*tasks, "tasks", "a directory holding one task file per job")
@@ -480,7 +481,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 // TSV. It has no pool and no admission queue: it starts one runner process per card, waits
 // until they all end or the batch's deadline, and folds every card's RESULT.md into one
 // bounded packet.
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench string, stdout, stderr io.Writer) int {
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench string, then string, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
 	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
 	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
@@ -510,7 +511,7 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int
 		ID: id, Deadline: time.Duration(seconds) * time.Second,
 		Idle:  time.Duration(idle) * time.Second,
 		Cards: cards, Root: root, Runner: runner,
-		Benches: benches, Bench: bench,
+		Benches: benches, Bench: bench, Then: then,
 		Stdout: stdout, Stderr: stderr,
 	})
 }
@@ -1335,8 +1336,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
-	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s%s\n",
-		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), usageSuffix(res.usageReason, res.usageState))
+	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
+	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
+	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s\n",
+		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), usageSuffix(res.usageReason, res.usageState))
 	if res.rc != 0 {
 		if res.rc > 0 {
 			return res.rc
