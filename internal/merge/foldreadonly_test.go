@@ -36,7 +36,7 @@ func recordLane(t *testing.T) (lane, file string, whole []byte) {
 
 func laneRecords(lane string) *Records {
 	return &Records{Lane: lane, Branch: "nova-merge/lane", Remote: "origin",
-		Git: NewGit(lane, time.Second, nil), Wait: time.Second}
+		Git: NewGit(lane, reportTestGitTimeout, nil), Wait: time.Second}
 }
 
 func TestAReadOnlyFoldReadsAgainARecordItCaughtHalfWritten(t *testing.T) {
