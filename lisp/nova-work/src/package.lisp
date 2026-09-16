@@ -108,7 +108,36 @@
    #:submit
    #:ask-size
    #:open-issue-count
-   #:open-leaf-count))
+   #:open-leaf-count
+   ;; replays-l3600-2
+   #:*config-schema*
+   #:config-value-valid-p
+   #:apply-config-delta
+   #:*gap-kinds*
+   #:capture-gaps
+   #:capture-complete-p
+   #:absorb-capture
+   #:state-as-of
+   #:operation-launch
+   #:operation-cancel
+   #:add-ordered-row
+   #:finish-row
+   #:retire-row
+   #:active-denominator
+   #:apply-atomic-batch
+   #:apply-independent-batch
+   #:day-key
+   #:parse-day
+   #:day-string
+   #:day-add
+   #:window-days
+   #:open-days-from
+   #:dispatch-facts-distinct-p
+   #:make-offer
+   #:reserve-offer
+   #:make-dispatch
+   #:dispatch-launches
+   #:dispatch-timeout))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
