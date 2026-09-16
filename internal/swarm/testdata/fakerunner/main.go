@@ -159,6 +159,13 @@ func (r *runner) run(s spec) int {
 			}
 		case "sleep":
 			sleep(st.Ms)
+		case "spawn-setsid":
+			// Start a sleeping child in a NEW SESSION (`setsid sleep 300`), the shape issue
+			// #640's deadline must kill by walking the whole tree: a child that setid'd itself
+			// is reachable by no process-group kill, and one the deadline misses keeps running
+			// after the BATCH line. The child's pid is written to Path so a test can assert it
+			// is gone.
+			r.spawnSetsid(r.expand(st.Path))
 		case "spin":
 			r.spin(st.N, st.Ms)
 		case "exit":
@@ -182,6 +189,20 @@ func (r *runner) spin(burnMs, ms int) {
 	sleep(ms)
 	_ = cmd.Process.Kill()
 	_, _ = cmd.Process.Wait()
+}
+
+// spawnSetsid starts `setsid sleep 300` and writes the child's pid to path. The child is not
+// a process group leader to begin with, so setsid does not fork: it calls setsid() and execs
+// sleep in place, leaving the sleeper with this process as its parent and in a session of its
+// own -- in the card's process TREE, and in no process GROUP this card can be killed by.
+func (r *runner) spawnSetsid(path string) {
+	must(os.MkdirAll(filepath.Dir(path), 0o755))
+	child := exec.Command("setsid", "sleep", "300")
+	if err := child.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "fakerunner: spawn-setsid: %v\n", err)
+		os.Exit(2)
+	}
+	must(os.WriteFile(path, []byte(strconv.Itoa(child.Process.Pid)+"\n"), 0o644))
 }
 
 // burn holds a core for d without writing one byte: the state the idle monitor must read as

@@ -199,8 +199,12 @@ func Batch(in BatchInput) int {
 		done       bool   // guarded by doneMu
 		idleKilled bool   // guarded by doneMu
 		deadKilled bool   // killed at the batch deadline; guarded by doneMu
-		rc         int    // the child's exit code; guarded by doneMu
-		lastGrow   time.Time
+		// deadKilledPids is how many processes the deadline kill reached -- the runner and
+		// every descendant in its tree -- printed on the card's ABSTAIN line as killed=<n>
+		// pids (issue #640); guarded by doneMu.
+		deadKilledPids int
+		rc             int // the child's exit code; guarded by doneMu
+		lastGrow       time.Time
 	}
 	var doneMu sync.Mutex
 	procs := make([]proc, len(cards))
@@ -378,7 +382,9 @@ func Batch(in BatchInput) int {
 							procs[i].idleKilled = true
 							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
 							if procs[i].cmd.Process != nil {
-								_ = procs[i].cmd.Process.Kill()
+								// A card's idle kill is its whole tree's, not the runner's alone:
+								// the same harness children a deadline kill must reach (issue #640).
+								killTree(procs[i].cmd.Process.Pid)
 							}
 						}
 					}
@@ -398,7 +404,11 @@ func Batch(in BatchInput) int {
 			}
 			procs[i].deadKilled = true
 			if procs[i].cmd.Process != nil {
-				_ = procs[i].cmd.Process.Kill()
+				// THE DEADLINE KILLS THE WHOLE TREE (issue #640): a kill of the runner alone
+				// left the harness's children -- the sandbox wrapper, its test binaries, a
+				// go-build cache process -- running minutes after the BATCH line. The count
+				// of pids reached rides the card's ABSTAIN line as killed=<n> pids.
+				procs[i].deadKilledPids = killTree(procs[i].cmd.Process.Pid)
 			}
 		}
 		doneMu.Unlock()
@@ -491,7 +501,7 @@ func Batch(in BatchInput) int {
 		// (issue #594): it is copied up to the job root before the card is scored, and the
 		// copy is said once on stderr so the packet's own bytes stay bounded by n.
 		liftResult(filepath.Join(in.Root, scratchName(c), "jobs", c.label), c.label, in.Stderr)
-		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
+		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].deadKilledPids, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
 		rows[i].state, rows[i].reason, rows[i].tail, rows[i].line2 = state, reason, tail, line2
 		if state == "done" {
 			done++
@@ -711,7 +721,11 @@ func findResultBelow(dir string, depth int) (string, bool) {
 // a matching result means it finished late. The tail is one bounded field the remedy needs --
 // the log the idle monitor watched, or the job directory that holds no result -- printed
 // after log=<n>, never in place of the token.
-func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSeconds int, logPath, idleLog string) (state, reason, tail, line2 string) {
+//
+// DEADLINE KILL EVIDENCE (issue #640): the deadline kill names how many pids it reached --
+// the runner and every descendant in its tree -- so a BATCH line's reader knows the card's
+// tree is gone and what it took, the same evidence shape admission carries.
+func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, deadKilledPids, rc, idleSeconds int, logPath, idleLog string) (state, reason, tail, line2 string) {
 	// A remote card's job came back under <root>/<bench>-<n>/jobs/<label>; a local card's
 	// sits under <root>/<n>/jobs/<label>.
 	job := filepath.Join(root, scratchName(c), "jobs", c.label)
@@ -743,7 +757,10 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 			return "abstain", "fence", "path=" + p, ""
 		}
 		if deadKilled {
-			return "abstain", "deadline", "", ""
+			// The deadline kill names how many pids it reached -- the runner and every
+			// descendant in its tree -- so a BATCH line's reader knows the card's tree is
+			// gone and what it took (issue #640), the same evidence shape admission carries.
+			return "abstain", fmt.Sprintf("deadline killed=%d pids", deadKilledPids), "", ""
 		}
 		if cardHarnessSilent(job) {
 			return "abstain", "harness-silent", "job=" + job, ""

@@ -1010,6 +1010,12 @@ routes: see docs/MODELS.md
 provider `--model` names is checked against `--auth`; a provider whose options carry
 `baseURL` and no `apiKey` (ollama on localhost) needs no key and is admitted without one.
 
+A `batch`'s deadline kills a card's **whole process tree** — the runner and every
+descendant of it, a child that setid'd itself into a new session included — never the
+runner alone, whose harness children (the sandbox wrapper, its test binaries, a go-build
+cache process) once outlived the BATCH line by minutes; the card's ABSTAIN line names how
+many pids the kill reached, `reason=deadline killed=<n> pids` (issue #640).
+
 ### First run
 
 `quickstart` needs nothing but a directory: it makes the pool's structure and names the

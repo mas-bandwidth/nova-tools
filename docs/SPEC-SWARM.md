@@ -1052,9 +1052,15 @@ refused everything above 228, and every card scored ABSTAIN `rc=2` with no log t
 `wait` blocks until every card has ended **or** the batch's deadline has
 passed. A card past the deadline is an **abstain** row on the packet, **never
 a hang**: the wait ends at the deadline and reports the stragglers; it does
-not wait for them. The wait reads sidecars and usage files — the pool's own
-accounting, never a card's process. **Missing contact is `unknown`, not
-failure**: a card the machinery cannot reach is `unknown`, never failed.
+not wait for them. The deadline kills the card's **whole process tree** —
+the runner and every descendant of it in the kernel's own table, a child that
+setid'd itself into a new session included — never the runner alone, whose
+children (the sandbox wrapper, its test binaries, a go-build cache process)
+would outlive the BATCH line by minutes (issue #640), and the card's line says
+how many pids the kill reached: `killed=<n> pids`. The wait reads sidecars and
+usage files — the pool's own accounting, never a card's process. **Missing
+contact is `unknown`, not failure**: a card the machinery cannot reach is
+`unknown`, never failed.
 
 - `--idle <seconds>` (default 300) is the per-card idle timeout, held beside
   the batch deadline, never instead of it. A card writes its own log —
@@ -1130,7 +1136,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `runner-refused` | its RUNNER exited before the harness started — no `NATIVE` line and no `harness-output.log` — so the non-zero exit code is the runner's, not the harness's; the runner's last line follows as `last=<line>` (issue #618) |
 | `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it, and its harness DID run |
 | `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
-| `deadline` | was killed at the batch's deadline and published no `RESULT.md` |
+| `deadline` | was killed at the batch's deadline and published no `RESULT.md`; the line names how many pids the kill reached as `killed=<n> pids` (issue #640) |
 | `result-after-deadline` | published a matching `RESULT.md` that only landed because the deadline fired, so it is late, not done |
 | `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
 | `admission` | was refused at admission; the reason follows the token |
@@ -1167,9 +1173,12 @@ The card's line carries the token and its own log count —
 `<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
 field after it where the remedy needs a path: `watched=<path>`, the log the
 idle monitor watched, or `job=<dir>`, the job directory that holds no result.
-**A stall is `log=0`**: a card that ended with no output after the wall opened
-is counted on the `BATCH` line's `stalled=<n>` and reads its own emptiness on
-its line.
+A card killed at the deadline names how many pids the kill reached —
+`reason=deadline killed=<n> pids` — the runner and every descendant in its
+tree, so a BATCH line's reader knows the card's tree is gone with it (issue
+#640). **A stall is `log=0`**: a card that ended with no output after the wall
+opened is counted on the `BATCH` line's `stalled=<n>` and reads its own
+emptiness on its line.
 
 The copied-up result above is the same rule the bench pull holds under
 **Benches**, rule 3 of the pull (#581), and both print the one `BATCH NOTE`
@@ -1198,7 +1207,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline killed=<n> pids|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1346,7 +1355,7 @@ process owns the batch deadline and the per-card `--idle`. The local wrapper
 holds its `ssh` child in a process group of its own; on deadline or idle it
 sends `SIGTERM` to that group, then `ssh <host> pkill -TERM -g <pgid>` with
 the pgid from the `RUN pgid=<n>` line, then `-KILL` after 5 s, and the card is
-scored as a local card: `<label>: ABSTAIN reason=deadline`, or `reason=idle=<s>`
+scored as a local card: `<label>: ABSTAIN reason=deadline killed=<n> pids`, or `reason=idle=<s>`
 counted in `idle=<n>`. If `ssh` itself is unreachable then, the slot is
 `<label>: ABSTAIN reason=bench-unreachable` and gather records what was pulled
 (`RESULT.md` absent, `usage.tsv` absent) with the last local log line. A
@@ -1522,7 +1531,7 @@ BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline killed=<n> pids|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>

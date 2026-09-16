@@ -343,7 +343,7 @@ func TestBatchAbstainNamesReason(t *testing.T) {
 		{
 			name: "deadline", model: "model", body: "RESULT: x\nSLEEP",
 			deadline: 30 * time.Second, kill: "deadline",
-			want: "x slot=1: ABSTAIN reason=deadline log=0",
+			want: "x slot=1: ABSTAIN reason=deadline killed=1 pids log=0",
 		},
 		{
 			name: "result-after-deadline", model: "model", body: "RESULT: x\nLATE",
