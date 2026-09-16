@@ -23,7 +23,6 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
-nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -94,8 +93,6 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdHarvest(rest, stdout, stderr)
 	case "manager":
 		return cmdManager(rest, stdout, stderr)
-	case "status":
-		return cmdStatus(rest, stdout, stderr)
 	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
@@ -274,39 +271,6 @@ func cmdManager(args []string, stdout, stderr io.Writer) int {
 	return pulse.Manager(pulse.ManagerInput{
 		Policy: *policy, Queue: *queue, Roots: *roots, Bus: *bus, As: *as,
 		Hours: *hours, Max: *max, Stdout: stdout, Stderr: stderr,
-	})
-}
-
-func cmdStatus(args []string, stdout, stderr io.Writer) int {
-	f := newFlags("status")
-	queue := f.fs.String("queue", "", "")
-	roots := f.fs.String("roots", "", "")
-	day := f.fs.String("day", "", "")
-	timeout := f.fs.Int("timeout", 120, "")
-	max := f.fs.Int("max", bounded.Default, "")
-
-	if !f.parse(args, stderr) {
-		return 2
-	}
-	f.want(*queue, "queue", "the queue directory holding pending, launched, done and the state files")
-	f.want(*roots, "roots", "the benches to report, comma separated")
-	if *timeout < 1 {
-		f.add(fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
-	}
-	if *max < 0 {
-		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
-	}
-	if f.refused(stderr) {
-		return 2
-	}
-	return pulse.Status(pulse.StatusInput{
-		Queue:   *queue,
-		Roots:   *roots,
-		Day:     *day,
-		Max:     *max,
-		Timeout: time.Duration(*timeout) * time.Second,
-		Stdout:  stdout,
-		Stderr:  stderr,
 	})
 }
 
