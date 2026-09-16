@@ -1435,12 +1435,12 @@ type inboxReading struct {
 	// this reader -- receipted with `receipt --note` since the cursor, not answered. They
 	// are still new to the open list (heard is not answered), but they are news the reader
 	// has already taken; `wait --advance` skips them rather than returning on them.
-	HeardNew    int
+	HeardNew int
 	// Changed is how many lane paths the incremental diff named. It is scope.Changed, held
 	// here so `wait --quiet-beats` can tell a beat/cursor-only change from no change at all.
 	Changed int
 	// NoteChanges is how many of those changed paths were notes; see bus.InboxResult.
-	NoteChanges  int
+	NoteChanges int
 	Next        string
 	BodyBytes   int64
 	BodyPrinted int
