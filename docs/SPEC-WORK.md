@@ -1045,7 +1045,13 @@ they are distinct kinds:
     `:machine`, `:name`, `:owner`, `:connect`, `:roles`, `:workload`, `:key`, `:value`,
     `:declared-by`, `:reason`. Its subject is a machine identity of *The fleet* below: `:node` is
     `(:absent)` and `MACHINE OK` prints `machine=<id>`.
-    **The `friends`, `models` and `fleet` sections these six kinds write are indexes in the resident
+  - `:route` — `:change` (`:register`, `:retire` or `:probe`), `:route`, `:provider`, `:endpoint`,
+    `:key-location`, `:plan`, `:cost-per-mtok`, `:capabilities`, `:owner`, `:card`, `:pass`,
+    `:wall`, `:usd`, `:benched-until`, `:source`, `:reason`. Its subject is a route identity of
+    *Model routes* below: `:node` is `(:absent)` and `ROUTE OK` prints `route=<id>`; a `:probe`
+    change writes the dated ACTIVE probe record and touches no CONFIG field, and a `:key-location`
+    is a path or an env name and never a key value.
+    **The `friends`, `models`, `fleet` and `routes` sections these kinds write are indexes in the resident
     model under the one writer and the one journal, by *Friends, CONFIG and ACTIVE* below, and
     are no node kind of *The data* above** — which is why their events name a friend or a model
     identity rather than a `:node`, and why no count, roadmap or required set moves when one is
@@ -2103,6 +2109,7 @@ transition log is not a counting row. Every other ask prints the counting row. A
 | `models` / `models --category <task-class>` | the shared model catalog by stable model and version identity, with declared capability, friend assessment and measured result kept apart, each with its observation age, sample count and uncertainty, and bounded drill-down to the receipts |
 | `ready --node X` | the work that can actually be started under X, derived from dependencies, agreed scope, acceptance readiness, ownership, availability and resource limits; **every row that cannot proceed prints its exact reason and who can resolve it**, because waiting is not execution (replay `ready-names-the-blocker-and-the-resolver`) |
 | `fleet` / `fleet --for <workload-kind>` | the fleet of *The fleet* below: every live member with owner, roles, limits and dated declared facts; under `--for`, the members whose declared roles and permits admit the kind and whose exclusions do not — **a recommendation from declared facts, never a lease** (johnny-5b879930aae8) |
+| `routes` / `routes --class <card-class>` | the route registry of *Model routes* below: every live `:kind :route` member of the `routes` section of CONFIG with its provider, endpoint, key location as a path or env name, plan, cost per Mtok, capabilities, owner and its dated probe record with `benched-until=`; under `--class`, the projection's ordered route list for that card class, cheapest first, each admitted route carrying its passing probe — **a projection from declared facts and dated probe evidence, never a lease and never a second store** |
 
 ### The worked acceptance: findings per repository across C and O *(Glenn's own query, 23:36Z)*
 
@@ -2277,6 +2284,7 @@ nova-work goal set       --session <path> <write flags> --expect <rev> [--scope 
 nova-work goal show      (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --as <name> [--scope <scope>] --max <n>
 nova-work goal update    --session <path> <write flags> --expect <rev> [--scope <scope>] (--progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text>)   (writes on the current goal node of the scope and on no other node)
 nova-work machine        --session <path> <write flags> (--register <id> --name <text> --owner <name> --connect <ref> --role <build|test|profile> ... | --retire <id> | --permit <id>=<kind> | --exclude <id>=<kind> | --limit <id> <key>=<n|n,n,...> | --fact <id> <key>=<value> --declared-by <name>) --reason <text>
+nova-work route          --session <path> <write flags> (--register <id> --provider <name> --endpoint <url> --key-location (:path "<path>"|:env "<name>") --plan <flat|metered|free|local> [--cost-per-mtok <n>] --capabilities <text=yes|no,code=yes|no,tool-calls=yes|no> --owner <name> | --retire <id> | --probe <id> --card <pointer> --pass <true|false|absent> [--wall <duration> --usd <amount>] --source <pointer>) --reason <text>
 nova-work offer          --session <path> <write flags> --node <id> --offer <offer-id> --to <name> --profile <capability-id>@<config-revision> --attempt <attempt-id> --generation <n> --request-ref <opaque-id> --payload <pointer> --payload-sha256 <hex> --reserve <slots> --until <stamp> [--requested-model <model-id>] [--predecessor-offer <offer-id> --predecessor-attempt <attempt-id>] [--reason <text>]
 nova-work acknowledge    --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --stage <received|accepted> --provenance <pointer> --provenance-sha256 <hex> [--by <duration|stamp> --default <release|extend-once|escalate:<name>>] [--observed-model <model-id>] [--bench <name>] [--execution <handle>] [--reason <text>]   (--stage accepted: --by and --default, required, create-if-needed; --stage received: both exit 2)
 nova-work decline        --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --provenance <pointer> --provenance-sha256 <hex> [--reason <text>]
@@ -2290,14 +2298,15 @@ nova-work clip           --session <path> --as <name> --git-timeout <seconds> [-
 nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]
 nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
 nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
-                         (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet)
-                         [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>]
+                         (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet, routes)
+                         [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>] [--class <card-class>]
                          [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--page-budget <n>] [--max <n>] [--order <discovery|priority>]
                          (who and stale: --window <duration>, required; percent: --axis <member>, required on a matrix and refused on a zero- or one-axis roadmap;
                           ready: --order, optional, discovery by default; --order priority on any other ask is exit 2;
                           --branch closed and --branch root: --from and --to, required, and refused under --branch open;
                           who, stale and handoffs: --branch open only, the other two exit 2;
-                          fleet: --for optional, --node names a machine id, and --for with --node on a member that excludes the kind is refused)
+                          fleet: --for optional, --node names a machine id, and --for with --node on a member that excludes the kind is refused;
+                           routes: --class optional, the card class whose ordered route list the projection emits, cheapest first; without it the whole registry is listed)
 nova-work render         --session <path> --view <roadmap-id> (--chat [--projection <id> | --row-axis <id> --column-axis <id> --fixed <axis-id>=<member-id> ...] | --projection <id> (--file | --check)) [--at <revision>]
 nova-work node add       --session <path> <write flags> --id <id> --type <work-set|epic|feature|task> (--under <parent-id> | --under-root open --repo <owner/name>) [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id:kind:subject:predicate> ...] [--link <text> ... | --links-empty | --clear-links] [--private <true|false>] [--version <text>] --reason <text>   (--type roadmap is exit 2 naming `roadmap create`)
 nova-work node edit      --session <path> <write flags> --node <id> (--title <text> | --clear-title | --category <label> | --clear-category | --link <text> ... | --links-empty | --clear-links | --private <true|false> | --clear-private | --version <text> | --clear-version) ... --reason <text>
@@ -3671,6 +3680,100 @@ under #500 like every rule here.
    own verified release or fencing, and no reconciliation frees a slot without a confirmed
    termination. Replay: `one-allocator-per-machine-aliases-share-nested-conserve`.
 
+## Model routes *(Rowan and Stella, on the route record beside the `:kind :machine` member of *The fleet* and the ACTIVE data of *Friends, CONFIG and ACTIVE*; #500)*
+
+**This amendment is a draft with no code yet, on Glenn's word of 2026-09-16** — *"other teams with
+humans and AIs will need to remember what models they have and how to run them ... lock this in
+properly with tools ... part of nova-work datastructure"*. Every rule here carries **SPEC-AHEAD:
+#500** on its first line; nothing already numbered is renumbered or rewritten — the validator's
+rules 1 to 18, the efficiency rules 1 to 10, the duty-tier rules 1 to 6 and the fleet-allocation
+rules 1 to 6 stand — and each rule's replay is appended at the end of the list in *Acceptance
+replays* below. *The fleet* and *Models, prices and what they are evidence of* stay the desired
+half — configuration, never work — and this section adds **routes** beside the machine: **a route
+is how a model is run, remembered by the tool so a team need not remember it**. Routing is a
+**projection** of the route registry at a named scope revision and never a second store; probes
+are **ACTIVE evidence** and never CONFIG; and the registry is the source the harness config is
+generated from. The line shapes the rules name are this amendment's additions to *Output grammar*
+— `ROUTE` joins the first-token list, and the probe line `PROBE` of *Fleet allocation* is extended
+for routes — and are proposals under #500 like every rule here.
+
+1. SPEC-AHEAD: #500
+   **A route is a CONFIG member beside the machine, and it is the whole of how a model is run.** A
+   route is a `:kind :route` member record of a **`routes` section of CONFIG** beside the `fleet`
+   section that *The fleet* defines, changed only on a meaningful configuration change and never by
+   a probe, an abstain or a rebuild; it is **no child of O and under no repository work set**, so no
+   count, roadmap or required set moves when one is written, and *The root is COW* is untouched by
+   it. **Nothing in nova-work names a route**: no provider, endpoint, model or key path is a
+   constant in the product, the way no machine is (*The fleet*; Johnny, johnny-5b879930aae8). The
+   fields, each of them a team's own configuration:
+   - `:id` — the **stable route id**, spelled `provider/model`; never reused, never display text,
+     never a locator.
+   - `:provider` — the provider's name.
+   - `:endpoint` — the **provider endpoint** the harness reaches to run the route.
+   - `:key-location` — the **key location**, `(:path "<path>")` or `(:env "<name>")`, **never a key
+     value**: no key, token, password or secret is ever in a record, a manifest or a clip, by the
+     CONFIG rule above, and a `:key-location` that is neither a path nor an env name is a refusal,
+     `credential in record`, exactly as a machine's `:connect` is.
+   - `:plan` — the cost class, one of `flat`, `metered`, `free` and `local`.
+   - `:cost-per-mtok` — **cost per million tokens**, present when `:plan` is `metered` and refused
+     when it is not; a metered route with no `:cost-per-mtok` is `refusing to guess`, never
+     estimated (SPEC.md *Conventions*).
+   - `:capabilities` — the declared capabilities: `(:text <yes|no> :code <yes|no> :tool-calls
+     <yes|no>)`, the last being **whether the harness parses tool calls** for that route; an
+     unknown value is a refusal, never a guess.
+   - `:owner` — a friend of `friends`, **required**: the person whose word admits work on the
+     route, as a machine's owner does.
+   - `:probe` — a **dated probe record**: a **known-answer card** (`:card <pointer>`, the exact
+     question the probe asks), `:pass` (`true` or `false`), `:wall <duration>`, `:usd <amount>` and
+     `:at <stamp>`; and **`:benched-until <stamp>` when the last probe failed**, the date a benched
+     route may be tried again. The probe record is **ACTIVE evidence** (rule 3) and the declared
+     `:id`, `:provider`, `:endpoint`, `:key-location`, `:plan`, `:cost-per-mtok`, `:capabilities`
+     and `:owner` are the CONFIG facts it never overwrites. Replay:
+     `route-config-lists-key-by-path-never-value`.
+
+2. SPEC-AHEAD: #500
+   **Routing is a projection, cheapest first, and a route listed n times gets n shares.** A **card
+   class** — the task class a card is cut for, by *Delegation*'s `:task-class` — maps to an
+   **ordered route list**: a **projection** of the route registry at a named scope revision,
+   computed and cached in memory and never written as authority, by *The root is COW*'s projection
+   sentence. The order is **cheapest first**: `flat` before `metered` before anything else, and
+   within one plan by `:cost-per-mtok` ascending, a tie by bytewise stable id — the same unhashed
+   ordering *Retention* uses for its keys. **A route listed n times gets n shares**: the projection
+   may list one route more than once, and each listing is one share of the class's routing. **A
+   route with no passing probe carries no real card**: the projection admits only routes whose
+   newest probe record is a pass and whose `:benched-until` is not live; an unprobed or benched
+   route is **absent from the generated cards, never present with a warning** — no card of its
+   class is cut for it until a probe passes. **Three consecutive abstains bench a route until the
+   next probe**: a route whose probe thrice in a row could not be answered — `pass=absent`,
+   unreachable, refused — is **benched**, its `:benched-until` set and its cards carried by none,
+   until the next probe passes and clears it. Replays: `routing-picks-flat-before-metered`,
+   `unprobed-route-carries-no-card`, `three-abstains-bench-until-probe`.
+
+3. SPEC-AHEAD: #500
+   **Probes are ACTIVE evidence produced by the adopt pass after every rebuild, and they never
+   overwrite the declared CONFIG facts.** A probe is an observation and writes **ACTIVE evidence
+   with its date, its source and its last-contact stamp** —
+   `PROBE OK route=<id> card=<card> pass=<true|false|absent> wall=<duration|-> usd=<amount|-> at=<stamp> source=<pointer>` —
+   and it **never writes CONFIG**: a probe changes no route member, no `:endpoint`, no
+   `:key-location`, no `:plan`, no `:cost-per-mtok`, no `:capabilities` and no `:owner`, by the
+   same sentence that keeps a machine's probe from touching its member (*Fleet allocation* rule 5).
+   **The adopt pass produces a probe after every rebuild**: the pass that regenerates the harness
+   config probes every route it is about to emit, writing one dated ACTIVE record per route, so the
+   cards it emits stand on evidence produced by the same rebuild that emits them. **A probe carries
+   no credential**: `:key-location` names a path or an env name and is resolved by the harness,
+   never read by the tool, and no key, token, password or secret is in a record, a manifest or a
+   clip.
+
+4. SPEC-AHEAD: #500
+   **The registry is the source the harness config is generated from; a provider block missing from
+   the generated config is a defect, never a manual fix.** The `routes` registry is the **one
+   source** from which the harness config is generated — every harness config is regenerated from
+   it, never hand-edited, by the same sentence that makes `ROADMAP.md` regenerated and never edited
+   and a hand-typed percentage a bug. **A provider block missing from the generated config is a
+   defect, never a manual fix**: the generator emits every route of the registry, and a route the
+   generated config lacks is a defect in the generator, repaired in the generator and never by a
+   hand edit that would let a route and its config drift apart.
+
 ## Assignment and execution control *(Stella's draft, nova-tools #294 at `4fddfcb2`, folded; Root and Terra's corrections taken as she took them; the spellings are this file's)*
 
 **The six verbs the missing-verb register named, and two beside them, have their contracts here
@@ -5025,7 +5128,7 @@ chain, high fan-out, and on one multi-command session.
 
 Every line's first token is the verb's (`SESSION`, `EXPORT`, `REPLAY`, `HANDOFF`, `CLIP`,
 `OPERATION`, `SAVEPOINT`, `UNDO`, `REDO`, `FRIEND`, `CONFIG`, `MODEL`, `OBSERVE`, `GOAL`, `MACHINE`,
-`OFFER`, `ACKNOWLEDGE`, `DECLINE`, `EXECUTION`, `ALLOC`, `PROBE`, `WORK`, `VERIFY`, `QUERY`, `RENDER`, `LOAD`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
+`OFFER`, `ACKNOWLEDGE`, `DECLINE`, `EXECUTION`, `ALLOC`, `PROBE`, `ROUTE`, `WORK`, `VERIFY`, `QUERY`, `RENDER`, `LOAD`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
 `ROADMAP`, `PRIORITY`, `RESPONSIBLE`, `ACCEPT`, `SOURCE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`,
 `ATTESTED`, `STATE`, `CORRECT`, `EVENT`), the second is `OK` or `FAIL`, `RACED` for a push the base predicate
 refused (SPEC-MERGE rule 21's shape, exit 1, nothing pushed), or one of the informational
@@ -5075,6 +5178,7 @@ QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows whose bodies the r
 QUERY ROW <lease-id> node=<id> kind=<lease|heartbeat|release|handoff> rev=<n> at=<stamp> from=<name|-> to=<name|-> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|->   (handoffs)
 QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
 QUERY ROW <machine-id> kind=machine name=<text> owner=<name> roles=<build,test,profile> admits=<kind|-> concurrent=<n|-> arch=<text|-> os=<text|-> declared-by=<name> declared-at=<stamp>   (fleet)
+QUERY ROW <route-id> kind=route provider=<name> endpoint=<text> key-location=<path|env-name> plan=<flat|metered|free|local> cost-per-mtok=<n|-> capabilities=<text,code,tool-calls> owner=<name> probe=<pass|fail|absent|none> at=<stamp|-> benched-until=<stamp|->   (routes; probe= is the newest dated probe's pass, absent for an abstain, and benched-until= is live only for a benched route; under --class the rows are the projection's order, cheapest first, and every row printed carries a passing probe)
 QUERY FAIL ask=fleet rows=0 shown=0: <id> excludes <kind>   (--for with --node on a member that excludes the kind: a refusal, never an empty answer)
 QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable
 QUERY FAIL ask=<kind> after=<cursor> pinned=<rev> current=<rev>: page expired   (a continuation whose captured revision the session can no longer serve; never a drifted page)
@@ -5098,6 +5202,9 @@ CONFIG FAIL friend=<name> base=<hash|-> verdict=<schema|identity|hash|incomplete
 FRIEND OK id=<event-id> request=<id> friend=<name> change=<register|retire|role|participation|capability|limit> rev=<n> pushed=<rev|-> emitted=<bytes>
 MACHINE OK id=<event-id> request=<id> machine=<id> change=<register|retire|permit|exclude|limit|fact> rev=<n> pushed=<rev|-> emitted=<bytes>
 MACHINE FAIL machine=<id|->: <reason>   (no owner, no id, unknown owner, connect held by <id>, credential in record, unknown role, fact without provenance: nothing written, the value never echoed)
+ROUTE OK id=<event-id> request=<id> route=<id> change=<register|retire|probe> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>   (route: the mutation form; a probe change writes the dated ACTIVE probe record and touches no CONFIG field)
+PROBE OK route=<id> card=<card> pass=<true|false|absent> wall=<duration|-> usd=<amount|-> at=<stamp> source=<pointer>   (route probe: ACTIVE evidence with its date, its source and its last-contact stamp, by *Model routes* rule 3)
+ROUTE FAIL route=<id|->: <reason>   (no owner, no id, unknown owner, credential in record, a metered route with no cost-per-mtok, unknown capability: nothing written, the value never echoed)
 MODEL OK id=<event-id> request=<id> model=<id> change=<register|rate|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>
 OBSERVE OK id=<event-id> request=<id> friend=<name> change=<state|attempt> rev=<n> pushed=<rev|-> emitted=<bytes>
 GOAL OK id=<event-id> request=<id> scope=<scope> goal=<id|-> change=<set|clear|progress|evidence|blocked|stop> kind=<goal|transition|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>   (goal set and goal update: change= is the form the caller used, evidence for --progress with the evidence triple and progress for --progress alone; kind= is the event written, :goal for set and clear, the node's own :transition or :evidence for update)
@@ -5160,11 +5267,11 @@ nova-work <build identity> <goos>/<goarch> <go version>
 
 where `<MUTATION>` is one of `NODE`, `DECOMPOSE`, `ACCEPT`, `SOURCE`, `DEP`, `AXIS`, `CELL`,
 `ROADMAP`, `PRIORITY`, `RESPONSIBLE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`, `ATTESTED`, `STATE`,
-`CORRECT`, `EVENT`, `UNDO`, `REDO`, `FRIEND`, `MODEL`, `OBSERVE`, `MACHINE`, `OFFER`, `ACKNOWLEDGE`,
+`CORRECT`, `EVENT`, `UNDO`, `REDO`, `FRIEND`, `MODEL`, `OBSERVE`, `MACHINE`, `ROUTE`, `OFFER`, `ACKNOWLEDGE`,
 `DECLINE`, `EXECUTION` and `CONFIG` (its `--intake`
-form alone), `GOAL` (its `set` and `update` forms). **Nine of them name no node, and their lines are written out above rather than left
+form alone), `GOAL` (its `set` and `update` forms). **Ten of them name no node, and their lines are written out above rather than left
 to `node=`**: `UNDO` and `REDO` print `nodes=<n>`, `FRIEND`, `OBSERVE` and `CONFIG --intake`
-print `friend=<name>`, `MODEL` prints `model=<id>`, `GOAL` prints `scope=<scope> goal=<id|->`, `MACHINE` prints `machine=<id>`, and `EXECUTION` prints `control=<id>` — each the subject its `:event` kind above
+print `friend=<name>`, `MODEL` prints `model=<id>`, `GOAL` prints `scope=<scope> goal=<id|->`, `MACHINE` prints `machine=<id>`, `ROUTE` prints `route=<id>`, and `EXECUTION` prints `control=<id>` — each the subject its `:event` kind above
 names, each still carrying `id=`, `request=`, `rev=` and `pushed=`, so the once-only retry
 promise reads the same for them as for every other mutation. The rest each
 add the fields their section names (`LEASE OK … holder= deadline= default= live=`, `STATE OK
@@ -5955,6 +6062,35 @@ being the amendment's additions to *Output grammar*:**
   --generation <n>` is refused `ALLOC FAIL machine=m-a1 slots=1 holder=<name>: capacity` at exit 1
   even though fourteen cores sit idle, because slots are bounded by declared concurrency and cores
    are a separate constraint validated independently.
+
+**The replays of the model route rules (#500), for the route as a CONFIG member beside the machine,
+the cheapest-first routing projection, the dated probe evidence of the adopt pass and the registry
+as the harness config's source. Each replay is a command line and the exact printed line, the line
+shapes of *Model routes* being the amendment's additions to *Output grammar*:**
+
+- **`route-config-lists-key-by-path-never-value`** — `nova-work route --session <path> <write
+  flags> --register anthropic/claude-3.7-sonnet --provider anthropic --endpoint
+  https://api.example.com --key-location (:env "ANTHROPIC_KEY") --plan metered --cost-per-mtok 15
+  --capabilities (:text yes :code yes :tool-calls yes) --owner glenn --reason "team route"` prints
+  `ROUTE OK id=<event-id> request=<id> route=anthropic/claude-3.7-sonnet rev=<n> pushed=<rev|->
+  changed=<n> emitted=<bytes>`; `query --ask routes` lists the member with every field but the key
+  — the key is a path or an env name and no value is ever printed, stored or echoed; a
+  `:key-location` that is neither is refused `credential in record` with the value never echoed;
+  `|O|`, `rows=` and every count are unchanged, the event's `:node` is `(:absent)`, and the record
+  is a `:kind :route` member of the `routes` section of CONFIG.
+- **`routing-picks-flat-before-metered`** — a card class whose eligible routes are one `metered`,
+  one `free` and one `flat` projects `flat` first, then `free`, then `metered`; two metered routes
+  order by `:cost-per-mtok` ascending, and a tie by bytewise stable id; a route listed twice in the
+  class's list is two shares of its routing; the projection is derived at the named scope revision
+  and never a stored list.
+- **`unprobed-route-carries-no-card`** — a route with no passing probe — no probe record, or a
+  probe whose `:pass` is `false`, or a live `:benched-until` — is absent from the generated cards
+  of its class, never present with a warning, and the card builder refuses to cut a card for it;
+  once a probe passes and the bench clears, the route carries cards again.
+- **`three-abstains-bench-until-probe`** — a route whose probe thrice in a row answers
+  `pass=absent` reads benched, its `:benched-until` set and its cards carried by none, and a
+  further probe before that date changes nothing; the next probe that passes clears the bench and
+  the route carries cards again.
 
 ## Preservation and recovery acceptance *(Stella, `docs/SPEC-WORK-VALIDATION.md` at `81c2885`)*
 
