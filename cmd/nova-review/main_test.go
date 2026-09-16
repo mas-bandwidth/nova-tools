@@ -648,6 +648,34 @@ func TestPacketAcceptsAbsoluteOutUnderCwd(t *testing.T) {
 	}
 }
 
+func TestPacketAcceptsAbsoluteOutUnderSymlinkedCwd(t *testing.T) {
+	lane, _ := packetLab(t)
+	// Two spellings of one directory, built rather than inherited: the cwd is
+	// entered through the alias, so os.Getwd() reports the resolved spelling
+	// while --out keeps the alias spelling — the darwin /var -> /private/var
+	// shape (#562), without depending on the machine's temp tree being a
+	// symlink the way t.TempDir() is on darwin.
+	physical := t.TempDir()
+	holder := t.TempDir()
+	alias := filepath.Join(holder, "alias")
+	if e := os.Symlink(physical, alias); e != nil {
+		t.Skipf("could not build the aliased cwd: %v", e)
+	}
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	if e := os.Chdir(alias); e != nil {
+		t.Fatal(e)
+	}
+	absOut := filepath.Join(alias, "packet.md")
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", absOut}, &out, &errb); code != 0 {
+		t.Fatalf("absolute --out under a symlinked cwd refused: code=%d stderr=%s", code, errb.String())
+	}
+	if _, err := os.Stat(absOut); err != nil {
+		t.Fatalf("packet not written at %s: %v", absOut, err)
+	}
+}
+
 func TestPacketRefetchesMovedHead(t *testing.T) {
 	dir := t.TempDir()
 	remote := filepath.Join(dir, "remote.git")
