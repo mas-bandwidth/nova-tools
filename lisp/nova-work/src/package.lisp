@@ -1994,7 +1994,32 @@
     #:state-export-wait
     #:snapshot-state-export
     #:export-wire-op
-    #:state-export-cancel-ack))
+    #:state-export-cancel-ack
+    ;; packet replays (docs/SPEC-WORK.md:4489-4496)
+    #:make-decision-packet #:decision-packet-item #:decision-packet-revision
+    #:decision-packet-delta #:decision-packet-rules
+    #:decision-packet-findings #:decision-packet-behaviour
+    #:decision-packet-source-links #:decision-packet-whole-p
+    #:make-packet-store #:record-packet #:packet-count #:find-packets
+    #:supersede-packet #:amend-packet #:pulse
+    #:make-reader #:reader-id #:reader-recorded-head #:reader-busy-p
+    #:build-packet
+    #:make-worker-result #:worker-result-reader #:worker-result-sha #:worker-result-outcome
+    #:make-verdict #:verdict-reader #:verdict-sha #:verdict-base #:verdict-head
+    #:verdict-integration
+    #:make-verdict-home #:book-verdict #:verdict-lookup
+    #:make-refusal #:refusal-p #:refusal-kind #:refusal-reason #:refusal-revision
+    #:hop
+    #:make-envelope #:envelope-child-id #:envelope-verdict #:envelope-result-pointer
+    #:envelope-evidence-events #:envelope-usage-pointer #:envelope-head #:envelope-learning
+    #:send-up #:open-child-evidence
+    #:make-claim #:claim-p #:claim-outcome #:claim-evidence
+    #:verify-claim #:tier-move
+    #:make-escalation #:escalation-p #:escalation-kind #:escalation-reason
+    #:escalation-revision #:escalation-coordinator-reason
+    #:escalate #:stale-pass-line
+    #:make-parent #:parent-children #:parent-issue-mapping #:parent-outstanding
+    #:parent-closed-p #:observe-child #:outstanding-line #:issue-open-p))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
