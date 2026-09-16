@@ -180,7 +180,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     whoever put it there, with no push or PR withheld for want of a cards.tsv: with none to
     name the contract, the `RESULT.md`'s own line 1 is the contract, and the refusal stands
     only when neither the file nor a job dir is there.
-13. **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
+13. *SPEC-AHEAD: #467.* **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
     appends (`pr`, `<repo>#<n>`, `read`, `<title>`, `read`) to `<root>/next.tsv` — template
     `read`, or `tone` for a seed page — which the next `pool` reads after `queue.tsv` and
     before the sources. The read card's model comes from the bench cost table, cheapest
