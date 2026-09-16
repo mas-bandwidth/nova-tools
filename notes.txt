@@ -1,0 +1,171 @@
+CARD-8067 — nova-tools issue #465 — nova-swarm native: models on a configured provider
+(ollama, inception, zen ids) fail at once with "Unexpected server error" because the
+harness config is not carried into the job
+
+THE ISSUE (verbatim, its own words): "nova-swarm native --model ollama/north-mini-code-32k
+... exits rc=1 in 0.9 s with the harness printing {\"name\":\"UnknownError\",\"data\":
+{\"message\":\"Unexpected server error\"}} ... Cause: the clean environment of #400 gives
+the harness a job-local XDG config that carries auth.json (--auth) but not opencode.json, so
+every configured provider is unknown." Smallest fix demanded: "native --config <opencode.json>
+(default: none) copies the file beside the carried auth file with mode 0600 and prints
+config=<sha8> on NATIVE OK; refuses with one line if the file names a provider whose key is
+absent from --auth (name the provider, never the key). Test: TestNativeCarriesProviderConfig
+(a fake harness asserts the file is present in its XDG config dir). Sequence test:
+TestFriendSequenceLocalModelCard."
+
+WHAT I FOUND ON THIS BRANCH, READ BEFORE ANY EDIT (spec: docs/SPEC-SWARM.md:547-567 the
+native admission section and :1244-1252 the NATIVE OK line; docs/CLI.md:828-845 the
+nova-swarm section; docs/MODELS.md the route registry; code: cmdNative() main.go:1275,
+nativeRun() native.go:69, the (4b) carry block native.go:164-184, copyProviderConfig()
+native.go:676, modelProviderMissingAuth() native.go:706, keylessProvider() native.go:737,
+nativeChildEnv() native.go:455, and the fake harness's FAKE-RECORD-CONFIG
+testdata/fakeharness/main.go:127-137):
+  The fix the issue asks for is ALREADY on origin/main, and therefore on this branch
+  (rowan/issue-465 cut from a9fa1a6): commit 852ef06 (PR #479, issue #465 itself) added the
+  --config flag, the configFile/configSHA fields, the (4b) carry block, copyProviderConfig
+  and the config=<sha8|-> token on NATIVE OK, plus TestNativeCarriesProviderConfig
+  (native_test.go:262) and the fake harness's FAKE-RECORD-CONFIG. 92790f0 (PR #531, #523)
+  added the keyless-provider admission (baseURL, no apiKey) and TestFriendSequenceLocalModelCard
+  (native_test.go:535). 51724da (PR #586, #578/#523) narrowed the key check to THE MODEL'S
+  OWN provider. All three are ancestors of this branch's head, and both tests the issue
+  names are green on this machine as-is (shown below).
+  One demand of the issue is deliberately NOT restored to its letter: "refuses ... if the
+  file names a provider whose key is absent from --auth" — checking every provider the
+  file names refused local-model cards for an absent inception key on every adoption pass
+  (#523), so #586 checks only the provider --model names; that is pinned by
+  TestNativeConfigChecksOnlyTheModelsProvider (native_test.go:397) and recorded in
+  docs/PIT-STOP.md:66. Reverting it would re-break #523.
+  The gap this card could still close: no test pins the PRINTED `config=<sha8>` token on the
+  NATIVE OK line. TestNativeCarriesProviderConfig pins the struct's sha8 (native_test.go:307)
+  and the copied bytes, and the OK-line tests pin sandbox= (native_test.go:696) and harness=
+  (native_test.go:1320-1359), but the one token a caller reads to know a configured provider
+  was carried — "prints config=<sha8> on NATIVE OK", the issue's own words — is asserted by
+  nothing (main.go:1341-1342).
+
+RED FIRST — the new test was written before any edit, and no product file is edited at all.
+To run the tests against the pre-fix code I reverted the landed --config machinery locally
+(removed the --config flag registration and configFile wiring and the config token from
+cmdNative()'s NATIVE OK line in main.go, and the (4b) carry block and its three helpers
+copyProviderConfig/modelProviderMissingAuth/keylessProvider from native.go, keeping the two
+inert struct fields so the package still builds and the named tests fail at runtime, not at
+compile — exactly the carry #479 added and #531/#586 refined), recorded the failures, then
+restored the fix with git checkout. The committed diff touches no product .go file.
+
+  $ TMPDIR=<card>/scratch go test -count=1 -v -run 'TestNativeCarriesProviderConfig' ./cmd/nova-swarm
+  === RUN   TestNativeCarriesProviderConfig
+  === RUN   TestNativeCarriesProviderConfig/without_config
+  === RUN   TestNativeCarriesProviderConfig/with_config
+      native_test.go:307: the run records config sha8 "", want "82a6352e"
+      native_test.go:309: the harness saw "absent\n", want mode 0600
+      native_test.go:309: the harness saw different bytes:
+          absent
+      native_test.go:313: the config copy was not written: stat <scratch>/TestNativeCarriesProviderConfigwith_config1412208315/001/slot-1/data/.config/opencode/opencode.json: no such file or directory
+  --- FAIL: TestNativeCarriesProviderConfig (0.23s)
+      --- PASS: TestNativeCarriesProviderConfig/without_config (0.02s)
+      --- FAIL: TestNativeCarriesProviderConfig/with_config (0.01s)
+  FAIL
+  FAIL	github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	0.233s
+  FAIL
+
+  $ TMPDIR=<card>/scratch go test -count=1 -v -run 'TestNativeOKNamesTheCarriedConfig' ./cmd/nova-swarm
+  === RUN   TestNativeOKNamesTheCarriedConfig
+  === RUN   TestNativeOKNamesTheCarriedConfig/with_config
+      native_test.go:500: the --config run exits 0, got 2:
+          nova-swarm native: flag provided but not defined: -config; run: nova-swarm help
+  === RUN   TestNativeOKNamesTheCarriedConfig/without_config
+      native_test.go:526: NATIVE OK names an absent config with the dash:
+          NATIVE OK label=lbl job=<scratch>/.../slot-1/jobs/lbl tmp=<scratch>/.../slot-1/tmp/lbl rc=0 wall=0.00s sandbox=none-by-flag card_sha256=d041...f1e0 binary_sha256=d107...1a72 harness=ok usage=none reason=no-store path=<scratch>/.../slot-1/data/opencode/opencode.db
+  --- FAIL: TestNativeOKNamesTheCarriedConfig (0.23s)
+      --- FAIL: TestNativeOKNamesTheCarriedConfig/with_config (0.00s)
+      --- FAIL: TestNativeOKNamesTheCarriedConfig/without_config (0.01s)
+  FAIL
+  FAIL	github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	0.234s
+  FAIL
+
+  Also red pre-fix, same revert: TestNativeRefusesConfigProviderWithoutKey (the refusal
+  never happens, the run proceeds) and TestNativeConfigKeylessProviderAdmitted (sha8 "" and
+  the copy absent). Still green, correctly: TestNativeConfigChecksOnlyTheModelsProvider and
+  TestFriendSequenceLocalModelCard assert admission of a keyless local model, not the carry
+  itself — the sequence test runs the card walled and reads its known answer, which needs
+  no config to be present.
+
+GREEN — fix restored (git checkout -- cmd/nova-swarm/main.go cmd/nova-swarm/native.go;
+git diff on both files empty, verified 0 bytes), the issue's two named tests and the new
+one:
+  $ TMPDIR=<card>/scratch go test -count=1 -v -run 'TestNativeCarriesProviderConfig|TestFriendSequenceLocalModelCard|TestNativeOKNamesTheCarriedConfig' ./cmd/nova-swarm
+  === RUN   TestNativeCarriesProviderConfig
+  === RUN   TestNativeCarriesProviderConfig/without_config
+  === RUN   TestNativeCarriesProviderConfig/with_config
+  --- PASS: TestNativeCarriesProviderConfig (0.25s)
+      --- PASS: TestNativeCarriesProviderConfig/without_config (0.01s)
+      --- PASS: TestNativeCarriesProviderConfig/with_config (0.03s)
+  === RUN   TestNativeOKNamesTheCarriedConfig
+  === RUN   TestNativeOKNamesTheCarriedConfig/with_config
+  === RUN   TestNativeOKNamesTheCarriedConfig/without_config
+  --- PASS: TestNativeOKNamesTheCarriedConfig (0.23s)
+      --- PASS: TestNativeOKNamesTheCarriedConfig/with_config (0.01s)
+      --- PASS: TestNativeOKNamesTheCarriedConfig/without_config (0.01s)
+  === RUN   TestFriendSequenceLocalModelCard
+  --- PASS: TestFriendSequenceLocalModelCard (0.43s)
+  PASS
+  ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	0.914s
+
+STEP 4 (TMPDIR exported to the card's scratch, the $OLDPWD/scratch of the card text,
+because this shell's OLDPWD is not reliably the card root; GOTOOLCHAIN=go1.26.8 pinned
+because go.mod says `go 1.26`, the sandbox's bundled go is 1.22.2, and auto mode tries to
+download a "go1.26" toolchain that does not exist — the cached go1.26.8 in the module
+cache is the one that runs):
+  $ set -o pipefail; export TMPDIR=<card>/scratch && go vet ./cmd/nova-swarm 2>&1 | tail -3 && go test -count=1 ./cmd/nova-swarm 2>&1 | tail -5
+  (go vet: no output, exit 0)
+  ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	60.511s
+
+  PACKAGE UNDER 60 s — the package's own gate, not this sandbox's wall clock, is the rule:
+  docs/TEST-DURATIONS.md records cmd/nova-swarm at 29.2 s on the reference bench (Space,
+  one quiet pinned core), and tools/testdur's TestFastSuiteUnderOneMinute, the test that
+  FAILS when a recorded package crosses 60 s, passes:
+  $ go test -count=1 -run 'TestFastSuiteUnderOneMinute' -v ./tools/testdur/
+  --- PASS: TestFastSuiteUnderOneMinute (0.00s)
+  ok   github.com/mas-bandwidth/nova-tools/tools/testdur	0.002s
+  This sandbox is ONE core (nproc 1) under load 5-20 shared with other swarm jobs, so the
+  same suite's wall clock here is contention, not cost: with the new test 61.9 s / 60.5 s /
+  60.8 s / 60.1 s (~13 s of CPU each), and at HEAD WITHOUT the new test 67.1 s — slower
+  than every run with it. The new test itself costs 0.23 s. Nothing to regenerate in
+  docs/TEST-DURATIONS.md: the table is the reference bench's, and 29.2 + 0.2 stays under
+  the gate with room.
+
+DOCS, BYTE FOR BYTE WITH WHAT THE BINARY NOW PRINTS — nothing to update: the carry and its
+two lines are already documented, and both match the binary mechanically. Verified with the
+binary built from this branch:
+  - `nova-swarm help` prints the native usage line with `[--config <file>]`; minus the two
+    spaces of help's own code-block indent it is byte for byte docs/SPEC-SWARM.md:549
+    (cmp clean), and identical to the usage block in cmd/nova-swarm/main.go:60.
+  - A real `native --no-wall` run against the fake harness with --config printed
+    `... binary_sha256=<sha> config=82a6352e harness=ok usage=none reason=no-store path=<db>`
+    where 82a6352e is sha256[:8] of the opencode.json handed to it (sha256sum agrees), and
+    without --config the same line carries ` config=- `. The line's token shape — label job
+    tmp rc wall sandbox card_sha256 binary_sha256 config harness usage reason path — is
+    byte for byte the template at docs/SPEC-SWARM.md:1250
+    (`NATIVE OK label=<id> ... binary_sha256=<sha> config=<sha8|-> harness=<ok|silent>
+    [usage=none reason=<r> path=<p>]`, the SPEC's own brackets marking the optional tail).
+  - docs/SPEC-SWARM.md:561-567 states the copy semantics exactly as the code performs them,
+    including the #586 narrowing to the model's own provider and the #531 keyless
+    admission; docs/MODELS.md:46 records rule 3 ("the provider block ... never dropped by
+    a config rewrite — #479, and #586 dropped deepseek"). docs/CLI.md:843-845 carries no
+    native usage or OK-line text at all ("native and batch / routes: see
+    docs/MODELS.md"), so there is no line in CLI.md to make byte for byte with the changed
+    output — the two lines the fix prints live in SPEC-SWARM.md and already match.
+
+THE NEW TEST (cmd/nova-swarm/native_test.go, after TestNativeConfigKeylessProviderAdmitted,
+before TestFriendSequenceLocalModelCard): TestNativeOKNamesTheCarriedConfig drives the
+`native` verb the way TestNativeOKNamesTheWall does — the real cmdNative() through run(),
+the fake harness, an 0600 --auth and a keyless-fake opencode.json — and asserts the ONE
+thing no other test reads: the printed line carries ` config=<sha8>` (the sha8 of the
+config's own bytes) when --config named one and ` config=- ` when it named none. Red
+pre-fix on any POSIX machine (the flag is refused, then the token is missing), green
+post-fix, and independent of the machine's TMPDIR. It skips on Windows with its siblings
+(windowsIsNotABench: --auth's 0600 check is POSIX).
+
+COMMITTED ON THIS BRANCH: the new test and this notes.txt. No product code change: the
+--config carry is already on main (852ef06, refined by 92790f0 and 51724da) and IS the
+smallest change that turns the tests green; re-touching correct code would only churn.
+The commit's "fix #465:" prefix follows the card's message format.

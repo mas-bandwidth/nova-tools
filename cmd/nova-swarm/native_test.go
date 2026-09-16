@@ -479,6 +479,71 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 	assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
 }
 
+// TestNativeOKNamesTheCarriedConfig: the NATIVE OK line itself names the carried provider
+// config -- config=<sha8> when --config named one and config=- when it named none -- which
+// is the one token of issue #465's fix no other test pins on the printed line: the carry
+// test pins the struct's sha8 and the copied bytes, and the OK-line tests pin sandbox= and
+// harness=, but the token a caller reads to know a configured provider was carried before
+// the child ever ran is asserted by nothing. The sha8 is of the config's own bytes, so the
+// line names exactly which opencode.json the run carried.
+func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
+	windowsIsNotABench(t)
+	bin := nativeHarness(t)
+	const config = `{"provider":{"fake":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
+	wantSum := sha256.Sum256([]byte(config))
+	wantSHA := hex.EncodeToString(wantSum[:])[:8]
+
+	t.Run("with_config", func(t *testing.T) {
+		root, slot := aSlot(t)
+		auth := filepath.Join(t.TempDir(), "auth.json")
+		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+		if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
+			"--auth", auth, "--config", cfgPath, "--deadline", "30s", "--no-wall"},
+			strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 0 {
+			t.Fatalf("the --config run exits 0, got %d:\n%s", rc, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), " config="+wantSHA+" ") {
+			t.Fatalf("NATIVE OK names the carried config's sha8 %s:\n%s", wantSHA, stdout.String())
+		}
+	})
+
+	t.Run("without_config", func(t *testing.T) {
+		root, slot := aSlot(t)
+		auth := filepath.Join(t.TempDir(), "auth.json")
+		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
+			"--auth", auth, "--deadline", "30s", "--no-wall"},
+			strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 0 {
+			t.Fatalf("the run without --config exits 0, got %d:\n%s", rc, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), " config=- ") {
+			t.Fatalf("NATIVE OK names an absent config with the dash:\n%s", stdout.String())
+		}
+	})
+}
+
 // TestFriendSequenceLocalModelCard runs one known-answer card on a fake local provider: the
 // harness is the fake, the provider is a keyless ollama (baseURL, no apiKey, no auth entry),
 // and the card FAKE-PWD answers with the job directory. The run is walled, admitted without a
