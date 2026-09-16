@@ -1516,6 +1516,41 @@ are terminal and accepted; it does not acquire a lease or reserve a slot.
 result before resetting its worktree. Use that mutating workflow only with the
 intended worktree, branch, base and harvest destination.
 
+### The session client
+
+`nova-work session start|status|stop` is the thin client of the resident work session ([docs/SPEC-WORK.md](SPEC-WORK.md)): it sends one request line over the Unix socket `--session` names and prints the session's one answer line, byte for byte. The session owns every fact -- the state, the journal, the indexes, the ordering -- and the client owns none of them. A missing `--session`, or a socket nothing answers, is one `WORK REFUSED` line on stderr, exit 2, ending `run: nova-work help`; the session's own `FAIL`, `RACED` and `REFUSED` reach stderr and exit 1.
+
+```
+nova-work: the thin client of the resident work session (see docs/SPEC-WORK.md)
+
+usage:
+  nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --cache <path> --repo <path> --remote <name> --branch <name>
+                           --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --skew <duration> --clip-every <duration> --clip-after <n> --retain <duration>
+                           --savepoint-every <duration> --savepoint-after <n> --max-frame-bytes <n> --silence-ping <duration>
+                           --index-cache <n> --page-bytes <n> --page-records <n> [--closed-window <duration>] [--render-root <root-id>=<owner/name>:<directory> ...]
+                           [--resolver <scheme>=<command> ...] --git-timeout <seconds> [--attempts <n>] [--repair] [--foreground] [--max <n>] [--now <stamp>]
+  nova-work session status --session <path>
+  nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
+  nova-work version        print this build identity (--version also accepted)
+  nova-work help
+
+wire:
+  one line in, one line out over the Unix socket --session names. The request
+  line is the verb and its flags in the order above, each as --name <value>,
+  values escaped through internal/oneline's field form (one token per value:
+  a space is \x20, an equals is \x3d), bools as --name true, the whole line
+  newline-terminated. The reply is the session's own answer line, printed byte
+  for byte: OK, ROW, NOTE and MORE to stdout, exit 0; FAIL, RACED and REFUSED
+  to stderr, exit 1. What cannot run at all is one WORK REFUSED line on
+  stderr, exit 2, ending "run: nova-work help". Values travel as given: the
+  session validates every one and refuses with its own naming.
+
+example:
+  nova-work session status --session ./sessions/alpha.sock
+  nova-work session stop --session ./sessions/alpha.sock --git-timeout 30
+  nova-work version
+```
+
 ## nova-cairn
 
 Keeps explicit session checkpoints, their source pointers and a bounded index.

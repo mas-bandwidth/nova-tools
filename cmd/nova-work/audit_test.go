@@ -22,7 +22,19 @@ var workAudit = audit.Config{
 	// a command a person can copy out of the READY row and type back in, and Field
 	// would render its space as \x20 and make it unpasteable.
 	Escapers: []string{"oneline.Quote"},
+	// The session client prints the session's own answer line byte for byte, so
+	// escaping it would break the wire contract the spec pins; the line is read
+	// back as one newline-terminated line and can add no second line.
+	Exempt: map[string]string{
+		"main.go|printReply|line": "the session's ONE answer line is passed through byte for byte, already bounded to one line by readReply",
+	},
 	Imports: []string{
+		// bytes and errors bound the one reply line the client reads back from the
+		// socket; neither writes to a stream.
+		`"bytes"`, `"errors"`,
+		// net dials the Unix socket the session names; the request goes out through
+		// io.Copy and the reply is printed through the escaped sites above.
+		`"net"`,
 		// buildinfo answers which build this is; its Line renders every field through
 		// oneline.Field itself, and the version print site wraps the result in
 		// oneline.Escape so the tripwire sees the escape.
