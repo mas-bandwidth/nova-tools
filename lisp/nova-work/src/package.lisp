@@ -1994,7 +1994,26 @@
     #:state-export-wait
     #:snapshot-state-export
     #:export-wire-op
-    #:state-export-cancel-ack))
+    #:state-export-cancel-ack
+    ;; s3: the pure lease-log model, distinct from the kernel's
+    ;; take-lease/release-lease/working-count above.
+    #:lease-event #:make-lease-event
+    #:lease-event-kind #:lease-event-node #:lease-event-id #:lease-event-by
+    #:lease-event-stamp #:lease-event-deadline #:lease-event-default
+    #:lease-event-to #:lease-event-rev
+    #:lease-log #:make-lease-log
+    #:lease-log-events #:lease-log-next-rev
+    #:active-lease #:lease-holder #:lease-live-p #:lease-holder-name
+    #:heartbeat-age #:worked-now-p #:held-not-worked-p #:lease-escalated-to
+    #:lease-take #:heartbeat-lease #:lease-release
+    #:lease-release-on-settle #:leased-node-refusal
+    #:who-rows #:stale-rows #:stale-by-holder #:handoff-rows #:handoff-row-form
+    #:who-row-form #:default-wire #:holder-word
+    #:stamp< #:stamp> #:stamp>= #:stamp<= #:resolve-deadline
+    ;; s3: the working view
+    #:working-view #:working-view-build
+    #:working-view-count #:working-ids #:working-member-p #:working-watermark
+    #:working-count-of))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
