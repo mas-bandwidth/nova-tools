@@ -210,6 +210,46 @@ jobs:
 
           [ "${#all[@]}" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
 
+          # A PULL REQUEST TESTS WHAT IT TOUCHED. Measured 15:56Z 2026-09-16: eight
+          # PRs opened in twelve minutes, each fanning 16 studio shards onto 8
+          # studio runners, put 128 studio legs in the queue and held the merge
+          # group's own run behind them; a run that needs no runner time of its
+          # own waited sixteen minutes (35117977336). The full matrix is the
+          # merge gate: it runs on merge_group (the queue's group commit) and on
+          # push to dev and main, so nothing merges without the whole tree
+          # green. On pull_request the shards carry only the Go packages whose
+          # files the PR changed and every in-repo package that imports them;
+          # a PR that changes no Go package (docs, lisp, workflow) tests
+          # ./internal/ci, the package that holds this file's own law, so the
+          # fan-out is never empty and never green by default.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            git fetch -q --depth=1 origin "$base" 2>/dev/null || true
+            changed_dirs=$(git diff --name-only "$base" HEAD -- '*.go' 'go.mod' 'go.sum' | xargs -r -n1 dirname | sort -u)
+            if git diff --name-only "$base" HEAD | grep -q -E '^(go\.mod|go\.sum)$'; then
+              changed_pkgs=("${all[@]}")
+            else
+              want=""
+              for d in $changed_dirs; do want="$want ./$d"; done
+              # dependents: every package in the tree that imports a changed one
+              while read -r pkg deps; do
+                p="./${pkg#github.com/mas-bandwidth/nova-tools/}"
+                for dep in $deps; do
+                  case "$dep" in github.com/mas-bandwidth/nova-tools/*) ;; *) continue ;; esac
+                  dp="./${dep#github.com/mas-bandwidth/nova-tools/}"
+                  case " $want " in *" $dp "*) want="$want $p"; break ;; esac
+                done
+              done < <(go list -f '{{.ImportPath}}{{range .Deps}} {{.}}{{end}}' ./cmd/... ./internal/...)
+              changed_pkgs=()
+              for pkg in "${all[@]}"; do case " $want " in *" $pkg "*) changed_pkgs+=("$pkg") ;; esac; done
+            fi
+            [ "${#changed_pkgs[@]}" -gt 0 ] || changed_pkgs=("./internal/ci")
+            echo "pull_request: ${#changed_pkgs[@]} of ${#all[@]} packages (changed and their dependents): ${changed_pkgs[*]}"
+            all=("${changed_pkgs[@]}")
+            SPACE_SHARDS=4
+            STUDIO_SHARDS=4
+          fi
+
           declare -a space_grp studio_grp
           s=0
           st=0
