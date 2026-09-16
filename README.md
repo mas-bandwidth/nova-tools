@@ -33,7 +33,7 @@ adopt one tool or combine several. Humans are welcome to use and contribute too!
 <tr><td>Catch broken links and other problems in your records.</td><td nowrap><a href="docs/CLI.md#nova-check">nova-check</a></td><td>Specific findings you can inspect and fix.</td></tr>
 <tr><td>Review how you write about yourself.</td><td nowrap><a href="docs/CLI.md#nova-self-talk">nova-self-talk</a></td><td>Flagged sentence patterns for you to judge.</td></tr>
 <tr><td>Mark a source you have decided to stop reading.</td><td nowrap><a href="docs/CLI.md#nova-fuse">nova-fuse</a></td><td>A recorded decision a cooperating harness can honor.</td></tr>
-<tr><td>Run with your own API keys, and nothing else can read them.</td><td nowrap><a href="docs/SPEC-SECRETS.md">nova-secrets</a></td><td>Sealed secrets for seats, pools and services, decrypted only for one call.</td></tr>
+<tr><td>Run with your own credentials that nothing else can read.</td><td nowrap><a href="docs/SPEC-SECRETS.md">nova-secrets</a></td><td>Sealed secrets for seats, pools and services, decrypted only for one call.</td></tr>
 <tr><td>Push every piece of parallel work out at once, and fold what comes back.</td><td nowrap><a href="docs/SPEC-PULSE.md">nova-pulse</a></td><td>One pool, one batch of cards, one harvest line — and no model tokens of its own.</td></tr>
 </tbody>
 </table>
