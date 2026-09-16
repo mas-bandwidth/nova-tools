@@ -238,3 +238,25 @@ func cardTexts(t *testing.T, queue string, dirs ...string) []string {
 	}
 	return out
 }
+
+// headroom-decimal-caps-the-tick (issue #869): headroom is a ratio of cores, so 2.5 is a
+// value a person writes, and the arithmetic that caps a tick's take must read it as 2.5 and
+// not refuse it or round it up. Half a card is not a card: the cap is the whole cards that
+// fit under the headroom.
+func TestHeadroomTakeReadsADecimal(t *testing.T) {
+	for _, c := range []struct {
+		open     int
+		headroom float64
+		want     int
+	}{
+		{open: 8, headroom: 2.5, want: 2},
+		{open: 8, headroom: 3, want: 3},
+		{open: 2, headroom: 2.5, want: 2},
+		{open: 8, headroom: 0, want: 8}, // no headroom is no cap, as it always was
+		{open: 1, headroom: 0.5, want: 0},
+	} {
+		if got := headroomTake(c.open, c.headroom); got != c.want {
+			t.Errorf("headroomTake(%d, %v) = %d, want %d", c.open, c.headroom, got, c.want)
+		}
+	}
+}
