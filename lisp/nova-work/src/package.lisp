@@ -1994,7 +1994,26 @@
     #:state-export-wait
     #:snapshot-state-export
     #:export-wire-op
-    #:state-export-cancel-ack))
+    #:state-export-cancel-ack
+    ;; replays-bugs
+    #:nbug
+    #:make-nbug
+    #:bg-id #:bg-title #:bg-found-during #:bg-test #:bg-status #:bg-source
+    #:bg-evidence #:bg-acceptance
+    #:bug-index
+    #:make-bug-index
+    #:bug-list #:bug-get #:bug-put #:bug-set-status
+    #:bug-add-refusal #:add-bug
+    #:bug-close-verdict #:correct-voids
+    #:scope-verdict #:make-scope-verdict
+    #:sv-state #:sv-green #:sv-percent #:sv-scope-event #:sv-revision-moved
+    #:feature-percent #:feature-verdict
+    #:bug-tally #:who-line
+    #:feature-model #:make-feature-model
+    #:split #:make-split
+    #:sp-children #:sp-minted-bugs #:sp-scope-revision-delta #:sp-required-unchanged-p
+    #:decompose
+    #:parse-roadmap #:collect-bug-entries #:roadmap-parity))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
