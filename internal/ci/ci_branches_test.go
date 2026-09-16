@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-
 // ci_branches_test.go pins the per-event job set: what each trigger runs, and
 // that the merge queue's gate runs what a push to dev runs. Rule T (pit stop 4,
 // 2026-09-16): the -short hosted-pr leg passed #858 while the full Windows leg
