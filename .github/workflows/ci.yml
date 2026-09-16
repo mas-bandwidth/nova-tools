@@ -48,7 +48,11 @@ concurrency:
   # Per PR, not per ref: a push to a PR branch reuses the PR number, so the new
   # run cancels the in-progress one. On push to main the ref is the group.
   group: ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  # A push to main never cancels main's running verdict: with a steady merge
+  # stream every main run was cancelled by the next merge (2026-09-16 04:41Z and
+  # 04:53Z), so main had no completed run for the mechanical red gate to read.
+  # Branch runs still cancel each other (only the newest head matters there).
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   lint:
