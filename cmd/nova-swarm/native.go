@@ -97,12 +97,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 		bin = found
 	}
-	st, err := os.Stat(bin)
-	if err != nil {
+	if _, err := os.Stat(bin); err != nil {
 		refuseNative(errOut, fmt.Sprintf("the harness binary %s is missing", oneline.Field(bin)))
 		return nativeRunResult{}, 2
 	}
-	if st.IsDir() || st.Mode().Perm()&0o111 == 0 {
+	// The execute question is asked by the platform's own rule, never by the unix bit
+	// alone: windows carries no such bit and reports 0666 for every file, so reading it
+	// there refused every harness that existed. See isExecutable in executable.go.
+	if !isExecutable(bin) {
 		refuseNative(errOut, fmt.Sprintf("the harness binary %s is not executable", oneline.Field(bin)))
 		return nativeRunResult{}, 2
 	}
