@@ -49,6 +49,16 @@ usage:
                            [--resolver <scheme>=<command> ...] --git-timeout <seconds> [--attempts <n>] [--repair] [--foreground] [--max <n>] [--now <stamp>]
   nova-work session status --session <path>
   nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
+  nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
+                           (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet)
+                           [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>]
+                           [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--page-budget <n>] [--max <n>] [--order <discovery|priority>]
+                           (who and stale: --window <duration>, required; percent: --axis <member>, required on a matrix and refused on a zero- or one-axis roadmap;
+                            ready: --order, optional, discovery by default; --order priority on any other ask is exit 2;
+                            --branch closed and --branch root: --from and --to, required, and refused under --branch open;
+                            who, stale and handoffs: --branch open only, the other two exit 2;
+                            fleet: --for optional, --node names a machine id, and --for with --node on a member that excludes the kind is refused)
+  nova-work render         --session <path> --view <roadmap-id> (--chat [--projection <id> | --row-axis <id> --column-axis <id> --fixed <axis-id>=<member-id> ...] | --projection <id> (--file | --check)) [--at <revision>]
   nova-work version        print this build identity (--version also accepted)
   nova-work help
 
@@ -100,6 +110,10 @@ func run(args []string, stdout, stderr io.Writer, stamp string) int {
 		default:
 			return refused(stderr, fmt.Sprintf("unknown session verb %q", sub))
 		}
+	case "render":
+		return renderVerb(rest, stdout, stderr)
+	case "query":
+		return queryVerb(rest, stdout, stderr)
 	default:
 		return refused(stderr, fmt.Sprintf("unknown verb %q", verb))
 	}

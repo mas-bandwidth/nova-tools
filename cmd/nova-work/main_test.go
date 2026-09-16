@@ -172,7 +172,7 @@ func TestMissingSocketExitsTwoWithTheSpecsRemedy(t *testing.T) {
 
 func TestHelpListsEveryVerbTheSwitchAccepts(t *testing.T) {
 	verbs := switchVerbs(t)
-	want := []string{"help", "session start", "session status", "session stop", "version"}
+	want := []string{"help", "query", "render", "session start", "session status", "session stop", "version"}
 	if got := strings.Join(verbs, ","); got != strings.Join(want, ",") {
 		t.Fatalf("the switch accepts %q, want exactly %q", got, strings.Join(want, ","))
 	}
