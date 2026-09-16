@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -53,7 +54,9 @@ type nativeRunConfig struct {
 	// the description pins it -- and when it carries "secret": "<NAME>" it is the source of
 	// the key, taken from the environment and passed through by name, with no auth file
 	// ever written. nil means native keeps --model and --auth as today.
-	worker *swarm.Worker
+	worker     *swarm.Worker
+	turnBudget int // >0: a MODE: explore card, stopped when the harness log passes this
+	// many tool calls (issue #856). 0 is today's behaviour: no ceiling but the deadline.
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -70,6 +73,8 @@ type nativeRunResult struct {
 	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
 	harness      string  // ok | silent: silent when the capture holds no words of the child's and no result was found
 	fence        string  // the first path the harness's own fence auto-rejected, "" when it rejected nothing
+	turns        int     // the tool calls counted in the capture, when a turn budget was set
+	overBudget   bool    // the run was stopped because those turns passed the budget
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -363,7 +368,6 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if cfg.noWall {
 		res.wall = "none-by-flag"
 	}
-
 	// THE LAUNCH GRACE (issue #900). A harness that dies inside this window with a
 	// provider server error in its own output is a launch that did not take: the provider
 	// answered before the request began, and the slot was spent on nothing. The SAME card
@@ -374,6 +378,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if cfg.worker != nil {
 		grace = swarm.LaunchGrace(*cfg.worker)
 	}
+	// THE TURN BUDGET (issue #856). A `MODE: explore` card keeps the harness loop, and the
+	// loop is what #855 measured the bill in: a 45k-token read over 30 turns bills 1.35M
+	// cache-read tokens, because every turn re-sends the whole transcript. So the capture is
+	// counted WHILE the child runs and the child is killed when its turns pass the ceiling --
+	// the deadline cannot do this, being a wall-clock bound on a loop whose cost is turns.
+	var overBudget atomic.Bool
 	for attempt := 1; ; attempt++ {
 		before := fileSize(outLog)
 		ctx, cancel := context.WithTimeout(context.Background(), cfg.deadline)
@@ -384,7 +394,32 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		cmd.Stdout = capture
 		cmd.Stderr = io.MultiWriter(capture, &wallOut)
 		attemptStart := time.Now()
+		budgetStop := make(chan struct{})
+		budgetDone := make(chan struct{})
+		if cfg.turnBudget > 0 {
+			go func() {
+				defer close(budgetDone)
+				tick := time.NewTicker(pipelineTurnPoll)
+				defer tick.Stop()
+				for {
+					select {
+					case <-budgetStop:
+						return
+					case <-tick.C:
+						if swarm.HarnessTurnsInFile(outLog) > cfg.turnBudget {
+							overBudget.Store(true)
+							cancel()
+							return
+						}
+					}
+				}
+			}()
+		} else {
+			close(budgetDone)
+		}
 		runErr := cmd.Run()
+		close(budgetStop)
+		<-budgetDone
 		elapsed := time.Since(attemptStart)
 		cancel()
 		res.wallSeconds += elapsed.Seconds()
@@ -407,6 +442,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		break
 	}
 	log.Close()
+	if cfg.turnBudget > 0 {
+		res.turns = swarm.HarnessTurnsInFile(outLog)
+		res.overBudget = overBudget.Load()
+	}
 	harnessOut.Close()
 	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
 	// logs are closed, so every byte the child wrote is on disk -- and carried on the OK line.
@@ -469,6 +508,11 @@ func readSince(path string, offset int64) []byte {
 	}
 	return raw
 }
+
+// pipelineTurnPoll is how often the capture is counted against a turn budget. A turn is
+// seconds of a model's work, so this is fast enough to stop the turn after the ceiling and
+// slow enough to cost nothing.
+const pipelineTurnPoll = 250 * time.Millisecond
 
 // fenceRejected is the first path the harness's own fence auto-rejected in this job's
 // capture, or "" when it rejected nothing. It is asked OF THE RUN'S OWN CAPTURE,
@@ -586,6 +630,14 @@ func sandboxHostRules(sandbox string) bool {
 // recipient never appears: a bus send is denied by the wall itself, not granted by the
 // caller, so no allow rule is ever built for one.
 func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir string) []string {
+	argv := append(nativeWallFlags(bin, cfg, dataHome, jobDir, tmpDir), "--")
+	return append(argv, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
+}
+
+// nativeWallFlags is the wall's own flags, without the `--` and without the program: the
+// same containment for the harness and for a pipeline's shell step (issue #856), which run
+// the same card's work in the same directories and so may not be walled differently.
+func nativeWallFlags(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir string) []string {
 	argv := []string{
 		"--read", cfg.slotDir,
 		"--write", jobDir,
@@ -610,8 +662,6 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 	for _, r := range cfg.repos {
 		argv = append(argv, "--repo", r)
 	}
-	argv = append(argv, "--")
-	argv = append(argv, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
 	return argv
 }
 

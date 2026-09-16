@@ -95,6 +95,22 @@ func main() {
 		published = true
 	}
 
+	// FAKE-TURNS <n> is a harness that TAKES TURNS: it prints one tool-call line per turn,
+	// in the harness's own column-0 sigil, and then waits to be stopped. It is how the
+	// explore turn budget (issue #856) is tested without a provider: the budget counts
+	// these lines in the capture and kills the child when they pass the ceiling. The sleep
+	// is what a real loop's thinking time is, and the run ends by the budget or the
+	// deadline, never by this process running out of lines.
+	if n, ok := number(prompt, "FAKE-TURNS"); ok {
+		for i := 0; i < n; i++ {
+			fmt.Printf("\x1b[0m$ \x1b[0mecho turn %d\n", i+1)
+			os.Stdout.Sync()
+			time.Sleep(200 * time.Millisecond)
+		}
+		time.Sleep(60 * time.Second)
+		return
+	}
+
 	// FAKE-SAY is the harness's own words on its own stderr -- a provider's `401
 	// unauthorized`, the one diagnosis a failed job has.
 	if said, ok := directive(prompt, "FAKE-SAY"); ok {

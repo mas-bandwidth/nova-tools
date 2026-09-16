@@ -60,7 +60,7 @@ usage:
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--mode pipeline|explore] [--max-turns <n>] [--max-input-bytes <n>] [--max-steps <n>] [--endpoint <url>] [--key-file <path>]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
    nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
@@ -1371,11 +1371,28 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	sandbox := f.fs.String("sandbox", "", "")
 	noWall := f.fs.Bool("no-wall", false, "")
 	noSharedCaches := f.fs.Bool("no-shared-caches", false, "")
+	// THE TWO MODES (issue #856). `--mode pipeline` runs the card's STEPs as a pipeline of
+	// stateless calls -- the harness does the shell steps itself and each model step is ONE
+	// call -- and `--mode explore` keeps today's harness loop under a turn budget. The card
+	// may say so itself on its contract lines (`MODE: pipeline`), and the flag wins.
+	mode := f.fs.String("mode", "", "")
+	maxTurns := f.fs.Int("max-turns", swarm.DefaultExploreTurns, "")
+	maxInput := f.fs.Int("max-input-bytes", swarm.DefaultStepInputBytes, "")
+	maxSteps := f.fs.Int("max-steps", swarm.DefaultMaxSteps, "")
+	maxCalls := f.fs.Int("max-calls", 0, "")
+	endpoint := f.fs.String("endpoint", "", "")
+	keyFile := f.fs.String("key-file", "", "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	if *mode != "" && *mode != swarm.ModePipeline && *mode != swarm.ModeExplore {
+		f.add("--mode wants " + swarm.ModePipeline + " or " + swarm.ModeExplore + ": a pipeline runs the card's STEPs as one call each with no transcript, and explore keeps the harness loop under --max-turns")
+	}
+	if *maxTurns <= 0 {
+		f.add("--max-turns wants a positive number of harness turns: it is the ceiling a MODE: explore card is stopped at")
 	}
 	if *noWall && *sandbox != "" {
 		f.add("--no-wall and --sandbox together: one asks for no containment at all and the other names the wall to use; pass at most one")
@@ -1470,6 +1487,20 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if workerGiven {
 		cfg.worker = &w
 	}
+	// The mode is the flag's, else the card's own declaration on its contract lines.
+	runMode := *mode
+	if runMode == "" {
+		runMode = swarm.CardMode(cardRaw)
+	}
+	if runMode == swarm.ModePipeline {
+		return runNativePipeline(cfg, pipelineOptions{
+			maxInput: *maxInput, maxSteps: *maxSteps, maxCalls: *maxCalls,
+			endpoint: *endpoint, keyFile: *keyFile, configFile: *config,
+		}, stdout, stderr)
+	}
+	if runMode == swarm.ModeExplore {
+		cfg.turnBudget = *maxTurns
+	}
 	res, code := nativeRun(cfg, stderr)
 	if code != 0 {
 		return code
@@ -1477,7 +1508,15 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
 	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s\n",
-		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState))
+		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), nativeSuffix(res, cfg.turnBudget), usageSuffix(res.usageReason, res.usageState))
+	// A card the turn budget stopped publishes a PARTIAL result naming the budget, so the
+	// gather scores it `card-abstain` with a reason instead of `no-result` (issue #856).
+	if res.overBudget {
+		if writeBudgetResult(res.job, cfg.card, res.turns, cfg.turnBudget) {
+			fmt.Fprintf(stderr, "NATIVE NOTE: %s was stopped at its turn budget (turns=%d max=%d) and a partial RESULT.md was published\n",
+				oneline.Field(cfg.label), res.turns, cfg.turnBudget)
+		}
+	}
 	if res.rc != 0 {
 		if res.rc > 0 {
 			return res.rc
