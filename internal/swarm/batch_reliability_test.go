@@ -185,6 +185,74 @@ func TestBatchRefusesLiveSlot(t *testing.T) {
 	}
 }
 
+// ISSUE #457 reproduction named for CARD-8072: the held range is wider than one slot, and
+// the colliding batch's range overlaps it twice (the issue's cards 305 / 307 / slots 49 /
+// 51). Two locks, one live, two colliding cards in the second batch -- both refused, the
+// rest of the second batch runs, and the other batch's locks are left where they were.
+// Without the lock check, both cards were launched into the same slot and the slot's
+// native.log carried both harnesses; with it, the lock is read before any child is forked.
+func TestBatchCard8072TwoHeldSlotsBothRefused(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	marks := filepath.Join(dir, "marks")
+	holder := os.Getpid()
+	writeBatchLock(t, root, 49, "OTHER-A", holder)
+	writeBatchLock(t, root, 51, "OTHER-B", holder)
+	type spec struct {
+		label string
+		slot  int
+	}
+	issued := []spec{{"a", 49}, {"b", 50}, {"c", 51}, {"d", 52}}
+	var b strings.Builder
+	expectedRefused := map[string]bool{"a": true, "c": true}
+	for _, s := range issued {
+		path := writeCard(t, dir, s.label+".card", "RESULT: "+s.label+"\nall green")
+		b.WriteString(s.label + "\t" + strconv.Itoa(s.slot) + "\tmodel\t" + path + "\n")
+	}
+	tsv := filepath.Join(dir, "cards.tsv")
+	if err := os.WriteFile(tsv, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := markingRunner(t, dir, marks)
+	code, out, errs := runBatch(t, tsv, root, runner, 10*time.Second)
+	if code != 1 {
+		t.Fatalf("a batch that met two held slots exits 1, got %d:\n%s\n%s", code, out, errs)
+	}
+	for _, want := range []string{
+		"ADMIT REFUSED slot=49 held-by=OTHER-A pid=" + strconv.Itoa(holder),
+		"ADMIT REFUSED slot=51 held-by=OTHER-B pid=" + strconv.Itoa(holder),
+	} {
+		if !strings.Contains(errs, want) {
+			t.Fatalf("each colliding slot is refused with the holding batch's id and pid:\nwant %q\ngot  %q", want, errs)
+		}
+	}
+	if !strings.Contains(out, "BATCH B1 n=4 done=2 abstain=2") {
+		t.Fatalf("only the free slots run; the held ones abstain:\n%s", out)
+	}
+	for s, refuse := range expectedRefused {
+		if !refuse {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(marks, s)); err == nil {
+			t.Fatalf("card %s must not have launched: %v", s, err)
+		}
+	}
+	for _, s := range issued {
+		if expectedRefused[s.label] {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(marks, s.label)); err != nil {
+			t.Fatalf("card %s must have launched: %v", s.label, err)
+		}
+	}
+	// The other batch's locks are the other batch's: this batch removes only its own.
+	for _, slot := range []int{49, 51} {
+		if _, err := os.Stat(filepath.Join(root, strconv.Itoa(slot), "BATCH")); err != nil {
+			t.Fatalf("another batch's live lock at slot %d is left where it was: %v", slot, err)
+		}
+	}
+}
+
 // ISSUE #457: a BATCH lock whose pid is dead is stale, and the batch takes the slot over,
 // saying so once. The lock it writes is its own, and it is gone when the slot ends.
 func TestBatchTakesOverStaleSlotLock(t *testing.T) {
