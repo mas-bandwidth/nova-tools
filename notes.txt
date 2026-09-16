@@ -1,0 +1,21 @@
+CARD-8065 / issue #492 — nova-pulse onboarding standard
+
+Red (before fix), verbatim:
+  go test ./internal/ci/... -run TestEveryCommandMeetsTheOnboardingStandard/nova-pulse
+    --- FAIL: TestEveryCommandMeetsTheOnboardingStandard/nova-pulse (0.47s)
+        onboarding_test.go:74: the document has no `## nova-pulse` section
+            (docs/ONBOARDING.md point 5(c): every tool's docs/TESTS.md section opens with `### First run`)
+        onboarding_test.go:112: the usage banner has no `example:` block; a bare nova-pulse must end in lines a first run can type
+            (docs/ONBOARDING.md point 1)
+
+Fix: docs/TESTS.md carries a `## nova-pulse` section opening with `### First run` (the launch/cut/pool
+first-run transcript, fixture cmd/nova-pulse/testdata/example-pulse), and cmd/nova-pulse's usage banner
+(help text) ends in an `example:` block whose lines a stranger can paste.
+
+Green (after fix), verbatim:
+  go test ./internal/ci/... -run TestEveryCommandMeetsTheOnboardingStandard/nova-pulse
+    ok  	github.com/mas-bandwidth/nova-tools/internal/ci	0.449s
+
+Note: both required changes (the TESTS.md section and the usage example: block) are already present in
+origin/main at head af82d73 (landed via #497/#507); the red state was reproduced by reverting exactly
+those two items, and re-applying them turns the test green with no other printed line changing.
