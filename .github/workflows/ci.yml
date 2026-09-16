@@ -72,7 +72,7 @@ concurrency:
   # dev is an integration branch with the same steady merge stream (2026-09-16
   # 16:35Z: dev's rerun was cancelled by the next merge and the mechanical gate
   # read the cancellation as red), so dev keys on the sha like main does.
-  group: ci-${{ github.event.pull_request.number || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.sha) || github.ref }}-${{ github.event_name }}
+  group: ci-${{ github.event.pull_request.number || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.sha) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
   # A push to main never cancels main's running verdict: with a steady merge
   # stream every main run was cancelled by the next merge (2026-09-16 04:41Z and
   # 04:53Z), so main had no completed run for the mechanical red gate to read.
