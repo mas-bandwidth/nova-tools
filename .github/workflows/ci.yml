@@ -1,7 +1,4 @@
 # CI for nova-tools: the CL tier.
-          # A runner user keeps sbcl in its own ~/.local/bin (hulk, vision); a listener started
-          # before its .path file saw none of it (2026-09-16), so the step finds it itself.
-          for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
 #
 # Why this exists: until now, local `go test` on one machine was the whole
 # evidence behind a release — including for four rounds of fail-open fixes in a
@@ -614,6 +611,9 @@ jobs:
       - name: install sbcl if missing
         # The self-hosted runners need no sudo; install directly when sbcl is absent.
         run: |
+          # A runner user keeps sbcl in its own ~/.local/bin (hulk, vision); a listener started
+          # before its .path file saw none of it (2026-09-16), so the step finds it itself.
+          for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
           if ! command -v sbcl >/dev/null 2>&1; then
             apt-get update -qq
             apt-get install -y --no-install-recommends sbcl
