@@ -57,9 +57,17 @@ if [ "$parent_conclusion" != "success" ]; then
 fi
 
 # --- the failing jobs, for the commit message and the comment ---
-failing="$(gh api "repos/$repo/actions/runs/$run_id/jobs?per_page=100" \
-  --jq '[.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | .name] | join(", ")' 2>/dev/null || true)"
-failing="${failing:-no failing job named}"
+failing_json="$(gh api "repos/$repo/actions/runs/$run_id/jobs?per_page=100" \
+  --jq '[.jobs[] | select(.conclusion != "success" and .conclusion != "skipped")]' 2>/dev/null || echo '[]')"
+failing_count="$(printf '%s' "$failing_json" | jq 'length')"
+failing_first="$(printf '%s' "$failing_json" | jq -r '.[0].name // ""')"
+failing_list="$(printf '%s' "$failing_json" | jq -r '[.[].name] | join(", ")')"
+failing_list="${failing_list:-no failing job named}"
+if [ "$failing_count" -eq 1 ] && [ -n "$failing_first" ]; then
+  failing_subject="$failing_first"
+else
+  failing_subject="${failing_count} job(s)"
+fi
 
 # --- the revert ---
 git config user.name "github-actions[bot]"
@@ -74,7 +82,7 @@ else
   git revert --no-edit "$head_sha"
 fi
 
-msg="revert $(short "$head_sha"): main red on $failing (mechanical revert-on-red; fix forward on a branch)"
+msg="revert $(short "$head_sha"): main red on $failing_subject (mechanical revert-on-red; fix forward on a branch)"
 git commit --amend -q -m "$msg"
 new_sha="$(git rev-parse HEAD)"
 echo "revert commit=$(short "$new_sha")"
@@ -84,7 +92,9 @@ push_log="$(mktemp)"
 if git push origin HEAD:main >"$push_log" 2>&1; then
   echo "pushed revert $(short "$new_sha") to main"
 else
-  cat "$push_log"
+  push_lines="$(wc -l < "$push_log")"
+  push_last="$(tail -n1 "$push_log")"
+  echo "push failed ($push_lines lines); last line: $push_last"
   echo "direct push refused by the ruleset; opening a revert PR with auto-merge"
   branch="revert/$(short "$head_sha")"
   git branch -f "$branch" HEAD
@@ -103,7 +113,7 @@ fi
 # --- ONE comment on the merged PR (found by the commit's PR association) ---
 pr="$(gh api "repos/$repo/commits/$head_sha/pulls" --jq '.[] | select(.merged_at != null) | .number' 2>/dev/null | head -n1)"
 if [ -n "$pr" ]; then
-  body="Main was red on $failing. Reverted by $(short "$new_sha") (mechanical revert-on-red); fix forward on a branch."
+  body="Main was red on $failing_list. Reverted by $(short "$new_sha") (mechanical revert-on-red); fix forward on a branch."
   gh api "repos/$repo/issues/$pr/comments" -f body="$body" >/dev/null
   echo "commented on #$pr naming revert $(short "$new_sha")"
 else

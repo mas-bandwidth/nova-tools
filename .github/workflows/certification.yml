@@ -1054,6 +1054,41 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  test-revert-on-red-token:
+    # Asserts every step in revert-on-red.yml that invokes `gh` declares a token
+    # in its env. The missing token was the blocker on PR #693: the rerun step's
+    # env had no GH_TOKEN and the revert step's env had no GITHUB_TOKEN, so the
+    # script's :? guard killed the first red before any rerun or revert.
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: every gh step in revert-on-red.yml declares a token
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c "
+import sys, yaml
+with open('.github/workflows/revert-on-red.yml') as f:
+    wf = yaml.safe_load(f)
+job = wf['jobs']['revert-on-red']
+steps = job['steps']
+bad = []
+for i, step in enumerate(steps):
+    run = step.get('run', '')
+    if 'gh ' not in run and 'ghapi' not in run:
+        continue
+    env = step.get('env', {}) or {}
+    has_token = 'GH_TOKEN' in env or 'GITHUB_TOKEN' in env
+    name = step.get('name', f'step {i+1}')
+    if not has_token:
+        bad.append(name)
+if bad:
+    print('FAIL: gh steps with no token env:', ', '.join(bad))
+    sys.exit(1)
+print('ok: every gh step in revert-on-red.yml declares GH_TOKEN or GITHUB_TOKEN')
+"
+
   perf:
     # THE WALL CLOCK, nightly, because a wall clock is not a per-commit test.
     #
@@ -1129,7 +1164,7 @@ jobs:
     # succeeded, so a leg renamed out of existence shows up here as a missing success and
     # not as silence. A red certification is a blocker for the next release, never for a
     # CL, whose gate is ci-ok in ci.yml.
-    needs: [test, build-windows, windows-packages, test-windows, smoke, release-dry-run, perf]
+    needs: [test, build-windows, windows-packages, test-windows, smoke, release-dry-run, test-revert-on-red-token, perf]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

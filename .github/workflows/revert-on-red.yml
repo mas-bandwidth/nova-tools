@@ -59,6 +59,7 @@ jobs:
       - name: re-run the failed jobs once on the first red (flake guard)
         shell: bash
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
@@ -72,6 +73,7 @@ jobs:
       - name: revert the push that turned main red
         shell: bash
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: .github/scripts/revert-on-red.sh
