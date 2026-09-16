@@ -180,7 +180,7 @@ jobs:
           # measured at over eleven minutes in run 35018437149 for a tier whose
           # budget is two.
           SPACE_SHARDS=8
-          STUDIO_SHARDS=8 # eight studio runners since 05:0xZ 2026-09-16; four shards of double size hit the 6-minute job timeout on a loaded Studio (main runs 35055138586, 35057357169: test (2/4 studio) and (4/4 studio) cancelled at 6 min, twice each)
+          STUDIO_SHARDS=16 # two waves on eight studio runners, each shard inside the 6-minute cap on a loaded Studio; eight studio runners since 05:0xZ 2026-09-16; four shards of double size hit the 6-minute job timeout on a loaded Studio (main runs 35055138586, 35057357169: test (2/4 studio) and (4/4 studio) cancelled at 6 min, twice each)
           darwin_only=("./cmd/nova-sandbox" "./internal/sandbox")
 
           is_darwin_only() {
@@ -267,7 +267,9 @@ jobs:
     # one to two minutes; the budget itself is the run, and the run is what to
     # hold to the law. The fast jobs — lint, test-packages, lisp at 32, 11 and
     # 12 s — keep the 2 they always had.
-    timeout-minutes: 12 # the Studio at load 55 (swarm + CI) runs a shard in 6-7 min; 6 killed two shards per run on 2026-09-16 (05:16Z). The bar stays two minutes; the timeout is the panic guard, not the target.
+    # The Studio at load 55 ran a double-size shard in 6-7 min (2026-09-16 05:16Z);
+    # the cap stays 6 by the two-minute law (internal/ci); the shards got smaller instead.
+    timeout-minutes: 6
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
