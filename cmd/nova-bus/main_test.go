@@ -452,7 +452,7 @@ func TestARefusalIsOneLineWhateverTheDraftHolds(t *testing.T) {
 func TestInboxSeparatesNotesFromReceiptsAndPutsNotesFirst(t *testing.T) {
 	t.Parallel()
 	checkout, _ := busDir(t)
-	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "the archivist", "--receipt-max-words", "40").
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "the archivist", "--receipt-max-words", "40", "--open").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX NOTE id=bo-abcdef012345 from=Bo addr=to").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2 notes=1 receipts=1")
@@ -653,7 +653,7 @@ func TestInboxShowsWhatWasHeardButNotAnswered(t *testing.T) {
 	checkout, _ := busDir(t)
 	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX HEARD id=bo-abcdef012345 from=Bo addr=to").
 		mustContain(t, "stdout", "heard=1")
@@ -667,7 +667,7 @@ func TestInboxShowsWhatWasHeardButNotAnswered(t *testing.T) {
 	}
 	// And a note that was actually REPLIED to is gone, not merely heard.
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	r = invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
+	r = invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open").mustCode(t, 0)
 	if strings.Contains(r.stdout, "bo-abcdef012345") {
 		t.Fatalf("an answered note is still listed:\n%s", r.stdout)
 	}

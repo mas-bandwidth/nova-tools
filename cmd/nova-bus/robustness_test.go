@@ -205,7 +205,9 @@ func TestANoteAddressedToNobodyIsNamed(t *testing.T) {
 	writeFile(t, checkout, "from-bo/2026-09-08T0300Z-partly.md",
 		"From: Bo\nTo: Ada, Team\nDate: Tue Sep  8 03:00:00 UTC 2026\nSubject: Partly addressed\n\nThis one reaches Ada.\n")
 	commitAs(t, checkout, "Bo", "bo: partly addressed")
-	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").mustCode(t, 0)
+	// The carried list is behind --open now (#674); a --full read alone names the
+	// carrying count and not the entries, so the listing is asked for with --open.
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--open").mustCode(t, 0)
 	if strings.Contains(r.stdout, "2026-09-08T0300Z-partly.md: ") && strings.Contains(r.stdout, "INBOX UNADDRESSED path=from-bo/2026-09-08T0300Z-partly.md") {
 		t.Fatalf("a note that reaches Ada was reported as reaching nobody:\n%s", r.stdout)
 	}
@@ -322,7 +324,8 @@ func TestASubdirectoryBusIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
 // The two counts said different numbers on two lines with nothing saying why: `carrying=`
 // is the whole open list and `open=` is what still waits on you, and they differ by exactly
 // the heard notes. Both are now on the OK line, under the names they are printed under
-// elsewhere, beside the decomposition that makes them add up.
+// elsewhere, beside the decomposition that makes them add up. The OPEN frame is behind
+// --open (#674); --open is passed here so the frame is on stdout for the comparison.
 func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -331,7 +334,7 @@ func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 		"--remote", "origin", "--branch", "main").mustCode(t, 0)
 	// A cursor first, so the read below is the incremental one a person actually runs.
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
-	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open").mustCode(t, 0)
 	// Two notes on the list, one of them heard: carrying counts it, open does not.
 	for _, want := range []string{
 		"INBOX SCOPE mode=since",

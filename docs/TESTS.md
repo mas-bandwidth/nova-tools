@@ -32,7 +32,7 @@ INBOX OPEN carrying=1 heard=0 large=false remedy=inbox --advance
 INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
 INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unreadable=0
 
-$ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --full --bodies
+$ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --full --bodies --open
 INBOX SCOPE mode=full cursor=- changed=0 carrying=1
 INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to at=2026-09-09T12:34:56Z path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-0f1e2d3c4b5a.md: Yes, on the merge queue too
 INBOX BODY id=ada-0f1e2d3c4b5a bytes=195
@@ -52,7 +52,7 @@ INBOX OK as=Bo carrying=1 open=1 notes=1 receipts=0 heard=0 unaddressed=0 unread
 $ nova-bus receipt --bus ./bus --as Bo --note ada-0f1e2d3c4b5a --remote origin --branch main
 RECEIPT OK recorded=1 already=0 commit=9750ba9617d4a42a5fdedf372ec70132aa46f936 pushed=true attempts=1
 
-$ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --advance --legacy-now --remote origin --branch main
+$ nova-bus inbox --bus ./bus --as Bo --receipt-max-words 40 --advance --legacy-now --open --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=0
 INBOX LEGACY before=2026-09-12T20:15:33Z notes=1 unreadable=0
 INBOX OPEN carrying=0 heard=0 large=false remedy=inbox --advance
@@ -67,7 +67,7 @@ SEND OK id=bo-8405301fd99d path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md co
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
 INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
 
-$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
+$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --open --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=3
 INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
 INBOX NOTE id=bo-8405301fd99d from=Bo addr=to at=2026-09-12T20:15:41Z path=from-bo/2026-09-12T2015Z-gate-8405301fd99d.md: gate
@@ -76,7 +76,7 @@ INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-09T13:00:00Z path=fr
 INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
 INBOX CURSOR commit=57dc978d3ad645788c4236b0da99b1c59f89282d carrying=3 pushed=true attempts=1
 
-$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40
+$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --open
 INBOX SCOPE mode=since cursor=57dc978d3ad645788c4236b0da99b1c59f89282d changed=2 carrying=3
 INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
 INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
@@ -87,6 +87,8 @@ DRAFT OK path=./drafts/2026-09-12T2015Z-re-bo-ce10834fbfea.md re=bo-ce10834fbfea
 ```
 
 **Identity is the roster, not the shell.** `names` is the whole of it: a participant with a `lane` can send, one without a lane (Dana) can be written to and cannot write, and `--as` takes a name or any alias on that line — `--as "the archivist"` is Ada. There is no default `--as`, and a name the roster does not know is a refusal rather than a new participant.
+
+**The OPEN frame sits behind `--open` (#674).** A first run on a fresh reader needs `--open` to see the carrying count on a single `INBOX OPEN carrying=<n> heard=<m>` line; the default `inbox` and `wait` returns name the same counts on `INBOX OK as=... carrying=... open=... notes=... receipts=... heard=... unaddressed=... unreadable=...`. The listing of entries is also behind `--open`, capped at `--open-max` (default 20) and named on a second `INBOX OPEN listed=<n> and <k> more (--open-max to widen)` line when it stops short.
 
 **`--bodies` is the note's text in the call that reported it.** Without it, `inbox` and `wait` print what a note IS -- id, sender, address, date, path and subject -- and a reader who wants to answer opens the file. With it, each NEW note's body follows its line inside a counted frame: `INBOX BODY id=<id> bytes=<n>`, exactly `n` bytes, the one newline the framing supplies when the body does not end in one, and `INBOX BODY END id=<id>`. The count is the frame, so nothing a body holds can be read as an event line. It is also the one flag that BOUNDS the NEW half -- `--max-notes` (20, ceiling 1000) and `--max-bytes` (65536, ceiling 1048576) -- and the `INBOX BODIES` line says what printed, whether the snapshot is drained, whether anything was left behind, and the opaque `next=` token that continues it as `--after <token>`. Drain while `next=` is present; never loop on `complete=false`.
 

@@ -1178,18 +1178,19 @@ func refusalTable(t *testing.T, checkout string) []refusalRow {
 // "Drafting a reply does not close the note it answers, does not mark it heard, does not
 // move the cursor and does not write to the bus."
 //
-// expected= `INBOX OPEN carrying=2 heard=0` before and after.
+// expected= `INBOX OK carrying=2 open=2` before and after (the OPEN frame is behind --open
+// in #674; the OK line carries the open-list count).
 func TestDraftingAReplyClosesNothing(t *testing.T) {
 	t.Parallel()
 	checkout, _, drafts := replyBus(t)
-	before := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
+	before := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open").mustCode(t, 0)
 	body := bodyFile(t, "Yes.\n")
 	invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).mustCode(t, 0)
-	after := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
+	after := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open").mustCode(t, 0)
 	if !strings.Contains(before.stdout, "INBOX OPEN carrying=2 heard=0") {
 		t.Fatalf("the fixture is not what this test measures:\n%s", before.stdout)
 	}
-	if !strings.Contains(after.stdout, "INBOX OPEN carrying=2 heard=0") {
+	if !strings.Contains(after.stdout, "INBOX OK as=Ada carrying=2 open=2") {
 		t.Errorf("the draft changed the open list:\n%s", after.stdout)
 	}
 }
@@ -1197,7 +1198,8 @@ func TestDraftingAReplyClosesNothing(t *testing.T) {
 // "the end-to-end path against a disposable local bare remote: draft, `prepare`,
 // `send --prepared`, and the target leaves the open list on the next read."
 //
-// expected= `SEND OK`, then `INBOX OPEN carrying=1 heard=0`.
+// expected= `SEND OK`, then `INBOX OK carrying=1 open=1` (the OPEN frame is behind --open
+// in #674; the OK line carries the open-list count).
 func TestGeneratedReplySendsAndClosesItsTarget(t *testing.T) {
 	t.Parallel()
 	checkout, _, drafts := replyBus(t)
@@ -1213,7 +1215,7 @@ func TestGeneratedReplySendsAndClosesItsTarget(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--advance", "--remote", "origin", "--branch", "main").mustCode(t, 0)
-	if !strings.Contains(r.stdout, "INBOX OPEN carrying=1 heard=0") {
+	if !strings.Contains(r.stdout, "INBOX OK as=Ada carrying=1 open=1") {
 		t.Errorf("the target did not leave the open list:\n%s", r.stdout)
 	}
 }

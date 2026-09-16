@@ -2544,31 +2544,34 @@ written by the run before it — and `notes=0`. Neither is parsed as a note. It 
 is the size of the open list this run will keep.
 
 **Every `inbox` and `wait` return has the same three parts, in this order: what
-is NEW, in full; one `INBOX OPEN carrying=<n> heard=<m>` line; and the carried
-list only if you asked for it.**
+is NEW, in full; one `INBOX OK as=<name> carrying=... notes=...` line; and the
+OPEN frame only if you asked for it with `--open` (#674).**
 
 *What is new, in full.* The notes this run put on the open list that were not on
 it before, under `INBOX NOTE`, `INBOX HEARD` and `INBOX RECEIPT`, in the usual
-three groups. This is what a poll is for and it is printed on every run in every
-mode. It used to be printed on none of them: the choice was one summary line or
-the whole carried list, so a reader who wanted to see what had just arrived asked
-for `--open` and got every note they had ever failed to answer, above the one
-they were looking for, on every return.
+three groups. This is what a poll is for. On an incremental read it is printed
+on every run; on a full read `res.Fresh` is empty by construction (the open list
+is the whole bus), so a first read prints SCOPE and OK and the carried entries
+only if `--open` was passed too. It used to be printed on none of them: the
+choice was one summary line or the whole carried list, so a reader who wanted
+to see what had just arrived asked for `--open` and got every note they had
+ever failed to answer, above the one they were looking for, on every return.
+The middle ground between "one summary line" and "the whole list" is exactly
+what `--open` is, and a To: wake is the place that pain showed itself first.
 
-*`INBOX OPEN carrying=<n> heard=<m>`*, exactly once, whichever way the run was
-asked. A reader carrying five hundred notes gets five hundred lines on every run
-otherwise, with the new note somewhere in the middle of them — the same
-listing-nobody-reads failure the switch-day line exists to stop, arriving from
-the other end. Nothing is hidden: the same counts are on `INBOX OK`, and the
-entries themselves are in `OPEN`, which is a file a person can open.
+*`INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> heard=<n>
+unaddressed=<n> unreadable=<n>`*, on every run. The carrying count is the whole
+open list; `open=` is what is still waiting on you (notes and receipts); they
+differ by exactly `heard + unreadable`. The remaining fields name every part of
+the decomposition so a reader does not have to ask again.
 
-*The carried list, under `--open`* — and under `--full`, because a full read is
-what a person asks for when they want the whole picture. The cap is the
-footgun itself, closed: a flag whose cost grows with the backlog, reached for by
-the reader with the biggest backlog, printed into a context window that has no
-way to refuse it. The cap counts entries PRINTED, so a capped listing is the
-first `<n>` of the order a full one would have printed — the notes first and the
-bare acknowledgements last, which is the right end to lose.
+*The OPEN frame, under `--open`*: one `INBOX OPEN carrying=<n> heard=<m>
+large=<true|false> remedy=...` line that names the carrying count once and, past
+`--open-warn` carried entries (default 40), names the symptom (`large=true`)
+and the normal way out (`reply or receipt each note, or close --before
+<instant> as an explicit bulk cutoff`). The carried list itself, in listing
+order, capped at `--open-max` (default 20) and named on a second `INBOX OPEN
+listed=<n> and <k> more (--open-max to widen)` line when it stops short.
 
 `INBOX UNREADABLE` is printed whichever way the run was
 asked, because a file nobody can read is not a listing choice — the one exception
@@ -2641,10 +2644,10 @@ stderr, against the rule below, and the cost was real: anything reading the two
 streams apart — which is what CI does — saw every clean-but-forgiving run as a
 failing one.
 
-`INBOX SCOPE`'s and `INBOX OPEN`'s `carrying=` and `INBOX OK`'s `open=` are two
-different counts and used to be printed on two lines with nothing saying so: one
-real run read `carrying=658` and `open=657`. **`carrying=` is the whole open
-list** — the notes, the bare receipts, the heard and the unreadable — and
+`INBOX SCOPE`'s `carrying=` and `INBOX OK`'s `carrying=` and `INBOX OPEN`'s
+`carrying=` are three names for two different counts, distinguished by which
+line reads them. **`carrying=` on `INBOX SCOPE` and `INBOX OK`** is the
+whole open list — the notes, the bare receipts, the heard and the unreadable.
 **`open=` is what is still waiting on you**, which is the notes and the receipts
 and nothing else, because a note you have receipted has had the sender's question
 about whether it arrived answered. They differ by exactly `heard + unreadable`.
@@ -3045,10 +3048,10 @@ to receipt**:
 | deliver | `prepare` + `send --prepared` | the id is assigned once; the saved artifact is the retry; an ambiguous write is reconciled against the remote, never duplicated |
 
 The addressed note, the CC, the receipt and the open obligation are four
-distinct lines in every read — `INBOX NOTE addr=<to|cc>`, `INBOX RECEIPT`,
-`INBOX HEARD`, `INBOX OPEN` — and none of them is dropped when a return is
-capped: the cap is a prefix of the scan order, never a sample, and the
-continuation resumes at the item where the cap stopped.
+distinct lines in every read that lists — `INBOX NOTE addr=<to|cc>`, `INBOX
+RECEIPT`, `INBOX HEARD`, `INBOX OPEN` — and none of them is dropped when a
+listing under `--open` is capped: the cap is a prefix of the scan order, never a
+sample, and the continuation resumes at the item where the cap stopped.
 
 **One identity, stated as the rule that binds the four.** A note's id is
 assigned once and is never recomputed; a receipt records the id and the commit;
@@ -4120,11 +4123,12 @@ same open list, the same switch-day line, the same `INBOX` lines on stdout in th
 same order — so the caller's next action is the one an inbox listing always
 implies, and a caller who knows one verb knows both. `--open`, `--advance`,
 `--legacy-before` and `--carry-history` mean exactly what they mean on `inbox`;
-`--open` is the one to pass, because without it a run prints one `INBOX OPEN`
-line for what you are carrying rather than listing it, which is the right default
-for a poll and the wrong one for a call you made to find out what arrived. The
-listing is one implementation shared by the two verbs (`inboxListing`), not a
-second reader that could drift.
+`--open` is the one to pass when the caller wants the carrying count and the
+backlog, because without it the run prints the carrying count on the `INBOX OK`
+line and not on an `INBOX OPEN` line (#674) — which is the right default for a
+poll that should not re-read seven hundred carried notes on every wake to find
+the one new one. The listing is one implementation shared by the two verbs
+(`inboxListing`), not a second reader that could drift.
 
 **What it adds is a clock and a fetch.** Each poll takes the checkout lock,
 fetches, and **fast-forwards the checkout** — every read in this tool reads the

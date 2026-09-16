@@ -1632,6 +1632,13 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// is a listing a reader will mistake for everything.
 	fmt.Fprintf(stdout, "INBOX SCOPE mode=%s cursor=%s changed=%d carrying=%d\n",
 		oneline.Field(scope.Mode()), oneline.Field(dash(cursor.Commit)), scope.Changed, len(res.Open))
+	// THE LISTING IS A CHOICE, AND THE BACKLOG ONE IS TOO. `wait` is `inbox` on a clock,
+	// and a poll wakes on a `To:` note -- that is the contract #328 set and #674 keeps --
+	// so the line that woke it is the one the caller must see, and the carrying count that
+	// does not change between polls is the one they must not. The OPEN frame moves behind
+	// `--open`: a default return prints the news and ONE ok line and nothing else, and a
+	// reader who wants the carrying count and the entries asks for `--open`, the same flag
+	// they already used to look. `--quiet-beats` already has its own contract on this.
 	// AND THEN, IF THIS READER'S LINE IS DRAWN FORWARD, THE SENTENCE THAT SAYS SO. It is
 	// printed from the cursor as it stands on the bus -- not from the flag this run was
 	// given -- because it is a fact about the state a reader is stuck in, and the run that
@@ -1687,11 +1694,12 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// carried notes and blew its context. News and backlog are different questions, and the
 	// news is the one every run answers.
 	//
-	// It is skipped on a run that is about to list the WHOLE open list -- `--open`, or a
-	// full read -- because the new entries are in that list and printing them twice is the
-	// same noise from the other end.
-	listCarried := o.openList || scope.Full
-	if o.bodies || !listCarried {
+	// It is skipped on a run that is about to list the WHOLE open list -- `--open` -- because
+	// the new entries are in that list and printing them twice is the same noise from the
+	// other end. (A `--full` read without `--open` does not list either, after #674: the
+	// OPEN frame is behind `--open` and the news it returns on is the SCOPE + OK line; a
+	// reader who wants the picture asks for `--open` too.)
+	if o.bodies || !o.openList {
 		if o.bodies {
 			head, headErr := bus.HeadCommit(o.busDir)
 			if headErr != nil {
@@ -1768,38 +1776,41 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			printOpenEntries(stdout, res.Fresh, len(res.Fresh))
 		}
 	}
-	// THEN ONE LINE FOR THE BACKLOG, whichever way the run was asked. It was printed only on
-	// the runs that did NOT list, which meant the two shapes of return had no line in common
-	// and a reader parsing `--open` output could not find the count at all. One line, always,
-	// under one name. The large-list sentence used to be a SECOND line, past a size, with a
-	// whole command pasted into it; a reader parsing OPEN could not tell small from large
-	// without knowing the threshold, and the command duplicated every run's own flags. One
-	// line carries both now: `large=` is the sentence, and `remedy=` names the one whole-
-	// backlog way out without spelling a command the caller already built. A large set's
-	// remedy is not `inbox --advance`: that moves the read cursor while the OPEN entries
-	// stay carried, so it loops without resolving anything. Reply or receipt each note is
-	// the normal answer, and `close --before` is the explicit opt-in bulk cutoff.
-	if len(res.Open) > o.openWarn {
-		fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d large=true remedy=%s\n",
-			len(res.Open), heard, remedyLarge)
-	} else {
-		fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d large=false remedy=%s\n",
-			len(res.Open), heard, remedyAdvance)
+	// THEN ONE LINE FOR THE BACKLOG, BEHIND `--open` (#674). The previous default printed
+	// this line on every run: a To: wake on a bus of 1,904 notes returned WAIT followed by
+	// one INBOX OPEN carrying=1904 heard=177 large=true line that re-stated a carrying count
+	// the reader had been told on every poll, burning tokens on a frame that said nothing
+	// the call had not already said. The OPEN frame now lives where the listed entries
+	// already lived -- behind `--open`, the flag a reader passes when they want the
+	// backlog. The decomposing counts (carrying=, open=, heard=, unaddressed=,
+	// unreadable=, notes=, receipts=) stay on `INBOX OK`, which is the only place every
+	// run names them. The carrying count above --open-warn still gets the `large=`
+	// sentence and the `remedy=` from the same line, the same way the symptom (a list
+	// that grows one note at a time) is named once.
+	if o.openList {
+		if len(res.Open) > o.openWarn {
+			fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d large=true remedy=%s\n",
+				len(res.Open), heard, remedyLarge)
+		} else {
+			fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d large=false remedy=%s\n",
+				len(res.Open), heard, remedyAdvance)
+		}
 	}
 	// LISTING THE CARRIED NOTES IS A CHOICE, and the default is not to. A reader carrying five
 	// hundred notes gets five hundred lines on every run, and the one new note is in the
 	// middle of them -- which is the listing-nobody-reads failure the switch-day line exists
-	// to stop, arriving from the other end. So `--open` prints the entries, and `--full` lists
-	// them too because a full read is what a person asks for when they want the whole picture.
-	// Nothing is hidden either way: the counts are on the OK line, and the entries are in
-	// OPEN, which is a file.
+	// to stop, arriving from the other end. So `--open` prints the entries and the OPEN
+	// frame, and nothing else does. A full read is still a full read -- it rebuilds the
+	// open list from the whole bus, internally -- but a reader who wants the picture asks
+	// for it under `--open` now. Nothing is hidden either way: the counts are on the OK
+	// line, and the entries are in OPEN, which is a file.
 	//
 	// AND IT IS CAPPED. `--open` on a long list was the footgun itself: a flag whose cost
 	// grows with the backlog, asked for by the reader with the biggest backlog, printed into
 	// a context window that has no way to refuse it. --open-max is the cap, it has a default
 	// so that nobody has to know about it before the run that needed it, and the line under
 	// the listing says how many were left and which flag widens it.
-	if listCarried {
+	if o.openList {
 		rows := bus.SortForListing(res.Open)
 		shown := printOpenEntries(stdout, rows, o.openMax)
 		if more := countListable(rows) - shown; more > 0 {

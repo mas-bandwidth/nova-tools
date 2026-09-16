@@ -397,9 +397,11 @@ func TestWaitSaysWhyAnInstantDrawnForwardHidesTheWholeWait(t *testing.T) {
 }
 
 // A WAIT RETURN, WITHOUT --open, OVER A BACKLOG. This is the loop the README now
-// recommends, and the whole of what it prints: the note that woke it, in full, and one
-// line for the backlog it did not print. With --open in that loop, a line carrying
-// seventy-four re-read all seventy-four on every poll.
+// recommends: a `wait` without --open prints the note that woke it, in full, and the
+// INBOX OK line that names the carrying count -- and not the OPEN frame, which moved
+// behind --open (#674). A wait with --open would re-read every carried note on every
+// poll and blow a small context window. So the loop the README names does NOT pass
+// --open, and this test is what that loop looks like on the wire.
 func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -427,13 +429,14 @@ func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
 	}
 	r.mustContain(t, "stdout", "WAIT OK new=1").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-333333333333").
-		mustContain(t, "stdout", "INBOX OPEN carrying=3 heard=0")
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=3 open=3")
 	// ONE note line: the one that woke it. Not the two it was already carrying.
 	if n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT "); n != 1 {
 		t.Fatalf("a wait return without --open printed %d listing lines, want the 1 new note:\n%s", n, r.stdout)
 	}
-	if n := strings.Count(r.stdout, "INBOX OPEN carrying="); n != 1 {
-		t.Fatalf("a wait return printed %d OPEN carrying lines, want exactly 1:\n%s", n, r.stdout)
+	// No OPEN frame on a default wait (#674): the carrying count is named on INBOX OK.
+	if strings.Contains(r.stdout, "INBOX OPEN") {
+		t.Fatalf("a default wait return still printed an INBOX OPEN frame; the #674 contract puts the frame behind --open:\n%s", r.stdout)
 	}
 }
 

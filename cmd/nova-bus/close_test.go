@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-// The INBOX OPEN line used to be two lines: one carrying the counts, and, past a size, a
-// second carrying a whole pasted command. A reader parsing OPEN had to know the threshold
-// to tell a small list from a large one. It is one line now, and `large=` plus `remedy=` say
-// the sentence and the way out without a command the caller already built.
+// The INBOX OPEN line, under --open, is one line: it carries the counts AND, past a size, a
+// whole sentence. A reader parsing OPEN had to know the threshold to tell a small list from
+// a large one; `large=` plus `remedy=` say the sentence and the way out without a command
+// the caller already built. The OPEN frame moved behind --open in #674.
 func TestInboxOpenIsOneLine(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -25,7 +25,9 @@ func TestInboxOpenIsOneLine(t *testing.T) {
 	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "many notes")
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 
-	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+	// Adopt the bus, then ask for the OPEN frame with --open.
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open").mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0 large=true remedy=reply or receipt each note, or close --before <instant> as an explicit bulk cutoff")
 	if n := strings.Count(r.stdout, "INBOX OPEN carrying=62 heard="); n != 1 {
 		t.Fatalf("the backlog counts were not on exactly one line:\n%s", r.stdout)
@@ -35,9 +37,10 @@ func TestInboxOpenIsOneLine(t *testing.T) {
 	}
 }
 
-// A large carrying set names reply/receipt as the normal path, not `--advance` alone: plain
-// `inbox --advance` moves the read cursor while the OPEN entries stay carried, so it loops
-// without resolving anything. `close --before` is named only as the explicit opt-in cutoff.
+// A large carrying set, under --open, names reply/receipt as the normal path, not
+// `--advance` alone: plain `inbox --advance` moves the read cursor while the OPEN entries
+// stay carried, so it loops without resolving anything. `close --before` is named only as
+// the explicit opt-in cutoff.
 func TestInboxLargeRemedyNamesReplyOrReceiptNotAdvance(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -51,7 +54,8 @@ func TestInboxLargeRemedyNamesReplyOrReceiptNotAdvance(t *testing.T) {
 	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "many notes")
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 
-	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open").mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0 large=true")
 	if strings.Contains(r.stdout, "remedy=inbox --advance") {
 		t.Fatalf("a large carrying set names '--advance' alone as its remedy, which loops without resolving:\n%s", r.stdout)

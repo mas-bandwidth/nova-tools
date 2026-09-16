@@ -212,7 +212,6 @@ INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an anc
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=3
-INBOX OPEN carrying=3 heard=1
 INBOX NOTE id=bo-a57f65f4f21c from=Bo addr=to at=2026-09-12T20:33:50Z path=from-bo/2026-09-12T2033Z-gate-a57f65f4f21c.md: gate
 INBOX HEARD id=bo-222222222222 from=Bo addr=to at=2026-09-09T14:00:00Z path=from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md: The Windows runner skips three steps
 INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-09T13:00:00Z path=from-bo/2026-09-09T1300Z-heard-111111111111.md: Heard
@@ -293,9 +292,9 @@ Four things a first draft gets wrong, and what `send` does about each, one `SEND
 nova-bus inbox --bus ~/bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
 ```
 
-Every return has three parts: what is new, in full; one `INBOX OPEN carrying=<n> heard=<m>` line for the backlog; and the backlog itself only if you ask with `--open`, capped at `--open-max` (default 20). Anything unreadable, and any note on the bus that reaches nobody, is named. `--receipt-max-words` is the threshold for telling a bare receipt from a note carrying a finding, and it comes from you because it is a property of how your bus writes; a `Kind:` line in a header always wins. It reports and exits 0 whether the inbox is empty or full. Without `--advance` it writes nothing; with it, it moves your cursor and pushes it, so your place survives a change of machine.
+Every return has two parts and a switch: what is new, in full on an incremental read (or nothing on a fresh cursor's first full read); one `INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> heard=<n> unaddressed=<n> unreadable=<n>` line that names the counts under the names they carry elsewhere; and the OPEN frame only if you asked for it with `--open` (#674). `--open` prints one `INBOX OPEN carrying=<n> heard=<m> large=... remedy=...` line and, capped at `--open-max` (default 20), the carried entries themselves with a second `INBOX OPEN listed=<n> and <k> more (--open-max to widen)` line when the cap stops short. Anything unreadable, and any note on the bus that reaches nobody, is named. `--receipt-max-words` is the threshold for telling a bare receipt from a note carrying a finding, and it comes from you because it is a property of how your bus writes; a `Kind:` line in a header always wins. It reports and exits 0 whether the inbox is empty or full. Without `--advance` it writes nothing; with it, it moves your cursor and pushes it, so your place survives a change of machine.
 
-Past `--open-warn` carried (default 40) every return adds a line naming the three ways out: answer with `Re: <id>`, say heard with `receipt --note <id>`, or start over with `--full --legacy-now --advance`. It is a note, not a refusal: a backlog grows one note at a time and no single run says it is growing.
+Past `--open-warn` carried (default 40) and only under `--open`, the OPEN frame names the way out: `reply or receipt each note`, or `close --before <instant> as an explicit bulk cutoff`. The remaining `INBOX OK` line still names the count on every run.
 
 **`wait`** is the same listing, blocking, for a harness that does not wake you:
 
