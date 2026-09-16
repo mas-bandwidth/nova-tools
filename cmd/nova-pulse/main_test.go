@@ -76,6 +76,48 @@ func TestHelpDropsNotYetImplementedForHarvest(t *testing.T) {
 	}
 }
 
+// issue #515, the half that outlived the landings: docs/SPEC-PULSE.md's "The verbs"
+// block claims to be the string `nova-pulse help` prints, byte for byte, so it is
+// a line a stranger pastes. A verb the binary refuses with "not implemented in
+// this card" must read "(not yet implemented)" there — a first run following the
+// block otherwise hits a dead end on a verb the block called available
+// (docs/ONBOARDING.md point 1) — and a marker left on a verb that runs is the same
+// lie the other way round, so it must go the day the verb lands.
+func TestSpecVerbsBlockMarksUnshippedVerbs(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-PULSE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, after, ok := strings.Cut(string(doc), "\n## The verbs\n")
+	if !ok {
+		t.Fatal("the spec has no verbs section")
+	}
+	_, after, ok = strings.Cut(after, "```\n")
+	if !ok {
+		t.Fatal("the verbs section has no block")
+	}
+	block, _, ok := strings.Cut(after, "```")
+	if !ok {
+		t.Fatal("the verbs block does not close")
+	}
+	for _, line := range strings.Split(block, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "nova-pulse" || fields[1] == "version" || fields[1] == "help" {
+			continue
+		}
+		var out, errb bytes.Buffer
+		run([]string{fields[1]}, &out, &errb, time.Now().UTC())
+		refused := strings.Contains(errb.String(), "not implemented in this card")
+		marked := strings.Contains(line, "(not yet implemented)")
+		switch {
+		case refused && !marked:
+			t.Errorf("the spec's verbs block lists %q as available; the verb refuses \"not implemented in this card\" and the line must read \"(not yet implemented)\": %q", fields[1], line)
+		case marked && !refused:
+			t.Errorf("the spec's verbs block marks %q \"(not yet implemented)\" and the verb runs; the marker must go when the verb lands: %q", fields[1], line)
+		}
+	}
+}
+
 // cut-refusal-names-models-shape: a cut whose templates dir has no models.tsv is refused,
 // and the refusal names the two-line shape flash <model id> / pro <model id> (issue #633).
 func TestCutRefusalNamesModelsShape(t *testing.T) {
