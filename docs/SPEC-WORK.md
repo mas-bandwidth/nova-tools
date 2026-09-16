@@ -2278,6 +2278,7 @@ nova-work goal show      (--session <path> | --snapshot <path> --max-bytes <n> -
 nova-work goal update    --session <path> <write flags> --expect <rev> [--scope <scope>] (--progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text>)   (writes on the current goal node of the scope and on no other node)
 nova-work machine        --session <path> <write flags> (--register <id> --name <text> --owner <name> --connect <ref> --role <build|test|profile> ... | --retire <id> | --permit <id>=<kind> | --exclude <id>=<kind> | --limit <id> <key>=<n|n,n,...> | --fact <id> <key>=<value> --declared-by <name>) --reason <text>
 nova-work offer          --session <path> <write flags> --node <id> --offer <offer-id> --to <name> --profile <capability-id>@<config-revision> --attempt <attempt-id> --generation <n> --request-ref <opaque-id> --payload <pointer> --payload-sha256 <hex> --reserve <slots> --until <stamp> [--requested-model <model-id>] [--predecessor-offer <offer-id> --predecessor-attempt <attempt-id>] [--reason <text>]
+nova-work profile        --session <path> <write flags> (--write <name> --model <id> --harness <id> --work-type <label> --pointer <path> --policy <revision> [--evidence <pointer>] [--expiry <stamp>] [--owner <name>] | --edit <name> (--pointer <path> | --policy <revision> | --evidence <pointer> | --expiry <stamp> | --owner <name>)) --reason <text>   (an edit re-pins the digest when it changes --pointer; a manager session selects one by name at start and never swaps it mid-session)
 nova-work acknowledge    --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --stage <received|accepted> --provenance <pointer> --provenance-sha256 <hex> [--by <duration|stamp> --default <release|extend-once|escalate:<name>>] [--observed-model <model-id>] [--bench <name>] [--execution <handle>] [--reason <text>]   (--stage accepted: --by and --default, required, create-if-needed; --stage received: both exit 2)
 nova-work decline        --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --provenance <pointer> --provenance-sha256 <hex> [--reason <text>]
 nova-work execution pause     --session <path> <write flags> (--node <id> | --repo <owner/name> | --all) --reason <text>
@@ -3329,10 +3330,13 @@ been taken**, never a measurement campaign forced before the profile can be used
 date** after which the profile is stale, **the expiry and refresh intervals themselves CONFIG, set
 per profile**, a refresh itself one edit under the edit grammar below; and an **owner**, a friend
 of `friends`. **A manager session names its profile**, **selecting one by name at start and never
-swapping it mid-session**, and **a stale or absent profile is printed on the status line as such**
-— `profile-state=stale` with the expired date, `profile-state=absent`, or `profile-state=unknown`
-where the evidence was never measured, never guessed and never silently swapped for another
-model's prompt. **Profiles are edited by the coordinator only**, under the one writer and the one
+swapping it mid-session**, and **before it is invoked the prompt content at the pointer is hashed
+and compared with the pinned digest: a mismatch refuses the invocation at exit 1, `SESSION FAIL
+session=<path> profile=<name>: digest mismatch`, rather than running on unknown bytes or silently
+re-pinning**, and **a stale, absent or mismatched profile is printed on the status line as such**
+— `profile-state=stale` with the expired date, `profile-state=absent`, `profile-state=mismatch`,
+or `profile-state=unknown` where the evidence was never measured, never guessed and never silently
+swapped for another model's prompt. **Profiles are edited by the coordinator only**, under the one writer and the one
 journal like every CONFIG change — **the edit grammar is one new versioned record with `:by`,
 naming the profile and stating the fields it changes (pointer and digest, policy version,
 evidence, expiry or owner), never an in-place rewrite** — so the journal answers who last edited a
