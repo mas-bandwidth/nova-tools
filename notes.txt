@@ -1,0 +1,25 @@
+# CARD-8068 notes — bug node kind (#463)
+
+## Red test output (before fix)
+
+TEST bug-at-epic-level-is-legal FAIL spec=docs/SPEC-WORK.md:1851-1871 expected=bug-counted-as-leaf;bug-closes-and-reopens: open leaf count includes the bug: expected 2 got 1
+NOVA-WORK SLICE1 total=149 pass=148 fail=1
+
+## Failing line verbatim
+
+open leaf count includes the bug: expected 2 got 1
+
+## Needs
+
+state.lisp:150 — `%adjust-counters` checks `(eq :task (wnode-type node))` for leaf counter, must include `:bug`
+kernel.lisp:130 — `%validate` checks `(eq :task (wnode-type node))` for state transitions, must include `:bug`
+
+## Green test output (after fix)
+
+TEST bug-at-epic-level-is-legal PASS spec=docs/SPEC-WORK.md:1851-1871 expected=bug-counted-as-leaf;bug-closes-and-reopens
+NOVA-WORK SLICE1 total=149 pass=149 fail=0
+
+## Package lines verbatim
+
+lisp/nova-work/src/state.lisp:150 — `(when (member (wnode-type node) '(:task :bug))`
+lisp/nova-work/src/kernel.lisp:130 — `(unless (member (wnode-type node) '(:task :bug))`
