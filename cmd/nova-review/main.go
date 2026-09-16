@@ -186,14 +186,10 @@ func packet(args []string, out, errOut io.Writer) int {
 	// that is already a full sha names one commit and cannot go stale, so it needs no fetch.
 	baseSHA := base
 	if !merge.IsSHA(base) {
-		if _, err := gitOut(ctx, repo, "fetch", "origin", base); err != nil {
-			return refuse(errOut, fmt.Sprintf("could not fetch the base %q: %v", base, err))
-		}
-		fetched, err := gitOut(ctx, repo, "rev-parse", "refs/remotes/origin/"+base+"^{commit}")
+		baseSHA, err = fetchBase(ctx, repo, *pr, base, st.Repo)
 		if err != nil {
-			return refuse(errOut, fmt.Sprintf("the lane does not hold the fetched base %q: %v", base, err))
+			return refuse(errOut, err.Error())
 		}
-		baseSHA = strings.TrimSpace(fetched)
 	}
 	rangeText := ""
 	var fullRange string
@@ -385,6 +381,27 @@ func fetchEntryHead(ctx context.Context, repo string, pr int, branch, hostRepo s
 		return "", fmt.Errorf("fetching %q from %q: %w", refspec, remote, err)
 	}
 	return gitOut(ctx, repo, "rev-parse", "FETCH_HEAD")
+}
+
+// fetchBase fetches the merge base into the lane's clone and returns its sha.
+// A PR's base lives on the GitHub remote the lane's --repo names, never on the
+// lane's --remote: a local rehearsal remote has no main branch (#493). A branch
+// entry still fetches its base from the lane remote as before.
+func fetchBase(ctx context.Context, repo string, pr int, base, hostRepo string) (string, error) {
+	remote := "origin"
+	refOut := "refs/remotes/origin/" + base + "^{commit}"
+	if pr > 0 {
+		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
+		refOut = "FETCH_HEAD"
+	}
+	if _, err := gitOut(ctx, repo, "fetch", remote, base); err != nil {
+		return "", fmt.Errorf("could not fetch the base %q from %q: %v", base, remote, err)
+	}
+	fetched, err := gitOut(ctx, repo, "rev-parse", refOut)
+	if err != nil {
+		return "", fmt.Errorf("the lane does not hold the fetched base %q: %v", base, err)
+	}
+	return strings.TrimSpace(fetched), nil
 }
 
 // outEscapes reports whether --out, resolved against the current directory, lies outside

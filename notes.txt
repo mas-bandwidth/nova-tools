@@ -1,0 +1,7 @@
+#493 red test output (before fix), verbatim:
+
+--- FAIL: TestPacketFetchesBaseFromGitHubNotLaneRemote (0.08s)
+    main_test.go:825: packet for a PR whose base lives only on the GitHub remote code=2 stderr=PACKET REFUSED: could not fetch the base "main": git fetch: exit status 128: fatal: couldn't find remote ref main
+FAIL
+
+The failing line: PACKET REFUSED: could not fetch the base "main": git fetch: exit status 128: fatal: couldn't find remote ref main
