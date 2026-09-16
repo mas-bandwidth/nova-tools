@@ -12,21 +12,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/update"
 )
 
-// THE SEQUENCE A FRIEND RUNS THROUGH THIS TOOL, in the order they run it: snapshot the
-// tools they have installed, then report on the manifest snapshot just wrote. Both verbs
-// pass their own tests -- snapshot writes the file it says it writes
-// (TestSnapshotWritesRuleTwoManifest), report reads the manifests in testdata -- and the
-// sequence was broken anyway until #571, because snapshot wrote `kind=binary` and report's
-// manifest parser accepts only the five curated kinds:
-//
-//	REPORT REFUSED: <path>: line 2: unknown kind binary (use harness,engine,model,tool,pin)
-//
-// exit 2, on the file this tool wrote one command earlier. That was the whole of the
-// dogfood finding, and it is the shape no single-verb test can see: the two verbs were
-// each right about themselves and disagreed about the file between them.
-//
-// The stubs are shell scripts, so this file is unix-only, as the fixture in
-// internal/update's own snapshot test is.
+// THE SEQUENCE A FRIEND RUNS THROUGH THIS TOOL: snapshot the manifest to count the
+// tools they have adopted, then report on that same hand-written --file. Both verbs
+// read the one manifest; snapshot counts it, report runs each installed command and
+// carries the version forward. The stubs are shell scripts, so this file is unix-only.
 func TestFriendSequenceSnapshotReport(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
@@ -44,21 +33,28 @@ func TestFriendSequenceSnapshotReport(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	manifest := filepath.Join(dir, "versions.tsv")
+	body := update.Header + "\n" +
+		"nova-bus\ttool\tnova-bus version\t-\t-\trowan\n" +
+		"nova-check\ttool\tnova-check version\t-\t-\trowan\n"
+	if err := os.WriteFile(manifest, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	var out, errs bytes.Buffer
-	if code := update.Main("nova-version", []string{"snapshot", "--bin", bin, "--out", manifest, "--owner", "rowan"}, "", &out, &errs); code != 0 {
+	if code := update.Main("nova-version", []string{"snapshot", "--file", manifest}, "", &out, &errs); code != 0 {
 		t.Fatalf("snapshot: exit %d\nstdout: %s\nstderr: %s", code, out.String(), errs.String())
 	}
-	if !strings.Contains(out.String(), "SNAPSHOT OK tools=2 unreadable=0") {
-		t.Fatalf("snapshot did not write both stubs:\n%s", out.String())
+	if !strings.Contains(out.String(), "SNAPSHOT OK known=2") {
+		t.Fatalf("snapshot did not count both adopted tools:\n%s", out.String())
 	}
 
 	out.Reset()
 	errs.Reset()
 	if code := update.Main("nova-version", []string{"report", "--file", manifest}, "", &out, &errs); code != 0 {
-		t.Fatalf("report on the manifest snapshot just wrote: exit %d\nstdout: %s\nstderr: %s", code, out.String(), errs.String())
+		t.Fatalf("report on the adopted manifest: exit %d\nstdout: %s\nstderr: %s", code, out.String(), errs.String())
 	}
 	if !strings.Contains(out.String(), "REPORT OK checked=2 known=2 unknown=0") {
-		t.Fatalf("report did not read the file snapshot wrote:\n%s", out.String())
+		t.Fatalf("report did not read the adopted manifest:\n%s", out.String())
 	}
 	for _, tool := range []string{"nova-bus", "nova-check"} {
 		if !strings.Contains(out.String(), "REPORT TOOL name="+tool) {
