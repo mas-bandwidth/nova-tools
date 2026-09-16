@@ -1,0 +1,23 @@
+#!/bin/sh
+# Run the nova-work acceptance suite under SBCL, non-interactively, on the CI
+# runners. Exit 0 when every case passes, 1 when any case fails.
+#
+# The system is loaded from the checkout with the ASDF that SBCL bundles — no
+# quicklisp, no network — so this works on the self-hosted runners as-is: SBCL
+# 2.6.8 on the macOS studio runners and 2.2.9 on the Linux space runners, and
+# nothing newer than 2.2.9 is used here. The 120 s budget is the job's
+# timeout-minutes in .github/workflows/ci.yml, not a GNU timeout(1) wrapper
+# (not installed by default on macOS).
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+root=$(cd "$here/../.." && pwd)
+lisp="$root/lisp/nova-work"
+
+[ -d "$lisp" ] || { echo "lisp-test.sh: lisp/nova-work not found in the checkout" >&2; exit 1; }
+
+exec sbcl --non-interactive \
+  --eval "(require :asdf)" \
+  --eval "(push #p\"${lisp}/\" asdf:*central-registry*)" \
+  --eval "(handler-bind ((warning #'muffle-warning)) (asdf:load-system :nova-work/tests))" \
+  --eval "(nova-work/tests:main)"
