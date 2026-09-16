@@ -25,7 +25,7 @@ nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
-nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
+nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]                                    # past rate, cost, parallelism and a time-remaining estimate from usage.tsv
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--max <n>]
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>]

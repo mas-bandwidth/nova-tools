@@ -713,7 +713,8 @@ The things a first run gets wrong, and what each one wants:
 One tool for parallel work: enumerate bounded work, cut cards, admit them
 through `nova-swarm batch`, and fold what comes back. It makes no model call.
 `pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
-`status` below is the one-verb answer to the all-day questions. `width`, the
+`status` below is the one-verb answer to the all-day questions. The contract
+is [docs/SPEC-PULSE.md](SPEC-PULSE.md). `width`, the
 drift alarm rule 16 of [SPEC-PULSE.md](SPEC-PULSE.md) names, is planned but
 not shipped, and `nova-pulse help` says so on its own line — a verb the help
 lists as available must run, or be marked (issue #515):
@@ -802,6 +803,20 @@ Sources: the queue directory (`pending`, `launched`, `done`, `failed`, and the
 `COORDINATOR`, `REPO`, `UNREAD`, `DIRTY`, `UNCARDED`, `HOLD`, `ESCALATE`,
 `DOGFOOD` state files), each bench's `pool/slots/*.json` and `usage.tsv` rows,
 and each bench's `ADOPT/<friend>` files. Prototype: `bin/status.sh`.
+
+### progress
+
+`nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]` reads every job's
+`usage.tsv` under `--roots` for the day and prints past rate, cost and parallelism,
+then a conservative time-remaining estimate:
+
+```
+PROGRESS cards=<n> rc0=<n> wall_p50_s=<n> wall_p90_s=<n> usd_per_card=<x.xxxx> span_h=<n.n> effective_parallelism=<n.n> cards_per_hour=<n.n>
+ESTIMATE remaining_cards=<n> hours=<n.n>
+```
+
+`effective_parallelism` is busy card-seconds over span seconds; `hours` is
+`remaining x p90 / parallelism x 1.5`.
 
 ## nova-review
 
