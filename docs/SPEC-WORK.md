@@ -4754,7 +4754,7 @@ The rationale rests on measured facts from Gas Town:
    every card and delegated packet carries an explicit `:effort` bound (a small integer scale per task
    class stating how many reads, tool calls and how wide a fan-out the objective is worth); it is stated
    by the coordinator when the card is cut, and a packet lacking it is refused. A worker past its effort
-   limit stops and reports rather than widening on its own; only the coordinator may widen a card's
+   limit stops and reports; only the coordinator may widen a card's
    `:effort`, and only with an explicitly recorded reason.
 10. **Fleet-wide spend ceiling per day.** CONFIG maintains an explicit fleet-wide spend ceiling per day
     and per model family. When an automatic or delegated dispatch would cross that ceiling, it is refused
