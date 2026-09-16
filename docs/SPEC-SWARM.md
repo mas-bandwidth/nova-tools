@@ -887,7 +887,8 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `harness-silent` | its harness wrote nothing at all — no word in the run's capture and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
 | `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it |
 | `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
-| `deadline` | was killed at the batch's deadline |
+| `deadline` | was killed at the batch's deadline and published no `RESULT.md` |
+| `result-after-deadline` | published a matching `RESULT.md` that only landed because the deadline fired, so it is late, not done |
 | `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
 | `admission` | was refused at admission; the reason follows the token |
 | `input-limit` | was refused for size, by the provider's own structured signal (issue #163) |
@@ -896,23 +897,28 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 **The RESULT is the contract, and `harness-silent` is for a card that has none.**
 A `RESULT.md` whose line 1 matches the card is **`done` whatever the harness exit
 code was** (issue #577); the exit code is recorded on the card's own `NATIVE OK`
-line and decides nothing here. So `harness=silent` and `reason=harness-silent`
+line and decides nothing here. The one timing that overrides it is the deadline: a
+matching result that only landed because the deadline fired is
+`result-after-deadline`, not done. So `harness=silent` and `reason=harness-silent`
 apply **only when there is no matching result anywhere `gather` looks** — the job
 root, `repo/`, and one directory below it (issue #594): `native` asks that same
 question with that same lookup before it prints its line, and `gather` reads the
 token off the line rather than guessing from files a batch creates itself.
 
-**The order, once no matching result is found:** `card-abstain`, `admission`,
-`fence`, `harness-silent`, then the pair `no-result` (ended clean) and `rc=<n>`
-(ended non-zero), which are one slot split by the exit code. **`fence` comes
-before all three**: a card the machinery's own fence stopped is neither a model
-that published nothing nor a harness that never ran, and reading it as either
-sends a coordinator to the model for a wall this tool built (issue #644).
-**`rc=<n>` is never first**:
+**The order:** the result is read first, and a matching result decides — `done`,
+or `result-after-deadline` at the deadline — before `card-abstain` (line 1 or
+line 2 beginning `ABSTAIN`) and `line1-mismatch`. With no matching result: the
+kill classes the machinery watched itself — `idle=<s>`, `input-limit` — and
+`admission`, then `fence`, then `harness-silent`, then `deadline`, then the pair `no-result`
+(ended clean) and `rc=<n>` (ended non-zero), which are one slot split by the exit
+code. **`fence` comes before `harness-silent`, `deadline`, `no-result` and `rc=<n>`**:
+a card the machinery's own fence stopped is neither a model that published nothing
+nor a harness that never ran, and reading it as either sends a coordinator to the
+model for a wall this tool built (issue #644). **`rc=<n>` is never first**:
 an exit code from a harness that never ran the card is nothing to go and read.
-`idle=<s>`, `deadline` and `input-limit` are decided before the result is read at
-all — they are what the machinery watched happen, true whether a result exists or
-not.
+`idle=<s>` and `input-limit` are decided before the result is read at all — they
+are what the machinery watched happen, true whether a result exists or not;
+`deadline` is not, because a matching result at the deadline is late, not lost.
 
 The card's line carries the token and its own log count —
 `<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
@@ -945,7 +951,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1091,7 +1097,7 @@ counted in `idle=<n>`. If `ssh` itself is unreachable then, the slot is
 network drop after `RESULT.md` was written is recovered by a second pull at
 gather: one retry, 30 s, none after. The reason in `ABSTAIN reason=<token>` is
 one token, the set issue #461 gives every card: `line1-mismatch | no-result |
-fence | harness-silent | rc=<n> | idle=<s> | deadline | card-abstain |
+fence | harness-silent | rc=<n> | idle=<s> | deadline | result-after-deadline | card-abstain |
 admission <why> | input-limit | bench-unreachable`, and the card's line carries its own `log=<n>` after it. The idle watch on a
 remote card asks `ssh <host> stat -c %s <root>/<n>/jobs/<label>/native.log` —
 bytes, the growth a local log is measured by, never an mtime (rule 16) — no
@@ -1260,7 +1266,7 @@ BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
