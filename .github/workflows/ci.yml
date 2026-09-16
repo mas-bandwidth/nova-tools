@@ -48,7 +48,11 @@ concurrency:
   # Per PR, not per ref: a push to a PR branch reuses the PR number, so the new
   # run cancels the in-progress one. On push to main the ref is the group.
   group: ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  # A push to main never cancels main's running verdict: with a steady merge
+  # stream every main run was cancelled by the next merge (2026-09-16 04:41Z and
+  # 04:53Z), so main had no completed run for the mechanical red gate to read.
+  # Branch runs still cancel each other (only the newest head matters there).
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   lint:
@@ -176,7 +180,7 @@ jobs:
           # measured at over eleven minutes in run 35018437149 for a tier whose
           # budget is two.
           SPACE_SHARDS=8
-          STUDIO_SHARDS=4
+          STUDIO_SHARDS=16 # two waves on eight studio runners, each shard inside the 6-minute cap on a loaded Studio; eight studio runners since 05:0xZ 2026-09-16; four shards of double size hit the 6-minute job timeout on a loaded Studio (main runs 35055138586, 35057357169: test (2/4 studio) and (4/4 studio) cancelled at 6 min, twice each)
           darwin_only=("./cmd/nova-sandbox" "./internal/sandbox")
 
           is_darwin_only() {
@@ -263,6 +267,8 @@ jobs:
     # one to two minutes; the budget itself is the run, and the run is what to
     # hold to the law. The fast jobs — lint, test-packages, lisp at 32, 11 and
     # 12 s — keep the 2 they always had.
+    # The Studio at load 55 ran a double-size shard in 6-7 min (2026-09-16 05:16Z);
+    # the cap stays 6 by the two-minute law (internal/ci); the shards got smaller instead.
     timeout-minutes: 6
     steps:
       - name: remove stale build dirs from the shared runner
