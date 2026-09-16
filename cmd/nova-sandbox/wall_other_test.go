@@ -17,6 +17,7 @@ func skipNotLinux(t *testing.T) {
 
 func TestLandlockWallRefusesWriteOutsideJob(t *testing.T)      { skipNotLinux(t) }
 func TestLandlockWallAllowsReadPaths(t *testing.T)             { skipNotLinux(t) }
+func TestLandlockWallClampsAnABIAboveTheTable(t *testing.T)    { skipNotLinux(t) }
 func TestLandlockWallHidesSecret(t *testing.T)                 { skipNotLinux(t) }
 func TestLandlockWallBlocksNetworkWhenNotAllowed(t *testing.T) { skipNotLinux(t) }
 func TestCheckReportsLandlock(t *testing.T)                    { skipNotLinux(t) }

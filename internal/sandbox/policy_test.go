@@ -289,6 +289,18 @@ func TestChildEnv(t *testing.T) {
 			t.Fatalf("%q survived into the child's environment:\n%s", gone, got)
 		}
 	}
+	// The guest's separator, on every host: the four temp variables name paths the
+	// CHILD opens inside the wall, so a backslash in any of them is the host's
+	// separator leaking through filepath.Join. Red on windows before the `path` fix.
+	for _, kv := range ChildEnv(env, "/w/.nova-sandbox-tmp") {
+		name, value, _ := strings.Cut(kv, "=")
+		switch name {
+		case "TMPDIR", "TMP", "TEMP", "TMPPREFIX":
+			if strings.Contains(value, `\`) {
+				t.Fatalf("%s=%q is a guest path spelled with the host's separator", name, value)
+			}
+		}
+	}
 	if d := DroppedEnv(env); len(d) != 2 {
 		t.Fatalf("DroppedEnv = %v, want the two agent variables", d)
 	}

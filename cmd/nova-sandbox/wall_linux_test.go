@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
 
 var (
@@ -119,6 +121,53 @@ func TestLandlockWallRefusesWriteOutsideJob(t *testing.T) {
 	if !strings.Contains(errOut, "SANDBOX OK backend=landlock") {
 		t.Errorf("the run did not announce the landlock wall: %q", errOut)
 	}
+}
+
+// The clamp, end to end, on whatever kernel this machine has (run 35045469738). An ABI above the
+// tool's table is not a refusal: the wall is built at the table's maximum, the command
+// runs, and the SANDBOX OK line carries the kernel's number on abi= and the wall's on
+// used=. On a kernel at or below the table there is no clamp and the line must carry NO
+// used= field at all -- an unconditional field would say "clamped" on every machine and
+// the word would stop meaning anything.
+//
+// This is the test the hosted ubuntu-latest leg needed and did not have: that runner moved
+// to a kernel reporting landlock abi 7, and on `main` every walled run there was
+// `SANDBOX REFUSED reason=landlock_abi_unknown` at exit 125 (run 35045469738). On main this
+// test is that same red; on a kernel at abi 4 (the fleet's linux bench) it takes the other
+// branch and asserts the line is unchanged.
+func TestLandlockWallClampsAnABIAboveTheTable(t *testing.T) {
+	needLandlock(t)
+	j := newJob(t)
+	code, _, errOut := j.wall(t, "echo ran > "+filepath.Join(j.write, "output"))
+	if code != 0 {
+		t.Fatalf("a walled run on this kernel exited %d; a clamped abi must still run: %s", code, errOut)
+	}
+	used, clamped := sandbox.ClampedABI()
+	if !clamped {
+		if strings.Contains(errOut, " used=") {
+			t.Errorf("this kernel's abi is inside the table and the line still claims a clamp: %q", errOut)
+		}
+		return
+	}
+	// abi= is the kernel's, used= is the wall's, and both are on the one line a log keeps.
+	want := "abi=" + abiOf(t, j) + " used=" + strconv.Itoa(used)
+	if !strings.Contains(errOut, want) {
+		t.Errorf("the SANDBOX OK line does not carry %q: %q", want, errOut)
+	}
+	if !strings.Contains(errOut, "SANDBOX NOTE") || !strings.Contains(errOut, "clamped") {
+		t.Errorf("the clamp was not said in a note before the command started: %q", errOut)
+	}
+}
+
+// abiOf is the kernel's own number, read off the tool's `check` line rather than computed
+// here: the test asserts the two lines agree, so it must not be the one deciding.
+func abiOf(t *testing.T, j job) string {
+	t.Helper()
+	code, out, errOut := j.runTool(t, j.env(), "check")
+	if code != 0 {
+		t.Fatalf("check exited %d: %s", code, errOut)
+	}
+	return fieldOf(out, "abi=")
 }
 
 // A wall that denies the work is broken: what --read names must be readable.

@@ -835,6 +835,10 @@ nova-swarm note     --pool <dir> --task <id> --text <text>                      
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
 ```
 
+### native and batch
+
+routes: see docs/MODELS.md
+
 ### First run
 
 `quickstart` needs nothing but a directory: it makes the pool's structure and names the

@@ -2,11 +2,104 @@ package update
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+)
+
+// stubSource is a tool that prints one line for any argument: the fixture the two tests
+// below ask their versions of. It reads the line from a file named after itself in a
+// `lines` directory BESIDE --bin, so one build serves every tool and the bin directory
+// holds tools and nothing else.
+const stubSource = `package main
+
+import (
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 )
+
+func main() {
+	exe, err := os.Executable()
+	if err != nil {
+		os.Exit(1)
+	}
+	name := strings.TrimSuffix(filepath.Base(exe), ".exe")
+	line, err := os.ReadFile(filepath.Join(filepath.Dir(exe), "..", "lines", name))
+	if err != nil {
+		os.Exit(1)
+	}
+	os.Stdout.Write(line)
+}
+`
+
+// stubBinary compiles stubSource ONCE per test binary and hands back its bytes. The
+// build is the expensive part of the fixture and the result does not vary by test, so a
+// package whose suite has to stay under a minute pays for it a single time.
+var stubBuild struct {
+	once sync.Once
+	body []byte
+	err  error
+}
+
+func stubBinary() ([]byte, error) {
+	stubBuild.once.Do(func() {
+		src, err := os.MkdirTemp("", "nova-version-stub")
+		if err != nil {
+			stubBuild.err = err
+			return
+		}
+		defer os.RemoveAll(src)
+		if stubBuild.err = os.WriteFile(filepath.Join(src, "main.go"), []byte(stubSource), 0644); stubBuild.err != nil {
+			return
+		}
+		if stubBuild.err = os.WriteFile(filepath.Join(src, "go.mod"), []byte("module novaversionstub\n\ngo 1.26\n"), 0644); stubBuild.err != nil {
+			return
+		}
+		built := filepath.Join(src, "stub"+exeSuffix())
+		build := exec.Command("go", "build", "-o", built, ".")
+		build.Dir = src
+		if out, err := build.CombinedOutput(); err != nil {
+			stubBuild.err = fmt.Errorf("building the version stub: %v\n%s", err, out)
+			return
+		}
+		stubBuild.body, stubBuild.err = os.ReadFile(built)
+	})
+	return stubBuild.body, stubBuild.err
+}
+
+// toolStubs installs one fake tool per entry of lines under bin, each printing its line
+// when the snapshot verb asks it for a version.
+//
+// THEY ARE BUILT BINARIES AND NOT `#!/bin/sh` SCRIPTS, and that is the whole of the
+// windows failure of the hosted leg: windows has no shebang and exec.LookPath there will
+// not run an extension-less file, so every script was "not_found" and the verb reported
+// tools=0 unreadable=4 -- a fixture that cannot run on that platform, never a verb that
+// refused. A stub compiled by the toolchain that is already running the test runs on
+// every platform the tool is built for, `.exe` and all.
+func toolStubs(t *testing.T, bin string, lines map[string]string) {
+	t.Helper()
+	linesDir := filepath.Join(filepath.Dir(bin), "lines")
+	if err := os.MkdirAll(linesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := stubBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, line := range lines {
+		if err := os.WriteFile(filepath.Join(bin, name+exeSuffix()), body, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(linesDir, name), []byte(line+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestSnapshotWritesRuleTwoManifest(t *testing.T) {
 	dir := t.TempDir()
@@ -14,16 +107,12 @@ func TestSnapshotWritesRuleTwoManifest(t *testing.T) {
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)
 	}
-	stub := func(name, line string) {
-		p := filepath.Join(bin, name)
-		if err := os.WriteFile(p, []byte("#!/bin/sh\nprintf '%s\\n' '"+line+"'\n"), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	stub("nova-bus", "nova-bus v0.12.1-0.20260912-0459069+dirty darwin/arm64")
-	stub("nova-check", "v7.8.9")
-	stub("nova-wake", "nova-wake 2.3.4")
-	stub("nova-bad", "hello world")
+	toolStubs(t, bin, map[string]string{
+		"nova-bus":   "nova-bus v0.12.1-0.20260912-0459069+dirty darwin/arm64",
+		"nova-check": "v7.8.9",
+		"nova-wake":  "nova-wake 2.3.4",
+		"nova-bad":   "hello world",
+	})
 	if err := os.WriteFile(filepath.Join(bin, "README"), []byte("not a tool"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -72,15 +161,10 @@ func TestSnapshotThenReportRoundTrips(t *testing.T) {
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)
 	}
-	for name, line := range map[string]string{
+	toolStubs(t, bin, map[string]string{
 		"nova-bus":   "nova-bus v0.15.0 darwin/arm64",
 		"nova-check": "nova-check 1.2.3",
-	} {
-		if err := os.WriteFile(filepath.Join(bin, name),
-			[]byte("#!/bin/sh\nprintf '%s\\n' '"+line+"'\n"), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
+	})
 	out := filepath.Join(dir, "versions.tsv")
 	var o, e bytes.Buffer
 	if code := Run("nova-version", []string{"snapshot", "--bin", bin, "--out", out, "--owner", "rowan"}, "", &o, &e, Environment{}); code != 0 {

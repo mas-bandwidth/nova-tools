@@ -1837,6 +1837,91 @@ revision*).
 and records `:clock :tool`; `--now <stamp>` is optional and records `:clock :given`, for
 replay and tests (Stella, point 3). Reads take the same `--now` for the same reason.
 
+## Bugs found while working *(Rowan, on Glenn's word of 2026-09-15, nova-tools#463; additive to the lock at #231)*
+
+**Glenn's words, 2026-09-15 16:00Z, are the requirement**: *"we may find bugs while doing work.
+These don't map neatly to features, or sub-features always; at various points in the recursive
+structure we should feel free to track straight up bugs that need to be fixed, at the highest
+level in the work tree that they can be placed, feature, subfeature, epic whatever."* And of the
+same hour: *"once we dogfood, test and find issues, we reproduce those errors and fix and lock in
+with tests"*; *"no point just fixing; tests make sure we fix, and the fix stays"*; *"make sure to
+capture the dogfood breakage with new tests."* This section adds one kind, three fields, one
+validator rule, one count and seven replays, and changes no sentence above or below it.
+
+- `:bug` — a kind of *The data*, beside the six above. **A bug is legal as a child of any node**
+  — the open root, an `:epic`, a `:feature`, a sub-feature, a `:work-set` or a `:task` — and **is
+  placed at the highest node whose scope contains it**, never lower to make a feature look busy
+  and never higher than the work it breaks (Glenn: *the highest level in the work tree that they
+  can be placed*). By every rule this section does not restate it is a `:task`: `:acceptance`
+  (rule 15), the transition table, generation and `:correct`, `:attempt`, `:evidence` events,
+  `verify`, the lease and its defaults, `:private`, `:version`, and `unit=leaves` counts it as
+  a leaf. Its own fields:
+  - `:found-during "<node-id>"` — **required**: the work that surfaced it. It is a reference and
+    never containment — the parent is where the bug is *placed*, `:found-during` is where it was
+    *met*, and the two differ exactly when a bug is placed higher than the work that found it.
+    Rule 2 checks it as it checks every reference.
+  - `:evidence` — the dogfood shape, one record `(:tool "<name>" :command "<argv>" :output
+    "<verbatim>" :expected "<text>")`: the tool, the command, what it printed, what it should
+    have. Optional at `node add`, because a bug may be reported from a reading before anyone has
+    reproduced it; a bug without it prints `evidence=-` on every row so the gap is visible.
+  - `:test "<name>"` — **required to close**: the reproducing test that fails before the fix and
+    passes after it, in the `test:<path>@<rev>` form an acceptance subject takes. The bug's
+    `:acceptance` must hold one `:kind :test` criterion whose `:subject` is this name, and **a bug
+    with no `:test` cannot reach `:done`** (rule 19 below): the test is the lock, and a fix without
+    one is the fix Glenn called *no point*.
+
+**Counting.** A bug is counted **beside** the tree and never inside a feature's item total:
+`done=`, `required=`, `since-baseline=`, `rows=`, `applicable=` and every percentage exclude it,
+so finding a bug moves no denominator and fixing one raises no percentage (5654160320: a
+denominator moves only by a scope event, and a bug is not scope; the delta table has no row for
+it). **An open bug blocks its parent's done**: a container with an open bug beneath it — placed on
+it directly or on any descendant — is not derived `:done` and no cell over it is green, exactly as
+an unmet dependency gate blocks it; rule 6 reads an open bug as an unfinished child, though it is
+no member of the required set and rule 11 never sees it. A bug in O is *open*; a bug in C with
+disposition `done` is *fixed*, and one cancelled or superseded is neither. **`who`, `check` and
+`stale` print `bugs=<open>/<fixed>` on every line**, both numbers under the line's scope and never
+added to any other field (*Counting* below: unknown is a count of its own, and so is this one).
+`remaining` and `under` list bugs with the counting row under `--kind bug`; `done` under `--branch
+closed` lists fixed ones with the disposition row, `landed=` the revision the fix landed at.
+
+**Verbs.** `node add --type bug --found-during <id> [--evidence <record>] [--test <name>]` writes
+the `:structure` event with `:found-during`, `:evidence-record` and `:test` after `:version` in the
+field order above, and `NODE OK` prints `kind=bug found-during=<id>`. `accept --add` may add the
+test criterion after creation; `node edit --test-patch` sets `:test`, on a bug only. **`decompose`
+may mint bugs**: `--into` accepts `bug:<id>` children under any node, each with `--found-during`
+and its acceptance, in the one envelope every child shares; a minted bug is listed in the
+`:split`'s `:children` beside the tasks, enters no required set, and the delta table counts only
+the tasks, so a decomposition that mints one bug and no task moves the scope revision and nothing
+else.
+
+**Validator, rule 19 — bug without its lock.** A `:bug` with no `:found-during` is refused at the
+candidate gate at `node add`, naming the field. A `:to :done` on a `:bug` whose `:test` is absent,
+or whose named evidence qualifies no `:test` criterion with that subject, is refused at the
+candidate gate and is a finding on the whole walk: `WORK FAIL <id>: rule 19: no test locks this
+fix`. A `:found-during` naming nothing is rule 2, not this rule. A bug on a node in C is rule 18.
+
+**The roadmap lisp.** The roadmap file is restricted Lisp — lists, keywords, strings, integers —
+so #463's shorthand `(bug "<id>" :found-during ... :test ...)` is spelled without the symbol:
+**any level of `docs/roadmaps/nova-work.sexp`** — the root, an epic, a feature, an item — may carry
+`:bugs (...)`, each entry `(:id "<id>" :title "<text>" :found-during "<node-id>" :test "<name>"
+:status "open"|"fixed" :source "<issue>")`; the root carries `:current-bugs <open> <fixed>`, and
+`tools/roadmap-parity.sh` prints `bugs=<open>/<fixed>` beside its feature and item counts, checked
+against that pair, and **never folds a bug into `:current-acceptance-items` or `:current-features`**.
+The first bugs are the dogfood edges of 2026-09-15 — #417, #418, #457, #459, #460, #461, #462 —
+each entered with the test that closed it, or open with `:test` absent until one does.
+
+### Required replays
+
+| Replay | Required outcome |
+| --- | --- |
+| bug-at-epic-level-is-legal | `node add --type bug` under the open root, an epic, a feature, a sub-feature and a task each accepted in one session; `unit=features` and `unit=leaves` counts unchanged; `check` prints `bugs=5/0`. |
+| bug-needs-found-during | `node add --type bug` without `--found-during` refused at exit 1 naming the field, O, the journal and the indexes unchanged; one naming a missing id refused by rule 2. |
+| bug-cannot-close-without-test | `state --to done` on a bug with no `:test` refused `rule 19`; with `:test` set and a verified passing test of another name, refused; with the named test verified at the current generation, accepted; a `correct` then voids it. |
+| bug-blocks-parent-done | A feature whose required leaves are all verified done and which holds one open bug, directly or on a descendant, is `unknown`, its cell not green, `percent` unchanged; the bug settled `done`, the feature green with no scope event and no revision moved. |
+| who-line-counts-bugs | `who`, `check` and `stale` print `bugs=<open>/<fixed>` under the scope; a bug opened, fixed and revived moves the two numbers and never `done=`, `required=`, `rows=` or `since-baseline=`. |
+| decompose-may-mint-bug | `decompose --into bug:<id>` under a feature writes one envelope; the bug carries `:found-during` and its acceptance; the feature's required set is unchanged and its scope revision moved by one; the same call without `--found-during` refused whole. |
+| roadmap-bug-form-parses | A `:bugs` list at the root, an epic, a feature and an item level parses under the three bounds; parity prints `bugs=<open>/<fixed>` equal to `:current-bugs`, features and items unchanged; a bare `(bug ...)` symbol form refused by the reader at exit 2 naming the byte offset. |
+
 ## Counting *(shared; Glenn's rules verbatim where they are his)*
 
 - **Language completion** on a roadmap = `100 * green feature cells / applicable feature
@@ -5775,6 +5860,13 @@ draft 25 can find every one of them:
 **dry-run plan** — for an undo, a redo or an import — is not the `plan`/`apply`/`reconcile` triple
 of 5653982211, which stays deferred below. A plan here shows what one named request would move and
 accepts no mutation; the deferred triple is a different design with its own section to come.
+
+## What the bug amendment adds *(Rowan, 2026-09-15, nova-tools#463)*
+
+One section, *Bugs found while working*, above *Counting*: the `:bug` kind at any level, its
+`:found-during`, `:evidence` and `:test` fields, rule 19, the `bugs=<open>/<fixed>` count, the
+`:bugs` roadmap form and seven replays. Nothing older is changed; a bug is outside every
+denominator and inside every parent's done gate.
 
 ## What this draft does not do
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -125,6 +126,16 @@ func sealFileWithSops(t *testing.T, sopsPath string, filePath string, ageKeys []
 func buildNovaSecrets(t *testing.T) string {
 	t.Helper()
 	binPath := filepath.Join(t.TempDir(), "nova-secrets")
+	if runtime.GOOS == "windows" {
+		// `go build -o <file>` writes EXACTLY the name it is handed, and
+		// os/exec resolves a path whose extension is not in PATHEXT through
+		// lookPathExts, which only ever tries <path>.exe, <path>.bat and the
+		// rest. Without this suffix the build succeeds and the binary then
+		// never starts, and because the failure is an *exec.Error and not an
+		// *exec.ExitError it arrived at the caller as exit 1 with two empty
+		// streams -- indistinguishable from a tool that refused without a word.
+		binPath += ".exe"
+	}
 	cmd := exec.Command("go", "build", "-o", binPath, ".")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -144,7 +155,12 @@ func runNovaSecrets(bin string, args ...string) (stdout string, stderr string, e
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			code = exitErr.ExitCode()
 		} else {
+			// The binary never ran at all. Say which, on stderr, because a
+			// bare 1 with nothing on either stream reads exactly like a
+			// refusal that forgot its message and cost a whole CI round to
+			// tell apart.
 			code = 1
+			errBuf.WriteString("nova-secrets did not run: " + err.Error() + "\n")
 		}
 	}
 	return outBuf.String(), errBuf.String(), code
