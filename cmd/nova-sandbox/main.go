@@ -267,7 +267,7 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 			fmt.Fprintf(stderr, "SANDBOX NOTE dropped from the child's environment: %s; an agent socket speaks for a key the wall denies\n",
 				oneline.Escape(strings.Join(dropped, " ")))
 		}
-// used=<n> is printed ONLY when the wall was built below the ABI the kernel
+		// used=<n> is printed ONLY when the wall was built below the ABI the kernel
 		// reports -- the clamp -- so an ordinary machine's line is unchanged. The note
 		// carries the sentence, because the field carries a number and a number alone
 		// does not say which way it went or what to do about it.
