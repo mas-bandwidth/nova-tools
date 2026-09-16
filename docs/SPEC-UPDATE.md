@@ -343,11 +343,14 @@ DIFFERENT line, so the morning names a person, not only a number.
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update watch --adopt <checks.tsv> [--rebuild <sha>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>]
 nova-update help
 ```
 
-Those three usage lines are the string `nova-update help` prints, byte for byte: one string
-in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19. No
+Those usage lines are the string `nova-update help` prints, byte for byte: one string
+in the binary, so the spec and the help cannot drift apart. `check`, `apply` and `report`
+are the three shipped verbs; the `watch --adopt` line is printed by the binary but not yet
+implemented — `nova-update watch` is an unknown verb. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
 name, `send` implying `--send` (rule 20); its `help` prints those two lines the same way.
