@@ -5954,7 +5954,7 @@ being the amendment's additions to *Output grammar*:**
   holds two allocations each consuming one slot; a third `take --machine m-a1 --slots 1 --node N3
   --generation <n>` is refused `ALLOC FAIL machine=m-a1 slots=1 holder=<name>: capacity` at exit 1
   even though fourteen cores sit idle, because slots are bounded by declared concurrency and cores
-  are a separate constraint validated independently.
+   are a separate constraint validated independently.
 
 ## Preservation and recovery acceptance *(Stella, `docs/SPEC-WORK-VALIDATION.md` at `81c2885`)*
 
