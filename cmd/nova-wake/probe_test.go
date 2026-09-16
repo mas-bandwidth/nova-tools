@@ -239,7 +239,7 @@ func TestAProbeMeasuresBeforeItPings(t *testing.T) {
 		if r.exit != 1 {
 			t.Errorf("exit %d, want 1:\n%s", r.exit, r.all())
 		}
-		hasFields(t, probeLine(t, r.stdout), "state=SILENT contact=NONE last=- commit=-")
+		hasFields(t, probeLine(t, r.stdout), "state=SILENT contact=NONE last=- silent=- commit=-")
 	})
 
 	t.Run("a rest is never probed", func(t *testing.T) {
