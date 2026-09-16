@@ -875,6 +875,56 @@ func TestBatchScoresInputLimit(t *testing.T) {
 	}
 }
 
+// TestBatchThenRunsOnlyWhenAllDone: the --then follow-on runs only when every card is done.
+// All done runs the command and records its rc; one abstain prints SKIPPED and exits 3.
+func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
+	// all done: the follow-on runs in the batch's root and its rc is recorded on the line.
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\ndone and clean"},
+	})
+	runner := fakeRunner(t, dir)
+	var out, errb bytes.Buffer
+	code := Batch(BatchInput{
+		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Then:   `[ "$BATCH_ID" = "B1" ] && [ "$BATCH_DONE" = "$BATCH_N" ] && exit 7`,
+		Stdout: &out, Stderr: &errb,
+	})
+	if code != 0 {
+		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "BATCH THEN rc=7") {
+		t.Fatalf("all done runs the follow-on and records its rc:\n%s", out.String())
+	}
+
+	// one abstain: the follow-on is skipped and the batch exits 3.
+	dir = t.TempDir()
+	root = filepath.Join(dir, "root")
+	tsv = writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\nMISSING"},
+	})
+	runner = fakeRunner(t, dir)
+	out.Reset()
+	var out2, errb2 bytes.Buffer
+	code = Batch(BatchInput{
+		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Then:   `exit 0`,
+		Stdout: &out2, Stderr: &errb2,
+	})
+	if code != 3 {
+		t.Fatalf("a batch with an abstain skips the follow-on and exits 3, got %d; stderr: %s", code, errb2.String())
+	}
+	if !strings.Contains(out2.String(), "BATCH THEN SKIPPED done=1 n=2 abstain=1 stalled=1") {
+		t.Fatalf("a skipped follow-on prints the counts:\n%s", out2.String())
+	}
+	if strings.Contains(out2.String(), "BATCH THEN rc=") {
+		t.Fatalf("the follow-on must not run on an abstain:\n%s", out2.String())
+	}
+}
+
 // ISSUE #593: IDLE MEANS NO CHILD ACTIVITY, NOT ONLY NO LOG GROWTH. On 2026-09-15 cards
 // 664-670 were killed "idle 300s" while their harness sat in a `go test` that prints nothing
 // for minutes: the work was alive, the log was not. A card is active while its process tree
