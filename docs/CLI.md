@@ -715,6 +715,29 @@ through `nova-swarm batch`, and fold what comes back. It makes no model call.
 `pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
 `status` below is the one-verb answer to the all-day questions.
 
+### cut
+
+```
+nova-pulse cut --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
+```
+
+`cut` writes one card per `pool.tsv` candidate from its typed template in
+`--templates` (a `read.md`, `fix.md`, `text.md`, `replay.md`, `drift.md` or
+`tone.md`) into `--out`, plus a `cards.tsv`, and prints one line:
+
+```
+CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
+```
+
+The models are the `--templates/models.tsv` table, one line per route —
+`flash <model id>`, `pro <model id>` — the whole routing policy, in git, edited
+once; there is no `--model` flag. A table naming one model holds the whole pulse
+to it: every card, fix cards included, routes to the one model the table names,
+and the `flash=` and `pro=` counts follow where the cards actually went (a
+`flash only tonight` spend rule is a one-row `models.tsv`, never a flag). A
+candidate whose template is not a file there is `skipped` and named on a
+`CUT SKIPPED` line, and its `(source, id)` goes to `<root>/skipped.tsv`.
+
 ### status
 
 ```

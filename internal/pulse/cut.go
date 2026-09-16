@@ -75,10 +75,10 @@ func Cut(in CutInput) int {
 			return 2
 		}
 		model := modelFor(row.Kind, in.Local, models)
-		if isFlashKind(row.Kind) {
-			flash++
-		} else {
+		if model == models["pro"] {
 			pro++
+		} else {
+			flash++
 		}
 		cards = append(cards, CardRow{Label: row.ID, Slot: SlotDash, Model: model, Card: filepath.Join(in.Out, cardName)})
 	}
@@ -109,14 +109,22 @@ func isFlashKind(kind string) bool { return textKinds[kind] }
 
 // modelFor decides the model by kind and nowhere else: read/text/tone -> flash, the rest ->
 // pro, with --local naming an ollama/<tag> override for read and text (SPEC-PULSE rule 7).
+// When the table omits a kind's model, the card routes to the one model the table does name
+// (#635): a models.tsv naming a single model holds the whole pulse to it.
 func modelFor(kind, local string, models map[string]string) string {
 	if local != "" && (kind == "read" || kind == "text") {
 		return "ollama/" + local
 	}
 	if isFlashKind(kind) {
-		return models["flash"]
+		if models["flash"] != "" {
+			return models["flash"]
+		}
+		return models["pro"]
 	}
-	return models["pro"]
+	if models["pro"] != "" {
+		return models["pro"]
+	}
+	return models["flash"]
 }
 
 // readPool reads pool.tsv: five fields per line, blank lines skipped.
@@ -139,7 +147,9 @@ func readPool(path string) ([]PoolRow, error) {
 	return rows, nil
 }
 
-// readModels reads models.tsv: two lines, `flash <model>` and `pro <model>`.
+// readModels reads models.tsv: one or two lines, `flash <model>` and/or `pro <model>`. A
+// table naming one model is a spend rule the whole pulse is held to (#635): every card
+// routes to the one model the table names.
 func readModels(path string) (map[string]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -156,8 +166,8 @@ func readModels(path string) (map[string]string, error) {
 		}
 		models[parts[0]] = parts[1]
 	}
-	if models["flash"] == "" || models["pro"] == "" {
-		return nil, fmt.Errorf("models.tsv wants both a flash and a pro model id")
+	if models["flash"] == "" && models["pro"] == "" {
+		return nil, fmt.Errorf("models.tsv wants at least one model id, `flash <id>` or `pro <id>`")
 	}
 	return models, nil
 }

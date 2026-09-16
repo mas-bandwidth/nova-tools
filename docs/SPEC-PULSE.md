@@ -111,7 +111,10 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    `CUT ROUTE` line, `class` the cost class. A retry after an abstain (rule 14) moves the pick
    one capability class up (`read` → `text` → `code` → `replay`), so a rewritten card routes
    to a stronger class. There is no `--model` flag on any verb: the table is the whole
-   policy, in git, edited once. `cards.tsv` is five fields per line: `label`, `slot`, `model`,
+   policy, in git, edited once. A table that names one model holds the whole pulse to it — a
+   spend rule like `flash only tonight` is a one-row table, never a flag (#635): `cut` routes
+   every card, fix cards included, to the one model the table names, and `CUT OK` counts it
+   there. `cards.tsv` is five fields per line: `label`, `slot`, `model`,
    `tokens`, `card` (the card's path); `slot` is `-` until `launch` allocates, and `tokens` is
    the card's admission token bound, which rule 10 sums for the batch's `--tokens`.
 8. **A slot is free when the swarm's slot lock files say so.** `launch` reads the swarm pool

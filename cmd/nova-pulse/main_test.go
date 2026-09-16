@@ -31,6 +31,60 @@ func mainGhFixture(t *testing.T, dir, jsonBody string) string {
 	return log
 }
 
+// hold-a-pulse-to-one-model (#635): a models.tsv may name one model, and cut holds the
+// whole pulse to it -- every card routes to the model the table names, fix cards included.
+// The dogfood run cut 18 fix cards all onto pro with no way to say "flash only tonight";
+// SPEC-PULSE rule 7 gives cut no --model flag, so the table is where the rule lives.
+func TestCutHoldsPulseToOneModel(t *testing.T) {
+	dir := t.TempDir()
+	pool := writeMainFile(t, dir, "pool.tsv",
+		"mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n"+
+			"mas-bandwidth/nova-tools\t2\tfix\tTitle\tfix\n")
+	templates := filepath.Join(dir, "templates")
+	if err := os.MkdirAll(templates, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeMainFile(t, templates, "models.tsv", "flash opencode/deepseek-v4-flash\n")
+	writeMainFile(t, templates, "read.md", pulseCutReadTemplate)
+	writeMainFile(t, templates, "fix.md", pulseCutFixTemplate)
+
+	var out, errb bytes.Buffer
+	code := run([]string{"cut", "--pool", pool, "--templates", templates,
+		"--out", filepath.Join(dir, "cards"), "--root", filepath.Join(dir, "root")}, &out, &errb, time.Now().UTC())
+	if code != 0 {
+		t.Fatalf("cut exit = %d, want 0; stderr=%s", code, errb.String())
+	}
+	want := "CUT OK cards=2 skipped=0 flash=2 pro=0 out=" + filepath.Join(dir, "cards")
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("stdout=%q, want %q", out.String(), want)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "cards", "cards.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		fields := strings.Split(line, "\t")
+		if fields[2] != "opencode/deepseek-v4-flash" {
+			t.Fatalf("cards.tsv row %q: model %q, want the one model the table names (opencode/deepseek-v4-flash)", line, fields[2])
+		}
+	}
+}
+
+const pulseCutReadTemplate = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Read the named files and write notes.txt in the repo directory.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
+
+const pulseCutFixTemplate = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Make the fix; report the red line and then the green line, one row per item.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
+
 func TestHelpListsOnlyBuiltVerbs(t *testing.T) {
 	var out, errb bytes.Buffer
 	if code := run([]string{"help"}, &out, &errb, time.Now().UTC()); code != 0 {
