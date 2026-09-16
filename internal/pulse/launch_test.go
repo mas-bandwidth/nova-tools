@@ -103,8 +103,34 @@ func runLaunch(t *testing.T, in LaunchInput) (int, string, string) {
 	var out, errb bytes.Buffer
 	in.Stdout = &out
 	in.Stderr = &errb
+	// The batch is detached ON PURPOSE -- launch does not hold the window for a pulse's
+	// whole deadline -- so a test must wait for it before its TempDir goes, or the cleanup
+	// races the batch still writing under the root.
+	root := in.Root
+	t.Cleanup(func() { waitBatchesDone(t, root) })
 	code := Launch(in)
 	return code, out.String(), errb.String()
+}
+
+// waitBatchesDone waits until every batch this root started has printed its BATCH line.
+func waitBatchesDone(t *testing.T, root string) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		paths, _ := filepath.Glob(filepath.Join(root, "batch-*.out"))
+		done := true
+		for _, p := range paths {
+			raw, err := os.ReadFile(p)
+			if err != nil || !strings.Contains(string(raw), "BATCH ") {
+				done = false
+			}
+		}
+		if done {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Log("a batch had not printed its BATCH line when the test ended")
 }
 
 // waitFor polls until cond holds or the deadline passes.
