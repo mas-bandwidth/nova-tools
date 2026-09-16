@@ -1,11 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
@@ -763,17 +764,25 @@ func TestReplyNeverOverwritesAnExistingDraft(t *testing.T) {
 	}
 }
 
-// "two nova-bus processes, not two goroutines, started together against two separate bus
-// checkouts sharing one --draft-dir ... Exactly one exits 0; the other exits 1 with the
-// existing-file line naming the path."
+// "two nova-bus processes ... sharing one --draft-dir. Exactly one exits 0; the other exits
+// 1 with the existing-file line naming the path."
+//
+// The two "processes" are two `run` invocations against two separate checkouts composing the
+// SAME filename, because both are handed the SAME injected clock. The interleaving is decided
+// by the test at the `publishDraft` seam: a gate holds whichever run reaches the publish first
+// until both have arrived, then releases it to win. It never races real wall clocks or real
+// process starts. The old test spawned two real processes that each took the wall clock; on a
+// loaded bench they straddled a UTC minute, composed two DIFFERENT names, and both exited 0
+// (#694, "weather on a loaded bench").
 //
 // expected= one exit 0, one exit 1 carrying `this tool never overwrites a draft`, one file
 // at the composed path, and no `.tmp` beside it.
 func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 	if testing.Short() {
-		t.Skip("slow: spawns racing processes over one draft path; runs on the self-hosted legs and nightly")
+		t.Skip("the race wants two run invocations over one draft path; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+	// Serial on purpose: it stands in for publishDraft, a process-wide seam, and puts it
+	// back on the way out (the serial list lives in main_test.go).
 	hermetic(t)
 	first, bare := busDir(t)
 	second := filepath.Join(t.TempDir(), "second")
@@ -784,50 +793,71 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 	}
 	drafts := t.TempDir()
 	body := bodyFile(t, "Yes.\n")
-	bin := buildNovaBus(t)
+
+	// The injected clock: one fixed instant handed to BOTH runs, so both compose the same
+	// `<minute>-re-bo-abcdef012345.md`. It is the seam the weather came through before.
+	fixed := now()
+
+	// The publish seam this test decides through; the real publish is put back on the way
+	// out, which is why the test is serial.
+	real := publishDraft
+	defer func() { publishDraft = real }()
+
 	for round := 0; round < 5; round++ {
-		round := round
 		dir := filepath.Join(drafts, fmt.Sprintf("round%d", round))
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		// One channel, one value per run: a code and its own output travel together. Two
-		// channels let the second run's output arrive before the first run's code, and the
-		// loser's words were then read off the winner.
+
+		// One gate, two doors, and the test -- not the scheduler, not the clock -- decides
+		// who wins. Whichever run reaches the publish first is the winner and is HELD at
+		// the gate until both have arrived; it is then released to do the real no-replace
+		// publish and take the name. The second run reaches the publish after the winner's
+		// file is on the bench and is refused by the same real publish.
+		reached := make(chan struct{}, 2)
+		releaseWinner := make(chan struct{})
+		winnerDone := make(chan struct{})
+		var mu sync.Mutex
+		firstCall := true
+		publishDraft = func(d, name string, content []byte) (string, error) {
+			mu.Lock()
+			winner := firstCall
+			firstCall = false
+			mu.Unlock()
+			reached <- struct{}{}
+			if winner {
+				<-releaseWinner
+				path, err := real(d, name, content)
+				close(winnerDone)
+				return path, err
+			}
+			<-winnerDone
+			return real(d, name, content)
+		}
+
 		type runOut struct {
-			code    int
-			out     string
-			bus     string
-			started bool // the process ran and returned a code of its own
-			err     error
+			code int
+			out  string
 		}
 		runs := make(chan runOut, 2)
 		for _, c := range []string{first, second} {
 			go func(c string) {
-				cmd := exec.Command(bin, "draft", "--bus", c, "--as", "Ada",
-					"--reply-to", "bo-abcdef012345", "--body-file", body, "--draft-dir", dir,
-					"--remote", "origin", "--branch", "main")
-				out, err := cmd.CombinedOutput()
-				// cmd.ProcessState is nil when the process never started -- a bad
-				// executable name, a missing file -- and ExitCode() then answers -1 for a
-				// run that produced no exit code at all. Kept apart from a real 0 or 1, so
-				// that a failure here says WHICH it was.
-				r := runOut{out: string(out), bus: c, err: err, code: -1}
-				if cmd.ProcessState != nil {
-					r.started = true
-					r.code = cmd.ProcessState.ExitCode()
-				}
-				runs <- r
+				var stdout, stderr bytes.Buffer
+				code := run(replyArgs(c, dir, "bo-abcdef012345", body), strings.NewReader(""), &stdout, &stderr, fixed)
+				runs <- runOut{code: code, out: stdout.String() + stderr.String()}
 			}(c)
 		}
+
+		// Both runs reach the publish before either finishes; only then does the test
+		// release the winner. The loser is refused by the real publish, so the outcome is
+		// one exit 0 and one exit 1, every round, whatever the schedule.
+		<-reached
+		<-reached
+		close(releaseWinner)
+
 		runA, runB := <-runs, <-runs
-		// The output of both runs, on every round, pass or fail: a failure in two
-		// processes is only diagnosable from what they said, and a -1 says nothing.
 		for _, r := range []runOut{runA, runB} {
-			t.Logf("round %d: bus=%s started=%v code=%d err=%v output:\n%s", round, r.bus, r.started, r.code, r.err, r.out)
-			if !r.started {
-				t.Fatalf("round %d: the run against %s never started (%v); both racing processes must run and exit with a code of their own", round, r.bus, r.err)
-			}
+			t.Logf("round %d: code=%d output:\n%s", round, r.code, r.out)
 		}
 		a, b := runA.code, runB.code
 		if a+b != 1 {
@@ -848,35 +878,6 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 			t.Errorf("round %d: a temporary survived: %v", round, files)
 		}
 	}
-}
-
-// buildNovaBus builds the binary the race test runs as two processes.
-//
-// The output is a DIRECTORY, not a file name, and the name go wrote inside it is read
-// back. `go build -o <file>` writes exactly the name it is given, and this used to give it
-// `nova-bus` -- which on Windows is not an executable name. os/exec resolves even an
-// absolute path through PATHEXT before it starts anything (lookExtensions, called from
-// Cmd.Start), so `nova-bus` with no `.exe` was ErrNotFound, NEITHER racing process ever
-// started, cmd.ProcessState stayed nil, and ProcessState.ExitCode() answered -1 for both.
-// The race test then failed with "exit codes -1 and -1" and no word about why, because the
-// start error was discarded. `go build -o <dir>` writes the platform's own executable name
-// -- `nova-bus` here, `nova-bus.exe` there -- so there is no suffix spelled out in this
-// file and no platform named in it.
-func buildNovaBus(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	out, err := exec.Command("go", "build", "-o", dir+string(os.PathSeparator), ".").CombinedOutput()
-	if err != nil {
-		t.Fatalf("go build: %v\n%s", err, out)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("go build wrote %d files into %s, want the one binary", len(entries), dir)
-	}
-	return filepath.Join(dir, entries[0].Name())
 }
 
 // "No refusal writes a partial draft, and no publish replaces one." -- every row of the
