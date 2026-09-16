@@ -588,8 +588,11 @@ jobs:
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 1
     steps:
-      - name: every CL-tier job succeeded (pull request or manual)
-        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+      - name: every CL-tier job succeeded (pull request, merge group or manual)
+        # merge_group is the queue's group commit: ci-ok on it is THE merge gate,
+        # so this step must run there too; a guard that names no event lets ci-ok
+        # report success over red needs (read of #766).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           set -uo pipefail
