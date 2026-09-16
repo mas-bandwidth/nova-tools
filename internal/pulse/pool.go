@@ -44,8 +44,8 @@ type ghIssue struct {
 	Body string `json:"body"`
 }
 
-// ghPR is the subset of a GitHub pull request the pool verb reads.
-type ghPR struct {
+// poolPR is the subset of a GitHub pull request the pool verb reads.
+type poolPR struct {
 	Number  int    `json:"number"`
 	Title   string `json:"title"`
 	IsDraft bool   `json:"isDraft"`
@@ -194,7 +194,7 @@ func listIssues(locator string, in PoolInput) ([]ghIssue, error) {
 	return issues, nil
 }
 
-func listPRs(locator string, in PoolInput) ([]ghPR, error) {
+func listPRs(locator string, in PoolInput) ([]poolPR, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), in.Timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--repo", locator, "--state", "open", "--limit", "500", "--json", "number,title,isDraft")
@@ -202,7 +202,7 @@ func listPRs(locator string, in PoolInput) ([]ghPR, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gh pr list: %w", err)
 	}
-	var prs []ghPR
+	var prs []poolPR
 	if err := json.Unmarshal(out, &prs); err != nil {
 		return nil, fmt.Errorf("gh pr list: bad JSON: %w", err)
 	}
