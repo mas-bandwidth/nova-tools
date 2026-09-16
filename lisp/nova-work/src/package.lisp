@@ -106,9 +106,42 @@
    #:kernel-journal
    #:kernel-next-rev
    #:submit
-   #:ask-size
-   #:open-issue-count
-   #:open-leaf-count))
+    #:ask-size
+    #:open-issue-count
+    #:open-leaf-count
+    ;; replays-enforcement
+    #:launcher #:make-launcher
+    #:launcher-input-bound #:launcher-output-bound
+    #:launcher-deadline #:launcher-attempt-limit
+    #:missing-hard-limits #:auto-dispatch-allowed-p
+    #:deadline-handle #:admit-execution
+    #:batch-config #:make-batch-config
+    #:batch-config-max-bytes #:batch-config-max-records #:batch-config-max-delay-ms
+    #:packet-fragment #:make-packet-fragment
+    #:packet-fragment-id #:packet-fragment-bytes #:packet-fragment-kind
+    #:packet-fragment-dependencies #:packet-fragment-retry-of
+    #:packet #:make-packet #:packet-manifest #:packet-fragments
+    #:total-bytes #:exhausted-bound #:within-bounds-p
+    #:batch-unchanged-p #:validate-packet #:delay-applies-p
+    #:dependencies-of #:retry-identity-of
+    #:adoption-claim #:make-adoption-claim
+    #:adoption-claim-baseline #:adoption-claim-coverage-complete
+    #:adoption-claim-quality-match #:adoption-claim-prospective
+    #:adoption-claim-retrospective-only
+    #:auto-promotion-supported-p
+    #:step-record #:make-step-record
+    #:step-record-node #:step-record-depth
+    #:root-only-record-count #:fine-grained-record-count
+    #:materialized-child-count
+    #:waiting-item #:make-waiting-item
+    #:waiting-item-id #:waiting-item-next-trigger
+    #:durable-next-trigger-p #:model-reexecutions
+    #:projection-within-bytes-p
+    #:open-count-excluding-unpoured
+    #:tripped-lease-allowed-p
+    #:delegate-verb-allowed-p
+    #:packet-effort-present-p
+    #:spend-ceiling-refusal))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
