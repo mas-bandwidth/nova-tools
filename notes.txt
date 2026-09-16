@@ -1,0 +1,72 @@
+CARD-8073 -- nova-tools #450, red test first, on branch rowan/issue-450
+
+The fix started missing from this branch the way the harness describes it:
+--provider xai: refused the documented `grok usage` JSON because the parser
+only knew the comma-separated shape, and the failure line was on every run:
+
+    SOURCES SOURCE label=xai:studio kind=provider path=.../grok-usage.json
+        reports=- day_basis=utc files=1 unreadable=1 ...
+    SOURCES UNREADABLE label=xai:studio path=.../grok-usage.json:
+        the export is not the comma-separated shape the xai parser reads
+    SOURCES OK sources=1 files=1 messages=0 unreadable=1 unparsed=0 rows=0
+
+RED TEST -- a sanitized single turn exported by `grok usage`, folded under
+--provider xai:studio=...; expected: 1 row, 5 reports, no unreadable, with a
+missing field absent (not zero). Without the JSON decoder the readXaiJSON
+helper does not run, the file is parsed by the CSV branch, and the test fails
+on the unreadable count and on every count it asserted. The expected failing
+run (readXaiJSON and xaiJSONColumns removed from internal/tokens/provider.go)
+ends with:
+
+    --- FAIL: TestXaiUsageJSONShapeParses (0.00s)
+        provider_test.go:52: the JSON shape is unreadable: ...
+        provider_test.go:55: want 1 row, got 0
+    FAIL    github.com/mas-bandwidth/nova-tools/internal/tokens    0.007s
+
+needs internal/tokens/provider.go:114 (the JSON-shape branch) and the
+readXaiJSON helper at internal/tokens/provider.go:275 with xaiJSONColumns at
+internal/tokens/provider.go:262 and providerJSONReason at internal/tokens/
+provider.go:337.
+
+SMALLEST FIX -- one JSON decoder `readXaiJSON(kind, path, text, *Source)`
+called by ReadProvider when the file's first non-space byte is `{` or `[`;
+fold each turn into the same rows the CSV reads: `endedAt` becomes the UTC
+day, `primaryModelId` becomes the model, the five camelCase token fields
+map to the five existing types (inputTokens -> Input, outputTokens -> Output,
+cacheCreationTokens -> CacheWrite, cachedReadTokens -> CacheRead,
+reasoningTokens -> Reasoning). You do NOT fold cachedReadTokens into input:
+the column is its own CacheRead count; you do NOT treat a missing field as
+zero: the parser `continue`s on absent or wrong-typed values, so the count
+stays absent. `totalTokens`, `modelCalls`, `costUsdTicks`, `turnCount` are
+not token spend columns and are dropped, not added. A document with no
+`turns` array is UNREADABLE naming both shapes the parser reads, in fixed
+phrases only. This is the historical commit 0a47d95 on origin/main, present
+on this branch already.
+
+GREEN -- TestXaiUsageJSONShapeParses now passes:
+
+    === RUN   TestXaiUsageJSONShapeParses
+    --- PASS: TestXaiUsageJSONShapeParses (0.00s)
+    PASS
+    ok      github.com/mas-bandwidth/nova-tools/internal/tokens    0.007s
+
+A second regression test was added on this branch that pins the missing-keys
+behaviour the issue calls out: --provider xai:studio with a turn that omits
+`cacheCreationTokens` and `reasoningTokens` reports 3 (not 5) reports and
+hits those two as absent (Counts.has[type]=false), not zero, so the day file
+will write a `-` for them and not a `0`. The full green package:
+
+    === RUN   TestXaiUsageJSONShapeParses
+    --- PASS: TestXaiUsageJSONShapeParses (0.00s)
+    === RUN   TestXaiUsageJSONShapeParsesMissingKeysNotZero
+    --- PASS: TestXaiUsageJSONShapeParsesMissingKeysNotZero (0.00s)
+    PASS
+    ok      github.com/mas-bandwidth/nova-tools/internal/tokens    0.007s
+
+DOCS -- docs/SPEC-TOKENS.md "The `xai` parser also reads..." paragraph is
+already in place from the historical commit and names both shapes the
+parser accepts and the field-not-carried policy. The CLI.md nova-tokens
+section already says `--provider google:emma=<export>` is the form, and
+the parser list (`google`, `openai`, `xai`) is unchanged: this fix keeps
+`xai:` as the declared kind rather than introducing a separate `grok:`
+kind, which is the issue's first named option.
