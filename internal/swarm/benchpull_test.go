@@ -96,7 +96,8 @@ func writeAt(t *testing.T, path, body string) {
 func TestPullWaitsForResult(t *testing.T) {
 	windowsIsNotABench(t)
 	dir := t.TempDir()
-	remoteJob := filepath.Join(dir, "bench", "3", "jobs", "a")
+	remoteSlot := filepath.Join(dir, "bench", "3")
+	remoteJob := filepath.Join(remoteSlot, "jobs", "a")
 	localJob := filepath.Join(dir, "root", "b2-3", "jobs", "a")
 	// The result is not on the bench when the slot's shell returns: it appears on the
 	// THIRD ask, so a pull that asks once and copies gets nothing, whatever the machine's
@@ -107,11 +108,11 @@ func TestPullWaitsForResult(t *testing.T) {
 		appearBody:  "RESULT: a\nall green\n",
 	})
 	writeAt(t, filepath.Join(remoteJob, "usage.tsv"), "tokens_in\ttokens_out\tusd\n10\t20\t0.0100\n")
-	writeAt(t, filepath.Join(remoteJob, "native.log"), "the card's own log\n")
+	writeAt(t, filepath.Join(remoteSlot, "native.log"), "the card's own log\n")
 
 	var notes strings.Builder
 	if err := pullFromBench(benchPull{
-		host: "b2", remoteJob: remoteJob, localJob: localJob,
+		host: "b2", remoteSlot: remoteSlot, remoteJob: remoteJob, localJob: localJob,
 		wait: 30 * time.Second, poll: 50 * time.Millisecond, notes: &notes, clock: newStepClock(),
 	}); err != nil {
 		t.Fatalf("the pull failed on a bench that answered: %v", err)

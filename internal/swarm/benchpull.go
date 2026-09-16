@@ -61,17 +61,18 @@ type pullClock interface {
 	Sleep(time.Duration)
 }
 
-// benchPull is one card's pull: the bench it ran on, the job directory there, and the job
-// directory here.
+// benchPull is one card's pull: the bench it ran on, the slot directory there, the job
+// directory there, and the job directory here.
 type benchPull struct {
-	host      string        // the ssh alias
-	remoteJob string        // <root>/<n>/jobs/<label> on the bench
-	localJob  string        // <root>/<bench>-<n>/jobs/<label> here
-	label     string        // the card's label, named on the copied-up note
-	wait      time.Duration // how long to wait for RESULT.md to exist remotely
-	poll      time.Duration // how often to ask
-	notes     io.Writer     // where BATCH NOTE lines go
-	clock     pullClock     // nil means the real clock
+	host       string        // the ssh alias
+	remoteSlot string        // <root>/<n> on the bench, the slot native wrote <slot>/native.log under
+	remoteJob  string        // <root>/<n>/jobs/<label> on the bench
+	localJob   string        // <root>/<bench>-<n>/jobs/<label> here
+	label      string        // the card's label, named on the copied-up note
+	wait       time.Duration // how long to wait for RESULT.md to exist remotely
+	poll       time.Duration // how often to ask
+	notes      io.Writer     // where BATCH NOTE lines go
+	clock      pullClock     // nil means the real clock
 }
 
 // pullFromBench waits for the card's RESULT.md, copies the three files back by one explicit
@@ -123,7 +124,9 @@ func pullFromBench(p benchPull) error {
 	}
 	_ = scpFile(p.host, p.remoteJob+"/usage.tsv", filepath.Join(p.localJob, "usage.tsv"))
 	log := filepath.Join(p.localJob, "native.log")
-	if err := scpFile(p.host, p.remoteJob+"/native.log", log); err == nil {
+	// native writes its own log to <slot>/native.log, so the third file comes back from
+	// the slot directory, not the job (#656).
+	if err := scpFile(p.host, p.remoteSlot+"/native.log", log); err == nil {
 		if err := truncateToTail(log, pullLogTail); err != nil {
 			return err
 		}

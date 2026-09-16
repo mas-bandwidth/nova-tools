@@ -289,7 +289,7 @@ func remoteRun(c batchCard, b Bench, localRoot string, deadline int, logFile *os
 		"--model", c.model,
 		"--label", c.label,
 		"--card", cardDest,
-		"--slot", filepath.Join(b.Root, strconv.Itoa(c.slot), "jobs", c.label),
+		"--slot", filepath.Join(b.Root, strconv.Itoa(c.slot)),
 		"--root", b.Root,
 		"--deadline", strconv.Itoa(deadline),
 	)
