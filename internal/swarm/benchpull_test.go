@@ -83,6 +83,7 @@ func writeAt(t *testing.T, path, body string) {
 // copies -- one explicit scp per file, so a file that did not come back is a copy that
 // failed rather than a filter that matched nothing and exited 0.
 func TestPullWaitsForResult(t *testing.T) {
+	windowsIsNotABench(t)
 	dir := t.TempDir()
 	remoteJob := filepath.Join(dir, "bench", "3", "jobs", "a")
 	localJob := filepath.Join(dir, "root", "b2-3", "jobs", "a")
@@ -158,6 +159,7 @@ func TestPullWaitsForResult(t *testing.T) {
 // file up into the job, and says so on stderr -- the card is wrong and a person reading the
 // packet is told where its result was found.
 func TestPullCopiesResultUpFromRepo(t *testing.T) {
+	windowsIsNotABench(t)
 	dir := t.TempDir()
 	_, _ = fakeBenchBin(t, dir, benchFake{})
 	remoteJob := filepath.Join(dir, "bench", "1", "jobs", "a")
@@ -192,6 +194,7 @@ func TestPullCopiesResultUpFromRepo(t *testing.T) {
 // own reason token, so a batch's packet says the machine was unreachable rather than
 // blaming the model for a result nobody could go and get.
 func TestPullScoresBenchUnreachable(t *testing.T) {
+	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	benchRoot := filepath.Join(dir, "benchroot")

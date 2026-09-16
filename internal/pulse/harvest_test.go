@@ -8,26 +8,34 @@ import (
 	"testing"
 )
 
-// fakeBin writes an executable POSIX sh fixture that logs its argv to $ARGLOG.
-func fakeBin(t *testing.T, bindir, name, script string) {
-	t.Helper()
-	path := filepath.Join(bindir, name)
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func setupPulse(t *testing.T) (root, bindir, arglog string) {
+// setupPulse makes a root, puts the fakes at the front of PATH and hands back the spec
+// directory this test teaches them in and the argv log they all record into.
+//
+// The fixtures here were POSIX sh scripts logging to $ARGLOG. Windows executes neither the
+// script nor the `$@`, so the real git and gh answered instead and harvest pushed nothing:
+// pushed=0 where the test wants pushed=1. Every one of them is now a Go fake.
+func setupPulse(t *testing.T) (root, specs, arglog string) {
 	t.Helper()
 	root = t.TempDir()
-	bindir = filepath.Join(root, "bin")
-	if err := os.MkdirAll(bindir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	specs = fakePATH(t)
 	arglog = filepath.Join(root, "argv.log")
-	t.Setenv("ARGLOG", arglog)
-	t.Setenv("PATH", bindir+":"+os.Getenv("PATH"))
-	return root, bindir, arglog
+	return root, specs, arglog
+}
+
+// fakeGit records every git invocation and succeeds; nothing here has a repository.
+func fakeGit(t *testing.T, specs, arglog string) {
+	t.Helper()
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog})
+}
+
+// fakeGH records every gh invocation, refuses `gh pr view` (no PR exists yet) and answers
+// `gh pr create` with the URL the test wants.
+func fakeGH(t *testing.T, specs, arglog, prURL string) {
+	t.Helper()
+	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
+		{Arg: 2, Equals: "view", Exit: 1},
+		{Arg: 2, Equals: "create", Stdout: prURL},
+	}})
 }
 
 // addCard writes a card file (line 1 = contract) and its RESULT.md and a cards.tsv row.
@@ -86,15 +94,10 @@ func arglogLines(t *testing.T, arglog string) []string {
 }
 
 func TestHarvestPushesOnlyOnLine1Match(t *testing.T) {
-	root, bindir, arglog := setupPulse(t)
+	root, specs, arglog := setupPulse(t)
 
-	fakeBin(t, bindir, "git", `echo "git $@" >> "$ARGLOG"`)
-	fakeBin(t, bindir, "gh", `echo "gh $@" >> "$ARGLOG"
-case "$2" in
-  view) exit 1 ;;
-  create) echo "https://github.com/owner/repo/pull/42" ;;
-esac
-exit 0`)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
 
 	addCard(t, root, "a", "1", "flash", "RESULT a sha=aaa",
 		"RESULT a sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\n")
@@ -148,11 +151,9 @@ exit 0`)
 }
 
 func TestHarvestAbstainGoesToRetry(t *testing.T) {
-	root, bindir, arglog := setupPulse(t)
-	fakeBin(t, bindir, "git", `echo "git $@" >> "$ARGLOG"`)
-	fakeBin(t, bindir, "gh", `echo "gh $@" >> "$ARGLOG"
-case "$2" in view) exit 1 ;; create) echo "https://github.com/owner/repo/pull/9" ;; esac
-exit 0`)
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/9")
 
 	// One ABSTAIN with a refusal in the harness log, one card with no RESULT.md at all.
 	addCard(t, root, "x", "1", "flash", "RESULT x sha=xxx",
@@ -191,14 +192,12 @@ exit 0`)
 }
 
 func TestHarvestRelaunchesQueueFirst(t *testing.T) {
-	root, bindir, arglog := setupPulse(t)
-	fakeBin(t, bindir, "git", `echo "git $@" >> "$ARGLOG"`)
-	fakeBin(t, bindir, "gh", `echo "gh $@" >> "$ARGLOG"
-case "$2" in view) exit 1 ;; create) echo "https://github.com/owner/repo/pull/1" ;; esac
-exit 0`)
-	fakeBin(t, bindir, "nova-pulse", `echo "nova-pulse $@" >> "$ARGLOG"
-echo "PULSE OK id=p2 n=5 free-before=5 queued=1 batches=1 deadline=300"
-exit 0`)
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/1")
+	fakeTool(t, specs, "nova-pulse", fakeSpec{Log: arglog, Default: fakeRule{
+		Stdout: "PULSE OK id=p2 n=5 free-before=5 queued=1 batches=1 deadline=300",
+	}})
 
 	// One done card to fold, then a queue of three, a read card, and two source items.
 	addCard(t, root, "done", "1", "flash", "RESULT done sha=ddd",
@@ -257,11 +256,9 @@ exit 0`)
 }
 
 func TestThenGatedOnVerdict(t *testing.T) {
-	root, bindir, arglog := setupPulse(t)
-	fakeBin(t, bindir, "git", `echo "git $@" >> "$ARGLOG"`)
-	fakeBin(t, bindir, "gh", `echo "gh $@" >> "$ARGLOG"
-case "$2" in view) exit 1 ;; create) echo "https://github.com/owner/repo/pull/5" ;; esac
-exit 0`)
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/5")
 
 	addCard(t, root, "m", "1", "flash", "RESULT m sha=mmm",
 		"RESULT m sha=mmm\nDONE\nBRANCH bm\nREPO owner/repo\n")

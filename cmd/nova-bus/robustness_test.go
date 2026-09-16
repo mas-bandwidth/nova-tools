@@ -366,6 +366,7 @@ func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 // It is the same class as the NoteParses and checkoutLockWait tests: process-global state,
 // so it runs alone.
 func TestGitTimeoutIsAFlagAndIsChecked(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", "check", "--bus", checkout, "--full", "--git-timeout", "0").

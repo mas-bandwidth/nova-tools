@@ -97,7 +97,14 @@ func TestWaitEndsWithRearmLine(t *testing.T) {
 	}
 	trimmed := strings.TrimRight(r.stdout, "\n")
 	last := trimmed[strings.LastIndex(trimmed, "\n")+1:]
-	if !strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait --bus "+checkout) {
+	// The expected --bus word is built with the binary's OWN shellQuote, never spelled
+	// out here. A hard-coded bare path made this assertion an assertion about the
+	// PLATFORM: a darwin temporary directory holds nothing shellQuote acts on, so the
+	// bare spelling matched, while a Windows temporary path -- backslashes and the
+	// RUNNER~1 tilde -- comes back single-quoted and the same line read as "not last".
+	// The line under test is that the re-arm line is LAST; what one argument looks like
+	// quoted is TestRearmCommandQuotesArgumentsWithSpaces's.
+	if !strings.HasPrefix(last, "WAIT DONE reason=timeout rearm=required next=nova-bus wait --bus "+shellQuote(checkout)) {
 		t.Fatalf("the re-arm line is not last:\n%s", r.stdout)
 	}
 }

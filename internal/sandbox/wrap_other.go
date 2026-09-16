@@ -20,6 +20,10 @@ const Backend = "none"
 // ABI is the abi= field; there is no backend to have one.
 func ABI() string { return "-" }
 
+// ClampedABI is linux's alone: only Landlock has a numbered table this tool can be newer
+// or older than. Here there is no number, so there is nothing to clamp and no used= field.
+func ClampedABI() (int, bool) { return 0, false }
+
 // Available is rule 1's question, and on a platform with no body the answer is no.
 func Available() (string, bool) { return "", false }
 

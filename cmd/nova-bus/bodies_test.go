@@ -22,6 +22,7 @@ func TestBodiesFullUsesCountedFramesAndHonoursByteBudget(t *testing.T) {
 }
 
 func TestBodiesBrokenOutputCannotAdvanceCursor(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
 	before, err := bus.ReadCursor(checkout, "from-ada")
@@ -44,6 +45,7 @@ func TestBodiesBrokenOutputCannotAdvanceCursor(t *testing.T) {
 }
 
 func TestBodiesPreservesReceiptAndHeardAsSummaryOnly(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	// The fixture's second incoming note is an actual receipt-shaped note. It remains a
 	// listing entry, but must not be reframed as body prose.
@@ -62,6 +64,7 @@ func TestBodiesPreservesReceiptAndHeardAsSummaryOnly(t *testing.T) {
 }
 
 func TestBodiesKeepInboxDisplayGroupsWhenCanonicalOrderStartsReceipt(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
 	addGroupedBodyCommit(t, checkout)
@@ -82,6 +85,7 @@ type refusingWriter struct{}
 func (refusingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
 
 func TestBodiesContinuationKeepsOriginalSnapshotAfterAdvanceAndNewTip(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	// Establish C0 so the body chain is an incremental C0..H snapshot rather than
 	// first-run adoption history.
@@ -116,6 +120,7 @@ func TestBodiesContinuationKeepsOriginalSnapshotAfterAdvanceAndNewTip(t *testing
 }
 
 func TestBodiesReadOnlyContinuationNeedsNoPersistedOpenSnapshot(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
 	addBodyCommit(t, checkout, "from-bo/read-only-a.md", "bo-eeeeeeeeeeee", "read-only A")
@@ -130,6 +135,7 @@ func TestBodiesReadOnlyContinuationNeedsNoPersistedOpenSnapshot(t *testing.T) {
 }
 
 func TestBodiesSameCommitPersistsWholeEmittedPrefix(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
 	addTwoBodyNotesOneCommit(t, checkout)
@@ -146,6 +152,7 @@ func TestBodiesSameCommitPersistsWholeEmittedPrefix(t *testing.T) {
 }
 
 func TestBodiesFullAdvancePersistsOnlyEmittedItems(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	addBodyCommit(t, checkout, "from-bo/unprinted.md", "bo-eeeeeeeeeeef", "unprinted")
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--bodies", "--max-notes", "2", "--max-bytes", "1000", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
@@ -162,6 +169,7 @@ func TestBodiesFullAdvancePersistsOnlyEmittedItems(t *testing.T) {
 }
 
 func TestBodiesFullAdvancePreservesExistingOpenCarry(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
 	before, err := bus.ReadOpen(checkout, "from-ada")
@@ -191,6 +199,7 @@ func hasOpenID(entries []bus.OpenEntry, id string) bool {
 }
 
 func TestBodiesContinuationRefusesOtherReaderAndSelector(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	first := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--bodies", "--max-notes", "1", "--max-bytes", "1000").mustCode(t, 0)
 	token := bodyNext(t, first.stdout)

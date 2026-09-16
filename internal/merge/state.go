@@ -440,6 +440,24 @@ const (
 	replacePoll   = 2 * time.Millisecond
 )
 
+// The WRITER's window is longer than the reader's, and it is longer on purpose.
+//
+// A reader that waits out its 200ms and gives up has lost a read it can simply take
+// again. A writer that gives up has lost a WRITE -- bytes already durable in the temp
+// file, taken under the lane's lock, with the caller told it landed only if this rename
+// did. On the windows leg one of thirty writes was lost that way, to readers polling the
+// file in a tight loop: the rename needs a moment when NO handle is open, and 200ms of
+// 2ms polls did not find one. A second of trying does, and a second is nothing beside a
+// write that never happened. Past it the refusal is still the answer: this waits out a
+// storm of opens, it does not wait forever.
+//
+// The poll grows so that the first tries are cheap and a long wait is not a busy loop.
+const (
+	replaceWriteWindow  = 2 * time.Second
+	replaceWritePoll    = time.Millisecond
+	replaceWritePollMax = 20 * time.Millisecond
+)
+
 // replaceState renames tmp over path, WAITING OUT A READER'S OPEN -- the other half of
 // the same Windows window, and the same bound.
 //
@@ -451,15 +469,20 @@ const (
 // race care can lose. Past the window the refusal is the answer. A temp file that is not
 // there is this tool's own bug and returns at once.
 //
-// On unix replaceRefusal is a compile-time false: rename never fails for a reader there.
+// On unix replaceRefusal is a compile-time false: rename never fails for a reader there,
+// so the loop runs once, the retry costs nothing, and nothing about it is platform code.
 func replaceState(tmp, path string) error {
-	deadline := time.Now().Add(replaceWindow)
+	deadline := time.Now().Add(replaceWriteWindow)
+	poll := replaceWritePoll
 	for {
 		err := os.Rename(tmp, path)
 		if err == nil || errors.Is(err, fs.ErrNotExist) || !replaceRefusal(err) || !time.Now().Before(deadline) {
 			return err
 		}
-		time.Sleep(replacePoll)
+		time.Sleep(poll)
+		if poll *= 2; poll > replaceWritePollMax {
+			poll = replaceWritePollMax
+		}
 	}
 }
 
@@ -475,10 +498,15 @@ func replaceState(tmp, path string) error {
 //
 // Only the OPEN is retried. A file that is there and does not parse is never retried and
 // never smoothed over -- Decode's error is the one rule 1 is checked by.
+//
+// The read also SHARES DELETE where the platform has such a thing (readShared), so that
+// this tool's own readers are not the thing holding a writer's rename shut. Half of the
+// windows window is the reader's open refusing the replace, and a reader that lets the
+// replace through closes that half at the source rather than waiting it out.
 func readState(path string) ([]byte, error) {
 	deadline := time.Now().Add(replaceWindow)
 	for {
-		raw, err := os.ReadFile(path)
+		raw, err := readShared(path)
 		if err == nil || !replaceRefusal(err) || !time.Now().Before(deadline) {
 			return raw, err
 		}
