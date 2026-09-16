@@ -283,7 +283,6 @@ func certificationOKNeeds(src string) map[string]bool {
 	return needs
 }
 
-
 // TestEveryTriggeringEventReachesACIOKVerdict is the guard the merge queue
 // depends on: ci-ok is the only required check, and a verdict step is gated by
 // event name. An event the workflow triggers on (pull_request, merge_group,
