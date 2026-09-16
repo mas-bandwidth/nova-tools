@@ -1,25 +1,49 @@
-CARD-8012 / issue #559: nova-merge lane as the merge queue for nova-tools.
+CARD-8097 / issue #198: Diagnose Windows state replacement refusals under sustained
+reader contention -- the writer's bounded retry on a refused rename, with a
+deterministic exhaust test on every platform.
 
 Red test (before the fix), verbatim:
-  --- FAIL: TestManagerHandsMergeToLane (0.00s)
-      manager_test.go:407: exit = 2 (stdout="")
+  --- FAIL: TestExhaustedReplaceReturnsTheRenameErrorAndLeavesStateParseable (build failed)
+      # github.com/mas-bandwidth/nova-tools/internal/merge [github.com/mas-bandwidth/nova-tools/internal/merge.test]
+      internal/merge/state_test.go:294:2: cannot assign to replaceRefusal (neither addressable nor a map index expression)
+      internal/merge/state_test.go:295:17: cannot assign to replaceRefusal (neither addressable nor a map index expression)
+      FAIL    github.com/mas-bandwidth/nova-tools/internal/merge [build failed]
+      FAIL
 
-Root cause: the manager policy had no `lane` key, so `lane=<dir>` was an unknown
-policy key and the shift refused (exit 2). Even with the key, `mergeOne` merged via
-`gh pr merge` rather than handing the PR to the lane.
+Root cause: `replaceRefusal` was declared `func` in both `replace_unix.go` and
+`replace_windows.go`, so a deterministic exhaust test could not stub it without
+a build tag and a Windows-only test rig, and a single-process regression
+against this whole class of failure (writer29's `Access is denied` on v0.14.0
+run 34724270698) could not be written. The retry loop itself is the same on
+every platform; only the OS's classification of a refusal differs. The hook
+parallels `Sleep` in `records.go`, already used to hold a fold still in tests.
 
 Fix (smallest change):
-  - internal/pulse/manager.go: add `lane` to the policy (struct field + key + parse).
-  - internal/pulse/manager.go mergeOne: replace `gh pr merge --squash --delete-branch`
-    with `nova-merge add --lane <lane> --pr <n>`; print `MANAGER LANE ref=… head=…`.
-    With no `lane` configured the approval stays on file and nothing is merged.
+  - internal/merge/replace_unix.go: `func replaceRefusal(error) bool { return false }`
+    -> `var replaceRefusal = func(error) bool { return false }`. The default
+    behaviour is unchanged: still false on every error on unix.
+  - internal/merge/replace_windows.go: same conversion, the windows body is
+    unchanged, the comment now names the hook (a `var`, not a `func`) for the
+    next reader of the file.
+  - internal/merge/state_test.go: `TestExhaustedReplaceReturnsTheRenameError
+    AndLeavesStateParseable` exercises the loop deterministically. It stubs
+    `replaceRefusal` to admit any error and makes `state.json` a directory so
+    `os.Rename` consistently returns "file exists" (the same shape of failure
+    the windows MoveFileEx returns as `Access is denied` for the writer).
+    The test asserts: error surfaced, elapsed >= replaceWriteWindow/2 and
+    <= replaceWriteWindow + replaceWritePollMax + 500ms (the deadline check
+    sits after the rename, so one final poll and a small test-host allowance
+    are the contract, not the loop's absence of spin), `state.json.tmp`
+    cleaned up, and the prior `state.json` is byte-identical on disk. It calls
+    SaveTo directly, not Update, so the reader's own bounded retry (200ms) is
+    not masking the writer's behavior on a now-directory state.json.
 
 Docs updated byte for byte:
-  - docs/SPEC-PULSE.md: manager tier now hands approved PRs to the lane; policy keys
-    gain `lane`; tripwire and "No merging" note the manager's `nova-merge add` exception;
-    replays list gains `manager-hands-merge-to-lane`.
-  - docs/CLI.md: no nova-pulse section, nothing to change.
-
-Note: `go test ./...` also fails `internal/swarm` TestPullWaitsForResult, but only
-because TMPDIR=scratch lives under a path containing "swarm-root", and that test's
-scp filter trips on the substring "-r". Pre-existing and unrelated to this card.
+  - docs/SPEC-MERGE.md: demanded test 1 gains the exhausted-contention
+    paragraph naming the writer's bounded retry, the windows errors, the
+    `state.json.tmp` cleanup, and the `replaceRefusal` hook.
+  - docs/SPEC-MERGE.md rule 1 stays as is; work-list task 1 now spells out
+    replaceWriteWindow (2s, growing 1ms->20ms) and replaceWindow (200ms,
+    fixed 2ms) and the hook, so the spec matches the constants and the test.
+  - docs/CLI.md: no nova-merge section names state-file replacement; nothing
+    to change.

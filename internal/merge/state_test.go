@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Work list 1, and demanded tests 1 and 20. The state file is the lane's order and the
@@ -252,3 +253,82 @@ func TestThirtyConcurrentWritersAllLandAndTheFileAlwaysParses(t *testing.T) {
 }
 
 func h40(c byte) string { return strings.Repeat(string(c), 40) }
+
+// Companion to demanded test 1: a sustained replace refusal exhausts the writer's bounded
+// retry. The loop must surface the rename error to the caller (NOT call the write OK,
+// because a write that returned success without replacing has lost acknowledged bytes the
+// caller did not recover), the wait must stop at replaceWriteWindow (NOT spin forever,
+// because a busy unbounded wait is the door held open forever), and the old parseable
+// state must still be on disk (NOT replaced or damaged, because the question a hand at the
+// keyboard next asks is "what was the lane before," and "this is not a lane" is the wrong
+// answer when the lane is there).
+//
+// The hook makes this deterministic on every platform: replaceRefusal is stubbed to admit
+// any error, and the path that os.Rename would replace is made a directory so os.Rename
+// returns "file exists" on every iteration. The same loop on Windows refuses the rename
+// with `Access is denied` when an unsympathetic reader holds state.json open, and the
+// diagnostic is the loop's behavior, not the OS's classification.
+//
+// The test calls SaveTo (not Update) so the writer's bounded loop is exercised on its own;
+// routing via Update would also drive the tool's own reader's bounded readState loop on
+// the now-directory state.json, and that one would exhaust first, masking the writer's
+// behavior. The reader's exhaustion is its OWN contract, and its own test.
+//
+// SaveTo does what the contract says on a refused replace: os.Remove(tmp), then the rename
+// error. tmp is gone, dst is the original parseable state, the caller sees the rename
+// error, and a hand holding the lane at the keyboard sees it whole.
+func TestExhaustedReplaceReturnsTheRenameErrorAndLeavesStateParseable(t *testing.T) {
+	lane := t.TempDir()
+	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "l"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(lane, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(before); err != nil {
+		t.Fatalf("the prior state must decode: %v", err)
+	}
+
+	origRefusal := replaceRefusal
+	replaceRefusal = func(error) bool { return true }
+	defer func() { replaceRefusal = origRefusal }()
+
+	dst := filepath.Join(lane, StateName)
+	if err := os.Remove(dst); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	st := &State{Version: Version, Repo: "o/n", Base: "main", LaneBranch: "l",
+		PRs: []*Entry{}, Branches: []*Entry{}, Gates: []Gate{}}
+	err = st.SaveTo(lane)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("a sustained replace refusal must surface the rename error to the caller, not smooth it over with success")
+	}
+	// The bound is replaceWriteWindow; the rename OS call sits between the deadline
+	// check and the return, so an overshoot of up to one final poll (replaceWritePollMax)
+	// plus a small allowance for test-host scheduling is the contract, not the loop
+	// spinning or bailing at a fraction of the bound.
+	if elapsed > replaceWriteWindow+replaceWritePollMax+500*time.Millisecond {
+		t.Errorf("the bounded retry must not run past the bound (one final poll + test-host allowance): %v > %v+%v+500ms", elapsed, replaceWriteWindow, replaceWritePollMax)
+	}
+	if elapsed < replaceWriteWindow/2 {
+		t.Errorf("the bounded retry must run the bound, not bail early: only %v of %v", elapsed, replaceWriteWindow)
+	}
+	if _, err := os.Stat(filepath.Join(lane, StateTmpName)); err == nil {
+		t.Errorf("a refused replace must clean up the temp file; found %s still on disk", StateTmpName)
+	}
+	fi, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("the prior parseable state must still be on disk: %v", err)
+	}
+	if !fi.IsDir() {
+		t.Errorf("a refused replace must leave the prior state byte-identical; was it replaced? fi=%+v", fi)
+	}
+}

@@ -27,7 +27,12 @@ const (
 
 // replaceRefusal reports whether this is a refusal a replace in flight explains, and so
 // one worth waiting out for a bounded time. Any other error is the caller's answer.
-func replaceRefusal(err error) bool {
+//
+// A var (not a function) so a test can stub it without a build tag, the way `Sleep` is in
+// records.go: the writer's bounded loop is the same loop on every platform, the windows
+// cases are listed right here, and a deterministic exhaust test on any platform needs
+// the hook to stand in for Access is denied under a sustained reader.
+var replaceRefusal = func(err error) bool {
 	return errors.Is(err, errorSharingViolation) ||
 		errors.Is(err, errorAccessDenied) ||
 		errors.Is(err, fs.ErrNotExist)
