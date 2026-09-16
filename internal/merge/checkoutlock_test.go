@@ -107,7 +107,7 @@ func TestAFoldWaitsForTheCheckoutLockAndNamesTheHolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	r := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, nil), 200*time.Millisecond)
+	r := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, nil), 200*time.Millisecond)
 	if _, err := r.Fold(); err == nil {
 		t.Fatal("a fold ran while another holder had the checkout; the reset of a concurrent flush is exactly what it would have read")
 	} else if !strings.Contains(err.Error(), "pid=") {
