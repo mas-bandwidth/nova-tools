@@ -44,7 +44,7 @@ refused with the holder's pid.
 example:
   nova-pulse launch --cards ./cards.tsv --root ./swarm-root --deadline 1500 --slots 1-16 --harness /path/to/opencode
   nova-pulse launch --cards ./cards.tsv --root ./swarm-root --deadline 1500 --slots 101-160 --benches ./benches.tsv --bench space
-  nova-pulse check  --root ./swarm-root --id <pulse id>
+  nova-pulse check  --root ./swarm-root --id 20260916T014455Z-pulse-7c1a20
 
 check counts the cards of a pulse that have a job directory -- made before the
 harness's first line -- and says so in one line; a bench that does not answer is

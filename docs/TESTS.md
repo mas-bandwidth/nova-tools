@@ -347,6 +347,10 @@ STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=
 
 Fixture: none that lies. The stub `bin/nova-swarm` this section used to run against — three lines, `exit 0` for any argv — is deleted: it exited 0 for the form of `nova-swarm batch` that starts no card, so the `PULSE OK` lines it produced were the tool reporting success at launching nothing (#630). The tests in `internal/pulse` now build `cmd/nova-swarm` from this tree and drive the real binary, with a runner script that writes `RESULT.md`, so every line below is what the real pair prints.
 
+### First run
+
+A first sitting is three runs: one pulse that starts its cards, the check that says they started, and the refusal when every slot in the range is held.
+
 ```
 $ nova-pulse launch --cards ./cards.tsv --root ./swarm-root --deadline 60 --slots 1-4 --runner ./runner.sh
 LAUNCH OK id=20260916T014455Z-pulse-7c1a20 bench=- cards=2 slots=1-4 free=4 deadline=60
