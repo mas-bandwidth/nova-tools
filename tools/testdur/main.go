@@ -1,64 +1,90 @@
-// Command testdur turns `go test -json` into the two-minute rule's evidence: the
-// per-package total and every test over five seconds. Glenn's rule (2026-09-10,
-// reaffirmed 2026-09-15) is that anything we call out to answers in a minute,
-// two at most; a package nobody times drifts past that without anyone noticing.
+// Command testdur turns `go test -json` into the two-minute rule's assertion,
+// not a memory. The caller pipes the test step through it:
 //
-// Usage: go test -json -count=1 ./... | go run ./tools/testdur
+//	set -o pipefail
+//	go test -json -count=1 ./... | go run ./tools/testdur
 //
-// Output is one line per slow test, "<pkg> <test> <seconds>", then one line per
-// package, "<pkg> TOTAL <seconds>", both sorted slowest first. Nothing else: the
-// caller pastes it into docs/TEST-DURATIONS.md.
+// After the packages have run, testdur fails the step when any package took
+// over 60 s, or when the step's total (the sum of the packages' elapsed times)
+// exceeded 120 s, printing one "TESTDUR FAIL pkg=<p> s=<n> bar=<b>" line per
+// offender. A passing step prints one "TESTDUR OK" line naming the slowest
+// package. pipefail keeps the real `go test` exit status, so a failing test and
+// a slow leg are both red for the reason they actually are.
 package main
 
 import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
-	"sort"
 )
 
-// slowTestSeconds is the threshold #516 names for a test worth listing by name.
-const slowTestSeconds = 5.0
+// packageBar is Glenn's working number: a package answers in a minute.
+const packageBar = 60.0
 
-type row struct {
-	pkg, test string
-	seconds   float64
-}
+// totalBar is the two-minute ceiling: the step's packages summed must not cross it.
+const totalBar = 120.0
 
-func main() {
-	var tests, pkgs []row
-	in := bufio.NewScanner(os.Stdin)
-	in.Buffer(make([]byte, 0, 1<<20), 1<<24)
-	for in.Scan() {
+// run reads one `go test -json` stream, writes the assertion's verdict to out,
+// and reports whether the step crossed the bar (the caller turns that into exit 1).
+func run(in io.Reader, out io.Writer) (failed bool) {
+	type pkgTime struct {
+		pkg  string
+		secs float64
+	}
+	var pkgs []pkgTime
+	var total float64
+
+	sc := bufio.NewScanner(in)
+	sc.Buffer(make([]byte, 0, 1<<20), 1<<24)
+	for sc.Scan() {
 		var e struct {
 			Action, Package, Test string
 			Elapsed               float64
 		}
-		if err := json.Unmarshal(in.Bytes(), &e); err != nil {
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
 			continue // a test that prints non-JSON to stdout is not a duration
 		}
 		if e.Action != "pass" && e.Action != "fail" {
 			continue
 		}
-		if e.Test == "" {
-			pkgs = append(pkgs, row{pkg: e.Package, seconds: e.Elapsed})
-		} else if e.Elapsed >= slowTestSeconds {
-			tests = append(tests, row{pkg: e.Package, test: e.Test, seconds: e.Elapsed})
+		if e.Test != "" {
+			continue
 		}
+		pkgs = append(pkgs, pkgTime{pkg: e.Package, secs: e.Elapsed})
+		total += e.Elapsed
 	}
-	if err := in.Err(); err != nil {
+	if err := sc.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "testdur: reading go test -json: %v\n", err)
 		os.Exit(1)
 	}
-	for _, rs := range []([]row){tests, pkgs} {
-		sort.Slice(rs, func(i, j int) bool { return rs[i].seconds > rs[j].seconds })
-		for _, r := range rs {
-			name := r.test
-			if name == "" {
-				name = "TOTAL"
-			}
-			fmt.Printf("%s %s %.1f\n", r.pkg, name, r.seconds)
+
+	for _, p := range pkgs {
+		if p.secs > packageBar {
+			fmt.Fprintf(out, "TESTDUR FAIL pkg=%s s=%d bar=%d\n", p.pkg, int(p.secs), int(packageBar))
+			failed = true
 		}
+	}
+	if total > totalBar {
+		fmt.Fprintf(out, "TESTDUR FAIL pkg=<total> s=%d bar=%d\n", int(total), int(totalBar))
+		failed = true
+	}
+
+	if !failed {
+		var slowest pkgTime
+		for _, p := range pkgs {
+			if p.secs > slowest.secs {
+				slowest = p
+			}
+		}
+		fmt.Fprintf(out, "TESTDUR OK pkg=%s s=%d\n", slowest.pkg, int(slowest.secs))
+	}
+	return failed
+}
+
+func main() {
+	if run(os.Stdin, os.Stdout) {
+		os.Exit(1)
 	}
 }

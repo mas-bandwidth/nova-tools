@@ -446,7 +446,17 @@ jobs:
         # and an Intel Mac at load 2; the cards make those packages fast. Until they land the budget is 300 s here so
         # a mechanical red does not hold dev, and every CI-SLOW line is still printed for the coordinator. This covers
         # the Intel Mac benches too (about 3x slower per core than the Studio) that cards 9352 to 9354 make fast.
-        run: go test -json -count=1 ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json"; go run ./cmd/nova-ci slowtests --budget 300 < "$RUNNER_TEMP/test.json"
+        #
+        # The two-minute rule as an assertion, not a memory: pipe the -json
+        # stream through the tool that fails the leg when a package crossed 60 s
+        # or the step crossed 120 s. pipefail keeps the real `go test` exit
+        # status, so a failing test and a slow leg are each red for their own
+        # reason.
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -json -count=1 ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json" | go run ./tools/testdur
+          go run ./cmd/nova-ci slowtests --budget 300 < "$RUNNER_TEMP/test.json"
 
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest, macos-latest,
@@ -509,6 +519,7 @@ jobs:
         # run only on main and nightly; the shard count is the whole tuning.
         shell: bash
         run: |
+          set -o pipefail
           pkgs=$(go list ./... | awk -v n=4 -v i=${{ matrix.shard }} 'NR % n == i - 1')
           echo "$pkgs"
           # The hosted legs run -short: the multi-process and thousand-note fixture tests
@@ -518,7 +529,15 @@ jobs:
           # 35052889521, panic: test timed out after 10m0s). The self-hosted shards keep
           # running everything; the nightly certification runs the hosted legs full.
           # -timeout 20m stays as the ceiling, not the target.
-          go test -short -count=1 -timeout 20m $pkgs
+          #
+          # The two-minute rule is still an assertion here: testdur fails the leg on the
+          # same 60 s / 120 s bar, so -timeout 20m stays a panic guard and never the
+          # budget. -timeout 20m is the hosted windows leg's reality, not a target:
+          # cmd/nova-bus took 439 s there on the branch and hit Go's 10 m default on
+          # main (run 35052889521, panic: test timed out after 10m0s). The two-minute
+          # rule is met by gating the multi-process bus tests behind -short on hosted
+          # legs (issue filed); until that lands, a slow package must not panic the leg.
+          go test -short -count=1 -json -timeout 20m $pkgs | go run ./tools/testdur
 
   plan-merge:
     # How many shard slots this merge group needs, decided before any leg starts.
@@ -797,6 +816,7 @@ jobs:
         if: steps.filter.outputs.changed == 'true'
         run: go test -short -count=1 ${{ matrix.leg.packages }}
 
+
   e2e:
     # THE SEQUENCES A FRIEND RUNS, end to end, one job. The sharded `test` job above runs
     # these too -- they are ordinary Go tests in ordinary packages -- and this job exists
@@ -841,7 +861,10 @@ jobs:
           go version
 
       - name: friend sequences
-        run: go test -count=1 -run TestFriendSequence ./cmd/...
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -json -run TestFriendSequence ./cmd/... | go run ./tools/testdur
 
   lisp-changes:
     # THE PATH FILTER for the lisp tier, and it exists because the lisp job must
