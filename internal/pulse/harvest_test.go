@@ -362,6 +362,63 @@ func cardsModel(cards, label string) string {
 	return "<missing>"
 }
 
+// harvest-cuts-read-card-per-pr (SPEC-PULSE rule 13, replay 15): every PR opened yields one
+// row in next.tsv with template read, and the next pool counts it in next=<n> before the
+// sources, so the read card is the next pool's first cut and reads stay on the local route.
+func TestPoolCountsReadCardsFromNext(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://example.com/owner/repo/pull/42")
+	fakeTool(t, specs, "nova-pulse", fakeSpec{Log: arglog, Default: fakeRule{
+		Stdout: "PULSE OK id=p2 n=1 free-before=1 queued=0 batches=1 deadline=300",
+	}})
+
+	addCard(t, root, "r", "1", "flash", "RESULT r sha=rrr",
+		"RESULT r sha=rrr\nDONE\nBRANCH br\nREPO owner/repo\n")
+
+	out, _ := runHarvest(t, root)
+	if !strings.Contains(out, "prs=1") {
+		t.Fatalf("want prs=1, got:\n%s", out)
+	}
+
+	// Every PR opened yields one read card in next.tsv: pr<TAB>repo#n<TAB>read<TAB>title<TAB>read.
+	raw, err := os.ReadFile(filepath.Join(root, "next.tsv"))
+	if err != nil {
+		t.Fatalf("no next.tsv after a PR opened: %v", err)
+	}
+	rows := nonempty(string(raw))
+	if len(rows) != 1 {
+		t.Fatalf("want one read card per PR, got %d:\n%s", len(rows), raw)
+	}
+	const want = "pr\towner/repo#42\tread\tr\tread"
+	if rows[0] != want {
+		t.Fatalf("next.tsv row = %q, want %q", rows[0], want)
+	}
+
+	// The next pool reads next.tsv after queue.tsv and before the sources, counting it in next=<n>.
+	srcDir := t.TempDir()
+	roadmap := writeTestFile(t, srcDir, "roadmap.sexp", "((:id \"cell-fix\" :title \"fix the pool\" :card \"fix\"))\n")
+	sources := writeTestFile(t, srcDir, "sources.tsv", "roadmap\t"+roadmap+"\tfix\n")
+	var pout, perr bytes.Buffer
+	if code := Pool(PoolInput{Sources: sources, Root: root, Stdout: &pout, Stderr: &perr}); code != 0 {
+		t.Fatalf("pool exit = %d, stderr=%s", code, perr.String())
+	}
+	if !strings.Contains(pout.String(), "next=1") {
+		t.Fatalf("POOL OK must count the read card in next=1, got:\n%s", pout.String())
+	}
+	prs, err := os.ReadFile(filepath.Join(root, "pool.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prows := nonempty(string(prs))
+	if len(prows) != 2 {
+		t.Fatalf("want the read card plus the source candidate in pool.tsv, got %d:\n%s", len(prows), prs)
+	}
+	if prows[0] != want {
+		t.Fatalf("pool.tsv must hold the read card before the sources, got:\n%s", strings.Join(prows, "\n"))
+	}
+}
+
 func writeTSV(t *testing.T, path string, lines []string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "")), 0o644); err != nil {

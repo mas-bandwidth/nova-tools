@@ -81,6 +81,17 @@ func Pool(in PoolInput) int {
 	seenCount := 0
 	planCount := 0
 
+	// next.tsv holds the read cards harvest cut for the PRs it opened (SPEC-PULSE rule 13):
+	// the next pool reads them after queue.tsv and before the sources, so a read card is
+	// pooled the first cycle after its PR opens, counted in next=<n>.
+	for _, r := range readCandidates(filepath.Join(in.Root, "next.tsv")) {
+		if in.Max > 0 && len(rows) >= in.Max {
+			break
+		}
+		rows = append(rows, r)
+		counts["next"]++
+	}
+
 	for _, s := range srcs {
 		cands, plan, cseen, err := poolSource(s, seen, in)
 		if err != nil {
@@ -107,7 +118,7 @@ func Pool(in PoolInput) int {
 	fmt.Fprintf(in.Stdout, "POOL OK sources=%d candidates=%d issues=%d audits=%d slices=%d roadmap=%d prs=%d work=%d next=%d plan=%d seen=%d took=%s out=%s\n",
 		len(srcs), len(rows),
 		counts["issue"], counts["audit"], counts["slice"], counts["roadmap"], counts["read"],
-		counts["work"], 0, planCount, seenCount,
+		counts["work"], counts["next"], planCount, seenCount,
 		time.Since(started).Round(time.Millisecond), oneline.Field(out))
 	return 0
 }
