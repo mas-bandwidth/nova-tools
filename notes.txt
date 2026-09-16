@@ -1,0 +1,26 @@
+# CARD-8150: nova-pulse help says harvest is not yet implemented; the verb is implemented
+
+## Red test output (before fix)
+```
+=== RUN   TestHelpDropsNotYetImplementedForHarvest
+    main_test.go:70: harvest help still reads "not yet implemented": "nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]  (not yet implemented)"
+--- FAIL: TestHelpDropsNotYetImplementedForHarvest (0.00s)
+FAIL
+FAIL	github.com/mas-bandwidth/nova-tools/cmd/nova-pulse	0.019s
+FAIL
+```
+
+## Fix
+Dropped `(not yet implemented)` from the harvest help line in cmd/nova-pulse/main.go.
+Moved harvest from unshipped to shipped in cmd/nova-pulse/main_test.go TestHelpListsOnlyBuiltVerbs.
+
+## Green test output (after fix)
+```
+=== RUN   TestHelpDropsNotYetImplementedForHarvest
+--- PASS: TestHelpDropsNotYetImplementedForHarvest (0.00s)
+PASS
+ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-pulse	0.029s
+```
+
+## Dogfood
+`pool` testdata still `POOL OK candidates=2`. Did not launch.
