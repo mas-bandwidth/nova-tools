@@ -302,14 +302,19 @@ func TestUsageAndUnknownVerb(t *testing.T) {
 	invoke(t, "", "wibble").mustCode(t, 2).mustContain(t, "stderr", `unknown subcommand "wibble"`)
 }
 
-// The wait usage must say plainly that an unadvanced cursor makes wait return at once
-// -- so a caller with a backlog knows to run inbox first -- and the example loop must
-// show --advance, which is what makes the second wait a real one. (#328)
-func TestWaitUsageStatesUnadvancedCursorReturnsAtOnce(t *testing.T) {
+// The wait usage must say plainly that an unadvanced cursor's carry backlog
+// does NOT make wait return at once (#328) -- so a caller with a backlog knows
+// wait blocks over the carry rather than running a hot loop with a network fetch
+// in it -- and the example loop must show --advance, which is what makes the
+// second wait a real one for a note newer than the start.
+func TestWaitUsageStatesUnadvancedCursorBlocks(t *testing.T) {
 	t.Parallel()
 	banner := invoke(t, "", "help").mustCode(t, 0).stdout
-	if !strings.Contains(banner, "unadvanced cursor makes wait return AT ONCE") {
-		t.Fatalf("the usage text does not say plainly that an unadvanced cursor makes wait return at once:\n%s", banner)
+	if !strings.Contains(banner, "an unadvanced cursor with a carry backlog") {
+		t.Fatalf("the usage text does not say plainly that an unadvanced cursor blocks rather than returning on its carry:\n%s", banner)
+	}
+	if !strings.Contains(banner, "does NOT make wait return on that backlog") {
+		t.Fatalf("the usage text does not say plainly that wait does not return on the carry backlog:\n%s", banner)
 	}
 	if !strings.Contains(banner, "--advance --remote origin --branch main") {
 		t.Fatalf("the wait example loop does not show --advance:\n%s", banner)

@@ -44,6 +44,10 @@ var messageBusAudit = audit.Config{
 			"fold a whole listing into one unreadable line, which is the mistake printTranscript below documents. The buffer exists because a poll " +
 			"that finds nothing must print nothing, not because anything about the text changed. TestWaitReturnsWhenANoteArrivesDuringTheWait is the " +
 			"behavioural test for this site.",
+		"main.go|waitPoll|buf.String()": "the inbox listing --advance printed on its first poll and committed through, written verbatim because every value inside " +
+			"already passed oneline.Field or oneline.Escape at the inboxListing site that wrote it. The listing is a multi-line INBOX frame, the same buffer that " +
+			"waitLoop prints under keep above, and re-escaping it would fold a whole frame into one unreadable line. TestWaitAdvancesTheCursorExactlyAsInboxDoes " +
+			"is the behavioural test.",
 		"main.go|waitLoop|next": "the caller's own wait command echoed back after `next=` so they can re-arm it: flag names are literals and every value " +
 			"in it has already been through the flag parser (--bus is a repo root, --as a roster name, --remote and --branch through bus.ValidGitArg, " +
 			"durations and counts are numbers), and it must stay pasteable spaces-and-all -- escaping it folds a command into one unreadable token, " +

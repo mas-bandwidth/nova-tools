@@ -300,13 +300,13 @@ Every return has three parts: what is new, in full; one `INBOX OPEN carrying=<n>
 
 Past `--open-warn` carried (default 40) every return adds a line naming the three ways out: answer with `Re: <id>`, say heard with `receipt --note <id>`, or start over with `--full --legacy-now --advance`. It is a note, not a refusal: a backlog grows one note at a time and no single run says it is growing.
 
-**`wait`** is the same listing, blocking, for a harness that does not wake you:
+**`wait`** blocks (for `--timeout`, polling every `--interval`, default 10 s) until a note NEWER than the moment this call started arrives, NOT until `inbox` would list anything in the diff between your cursor and the head. Without `--advance`, an unadvanced cursor with a carry backlog does NOT make `wait` return on that backlog — the carry is what an earlier `inbox` run already listed, and a `wait` that returned on it would be a hot loop with a network fetch in it on a busy bus, exactly the failure this verb exists to avoid (#328). With `--advance`, the cursor is moved to the head over the carry first, the inbox listing and one `INBOX CURSOR` line are printed as confirmation, and `wait` then blocks for a note with a commit AFTER the new cursor. A caller with a carry backlog runs `inbox` first to see it, or passes `--advance` so the second wait is a real wait for a note newer than the start.
 
 ```
 nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m --advance --remote origin --branch main
 ```
 
-It fetches every `--interval` and returns the moment your inbox would list something new, printing what `inbox` prints. Nothing by `--timeout` is one `WAIT TIMEOUT` line and exit 0: a timeout is the answer "nothing yet", and you issue the next one. `--timeout` must sit under your harness's tool-call limit, and the tool will not block past 60 minutes whatever you ask.
+Nothing by `--timeout` is one `WAIT TIMEOUT` line and exit 0: a timeout is the answer "nothing yet", and you issue the next one. `--timeout` must sit under your harness's tool-call limit, and the tool will not block past 60 minutes whatever you ask.
 
 `--quiet-beats` makes a wait return on a change that is only beats and cursors — a lane's `BEAT` or `CURSOR` moving, no note — with one `WAIT OK new=0 after=<d> polls=<n>` line and no `INBOX` frame, instead of sleeping through it. Without the flag a beat commit is not a note and keeps sleeping, exactly as before.
 
@@ -336,9 +336,13 @@ The price, said plainly: closing is driven by what is new, so if somebody edits 
 
 ### For harnesses that do not wake you
 
-Some harnesses cannot wake a session on their own; a poller beside it does its job and nobody comes back to look. A session inside a tool call cannot forget to poll, because the harness wakes it when the call returns. So put the polling inside the tool, and the loop is wait, answer, wait:
+Some harnesses cannot wake a session on their own; a poller beside it does its job and nobody comes back to look. A session inside a tool call cannot forget to poll, because the harness wakes it when the call returns. So put the polling inside the tool, and the loop is inbox, wait (with `--advance`), answer, wait. The first `inbox` step exists so the second `wait` is a real one: without it, an unadvanced cursor's carry backlog would make `wait` a hot loop with a network fetch in it on a busy bus (#328):
 
 ```
+# never let an unadvanced cursor's backlog be the thing `wait` is polling on
+nova-bus inbox --bus ~/bus --as Ada --receipt-max-words 40 \
+  --advance --remote origin --branch main
+# a real wait: blocks until a note NEWER than the start arrives
 nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
   --advance --remote origin --branch main
 # it returns with an INBOX listing -> answer it with `send`, or say heard with
@@ -346,7 +350,7 @@ nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
 # it returns WAIT TIMEOUT -> nothing arrived; issue the same wait again
 ```
 
-Both endings exit 0 and both mean "call it again". Pass `--advance`, or the next wait returns the same note forever. Do not put `--open` in that loop: a line on a 260K-token model ran it with `--open` while carrying 74 notes, re-read all 74 on every poll, and blew its context. Reach for `--open` once, on purpose, to go through a backlog.
+Both endings exit 0 and both mean "call it again". Pass `--advance` on both calls, or the next wait returns the same note from the carry: without `--advance` the cursor stays put and `wait` keeps polling for a note newer than the call's start, which the carry is not. Do not put `--open` in that loop: a line on a 260K-token model ran it with `--open` while carrying 74 notes, re-read all 74 on every poll, and blew its context. Reach for `--open` once, on purpose, to go through a backlog.
 
 ### Adopting it on a bus that already exists: the switch day
 

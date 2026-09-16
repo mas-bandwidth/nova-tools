@@ -179,19 +179,27 @@ after the first needs neither, and a bus with no old notes needs neither ever.
 
 inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
 
-wait is inbox on a clock, for a harness that does not wake you: it fetches every
---interval (default 10s) and RETURNS the moment your inbox would list something
-new, printing exactly what inbox prints. Without --advance the cursor does not
-move, so an unadvanced cursor makes wait return AT ONCE with the same listing
-inbox would print, every call, for as long as it stays where it is: a caller
-with a backlog runs inbox first to clear it, or passes --advance so the second
-wait is a real wait for a note newer than the start. Nothing by --timeout is a
-WAIT TIMEOUT line and exit 0 -- not an error, the answer "nothing yet" -- and you
-issue the next one. --timeout is required, because every wait has a deadline, and
-is at most 60m: a wait runs inside your harness's tool call, so ask your harness
-what its limit is and sit under it. The loop is wait, answer, wait, with --advance
-so the second wait is a real wait:
+wait blocks for --timeout (polling every --interval, default 10s) until a note
+NEWER than the moment this call started arrives -- committed during it, not
+"in inbox since the cursor" -- so an unadvanced cursor with a carry backlog
+does NOT make wait return on that backlog (#328). What this verb exists for is
+waking a harness that does not wake its session: a busy bus where every poll
+was returning instantly on whatever the cursor had yet to read was a hot loop
+with a network fetch in it. Without --advance the carry sits in the diff between
+the cursor and the head, and wait blocks over it until something arrives during
+this call (or --timeout fires). With --advance the cursor is moved to the head
+over the carry first, the inbox listing and one INBOX CURSOR line are printed
+as confirmation, and wait then blocks for a note with a commit AFTER the new
+cursor. A caller with a carry backlog runs inbox first to see it, or passes
+--advance so the second wait is a real wait for a note newer than the start.
+Nothing by --timeout is one WAIT TIMEOUT line and exit 0 -- not an error, the
+answer "nothing yet" -- and you issue the next one. --timeout is required,
+because every wait has a deadline, and is at most 60m: a wait runs inside your
+harness's tool call, so ask your harness what its limit is and sit under it.
+The loop is inbox, wait (with --advance), answer, wait:
 
+  nova-bus inbox --bus ~/bus --as Ada --receipt-max-words 40 --advance \
+    --remote origin --branch main
   nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
     --advance --remote origin --branch main
 
@@ -1446,6 +1454,13 @@ type inboxReading struct {
 	BodyPrinted int
 	BodyGaps    int
 	AdvanceTo   string
+	// Fresh is the same path set bus.InboxResult.Fresh carries: the entries this listing
+	// ran put on the open list that were not on it before, in listing order, and nothing
+	// that was already there. `wait` reads the FIRST poll's fresh paths into a set so a
+	// later poll only fires WAIT OK on a path the first poll did not have -- the carry
+	// a busy bus left in the diff is the path the first poll had, and a NEW commit that
+	// lands during the call is the path it did not (#328).
+	Fresh []bus.OpenEntry
 }
 
 // inboxListing is the whole of an inbox report: what to read, what it found, and every
@@ -1829,6 +1844,10 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	r.Changed, r.NoteChanges = scope.Changed, res.NoteChanges
 	if !o.bodies {
 		r.Open = res.Open
+		// Fresh is the path set wait compares against its first poll: the carry backlog a
+		// busy bus hands the caller on poll 1 is here, and a fresh note that lands DURING
+		// the wait is the path whose absence in the first poll fires WAIT OK (#328).
+		r.Fresh = res.Fresh
 	}
 	// What this run would show a reader as news; see inboxReading.New.
 	r.New = res.New
@@ -2504,24 +2523,67 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 			fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
 		}
 	}
+	// Issue #328: wait blocks on a busy bus even when the cursor is unadvanced. What
+	// "new" means here is "committed after this call started" -- not "in inbox since the
+	// cursor" -- so a cursor that hasn't moved past the carry backlog does not make the
+	// first poll's WAIT OK. The first poll's fresh paths are captured so a NEW commit that
+	// lands during the wait is the one thing that wakes this call. A poll that found the
+	// carry the caller could already have seen by running inbox is not "news", and the
+	// caller with a carry runs inbox first, or passes --advance so the second wait is a
+	// real wait for a note newer than the start.
+	//
+	// #674, --quiet-beats: a change that is ONLY beats and cursors -- no note in the diff,
+	// and no switch-day line hiding the whole wait -- is not news to a default wait, which
+	// sleeps through it. Under --quiet-beats it is a wake worth one WAIT line: the bus
+	// moved, and the caller is owed that for one token rather than none.
+	var firstFreshSeen map[string]bool
+	quietOnly := func(r inboxReading) bool {
+		return o.quietBeats && r.New == 0 && r.Changed > 0 && r.NoteChanges == 0 && !hiddenWholeWait(r.Legacy, horizon)
+	}
+	keep := func(r inboxReading) bool {
+		// A switch-day line drawn after this call's horizon is the line-draws-forward case
+		// the listing already names -- INBOX SWITCH (date) or WAIT NOTE (instant) -- and
+		// hiddenWholeWait fires on it from the very first poll.
+		if hiddenWholeWait(r.Legacy, horizon) || quietOnly(r) {
+			return true
+		}
+		// Full mode is the FIRST run's shape (no cursor): "new" IS the whole open list, so
+		// returning on first poll is right and matches what inbox --full prints.
+		if r.Full {
+			return r.New > 0
+		}
+		// Bodies mode is an explicit body-fetch request, not a poll: the harness wants up
+		// to --max-notes bodies for whatever it is the harness is doing, and the wait that
+		// delivers them is the same shape as inbox --bodies. A first poll that printed
+		// frames is what the caller asked for; the WAIT OK plus INBOX BODIES summary is
+		// the answer, not "carry backlog": a body snapshot is a present-tense read of the
+		// bus and a harness pulling bodies is asking for it now. Polling bodies would not
+		// fix the issue (#328) either: the fetch is bounded by the body cap, the print
+		// is, and a harness that wants more bodies issues another wait with `--after`.
+		if r.BodyPrinted > 0 {
+			return true
+		}
+		// Incremental, first poll: the wait does NOT return on the carry backlog. The carry
+		// is what an earlier inbox run already showed, and printing it here would be the
+		// "hot loop with a network fetch in it" the issue names. The poll still scans so a
+		// --advance first poll can clear the cursor in waitPoll, and so the second poll can
+		// see what arrived between the first and itself.
+		if firstFreshSeen == nil {
+			return false
+		}
+		// A note NEWER than the moment this call started: a fresh path the first poll did
+		// not have, from a commit that landed DURING the wait.
+		for _, e := range r.Fresh {
+			if !firstFreshSeen[e.Path] {
+				return true
+			}
+		}
+		return false
+	}
 	for {
 		polls++
 		elapsed := time.Since(start).Round(time.Millisecond)
 		pollNow := now.Add(elapsed)
-		// Issue #328, re-landed: a wait returns the moment it sees news, an unadvanced
-		// cursor's backlog included, printing exactly what inbox prints for that state;
-		// it blocks only while there is nothing new at all, until a note arrives or the
-		// deadline. #352 blocked over the backlog instead and broke byte-identity with
-		// inbox, which is why it was reverted.
-		//
-		// #674, --quiet-beats: a change that is ONLY beats and cursors -- no note in the diff,
-		// and no switch-day line hiding the whole wait -- is not news to a default wait, which
-		// sleeps through it. Under --quiet-beats it is a wake worth one WAIT line: the bus
-		// moved, and the caller is owed that for one token rather than none.
-		quietOnly := func(r inboxReading) bool {
-			return o.quietBeats && r.New == 0 && r.Changed > 0 && r.NoteChanges == 0 && !hiddenWholeWait(r.Legacy, horizon)
-		}
-		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) || quietOnly(r) }
 		// THE BEAT, written before the poll. A waiting line's cursor does not move --
 		// there was nothing to read, so nothing was recorded -- and a line whose cursor
 		// does not move reads asleep to `nova-wake awake`. The BEAT is the file that moves
@@ -2529,7 +2591,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		// advances the cursor carry the beat out inside its own cursor commit; see
 		// landBeat.
 		writeBeat()
-		code, r, lines, skipped := waitPoll(o, polls == 1, pollNow, keep, stderr)
+		code, r, lines, skipped := waitPoll(o, polls == 1, pollNow, keep, stdout, stderr)
 		if r.Cursor != "" {
 			cursor = r.Cursor
 		}
@@ -2558,6 +2620,14 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 				cursor = head
 			}
 			continue
+		}
+		// Capture the first poll's fresh paths so a keep on a later poll only fires for
+		// notes that landed DURING this call, not for the carry that was there in poll 1.
+		if firstFreshSeen == nil {
+			firstFreshSeen = make(map[string]bool, len(r.Fresh))
+			for _, e := range r.Fresh {
+				firstFreshSeen[e.Path] = true
+			}
 		}
 		if keep(r) {
 			// Why this wait is not waiting, when the answer is not "a note arrived": the
@@ -2617,8 +2687,16 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 // because a poll that found nothing prints nothing: twenty polls of a quiet bus are not
 // twenty listings.
 //
+// Three lines the caller may want to see are written here, not handed back: WAIT REFUSED
+// (on the first poll's fetch failing), WAIT POLL fetch: (on a later one), and -- for
+// `--advance` on a first poll that did find a carry -- the listing and its INBOX CURSOR
+// line, because the carry is what the caller asked --advance to clear and the wait keeps
+// polling for a NEW commit afterwards. Skipped returns keep their WAIT ADVANCED line out
+// the same path as every other listing -- in waitLoop's printing, not here -- so a poll
+// that found nothing prints nothing.
+//
 // The lock is taken and released here rather than around the loop; see lockCheckout.
-func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bool, stderr io.Writer) (int, inboxReading, string, bool) {
+func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bool, stdout, stderr io.Writer) (int, inboxReading, string, bool) {
 	release, code := lockCheckout("WAIT", o.busDir, stderr)
 	if code != 0 {
 		return code, inboxReading{}, "", false
@@ -2646,9 +2724,6 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	if code != 0 {
 		return code, r, buf.String(), false
 	}
-	if !keep(r) {
-		return 0, r, "", false
-	}
 	// Issue #328: `wait --advance` skips notes already heard before it blocks. A reader who
 	// receipted a note and then waits has already taken that note -- heard is not answered,
 	// so the note is still news to the open list -- and a wait that returns on it pays a
@@ -2657,6 +2732,11 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	// genuinely new note. Addressed-elsewhere notes never reach this listing at all, so
 	// "every new note is heard" is exactly "no note between the cursor and the head owes
 	// this reader an answer".
+	//
+	// This branch is checked BEFORE the keep check below because keep is "false on first
+	// poll for an unadvanced cursor" (#328) and would otherwise pre-empt the advance, even
+	// though every heard note between the cursor and the head is exactly the situation the
+	// skip was written for.
 	if o.advance && !o.bodies && r.New > 0 && r.HeardNew == r.New {
 		head, err := bus.HeadCommit(o.busDir)
 		if err != nil {
@@ -2669,6 +2749,27 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 		}
 		skip := fmt.Sprintf("WAIT ADVANCED from=%s to=%s heard=%d\n", oneline.Field(sha8(r.Cursor)), oneline.Field(sha8(head)), r.HeardNew)
 		return 0, r, skip, true
+	}
+	// With --advance, a first poll that DID find a carry advances the cursor and prints
+	// the listing as confirmation: the carry is what an inbox --advance would have shown,
+	// and the caller asked for --advance so they want it gone. This branch fires before
+	// keep because keep is "false on first poll" for a carry reader (#328), but --advance
+	// is the caller's explicit "I want that carry gone, then block on something newer".
+	// The listing is printed from here so waitLoop does not have to know about the
+	// continuation path; on later polls the keep has already done its first-poll job and
+	// the body-mode advance at the bottom of this function runs as before.
+	if first && o.advance && !o.bodies && r.New > 0 {
+		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
+		if code != 0 {
+			return code, r, "", false
+		}
+		fmt.Fprint(stdout, buf.String())
+		return code, r, "", false
+	}
+	// Without --advance, the wait blocks over the carry backlog even on its first poll
+	// (#328); the keep closure in waitLoop gates whether to print or return.
+	if !keep(r) {
+		return 0, r, "", false
 	}
 	if o.advance && o.bodies && r.AdvanceTo != "" {
 		code = advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
