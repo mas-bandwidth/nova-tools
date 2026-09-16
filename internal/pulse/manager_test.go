@@ -389,7 +389,7 @@ func TestManagerRefusesFixPRWithoutTest(t *testing.T) {
 // lane with `nova-merge add`, never merged by `gh pr merge` -- the lane is the merge queue.
 func TestManagerHandsMergeToLane(t *testing.T) {
 	b := setupManager(t)
-	b.fake(t, "nova-merge", "exit 0")
+	b.fake(t, "nova-merge", fakeSpec{})
 	b.fakeGH(t, `{"isDraft":false,"state":"OPEN","headRefOid":"aaaaaaaaaaaaaaaa"}`,
 		`[{"name":"build","state":"SUCCESS"}]`)
 	b.write(t, "APPROVED", "mas-bandwidth/nova-tools 577 aaaaaaaaaaaaaaaa\n")
