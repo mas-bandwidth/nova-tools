@@ -383,7 +383,7 @@ BOARD MORE kind=<card|line|leg> shown=<n> total=<t> and <t-n> more; <remedy>
 BOARD NOTE <something true about this board that is not a card>
 BOARD FAIL <id or source>: <reason>
 BOARD REFUSED: <reason>
-ADD OK id=<id> owner=<name> at=<stamp> by=<stamp> backend=<issue|dir> durable=<true|false> existed=<true|false>
+ADD OK id=<id> owner=<name> at=<stamp> by=<stamp> backend=<issue|dir> durable=<true|false> created=<true|false> existed=<true|false>
 ADD NOTE <something true about this filing that is not a refusal>
 ADD REFUSED: <reason>
 TAKE OK id=<id> owner=<name> at=<stamp> previous=<name|-> override=<true|false>
