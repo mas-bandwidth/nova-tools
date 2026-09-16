@@ -95,6 +95,58 @@ func TestCutRefusalNamesModelsShape(t *testing.T) {
 	}
 }
 
+// pool-reads-open-non-draft-prs (issue #638): a `prs` source kind pools open, non-draft
+// pull requests as read candidates -- one candidate per PR, the read half of the loop
+// harvest itself describes ("cuts a read card per PR"). A draft PR is nowhere, and the
+// fake gh's argv record is the proof the rows came from the fake, never the network.
+func TestPoolReadsOpenNonDraftPRs(t *testing.T) {
+	dir := t.TempDir()
+	jsonBody := writeMainFile(t, dir, "prs.json", `[
+  {"number": 11, "title": "one", "isDraft": false},
+  {"number": 12, "title": "two", "isDraft": true},
+  {"number": 13, "title": "three", "isDraft": false}
+]`)
+	ghLog := mainGhFixture(t, dir, jsonBody)
+
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sources := writeMainFile(t, dir, "sources.tsv", "prs\tmas-bandwidth/nova-tools\tread\n")
+
+	var out, errb bytes.Buffer
+	code := run([]string{"pool", "--sources", sources, "--root", root}, &out, &errb, time.Now().UTC())
+	if code != 0 {
+		t.Fatalf("pool exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	// The fake answered, not the real gh: the argv it recorded is the only thing that can
+	// have produced the rows below.
+	calls, err := os.ReadFile(ghLog)
+	if err != nil || !strings.Contains(string(calls), "gh pr list --repo mas-bandwidth/nova-tools") {
+		t.Fatalf("the fake gh recorded %q (err=%v); want one `gh pr list --repo mas-bandwidth/nova-tools`", calls, err)
+	}
+	if !strings.Contains(out.String(), "candidates=2") || !strings.Contains(out.String(), "prs=2") {
+		t.Fatalf("POOL OK line wrong: %q", out.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "pool.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	want := []string{
+		"prs\t11\tread\tone\tread",
+		"prs\t13\tread\tthree\tread",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("want %d pool rows, got %d: %q", len(want), len(lines), string(raw))
+	}
+	for i, w := range want {
+		if lines[i] != w {
+			t.Fatalf("row %d = %q, want %q", i, lines[i], w)
+		}
+	}
+}
+
 func TestPoolMaxFlagBoundsCandidates(t *testing.T) {
 	dir := t.TempDir()
 	jsonBody := writeMainFile(t, dir, "issues.json", `[

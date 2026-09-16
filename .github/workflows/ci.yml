@@ -49,9 +49,11 @@ permissions:
   contents: read
 
 concurrency:
-  # Per PR, not per ref: a push to a PR branch reuses the PR number, so the new
-  # run cancels the in-progress one. On push to main the ref is the group.
-  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  # A pending run is evicted by a newly queued run in the same group before it
+  # ever starts. So a push to main keys on the commit sha (no two main runs
+  # share a group, none can evict another); a PR still keys on its number so its
+  # newest head supersedes older runs; a non-main branch with no PR keys on ref.
+  group: ci-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.sha) || github.ref }}-${{ github.event_name }}
   # A push to main never cancels main's running verdict: with a steady merge
   # stream every main run was cancelled by the next merge (2026-09-16 04:41Z and
   # 04:53Z), so main had no completed run for the mechanical red gate to read.

@@ -44,6 +44,13 @@ type ghIssue struct {
 	Body string `json:"body"`
 }
 
+// poolPR is the subset of a GitHub pull request the pool verb reads.
+type poolPR struct {
+	Number  int    `json:"number"`
+	Title   string `json:"title"`
+	IsDraft bool   `json:"isDraft"`
+}
+
 // Pool enumerates bounded open work from the declared sources into pool.tsv. It runs no
 // model: every candidate is read through gh, git or the files the sources name. One
 // unreadable source is one refusal and no pool.tsv is written.
@@ -97,9 +104,9 @@ func Pool(in PoolInput) int {
 		return 2
 	}
 
-	fmt.Fprintf(in.Stdout, "POOL OK sources=%d candidates=%d issues=%d audits=%d slices=%d roadmap=%d next=%d plan=%d seen=%d took=%s out=%s\n",
+	fmt.Fprintf(in.Stdout, "POOL OK sources=%d candidates=%d issues=%d audits=%d slices=%d roadmap=%d prs=%d next=%d plan=%d seen=%d took=%s out=%s\n",
 		len(srcs), len(rows),
-		counts["issue"], counts["audit"], counts["slice"], counts["roadmap"],
+		counts["issue"], counts["audit"], counts["slice"], counts["roadmap"], counts["read"],
 		0, planCount, seenCount,
 		time.Since(started).Round(time.Millisecond), oneline.Field(out))
 	return 0
@@ -165,8 +172,10 @@ func poolSource(s source, seen map[string]bool, in PoolInput) ([]PoolRow, int, i
 		return poolBus(s, seen)
 	case "roadmap":
 		return poolRoadmap(s, seen)
+	case "prs":
+		return poolPRs(s, seen, in)
 	default:
-		return nil, 0, 0, fmt.Errorf("unknown source kind %q (a source is issues, audits, bus or roadmap)", s.kind)
+		return nil, 0, 0, fmt.Errorf("unknown source kind %q (a source is issues, audits, bus, roadmap or prs)", s.kind)
 	}
 }
 
@@ -183,6 +192,21 @@ func listIssues(locator string, in PoolInput) ([]ghIssue, error) {
 		return nil, fmt.Errorf("gh issue list: bad JSON: %w", err)
 	}
 	return issues, nil
+}
+
+func listPRs(locator string, in PoolInput) ([]poolPR, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), in.Timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--repo", locator, "--state", "open", "--limit", "500", "--json", "number,title,isDraft")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("gh pr list: %w", err)
+	}
+	var prs []poolPR
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return nil, fmt.Errorf("gh pr list: bad JSON: %w", err)
+	}
+	return prs, nil
 }
 
 func poolIssues(s source, seen map[string]bool, in PoolInput, kind string) ([]PoolRow, int, int, error) {
@@ -315,6 +339,32 @@ func poolRoadmap(s source, seen map[string]bool) ([]PoolRow, int, int, error) {
 	return rows, 0, seenCount, nil
 }
 
+// poolPRs pools one read candidate per OPEN, NON-DRAFT pull request: the read half of the
+// loop harvest itself describes (SPEC-PULSE rule 13, "cuts a read card per PR"). A draft
+// is nowhere; every other PR is one candidate, deduped on (prs, number) like the issues
+// kind dedupes on (issues, number).
+func poolPRs(s source, seen map[string]bool, in PoolInput) ([]PoolRow, int, int, error) {
+	prs, err := listPRs(s.locator, in)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	var rows []PoolRow
+	seenCount := 0
+	for _, pr := range prs {
+		if pr.IsDraft {
+			continue
+		}
+		id := strconv.Itoa(pr.Number)
+		key := s.kind + "\x00" + id
+		if seen[key] {
+			seenCount++
+			continue
+		}
+		rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: "read", Title: pr.Title, Template: s.template})
+	}
+	return rows, 0, seenCount, nil
+}
+
 func hasLabel(iss ghIssue, name string) bool {
 	for _, l := range iss.Labels {
 		if l.Name == name {
@@ -410,7 +460,7 @@ func refuseSource(w io.Writer, s source, err error) {
 
 func remedy(kind string) string {
 	switch kind {
-	case "issues", "audits":
+	case "issues", "audits", "prs":
 		return "check gh auth and the repo name"
 	case "bus":
 		return "point --sources at a nova-bus checkout"

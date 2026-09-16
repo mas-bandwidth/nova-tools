@@ -13,6 +13,9 @@ import (
 // never read the environment, so a pool run with all five set to lethal values completes
 // normally and records no kill and no pause.
 func TestTheReleaseBuildIgnoresTheInjectionVariables(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	// The release binary is the builtTool default; this test deliberately does NOT opt into
 	// the tagged build (b.inject), because the whole point is that the release build reads

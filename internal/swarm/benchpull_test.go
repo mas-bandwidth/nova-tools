@@ -169,7 +169,7 @@ func TestPullCopiesResultUpFromRepo(t *testing.T) {
 
 	var notes strings.Builder
 	if err := pullFromBench(benchPull{
-		host: "b2", remoteJob: remoteJob, localJob: localJob,
+		host: "b2", remoteJob: remoteJob, localJob: localJob, label: "a",
 		wait: 200 * time.Millisecond, poll: 50 * time.Millisecond, notes: &notes,
 	}); err != nil {
 		t.Fatalf("the pull failed on a bench that answered: %v", err)
@@ -181,7 +181,7 @@ func TestPullCopiesResultUpFromRepo(t *testing.T) {
 	if string(raw) != "RESULT: a\nall green\n" {
 		t.Fatalf("the result came back changed:\n%q", raw)
 	}
-	want := "SPACE NOTE RESULT.md copied up from " + buried
+	want := "BATCH NOTE a RESULT.md copied up from " + buried
 	if !strings.Contains(notes.String(), want) {
 		t.Fatalf("the pull did not say where it found the result:\nwant: %s\ngot: %s", want, notes.String())
 	}
