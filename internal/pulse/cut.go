@@ -143,7 +143,7 @@ func readPool(path string) ([]PoolRow, error) {
 func readModels(path string) (map[string]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("--templates wants a models.tsv naming the flash and pro model ids: %s", oneline.Err(err))
+		return nil, fmt.Errorf("--templates wants a models.tsv: two lines, `flash <model id>` then `pro <model id>`: %s", oneline.Err(err))
 	}
 	models := map[string]string{}
 	for _, line := range strings.Split(string(raw), "\n") {
