@@ -39,19 +39,11 @@ func markingRunner(t *testing.T, dir, marks string) string {
 	if err := os.MkdirAll(marks, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "marking.sh")
-	body := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"touch " + strconv.Quote(marks) + "/\"$label\"\n" +
-		"path=\"$root/$slot/jobs/$label/RESULT.md\"\n" +
-		"mkdir -p \"$(dirname \"$path\")\"\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$path\"\n"
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return runnerDoing(t, dir, "marking",
+		runnerStep{Op: "touch", Path: filepath.Join(marks, "{label}")},
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		publishCard("{job}"),
+	)
 }
 
 // deepSeekCard is a well-shaped DeepSeek card: a lowercase contract line, a role line and
@@ -142,10 +134,13 @@ func writeBatchLock(t *testing.T, root string, slot int, id string, pid int) str
 	return path
 }
 
-// deadPID returns a pid no process holds: a child that has already been reaped.
+// deadPID returns a pid no process holds: a child that has already been reaped. The child is
+// the package's own fake runner doing nothing -- `/bin/sh` is not a program windows has, and
+// a test that only needs a process to start and stop has no business naming one shell.
 func deadPID(t *testing.T) int {
 	t.Helper()
-	cmd := exec.Command("/bin/sh", "-c", "exit 0")
+	bin := runnerDoing(t, t.TempDir(), "throwaway", runnerStep{Op: "exit", N: 0})
+	cmd := exec.Command(bin, "throwaway", "1", "model", filepath.Join(t.TempDir(), "no.card"), t.TempDir())
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("starting a throwaway child: %v", err)
 	}
@@ -221,25 +216,20 @@ func TestBatchTakesOverStaleSlotLock(t *testing.T) {
 // published as a result whose line 1 is the contract.
 func reasonRunner(t *testing.T, dir string) string {
 	t.Helper()
-	path := filepath.Join(dir, "reason.sh")
-	body := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"job=\"$root/$slot/jobs/$label\"\n" +
-		"mkdir -p \"$job\"\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"case \"$line2\" in\n" +
-		"  MISSING) exit 0 ;;\n" +
-		"  RC7) exit 7 ;;\n" +
-		"  WRONG) printf '%s\\n%s\\n' 'RESULT: someone-else' 'all green' > \"$job/RESULT.md\" ;;\n" +
-		"  SLEEP) sleep 30 ;;\n" +
-		"  DONE-RC5) printf '%s\\n%s\\n' \"$line1\" 'all green' > \"$job/RESULT.md\"; exit 5 ;;\n" +
-		"  *) printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\" ;;\n" +
-		"esac\n"
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return runnerDoing(t, dir, "reason",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "exit", N: 0, When: "line2==MISSING"},
+		runnerStep{Op: "exit", N: 7, When: "line2==RC7"},
+		runnerStep{Op: "write", Path: "{job}/RESULT.md", When: "line2==WRONG",
+			Body: "RESULT: someone-else\nall green\n"},
+		runnerStep{Op: "exit", N: 0, When: "line2==WRONG"},
+		runnerStep{Op: "sleep", Ms: 30000, When: "line2==SLEEP"},
+		runnerStep{Op: "exit", N: 0, When: "line2==SLEEP"},
+		runnerStep{Op: "write", Path: "{job}/RESULT.md", When: "line2==DONE-RC5",
+			Body: "{line1}\nall green\n"},
+		runnerStep{Op: "exit", N: 5, When: "line2==DONE-RC5"},
+		publishCard("{job}"),
+	)
 }
 
 // ISSUE #461: every abstain names one reason token, and a RESULT.md whose line 1 is the

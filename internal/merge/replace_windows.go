@@ -4,7 +4,9 @@ package merge
 
 import (
 	"errors"
+	"io"
 	"io/fs"
+	"os"
 	"syscall"
 )
 
@@ -29,4 +31,40 @@ func replaceRefusal(err error) bool {
 	return errors.Is(err, errorSharingViolation) ||
 		errors.Is(err, errorAccessDenied) ||
 		errors.Is(err, fs.ErrNotExist)
+}
+
+// readShared reads path with FILE_SHARE_DELETE in the share mode, which is the half of
+// the window this tool can close outright rather than wait out.
+//
+// os.ReadFile opens with FILE_SHARE_READ|FILE_SHARE_WRITE and no DELETE, and while such a
+// handle is open MoveFileEx cannot replace the file: the READER is what refuses the
+// writer's rename with "Access is denied". Under thirty writers and two readers polling
+// the lane, one write was lost to exactly that. A reader that shares delete is no longer
+// the door held shut -- the rename goes through underneath it, and the bytes this handle
+// was already reading are the old file's, which is what an atomic replace has always
+// promised a reader that got in first.
+//
+// The wait in readState stays: another process (a person's editor, another tool) may hold
+// the file without sharing delete, and an open refused inside a replace window is still
+// worth looking again for.
+func readShared(path string) ([]byte, error) {
+	name, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	h, err := syscall.CreateFile(
+		name,
+		syscall.GENERIC_READ,
+		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+		nil,
+		syscall.OPEN_EXISTING,
+		syscall.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	f := os.NewFile(uintptr(h), path)
+	defer f.Close()
+	return io.ReadAll(f)
 }
