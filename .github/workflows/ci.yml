@@ -39,7 +39,9 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    # dev is the integration branch (Glenn 2026-09-16): every merge lands there and the
+    # push run, hosted legs included, is the evidence a promotion to main waits for.
+    branches: [main, dev]
   pull_request:
   # merge_group: the merge queue builds a group commit of the PRs about to land and
   # runs this workflow on it; ci-ok on the group is the merge gate, so every PR is
