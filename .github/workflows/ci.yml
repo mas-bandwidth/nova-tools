@@ -517,8 +517,14 @@ jobs:
           # two-minute budget instead of hitting Go's 10 m default on main (run
           # 35052889521, panic: test timed out after 10m0s). The self-hosted shards keep
           # running everything; the nightly certification runs the hosted legs full.
-          # -timeout 20m stays as the ceiling, not the target.
-          go test -short -count=1 -timeout 20m $pkgs
+          # -timeout 12m stays above Go's 10 m default (cmd/nova-bus hit it on main,
+          # run 35052889521, panic: test timed out after 10m0s) and fires before the
+          # 15-minute job ceiling, so Go names the hung package instead of the runner
+          # killing the job silently. The two-minute rule is met by gating the
+          # multi-process bus tests behind -short on hosted legs (issue filed); until
+          # that lands, a slow package must not panic the leg. It is the ceiling, not
+          # the target.
+          go test -short -count=1 -timeout 12m $pkgs
 
   plan-merge:
     # How many shard slots this merge group needs, decided before any leg starts.
