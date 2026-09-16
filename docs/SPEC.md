@@ -1917,14 +1917,14 @@ preserves), and a read verb added later is fused by default, not by memory.
 ## nova-memory — membership as a lookup, never a scan
 
 ```
-nova-memory quickstart --root <dir> [--words <w>]... [--draft <file>] [--exclude <glob>]...
-nova-memory stats  --root <dir> [--exclude <glob>]...
-nova-memory search --root <dir> --channels <list> --k <n> [--exclude <glob>]... <words>...
-nova-memory check  --root <dir> --channels <list> --k <n> [--exclude <glob>]... <file|->
+nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
+nova-memory stats  --root <dir>... [--exclude <glob>]...
+nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <words>...
+nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <file|->
 nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                    [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
                    [--fail-max <n>]
-nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--exclude <glob>]...
+nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]...
                    [--fail-max <n>] <gold.tsv>
 nova-memory boot   --root <dir> --pin <file>
 nova-memory version
@@ -1984,8 +1984,14 @@ refusal, and the detail of every `verify` finding, render through
 environment variable is consulted and there is no discovery from the working
 directory** (pinned by test). A corpus you did not name is a corpus you did
 not mean, and answering *you already know this* about someone else's memory is
-the worst available way to be wrong. `--channels` is required wherever
-retrieval happens: which retrieval ran is part of what the answer means, and
+the worst available way to be wrong. `--root` is **repeatable** on every
+index-building verb (`quickstart`, `stats`, `search`, `check`, `eval`): several
+roots are indexed together in one ranking, and a receipt names which root each
+hit came from in its `root=` field — a memory that lives in the cairn beside
+`memory/` is a second root, not a miss. `verify` takes exactly one root (its
+coverage and frontmatter globs and link resolution walk one tree); `boot` names
+one root because its pin is relative to that root. `--channels` is required
+wherever retrieval happens: which retrieval ran is part of what the answer means, and
 no channel set is right by default. `--k` is required and must be positive —
 k is the mind's budget and zero is not "unlimited". `--floor` is required on
 `eval`, in (0,1]. `--links` is required on `verify`. `--exclude` and
@@ -2134,7 +2140,7 @@ address to go read, and a normalized snippet.
 ```
 SEARCH OK query=<q> hits=<n> k=<n> channels=<list> files=<n> chunks=<n>
 SEARCH CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
-SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|->: <file>:<para> "<snippet>"
+SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>"
 SEARCH MISS every query term is out of vocabulary for this corpus
 SEARCH NOTE <caveat>
 ```
@@ -2180,7 +2186,7 @@ consolidation ritual calls in place of re-reading the whole self.
 MEMORY OK candidates=<n> source=<name> k=<n> channels=<list> files=<n> chunks=<n>
 MEMORY CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
 MEMORY CAND n=<i>: "<normalized candidate>"
-MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|->: <file>:<para> "<snippet>"
+MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>"
 MEMORY MISS cand=<i> every query term is out of vocabulary for this corpus
 MEMORY NOTE <caveat>
 ```
