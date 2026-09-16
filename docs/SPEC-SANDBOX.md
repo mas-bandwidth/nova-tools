@@ -66,11 +66,10 @@ near the end.
 1. **OS-enforced or refused.** There is one Go function,
    `sandbox.Run`, with three
    bodies behind build tags: `sandbox-exec` on `darwin`, Landlock on `linux`,
-   AppContainer on `windows`. The bodies differ in whether the tool survives
-   the command: on `darwin` and `windows` the tool waits and returns the
-   command's status; on `linux` the function does not return on success,
-   because the tool restricts itself and then `exec`s the command in place
-   (rule 12). If the platform's backend is not available at run time — no
+   AppContainer on `windows`. On `darwin`, `linux` and `windows` alike the tool
+   waits and returns the command's status. On `linux` it restricts **itself**
+   first and starts the command afterwards, so the tool is inside the wall it
+   applied while it waits (rule 12 and the Linux section). If the platform's backend is not available at run time — no
    Landlock in the running kernel, no `sandbox-exec` on `PATH` and none at
    `/usr/bin/sandbox-exec`, an AppContainer
    profile that cannot be created — the tool prints `SANDBOX REFUSED
@@ -333,9 +332,15 @@ near the end.
     child's exit status is the tool's exit status, and a death by signal `N`
     gives exit `128+N`. Per platform:
     - **linux:** the tool restricts *itself* (`runtime.LockOSThread`,
-      `landlock_restrict_self`) and then `syscall.Exec`s the command, so the
-      tool **becomes** the command: same pid, same process group, no wait, no
-      signal forwarding, and the exit status is the command's by identity.
+      `landlock_restrict_self`) and then starts the command as a **child** and
+      **waits**; `SIGINT` and `SIGTERM` are forwarded **to the child**, not to
+      a process group. **The tool creates no process group of its own**, for
+      the reason the darwin bullet gives at length below, and the wall reaches
+      the child by Landlock's inheritance across `fork(2)`, not by identity:
+      the command has a pid of its own, and the tool is inside the same wall
+      while it waits and stays there (the Linux section's "`Run` is one-way").
+      The tool waits so that it can forward signals and return the command's
+      status, not to clean anything up: there is nothing to remove.
     - **darwin:** the tool spawns `sandbox-exec`, which applies the profile and
       `exec`s the command in place, and **waits**; `SIGINT` and `SIGTERM` are
       forwarded **to the child**, not to a process group. **The tool creates no
@@ -460,8 +465,8 @@ range, and this is a deliberate, recorded departure from the conventions
 | code | meaning |
 |------|---------|
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
-| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI newer than this tool's table (`reason=landlock_abi_unknown`), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`) |
-| 126 | the command could not be executed **and the tool was still there to say so**: on `linux` `syscall.Exec` returned an error, on `windows` `CreateProcessW` failed. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
+| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`) |
+| 126 | the command could not be executed **and the tool was still there to say so**: on `linux` the child could not be started inside the wall, on `windows` `CreateProcessW` failed. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
 | 127 | the command could not be resolved on the caller's `PATH`: `SANDBOX REFUSED reason=not_found`, printed like every other refusal of the tool's own |
 | 128+N | the wrapped command was killed by signal `N` |
 
@@ -498,9 +503,9 @@ wall and a `127` means the tool could not find the command at all. A command
 that is found and then dies inside the wall for want of its interpreter or a
 shared library exits `126` or dies by signal. There is **no** `SANDBOX NOTE`
 on that failure, and the previous revision was wrong to promise one: on linux
-the tool has `syscall.Exec`'d itself away before the command runs, so nothing
-of the tool is left to print anything (rule 12), and a promise the tool can
-keep on one platform and not the other two is worse than no promise. The
+the tool is inside the wall it applied by the time the command runs, so it can
+print no more than the command's own status (rule 12), and a promise the tool
+can keep on one platform and not the other two is worse than no promise. The
 remedy is printed where it can be printed on all three — the usage banner and
 the `--read` paragraph of the roots section — and a reader diagnosing a `126`
 compares it with the same command run without the wrap.
@@ -516,7 +521,7 @@ Every line below goes to **stderr** except the body of `policy`,
 which is the thing asked for and goes to stdout.
 
 ```
-SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> read=<n> write=<n> net=<denied|nopromise> cwd=<dir> ancestors=<n> cmd=<name>
+SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> write=<n> net=<denied|nopromise> cwd=<dir> ancestors=<n> cmd=<name>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
 PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
@@ -534,8 +539,8 @@ the executable — and never the arguments, because arguments carry task text an
 task text carries quoted rules.
 
 Every `SANDBOX NOTE` is printed **before** the command starts, for the reason
-`SANDBOX OK` is: on linux the tool becomes the command and can print nothing
-afterwards. There is no note about a failure the command suffered inside the
+`SANDBOX OK` is: on linux the tool is inside the wall from the moment it is
+applied, and the wall goes up before the command does. There is no note about a failure the command suffered inside the
 wall, on any platform.
 
 `net=nopromise` is rule 7: the caller did not ask for network denial and the
@@ -759,12 +764,15 @@ status, not to clean anything up.
 
 ## Linux — Landlock, no root
 
-> **Unimplemented proposal (2026-09-12).** The Linux (Landlock) backend
-> described in this section is not implemented: the linux body of `nova-sandbox`
-> is not built today (`cmd/nova-sandbox/parent_linux.go` carries only the
-> probe's parent-executable guard), so no Landlock wall is applied on linux. Its
-> requirements are preserved below, word for word, as the owed work for when the
-> body is built; nothing below is a promise the current binary keeps.
+> **Implemented (2026-09-15, [#69](https://github.com/mas-bandwidth/nova-tools/issues/69)).**
+> The linux body is `internal/sandbox/wrap_linux.go` and
+> `internal/sandbox/landlock_linux.go`, and it is measured on the fleet's linux
+> bench (Ubuntu 24.04, kernel 6.8, Landlock **ABI 4**): `nova-sandbox check`
+> there is `backend=landlock abi=4 net=enforceable`. One thing below changed
+> when it was built and is marked where it changed: the body is
+> **restrict-then-fork**, not restrict-then-exec in place. The limits this
+> backend has and the darwin one does not are listed at the end of this section
+> rather than left for a reader to infer.
 
 Landlock is an LSM available from kernel **5.13**, usable by an unprivileged
 process, and inherited across `execve(2)` so that the child cannot lift it. The
@@ -775,7 +783,8 @@ first, or `landlock_restrict_self` fails with `EPERM`.
 **There is no pre-exec hook in Go.** `os/exec` has no `PreExec` callback and
 `SysProcAttr` carries no user code, so the restriction cannot be applied
 "in the child between fork and exec" from Go. The body is therefore
-**restrict-then-exec in place**, in the tool's own process:
+**restrict-then-fork**: the ruleset is applied to the tool's **own** process,
+and `fork(2)` is what carries it to the command:
 
 1. `landlock_create_ruleset` with `handled_access_fs` covering every
    filesystem access **the ABIs in the table below define** — stated per ABI,
@@ -795,28 +804,37 @@ first, or `landlock_restrict_self` fails with `EPERM`.
    The previous revision said "every filesystem access the running ABI
    defines", which is a claim about kernels that did not exist when it was
    written: a kernel newer than the table can define an access this tool has
-   never heard of, the tool would not handle it, and the wall would be
-   advertised as complete while the kernel checked nothing on that access. So:
-   **a discovered ABI greater than the highest row is
+   never heard of, and the tool does not handle it. So: **a discovered ABI
+   greater than the highest row is CLAMPED to that row — the ruleset is built
+   at the table's maximum, the command runs, and the `SANDBOX OK` line carries
+   the kernel's number on `abi=` and the wall's on `used=` — preceded by a
+   `SANDBOX NOTE` naming both numbers and the word `clamped`.** A discovered
+   ABI **below the first row** has no row to clamp to and is
    `SANDBOX REFUSED reason=landlock_abi_unknown` at exit 125, naming the
-   discovered number and the highest the tool knows, and the command does not
-   run.** This tool has no workaround for it (rule 11); the caller's is
-   `nova-swarm run --no-sandbox`, and the fix here is one row in the table and
-   a release, which is a day, not a design.
+   discovered number and the lowest the tool knows, with the command not run;
+   so is no Landlock at all (`reason=no_sandbox`, rule 1). This tool has no
+   workaround for those two (rule 11); the caller's is
+   `nova-swarm run --no-sandbox`, and the fix for a missing row is one row in
+   the table and a release, which is a day, not a design.
 
-   **Why refusing is the safer of the two, said plainly.** The alternative —
-   handle the newest rights the tool knows and print a `SANDBOX NOTE` about
-   the gap — keeps every machine running and puts the hole in a log line. It
-   was rejected because this tool's whole reason is rule 1: *a sandbox that
-   silently does nothing on a platform it does not support*. A gap in
-   `handled_access_fs` is exactly that failure in miniature — the run looks
-   walled, the line says `SANDBOX OK`, and one class of access is unchecked —
-   and rule 7 already refuses rather than proceed with a weaker wall than the
-   caller asked for, so proceeding here would make the document contradict
-   itself. The cost is real and is accepted: an early adopter of a new kernel
-   is refused until the table grows. The cost lands on a machine whose owner
-   just upgraded a kernel, and it lands loudly, at start, with the number in
-   the line — not on a worker reading untrusted input six hours into a batch.
+   **Why the clamp and not a refusal, said plainly — this reversed revision 10's
+   rule, and here is the argument that reversed it.** Refusing an ABI above the
+   table was chosen so that no run could be advertised as walled while one class
+   of access went unchecked. What it missed is Landlock's own contract:
+   **a newer kernel accepts a ruleset built for an older ABI**, and the kernel
+   documentation tells a program to use the highest ABI it knows that is at or
+   below the running kernel's. So the wall the tool refused to build is one the
+   kernel would have enforced *exactly as asked* — the refusal bought no
+   containment, and it made every kernel upgrade a maintenance trap: nothing on
+   that machine runs walled until this repository grows a row and ships. That is
+   not a hypothetical. `ubuntu-latest` moved to a kernel reporting **ABI 7** and
+   took `main` red (run `35045469738`): every walled run on the hosted linux leg
+   was `reason=landlock_abi_unknown`. The gap the old rule named is real and is
+   **said rather than swallowed** — `used=<n>` on the `SANDBOX OK` line, a
+   `SANDBOX NOTE` before the command starts, and the `check` verb's note — which
+   is what rule 1 actually demands: never *silently* less than advertised. It
+   is not the rule 7 case either: rule 7 refuses a denial the backend **cannot**
+   give, and here the backend gives every denial the tool asked for.
 
    The specimen that produced this rule, from the DeepSeek read of revision 5
    (2026-09-11): that read reports ABI 9 adding `LANDLOCK_ACCESS_FS_RESOLVE_UNIX`,
@@ -833,12 +851,12 @@ first, or `landlock_restrict_self` fails with `EPERM`.
    bits are *granted* to the write set only; the read set and the roots get
    `EXECUTE|READ_FILE|READ_DIR`.
    The linux root list names `/proc`, not `/proc/self`. `/proc/self` opened
-   `O_PATH` resolves at open time to the pid that opened it — the tool's,
-   which after `syscall.Exec` is the command's — so a rule built on it grants
-   the wrapped process its own `/proc` entry and grants **every child it
-   spawns nothing**: a harness that runs a subprocess which reads
-   `/proc/self/status` would fail for no legible reason. `/proc` read-only is
-   the grant.
+   `O_PATH` resolves at open time to the pid that opened it — the **tool's**,
+   and the tool forks rather than becomes the command, so that pid is never the
+   command's — so a rule built on it grants the wrapped process **nothing, not
+   even its own `/proc` entry**, and grants every child it spawns nothing: the
+   wrapped command, and any harness subprocess that reads `/proc/self/status`,
+   would fail for no legible reason. `/proc` read-only is the grant.
 
 2. For each root and each `--read`: `open(2)` it `O_PATH|O_CLOEXEC` and
    `landlock_add_rule` with `LANDLOCK_RULE_PATH_BENEATH` and the read subset.
@@ -846,14 +864,36 @@ first, or `landlock_restrict_self` fails with `EPERM`.
 4. `runtime.LockOSThread` (the restriction is per-thread until it is applied,
    and Go may otherwise move the goroutine), `prctl(PR_SET_NO_NEW_PRIVS, 1)`,
    `landlock_restrict_self`.
-5. `syscall.Exec(path, argv, env)` — the tool **becomes** the command. Nothing
-   after this line runs, so every status line, including `SANDBOX OK`, is
-   printed and flushed before step 4.
+5. The command is started as a child and the tool **waits** for it, exactly as
+   the darwin body waits on `sandbox-exec`'s child, and returns its status.
+   Every status line, including `SANDBOX OK`, is printed and flushed before
+   step 4, because past step 4 the tool is itself inside the wall.
 
-The alternative is a re-exec helper (the tool re-executes itself with a hidden
-flag, restricts, then execs), which buys a waiting parent at the cost of a
-second process and a hidden flag; it is not chosen, because nothing on linux
-needs cleanup after the command ends.
+**Restrict-then-fork, and why it is not the `syscall.Exec` this section first
+proposed.** Revision 9 said the tool should `syscall.Exec` the command and
+*become* it, so `Run` never returns on success. That cannot be this body, and
+`probe` is the reason: rule 10's `probe` runs **four** walled steps in **one**
+process and reads the status of each, so a `Run` that never returns turns the
+probe into its own first step and the other three never happen. Rule 10 has
+tests and the `Exec` shape had none, so the shape gave way.
+
+What is chosen is not the re-exec helper this section also considered and
+rejected: there is **no** second process and **no** hidden flag. The tool
+applies the ruleset to itself and forks the command, so the process count is
+the darwin body's — tool plus command — and Landlock's inheritance across
+`fork(2)` is what carries the wall to the child. `runtime.LockOSThread` pins
+the goroutine to the thread being restricted so that the fork happens on that
+thread, and there is no matching `UnlockOSThread`: the thread is walled for
+good and handing it back to the runtime's pool would hand an unrelated
+goroutine a wall it never asked for.
+
+The cost is stated rather than hidden: **`Run` is one-way.** Past
+`landlock_restrict_self` the tool's own process is inside the wall and no call
+takes it back out. A caller that runs `Run` twice in one process nests a second
+domain inside the first — which is what `probe` does, and because its walled
+steps all share one policy the nested domain is the same wall again. Anything a
+caller must do unwalled it must do **before** the first `Run`, which is exactly
+why rule 10 runs `write_outside_control` first.
 
 The ABI is discovered with `landlock_create_ruleset(NULL, 0,
 LANDLOCK_CREATE_RULESET_VERSION)`, and the handled set is masked down to what
@@ -881,6 +921,36 @@ Landlock is unavailable when the kernel predates 5.13, when it is not compiled
 in, or when it is not in the boot-time `lsm=` list. All three come back as a
 failed version query, and all three are `SANDBOX REFUSED reason=no_sandbox`
 (rule 1).
+
+**What this backend cannot do that the darwin one can.** Four things, and they
+are here rather than in a footnote because a wall's gaps are the part a reader
+must be able to find:
+
+1. **It denies; it does not hide.** Landlock has no mount namespace, so a path
+   in neither `--read` nor `--write` is *unreadable*, not *absent*: its
+   **contents** never come out, while its **name** can still appear in a
+   listing of a readable parent directory. This matches the darwin backend,
+   which also denies rather than hides, and it is the promise both make — the
+   bytes, not the name.
+2. **Network denial is TCP only.** `--net-deny` is TCP `bind`/`connect`, which
+   is all Landlock restricts at any ABI; **UDP is not restricted**, so a walled
+   process under `net=denied` can still send and receive UDP, DNS included. The
+   darwin backend withholds the whole network grant and has no such hole.
+3. **No `ioctl` restriction below ABI 5** (kernel 6.10), which the fleet's
+   linux bench at kernel 6.8 is: `LANDLOCK_ACCESS_FS_IOCTL_DEV` does not exist
+   there, so a walled process can `ioctl` any device file it can open. The bit
+   is handled the moment the kernel defines it, and `abi=` on the `SANDBOX OK`
+   line — with `used=` beside it when the kernel is newer than the table — is
+   how a reader knows which machine they are on and which wall it got.
+4. **No abstract-unix-socket or signal scope below ABI 6** (kernel 6.12), as
+   the paragraph above says: a walled process on the 6.8 bench can connect to
+   an abstract socket outside its domain and signal a process outside it.
+
+A fifth is not this backend's but the roots table's, and it bites hardest on
+linux: **"the directory of the resolved command" is a read root**, so a command
+that lives in a directory holding secrets makes that directory readable. Keep
+the tool and the commands it wraps in a `bin` directory, never in the job's
+parent or in a shared `/tmp`.
 
 ## Windows — AppContainer, no admin
 
@@ -1395,8 +1465,12 @@ HOME="$PWD/home" nova-sandbox --read /opt/homebrew --write "$PWD" \
 
 # 3. linux: the Landlock ABI, without Go. syscall 444 is
 #    landlock_create_ruleset; flag 1 is LANDLOCK_CREATE_RULESET_VERSION.
+#    Expect: the same number the tool prints on abi=. If it is ABOVE the table's
+#    top row (6), the wall is CLAMPED and the tool says so -- `check` note, a
+#    SANDBOX NOTE, and used=6 on the SANDBOX OK line -- and the command still runs.
 python3 -c 'import ctypes;l=ctypes.CDLL(None,use_errno=True);print("landlock abi",l.syscall(444,0,0,1))'
 cat /sys/kernel/security/lsm        # landlock must appear in the list
+nova-sandbox check                  # backend=landlock abi=<n> ... note=<the clamp, if any>
 
 # 4. windows: who holds what on a directory, before, during and after a run —
 #    the ACE lifetime of the windows section, of `grant`/`release`, and of
@@ -1433,13 +1507,13 @@ that cannot confirm one changes this document rather than asserting it.
    measurement whether the tool refuses paths carrying SBPL metacharacters,
    changes how parameters are grouped, or both.
 3. Landlock syscall numbers as used from Go's `syscall` package on both
-   `amd64` and `arm64`, and whether the restrict-then-exec body (which needs
-   `runtime.LockOSThread`, `prctl`, three raw syscalls and `syscall.Exec`) is
+   `amd64` and `arm64`, and whether the restrict-then-fork body (which needs
+   `runtime.LockOSThread`, `prctl` and three raw syscalls) is
    achievable under the repository's standard-library-only rule or needs
    `golang.org/x/sys/unix` — a dependency decision, not a detail.
-4. That the restriction applied before `syscall.Exec` survives it for a Node
-   harness that re-execs itself, and that a child process it spawns is equally
-   restricted.
+4. That the restriction applied before the fork survives both `fork(2)` and
+   `execve(2)` for a Node harness that re-execs itself, and that a child
+   process it spawns is equally restricted.
 5. That *ALL APPLICATION PACKAGES* actually carries read+execute on `%WINDIR%`
    and `%ProgramFiles%` on the fleet's Windows images, and which of the
    toolchains the CI matrix uses are installed somewhere it does not cover.
@@ -1451,8 +1525,8 @@ that cannot confirm one changes this document rather than asserting it.
    particular whether ABI 7, 8 and 9 add a filesystem access. The DeepSeek
    read of revision 5 reports ABI 9 adding `LANDLOCK_ACCESS_FS_RESOLVE_UNIX`
    (the lookup of pathname unix sockets); that is a report, not a measurement,
-   and it is not in the table. Until it is measured the tool refuses ABI 7 and
-   up with `reason=landlock_abi_unknown`. The verification is also the
+   and it is not in the table. Until it is measured the tool **clamps** ABI 7
+   and up to the table's ABI 6 and says so (`used=6`). The verification is also the
    procedure for every future ABI: read the header, add the row, add the grant
    side, release.
 8. That a unix-domain socket **under** a Landlock write rule can be connected
@@ -1528,11 +1602,22 @@ One per rule:
    `(allow mach-lookup)`. A mutation deleting either turns a Go test red. The
    live DNS measurement stays in `profiles/darwin-check.sh`, where the operator
    run and the mac CI job execute it and a Go test does not (test 16).
-   On linux, an ABI forced **above** this tool's table is `SANDBOX REFUSED
+   On linux, an ABI forced **above** this tool's table is a **clamp**: the wall
+   is built at the table's maximum, `abi=` carries the kernel's number and
+   `used=` the wall's, and a `SANDBOX NOTE` before the command starts names
+   both numbers and the word `clamped`. A mutation that clamps *silently* —
+   dropping `used=` or the note — turns it red, because the saying is what
+   replaced the refusal. The refusal keeps its own test on the other end of the
+   table: an ABI forced **below** the first row is `SANDBOX REFUSED
    reason=landlock_abi_unknown` naming both numbers, at exit 125, with the
    tripwire on the exec path seeing no call — the mirror of the forced-down
-   case above, and the only thing that makes `landlock_abi_unknown` more than a
-   word in the exit table.
+   `net_unenforceable` case above, and the only thing that makes
+   `landlock_abi_unknown` more than a word in the exit table. Rule 1's own
+   `no_sandbox` refusal gets the linux test the ABI refusal used to stand in
+   for, through the same seam and with the same tripwire. End to end on a real
+   kernel, a walled run on a machine whose ABI is above the table **runs and
+   exits 0** and its line carries `used=`; on a machine at or below the table
+   the line carries **no** `used=` field at all.
 8. A wrapped command that writes to `$TMPDIR` succeeds and the file lands under
    the first `--write`; `TMPDIR`, `TMP` and `TEMP` all name that directory and
    zsh's `TMPPREFIX` is a prefix beneath it; `--tmp` outside the write set is
@@ -1581,9 +1666,10 @@ One per rule:
 12. A wrapped command exiting 3 gives exit 3; one killed by `SIGKILL` gives
     137; an argument containing a space, a quote, a `$` and a `;` arrives in
     the child's argv byte-for-byte; stdout and stderr are not interleaved by
-    the tool. Per platform: on linux the tool's pid **is** the command's pid
-    after the wrap (the test reads `/proc/self/stat` from the wrapped command
-    and compares it with the pid it spawned) and no wait happens; on darwin and
+    the tool. Per platform: on linux the command is a **child with a pid of its
+    own** (the test reads `/proc/self/stat` from the wrapped command and
+    asserts it is not the tool's) and the tool **waits** for it, and `SIGINT`
+    and `SIGTERM` reach that child; on darwin and
     windows `SIGTERM` (or the console control event) reaches the child and the
     tool waits for it. stdio: a wrapped command whose stdout is a **pipe**
     writes through it, and one whose stdout is a **file inside the write set**
@@ -1629,7 +1715,9 @@ And one for each thing the rules above assert but no test yet reached:
 17. `SANDBOX OK` is written and flushed **before** the command starts: the
     wrapped command writes a marker to a file, and the test asserts the stderr
     line is complete before the marker exists — on linux this is load-bearing,
-    because after `syscall.Exec` the tool cannot print anything.
+    because past `landlock_restrict_self` the tool's own process is inside the
+    wall (the Linux section's step 5), and every status line must be out of it
+    before it goes up.
 18. `check` on this machine prints one `CHECK OK` naming the backend, the ABI
     or `-`, and `net=enforceable|unenforceable`; with the backend forced
     unavailable it prints `backend=none` and still **exits 0**, because it is a
@@ -1799,8 +1887,10 @@ them.
    run by the mac CI job and its exit status is the job's.
 3. **`internal/sandbox/wrap_linux.go`** — ABI discovery, the handled-access
    mask per ABI, `O_PATH` fds per rule, `LockOSThread`, `PR_SET_NO_NEW_PRIVS`,
-   `landlock_restrict_self`, `syscall.Exec`, the ABI 6 scopes, and the
-   `net_unenforceable` refusal. Tests: 1, 3, 7, 12, 17; **to verify** items
+   `landlock_restrict_self`, the fork-and-wait with `SIGINT` and `SIGTERM`
+   forwarded to the child, the ABI 6 scopes, the clamp of an ABI above the
+   table (`used=<n>`), and the
+   `net_unenforceable` and `landlock_abi_unknown` refusals. Tests: 1, 3, 7, 12, 17; **to verify** items
    3–4, and item 3 decides whether this package is standard-library-only.
 4. **`internal/sandbox/wrap_windows.go`** — profile create/derive/delete from
    `--name`, the read-only and read-write ACL grants under `--acl tool`, the
@@ -1808,8 +1898,8 @@ them.
    the wait, and cleanup of the grants the tool added. Tests: 1, 3, 7, 22;
    **to verify** items 5–6.
 5. **`internal/sandbox/exec.go`** — the transparent wrapper: no shell,
-   inherited stdio, the platform's wait-or-exec choice, signal forwarding where
-   there is a child, the exit-status and `128+N` mapping, and the
+   inherited stdio, the wait every platform now does, signal forwarding to
+   that child, the exit-status and `128+N` mapping, and the
    `125`/`126`/`127` refusals. Tests: 12, 19.
 6. **`cmd/nova-sandbox/main.go`** — the verbs, the `--` split, the output
    grammar, `probe` (test 10), `fence` (test 14), `check` (test 18),
@@ -1936,3 +2026,22 @@ names `sandbox.Run` without a signature the code does not have.
 6. **`policy` takes an optional `-- <command>`**, not run, so that rule 15's
    "prints exactly what a wrapped run would apply" is true of the one root that
    is computed from the command.
+
+### Revision 11, after `main` went red on a kernel newer than the table (run 35045469738)
+
+1. **An ABI above the table is clamped, not refused.** Revision 10 made a
+   discovered Landlock ABI greater than the table's top row
+   `SANDBOX REFUSED reason=landlock_abi_unknown`. Landlock's contract is that a
+   newer kernel accepts a ruleset built for an older ABI, and the kernel
+   documentation tells a program to use the highest ABI it knows at or below the
+   running kernel's — so that refusal turned away a wall the kernel would have
+   enforced exactly as asked, and made every kernel upgrade a maintenance trap.
+   `ubuntu-latest` moved to ABI 7 and took `main` red (run `35045469738`). The
+   wall is now built at the table's maximum, the command runs, and the clamp is
+   **said**: `used=<n>` on `SANDBOX OK`, a `SANDBOX NOTE` before the command
+   starts, and a clause in the `check` verb's note. Refusal is left where there
+   is nothing to build: no Landlock at all (`reason=no_sandbox`) and an ABI
+   below the table's first row (`reason=landlock_abi_unknown`), which keeps the
+   exec-path tripwire load-bearing. The rights a newer ABI adds are still
+   unhandled until the table grows; the difference is that the operator is told
+   rather than stopped.

@@ -1,11 +1,12 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 // Every platform whose body is not built yet REFUSES, and this file is that refusal.
 // Rule 1 is "OS-enforced or refused": a stub that proceeded would be the silent sandbox
-// the whole tool exists to prevent, so the linux (Landlock) and windows (AppContainer)
-// bodies named in docs/SPEC-SANDBOX.md are not stubbed as pass-throughs — they are
-// stubbed as NO, and the refusal names the platform so that a reader knows which body
-// is missing rather than that "the sandbox failed".
+// the whole tool exists to prevent, so the windows (AppContainer) body named in
+// docs/SPEC-SANDBOX.md is not stubbed as a pass-through — it is stubbed as NO, and the
+// refusal names the platform so that a reader knows which body is missing rather than
+// that "the sandbox failed". darwin (sandbox-exec) and linux (landlock) are built and
+// have bodies of their own; this file is what is left.
 package sandbox
 
 import (
@@ -17,7 +18,11 @@ import (
 const Backend = "none"
 
 // ABI is the abi= field; there is no backend to have one.
-const ABI = "-"
+func ABI() string { return "-" }
+
+// ClampedABI is linux's alone: only Landlock has a numbered table this tool can be newer
+// or older than. Here there is no number, so there is nothing to clamp and no used= field.
+func ClampedABI() (int, bool) { return 0, false }
 
 // Available is rule 1's question, and on a platform with no body the answer is no.
 func Available() (string, bool) { return "", false }
@@ -41,8 +46,6 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 // says which thing is missing rather than only that something is.
 func backendNameFor(goos string) string {
 	switch goos {
-	case "linux":
-		return "landlock"
 	case "windows":
 		return "appcontainer"
 	}

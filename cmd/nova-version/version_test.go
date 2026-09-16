@@ -27,3 +27,15 @@ func TestVersionStampAndUsage(t *testing.T) {
 		t.Fatal("help omitted version")
 	}
 }
+
+func TestVersionReportFileUsageStatesShape(t *testing.T) {
+	var out, err bytes.Buffer
+	if code := update.Main("nova-version", []string{"help"}, "", &out, &err); code != 0 {
+		t.Fatalf("help exit=%d stderr=%s", code, err.String())
+	}
+	for _, want := range []string{"--file <manifest: ", "one line per tool", "written by hand"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("--file usage does not name the file's shape (%q):\n%s", want, out.String())
+		}
+	}
+}

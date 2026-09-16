@@ -40,8 +40,8 @@ func TestHelpListsOnlyBuiltVerbs(t *testing.T) {
 		t.Fatalf("help exit = %d, stderr=%s", code, errb.String())
 	}
 	usage := out.String()
-	shipped := map[string]bool{"pool": true, "launch": true, "harvest": true}
-	unshipped := map[string]bool{"cut": true, "width": true}
+	shipped := map[string]bool{"pool": true, "launch": true, "harvest": true, "manager": true, "cut": true}
+	unshipped := map[string]bool{"width": true}
 	for _, line := range strings.Split(usage, "\n") {
 		verb := strings.Fields(line)
 		if len(verb) < 2 || verb[0] != "nova-pulse" {
@@ -76,6 +76,25 @@ func TestHelpDropsNotYetImplementedForHarvest(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "--id is required") {
 		t.Errorf("harvest without --id did not name the remedy: %q", errb.String())
+	}
+}
+
+// cut-refusal-names-models-shape: a cut whose templates dir has no models.tsv is refused,
+// and the refusal names the two-line shape flash <model id> / pro <model id> (issue #633).
+func TestCutRefusalNamesModelsShape(t *testing.T) {
+	dir := t.TempDir()
+	pool := writeMainFile(t, dir, "pool.tsv", "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
+	templates := filepath.Join(dir, "templates")
+	if err := os.MkdirAll(templates, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	code := run([]string{"cut", "--pool", pool, "--templates", templates, "--out", filepath.Join(dir, "out"), "--root", filepath.Join(dir, "root")}, &out, &errb, time.Now().UTC())
+	if code != 2 {
+		t.Fatalf("cut missing models.tsv exit = %d, want 2; stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "flash <model id>") || !strings.Contains(errb.String(), "pro <model id>") {
+		t.Fatalf("stderr=%q, want the two-line shape flash <model id> / pro <model id>", errb.String())
 	}
 }
 

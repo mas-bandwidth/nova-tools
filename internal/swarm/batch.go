@@ -62,6 +62,7 @@ type BatchInput struct {
 	PullPoll time.Duration
 	Benches  string // path to the benches table; empty means no table is read
 	Bench    string // comma-separated bench names to allocate the cards across; empty means local only
+	Then     string // a follow-on command, run with sh -c only when every card is done; "" means none
 	Stdout   io.Writer
 	Stderr   io.Writer
 }
@@ -154,6 +155,8 @@ func Batch(in BatchInput) int {
 		bench      string
 		label      string
 		idleLog    string // the file the idle monitor watched; set only on an idle kill
+		cpu        uint64 // the card's process tree's CPU time at the last sample; guarded by doneMu
+		haveCPU    bool   // whether cpu holds a sample to compare against; guarded by doneMu
 		done       bool   // guarded by doneMu
 		idleKilled bool   // guarded by doneMu
 		deadKilled bool   // killed at the batch deadline; guarded by doneMu
@@ -177,8 +180,16 @@ func Batch(in BatchInput) int {
 		}
 		// A card's log is the runner's own stdout pinned to a regular file under the job, the
 		// way the spec records a job: harness.log. Idle means this file stopped growing.
+		//
+		// IT IS APPENDED TO, NEVER TRUNCATED (issue #608). Another process writes this same
+		// file for the same card -- the supervisor the runner starts pins the harness's own
+		// output to it -- and each holds its own offset. With O_TRUNC this file descriptor
+		// starts at offset 0 and the runner's first line lands on top of whatever the other
+		// writer has already put there, so the head of a card's evidence was overwritten by
+		// the line announcing the run. O_APPEND makes every write land at the end, whoever
+		// wrote last, and the file reads in the order it was written.
 		logPath := filepath.Join(job, "harness.log")
-		logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 		if err != nil {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 			return 2
@@ -212,9 +223,11 @@ func Batch(in BatchInput) int {
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
 	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
 	// --idle is set, one monitor re-reads each running card's own log -- <slot>/native.log
-	// when the child wrote one, else the job's harness.log -- and kills a card whose log has
-	// not grown for the idle window: a dead card is removed from the wait, so the batch
-	// returns on its slowest still-working card rather than burning the whole deadline.
+	// when the child wrote one, else the job's harness.log -- AND its process tree's CPU
+	// time, and kills a card only when neither has moved for the idle window: a dead card is
+	// removed from the wait, so the batch returns on its slowest still-working card rather
+	// than burning the whole deadline, and a card whose harness is busy and silent -- a
+	// `go test` that prints nothing for minutes -- is not a dead card (issue #593).
 	var wg sync.WaitGroup
 	allDone := make(chan struct{})
 	for i := range procs {
@@ -248,6 +261,7 @@ func Batch(in BatchInput) int {
 			ticker := time.NewTicker(idlePollInterval)
 			defer ticker.Stop()
 			lastSize := make([]int64, len(procs))
+			var lastSample time.Time
 			for {
 				select {
 				case <-stopMonitor:
@@ -255,6 +269,13 @@ func Batch(in BatchInput) int {
 				case <-allDone:
 					return
 				case now := <-ticker.C:
+					// The process table is read once per activity poll, outside the lock, and
+					// every card is asked of that one snapshot (issue #593).
+					var snap *procSnapshot
+					if now.Sub(lastSample) >= activityInterval(in.Idle) {
+						snap = newProcSnapshot()
+						lastSample = now
+					}
 					doneMu.Lock()
 					for i := range procs {
 						if procs[i].done || procs[i].idleKilled {
@@ -265,6 +286,20 @@ func Batch(in BatchInput) int {
 							lastSize[i] = size
 							procs[i].lastGrow = now
 							continue
+						}
+						// A silent log is not a silent card: a harness inside a `go test` that
+						// prints nothing for minutes is working, and its work is CPU its process
+						// tree spent -- its children's as much as its own. A card is idle only
+						// when NEITHER its log NOR its tree moved for the whole --idle window.
+						if snap != nil && procs[i].cmd != nil && procs[i].cmd.Process != nil {
+							if cpu, ok := snap.TreeCPU(procs[i].cmd.Process.Pid); ok {
+								grew := procs[i].haveCPU && cpu > procs[i].cpu
+								procs[i].cpu, procs[i].haveCPU = cpu, true
+								if grew {
+									procs[i].lastGrow = now
+									continue
+								}
+							}
 						}
 						if now.Sub(procs[i].lastGrow) >= in.Idle {
 							procs[i].idleKilled = true
@@ -378,6 +413,10 @@ func Batch(in BatchInput) int {
 			abstain++
 			continue
 		}
+		// A result the card wrote inside its clone is the card's result, not a missing one
+		// (issue #594): it is copied up to the job root before the card is scored, and the
+		// copy is said once on stderr so the packet's own bytes stay bounded by n.
+		liftResult(filepath.Join(in.Root, scratchName(c), "jobs", c.label), c.label, in.Stderr)
 		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
 		rows[i].state, rows[i].reason, rows[i].tail, rows[i].line2 = state, reason, tail, line2
 		if state == "done" {
@@ -422,17 +461,139 @@ func Batch(in BatchInput) int {
 		fmt.Fprintf(in.Stdout, "HOLD: %s\n", oneline.Escape(oneline.Cap(holds[i], oneline.TailBytes)))
 	}
 
+	// --then is the follow-on that runs only when every card is done. One abstain, one
+	// stalled card or one idle kill leaves the follow-on unrun: the batch prints one
+	// SKIPPED line naming its counts and exits 3, proof the follow-on did not run on a
+	// batch that was not all done (lesson 26).
+	if in.Then != "" {
+		if done == len(cards) && stalled == 0 && idle == 0 {
+			cmd := exec.Command("sh", "-c", in.Then)
+			cmd.Dir = in.Root
+			cmd.Env = append(os.Environ(),
+				"BATCH_ID="+in.ID,
+				"BATCH_DONE="+strconv.Itoa(done),
+				"BATCH_N="+strconv.Itoa(len(cards)))
+			rc := 0
+			if err := cmd.Run(); err != nil {
+				if ee, ok := err.(*exec.ExitError); ok {
+					rc = ee.ExitCode()
+				} else {
+					rc = -1
+				}
+			}
+			fmt.Fprintf(in.Stdout, "BATCH THEN rc=%d\n", rc)
+		} else {
+			fmt.Fprintf(in.Stdout, "BATCH THEN SKIPPED done=%d n=%d abstain=%d stalled=%d\n",
+				done, len(cards), abstain, stalled)
+			return 3
+		}
+	}
+
 	if abstain == 0 && len(holds) == 0 {
 		return 0
 	}
 	return 1
 }
 
+// resultLiftDepth is how far below the job root gather looks for a result the card wrote
+// somewhere else: repo/RESULT.md, and one directory down from there -- repo/<clone>/RESULT.md,
+// the cwd of a model that cloned into its clone. Deeper is not searched: a result further
+// down than that is a file the card left behind, not the result it published.
+const resultLiftDepth = 2
+
+// liftResult copies a card's RESULT.md up to the job root when the card wrote it inside its
+// clone instead (issue #594). STEP 1 of a card makes repo/ the model's cwd, so the model
+// publishes there; gather read only the job root, scored the card reason=no-result, and the
+// work was lost. The job root wins whenever it holds a result of its own -- nothing is ever
+// overwritten -- and the copy is said once on stderr, never in the packet, so the packet's
+// bytes stay bounded by n. The RESULT contract is untouched: line 1 is still the card's
+// contract line, and scoreCard still decides.
+func liftResult(job, label string, notes io.Writer) {
+	root := filepath.Join(job, "RESULT.md")
+	if fileExists(root) {
+		return
+	}
+	from, ok := FindCardResult(job)
+	if !ok {
+		return
+	}
+	raw, err := readRegular(from)
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(root, raw, 0o644); err != nil {
+		return
+	}
+	if notes != nil {
+		fmt.Fprintf(notes, "BATCH NOTE %s RESULT.md copied up from %s\n", oneline.Field(label), oneline.Field(from))
+	}
+}
+
+// FindCardResult is THE ONE PLACE a card's published result is looked for: the job root
+// first (ResultPath, the name the legacy runner's records use), then `repo/` and one
+// directory below it, exactly as far as `liftResult` copies from (issue #594). It is
+// exported because `native` asks the same question before the batch ever gathers -- whether
+// the harness published anything at all (issue #591) -- and a second, shallower lookup there
+// would call a card that published under `repo/` silent about a run that worked. One lookup,
+// one answer, both sides.
+func FindCardResult(job string) (string, bool) {
+	if root := ResultPath(job); fileExists(root) {
+		return root, true
+	}
+	return findResultBelow(job, resultLiftDepth)
+}
+
+// findResultBelow is the first RESULT.md under dir, breadth first and in name order, no
+// deeper than depth directories down: repo/ is looked at before any other name, because
+// repo/ is the directory the card's own STEP 1 makes. A symlinked directory is not followed
+// -- the wall is not a wall if the thing outside it will fetch (regular.go).
+func findResultBelow(dir string, depth int) (string, bool) {
+	if depth <= 0 {
+		return "", false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	// repo/ first, then the rest in the order the directory was read (ReadDir sorts by name).
+	for i, name := range dirs {
+		if name == "repo" {
+			dirs = append([]string{name}, append(dirs[:i:i], dirs[i+1:]...)...)
+			break
+		}
+	}
+	for _, name := range dirs {
+		if p := filepath.Join(dir, name, "RESULT.md"); fileExists(p) {
+			return p, true
+		}
+	}
+	for _, name := range dirs {
+		if p, ok := findResultBelow(filepath.Join(dir, name), depth-1); ok {
+			return p, true
+		}
+	}
+	return "", false
+}
+
 // scoreCard decides one card's state and, when it abstains, its ONE reason token
-// (issue #461): line1-mismatch, no-result, rc=<n>, idle=<s>, deadline, card-abstain,
-// admission -- plus input-limit, the provider's own structured class (issue #163). A result
-// whose line 1 is the card's own line 1 is done WHATEVER the harness exit code was: the
-// contract decides, never the child's timing or its rc. The tail is one bounded field the
+// (issue #461): line1-mismatch, no-result, harness-silent, rc=<n>, idle=<s>, deadline,
+// card-abstain, admission -- plus input-limit, the provider's own structured class
+// (issue #163). A result whose line 1 is the card's own line 1 is done WHATEVER the harness
+// exit code was (issue #577): the contract decides, never the child's timing and never its
+// rc, which is recorded on the card's own NATIVE OK line either way.
+//
+// THE ORDER, once there is no matching result anywhere the gather looks: the kill classes
+// the machinery watched itself first -- idle, deadline, input-limit, each pinned by its own
+// test and true whether or not a result exists -- then the card's own words (card-abstain)
+// and its admission, then harness-silent, and only then the pair rc=<n> (ended non-zero) and
+// no-result (ended clean), which are one slot split by the exit code. rc is never first: an
+// exit code from a harness that never ran the card is nothing to go and read (issue #591). The tail is one bounded field the
 // remedy needs -- the log the idle monitor watched, or the job directory that holds no
 // result -- printed after log=<n>, never in place of the token.
 func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSeconds int, logPath, idleLog string) (state, reason, tail, line2 string) {
@@ -453,6 +614,15 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	job := filepath.Join(root, scratchName(c), "jobs", c.label)
 	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
 	if err != nil {
+		// A harness that wrote nothing at all did not run this card, and that is the first
+		// thing to say about it: `harness-silent` comes before BOTH `no-result` and `rc=<n>`
+		// (issue #591). `no-result` is a harness that ran and published nothing, which is the
+		// model's own doing; `rc=<n>` is a harness that ran and ended badly; a silent harness
+		// is neither, and its exit code -- 0 in the fault that wrote this rule -- says nothing
+		// worth going to read. The exit code is still on the card's own NATIVE OK line.
+		if cardHarnessSilent(job) {
+			return "abstain", "harness-silent", "job=" + job, ""
+		}
 		// A card that ran to a clean exit and published nothing named no result; a card that
 		// ended non-zero names the code it ended with, which is the thing to go and read.
 		if rc != 0 {
@@ -591,6 +761,34 @@ func cardEndsInputLimit(logPath string) bool {
 	}
 	_, ok := ReadInputLimitSignal(raw)
 	return ok
+}
+
+// cardHarnessSilent reports whether the runner's own `NATIVE OK` line said the harness left no
+// record of itself: `harness=silent`, the token `native` writes when its capture holds no word
+// of the child's and no result was found anywhere this gather would look (issue #591). THE
+// TOKEN IS READ, NEVER RECOMPUTED: `native` looked at its own capture while the job directory
+// held exactly what the child put there, and this side would be guessing from files the batch
+// itself creates. The line is read out of the job's `harness.log` -- the file THIS process
+// pins the runner's stdout to, never one `native` writes -- and that is where the line lands
+// for a local card and a remote one alike (the ssh child's stdout comes back into it). A
+// runner that prints no such line -- any runner but `native` -- is not silent here, only
+// unsaid, and the card keeps the score it has today.
+func cardHarnessSilent(job string) bool {
+	raw, err := readRegular(filepath.Join(job, "harness.log"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "NATIVE OK ") {
+			continue
+		}
+		for _, tok := range strings.Fields(line) {
+			if tok == "harness=silent" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }

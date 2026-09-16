@@ -22,7 +22,11 @@ import (
 const Backend = "sandbox-exec"
 
 // ABI is the abi= field, which only linux fills.
-const ABI = "-"
+func ABI() string { return "-" }
+
+// ClampedABI is linux's alone: only Landlock has a numbered table this tool can be newer
+// or older than. Here there is no number, so there is nothing to clamp and no used= field.
+func ClampedABI() (int, bool) { return 0, false }
 
 // sandboxExecPath is where the OS ships the backend. It is looked up on the PATH first,
 // so a machine that moved it is not a refusal. A backend that is not there at all is
@@ -133,22 +137,4 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	close(done)
 	signal.Stop(sigs)
 	return statusOf(waitErr, cmd.ProcessState), nil
-}
-
-// statusOf is the exit-status mapping of rule 12: the child's status is the tool's, and
-// a death by signal N is 128+N.
-func statusOf(waitErr error, st *os.ProcessState) int {
-	if st != nil {
-		if ws, ok := st.Sys().(syscall.WaitStatus); ok {
-			if ws.Signaled() {
-				return 128 + int(ws.Signal())
-			}
-			return ws.ExitStatus()
-		}
-		return st.ExitCode()
-	}
-	if waitErr != nil {
-		return ExitNotExecuted
-	}
-	return 0
 }
