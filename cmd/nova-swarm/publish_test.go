@@ -159,6 +159,97 @@ func TestPublishPushesByRefspec(t *testing.T) {
 	}
 }
 
+// TestPublishMainAdvanceIsNotATopicEdit: main advancing past the fork with its own file is
+// not a topic edit. Touched-file admission reads the topic's own diff from the merge base,
+// so a file changed only on main is not counted against --touched and the publish proceeds
+// (issue #692).
+func TestPublishMainAdvanceIsNotATopicEdit(t *testing.T) {
+	windowsIsNotABench(t)
+	job, bare, _ := makeGitRepo(t)
+	runGit(t, job, "checkout", "-b", "topic")
+	if err := os.WriteFile(filepath.Join(job, "allowed.txt"), []byte("allowed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, job, "add", ".")
+	runGit(t, job, "commit", "-m", "one admitted topic commit")
+	// main advances past the fork with a file the topic never touches.
+	runGit(t, job, "checkout", "main")
+	if err := os.WriteFile(filepath.Join(job, "main_only.txt"), []byte("main only\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, job, "add", ".")
+	runGit(t, job, "commit", "-m", "main advances without the topic")
+	runGit(t, job, "push", "origin", "main")
+	advancedMain := strings.TrimSpace(runGit(t, job, "rev-parse", "origin/main"))
+	runGit(t, job, "checkout", "topic")
+	stubGh(t, "https://example.com/pr/7")
+	body := filepath.Join(t.TempDir(), "body.md")
+	if err := os.WriteFile(body, []byte("body\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := publishRun(t, "--job", job, "--branch", "topic", "--base", "main",
+		"--title", "a title", "--body-file", body, "--touched", "allowed.txt")
+	if exit != 0 {
+		t.Fatalf("a file changed only on main is not a topic edit, so publish proceeds; got exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "PUBLISH OK") {
+		t.Fatalf("stdout wants one PUBLISH OK line:\n%s", stdout)
+	}
+	// the push moved only the topic refspec; main stayed where main's own commit put it.
+	remoteMain := strings.TrimSpace(runGit(t, "", "--git-dir", bare, "rev-parse", "--verify", "refs/heads/main"))
+	if remoteMain != advancedMain {
+		t.Errorf("main moved from %s to %s; the push is by refspec and must not move it", advancedMain, remoteMain)
+	}
+}
+
+// TestPublishStillRefusesUnadmittedTopicFile: counting the topic's own diff must not open a
+// hole. A topic file --touched does not admit still refuses before any push, even while main
+// has advanced on its own, and the refusal names that topic path (issue #692).
+func TestPublishStillRefusesUnadmittedTopicFile(t *testing.T) {
+	windowsIsNotABench(t)
+	job, bare, _ := makeGitRepo(t)
+	runGit(t, job, "checkout", "-b", "topic")
+	if err := os.WriteFile(filepath.Join(job, "allowed.txt"), []byte("allowed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(job, "stray.txt"), []byte("stray\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, job, "add", ".")
+	runGit(t, job, "commit", "-m", "touches an admitted file and a stray one")
+	// main advances past the fork with a file the topic never touches.
+	runGit(t, job, "checkout", "main")
+	if err := os.WriteFile(filepath.Join(job, "main_only.txt"), []byte("main only\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, job, "add", ".")
+	runGit(t, job, "commit", "-m", "main advances without the topic")
+	runGit(t, job, "push", "origin", "main")
+	advancedMain := strings.TrimSpace(runGit(t, job, "rev-parse", "origin/main"))
+	runGit(t, job, "checkout", "topic")
+	stubGh(t, "https://example.com/pr/8")
+	body := filepath.Join(t.TempDir(), "body.md")
+	if err := os.WriteFile(body, []byte("body\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, _, stderr := publishRun(t, "--job", job, "--branch", "topic", "--base", "main",
+		"--title", "a title", "--body-file", body, "--touched", "allowed.txt")
+	if exit != 2 {
+		t.Fatalf("a topic file --touched does not admit exits 2, got %d:\n%s", exit, stderr)
+	}
+	if !strings.Contains(stderr, "PUBLISH REFUSED") || !strings.Contains(stderr, "stray.txt") {
+		t.Fatalf("the refusal names the topic's own stray file:\n%s", stderr)
+	}
+	// nothing was pushed: no topic branch on the remote, and main unmoved.
+	if refs := runGit(t, "", "--git-dir", bare, "for-each-ref", "--format=%(refname)", "refs/heads/topic"); strings.TrimSpace(refs) != "" {
+		t.Errorf("the topic branch exists on the remote after a refusal:\n%s", refs)
+	}
+	remoteMain := strings.TrimSpace(runGit(t, "", "--git-dir", bare, "rev-parse", "--verify", "refs/heads/main"))
+	if remoteMain != advancedMain {
+		t.Errorf("main moved from %s to %s; a refusal pushes nothing", advancedMain, remoteMain)
+	}
+}
+
 // TestPublishPrintsPRURL: the PUBLISH OK line carries the draft PR URL the stub gh printed.
 func TestPublishPrintsPRURL(t *testing.T) {
 	windowsIsNotABench(t)

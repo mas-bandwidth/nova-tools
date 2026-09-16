@@ -71,8 +71,11 @@ func cmdPublish(args []string, stdout, stderr io.Writer) int {
 	if admitted != nil {
 		// (3) --touched ADMITS EVERY TOUCHED FILE. The diff ahead of the base may touch only
 		// files the caller named, so a change to a file nobody admitted is caught before the
-		// push rather than surfaced in someone's review inbox.
-		diff, err := gitOut(*job, "diff", "--name-only", "origin/"+*base, "HEAD")
+		// push rather than surfaced in someone's review inbox. The diff is three-dot
+		// (origin/<base>...HEAD), read from the merge base, so it is the topic's own work:
+		// the two-dot tip-to-tip form counts every commit main gained since the fork as a
+		// change the topic made, refusing files the topic never touched.
+		diff, err := gitOut(*job, "diff", "--name-only", "origin/"+*base+"...HEAD")
 		if err != nil {
 			return refusePublish(stderr, fmt.Sprintf("the diff ahead of origin/%s could not be read: %s", oneline.Field(*base), oneline.Err(err)))
 		}
