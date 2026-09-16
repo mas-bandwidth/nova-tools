@@ -376,9 +376,8 @@ func validateWorker(base string, n *profileNode) (WorkerProfile, *ProfileRefusal
 	if _, err := time.ParseDuration(w.Deadline); err != nil {
 		return WorkerProfile{}, refuseProfile(base+".worker.deadline", "the deadline is not a duration")
 	}
-	exec := n.vals["execution"]
-	if exec == nil || exec.kind != pNodeObject || len(exec.keys) == 0 {
-		return WorkerProfile{}, refuseProfile(base+".worker.execution", "worker.execution must be a nonempty object; its members are pinned by the execution-binding companion")
+	if ref := validateWorkerExecution(base, n.vals["execution"]); ref != nil {
+		return WorkerProfile{}, ref
 	}
 	if n.vals["read_roots"] != nil {
 		if w.ReadRoots, ref = stringArray(base, n.vals["read_roots"], "worker.read_roots", true); ref != nil {
@@ -391,6 +390,42 @@ func validateWorker(base string, n *profileNode) (WorkerProfile, *ProfileRefusal
 		}
 	}
 	return w, nil
+}
+
+// nativeAdapter and nativeAdapterRevision are the closed `adapter` /
+// `adapter_revision` identifiers this build executes (issue #296): a native adapter
+// identity and its one supported compatibility revision. They are implementation
+// identifiers, never provider or model names, and any other value refuses before a
+// gate or provider is used.
+const (
+	nativeAdapter         = "opencode-native/1"
+	nativeAdapterRevision = "1"
+)
+
+// validateWorkerExecution checks the worker's `execution` object: it is the single
+// owner of the native adapter identity and its compatibility revision, and an unknown
+// or mismatched one is refused on its own field before any gate or provider use. The
+// remaining members (path, env, artifact) keep their pin in the execution-binding
+// companion.
+func validateWorkerExecution(base string, n *profileNode) *ProfileRefusal {
+	if n == nil || n.kind != pNodeObject || len(n.keys) == 0 {
+		return refuseProfile(base+".worker.execution", "worker.execution must be a nonempty object; its members are pinned by the execution-binding companion")
+	}
+	adapter := n.vals["adapter"]
+	if adapter == nil {
+		return refuseProfile(base+".worker.execution.adapter", "missing required member")
+	}
+	if adapter.kind != pNodeString || adapter.str != nativeAdapter {
+		return refuseProfile(base+".worker.execution.adapter", "a native adapter must be the supported closed identifier "+nativeAdapter)
+	}
+	rev := n.vals["adapter_revision"]
+	if rev == nil {
+		return refuseProfile(base+".worker.execution.adapter_revision", "missing required member")
+	}
+	if rev.kind != pNodeString || rev.str != nativeAdapterRevision {
+		return refuseProfile(base+".worker.execution.adapter_revision", "a compatibility revision must be the supported closed identifier "+nativeAdapterRevision)
+	}
+	return nil
 }
 
 var credentialsAllowed = map[string]bool{
