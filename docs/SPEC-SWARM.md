@@ -662,15 +662,30 @@ stamp) is in the future, so a local job never runs beside a benchmark.
 walled or not** — the same file, the same bytes, alongside `<slot>/native.log`
 — so an unwalled card's failure is as diagnosable as a walled one's.
 `--no-wall` removes the containment and nothing else: it never removes the
-evidence (issue #608, every Space no-result of 2026-09-16). **The two names are
-two writers and never one**: `harness.log` is THE HARNESS'S OWN, written by the
-process that runs the harness, and `harness=silent` reads it to ask whether the
-harness itself wrote anything; `harness-output.log` is what `native` captured
-around it, the wall's lines with the harness's. A capture written into
-`harness.log` would answer `ok` for a harness that said nothing at all. **Every
-writer of a job's logs appends and none truncates**, `batch`'s runner pipe
-included: two processes write a card's `harness.log` at their own offsets, and
-a truncating open destroys the head of what the other already wrote.
+evidence (issue #608, every Space no-result of 2026-09-16). **The name
+`harness.log` belongs to the writers that already own it** — the legacy
+supervisor, which pins the harness's own output there, and a `batch`, which pins
+its runner's stdout there — and `native` never writes it: one file, one writer,
+and the evidence of a native run is `harness-output.log`. **Every writer of a
+job's logs appends and none truncates**, `batch`'s runner pipe and the
+supervisor's own open included: two processes write a card's `harness.log` at
+their own offsets, and a truncating open destroys the head of what the other
+already wrote.
+
+**A silent harness is never OK, and this is the one definition of it.** The
+`NATIVE OK` line always carries `harness=<ok|silent>`, and a run is `silent`
+**iff** the capture above holds no line the child wrote **and** no `RESULT.md` is
+found anywhere `gather` looks for one — the job root, `repo/`, one directory
+below it (issue #594). Everything else is `ok`. Three consequences, each a fault
+someone had: a harness that **spoke** and published nothing is `ok` and its card
+scores `no-result`, because there is evidence to read; the wall's own `SANDBOX`
+lines in that capture are **not** the harness speaking and are skipped, exactly as
+the gather's `log=<n>` skips them, or a walled run could never be called silent;
+and a result published under `repo/` is a run that worked, so the lookup is the
+gather's own and never a shallower one. The fault that wrote the rule was a local
+model whose tool calls the harness never parsed (issue #591): no tool ran, nothing
+was written, the child exited 0 and the line said OK. `gather` scores such a card
+`ABSTAIN reason=harness-silent`, before `no-result` and before `rc=<n>`.
 
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
@@ -811,6 +826,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 |-------|----------|
 | `line1-mismatch` | published a result whose line 1 is not its contract line |
 | `no-result` | ended with rc 0 and published no `RESULT.md`, at the job root or below it |
+| `harness-silent` | its harness wrote nothing at all — no word in the run's capture and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
 | `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it |
 | `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
 | `deadline` | was killed at the batch's deadline |
@@ -818,6 +834,23 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `admission` | was refused at admission; the reason follows the token |
 | `input-limit` | was refused for size, by the provider's own structured signal (issue #163) |
 | `bench-unreachable` | ran on a bench the pull could not reach, so nothing about it is known here |
+
+**The RESULT is the contract, and `harness-silent` is for a card that has none.**
+A `RESULT.md` whose line 1 matches the card is **`done` whatever the harness exit
+code was** (issue #577); the exit code is recorded on the card's own `NATIVE OK`
+line and decides nothing here. So `harness=silent` and `reason=harness-silent`
+apply **only when there is no matching result anywhere `gather` looks** — the job
+root, `repo/`, and one directory below it (issue #594): `native` asks that same
+question with that same lookup before it prints its line, and `gather` reads the
+token off the line rather than guessing from files a batch creates itself.
+
+**The order, once no matching result is found:** `card-abstain`, `admission`,
+`harness-silent`, then the pair `no-result` (ended clean) and `rc=<n>` (ended
+non-zero), which are one slot split by the exit code. **`rc=<n>` is never first**:
+an exit code from a harness that never ran the card is nothing to go and read.
+`idle=<s>`, `deadline` and `input-limit` are decided before the result is read at
+all — they are what the machinery watched happen, true whether a result exists or
+not.
 
 The card's line carries the token and its own log count —
 `<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
@@ -840,7 +873,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|harness-silent|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -984,8 +1017,8 @@ counted in `idle=<n>`. If `ssh` itself is unreachable then, the slot is
 network drop after `RESULT.md` was written is recovered by a second pull at
 gather: one retry, 30 s, none after. The reason in `ABSTAIN reason=<token>` is
 one token, the set issue #461 gives every card: `line1-mismatch | no-result |
-rc=<n> | idle=<s> | deadline | card-abstain | admission <why> | input-limit |
-bench-unreachable`, and the card's line carries its own `log=<n>` after it. The idle watch on a
+harness-silent | rc=<n> | idle=<s> | deadline | card-abstain | admission <why> |
+input-limit | bench-unreachable`, and the card's line carries its own `log=<n>` after it. The idle watch on a
 remote card asks `ssh <host> stat -c %s <root>/<n>/jobs/<label>/native.log` —
 bytes, the growth a local log is measured by, never an mtime (rule 16) — no
 more than once per `--idle/3` seconds. A bench unreachable at a poll is not a
@@ -1121,7 +1154,7 @@ BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|harness-silent|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1151,7 +1184,7 @@ RUN REFUSED: <reason>
 RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
 ADMIT REFUSED benchmark window open until <stamp>
-NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> [usage=none reason=<r> path=<p>]
+NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> [usage=none reason=<r> path=<p>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0

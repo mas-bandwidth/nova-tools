@@ -85,8 +85,12 @@ func Supervise(in SuperviseInput) int {
 	// (5) RELEASE TO WORK: the harness, as this supervisor's child, in a process group of
 	// the JOB's own so that the survivor check after it exits asks about the job and not
 	// about the supervisor asking.
+	// EVERY WRITER OF THIS FILE APPENDS (issue #608). A `batch` opens this same path for the
+	// same card and holds its own offset; with O_TRUNC this descriptor starts at 0 and writes
+	// over whatever the other writer already put there, which is how the head of a card's
+	// evidence was lost. O_APPEND makes every write land at the end, whoever wrote last.
 	logPath := filepath.Join(jobDir, "harness.log")
-	logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness log could not be opened: " + redactedReason(err)}, attest, 0, "")
 	}

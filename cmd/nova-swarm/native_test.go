@@ -1277,6 +1277,109 @@ func TestNativeNoWallWritesHarnessLog(t *testing.T) {
 	}
 }
 
+// TestNativeSilentHarnessIsNotOK pins THE ONE DEFINITION of the token (issues #591, #594,
+// #608 folded): `harness=silent` exactly when the run's own capture
+// (<job>/harness-output.log, the file the test above proves is written walled or not) holds
+// nothing the CHILD said AND no RESULT.md is found anywhere the gather looks; `harness=ok`
+// otherwise, and the token is always present.
+//
+// The four cases are the four ways that can go, and each is a fault someone had:
+//   - silent: the run of issue #591 -- a local model whose tool calls the harness never
+//     parsed, so no tool ran, nothing was written, the child exited 0 and the line said OK.
+//   - spoke_no_result: a harness that SAID something and published nothing is `ok`, because
+//     there is evidence to read; the batch scores that card `no-result`, which is the model's
+//     own doing and a different remedy.
+//   - wall_lines_only: the wall's own `SANDBOX ` lines are in the capture too, and counting
+//     them would make a WALLED run -- the shape of #591 itself -- impossible to call silent.
+//   - result_under_repo: the result is looked for where the gather looks (#594), and the
+//     capture here is EMPTY on purpose, so this case fails the moment that lookup narrows
+//     back to the job root: it is the only path where the lookup alone decides.
+func TestNativeSilentHarnessIsNotOK(t *testing.T) {
+	bin := nativeHarness(t)
+	const label = "silent-label"
+	// The fake says this on its own stderr for FAKE-SAY: "fake harness: " + the word + "\n",
+	// which is 37 bytes -- the harness speaking, and nothing published.
+	const saidBytes = 37
+	for _, tc := range []struct {
+		name, card, want string
+		// resultInRepo plants a RESULT.md under <job>/repo before the run, the way a card
+		// whose STEP 1 cloned into repo/ publishes, while the run itself says nothing.
+		resultInRepo bool
+		// walled runs the case inside the fake wall instead of --no-wall, so the capture
+		// holds the wall's own SANDBOX lines and nothing else.
+		walled bool
+		// wantCapture is how many bytes of the child's own words the capture must hold.
+		wantCapture int
+	}{
+		{name: "silent", card: "FAKE-NORESULT\n", want: " harness=silent"},
+		{name: "wrote_a_result", card: "a card line 1\nline 2\n", want: " harness=ok"},
+		{name: "spoke_no_result", card: "FAKE-SAY twenty-two-characters!\nFAKE-NORESULT\n", want: " harness=ok", wantCapture: saidBytes},
+		{name: "wall_lines_only", card: "FAKE-NORESULT\n", want: " harness=silent", walled: true},
+		{name: "result_under_repo", card: "FAKE-NORESULT\n", want: " harness=ok", resultInRepo: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.walled {
+				t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+			}
+			root, slot := aSlot(t)
+			jobDir := filepath.Join(slot, "jobs", label)
+			if tc.resultInRepo {
+				repo := filepath.Join(jobDir, "repo")
+				if err := os.MkdirAll(repo, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(repo, "RESULT.md"), []byte("a card line 1\nall green from the clone\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cardPath := filepath.Join(root, "card.md")
+			if err := os.WriteFile(cardPath, []byte(tc.card), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+				"--label", label, "--card", cardPath, "--slot", slot, "--root", root,
+				"--deadline", "30s"}
+			if tc.walled {
+				args = append(args, "--sandbox", nativeSandbox(t))
+			} else {
+				args = append(args, "--no-wall")
+			}
+			var stdout, stderr bytes.Buffer
+			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+			if rc != 0 {
+				t.Fatalf("the run exits 0, got %d:\n%s", rc, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), tc.want) {
+				t.Fatalf("the NATIVE OK line carries%s:\n%s", tc.want, stdout.String())
+			}
+			// The capture is the file the token is asked of, so the case that says the
+			// harness spoke proves the bytes are in it.
+			if tc.wantCapture > 0 {
+				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
+				if err != nil {
+					t.Fatalf("the capture the token reads is missing: %v", err)
+				}
+				if len(raw) != tc.wantCapture {
+					t.Errorf("the capture holds %d bytes of the child's words, want %d:\n%s", len(raw), tc.wantCapture, raw)
+				}
+			}
+			// A silent run's capture holds no word of the child's: either nothing at all, or
+			// the wall's own header lines.
+			if tc.want == " harness=silent" {
+				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
+				if err != nil {
+					t.Fatalf("the capture is written even for a silent run: %v", err)
+				}
+				for _, line := range strings.Split(string(raw), "\n") {
+					if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "SANDBOX ") {
+						t.Errorf("a silent run's capture carries a line the child wrote: %q", line)
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestNativeCaptureRefusesSymlink: the capture is the first file this process opens inside
 // the JOB, which is the card's own writable directory. A symlink planted there -- by an
 // earlier run of the same card, or by the card itself -- would carry the child's output to

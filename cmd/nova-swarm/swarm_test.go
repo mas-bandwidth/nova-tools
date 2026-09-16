@@ -1756,3 +1756,48 @@ func TestAWorkerThatExitsNonZeroIsAFailedJobEverywhere(t *testing.T) {
 		t.Errorf("the cost ledger called a failed job done:\n%s", stdout)
 	}
 }
+
+// TestSupervisorLogAppendsNeverTruncates is TestBatchLogAppendsNeverTruncates
+// (internal/swarm) for the OTHER writer of a card's `<job>/harness.log`: the supervisor,
+// which pins the harness's own stdout and stderr to that file. Two processes write it for
+// one job and each holds its own offset -- a `batch` pins its runner's stdout to the same
+// path before this supervisor starts -- so a truncating open here starts at offset 0 and
+// writes over the head of what the runner already put there. That is how the start of a
+// card's evidence was lost (issue #608), and it is the same defect on the same file from
+// the other side, so it gets the same test: write a line, run the job, demand BOTH sets of
+// bytes in the order they were written. Red with O_TRUNC in supervise.go.
+func TestSupervisorLogAppendsNeverTruncates(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	const said = "the-harness-said-this"
+	id := b.add("a task whose harness says one line\nFAKE-SAY " + said + "\nFAKE-FINDINGS 1\n")
+
+	// The bytes the other writer put there before the supervisor opened the file. The job
+	// directory is the slot's, named before the run the way the dispatcher will name it.
+	job := filepath.Join(b.dir, "worker-home-1", "jobs", id)
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const earlier = "the runner wrote this before the supervisor started"
+	write(t, filepath.Join(job, "harness.log"), earlier+"\n")
+
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("the run exits 0, got %d:\n%s%s", exit, stdout, stderr)
+	}
+	raw, err := os.ReadFile(filepath.Join(job, "harness.log"))
+	if err != nil {
+		t.Fatalf("the job's harness log could not be read: %v", err)
+	}
+	got := string(raw)
+	at, after := strings.Index(got, earlier), strings.Index(got, said)
+	if at < 0 {
+		t.Errorf("the supervisor truncated the job's harness log: the bytes written before the run are gone:\n%s", got)
+	}
+	if after < 0 {
+		t.Fatalf("the harness's own line is not in the job's harness log:\n%s", got)
+	}
+	if at >= 0 && after < at {
+		t.Errorf("the harness's line landed before the bytes that were there first; the log is out of order:\n%s", got)
+	}
+}
