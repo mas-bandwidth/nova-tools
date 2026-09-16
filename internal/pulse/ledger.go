@@ -44,8 +44,8 @@ const ledgerFileName = "ledger.tsv"
 // ledgerHeader names the seven fields, so the file reads without this source beside it.
 const ledgerHeader = "# pr\thead\tcard\tverdict\tat\tenqueued_at\tclosed_at\n"
 
-// dash is an empty field: every row has seven fields, and a missing one is never a blank.
-const dash = "-"
+// ledgerDash is an empty field: every row has seven fields, and a missing one is never a blank.
+const ledgerDash = "-"
 
 // redTestTitle is the title prefix a red-test PR carries; the policy holds those PRs, so
 // the sweep never enqueues one (bug 5: seven red-test PRs enqueued and dequeued by hand).
@@ -149,7 +149,7 @@ func Sweep(in SweepInput) int {
 		case view.Head != "" && view.Head != row.Head:
 			stale++ // a read is owed on the new head; this approval no longer stands
 			marks = append(marks, mark(row, row.EnqueuedAt, stamp, "STALE"))
-		case row.EnqueuedAt != dash && row.EnqueuedAt != "":
+		case row.EnqueuedAt != ledgerDash && row.EnqueuedAt != "":
 			// already in the queue; it closes when the merge lands.
 		case row.Verdict != "APPROVE" || view.IsDraft || heldPR(view):
 			held++
@@ -248,7 +248,7 @@ func seedFromApproved(queue, repo, stamp string) (int, error) {
 		if seen[key] {
 			continue
 		}
-		fresh = append(fresh, LedgerRow{PR: pr, Head: f[2], Card: dash, Verdict: "APPROVE", At: stamp})
+		fresh = append(fresh, LedgerRow{PR: pr, Head: f[2], Card: ledgerDash, Verdict: "APPROVE", At: stamp})
 		seen[key] = true
 	}
 	if err := AppendLedger(queue, fresh...); err != nil {
@@ -333,7 +333,7 @@ func OpenRows(rows []LedgerRow) []LedgerRow {
 	slices.Sort(order)
 	var open []LedgerRow
 	for _, pr := range order {
-		if r := latest[pr]; r.ClosedAt == dash || r.ClosedAt == "" {
+		if r := latest[pr]; r.ClosedAt == ledgerDash || r.ClosedAt == "" {
 			open = append(open, r)
 		}
 	}
@@ -342,7 +342,7 @@ func OpenRows(rows []LedgerRow) []LedgerRow {
 
 func orDash(s string) string {
 	if strings.TrimSpace(s) == "" {
-		return dash
+		return ledgerDash
 	}
 	return s
 }
