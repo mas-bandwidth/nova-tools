@@ -5885,6 +5885,28 @@ index's admission** (where #333 at `79277f05` already has a built witness, it is
   under `--index-cache`, an eviction under load losing no row, the next clip writing them into the
   pages, and no query replaying the journal.
 
+**Amendment #500's replays, for the duty tier and the single-writer kernel**:
+
+- **`duty-tier-executes-not-authors`** — a duty-tier session loads an approved finite policy record
+  from C with `:by` on every rule, never writes one, answers with the cheapest qualified model or
+   none, and every judgment it cannot make becomes an escalation; a session holding no approved
+   record reads `authority=-` (a proposed field, not shipped — no `SESSION OK` grammar line carries
+   it) and is a reader and a client, never a duty tier.
+- **`escalation-is-a-node-with-rule-default-and-age`** — an escalation node carries the policy rule
+  that could not decide it, the default that fires on silence, and its age; the coordinator's stale
+  pass reads the three and reassigns nothing.
+- **`wait-table-four-presence-columns`** — the per-harness wait table carries process alive, beat
+  written, delivery handled and parent woke; a harness with the fourth unproven cannot hold a
+  resident session and may hold only a duty session driven by notes.
+- **`quiet-time-zero-calls-zero-notes`** — a resident or duty session with nothing changed makes no
+  model call and sends no note; state publishes mechanically; cost per event is measurable.
+- **`cost-per-accepted-decision`** — the coordination measure across tiers is cost per accepted
+  decision, with wrong or missed decisions and recovery latency as gates, replacing the
+  decisions-per-token sentence.
+- **`two-concurrent-clients-one-total-order`** — two concurrent clients' commands land in one total
+  order: the journal shows a single sequence, each command applied in order by the one command
+  thread that owns O and C; a mutation outside the command loop is a defect.
+
 The stall replays of 5649089106
 belong to stall detection, deferred below, and are listed there so they are not lost.
 
@@ -6235,6 +6257,51 @@ One section, *Bugs found while working*, above *Counting*: the `:bug` kind at an
 `:found-during`, `:evidence` and `:test` fields, rule 19, the `bugs=<open>/<fixed>` count, the
 `:bugs` roadmap form and seven replays. Nothing older is changed; a bug is outside every
 denominator and inside every parent's done gate.
+
+## The duty tier and the single-writer kernel *(amendment #500; Glenn, Rowan and Stella, 2026-09-15; not cut as a card until nova-work is open again)*
+
+The resident session of *The resident session* above is a duty tier, and the Lisp server behind the
+engine of *The engine and its client* is its kernel. Nothing in this section is built; where a
+sentence below states a rule no code stands behind, the rule's first line is **`SPEC-AHEAD: #500`**.
+Six numbered points, each with its replay appended to *Acceptance replays* below; no existing rule is
+renumbered.
+
+1. **The resident session (E02) is the duty tier, and it executes a policy it never authors.**
+   `SPEC-AHEAD: #500`. The duty tier executes an **approved finite policy record** — a versioned
+   record in **C**, `:by` on every rule, by the root section above — with **the cheapest qualified
+   model or none**; it **never authors policy**; every judgment it cannot make becomes an
+    **escalation** (point 2). This is the session's authority, stated as such — save that the
+    `authority=` field it names is **proposed, not shipped**: the *Output grammar*'s `SESSION OK`
+    line carries no such field, so a duty session would print `authority=duty` beside the policy
+    record's revision only once that field is added (`SPEC-AHEAD: #500`), and a session that holds
+    no approved record to execute is a reader and a client of the kernel, never a duty tier. Replay
+   **`duty-tier-executes-not-authors`**.
+2. **Escalation becomes a node kind (or the row gains the fields).** `SPEC-AHEAD: #500`. An
+   escalation names **the policy rule that could not decide it**, **the default that fires on
+   silence**, and **its age** (Gas Town idea 5 of *Efficiency: lessons absorbed*, whose rule 5 already
+   surfaces `escalated-age=`); the coordinator's **stale pass reads them** and reassigns nothing, as
+   that rule already says. Replay **`escalation-is-a-node-with-rule-default-and-age`**.
+3. **The per-harness wait table gains four presence columns.** `SPEC-AHEAD: #500`. Beside the
+   `:wait-source` column the *Presence* table already carries, the wait table gains the four
+   **presence facts** as columns: **process alive**, **beat written**, **delivery handled**, and
+   **parent woke** (the nova-wake drill). A harness with the fourth unproven **cannot hold a resident
+   session**; it may hold only a **duty session driven by notes** (the notes of *Delegation*). Replay
+   **`wait-table-four-presence-columns`**.
+4. **Quiet time.** `SPEC-AHEAD: #500`. A resident or duty session **makes no model call and sends no
+   note when nothing changed**; its state is published mechanically; so **cost per event is
+   measurable** — rule 4's mechanical traffic and rule 6's durable triggers of *Admission and result
+   gates*, applied to the tier itself. Replay **`quiet-time-zero-calls-zero-notes`**.
+5. **The coordination measure is cost per accepted decision.** `SPEC-AHEAD: #500`. Across tiers, the
+   coordination measure is **cost per accepted decision**, with **wrong or missed decisions** and
+   **recovery latency** as gates; this **replaces the decisions-per-token sentence** of *Decision
+   packets*. Replay **`cost-per-accepted-decision`**.
+6. **The single-writer kernel.** `SPEC-AHEAD: #500`. The Lisp server managing the structure is
+   **single-threaded like redis, or it corrupts**. The resident session's kernel is **one command
+   thread that owns O and C**; every mutation is a command applied **in order** by that thread and
+   journaled **in the same order**; readers, network, journal fsync and clip may run elsewhere but
+   **never touch the structure**; duty and every other client are clients of that thread. Validator
+   rule: **a mutation outside the command loop is a defect**. Replay
+   **`two-concurrent-clients-one-total-order`**.
 
 ## What this draft does not do
 
