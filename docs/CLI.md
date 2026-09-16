@@ -719,7 +719,7 @@ files and a cached `gh` step, at most `--max` lines per capped kind (default
 ```
 STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
-STATUS RATE cards_per_hour=<n> p50_s=<n> p90_s=<n> usd_per_card=<x.xxxx> parallelism=<n.n>
+STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
 STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
 STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
@@ -733,6 +733,8 @@ headroom from each bench's slot files); `--roots` is the scope — a bench or
 friend outside it is nowhere on any line. `REMAINING` counts what is still in
 flight in scope only. `ADOPTION` prints one line per friend, the coordinator
 included (its `version=` reads `-` until there is an ADOPT file for it).
+With no `usage.tsv` rows in the window every `RATE` metric reads `-` — a cost
+or latency never measured is unknown, never zero.
 Sources: the queue directory (`pending`, `launched`, `done`, `failed`, and the
 `COORDINATOR`, `REPO`, `UNREAD`, `DIRTY`, `UNCARDED`, `HOLD`, `ESCALATE`,
 `DOGFOOD` state files), each bench's `pool/slots/*.json` and `usage.tsv` rows,
