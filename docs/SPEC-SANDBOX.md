@@ -332,9 +332,15 @@ near the end.
     child's exit status is the tool's exit status, and a death by signal `N`
     gives exit `128+N`. Per platform:
     - **linux:** the tool restricts *itself* (`runtime.LockOSThread`,
-      `landlock_restrict_self`) and then `syscall.Exec`s the command, so the
-      tool **becomes** the command: same pid, same process group, no wait, no
-      signal forwarding, and the exit status is the command's by identity.
+      `landlock_restrict_self`) and then starts the command as a **child** and
+      **waits**; `SIGINT` and `SIGTERM` are forwarded **to the child**, not to
+      a process group. **The tool creates no process group of its own**, for
+      the reason the darwin bullet gives at length below, and the wall reaches
+      the child by Landlock's inheritance across `fork(2)`, not by identity:
+      the command has a pid of its own, and the tool is inside the same wall
+      while it waits and stays there (the Linux section's "`Run` is one-way").
+      The tool waits so that it can forward signals and return the command's
+      status, not to clean anything up: there is nothing to remove.
     - **darwin:** the tool spawns `sandbox-exec`, which applies the profile and
       `exec`s the command in place, and **waits**; `SIGINT` and `SIGTERM` are
       forwarded **to the child**, not to a process group. **The tool creates no
@@ -777,7 +783,8 @@ first, or `landlock_restrict_self` fails with `EPERM`.
 **There is no pre-exec hook in Go.** `os/exec` has no `PreExec` callback and
 `SysProcAttr` carries no user code, so the restriction cannot be applied
 "in the child between fork and exec" from Go. The body is therefore
-**restrict-then-exec in place**, in the tool's own process:
+**restrict-then-fork**: the ruleset is applied to the tool's **own** process,
+and `fork(2)` is what carries it to the command:
 
 1. `landlock_create_ruleset` with `handled_access_fs` covering every
    filesystem access **the ABIs in the table below define** — stated per ABI,
@@ -835,12 +842,12 @@ first, or `landlock_restrict_self` fails with `EPERM`.
    bits are *granted* to the write set only; the read set and the roots get
    `EXECUTE|READ_FILE|READ_DIR`.
    The linux root list names `/proc`, not `/proc/self`. `/proc/self` opened
-   `O_PATH` resolves at open time to the pid that opened it — the tool's,
-   which after `syscall.Exec` is the command's — so a rule built on it grants
-   the wrapped process its own `/proc` entry and grants **every child it
-   spawns nothing**: a harness that runs a subprocess which reads
-   `/proc/self/status` would fail for no legible reason. `/proc` read-only is
-   the grant.
+   `O_PATH` resolves at open time to the pid that opened it — the **tool's**,
+   and the tool forks rather than becomes the command, so that pid is never the
+   command's — so a rule built on it grants the wrapped process **nothing, not
+   even its own `/proc` entry**, and grants every child it spawns nothing: the
+   wrapped command, and any harness subprocess that reads `/proc/self/status`,
+   would fail for no legible reason. `/proc` read-only is the grant.
 
 2. For each root and each `--read`: `open(2)` it `O_PATH|O_CLOEXEC` and
    `landlock_add_rule` with `LANDLOCK_RULE_PATH_BENEATH` and the read subset.
@@ -1486,13 +1493,13 @@ that cannot confirm one changes this document rather than asserting it.
    measurement whether the tool refuses paths carrying SBPL metacharacters,
    changes how parameters are grouped, or both.
 3. Landlock syscall numbers as used from Go's `syscall` package on both
-   `amd64` and `arm64`, and whether the restrict-then-exec body (which needs
-   `runtime.LockOSThread`, `prctl`, three raw syscalls and `syscall.Exec`) is
+   `amd64` and `arm64`, and whether the restrict-then-fork body (which needs
+   `runtime.LockOSThread`, `prctl` and three raw syscalls) is
    achievable under the repository's standard-library-only rule or needs
    `golang.org/x/sys/unix` — a dependency decision, not a detail.
-4. That the restriction applied before `syscall.Exec` survives it for a Node
-   harness that re-execs itself, and that a child process it spawns is equally
-   restricted.
+4. That the restriction applied before the fork survives both `fork(2)` and
+   `execve(2)` for a Node harness that re-execs itself, and that a child
+   process it spawns is equally restricted.
 5. That *ALL APPLICATION PACKAGES* actually carries read+execute on `%WINDIR%`
    and `%ProgramFiles%` on the fleet's Windows images, and which of the
    toolchains the CI matrix uses are installed somewhere it does not cover.
@@ -1634,9 +1641,10 @@ One per rule:
 12. A wrapped command exiting 3 gives exit 3; one killed by `SIGKILL` gives
     137; an argument containing a space, a quote, a `$` and a `;` arrives in
     the child's argv byte-for-byte; stdout and stderr are not interleaved by
-    the tool. Per platform: on linux the tool's pid **is** the command's pid
-    after the wrap (the test reads `/proc/self/stat` from the wrapped command
-    and compares it with the pid it spawned) and no wait happens; on darwin and
+    the tool. Per platform: on linux the command is a **child with a pid of its
+    own** (the test reads `/proc/self/stat` from the wrapped command and
+    asserts it is not the tool's) and the tool **waits** for it, and `SIGINT`
+    and `SIGTERM` reach that child; on darwin and
     windows `SIGTERM` (or the console control event) reaches the child and the
     tool waits for it. stdio: a wrapped command whose stdout is a **pipe**
     writes through it, and one whose stdout is a **file inside the write set**
@@ -1682,7 +1690,9 @@ And one for each thing the rules above assert but no test yet reached:
 17. `SANDBOX OK` is written and flushed **before** the command starts: the
     wrapped command writes a marker to a file, and the test asserts the stderr
     line is complete before the marker exists — on linux this is load-bearing,
-    because after `syscall.Exec` the tool cannot print anything.
+    because past `landlock_restrict_self` the tool's own process is inside the
+    wall (the Linux section's step 5), and every status line must be out of it
+    before it goes up.
 18. `check` on this machine prints one `CHECK OK` naming the backend, the ABI
     or `-`, and `net=enforceable|unenforceable`; with the backend forced
     unavailable it prints `backend=none` and still **exits 0**, because it is a
@@ -1852,8 +1862,9 @@ them.
    run by the mac CI job and its exit status is the job's.
 3. **`internal/sandbox/wrap_linux.go`** — ABI discovery, the handled-access
    mask per ABI, `O_PATH` fds per rule, `LockOSThread`, `PR_SET_NO_NEW_PRIVS`,
-   `landlock_restrict_self`, `syscall.Exec`, the ABI 6 scopes, and the
-   `net_unenforceable` refusal. Tests: 1, 3, 7, 12, 17; **to verify** items
+   `landlock_restrict_self`, the fork-and-wait with `SIGINT` and `SIGTERM`
+   forwarded to the child, the ABI 6 scopes, and the
+   `net_unenforceable` and `landlock_abi_unknown` refusals. Tests: 1, 3, 7, 12, 17; **to verify** items
    3–4, and item 3 decides whether this package is standard-library-only.
 4. **`internal/sandbox/wrap_windows.go`** — profile create/derive/delete from
    `--name`, the read-only and read-write ACL grants under `--acl tool`, the
@@ -1861,8 +1872,8 @@ them.
    the wait, and cleanup of the grants the tool added. Tests: 1, 3, 7, 22;
    **to verify** items 5–6.
 5. **`internal/sandbox/exec.go`** — the transparent wrapper: no shell,
-   inherited stdio, the platform's wait-or-exec choice, signal forwarding where
-   there is a child, the exit-status and `128+N` mapping, and the
+   inherited stdio, the wait every platform now does, signal forwarding to
+   that child, the exit-status and `128+N` mapping, and the
    `125`/`126`/`127` refusals. Tests: 12, 19.
 6. **`cmd/nova-sandbox/main.go`** — the verbs, the `--` split, the output
    grammar, `probe` (test 10), `fence` (test 14), `check` (test 18),
