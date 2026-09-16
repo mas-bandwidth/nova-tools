@@ -528,6 +528,7 @@ nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
 nova-swarm bench    probe --benches <file> --bench <name>
+nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
 nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
@@ -657,6 +658,23 @@ model with the same wall, card contract and RESULT rules; admission refuses with
 one line `ADMIT REFUSED benchmark window open until <stamp>` when the file named
 by `NOVA_BENCH_WINDOW` (or `~/.config/nova/bench-window`, a single RFC 3339
 stamp) is in the future, so a local job never runs beside a benchmark.
+
+**`native` owns `TMPDIR`, and it is outside every repository** (issue #460,
+landed in #558). The job directory is a git repository — admission wants one — so a
+`TMPDIR` under it makes every `t.TempDir()` a directory inside a repo, and a
+test that asserts "not a repo" goes red on every card for a cause the card did
+not make. `native` exports `TMPDIR=<slot>/tmp/<label>` into the harness
+environment — the slot directory is never a repository — and prints
+`tmp=<path>` on `NATIVE OK`; a card sets no `TMPDIR` of its own.
+
+**A local model is one slot, and it stays off the critical path.** The fault
+behind the silent-harness rule below (issue #591, landed in #604) was a local
+model emitting its tool calls as raw text the harness does not parse, so no
+tool ran and nothing was written: the local route needs a model whose
+tool-call format the harness parses, the adoption probe tries the configured
+local models in order and records which answer
+(`probe-local-model-supports-tools`, open), and a batch gives the local route
+one slot at most.
 
 **A native run captures the child's output to `<job>/harness-output.log`,
 walled or not** — the same file, the same bytes, alongside `<slot>/native.log`
@@ -860,6 +878,16 @@ idle monitor watched, or `job=<dir>`, the job directory that holds no result.
 is counted on the `BATCH` line's `stalled=<n>` and reads its own emptiness on
 its line.
 
+The copied-up result above is the same rule the bench pull holds under
+**Benches**, rule 3 of the pull (#581), and both print the one `BATCH NOTE`
+line. Replays this section demands, beside the tests #577 named:
+`idle-watch-counts-child-activity` (`TestIdleWatchCountsChildActivity`, landed
+in #603), `gather-copies-result-up-from-repo` (`TestGatherCopiesResultUpFromRepo`,
+#603), `native-silent-harness-is-not-ok` (`TestNativeSilentHarnessIsNotOK`, PR
+#604), `native-tmpdir-is-outside-any-repo` (`TestNativeTmpDirIsOutsideAnyRepo`,
+#558), `local-route-is-one-slot` (two local-model cards in one batch: one runs,
+one is `ABSTAIN reason=admission local route is one slot`; open).
+
 ### read — one agent, one packet, once
 
 **One agent reads the one packet once** and carries the dispositions to the
@@ -997,10 +1025,12 @@ is absent from the job but present under `repo/`, or one directory below it, it
 is **copied up into the job** and the batch prints
 
 ```
-SPACE NOTE RESULT.md copied up from <path>
+BATCH NOTE <label> RESULT.md copied up from <path>
 ```
 
-so the card's mistake is on the record and its work is not lost to it. A pull
+so the card's mistake is on the record and its work is not lost to it (#581
+landed this line as `SPACE NOTE …`; a host word in an output token is wrong,
+and it is renamed by #602). A pull
 that cannot reach the bench at all — `ssh`'s own exit 255, not a remote command
 saying no — scores the card `ABSTAIN reason=bench-unreachable`; a bench that
 answers and holds no result is the ordinary missing-result abstain and not that.
@@ -1045,6 +1075,27 @@ yours`, on stderr before the card starts. A `wall=none` bench without
 card's `CARD` line in the packet carries `wall=none`, so the packet a reader
 holds says which cards ran unwalled.
 
+**A bench's width is a measured power of two, and the loop fills to it and
+drops down under load** (Glenn, 2026-09-15, #528, open; the same rule is
+SPEC-PULSE **Rate and convergence** 3). `bench size --benches <file> --bench
+<name> [--max <n>]` runs the known-answer card `W` times concurrently for
+`W = 1, 2, 4, ...` and keeps doubling while three rules hold at the end of each
+round: (a) the one-minute load is at most `1.25 x cores`; (b) throughput
+scales — cards per minute at `W` is at least `1.5 x` cards per minute at
+`W/2`; (c) no card abstained (idle, deadline, refusal). The width is the last
+`W` that held. It is recorded on the bench row as three optional trailing
+columns — `width`, `measured` (a stamp), `version` (the tool's sha8) — a row
+without them is unmeasured and fills by cores as today; the adopt step
+re-measures whenever the tool version or the machine changes. A batch fills a
+bench up to its width and, per tick, launches at most `cores x 1.5 - load`
+cards, never more than `cores` in one tick — the bench's **headroom** (1.25 was
+the first setting; Glenn raised it: be aggressive) — so a loaded or less
+capable bench drops down without changing its width. `bench size` ends with one line:
+
+```
+BENCH WIDTH bench=<name> width=<W> cores=<n> rows=<n>
+```
+
 **Presence of a bench is not presence of a friend.** A bench answering ssh
 says a machine is up; nothing here writes a presence line, and `nova-wake` is
 untouched.
@@ -1083,9 +1134,10 @@ BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
   nova-work's fleet registry emitted; swarm keeps no hosts of its own.
 - **No bus traffic.** `batch --bench <name>` wakes nobody: a friend's name is
   refused at admission, and no line is written to the bus.
-- **No scheduling by load.** Slots go by core count and `--bench` order, never
-  by a load average; a person stops what else runs on a bench before a batch,
-  and the tool never touches it.
+- **No scheduling by load beyond headroom.** Slots go by width, core count and
+  `--bench` order; the one load the tool reads is the bench's own one-minute
+  average, to launch no more than its headroom per tick (#528). A person still
+  stops what else runs on a bench before a batch, and the tool never touches it.
 - **No key handling.** The auth file is placed by a person; ssh keys are the
   caller's own ssh config.
 - **No Windows benches, no shared root between benches, no card moving from
@@ -1115,11 +1167,21 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
     waits, then copies, and each of the three files is its own `scp` naming one file, with no
     filter and no pattern on any argv (`TestPullWaitsForResult`).
 17. `pull-copies-result-up-from-repo` — a card that wrote `RESULT.md` under `repo/` one level
-    down has it copied up into the job, pulled back, and `SPACE NOTE RESULT.md copied up from
-    <path>` printed (`TestPullCopiesResultUpFromRepo`).
+    down has it copied up into the job, pulled back, and `BATCH NOTE <label> RESULT.md copied
+    up from <path>` printed (`TestPullCopiesResultUpFromRepo`; #602 renames #581's line).
 18. `pull-scores-bench-unreachable` — a bench whose `ssh` exits 255 scores its card `ABSTAIN
     reason=bench-unreachable`, not a plain abstain and not a stall
     (`TestPullScoresBenchUnreachable`).
+19. `size-doubles-until-a-rule-breaks` — a fake bench whose load crosses `1.25 x cores` at
+    `W=16` records `width=8`; one whose throughput at 8 is under `1.5 x` its throughput at 4
+    records `width=4`; one abstain at any round ends the doubling there.
+20. `size-records-width-with-version` — the row gains `width`, `measured` and `version`, and
+    a `version` unequal to the running tool's is re-measured by the adopt step.
+21. `launch-fills-to-width` — a bench with `width=8`, 16 cores and no load is given eight
+    cards from a batch of twelve, and the four wait in the queue rather than a ninth slot.
+22. `launch-drops-down-under-load` — the same bench at load 6 is given `16 x 1.5 - 6 = 18`,
+    capped at `cores` 16 and then at its width 8; at load 20 it is given four; at load 24 it
+    is given none, its width unchanged on the row.
 
 ## Exit codes
 
@@ -1162,6 +1224,7 @@ HOLD: <one bounded quoted line>
 BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall> ok=<true|false> [<one bounded value>]
 BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>
 BENCH REFUSED name=<name> check=<first failing check>: <reason> (more <n>)
+BENCH WIDTH bench=<name> width=<W> cores=<n> rows=<n>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|false> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
