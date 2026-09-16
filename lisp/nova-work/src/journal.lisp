@@ -97,6 +97,73 @@ only property this fake carries."
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (require :sb-posix))
 
+;;; ------------------------------------------------------------------
+;;; The journal's lock: an OS-held exclusive flock on <journal>.lock.
+;;; SPEC-WORK.md:162-183 fixes `flock(LOCK_EX|LOCK_NB)` on Unix, held for the
+;;; whole life of the holder and released by the OS when the holder dies.
+;;; ------------------------------------------------------------------
+
+;; LOCK_* from <sys/file.h> on Linux (and BSD/macOS agree on these four).
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defconstant +lock-sh+ 1)
+  (defconstant +lock-ex+ 2)
+  (defconstant +lock-nb+ 4)
+  (defconstant +lock-un+ 8))
+
+#+sbcl
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (sb-alien:define-alien-routine ("flock" %flock) sb-alien:int
+    (fd sb-alien:int) (operation sb-alien:int)))
+
+(defstruct (journal-lock (:conc-name lock-))
+  path fd)
+
+(defun bench-identity (&key (path nil))
+  "The bench's identity string: the hostname plus, when PATH names a real file,
+the lock identity of rule 2 -- its device and inode on Unix. A journal copied to
+another bench, or onto a different file, therefore reads as a different bench."
+  #+sbcl
+  (let ((host (or (ignore-errors (machine-instance)) "unknown")))
+    (if (and path (probe-file (namestring (merge-pathnames path))))
+        (let ((st (ignore-errors (sb-posix:stat (namestring (merge-pathnames path))))))
+          (if st
+              (format nil "~A@~A:~A" host (sb-posix:stat-dev st) (sb-posix:stat-ino st))
+              host))
+        host))
+  #-sbcl
+  (ignore-errors (machine-instance)))
+
+(defun take-journal-lock (journal-path)
+  "Take an exclusive, non-blocking flock on <JOURNAL-PATH>.lock. Returns a
+JOURNAL-LOCK holding the fd on success, or NIL when the lock is already held
+(EWOULDBLOCK). The OS releases the lock when the holder dies."
+  #+sbcl
+  (let* ((path (namestring (merge-pathnames journal-path)))
+         (lock-path (concatenate 'string path ".lock"))
+         (fd (sb-posix:open lock-path (logior sb-posix:o-creat sb-posix:o-rdwr) #o644)))
+    (cond
+      ((null fd) nil)
+      ((< fd 0)
+       (ignore-errors (sb-posix:close fd))
+       nil)
+      (t
+       (let ((r (%flock fd (logior +lock-ex+ +lock-nb+))))
+         (if (zerop r)
+             (make-journal-lock :path lock-path :fd fd)
+             (progn (ignore-errors (sb-posix:close fd)) nil))))))
+  #-sbcl
+  nil)
+
+(defun release-journal-lock (lock)
+  "Release the flock held by LOCK and close its fd."
+  (when (and lock (lock-fd lock))
+    #+sbcl
+    (progn
+      (%flock (lock-fd lock) +lock-un+)
+      (ignore-errors (sb-posix:close (lock-fd lock)))
+      (setf (lock-fd lock) nil)))
+  t)
+
 (defun sync-stream (stream &key (path "unknown"))
   "Flush internal buffers and perform POSIX durable sync (F_FULLFSYNC on Darwin, fsync on other POSIX)
 on the underlying file descriptor. Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
@@ -162,6 +229,8 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
    (fail-partial-write-on :initarg :fail-partial-write-on :initform nil :accessor journal-fail-partial-write-on)
    (fail-creation-sync-on :initarg :fail-creation-sync-on :initform nil :accessor journal-fail-creation-sync-on)
    (seq :initform 0 :accessor journal-seq)
+   (bench :initarg :bench :initform nil :accessor journal-bench)
+   (lock :initform nil :accessor journal-lock)
    (uncertain-p :initform nil :accessor journal-uncertain-p)))
 
 (defun make-file-journal (path &key (capacity 64) initial-state-hash reject-on fail-sync-on
@@ -176,12 +245,13 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                  :fail-partial-write-on fail-partial-write-on
                  :fail-creation-sync-on fail-creation-sync-on))
 
-(defun write-header (stream initial-state-hash capacity stamp path)
+(defun write-header (stream initial-state-hash capacity stamp path bench)
   (let* ((header (list :journal-header
                        :magic "nova-work/journal"
                        :version 1
                        :initial-state (or initial-state-hash "")
                        :capacity capacity
+                       :bench (or bench (bench-identity :path path))
                        :created-at (or stamp "2026-09-14T00:00:00Z")))
          (header-str (canonical-string header)))
     (write-string header-str stream)
@@ -248,7 +318,8 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
              frame)))))))
 
 (defun open-file-journal (path &key (capacity 64) initial-state-hash reject-on fail-sync-on
-                                fail-pre-write-on fail-partial-write-on fail-creation-sync-on stamp)
+                                fail-pre-write-on fail-partial-write-on fail-creation-sync-on stamp
+                                (take-lock t) (bench nil))
   (let* ((journal (make-instance 'file-journal
                                  :path (namestring (merge-pathnames path))
                                  :capacity capacity
@@ -260,6 +331,17 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                                  :fail-creation-sync-on fail-creation-sync-on))
          (full-path (journal-path journal))
          (exists (probe-file full-path)))
+    ;; The OS-held lock is taken before the file is opened or created, so a
+    ;; second holder is refused up front and never reads a journal out from
+    ;; under a live owner (SPEC-WORK.md:162-183).
+    (when take-lock
+      (let ((lock (take-journal-lock full-path)))
+        (if lock
+            (setf (journal-lock journal) lock)
+            (error 'journal-held :path full-path))))
+    ;; A journal written on another bench records that bench in its header; the
+    ;; fencing rules (not the id) decide whether that journal can resume here.
+    (setf (journal-bench journal) (or bench (bench-identity :path full-path)))
     (if exists
         (let ((seq 0))
           ;; 1. Read and validate entire file read-only. Failure leaves file untouched.
@@ -268,7 +350,9 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                    (hplist (rest header)))
               (setf (journal-initial-state-hash journal) (getf hplist :initial-state))
               (when (getf hplist :capacity)
-                (setf (slot-value journal 'capacity) (getf hplist :capacity))))
+                (setf (slot-value journal 'capacity) (getf hplist :capacity)))
+              (when (getf hplist :bench)
+                (setf (journal-bench journal) (getf hplist :bench))))
             (loop
               (let ((frame (read-record-frame in full-path (1+ seq))))
                 (unless frame (return))
@@ -309,7 +393,7 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                 ;; Synchronize parent directory to guarantee the new directory entry is durable
                 (let ((parent-dir (directory-namestring (merge-pathnames full-path))))
                   (sync-directory parent-dir))
-                (write-header out initial-state-hash capacity stamp full-path))
+                (write-header out initial-state-hash capacity stamp full-path (journal-bench journal)))
             (error (c)
               ;; CRITICAL: Close the already-open stream so file descriptor is not leaked,
               ;; while preserving the created file on disk for explicit recovery.
@@ -324,6 +408,9 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
          (sync-stream (journal-stream journal) :path (journal-path journal))
       (close (journal-stream journal))
       (setf (journal-stream journal) nil)))
+  (when (journal-lock journal)
+    (release-journal-lock (journal-lock journal))
+    (setf (journal-lock journal) nil))
   t)
 
 (defmacro with-file-journal ((var path &rest args) &body body)

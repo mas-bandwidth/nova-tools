@@ -53,6 +53,11 @@
                      (journal-uncertain-write-path c)
                      (journal-uncertain-write-reason c)))))
 
+(define-condition journal-held (journal-error)
+  ((path :initarg :path :reader journal-held-path))
+  (:report (lambda (c s)
+             (format s "journal ~A is held by another process" (journal-held-path c)))))
+
 ;;; Instrumentation. `open-count-is-read-not-computed` (SPEC-WORK.md:3229) asks
 ;;; for zero visits, zero parses and zero replays on a resident current-revision
 ;;; |O| query, so each of the three has a counter and every path that does one

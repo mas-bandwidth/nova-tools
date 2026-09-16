@@ -21,12 +21,21 @@
 (in-package #:nova-work)
 
 (defstruct (kernel (:constructor %make-kernel))
-  state journal next-rev)
+  state journal next-rev
+  ;; The single-writer kernel (SPEC-WORK.md SPEC-AHEAD #500): one command thread
+  ;; owns O and C and applies mutations in order; readers never touch the thread.
+  queue q-lock q-cvar thread closed-p)
 
 (defvar *before-apply-hook* nil
   "A test seam. When bound, it is called with the envelope after the journal has
 recorded it and before any of it is applied, so a stop can be injected exactly
 at the ordering boundary SPEC-WORK.md:307 names.")
+
+(defstruct (kernel-command (:conc-name cmd-))
+  "One mutation enqueued for the kernel's single command thread. REPLY carries
+the results back to the caller; BEFORE-APPLY-HOOK is the captured dynamic value
+of *BEFORE-APPLY-HOOK* at submit time, since special bindings are thread-local."
+  request before-apply-hook results error done-p lock cvar)
 
 (defun make-kernel (&key state journal rev-base)
   "REV-BASE defaults to one past the state's own revision, so a kernel opened
@@ -39,9 +48,54 @@ below the state's revision is refused rather than silently reissued."
       (error 'unsupported-input
              :what (format nil "rev-base ~D is at or below the state's own revision ~D"
                            rev-base (state-revision state))))
-    (%make-kernel :state state
-                  :journal (or journal (make-ordering-journal))
-                  :next-rev (or rev-base (1+ (state-revision state))))))
+    (let ((k (%make-kernel :state state
+                           :journal (or journal (make-ordering-journal))
+                           :next-rev (or rev-base (1+ (state-revision state)))
+                           :queue '()
+                           :q-lock (sb-thread:make-mutex)
+                           :q-cvar (sb-thread:make-waitqueue)
+                           :thread nil
+                           :closed-p nil)))
+      (setf (kernel-thread k)
+            (sb-thread:make-thread (lambda () (command-loop k))
+                                   :name "nova-work-kernel"))
+      k)))
+
+(defun command-loop (kernel)
+  "The single command thread. It drains the mailbox, one command at a time, and
+applies each against O and C in the order it arrived. Readers never run here."
+  (unwind-protect
+       (loop
+         (let ((cmd nil))
+           (sb-thread:with-mutex ((kernel-q-lock kernel))
+             (loop while (and (null (kernel-queue kernel))
+                              (not (kernel-closed-p kernel)))
+                   do (sb-thread:condition-wait (kernel-q-cvar kernel)
+                                                (kernel-q-lock kernel)))
+             (when (and (kernel-closed-p kernel) (null (kernel-queue kernel)))
+               (return))
+             (setf cmd (pop (kernel-queue kernel))))
+           (run-command kernel cmd)))
+    ;; On unwind (shutdown), close so no further command is admitted.
+    (sb-thread:with-mutex ((kernel-q-lock kernel))
+      (setf (kernel-closed-p kernel) t)
+      (sb-thread:condition-broadcast (kernel-q-cvar kernel)))))
+
+(defun run-command (kernel cmd)
+  "Run one command on the command thread, then reply to the waiter."
+  (let ((*before-apply-hook* (cmd-before-apply-hook cmd)))
+    (handler-case
+        (multiple-value-bind (okp line code env) (%dispatch kernel (cmd-request cmd))
+          (finish-command cmd (list okp line code env) nil))
+      (error (c)
+        (finish-command cmd nil c)))))
+
+(defun finish-command (cmd results error)
+  (sb-thread:with-mutex ((cmd-lock cmd))
+    (setf (cmd-results cmd) results
+          (cmd-error cmd) error
+          (cmd-done-p cmd) t)
+    (sb-thread:condition-notify (cmd-cvar cmd))))
 
 ;;; What a request may carry, per verb. SPEC-WORK.md:3227
 ;;; `every-field-has-an-owning-verb` wants every field mapped to its owning
@@ -370,9 +424,10 @@ applied and the journal can be appended first."
              word (event-id requester) (work-event-request requester)
              (work-event-node requester) (work-event-rev last-event)))))
 
-(defun submit (kernel request)
-  "Answer (values OK-P LINE EXIT-CODE ENVELOPE). Nothing is applied unless the
-whole envelope is applied."
+(defun %dispatch (kernel request)
+  "Run one mutation request synchronously on the caller's thread and answer
+(values OK-P LINE EXIT-CODE ENVELOPE). This is the per-command body of the
+single command thread; it is never an independent mutation path."
   (handler-case (%submit kernel request)
     (unsupported-input (c)
       (values nil (format nil "~A FAIL node=~A: ~A"
@@ -381,6 +436,27 @@ whole envelope is applied."
                           (or (getf request :node) "-")
                           (unsupported-input-what c))
               2 nil))))
+
+(defun submit (kernel request)
+  "Answer (values OK-P LINE EXIT-CODE ENVELOPE). The request is enqueued onto the
+kernel's one command thread and the caller waits for its result; readers of O and
+C never touch that thread."
+  (let ((cmd (make-kernel-command
+              :request request
+              :before-apply-hook *before-apply-hook*
+              :lock (sb-thread:make-mutex)
+              :cvar (sb-thread:make-waitqueue))))
+    (sb-thread:with-mutex ((kernel-q-lock kernel))
+      (when (kernel-closed-p kernel)
+        (error 'unsupported-input :what "the kernel's command thread is closed"))
+      (setf (kernel-queue kernel) (nconc (kernel-queue kernel) (list cmd)))
+      (sb-thread:condition-notify (kernel-q-cvar kernel)))
+    (sb-thread:with-mutex ((cmd-lock cmd))
+      (loop until (cmd-done-p cmd)
+            do (sb-thread:condition-wait (cmd-cvar cmd) (cmd-lock cmd))))
+    (if (cmd-error cmd)
+        (error (cmd-error cmd))
+        (values-list (cmd-results cmd)))))
 
 (defun %submit (kernel request)
   (let ((verb (getf request :verb)))

@@ -64,16 +64,18 @@
   (token "" :type string)
   (stamp "" :type string)
   (until "" :type string)
+  (bench "" :type string)
   (successor nil))
 
 (defun format-ownership-record (record)
   "Format an OWNERSHIP-RECORD into string."
-  (format nil "owner=~A~%generation=~D~%token=~A~%stamp=~A~%until=~A~@[~%successor=~A~]~%"
+  (format nil "owner=~A~%generation=~D~%token=~A~%stamp=~A~%until=~A~%bench=~A~@[~%successor=~A~]~%"
           (owner-owner record)
           (owner-generation record)
           (owner-token record)
           (owner-stamp record)
           (owner-until record)
+          (owner-bench record)
           (owner-successor record)))
 
 (defun parse-ownership-record (str)
@@ -96,12 +98,20 @@
                        ((string= key "token") (setf (owner-token rec) val))
                        ((string= key "stamp") (setf (owner-stamp rec) val))
                        ((string= key "until") (setf (owner-until rec) val))
+                       ((string= key "bench") (setf (owner-bench rec) val))
                        ((string= key "successor") (setf (owner-successor rec) val))))))))
     rec))
 
-(defun evaluate-ownership-claim (current as-owner &key now (every "30s") (skew "5s") token journal-token)
+(defun evaluate-ownership-claim (current as-owner &key now (every "30s") (skew "5s")
+                                                     token journal-token
+                                                     (my-bench "") (lock-held t))
   "Evaluate an ownership claim by AS-OWNER against CURRENT ownership record.
-Returns (values action record line exit-code), where action is :take, :resume, or :fenced."
+Returns (values action record line exit-code), where action is :take, :resume, or :fenced.
+The resume predicate (SPEC-WORK.md:198-204) is: the record names me, my journal
+holds its token, my bench wrote that journal (MY-BENCH equals the record's bench),
+and I hold the journal's lock (LOCK-HELD). A copied journal -- same owner and token
+on a different bench -- or a journal whose lock is not held is refused rather than
+resumed."
   (let* ((now-str (or now (format-rfc3339 (get-universal-time))))
          (now-ut (parse-rfc3339 now-str))
          (every-sec (parse-duration every))
@@ -117,7 +127,8 @@ Returns (values action record line exit-code), where action is :take, :resume, o
                    :generation 1
                    :token tok
                    :stamp now-str
-                   :until until-str)))
+                   :until until-str
+                   :bench my-bench)))
          (values :take rec
                  (format nil "SESSION OK owner=~A generation=1 until=~A" as-owner until-str)
                  0)))
@@ -131,26 +142,48 @@ Returns (values action record line exit-code), where action is :take, :resume, o
                     :generation next-gen
                     :token tok
                     :stamp now-str
-                    :until until-str)))
+                    :until until-str
+                    :bench my-bench)))
          (values :take rec
                  (format nil "SESSION OK owner=~A generation=~D until=~A" as-owner next-gen until-str)
                  0)))
 
-      ;; 3. Resume: same owner, matching token in journal
+      ;; 3. Resume: same owner, matching token in journal. The full predicate
+      ;;    also demands the bench match and the journal's lock be held.
       ((and (string= (owner-owner current) as-owner)
             (or (and journal-token (string= (owner-token current) journal-token))
                 (and (not journal-token) token (string= (owner-token current) token))))
-       (let* ((gen (owner-generation current))
-              (rec-tok (owner-token current))
-              (rec (make-ownership-record
-                    :owner as-owner
-                    :generation gen
-                    :token rec-tok
-                    :stamp now-str
-                    :until until-str)))
-         (values :resume rec
-                 (format nil "SESSION OK owner=~A generation=~D until=~A" as-owner gen until-str)
-                 0)))
+       (cond
+         ;; 3a. A copied journal: the bench that wrote this record is not mine.
+         ((and (plusp (length (owner-bench current)))
+               (not (string= (owner-bench current) my-bench)))
+          (values :fenced current
+                  (format nil "SESSION FAIL owner=~A generation=~D bench=~A: copied journal, not resumed"
+                          (owner-owner current)
+                          (owner-generation current)
+                          (owner-bench current))
+                  1))
+         ;; 3b. The journal's lock is held by someone else (or not at all).
+         ((not lock-held)
+          (values :fenced current
+                  (format nil "SESSION FAIL owner=~A generation=~D: journal lock not held"
+                          (owner-owner current)
+                          (owner-generation current))
+                  1))
+         ;; 3c. The whole predicate holds: resume, keeping generation and token.
+         (t
+          (let* ((gen (owner-generation current))
+                 (rec-tok (owner-token current))
+                 (rec (make-ownership-record
+                       :owner as-owner
+                       :generation gen
+                       :token rec-tok
+                       :stamp now-str
+                       :until until-str
+                       :bench (owner-bench current))))
+            (values :resume rec
+                    (format nil "SESSION OK owner=~A generation=~D until=~A" as-owner gen until-str)
+                    0)))))
 
       ;; 4. Expired: until + skew < now
       ((< (+ (parse-rfc3339 (owner-until current)) skew-sec) now-ut)
@@ -160,7 +193,8 @@ Returns (values action record line exit-code), where action is :take, :resume, o
                     :generation next-gen
                     :token tok
                     :stamp now-str
-                    :until until-str)))
+                    :until until-str
+                    :bench my-bench)))
          (values :take rec
                  (format nil "SESSION OK owner=~A generation=~D until=~A" as-owner next-gen until-str)
                  0)))
@@ -172,7 +206,7 @@ Returns (values action record line exit-code), where action is :take, :resume, o
                        (owner-owner current)
                        (owner-generation current)
                        (owner-until current))
-               1)))))
+                1)))))
 
 ;;; ----------------------------------------------------------------------
 ;;; Session struct and operations
@@ -293,7 +327,8 @@ Checks completion before until, tip == base, and OWNER generation/token."
 
 (defun session-start (&key path (owner "emma") (state-seed nil) (journal nil)
                            (base "tip") (every "30s") (skew "5s") (token nil)
-                           (journal-token nil) (owner-record nil) (now nil))
+                           (journal-token nil) (owner-record nil) (now nil)
+                           (my-bench "") (lock-held t))
   "Start or resume a session."
   (multiple-value-bind (action record line exit-code)
       (evaluate-ownership-claim owner-record owner
@@ -301,7 +336,9 @@ Checks completion before until, tip == base, and OWNER generation/token."
                                :every every
                                :skew skew
                                :token token
-                               :journal-token journal-token)
+                               :journal-token journal-token
+                               :my-bench my-bench
+                               :lock-held lock-held)
     (if (eq action :fenced)
         (values nil line exit-code)
         (let* ((k (make-kernel :state (if (typep state-seed 'wstate)
