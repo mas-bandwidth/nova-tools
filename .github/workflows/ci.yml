@@ -55,6 +55,17 @@ on:
 permissions:
   contents: read
 
+env:
+  # THE integration branches, named ONCE (rule B of #828). dev is the
+  # integration branch every merge lands on, and main is what dev promotes
+  # into; every rule below that needs to know which branches those are reads
+  # this list through contains(fromJSON(env.INTEGRATION_BRANCHES), ...), rather
+  # than carrying its own refs/heads/ literal. A branch
+  # added to this stream is one edit here and one in the push filter, which
+  # cannot evaluate an expression and mirrors the list verbatim; both places
+  # are held in agreement by internal/ci's TestIntegrationBranchesAreOneList.
+  INTEGRATION_BRANCHES: '["main", "dev"]'
+
 concurrency:
   # A pending run is evicted by a newly queued run in the same group before it
   # ever starts. So a push to main keys on the commit sha (no two main runs
@@ -63,12 +74,12 @@ concurrency:
   # dev is an integration branch with the same steady merge stream (2026-09-16
   # 16:35Z: dev's rerun was cancelled by the next merge and the mechanical gate
   # read the cancellation as red), so dev keys on the sha like main does.
-  group: ci-${{ github.event.pull_request.number || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.sha) || github.ref }}-${{ github.event_name }}
+  group: ci-${{ github.event.pull_request.number || (contains(fromJSON(env.INTEGRATION_BRANCHES), github.ref_name) && github.sha) || github.ref }}-${{ github.event_name }}
   # A push to main never cancels main's running verdict: with a steady merge
   # stream every main run was cancelled by the next merge (2026-09-16 04:41Z and
   # 04:53Z), so main had no completed run for the mechanical red gate to read.
   # Branch runs still cancel each other (only the newest head matters there).
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+  cancel-in-progress: ${{ !contains(fromJSON(env.INTEGRATION_BRANCHES), github.ref_name) }}
 
 jobs:
   lint:
@@ -350,16 +361,20 @@ jobs:
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
 
-      - name: take a quarter of the machine, not all of it
-        # FOUR runners share each of these machines, and `go test` defaults
-        # GOMAXPROCS to every core it can see -- so four concurrent legs ask for
-        # four times the machine and spend the difference context-switching.
-        # Measured: the same studio legs ran 208 and 251 s in run 35021822106
-        # and 386 and 379 s in run 35023183602, the second pair cancelled at the
-        # ceiling, on identical work. A leg takes its FAIR SHARE instead: cores
-        # divided by the four runners, never below 1. `go test -p` follows
-        # GOMAXPROCS, so this bounds both the package-level and the in-package
-        # parallelism with one number.
+      - name: take a fair share of the machine, not all of it
+        # NOVA_RUNNERS_PER_MACHINE runners share each of these machines, and
+        # `go test` defaults GOMAXPROCS to every core it can see -- so that many
+        # concurrent legs ask for that many times the machine and spend the
+        # difference context-switching. Measured: the same studio legs ran 208
+        # and 251 s in run 35021822106 and 386 and 379 s in run 35023183602,
+        # the second pair cancelled at the ceiling, on identical work. A leg
+        # takes its FAIR SHARE instead: cores divided by the runners per
+        # machine, never below 1. `go test -p` follows GOMAXPROCS, so this
+        # bounds both the package-level and the in-package parallelism with one
+        # number. The runner count is read from the runner's environment (the
+        # machines set it) rather than written again here as a literal, which is
+        # rule B of #828; the default of 8 keeps a leg sized right on a machine
+        # that never sets the variable, and the log names whichever was used.
         shell: bash
         run: |
           set -euo pipefail
@@ -368,9 +383,10 @@ jobs:
           else
             cores=$(nproc)
           fi
-          share=$(( cores / 4 ))
+          runners="${NOVA_RUNNERS_PER_MACHINE:-8}"
+          share=$(( cores / runners ))
           [ "$share" -ge 1 ] || share=1
-          echo "$cores cores on this machine, 4 runners, this leg takes $share"
+          echo "$cores cores on this machine, $runners runners per machine, this leg takes $share"
           echo "GOMAXPROCS=$share" >> "$GITHUB_ENV"
 
       # No actions/cache here. These runners are PERSISTENT: ~/.cache/go-build
