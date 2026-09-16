@@ -2234,6 +2234,8 @@ nova-work responsible    --session <path> <write flags> --node <id> --to <name> 
 nova-work take           --session <path> <write flags> --node <id> --by <duration|stamp> --default <release|extend-once|escalate:<name>>
 nova-work heartbeat      --session <path> <write flags> --node <id> --evidence <pointer>
 nova-work release        --session <path> <write flags> --node <id> [--handed <name> --by <duration|stamp> --default <release|extend-once|escalate:<name>>]
+nova-work heartbeat      --session <path> <write flags> --allocation <id> --generation <n>   (allocation heartbeat: --allocation names the allocation id returned by take, --generation is the machine generation)
+nova-work release        --session <path> <write flags> --allocation <id> --generation <n> [--handed <name>]   (allocation release: --allocation names exactly one allocation, --generation is the machine generation; frees that allocation's slot only)
 nova-work attest         --session <path> <write flags> --node <id> --criterion <id> --result <pointer> --against <sha>
 nova-work attempt        --session <path> <write flags> --node <id> --model <name> --bench <name> --result <pointer> [--usage <pointer>]
 nova-work evidence       --session <path> <write flags> --node <id> --pointer <pointer> --criterion <id> --against <sha> [--attempt <id>]
@@ -3482,34 +3484,52 @@ under #500 like every rule here.
    called configuration — that references the machine's CONFIG identity and revision rather than
    copying a definition into every record, exactly as ACTIVE references CONFIG's stable identity
    and revision above. One allocation binds **machine** (`<machine-id>`), **slot** (one unit of
-   the machine's declared `:concurrent` or `:cores`) and an **allocation generation** (the token
-   and stamp the take drew) to a **batch** (the `--request` id of the envelope), a **node** (the
+   the machine's declared `:concurrent`) and an **allocation generation** (a token the allocator
+   drew at creation) to a **batch** (the `--request` id of the envelope), a **node** (the
    task node the work belongs to) and an **(offer, attempt)** — the assignment pair the offer
    section pins and the reservation key the offer already writes, so the allocation and the
-   reservation are one fact. **Core affinity is a separate resource constraint**: the core-pin rule
-   is a declared CONFIG `:limits` constraint on which slot may serve which workload, never part of
-   the allocation's identity and never changed by a take. Replay:
-   `allocation-binds-machine-slot-generation`.
+   reservation are one fact. **Admission happens before preparation**: the physical slot is
+   secured and the ACTIVE allocation is written before any clone, scp or preparation work begins,
+   and the pre-existing friend/profile reservation binds in the same step without a second debit.
+   **Both capacity constraints validate atomically** — the friend's declared reservation capacity
+   and the machine's declared slot capacity are checked in one predicate, and a single
+   binding-and-accounting transition converts the offer's reservation to committed capacity while
+   writing the ACTIVE allocation, never two debits. **Capacity is retained through verified
+   release**: the slot is not freed until a release confirms termination — a verified stop
+   observation, a `not-started` rejection, or machine-side fencing. **Core affinity is a separate
+   resource constraint**: the core-pin rule is a declared CONFIG `:limits` constraint on which
+   slot may serve which workload, never part of the allocation's identity and never changed by a
+   take. Replay: `allocation-binds-machine-slot-generation`.
 
 3. SPEC-AHEAD: #500
    **`take` is atomic and idempotent under a stable request identity, and returns all requested
-   capacity or a bounded refusal.** `nova-work take --session <path> <write flags> --machine <id>
-   --node <id> --slots <n> --offer <offer-id> --attempt <attempt-id> --generation <n> --request-ref
-   <opaque-id> --batch <id>` writes one ACTIVE allocation in one envelope under the one writer:
-   all-or-none, one journal record, one `OK` line, one request id — a retry of that id is answered
-   with the original line and applies nothing, by the two-part dedup test, and a changed payload
-   under the id is refused `reused with a different payload`. **It grants every requested slot or
-   none**: any slot it cannot grant — a held slot, a declared `:limits` or `:concurrent` passed,
-   an `:excludes` kind, a stale machine generation — is a bounded refusal, exit 1,
-   `ALLOC FAIL machine=<id> slots=<n|-> holder=<name|->: <reason>`, naming the machine and the
-   holder, **never a partial grant**. **`heartbeat` and `release` validate the allocation
-   generation** exactly as a lease `release` validates its holder: a heartbeat or a release
-   carrying a stale allocation generation is refused, exit 1,
-   `ALLOC FAIL machine=<id> generation=<n>: stale token`, naming the current holder and age;
-   `release` is the holder's act, or a `--handed` act from that holder, and never a third name
-   reaching in. **`list --machine <id>` shows the holders and the ages**: one `ALLOC ROW` per live
-   slot with its holder, node, batch, (offer, attempt) and `age=<duration>`. Replay:
-   `allocation-take-is-atomic-and-idempotent`.
+   capacity or a bounded refusal.** Two generations are distinct: the **machine generation** is the
+   `:generation` field of the machine's CONFIG member, bumped on every meaningful configuration
+   change; the **allocation generation** is a token the allocator drew when creating the allocation,
+   recorded in the ACTIVE allocation's own `:allocation-generation` field. `--generation` takes the
+   machine generation and is compared to the machine's current CONFIG generation. Each allocation
+   carries its own unique **allocation id** (`<allocation-id>`), returned as `id=` on the `OK` line
+   and used by `heartbeat` and `release` to name exactly one allocation.
+   `nova-work take --session <path> <write flags> --machine <id> --node <id> --slots <n> --offer
+   <offer-id> --attempt <attempt-id> --generation <n> --request-ref <opaque-id> --batch <id>`
+   writes one ACTIVE allocation in one envelope under the one writer: all-or-none, one journal
+   record, one `OK` line, one request id — a retry of that id is answered with the original line
+   and applies nothing, by the two-part dedup test, and a changed payload under the id is refused
+   `reused with a different payload`. **It grants every requested slot or none**: any slot it
+   cannot grant — a held slot, a declared `:limits` or `:concurrent` passed, an `:excludes` kind,
+   a stale machine generation — is a bounded refusal, exit 1, `ALLOC FAIL machine=<id> slots=<n|->
+   holder=<name|->: <reason>`, naming the machine and the holder, **never a partial grant**.
+   `nova-work heartbeat --session <path> <write flags> --allocation <id> --generation <n>` names
+   exactly one allocation by its allocation id and supplies the machine generation; it validates
+   both the allocation generation and the machine generation against the current ACTIVE and CONFIG
+   records, and refuses `ALLOC FAIL machine=<id> allocation=<id>: stale token` if either does not
+   match. `nova-work release --session <path> <write flags> --allocation <id> --generation <n>`
+   names exactly one allocation by its allocation id, validates both generations the same way, and
+   frees exactly that allocation's slot, printing `ALLOC RELEASE OK` and applying no change to any
+   other allocation on the same machine; `release` is the holder's act, or a `--handed` act from
+   that holder, and never a third name reaching in. **`list --machine <id>` shows the holders and
+   the ages**: one `ALLOC ROW` per live allocation with its allocation id, holder, node, batch,
+   (offer, attempt) and `age=<duration>`. Replay: `allocation-take-is-atomic-and-idempotent`.
 
 4. SPEC-AHEAD: #500
    **Expiry marks an allocation suspect and blocks renewal or start with the stale token; reuse
@@ -3542,18 +3562,29 @@ under #500 like every rule here.
 
 6. SPEC-AHEAD: #500
    **One authoritative allocator per physical machine, shared by every session and controller;
-   aliases share identity; nested quotas conserve capacity.** Allocations are admitted by **one
-   authoritative allocator per physical machine**, under the one writer and the fencing rules like
-   every other mutation, so **every session and every controller on the bench shares that allocator
-   and reads one allocation set**; a second allocator for one machine is refused like a second live
-   writer, exit 1, `ALLOC FAIL machine=<id>: allocator held`. **Machine aliases share identity**:
-   one physical host reached through two aliases is one record and one unit, by the fleet section's
-   own rule, so an allocation taken through one alias reads as the same allocation under the other
-   and is never double-counted. **Nested quotas conserve capacity**: an allocation nested under
-   another allocation's scope draws from the same declared capacity and is never an additional
-   grant — nested delegated executions keep their parent lineage without counting one slot twice,
-   by the nested-execution rule of *Friends, CONFIG and ACTIVE*, and a nested allocation lists once
-   per slot. Replay: `one-allocator-per-machine-aliases-share-nested-conserve`.
+   aliases share identity; nested quotas conserve capacity; capacity reduction preserves active
+   work.** Allocations are admitted by **one authoritative allocator per physical machine**, under
+   the one writer and the fencing rules like every other mutation, so **every session and every
+   controller on the bench shares that allocator and reads one allocation set**; a second allocator
+   for one machine is refused like a second live writer, exit 1, `ALLOC FAIL machine=<id>:
+   allocator held`. **Machine aliases share identity**: one physical host reached through two
+   aliases is one record and one unit, by the fleet section's own rule, so an allocation taken
+   through one alias reads as the same allocation under the other and is never double-counted.
+   **Nested quotas conserve capacity**: an allocation nested under another allocation's scope draws
+   from the same declared capacity and is never an additional grant — nested delegated executions
+   keep their parent lineage without counting one slot twice, by the nested-execution rule of
+   *Friends, CONFIG and ACTIVE*, and a nested allocation lists once per slot. **Slots come from the
+   declared concurrency, not from cores: cores and affinity are a separate constraint.** For a
+   machine with `:cores 16` and `:concurrent 2`, two allocations each occupying one slot fill the
+   concurrency and a third `take --slots 1` is refused `ALLOC FAIL machine=<id> slots=1 holder=<n>:
+   capacity` at exit 1, even though fourteen cores sit idle; core-affinity limits are validated
+   independently after the slot check. **On capacity reduction** (a declared `:concurrent` or
+   `:cores` lowered by a machine edit): **preserve active allocations** — every live allocation is
+   retained and never silently cancelled; **drain and refuse new admission** — no new `take` is
+   admitted once the reduced capacity is declared, and pending offers for that machine are held;
+   **do not silently cancel work** — running preparations and live attempts continue until their
+   own verified release or fencing, and no reconciliation frees a slot without a confirmed
+   termination. Replay: `one-allocator-per-machine-aliases-share-nested-conserve`.
 
 ## Assignment and execution control *(Stella's draft, nova-tools #294 at `4fddfcb2`, folded; Root and Terra's corrections taken as she took them; the spellings are this file's)*
 
@@ -5026,6 +5057,16 @@ NODE NOTE already-closed node=<id> disposition=<d> settled=<stamp>   (a same-id 
 <MUTATION> FAIL request=<id> key=<kind> bytes=<n> past <--page-bytes|--max-bytes>=<n>: indivisible   (exit 2: one key with its one locator no page could hold, or one journal record the reader's bounds could not read back, refused at admission, nothing journaled; a growing record splits instead)
 <MUTATION> FAIL request=<id> journal=<path>: journal uncertain   (an append or sync that failed: nothing admitted until the tail is read and diagnosed, and the tail is never truncated)
 <MUTATION> FAIL node=<id> findings=<n> was=<n>: no repair   (--repair only)
+ALLOC OK id=<event-id> request=<id> machine=<id> allocation=<id> slot=<n> node=<id> batch=<id> offer=<offer-id> attempt=<attempt-id> machine-generation=<n> allocation-generation=<n> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>
+ALLOC FAIL machine=<id> slots=<n|-> holder=<name|->: <reason>   (capacity, excludes, stale machine generation: exit 1, nothing written)
+ALLOC FAIL machine=<id> allocation=<id>: stale token   (allocation generation or machine generation mismatch: exit 1)
+ALLOC FAIL machine=<id>: suspect since=<stamp>   (allocation suspect, renewal and take refused: exit 1)
+ALLOC FAIL machine=<id>: not fenced   (no verified termination: exit 1)
+ALLOC FAIL machine=<id>: allocator held   (second allocator for one machine: exit 1)
+ALLOC HEARTBEAT OK allocation=<id> machine=<id> machine-generation=<n> allocation-generation=<n> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>
+ALLOC RELEASE OK allocation=<id> machine=<id> slot=<n> freed=<true> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>
+ALLOC ROW allocation=<id> machine=<id> slot=<n> holder=<name> node=<id> batch=<id> offer=<offer-id> attempt=<attempt-id> age=<duration>
+PROBE OK machine=<id> slot=<n|-> fact=<observed|absent> at=<stamp> source=<pointer>
 LEASE FAIL node=<id> holder=<name> since=<stamp> deadline=<stamp> live=<n>: held
 <TOKEN> NOTE <caveat>
 <TOKEN> MORE kind=<rule|row> shown=<n> total=<t> <remedy>
@@ -5766,21 +5807,28 @@ being the amendment's additions to *Output grammar*:**
 - **`allocation-binds-machine-slot-generation`** — `nova-work take --session <path> --machine m-a1
   --node schema/cpp/refuse-newer --slots 1 --offer <offer-id> --attempt <attempt-id> --generation
   <n> --request-ref <opaque-id> --batch <request-id>` prints `ALLOC OK id=<event-id> request=<id>
-  machine=m-a1 slot=<n> node=schema/cpp/refuse-newer batch=<request-id> offer=<offer-id>
-  attempt=<attempt-id> generation=<n> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>`; the
-  allocation is ACTIVE data referencing the machine's CONFIG identity and revision, the (offer,
-  attempt) is the offer section's reservation key, and the core-pin rule stays a declared `:limits`
-  constraint and is not in the allocation.
+  machine=m-a1 allocation=<allocation-id> slot=1 node=schema/cpp/refuse-newer batch=<request-id>
+  offer=<offer-id> attempt=<attempt-id> machine-generation=<n> allocation-generation=<g> rev=<n>
+  pushed=<rev|-> changed=<n> emitted=<bytes>`; the allocation is ACTIVE data referencing the
+  machine's CONFIG identity and revision, the (offer, attempt) is the offer section's reservation
+  key, admission happens before preparation and both capacity constraints validate atomically in
+  one binding, and the core-pin rule stays a declared `:limits` constraint and is not in the
+  allocation.
 - **`allocation-take-is-atomic-and-idempotent`** — `nova-work take --session <path> --machine m-a1
   --node schema/cpp/refuse-newer --slots 2 --offer <offer-id> --attempt <attempt-id> --generation
-  <n> --request-ref <opaque-id> --batch <request-id>` prints `ALLOC OK … machine=m-a1 slots=2 …`;
-  the retry under the same request id prints the original `ALLOC OK` line and applies nothing, a
-  changed payload under the id is refused `reused with a different payload`, a take for more than
-  the declared `:concurrent` admits is refused whole `ALLOC FAIL machine=m-a1 slots=2
-  holder=<name>: capacity` at exit 1 with **no partial grant**, a `heartbeat` with a stale
-  allocation generation prints `ALLOC FAIL machine=m-a1 generation=<n>: stale token`, and
-  `list --machine m-a1` prints one `ALLOC ROW machine=m-a1 slot=<n> holder=<name> node=<id>
-  batch=<id> offer=<offer-id> attempt=<attempt-id> age=<duration>` per live slot.
+  <n> --request-ref <opaque-id> --batch <request-id>` prints `ALLOC OK … machine=m-a1 allocation=<id>
+  slots=2 …`; the retry under the same request id prints the original `ALLOC OK` line and applies
+  nothing, a changed payload under the id is refused `reused with a different payload`, a take for
+  more than the declared `:concurrent` admits is refused whole `ALLOC FAIL machine=m-a1 slots=2
+  holder=<name>: capacity` at exit 1 with **no partial grant**, `nova-work heartbeat --session <path>
+  --allocation <allocation-id> --generation <n>` prints `ALLOC HEARTBEAT OK allocation=<id>
+  machine=m-a1 machine-generation=<n> allocation-generation=<g> …`, a heartbeat with a stale
+  allocation generation or stale machine generation prints `ALLOC FAIL machine=m-a1
+  allocation=<allocation-id>: stale token`, `nova-work release --session <path> --allocation
+  <allocation-id> --generation <n>` prints `ALLOC RELEASE OK allocation=<id> machine=m-a1 slot=<n>
+  freed=true …` and frees exactly that allocation's slot, and `list --machine m-a1` prints one
+  `ALLOC ROW allocation=<allocation-id> machine=m-a1 slot=<n> holder=<name> node=<id> batch=<id>
+  offer=<offer-id> attempt=<attempt-id> age=<duration>` per live allocation.
 - **`expiry-marks-suspect-reuse-needs-fencing`** — an allocation past its deadline reads suspect: a
   renewal and a `take` with the stale token are refused `ALLOC FAIL machine=m-a1: suspect
   since=<stamp>` at exit 1, the uncertain ACTIVE capacity retained and never cleared by the expiry;
@@ -5797,7 +5845,31 @@ being the amendment's additions to *Output grammar*:**
   machine is refused `ALLOC FAIL machine=m-a1: allocator held` at exit 1; an allocation taken
   through one alias of a host reads as the same allocation under the other alias and counts once;
   and an allocation nested under another allocation's scope draws from the same declared capacity,
-  never an additional slot, `ALLOC ROW` listing each live slot once.
+  never an additional slot, `ALLOC ROW` listing each live allocation once.
+- **`release-one-allocation-spares-the-other`** — machine m-a1 with `:concurrent 2` holds two
+  allocations `alloc-a` (slot 1, node N1) and `alloc-b` (slot 2, node N2); `nova-work release
+  --session <path> --allocation alloc-a --generation <n>` prints `ALLOC RELEASE OK allocation=alloc-a
+  machine=m-a1 slot=1 freed=true …` and `list --machine m-a1` then shows exactly one `ALLOC ROW`
+  for `alloc-b` with `slot=2`, proving `alloc-b` is untouched; the released slot 1 is free for a
+  new `take --slots 1` while `alloc-b` continues.
+- **`stale-allocation-id-refused-by-name`** — after `alloc-a` is released, a heartbeat or release
+  using `--allocation alloc-a --generation <n>` is refused `ALLOC FAIL machine=m-a1
+  allocation=alloc-a: stale token` at exit 1, naming the allocation id that no longer matches any
+  live allocation; a take using the released allocation's generation against a changed machine
+  configuration is refused `ALLOC FAIL machine=m-a1 slots=1 holder=<n>: capacity` at exit 1 by the
+  stale machine generation check.
+- **`preparation-interrupted-before-launch`** — `take` allocates slot 1 on m-a1 to node N1,
+  allocation `alloc-c`; preparation (clone/scp) is interrupted before the model launches; a second
+  session's `take --machine m-a1 --slots 1` for node N2 is refused `ALLOC FAIL machine=m-a1
+  slots=1 holder=<N1>: capacity` because `alloc-c` still holds the slot; only after reconciliation
+  (a verified stop observation, a `not-started` rejection, or machine-side fencing) frees
+  `alloc-c` does the slot become available, and no second session reuses the capacity until that
+  reconciliation happens.
+- **`concurrent-slots-refuse-third-job`** — machine m-a1 with `:cores 16` and `:concurrent 2`
+  holds two allocations each consuming one slot; a third `take --machine m-a1 --slots 1 --node N3
+  --generation <n>` is refused `ALLOC FAIL machine=m-a1 slots=1 holder=<name>: capacity` at exit 1
+  even though fourteen cores sit idle, because slots are bounded by declared concurrency and cores
+  are a separate constraint validated independently.
 
 ## Preservation and recovery acceptance *(Stella, `docs/SPEC-WORK-VALIDATION.md` at `81c2885`)*
 
