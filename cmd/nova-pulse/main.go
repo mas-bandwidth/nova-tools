@@ -20,6 +20,7 @@ const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
+nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
@@ -27,6 +28,8 @@ nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeo
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--bus <clone>] [--as <name>] [--max <n>]
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>]
+nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
+nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -88,6 +91,28 @@ status --oneline is the whole day in one line under 400 bytes: width per bench,
 pool, STOP, the day's reds, merges, cards done and failed, spend, and the pit-stop
 note when <queue>/PITSTOP exists. A fresh window needs that line and the policy,
 never the transcript.
+cut --kind is the typed cutter and the only numberer: the card number comes from
+the queue state file's next_card under the queue's lock, so two cutters never
+share one and there is no --number flag to pass. cut without --kind is unchanged.
+
+example:
+  nova-pulse cut --kind read --repo mas-bandwidth/nova-tools --pr 812 --head 5f544272a1b0 --out ./queue/pending --queue ./queue
+
+sweep walks the approvals ledger: every read verdict is a row in <queue>/ledger.tsv,
+and each sweep enqueues the approved, green, undrafted, unheld ones exactly once,
+marks a moved head stale, and closes a merged or closed PR. --source replays it
+from a file of PR states instead of gh, and enqueues into <queue>/enqueued.tsv.
+
+example:
+  nova-pulse sweep --repo mas-bandwidth/nova-tools --queue ./queue
+
+reap collects what the benches leak: processes under a swarm root older than the
+deadline, slot locks whose pid is dead, launched cards whose job directory is gone
+(requeued once, then failed) and swarm test directories older than 30 minutes.
+--dry-run changes nothing and prints the same counts.
+
+example:
+  nova-pulse reap --roots ./swarm-root,./swarm-root-space --queue ./queue --deadline 1800 --dry-run
 `
 
 // refuse is what an unusable invocation costs: one line naming what was wrong and the door
@@ -116,6 +141,9 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case "launch":
 		return cmdLaunch(rest, stdout, stderr, now)
 	case "cut":
+		if hasKindFlag(rest) {
+			return cmdCutKind(rest, stdout, stderr)
+		}
 		return cmdCut(rest, stdout, stderr)
 	case "harvest":
 		return cmdHarvest(rest, stdout, stderr)
@@ -129,6 +157,10 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdRun(rest, stdout, stderr, now)
 	case "triage":
 		return cmdTriage(rest, stdout, stderr)
+	case "sweep":
+		return cmdSweep(rest, stdout, stderr)
+	case "reap":
+		return cmdReap(rest, stdout, stderr)
 	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
