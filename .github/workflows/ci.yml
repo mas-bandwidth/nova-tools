@@ -446,7 +446,7 @@ jobs:
         # and an Intel Mac at load 2; the cards make those packages fast. Until they land the budget is 300 s here so
         # a mechanical red does not hold dev, and every CI-SLOW line is still printed for the coordinator. This covers
         # the Intel Mac benches too (about 3x slower per core than the Studio) that cards 9352 to 9354 make fast.
-        run: go test -json -count=1 ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json"; go run ./cmd/nova-ci slowtests --budget 300 < "$RUNNER_TEMP/test.json"
+        run: go test -json -count=1 -timeout 5m ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json"; go run ./cmd/nova-ci slowtests --budget 300 < "$RUNNER_TEMP/test.json"
 
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest, macos-latest,
@@ -841,7 +841,7 @@ jobs:
           go version
 
       - name: friend sequences
-        run: go test -count=1 -run TestFriendSequence ./cmd/...
+        run: go test -count=1 -timeout 1m -run TestFriendSequence ./cmd/...
 
   lisp-changes:
     # THE PATH FILTER for the lisp tier, and it exists because the lisp job must
