@@ -149,6 +149,14 @@ func FsyncDirectory(dirPath string) error {
 			return err
 		}
 	}
+	if runtime.GOOS == "windows" {
+		// A directory handle cannot be flushed on Windows (Sync on it fails with
+		// "Incorrect function"); NTFS carries the directory metadata with the file's
+		// own FlushFileBuffers, which FsyncFile already does. The hook above still
+		// records the intent, so the durability trace is the same on every OS.
+		// Main went red on the hosted windows leg here on 2026-09-16.
+		return nil
+	}
 	d, err := os.Open(dirPath)
 	if err != nil {
 		return err
