@@ -111,7 +111,10 @@ with a pretend plaintext key path. Profile workers still carry no friend/board
 identity.
 
 `store`, `age_key`, `sops`, `gate`, `launcher`, `worker.harness` and
-`worker.worker_dir` are explicit absolute paths; `read_roots` keeps its existing
+`worker.worker_dir` are explicit absolute paths -- rooted in either pathname
+grammar (a leading `/` or a volume), so one profile file loads on every client
+platform and a harness path typed POSIX-style is not refused on windows;
+`read_roots` keeps its existing
 absolute-path rules. `seat` uses nova-secrets' existing seat-name validator.
 `env_var` names one variable, never `all`, a comma-separated list, or a runtime
 variable such as PATH/HOME. Its syntax and reserved-name rules must agree with

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -359,7 +360,13 @@ func validateWorker(base string, n *profileNode) (WorkerProfile, *ProfileRefusal
 	if w.Harness, ref = requiredString(base, n.vals["harness"], "worker.harness"); ref != nil {
 		return WorkerProfile{}, ref
 	}
-	if !filepath.IsAbs(w.Harness) {
+	// `worker.harness` is a member of a portable profile record, so "absolute" is
+	// platform-independent here: rooted in either pathname grammar. `filepath.IsAbs`
+	// alone is false for a leading-`/` path on windows (no volume), which stopped
+	// the walk at the harness field on the hosted windows leg (2026-09-16) before it
+	// ever reached `worker.execution`. The both-grammars predicate is the one
+	// internal/check already uses (attest.go, corpus.go).
+	if !filepath.IsAbs(w.Harness) && !strings.HasPrefix(w.Harness, "/") {
 		return WorkerProfile{}, refuseProfile(base+".worker.harness", "a profile harness path must be absolute")
 	}
 	if w.HarnessArgs, ref = stringArray(base, n.vals["harness_args"], "worker.harness_args", true); ref != nil {

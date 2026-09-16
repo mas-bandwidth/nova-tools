@@ -92,7 +92,6 @@ func TestProfileRefusesUnknownField(t *testing.T) {
 // TestProfileRefusesMissingLimit: a worker with no `deadline` is the missing-limits refusal,
 // and it names the exact field a person must go and fill in.
 func TestProfileRefusesMissingLimit(t *testing.T) {
-	windowsIsNotABench(t)
 	mustRefuse(t, profileJSON("", ""), "worker.deadline")
 }
 
@@ -100,7 +99,6 @@ func TestProfileRefusesMissingLimit(t *testing.T) {
 // profile record in canonical field order, so the same record (even reordered and
 // re-spaced) hashes the same, and changing one field changes the hash.
 func TestProfilePreimageIsStable(t *testing.T) {
-	windowsIsNotABench(t)
 	valid := profileJSON("5m", "")
 
 	first, err := LoadProfile(writeProfile(t, valid))
