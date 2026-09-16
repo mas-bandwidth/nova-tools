@@ -7,7 +7,7 @@ is available today.
 
 - **abstain** — a card that produced no accepted answer, scored on the packet as
   `<label>: ABSTAIN reason=<token>`. The token names why: `line1-mismatch`,
-  `no-result`, `rc=<n>`, `idle=<s>`, `deadline`, `card-abstain`,
+  `no-result`, `rc=<n>`, `idle=<s>`, `deadline`, `result-after-deadline`, `card-abstain`,
   `bench-unreachable`, or a provider's `input-limit`. ([SPEC-SWARM.md, gather](SPEC-SWARM.md#gather-one-bounded-packet-mechanically))
 - **ADMIT** — the printed token of the pulse's per-card admission gate: `ADMIT
   REFUSED card=<label> gate=<spend|attempts|scope> <value>`. It is an event line,

@@ -45,9 +45,10 @@ type policy struct {
 	Sources     []string
 	KnownFlakes []string
 	MaxAttempts int
+	Lane        string
 }
 
-var policyKeys = []string{"wait-timeout", "floor", "scope-regex", "sources", "known-flakes", "max-attempts"}
+var policyKeys = []string{"wait-timeout", "floor", "scope-regex", "sources", "known-flakes", "max-attempts", "lane"}
 
 // noteID matches a bus note id as it appears on an inbox display line.
 var noteID = regexp.MustCompile(`\bbo-[0-9a-f]{6,}\b`)
@@ -105,6 +106,8 @@ func readPolicy(path string) (policy, error) {
 				return p, fmt.Errorf("%s: max-attempts wants 1 or more, got %q", path, value)
 			}
 			p.MaxAttempts = n
+		case "lane":
+			p.Lane = value
 		default:
 			return p, fmt.Errorf("%s line %d: unknown policy key %q; the manager never expands its policy (the keys are %s)", path, n+1, key, strings.Join(policyKeys, ", "))
 		}
@@ -628,13 +631,17 @@ func (m *manager) mergeOne(repo string, pr int, head, ref string) (keep bool) {
 		m.event("MANAGER NOTE ref=%s not merged: %s", oneline.Field(ref), why)
 		return why == "a check is still running"
 	}
-	if out, err := m.sh("", 120*time.Second, "gh", "pr", "merge", strconv.Itoa(pr), "-R", repo, "--squash", "--delete-branch"); err != nil {
-		m.event("MANAGER NOTE merge failed ref=%s: %s", oneline.Field(ref), oneline.Cap(strings.TrimSpace(out), 100))
+	if m.pol.Lane == "" {
+		m.event("MANAGER NOTE ref=%s: no lane in the policy; nothing is merged (set lane=<dir> to make nova-merge the merge queue)", oneline.Field(ref))
+		return true
+	}
+	if out, err := m.sh("", 120*time.Second, "nova-merge", "add", "--lane", m.pol.Lane, "--pr", strconv.Itoa(pr)); err != nil {
+		m.event("MANAGER NOTE add failed ref=%s: %s", oneline.Field(ref), oneline.Cap(strings.TrimSpace(out), 100))
 		return true
 	}
 	m.merged++
 	m.decisions++
-	m.event("MANAGER MERGE ref=%s head=%s", oneline.Field(ref), oneline.Field(sha12(head)))
+	m.event("MANAGER LANE ref=%s head=%s", oneline.Field(ref), oneline.Field(sha12(head)))
 	return false
 }
 

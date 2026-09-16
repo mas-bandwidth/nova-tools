@@ -3303,7 +3303,10 @@ writing this bus's form exists to allow.
 1. **Refuse before writing anything.** The bus must be a git work tree, on the
    branch `--branch` names, and hold no changes but the one this run is about to
    make. The retry rebases, and a rebase over a dirty tree either refuses or
-   sweeps somebody's unrelated work into a note's commit.
+   sweeps somebody's unrelated work into a note's commit. The `.nova-bus/`
+   directory at the bus root, and the caller's own `BEAT`, are the tool's own
+   per-clone state, never a note and never somebody else's work, so the guard
+   does not refuse over them.
 2. **Fetch, and refuse a branch that is ahead of it with somebody ELSE's work.**
    `git push` publishes the BRANCH, not the commit just made. A checkout carrying
    commits this tool did not make would put all of them on the bus under a
@@ -4407,7 +4410,10 @@ keeps working.
   `send` needs the bus's working tree clean but for the note it is about to
   write. A draft saved inside the bus directory is exactly the unrelated
   change that refusal names — put drafts in a scratch directory and pass
-  `--file`, or pipe them in with `--stdin`.
+  `--file`, or pipe them in with `--stdin`. The `.nova-bus/` directory is the
+  tool's own per-clone state and is not such a change, so a clone that wrote
+  `<bus>/.nova-bus/defaults` for `inbox` can `send` over it with no hand step
+  in between.
 - **It does not enforce the covenant.** Stated at the top of this section, and
   nowhere in the code.
 

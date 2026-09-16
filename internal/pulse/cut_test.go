@@ -28,14 +28,14 @@ func writeTemplates(t *testing.T, dir string, kind map[string]string) {
 const readTemplate = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
 Do not run go build, go test or any toolchain; read and write only.
-STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Read the named files and write notes.txt in the repo directory.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
 
 const fixTemplate = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
-STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Make the fix; report the red line and then the green line, one row per item.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
@@ -67,7 +67,7 @@ func cutLine1(t *testing.T, cards string) string {
 
 // cut-line1-is-contract: every card written has line 1 RESULT <label> sha=<sha12> with the
 // hash equal to SHA-256 of the bytes below line 1, and STEP 1 carrying mkdir -p scratch,
-// TMPDIR, an https:// clone and checkout -b; a template whose rendered line 1 is prose, or
+// an https:// clone and checkout -b; a template whose rendered line 1 is prose, or
 // whose STEP 1 clones git@, is CUT REFUSED and writes no card.
 func TestCutLine1IsContract(t *testing.T) {
 	for kind, tmpl := range map[string]string{"read": readTemplate, "fix": fixTemplate} {
@@ -100,7 +100,7 @@ func TestCutLine1IsContract(t *testing.T) {
 				break
 			}
 		}
-		for _, want := range []string{"mkdir -p scratch", "TMPDIR", "https://", "checkout -b"} {
+		for _, want := range []string{"mkdir -p scratch", "https://", "checkout -b"} {
 			if !strings.Contains(step1, want) {
 				t.Fatalf("STEP 1 %q lacks %q", step1, want)
 			}
@@ -128,6 +128,52 @@ func TestCutLine1IsContract(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
 		t.Fatal("git@ clone: a card was written despite the refusal")
+	}
+}
+
+// cut-step-one-sets-no-tmpdir: the STEP 1 a template renders sets no TMPDIR of its own
+// (#460, the template half that follows the runner's): native exports
+// TMPDIR=<slot>/tmp/<label> --
+// the slot directory is never a repo, while admission git-inits the job directory -- and
+// prints tmp=<path> on NATIVE OK, so a card that exports its own puts every t.TempDir()
+// inside the job's repo, which is the red cards 247, 266 and 353 reported and did not
+// cause. cut accepts a STEP 1 that only mkdirs, clones over https and checks out, and
+// refuses one that sets a TMPDIR, naming the rule, no card written.
+func TestCutStepOneSetsNoTmpDir(t *testing.T) {
+	// The STEP 1 every template now carries: no export, because the runner's own is
+	// already in the child's environment.
+	bare := strings.Replace(readTemplate, " && export TMPDIR=$PWD/scratch", "", 1)
+	code, _, stderr, out := runCut(t, map[string]string{"read": bare}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
+	if code != 0 {
+		t.Fatalf("a STEP 1 with no TMPDIR export is cut, got %d, stderr=%q", code, stderr)
+	}
+	card, err := os.ReadFile(filepath.Join(out, "1.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	step1 := ""
+	for _, ln := range strings.Split(string(card), "\n") {
+		if strings.HasPrefix(ln, "STEP 1") {
+			step1 = ln
+			break
+		}
+	}
+	if strings.Contains(step1, "TMPDIR") {
+		t.Errorf("the card's STEP 1 is %q; the runner exports TMPDIR and a card sets none", step1)
+	}
+
+	// The hurt itself: export TMPDIR=$PWD/scratch put the card's temp dir inside the
+	// job's git repo. A template that still sets one is refused, no card written.
+	exporting := strings.Replace(bare, "mkdir -p scratch &&", "mkdir -p scratch && export TMPDIR=$PWD/scratch &&", 1)
+	code, _, stderr, out = runCut(t, map[string]string{"read": exporting}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
+	if code != 2 || !strings.Contains(stderr, "CUT REFUSED template=read") {
+		t.Fatalf("a STEP 1 that sets TMPDIR is CUT REFUSED template=read, got %d, stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stderr, "STEP 1 sets TMPDIR") {
+		t.Errorf("the refusal names the rule, got %q", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+		t.Error("a card was written despite the refusal")
 	}
 }
 

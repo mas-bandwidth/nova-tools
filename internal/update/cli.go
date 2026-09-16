@@ -71,7 +71,8 @@ nova-update help`
 // named; the spec carries the same shape once (SPEC-UPDATE rule 2).
 const manifestShape = "one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand"
 
-const versionVerbs = `nova-version report --file <manifest: ` + manifestShape + `> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+const versionVerbs = `nova-version snapshot --bin <dir> --out <manifest> [--owner <name>]
+nova-version report --file <manifest: ` + manifestShape + `> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-version send --file <manifest: ` + manifestShape + `> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
 nova-version help`
 
@@ -268,7 +269,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	pins := 0
 	group := bounded.Grouped(out, o.max, "UPDATE", "use --max 0 to show all")
 	for _, r := range results {
-		status := verdict(r)
+		status, ahead := verdict(r)
 		counts[status]++
 		if r.Entry.Kind == "pin" && status == "DIFFERENT" {
 			pins++
@@ -282,6 +283,8 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 				x = r.Latest
 			}
 			group.Line("unknown", fmt.Sprintf("UPDATE UNKNOWN name=%s kind=%s installed=%s path=%s source=%s: %s (%s)", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Installed.Path), field(r.Latest.Source), oneline.Escape(x.Reason), oneline.Escape(x.Remedy)))
+		} else if status == "AHEAD" {
+			group.Line("ahead", fmt.Sprintf("UPDATE AHEAD name=%s kind=%s installed=%s latest=%s ahead=%s path=%s source=%s owner=%s", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(ahead), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
 		} else {
 			group.Line(strings.ToLower(status), fmt.Sprintf("UPDATE %s name=%s kind=%s installed=%s latest=%s path=%s source=%s owner=%s", status, field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
 		}
@@ -295,7 +298,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		result = "FAIL"
 		w = errs
 	}
-	fmt.Fprintf(w, "UPDATE %s checked=%d current=%d stale=%d newer=%d differ=%d unknown=%d pins=%d took=%s file=%s\n", result, len(selected), counts["EQUAL"], counts["STALE"], counts["NEWER"], counts["DIFFERENT"], counts["UNKNOWN"], pins, time.Since(started).Round(time.Millisecond), field(o.file))
+	fmt.Fprintf(w, "UPDATE %s checked=%d current=%d stale=%d newer=%d ahead=%d differ=%d unknown=%d pins=%d took=%s file=%s\n", result, len(selected), counts["EQUAL"], counts["STALE"], counts["NEWER"], counts["AHEAD"], counts["DIFFERENT"], counts["UNKNOWN"], pins, time.Since(started).Round(time.Millisecond), field(o.file))
 	return code
 }
 func contains(xs []string, s string) bool {
@@ -338,27 +341,30 @@ func readEntries(ctx context.Context, entries []Entry, o options, env Environmen
 	sort.SliceStable(rs, func(i, j int) bool { return rs[i].Entry.Kind == "pin" && rs[j].Entry.Kind != "pin" })
 	return rs
 }
-func verdict(r entryRead) string {
+func verdict(r entryRead) (string, string) {
 	if !r.Installed.Known() || !r.Latest.Known() {
-		return "UNKNOWN"
+		return "UNKNOWN", ""
 	}
 	if r.Entry.Kind == "pin" {
 		if wake.AcceptBus(r.Installed.Version, r.Latest.Version) {
-			return "EQUAL"
+			return "EQUAL", ""
 		}
-		return "DIFFERENT"
+		return "DIFFERENT", ""
 	}
 	if r.Entry.Kind == "model" {
 		if r.Installed.Version == r.Latest.Version {
-			return "EQUAL"
+			return "EQUAL", ""
 		}
-		return "DIFFERENT"
+		return "DIFFERENT", ""
+	}
+	if c, ok := ahead(r.Installed.Version, r.Latest.Version); ok {
+		return "AHEAD", c
 	}
 	v := Compare(r.Installed.Version, r.Latest.Version)
 	if v == "OLDER" {
-		return "STALE"
+		return "STALE", ""
 	}
-	return v
+	return v, ""
 }
 func apply(entries []Entry, name string, o options, out, errs io.Writer, env Environment) int {
 	var e *Entry

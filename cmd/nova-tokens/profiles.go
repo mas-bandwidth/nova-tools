@@ -77,7 +77,7 @@ func profileSwarmRoot(root string, stdout, stderr io.Writer, r *refusals) int {
 
 	models := map[string]*profileModel{}
 	for _, p := range paths {
-		_, model, _, out, _, _, outKnown, _, ok := readCardFile(p)
+		_, model, _, _, out, _, _, outKnown, _, ok := readCardFile(p)
 		if !ok || model == "" {
 			continue
 		}

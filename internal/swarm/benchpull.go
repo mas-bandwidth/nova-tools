@@ -31,6 +31,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // pullResultWait is how long the pull waits for RESULT.md to appear on the bench after the
@@ -57,9 +59,10 @@ type benchPull struct {
 	host      string        // the ssh alias
 	remoteJob string        // <root>/<n>/jobs/<label> on the bench
 	localJob  string        // <root>/<bench>-<n>/jobs/<label> here
+	label     string        // the card's label, named on the copied-up note
 	wait      time.Duration // how long to wait for RESULT.md to exist remotely
 	poll      time.Duration // how often to ask
-	notes     io.Writer     // where SPACE NOTE lines go
+	notes     io.Writer     // where BATCH NOTE lines go
 }
 
 // pullFromBench waits for the card's RESULT.md, copies the three files back by one explicit
@@ -91,7 +94,7 @@ func pullFromBench(p benchPull) error {
 				return err
 			}
 			if p.notes != nil {
-				fmt.Fprintf(p.notes, "SPACE NOTE RESULT.md copied up from %s\n", from)
+				fmt.Fprintf(p.notes, "BATCH NOTE %s RESULT.md copied up from %s\n", oneline.Field(p.label), oneline.Field(from))
 			}
 			found = true
 		}

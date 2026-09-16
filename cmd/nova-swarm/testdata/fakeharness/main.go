@@ -227,6 +227,20 @@ func main() {
 	if n, ok := number(prompt, "FAKE-AWAIT-NOTE"); ok {
 		awaitNote(job, time.Duration(n)*time.Second)
 	}
+	// FAKE-FENCE-REJECT is THE HARNESS'S OWN FENCE, in the harness's own words (issue #644).
+	// OpenCode's `run` answers a permission it cannot ask a person about by printing exactly
+	// this line -- `!` and its colours included -- and then the model stops and the process
+	// exits 0 with no result. Eight of thirty cards died this way on 2026-09-16 and every one
+	// of them was scored `no-result`, the token for a model that chose to publish nothing.
+	// The directive takes the path the fence rejected, so the test writes the real line.
+	if path, ok := directive(prompt, "FAKE-FENCE-REJECT"); ok {
+		if path == "" {
+			path = "/nowhere/*"
+		}
+		fmt.Printf("\x1b[33;1m!\x1b[0m  permission requested: external_directory (%s); auto-rejecting\n", path)
+		fmt.Fprintln(os.Stderr, "Error: The user rejected permission to use this specific tool call.")
+		os.Exit(0)
+	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
 	}

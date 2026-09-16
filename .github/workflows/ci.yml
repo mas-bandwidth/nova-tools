@@ -49,9 +49,11 @@ permissions:
   contents: read
 
 concurrency:
-  # Per PR, not per ref: a push to a PR branch reuses the PR number, so the new
-  # run cancels the in-progress one. On push to main the ref is the group.
-  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  # A pending run is evicted by a newly queued run in the same group before it
+  # ever starts. So a push to main keys on the commit sha (no two main runs
+  # share a group, none can evict another); a PR still keys on its number so its
+  # newest head supersedes older runs; a non-main branch with no PR keys on ref.
+  group: ci-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.sha) || github.ref }}-${{ github.event_name }}
   # A push to main never cancels main's running verdict: with a steady merge
   # stream every main run was cancelled by the next merge (2026-09-16 04:41Z and
   # 04:53Z), so main had no completed run for the mechanical red gate to read.
@@ -394,12 +396,14 @@ jobs:
         run: |
           pkgs=$(go list ./... | awk -v n=4 -v i=${{ matrix.shard }} 'NR % n == i - 1')
           echo "$pkgs"
-          # -timeout 20m is the hosted windows leg's reality, not a target: cmd/nova-bus
-          # took 439 s there on the branch and hit Go's 10 m default on main (run
-          # 35052889521, panic: test timed out after 10m0s). The two-minute rule is met
-          # by gating the multi-process bus tests behind -short on hosted legs (issue
-          # filed); until that lands, a slow package must not panic the leg.
-          go test -count=1 -timeout 20m $pkgs
+          # The hosted legs run -short: the multi-process and thousand-note fixture tests
+          # in cmd/nova-bus, cmd/nova-wake, cmd/nova-merge and internal/bus are gated
+          # behind testing.Short() and skip here, so a Windows leg answers inside the
+          # two-minute budget instead of hitting Go's 10 m default on main (run
+          # 35052889521, panic: test timed out after 10m0s). The self-hosted shards keep
+          # running everything; the nightly certification runs the hosted legs full.
+          # -timeout 20m stays as the ceiling, not the target.
+          go test -short -count=1 -timeout 20m $pkgs
 
   test-hosted-pr:
     # THE ONE EXCEPTION to "a pull request never touches GitHub-hosted
