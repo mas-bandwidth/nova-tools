@@ -1,0 +1,70 @@
+CARD-8062 -- nova-tools #495 -- nova-tokens sum --swarm-root: missing/malformed cost
+fields silently become 0 instead of unknown
+
+SITUATION (read before judging the red run). This card is a replay: origin/main at the
+branch point (af82d73) already carries the code fix for #495 -- commit 0ac9a58, "nova-tokens
+sum: missing/malformed cost fields are unknown, never 0 (#495) (#508)" -- which made
+parseCardCount/parseCardUsd return a known flag, added the per-field unknown counters and
+the trailing `dashes` ledger column, and added the mixed known/unknown witness
+TestSumSwarmMixedKnownUnknownDailyAggregate. A red test written fresh against HEAD would
+pass on arrival, so the red run below was produced against the genuine pre-fix
+implementation: the tree of 0ac9a58^ (the state the issue was filed against),
+materialized with `git archive 0ac9a58^` into scratch/red with only the new test
+appended. The failing output is that code's, verbatim.
+
+READ BEFORE ANY EDIT: docs/SPEC-TOKENS.md's `sum` section (the --swarm-root paragraph
+and the issue #64 future-shape paragraph), docs/CLI.md's nova-tokens section,
+cmd/nova-tokens/sumswarm.go whole, and the `sum` path of cmd/nova-tokens/main.go (cmdSum).
+
+THE RED TEST, written first: TestSumSwarmAllUnknownModelIsDashNeverZero in
+cmd/nova-tokens/sumswarm_test.go -- #495's other face. Beside the mixed known/unknown
+model the merged witness covers, the model whose ONLY card reported none of
+input/output/usd (a dash, an empty cell, a malformed number) must land `- - -` with a
+dashes count of 1,1,1, never 0/0/0.0000 -- the free route -- and the fully reported
+model keeps its numbers with 0,0,0, and the header is pinned byte for byte.
+
+RED, verbatim (go test -count=1 -run 'TestSumSwarmAllUnknownModelIsDashNeverZero'
+./cmd/nova-tokens, against 0ac9a58^ in scratch/red, go1.26.0):
+
+--- FAIL: TestSumSwarmAllUnknownModelIsDashNeverZero (0.00s)
+    sumswarm_test.go:86: ledger header is "day\tmodel\ttokens_in\ttokens_out\tusd\tcards", want "day\tmodel\ttokens_in\ttokens_out\tusd\tcards\tdashes"
+    sumswarm_test.go:89: the all-unknown model's row is "2026-09-11\tdeepseek-v3\t0\t0\t0.0000\t1", want "2026-09-11\tdeepseek-v3\t-\t-\t-\t1\t1,1,1" -- a kept field no card reported is -, never a 0 that reads as a free route
+    sumswarm_test.go:92: the fully reported model's row is "2026-09-11\tdeepseek-v4\t1000\t200\t0.0100\t1", want "2026-09-11\tdeepseek-v4\t1000\t200\t0.0100\t1\t0,0,0"
+FAIL
+FAIL	github.com/mas-bandwidth/nova-tools/cmd/nova-tokens	0.012s
+FAIL
+
+GREEN (the same command against this branch's sumswarm.go, whose fix is 0ac9a58 in
+ancestry):
+
+ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-tokens	0.011s
+
+The smallest change that turns the red green is the branch's code: parseCardCount and
+parseCardUsd return (value, known) and an absence counts unknownIn/unknownOut/unknownUsd
+instead of folding a 0 into the totals; cardCell/usdCell print `-` when every card left
+the field unknown; ledgerColumns and wantsLedger carry the trailing `dashes`. No other
+printed line changed: the SUM OK line is pinned by the new test and is identical before
+and after the fix (an unknown card adds nothing to the totals in either world).
+
+DOCS, aligned byte for byte with what the binary prints (verified against a live run in
+scratch, bytes below):
+- docs/SPEC-TOKENS.md: the --swarm-root paragraph's column list still said `day`,
+  `model`, `tokens_in`, `tokens_out`, `usd`, `cards` -- one column behind the binary,
+  which writes and refuses for `day model tokens_in tokens_out usd cards dashes`. Added
+  the trailing `dashes`, so the spec's list is the header's bytes.
+- docs/CLI.md: the nova-tokens "Reading a `-` as a zero" first-run bullet now names the
+  daily ledger `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes: its columns,
+  a kept field a card did not report is `-` never 0, and the trailing `dashes` column
+  counting the cards that left input, output and usd unknown.
+
+The live bytes the docs were aligned to (od -c of the ledger the run wrote, and its
+refusal of a six-column header):
+  SUM OK day=2026-09-11 models=2 cards=2 in=1000 out=200 usd=0.0100
+  day\tmodel\ttokens_in\ttokens_out\tusd\tcards\tdashes
+  2026-09-11\tdeepseek-v3\t-\t-\t-\t1\t1,1,1
+  2026-09-11\tdeepseek-v4\t1000\t200\t0.0100\t1\t0,0,0
+  SUM REFUSED: --out <ledger>: the ledger's header is "day\tmodel\ttokens_in\ttokens_out\tusd\tcards"; it wants "day\tmodel\ttokens_in\ttokens_out\tusd\tcards\tdashes", and a ledger filled by hand must agree with the one this verb writes
+
+TEST DURATIONS: cmd/nova-tokens is 2.6 s in docs/TEST-DURATIONS.md; the new test costs
+~0.01 s in-process and moves nothing past a threshold, so the table was not regenerated
+(its numbers belong to a pinned quiet core on the Space bench, not this machine).
