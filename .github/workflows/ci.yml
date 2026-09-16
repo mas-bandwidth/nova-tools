@@ -1,4 +1,7 @@
 # CI for nova-tools: the CL tier.
+          # A runner user keeps sbcl in its own ~/.local/bin (hulk, vision); a listener started
+          # before its .path file saw none of it (2026-09-16), so the step finds it itself.
+          for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
 #
 # Why this exists: until now, local `go test` on one machine was the whole
 # evidence behind a release — including for four rounds of fail-open fixes in a
@@ -98,7 +101,7 @@ jobs:
           set -euo pipefail
           if ! command -v go >/dev/null 2>&1; then
             for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
             done
           fi
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
@@ -167,7 +170,7 @@ jobs:
           set -euo pipefail
           if ! command -v go >/dev/null 2>&1; then
             for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
             done
           fi
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
@@ -356,7 +359,7 @@ jobs:
           set -euo pipefail
           if ! command -v go >/dev/null 2>&1; then
             for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
             done
           fi
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
@@ -578,7 +581,7 @@ jobs:
           set -euo pipefail
           if ! command -v go >/dev/null 2>&1; then
             for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
             done
           fi
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
