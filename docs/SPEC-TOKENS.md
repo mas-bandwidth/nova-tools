@@ -452,6 +452,7 @@ nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <label>=<file>]...
                     [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
 nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+                    --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
 nova-tokens check   --out <dir> [--max <n>]
 nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
