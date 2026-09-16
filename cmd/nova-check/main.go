@@ -32,10 +32,13 @@ usage:
   nova-check attest --home <dir> --manifest <file>   did the full self load
   nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]
                                                      every relative md link resolves;
-                                                     --file (repeatable) checks just those
-                                                     files, not the whole tree; --exclude
-                                                     leaves a subtree unscanned and skips
-                                                     links into it
+                                                     --file (repeatable) checks exactly the
+                                                     named files, so a two-file review does
+                                                     not expand to the whole tree; the named
+                                                     files' links resolve against --dir, or
+                                                     the tree root when --dir is omitted;
+                                                     --exclude leaves a subtree unscanned
+                                                     and skips links into it
   nova-check kernel --file <file> --max-bytes <n>    kernel size budget, in bytes
   nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>
                                                      kernel size budget, in tokens
@@ -304,23 +307,25 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 func cmdLinks(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("links", flag.ContinueOnError)
 	dir := fs.String("dir", "", "directory tree to scan for markdown links (required)")
+	var files repeatable
+	fs.Var(&files, "file", "markdown file to check (repeatable; an alternative to --dir)")
 	failMax := addFailMax(fs)
 	var exclude repeatable
 	fs.Var(&exclude, "exclude", "path prefix not scanned, and links into it not checked (repeatable; empty by default)")
-	var files repeatable
-	fs.Var(&files, "file", "one markdown file to scan, narrowing the walk to just these (repeatable; --dir is still the resolution root)")
-	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
+	if !parseFlags(fs, args, stderr) {
 		return 2
 	}
 	if !checkFailMax(fs, *failMax, stderr) {
 		return 2
 	}
-	var (
-		res check.LinksResult
-		err error
-	)
+	if *dir == "" && len(files) == 0 {
+		fmt.Fprintf(stderr, "nova-check links: --dir or --file is required; refusing to guess\n%s  --file <file> (repeatable) checks exactly the named files, so a two-file review does not expand to the whole tree\n", dirHint)
+		return 2
+	}
+	var res check.LinksResult
+	var err error
 	if len(files) > 0 {
-		res, err = check.LinksFiles(*dir, files, exclude)
+		res, err = check.LinksFiles(files, *dir, exclude)
 	} else {
 		res, err = check.LinksExcluding(*dir, exclude)
 	}

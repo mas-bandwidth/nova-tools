@@ -24,7 +24,7 @@ func TestRunRefusesToGuess(t *testing.T) {
 		{"unknown subcommand", []string{"frobnicate"}, "unknown subcommand"},
 		{"attest without home", []string{"attest", "--manifest", "m.txt"}, "--home is required"},
 		{"attest without manifest", []string{"attest", "--home", "."}, "--manifest is required"},
-		{"links without dir", []string{"links"}, "--dir is required"},
+		{"links without dir", []string{"links"}, "--dir or --file is required"},
 		{"kernel without file", []string{"kernel", "--max-bytes", "1000"}, "--file is required"},
 		{"kernel without budget", []string{"kernel", "--file", "k.md"}, "--max-bytes or --max-tokens is required"},
 		{"kernel with zero budget", []string{"kernel", "--file", "k.md", "--max-bytes", "0"}, "positive"},
@@ -545,6 +545,36 @@ func TestRunCorpusEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "below the stated floor") {
 		t.Errorf("stderr = %q, want the ledger-floor finding", stderr.String())
+	}
+}
+
+// Issue #621: a two-file review must not expand to the whole tree. --file
+// (repeatable) names exactly the files under review, so files= counts those two
+// and only their links are checked -- a broken link in a third, unnamed file is
+// out of scope and never reported.
+func TestLinksFileFlagChecksOnlyNamedFiles(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, dir, "a.md", "see [gone](missing.md)\n")
+	mustWrite(t, dir, "b.md", "fine\n")
+	mustWrite(t, dir, "c.md", "[other](also-missing.md)\n")
+	var stdout, stderr bytes.Buffer
+	got := run([]string{"links",
+		"--file", filepath.Join(dir, "a.md"),
+		"--file", filepath.Join(dir, "b.md")}, &stdout, &stderr)
+	if got != 1 {
+		t.Fatalf("exit = %d, want 1; stderr: %s", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "LINKS FAIL files=2 links=1 broken=1") {
+		t.Errorf("stderr = %q, want files=2 and only the under-review link", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "LINKS FAIL a.md:1: missing.md (does not exist)") {
+		t.Errorf("stderr = %q, want the a.md broken link", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "also-missing.md") {
+		t.Errorf("a file not under review was checked: %s", stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Errorf("a failing check must not print an OK line, got %q", stdout.String())
 	}
 }
 

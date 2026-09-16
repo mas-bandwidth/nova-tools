@@ -415,6 +415,7 @@ content semantics; anything about the session that pastes the line.
 
 ```
 nova-check links --dir <dir> [--file <path>] [--exclude <prefix>] [--fail-max <n>]
+nova-check links --file <file> [--exclude <prefix>] [--fail-max <n>]
 ```
 
 **Asserts.** Every relative link target in every `.md` file under `--dir`
@@ -426,7 +427,11 @@ those files — a two-file review does not expand to the whole tree — while
 an absolute one used as-is, and the reported paths stay repo-relative. A
 repeatable `--exclude <prefix>` leaves a subtree
 unscanned and skips any link into it, reporting the skipped files as
-`excluded=<n>` on the LINKS line.
+`excluded=<n>` on the LINKS line. A repeatable `--file <file>` is the
+alternative to `--dir`: it checks exactly the named files and nothing else, so
+a two-file review does not expand to the whole tree; the named files' common
+ancestor directory is the root for repo-root-relative links and the
+escapes-the-tree check.
 
 **What counts as a link.** Inline links and images: `[text](target)` and
 `![alt](target)`, with an optional title in any of the three CommonMark forms
@@ -458,8 +463,9 @@ provenance — that stricter posture belongs to `attest`.
   be read is a **named failure, not a refusal**. The walk continues, so one
   unreadable file can never discard the findings from the rest of the tree.
 
-**Refuses (exit 2) only when** `--dir` is missing, unresolvable, or does not
-resolve to a directory, or a directory in the walk cannot be listed. The root
+**Refuses (exit 2) only when** neither `--dir` nor `--file` is given, when
+`--dir` is unresolvable or does not resolve to a directory, or a directory in
+the walk cannot be listed. The root
 is resolved through symlinks first, so a `--dir`
 naming a link to the repo walks the repo rather than passing with
 `files=0 links=0`; an unreadable `.md` inside the tree is a finding (above),

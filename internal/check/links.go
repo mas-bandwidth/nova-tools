@@ -49,6 +49,88 @@ func Links(dir string) (mdFiles, checked int, broken []BrokenLink, err error) {
 	return res.MDFiles, res.Checked, res.Broken, nil
 }
 
+// LinksFiles verifies the relative links in exactly the named .md files, never
+// a whole tree: a two-file review scans the files under review and reports
+// files=2, so a broken link in a third, unnamed file stays out of scope. root
+// is the resolution root for root-relative targets and for the
+// escapes-the-tree check: an explicit --dir when given, otherwise the git
+// worktree root (defaultLinksRoot), NOT the common ancestor of the named
+// files — a file in a subdirectory is checked against the tree it lives in, so
+// a repo-level link like ../README.md still resolves instead of being reported
+// as escaping the tree. A relative file path is joined to root, an absolute
+// one is used as-is, and the reported paths stay repo-relative.
+func LinksFiles(files []string, root string, exclude []string) (res LinksResult, err error) {
+	if len(files) == 0 {
+		return res, fmt.Errorf("no files given")
+	}
+	if root == "" {
+		root, err = defaultLinksRoot()
+		if err != nil {
+			return res, err
+		}
+	} else {
+		// Resolve the root through symlinks, as the full walk does: a --dir
+		// naming a link to the repo must walk the repo, not pass quietly.
+		root, err = filepath.EvalSymlinks(root)
+		if err != nil {
+			return res, fmt.Errorf("dir %q: %w", root, err)
+		}
+	}
+	info, statErr := os.Stat(root)
+	if statErr != nil {
+		return res, fmt.Errorf("dir %q: %w", root, statErr)
+	}
+	if !info.IsDir() {
+		return res, fmt.Errorf("dir %q is not a directory", root)
+	}
+	for _, f := range files {
+		mdPath := f
+		if !filepath.IsAbs(mdPath) {
+			mdPath = filepath.Join(root, filepath.FromSlash(f))
+		}
+		if af, aerr := filepath.Abs(mdPath); aerr == nil {
+			mdPath = af
+		}
+		if !strings.EqualFold(filepath.Ext(mdPath), ".md") {
+			return res, fmt.Errorf("file %q is not a markdown file", f)
+		}
+		rel, relErr := filepath.Rel(root, mdPath)
+		if relErr != nil {
+			rel = mdPath
+		}
+		if underExclude(filepath.ToSlash(rel), exclude) {
+			res.Excluded++
+			continue
+		}
+		res.MDFiles++
+		n, b := checkFileLinks(root, mdPath, exclude)
+		res.Checked += n
+		res.Broken = append(res.Broken, b...)
+	}
+	return res, nil
+}
+
+// defaultLinksRoot is the tree root when the caller named files but no root:
+// the git worktree root if the working directory lives in one, otherwise the
+// working directory itself. It walks up from the working directory to find the
+// .git marker (a directory in a normal clone, a file in a linked worktree).
+func defaultLinksRoot() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for dir := wd; ; {
+		if _, statErr := os.Stat(filepath.Join(dir, ".git")); statErr == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return wd, nil
+		}
+		dir = parent
+	}
+}
+
 // LinksExcluding is Links with an explicit set of path prefixes to leave
 // unscanned: a file under an excluded prefix is not opened, and a link that
 // resolves into an excluded prefix is skipped rather than checked or reported.
@@ -100,42 +182,6 @@ func LinksExcluding(dir string, exclude []string) (res LinksResult, err error) {
 	})
 	if err != nil {
 		return res, err
-	}
-	return res, nil
-}
-
-// LinksFiles is the single-/few-file form of Links: it checks exactly the
-// listed markdown files and nothing else, so a two-file review does not
-// expand to the whole tree. dir is still the resolution root — root-relative
-// targets and the "escapes the tree" judgement resolve against it — and the
-// reported paths stay repo-relative, exactly as the full walk reports them. A
-// relative path is joined to dir; an absolute one is used as-is.
-func LinksFiles(dir string, files []string, exclude []string) (res LinksResult, err error) {
-	root, statErr := filepath.EvalSymlinks(dir)
-	if statErr != nil {
-		return res, fmt.Errorf("dir %q: %w", dir, statErr)
-	}
-	info, statErr := os.Stat(root)
-	if statErr != nil {
-		return res, fmt.Errorf("dir %q: %w", dir, statErr)
-	}
-	if !info.IsDir() {
-		return res, fmt.Errorf("dir %q is not a directory", dir)
-	}
-	dir = root
-
-	for _, f := range files {
-		mdPath := f
-		if !filepath.IsAbs(mdPath) {
-			mdPath = filepath.Join(dir, filepath.FromSlash(f))
-		}
-		if !strings.EqualFold(filepath.Ext(mdPath), ".md") {
-			return res, fmt.Errorf("file %q is not a markdown file", f)
-		}
-		res.MDFiles++
-		n, b := checkFileLinks(dir, mdPath, exclude)
-		res.Checked += n
-		res.Broken = append(res.Broken, b...)
 	}
 	return res, nil
 }
