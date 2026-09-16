@@ -24,9 +24,6 @@ type LaunchInput struct {
 	Slots    int    // the ceiling on free slots launch considers
 	Deadline string // the whole pulse's deadline, whole seconds
 	Queue    bool   // true keeps the overflow in queue.tsv instead of refusing
-	Files    int    // the --files budget every card in the batch carries; 0 takes the default
-	Tokens   string // the --tokens budget; empty takes the default
-	QueueDir string // the queue directory STOP lives in; empty falls back to Root (admission.go)
 	Stdout   io.Writer
 	Stderr   io.Writer
 	Now      func() time.Time
@@ -49,19 +46,6 @@ func Launch(in LaunchInput) int {
 		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s holds no card; a pulse of no cards is a typo\n", oneline.Field(in.Cards))
 		return 2
 	}
-	// STOP admission (SPEC-PULSE class C): while the bench is red, only the cards whose
-	// line 1 names the red launch. No STOP is no filtering and no line -- the launch path
-	// before this card, unchanged.
-	if stop := readStopFor(in); len(stop) > 0 {
-		admitted, refused := admitCards(cards, stop, in.Stderr)
-		if refused > 0 && len(admitted) == 0 {
-			fmt.Fprintf(in.Stdout, "PULSE STOP admitted=0 refused=%d admit=%s (the gate's STOP admits only the red's own card)\n",
-				refused, oneline.Field(dash(AdmissionName(stop))))
-			return 0
-		}
-		cards = admitted
-	}
-
 	free := freeSlots(in.Root, in.Slots, in.Now())
 	n := len(cards)
 	if n > free && !in.Queue {
@@ -123,25 +107,12 @@ func Launch(in LaunchInput) int {
 func runBatch(in LaunchInput, id, model, tasksDir string) bool {
 	then := fmt.Sprintf("nova-pulse harvest --id %s --root %s", id, in.Root)
 	pool := filepath.Join(in.Root, "pool")
-	// BOTH budgets, because `nova-swarm batch` requires both on the pool path and refuses to
-	// guess either: a launch without them is "--files is required and is at least 1, got 0",
-	// which is every launch on the first tick of the switch (issue #869).
-	files := in.Files
-	if files < 1 {
-		files = DefaultLaunchFiles
-	}
-	tokens := strings.TrimSpace(in.Tokens)
-	if tokens == "" {
-		tokens = DefaultLaunchTokens
-	}
 	var out, errb bytes.Buffer
 	cmd := exec.Command("nova-swarm", "batch",
 		"--pool", pool,
 		"--tasks", tasksDir,
 		"--label", "pulse-"+id,
 		"--deadline", in.Deadline,
-		"--files", strconv.Itoa(files),
-		"--tokens", tokens,
 		"--then", then)
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

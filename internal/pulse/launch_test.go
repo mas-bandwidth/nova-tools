@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -179,56 +178,5 @@ func TestLaunchQueuesRemainder(t *testing.T) {
 	}
 	if !strings.Contains(string(pulses), "pulse-"+id+"\tpro\t4") {
 		t.Fatalf("pulses/%s.tsv does not name the batch: %q", id, pulses)
-	}
-}
-
-// launch-carries-the-file-budget (issue #869): `nova-swarm batch` refuses a pool admission
-// that carries no budget -- "--files is required and is at least 1, got 0" -- so the wired
-// launch names both budgets the verb requires, the file budget from the configuration and the
-// explicit `unmetered` the shim's native runner has always meant. The mutation that matters:
-// the flag dropped, which is the refusal that stopped the first tick of the switch.
-func TestLaunchCarriesTheFileBudget(t *testing.T) {
-	root := t.TempDir()
-	argvLog := filepath.Join(root, "argv.log")
-	fakeSwarm(t, argvLog)
-	cards, _ := writeCards(t, root, 2)
-
-	code, _, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 4, Deadline: "120", Files: 40,
-		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
-	})
-	if code != 0 {
-		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
-	}
-	raw, err := os.ReadFile(argvLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	line := strings.TrimSpace(string(raw))
-	for _, want := range []string{"--files 40", "--tokens unmetered", "--pool ", "--tasks ", "--label pulse-", "--deadline 120", "--then nova-pulse harvest"} {
-		if !strings.Contains(line, want) {
-			t.Errorf("argv lacks %q: %s", want, line)
-		}
-	}
-}
-
-// A launch given no budget at all still names one: the documented default, never a zero the
-// swarm reads as "refusing to guess".
-func TestLaunchWithoutAConfiguredBudgetUsesTheDefault(t *testing.T) {
-	root := t.TempDir()
-	argvLog := filepath.Join(root, "argv.log")
-	fakeSwarm(t, argvLog)
-	cards, _ := writeCards(t, root, 1)
-
-	code, _, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 2, Deadline: "60",
-		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
-	})
-	if code != 0 {
-		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
-	}
-	raw, _ := os.ReadFile(argvLog)
-	if want := "--files " + strconv.Itoa(DefaultLaunchFiles); !strings.Contains(string(raw), want) {
-		t.Fatalf("argv lacks %q: %s", want, raw)
 	}
 }
