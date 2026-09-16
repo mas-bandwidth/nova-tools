@@ -51,17 +51,36 @@ func parseVersionLine(s string) (stamp, revision, platform string, ok bool) {
 	return f[1], revisionOf(f[1]), f[2], true
 }
 
-// snapshotVerb inventories a directory of binaries by running each one's own
-// `version`. Every path comes from a flag; neither the file's name nor PATH is
-// trusted for the reading.
+// snapshotTimeout bounds one adopted tool's identity read. The snapshot verb asks
+// each tool the adopted manifest names for its version the way report does, so a
+// hung tool cannot stall the count: each read gets this deadline and nothing more.
+const snapshotTimeout = 5 * time.Second
+
+// snapshotVerb has two shapes. With --bin/--out it inventories a directory of
+// binaries by running each one's own `version`; every path comes from a flag and
+// neither the file's name nor PATH is trusted for the reading. With --file it
+// scopes the count to the ADOPTED manifest (#622): it reads the rule-2 manifest
+// --file names and reports how many of its tools answer -- the adopted 16 --
+// never how many nova-* executables happen to sit on a bin dir or PATH -- the 32.
+// A recorded installed version is known without starting a process (Installed,
+// report's read); an installed argv is probed the same way report probes it, so
+// the count is the manifest's own adoption check. The adopted count line is the
+// whole print and the verb writes nothing: the manifest is adopted, not discovered.
 func snapshotVerb(name string, args []string, out, errs io.Writer, env Environment) int {
 	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var bin, outPath string
+	var bin, outPath, file string
 	fs.StringVar(&bin, "bin", "", "directory holding the binaries")
 	fs.StringVar(&outPath, "out", "", "TSV snapshot to write")
+	fs.StringVar(&file, "file", "", "manifest")
 	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("%s (run %s help)", err, name))
+	}
+	if len(fs.Args()) != 0 {
+		return refusal(errs, "SNAPSHOT", fmt.Errorf("snapshot takes no positional arguments (run %s help)", name))
+	}
+	if file != "" {
+		return snapshotAdopted(file, out, errs)
 	}
 	var missing []string
 	if bin == "" {
@@ -70,11 +89,11 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	if outPath == "" {
 		missing = append(missing, "--out")
 	}
+	if bin == "" && outPath == "" {
+		return refusal(errs, "SNAPSHOT", fmt.Errorf("missing --file; refusing to guess (run: %s help)", name))
+	}
 	if len(missing) > 0 {
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("missing %s; refusing to guess (supply each named flag; run: %s help)", strings.Join(missing, ", "), name))
-	}
-	if len(fs.Args()) != 0 {
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("snapshot takes no positional arguments (run %s help)", name))
 	}
 	entries, err := os.ReadDir(bin)
 	if err != nil {
@@ -125,4 +144,40 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	}
 	fmt.Fprintf(out, "SNAPSHOT OK bin=%s out=%s tools=%d stamp=%s\n", field(bin), field(outPath), len(rows), field(rows[0].stamp))
 	return 0
+}
+
+// snapshotAdopted counts how many of the adopted manifest's tools answer. It is
+// the --file shape of snapshotVerb: report's own read of each entry, printed as
+// one count line and no file written.
+func snapshotAdopted(file string, out, errs io.Writer) int {
+	f, err := os.Open(file)
+	if err != nil {
+		return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot open %s (supply a readable --file: %s)", file, manifestShape))
+	}
+	entries, err := Load(f)
+	f.Close()
+	if err != nil {
+		return refusal(errs, "SNAPSHOT", fmt.Errorf("%s: %w", file, err))
+	}
+	known := 0
+	for _, e := range entries {
+		ctx, cancel := context.WithTimeout(context.Background(), snapshotTimeout)
+		r := Installed(ctx, e, snapshotTimeout, true)
+		cancel()
+		if r.Known() {
+			known++
+		}
+	}
+	code := 0
+	w := out
+	if known != len(entries) {
+		code = 1
+		w = errs
+	}
+	result := "OK"
+	if code != 0 {
+		result = "FAIL"
+	}
+	fmt.Fprintf(w, "SNAPSHOT %s checked=%d known=%d unknown=%d file=%s\n", result, len(entries), known, len(entries)-known, field(file))
+	return code
 }

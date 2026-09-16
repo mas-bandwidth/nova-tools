@@ -66,3 +66,36 @@ func TestFriendSequenceSnapshotReport(t *testing.T) {
 		}
 	}
 }
+
+// #622: the same sequence with no binaries at all. Both verbs read the same
+// adopted manifest: snapshot counts the tools that answer (the adopted 16, never
+// every nova-* executable on a bin dir or PATH) and report reads the identities
+// the manifest holds.
+func TestFriendSequenceAdoptedManifest(t *testing.T) {
+	dir := t.TempDir()
+	manifest := filepath.Join(dir, "adopted.tsv")
+	var b strings.Builder
+	b.WriteString(update.Header + "\n")
+	b.WriteString("nova-bus\ttool\t0.15.0\t-\t-\trowan\n")
+	b.WriteString("nova-check\ttool\t1.2.3\t-\t-\trowan\n")
+	if err := os.WriteFile(manifest, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errs bytes.Buffer
+	if code := update.Main("nova-version", []string{"snapshot", "--file", manifest}, "", &out, &errs); code != 0 {
+		t.Fatalf("snapshot: exit %d\nstdout: %s\nstderr: %s", code, out.String(), errs.String())
+	}
+	if !strings.Contains(out.String(), "SNAPSHOT OK checked=2 known=2 unknown=0") {
+		t.Fatalf("snapshot did not count both adopted tools:\n%s", out.String())
+	}
+
+	out.Reset()
+	errs.Reset()
+	if code := update.Main("nova-version", []string{"report", "--file", manifest}, "", &out, &errs); code != 0 {
+		t.Fatalf("report on the adopted manifest: exit %d\nstdout: %s\nstderr: %s", code, out.String(), errs.String())
+	}
+	if !strings.Contains(out.String(), "REPORT OK checked=2 known=2 unknown=0") {
+		t.Fatalf("report did not read the same adopted manifest:\n%s", out.String())
+	}
+}

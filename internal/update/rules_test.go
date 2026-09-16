@@ -393,18 +393,41 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	}
 }
 
-// #592: the snapshot verb is callable, yet help never printed it. Its whole
-// usage line belongs beside report so a reader discovers the inventory verb,
-// distinguishable from report's unrelated --snapshot <path> option by the verb
-// spelling and its --bin/--out flags (docs/SPEC-VERSION.md).
+// #592/#622: the snapshot verb is callable and scoped to the adopted manifest, yet
+// help could omit it. Its whole usage line belongs beside report so a reader
+// discovers the verb that counts the adopted tools, distinguishable from report's
+// unrelated --snapshot <path> option by the verb spelling and its --file flag. The
+// --bin/--out inventory shape stays beside it, and diff opens the block.
 func TestHelpNamesTheSnapshotVerb(t *testing.T) {
 	var printed bytes.Buffer
 	help("nova-version", &printed)
-	if !strings.Contains(printed.String(), "nova-version snapshot --bin <dir> --out <file.tsv>") {
+	if !strings.Contains(printed.String(), "nova-version snapshot --file <manifest: "+manifestShape+">") {
 		t.Fatalf("nova-version help omits the snapshot verb:\n%s", printed.String())
+	}
+	if !strings.Contains(printed.String(), "nova-version snapshot --bin <dir> --out <file.tsv>") {
+		t.Fatalf("nova-version help omits the snapshot inventory verb:\n%s", printed.String())
 	}
 	if !strings.Contains(printed.String(), "nova-version diff --from <a.tsv> --to <b.tsv>") {
 		t.Fatalf("nova-version help omits the diff verb:\n%s", printed.String())
+	}
+}
+
+// #622 RED TEST: a test that walks the switch -- the verbs Run dispatches for each
+// name -- and checks help lists every one, so a verb added to the dispatch and
+// forgotten in help is red immediately (the #592 shape).
+func TestHelpListsEveryVerbMainDispatches(t *testing.T) {
+	dispatched := map[string][]string{
+		"nova-update":  {"check", "apply", "report", "help", "version"},
+		"nova-version": {"snapshot", "report", "send", "help", "version"},
+	}
+	for name, verbs := range dispatched {
+		var printed bytes.Buffer
+		help(name, &printed)
+		for _, verb := range verbs {
+			if !strings.Contains(printed.String(), name+" "+verb) {
+				t.Fatalf("%s help omits the %s verb it dispatches:\n%s", name, verb, printed.String())
+			}
+		}
 	}
 }
 
