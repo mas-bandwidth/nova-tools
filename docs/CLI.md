@@ -735,15 +735,44 @@ The things a first run gets wrong, and what each one wants:
 
 One tool for parallel work: enumerate bounded work, cut cards, admit them
 through `nova-swarm batch`, and fold what comes back. It makes no model call.
-`pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
-`status` below is the one-verb answer to the all-day questions. `width`, the
-drift alarm rule 16 of [SPEC-PULSE.md](SPEC-PULSE.md) names, is planned but
+`pool`, `cut`, `launch`, `harvest`, `manager`, `handoff` and `takeover` are
+the working verbs; `status` below is the one-verb answer to the all-day
+questions. `width`, the drift alarm rule 16 of [SPEC-PULSE.md](SPEC-PULSE.md)
+names, is planned but
 not shipped, and `nova-pulse help` says so on its own line — a verb the help
 lists as available must run, or be marked (issue #515):
 
 ```
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 ```
+
+### handoff and takeover
+
+```
+nova-pulse handoff  --queue <dir> --bus <clone> --to <name> [--from <name>] [--width <line>] [--as <name>]
+nova-pulse takeover --queue <dir> --bus <clone> --as <name>
+```
+
+`handoff` ends the manager's shift and writes the `HANDOFF` record the
+successor will inherit: `SHIFT END cycles=0 decisions=0 escalations=0` on
+stdout, then `HANDOFF OK to=<name> inflight=<n> pending=<n> escalations=<n>`,
+the lock on `<queue>/OWNER` released, the record at `<queue>/HANDOFF` with
+`to`, `from`, `width`, `in-flight`, `pending`, `escalations`, `benches` and
+`state`, and one bus note `From: <from>` -> `To: <to>` with the record as its
+body. It refuses mid-harvest (the `SHIFT END` line is not printed and the
+record is not written) and they sleep through; a new owner takes the shift by
+`takeover`, which refuses on a live `OWNER` on a reachable host
+(`TAKEOVER REFUSED owner=<name> pid=<n> host=<h>`) and otherwise prints one
+`TAKEOVER NOTE stale owner=... cleared` line, then `TAKEOVER OK from=<name>
+inherited=<inflight>/<pending>/<escalations>`. State is files under
+`<root>/queue/`: `OWNER` (`name`, `host`, `pid`, `since`) is the lock;
+`HANDOFF` is the eight-field record; the `HARVEST` flag the harvest verb
+takes clears when the harvest finishes. `--bus` is required: handoff posts a
+bus note to the successor and the `awake` probe it runs before any state
+change; takeover reads the bus clone for inheritance context where the
+`HANDOFF` record is on disk. When nova-work is open, handoff also moves the
+coordinator ownership record in the tree (generation, token, fencing, the
+`:handoff` event SPEC-WORK names).
 
 ### cut
 

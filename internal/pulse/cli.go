@@ -16,6 +16,8 @@ nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
+nova-pulse handoff  --queue <dir> --bus <clone> --to <name> [--from <name>] [--width <line>] [--as <name>]
+nova-pulse takeover --queue <dir> --bus <clone> --as <name>
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]

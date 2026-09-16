@@ -28,6 +28,8 @@ nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <di
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
+nova-pulse handoff --queue <dir> --bus <clone> --to <name> [--from <name>] [--width <line>] [--as <name>]
+nova-pulse takeover --queue <dir> --bus <clone> --as <name>
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 nova-pulse status  --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
@@ -55,20 +57,26 @@ ceiling on the free slots it may use, and --deadline is the whole pulse's one
 deadline in whole seconds. It makes no model call itself: nova-swarm must be on
 your PATH.
 
-example:
-  nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
-  nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
+	example:
+	  nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
+	  nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
 
-./cards.tsv and . there are a pulse root of your own; cmd/nova-pulse/testdata/example-pulse
-in this repo is a fixture the size of a first run, and every line above is run
-against it by the tests.
+	./cards.tsv and . there are a pulse root of your own; cmd/nova-pulse/testdata/example-pulse
+	in this repo is a fixture the size of a first run, and every line above is run
+	against it by the tests.
 
-manager is the manager tier: a bounded controller, no model call. Each cycle is
-wait, notes, harvest, triage, merge, refill and one MANAGER line; an unknown
-policy key is a refusal; --hours 0 runs one cycle and the shift ends SHIFT END.
+	manager is the manager tier: a bounded controller, no model call. Each cycle is
+	wait, notes, harvest, triage, merge, refill and one MANAGER line; an unknown
+	policy key is a refusal; --hours 0 runs one cycle and the shift ends SHIFT END.
 
-example:
-  nova-pulse manager --policy ./queue/POLICY --queue ./queue --roots ./swarm-root,./swarm-root-space --bus ./bus --as Rowan --hours 6
+	handoff ends a shift and writes its HANDOFF record; takeover begins the next.
+	handoff refuses mid-harvest and when the successor is asleep; takeover refuses
+	when the live OWNER is still on a reachable host.
+
+	example:
+	  nova-pulse manager --policy ./queue/POLICY --queue ./queue --roots ./swarm-root,./swarm-root-space --bus ./bus --as Rowan --hours 6
+	  nova-pulse handoff --queue ./queue --bus ./bus --to Stella --from Rowan --as Rowan
+	  nova-pulse takeover --queue ./queue --bus ./bus --as Stella
 
 example:
   nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
@@ -208,6 +216,10 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdManager(rest, stdout, stderr)
 	case "status":
 		return cmdStatus(rest, stdout, stderr, now)
+	case "handoff":
+		return cmdHandoff(rest, stdout, stderr)
+	case "takeover":
+		return cmdTakeover(rest, stdout, stderr)
 	case "progress":
 		return cmdProgress(rest, stdout, stderr)
 	case "gate":
@@ -578,6 +590,65 @@ func cmdProgress(args []string, stdout, stderr io.Writer) int {
 		Queue:  *queue,
 		Roots:  *roots,
 		Day:    *day,
+		Stdout: stdout,
+		Stderr: stderr,
+	})
+}
+
+func cmdHandoff(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("handoff")
+	queue := f.fs.String("queue", "", "")
+	bus := f.fs.String("bus", "", "")
+	to := f.fs.String("to", "", "")
+	from := f.fs.String("from", "", "")
+	as := f.fs.String("as", "", "")
+	width := f.fs.String("width", "", "")
+
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*queue, "queue", "the queue directory holding pending, launched, done and the state files")
+	f.want(*bus, "bus", "the nova-bus clone this handoff posts the HANDOFF record to")
+	f.want(*to, "to", "the successor's name (the bus note is addressed to them)")
+	if strings.TrimSpace(*from) == "" {
+		*from = strings.TrimSpace(*as)
+	}
+	if strings.TrimSpace(*from) == "" {
+		f.add("--from is required (or pass --as for the same value); it is the owner writing the HANDOFF record")
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.Handoff(pulse.HandoffInput{
+		Queue:  *queue,
+		Bus:    *bus,
+		To:     *to,
+		From:   *from,
+		Width:  *width,
+		Stdout: stdout,
+		Stderr: stderr,
+	})
+}
+
+func cmdTakeover(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("takeover")
+	queue := f.fs.String("queue", "", "")
+	bus := f.fs.String("bus", "", "")
+	as := f.fs.String("as", "", "")
+
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*queue, "queue", "the queue directory holding pending, launched, done and the state files")
+	f.want(*bus, "bus", "the nova-bus clone a takeover may need to read for the inherited HANDOFF record")
+	f.want(*as, "as", "the name taking over; written into OWNER and printed on TAKEOVER OK")
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.Takeover(pulse.TakeoverInput{
+		Queue:  *queue,
+		Bus:    *bus,
+		As:     *as,
 		Stdout: stdout,
 		Stderr: stderr,
 	})

@@ -36,7 +36,7 @@ type fakeSpec struct {
 
 // fakeTools are the programs nova-pulse starts. A name with no spec in the test's
 // directory exits 97 and says so, which no real gh or git ever does.
-var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm"}
+var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "nova-wake"}
 
 var (
 	fakeRoot    string
