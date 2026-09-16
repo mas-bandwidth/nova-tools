@@ -83,6 +83,10 @@ docs/TESTS.md carries the transcript it prints.
 example:
   nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
 
+cut reads <templates>/models.tsv: two lines, "flash <model id>" then "pro <model id>",
+naming the models text cards (read, text, tone) route to flash and writing cards
+(fix, replay, drift) route to pro.
+
 run holds the loop so the coordinator's turns are decisions and never ticks. Each
 tick is gate, harvest, sweep, reap, refill, launch and one PULSE WIDTH line, all
 mechanical; it makes no model call, and it writes ONE bus note -- carrying the

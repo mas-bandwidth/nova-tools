@@ -86,8 +86,10 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    own) is counted in `plan=<n>` on the `POOL` line and not pooled — a plan is the bus's, and
    its slices arrive by the `bus` source.
 4. **Six typed templates, in one directory, named by a flag.** `--templates <dir>` holds
-   `read.md`, `fix.md`, `text.md`, `replay.md`, `drift.md`, `tone.md` and the cost table
-   rule 7 reads (`benches.tsv`, or `routes.tsv`, whichever is there). A candidate whose
+   `read.md`, `fix.md`, `text.md`, `replay.md`, `drift.md`, `tone.md` and `models.tsv` —
+   two lines, `flash <model id>` then `pro <model id>` — the model-name table the shipped
+   `cut` reads today; rule 7's cost table (`benches.tsv`, or `routes.tsv`, whichever is
+   there) replaces it when routing lands. A candidate whose
    template is not a
    file there is `skipped`, counted on the `CUT` line, and its (`source`,`id`) goes to
    `skipped.tsv` with `no template <name>`; `cut` never falls back to another template.

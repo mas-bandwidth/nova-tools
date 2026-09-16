@@ -810,6 +810,10 @@ CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
 
 Exit 0 when every candidate was cut, 1 when any was skipped, 2 on a refusal.
 
+`cut` reads its model names from `<templates>/models.tsv` — two lines, `flash
+<model id>` then `pro <model id>` — so text cards (`read`, `text`, `tone`) route
+to flash and writing cards (`fix`, `replay`, `drift`) to pro.
+
 ### status
 
 ```

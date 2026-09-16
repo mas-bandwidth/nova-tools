@@ -140,6 +140,21 @@ func TestCutRefusalNamesCostTableShape(t *testing.T) {
 	}
 }
 
+// cut-help-names-models-shape: `nova-pulse help` names the models.tsv cut reads from
+// --templates and its two-line shape flash <model id> / pro <model id> (issue #633).
+func TestCutHelpNamesModelsShape(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"help"}, &out, &errb, time.Now().UTC()); code != 0 {
+		t.Fatalf("help exit = %d, stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "models.tsv") {
+		t.Fatalf("help %q does not name models.tsv", out.String())
+	}
+	if !strings.Contains(out.String(), "flash <model id>") || !strings.Contains(out.String(), "pro <model id>") {
+		t.Fatalf("help %q does not name the two-line shape flash <model id> / pro <model id>", out.String())
+	}
+}
+
 // pool-reads-open-non-draft-prs (issue #638): a `prs` source kind pools open, non-draft
 // pull requests as read candidates -- one candidate per PR, the read half of the loop
 // harvest itself describes ("cuts a read card per PR"). A draft PR is nowhere, and the
