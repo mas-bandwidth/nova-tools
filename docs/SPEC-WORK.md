@@ -2457,6 +2457,73 @@ same tree, shared-reference counting, and equivalent full versus incremental
 results after a change. Adopt the abstraction only if it reduces implementation
 or coordination cost without obscuring acceptance evidence.
 
+## The duty tier and the single-writer kernel *(Rowan, on the first day of a duty tier, 2026-09-15; #500)*
+
+From the first day of a duty tier (Glenn, Rowan, Stella, 2026-09-15), not cut as a card until
+nova-work is open again: the resident session is the duty tier, and the kernel that owns the
+structure is one command thread. This section is the amendment. Every rule here has no code yet,
+so each rule's first line is **SPEC-AHEAD: #500**, and each rule's replay is appended at the end of
+the replay list in *Acceptance replays* below. **Nothing is renumbered and nothing is rewritten**:
+the six rules below are added, the validator's rules 1 to 18 and the efficiency rules 1 to 10 are
+untouched, and the one older sentence the amendment replaces is the decisions-per-token sentence of
+*Decision packets*, replaced in place.
+
+1. SPEC-AHEAD: #500
+   **The resident session's authority.** The resident session (E02) is the duty tier: it executes an
+   approved finite policy — a versioned record in **C**, `:by` on every rule — with the cheapest
+   qualified model or none; it never authors policy; every judgment it cannot make becomes an
+   escalation. This is the session's authority, and it is stated as such: the authority to execute
+   the approved policy, to pick the cheapest qualified model or none, and to escalate what it cannot
+   decide; never the authority to author policy. A policy rule with no `:by` is refused at load,
+   because an approved policy is a record of whose word every rule is, exactly as every event's
+   `:by` is. Replay: `duty-tier-executes-the-policy`.
+
+2. SPEC-AHEAD: #500
+   **Escalation is a node kind, and the row gains the three fields.** Escalation becomes a node kind
+   (or the row gains fields): the policy rule that could not decide it, the default that fires on
+   silence, and its age (Gas Town idea 5); the coordinator's stale pass reads them. So an escalation
+   row carries `:rule` — the policy rule that could not decide; `:default` — the default that fires
+   on silence, what happens if the escalation is read too late; and the age — how long the
+   escalation has stood. `stale` reads the three and reassigns nothing: they are information, exactly
+   as the `escalated-age=` and `reread=` of *Efficiency: lessons absorbed* are information. Replay:
+   `escalation-carries-rule-default-age`.
+
+3. SPEC-AHEAD: #500
+   **The wait table gains the four presence columns.** The per-harness wait table of *Presence*
+   gains four columns, the presence facts: **process alive**, **beat written**, **delivery
+   handled**, **parent woke** (the nova-wake drill). A harness with the fourth unproven cannot hold
+   a resident session; it may hold a duty session driven by notes. A resident session is a
+   coordinator's line, and a coordinator whose parent cannot be woken is the sleeping-coordinator
+   case of *Presence* under a second name; so the wait that holds a resident session must have
+   demonstrated the whole drill, while a duty session driven by notes — which never authors policy
+   and escalates what it cannot decide — may be held by a harness that has proven the first three.
+   Replay: `wait-table-four-presence-columns`.
+
+4. SPEC-AHEAD: #500
+   **Quiet time.** A resident or duty session makes no model call and sends no note when nothing
+   changed; state is published mechanically; so cost per event is measurable. Quiet time is the
+   durable-triggers rule of *Efficiency: lessons absorbed* applied to the duty tier itself: nothing
+   changed is a trigger that fires on nothing, an empty pulse reruns nothing, and the mechanical
+   publication — the clip, the beat, the projection — still happens, so the cost of one event is the
+   measured spend of the one call that event caused. Replay: `quiet-time-calls-nothing`.
+
+5. SPEC-AHEAD: #500
+   **The coordination measure.** The coordination measure is **cost per accepted decision** across
+   tiers, with **wrong or missed decisions** and **recovery latency** as gates; it replaces the
+   decisions-per-token sentence of *Decision packets*, replaced in place. A cheap decision that was
+   wrong, missed, or recovered slowly is not an accepted decision; the gates are the wrong or missed
+   decisions and the recovery latency, and what is measured is what the accepted decisions cost.
+   Replay: `cost-per-accepted-decision`.
+
+6. SPEC-AHEAD: #500
+   **The single-writer kernel.** The kernel that owns **O** and **C** is one command thread, like
+   redis, or it corrupts (Glenn, 2026-09-15). Every mutation is a command applied in order by that
+   thread and journaled in the same order — the sequence number is the order; readers, network,
+   journal fsync and clip may run elsewhere but never touch the structure; the duty tier and every
+   other client are clients of that thread. **Validator rule: a mutation outside the command loop is
+   a defect.** Replay: `single-writer-kernel-total-order` — two concurrent clients' commands land in
+   one total order, and the journal shows the sequence numbers in that order.
+
 
 ## The engine and its client *(shared; Stella's `docs/SPEC-WORK-PILOT.md` at `81c2885`, integrated; the wire schema is Rowan's)*
 
@@ -4091,8 +4158,9 @@ this reader has never read the entry. **One writer and one durable home per fact
 keyed (reader, sha), a gate (base, head, integration), ownership on the node; a bus note carries
 questions, findings and handoffs only, and **there is no receipt-of-receipt** — a worker returns
 one structured result, and an independent review does not route through the coordinator to be
-counted. The measure is useful decisions completed, missed or duplicate wakeups, decision latency
-and source-reported usage, and equal correctness is proved before fewer turns is called a win.
+counted. The coordination measure is cost per accepted decision across tiers, with wrong or missed
+decisions and recovery latency as gates; equal correctness is proved before fewer turns is called a
+win (the duty-tier amendment, #500).
 
 ### The envelope up, and the no that survives the hop
 
@@ -5547,6 +5615,29 @@ index's admission** (where #333 at `79277f05` already has a built witness, it is
 
 The stall replays of 5649089106
 belong to stall detection, deferred below, and are listed there so they are not lost.
+
+**The replays of the duty-tier amendment (#500), for the resident session's authority, escalation,
+the wait table, quiet time, the coordination measure and the single-writer kernel:**
+
+- **`duty-tier-executes-the-policy`** — a resident session (E02) given an approved finite policy
+  record from C, `:by` on every rule, executes it with the cheapest qualified model or none, authors
+  no policy of its own, and escalates every judgment it cannot make; a policy rule with no `:by` is
+  refused at load.
+- **`escalation-carries-rule-default-age`** — an escalation row carries the policy rule that could
+  not decide it, the default that fires on silence, and its age; `stale` reads the three and
+  reassigns nothing.
+- **`wait-table-four-presence-columns`** — the per-harness wait table carries the four presence
+  facts — process alive, beat written, delivery handled, parent woke — and a harness with the fourth
+  unproven holds no resident session, only a duty session driven by notes.
+- **`quiet-time-calls-nothing`** — a resident or duty session with nothing changed makes no model
+  call and sends no note; state is published mechanically; the cost of one event is the measured
+  spend of the one call that event caused.
+- **`cost-per-accepted-decision`** — the coordination measure is cost per accepted decision across
+  tiers, with wrong or missed decisions and recovery latency as gates; the decisions-per-token
+  sentence of *Decision packets* is replaced.
+- **`single-writer-kernel-total-order`** — two concurrent clients' commands to the one kernel land
+  in one total order; the journal shows the sequence numbers in that order; a mutation outside the
+  command loop is a defect (the validator rule).
 
 ## Preservation and recovery acceptance *(Stella, `docs/SPEC-WORK-VALIDATION.md` at `81c2885`)*
 
