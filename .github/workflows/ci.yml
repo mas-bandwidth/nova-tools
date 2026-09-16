@@ -323,9 +323,13 @@ jobs:
           else
             cores=$(nproc)
           fi
-          share=$(( cores / 4 ))
+          # EIGHT runners per machine since 2026-09-16 (space-nova-1..8,
+          # studio-nova-1..8); the divisor was still 4, so eight legs asked for
+          # 32 threads of a 15-core Space (load 39 at 16:20Z with the swarm idle)
+          # and every leg crawled. The share follows the runner count.
+          share=$(( cores / 8 ))
           [ "$share" -ge 1 ] || share=1
-          echo "$cores cores on this machine, 4 runners, this leg takes $share"
+          echo "$cores cores on this machine, 8 runners, this leg takes $share"
           echo "GOMAXPROCS=$share" >> "$GITHUB_ENV"
 
       # No actions/cache here. These runners are PERSISTENT: ~/.cache/go-build
