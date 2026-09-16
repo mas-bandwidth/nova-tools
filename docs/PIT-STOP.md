@@ -69,11 +69,11 @@ slots (#536); nine faults were paying for the gap. The stop was called on the ev
 | `TMPDIR` under the job repo turned a "not a repo" test red on every card | #460 | landed, #558 |
 | the idle watch killed cards whose `go test` printed nothing | #593 | landed, #603 |
 | `RESULT.md` written under `repo/` on the local bench scored `no-result` | #594 | landed, #603 |
-| a silent harness scored `NATIVE OK rc=0`; the local route was unproven | #591 | PR #604 open |
+| a silent harness scored `NATIVE OK rc=0`; the local route was unproven | #591 | landed, #604 |
 | `go test ./cmd/nova-bus/` at 148 s paid by every card and CI job | #516 | landed, #606 |
 
 The rules the stop wrote are in their specs: the nine rate and convergence rules (#553,
 SPEC-PULSE **Rate and convergence**), the status and progress verbs (#549, #536), the bench
 width (#528, SPEC-SWARM **Benches**), the swarm's per-card admission, slot locks and reason
 tokens (SPEC-SWARM **scatter** and **gather**), and practices 22-25 of WORKER-CARDS. The trust
-batch that closes this stop is owed: it runs when #604 lands, and its `BATCH` line goes here.
+batch that closes this stop is owed: every row has landed, so it runs next, and its `BATCH` line goes here.
