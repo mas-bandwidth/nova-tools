@@ -104,6 +104,42 @@ func LinksExcluding(dir string, exclude []string) (res LinksResult, err error) {
 	return res, nil
 }
 
+// LinksFiles is the single-/few-file form of Links: it checks exactly the
+// listed markdown files and nothing else, so a two-file review does not
+// expand to the whole tree. dir is still the resolution root — root-relative
+// targets and the "escapes the tree" judgement resolve against it — and the
+// reported paths stay repo-relative, exactly as the full walk reports them. A
+// relative path is joined to dir; an absolute one is used as-is.
+func LinksFiles(dir string, files []string, exclude []string) (res LinksResult, err error) {
+	root, statErr := filepath.EvalSymlinks(dir)
+	if statErr != nil {
+		return res, fmt.Errorf("dir %q: %w", dir, statErr)
+	}
+	info, statErr := os.Stat(root)
+	if statErr != nil {
+		return res, fmt.Errorf("dir %q: %w", dir, statErr)
+	}
+	if !info.IsDir() {
+		return res, fmt.Errorf("dir %q is not a directory", dir)
+	}
+	dir = root
+
+	for _, f := range files {
+		mdPath := f
+		if !filepath.IsAbs(mdPath) {
+			mdPath = filepath.Join(dir, filepath.FromSlash(f))
+		}
+		if !strings.EqualFold(filepath.Ext(mdPath), ".md") {
+			return res, fmt.Errorf("file %q is not a markdown file", f)
+		}
+		res.MDFiles++
+		n, b := checkFileLinks(dir, mdPath, exclude)
+		res.Checked += n
+		res.Broken = append(res.Broken, b...)
+	}
+	return res, nil
+}
+
 // underExclude reports whether a tree-relative path (forward-slashed) is at or
 // below any of the given exclude prefixes. A prefix is matched as a path:
 // "testdata" excludes "testdata" and everything under it, never a sibling like

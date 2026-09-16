@@ -404,12 +404,17 @@ content semantics; anything about the session that pastes the line.
 ### links — every internal reference resolves
 
 ```
-nova-check links --dir <dir> [--exclude <prefix>] [--fail-max <n>]
+nova-check links --dir <dir> [--file <path>] [--exclude <prefix>] [--fail-max <n>]
 ```
 
 **Asserts.** Every relative link target in every `.md` file under `--dir`
 resolves to an existing file or directory inside the tree. Walks the whole
-tree, skipping `.git`. A repeatable `--exclude <prefix>` leaves a subtree
+tree, skipping `.git`. A repeatable `--file <path>` narrows the walk to just
+those files — a two-file review does not expand to the whole tree — while
+`--dir` remains the resolution root for root-relative targets and the
+"escapes the tree" judgement; a relative `--file` path is joined to `--dir`,
+an absolute one used as-is, and the reported paths stay repo-relative. A
+repeatable `--exclude <prefix>` leaves a subtree
 unscanned and skips any link into it, reporting the skipped files as
 `excluded=<n>` on the LINKS line.
 

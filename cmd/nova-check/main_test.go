@@ -182,6 +182,33 @@ func TestLinksUnreadableFileIsNamedFailureAtTheCLI(t *testing.T) {
 	}
 }
 
+// --file is the two-file (and single-file) review mode Stella asked for: a
+// links run over --file with one broken link in one of two files reports
+// files=2 and that link only, never expanding to the whole tree.
+func TestLinksFileNarrowsTheWalk(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, dir, "one.md", "[ok](two.md)\n")
+	mustWrite(t, dir, "two.md", "[gone](missing.md)\n")
+	mustWrite(t, dir, "three.md", "[other-gone](nowhere.md)\n")
+
+	var stdout, stderr bytes.Buffer
+	if got := run([]string{"links", "--dir", dir, "--file", "one.md", "--file", "two.md"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("exit = %d, want 1; stdout: %s stderr: %s", got, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "files=2") {
+		t.Errorf("stderr = %q, want files=2 (the two --file paths, not the whole tree)", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "two.md:1: missing.md (does not exist)") {
+		t.Errorf("stderr = %q, want the broken link in two.md and none else", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "three.md") {
+		t.Errorf("stderr = %q, want three.md unscanned: --file must not expand to the whole tree", stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Errorf("a failing check must not print an OK line, got %q", stdout.String())
+	}
+}
+
 // brief renders a value for a test failure the way the CLI renders one for a
 // caller: one line, escaped, and capped.
 func brief(s string) string { return oneline.Escape(oneline.Cap(s, 200)) }
