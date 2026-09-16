@@ -1,0 +1,20 @@
+CARD-8008 — nova-bus: send refuses a fresh clone that wrote .nova-bus/defaults
+
+Issue: `inbox` demands `.nova-bus/defaults` (or the env var) for
+--receipt-max-words; once the clone writes that file, `send` refuses over it as
+"changes that are not this note". The two verbs must agree: .nova-bus/ is the
+tool's own per-clone state, never a note. Fixed by making the clean guard ignore
+.nova-bus/ (internal/bus EnsureClean).
+
+Red test (failing output verbatim, before the fix):
+
+  --- FAIL: TestSendIgnoresDotNovaBusPerCloneState (0.05s)
+      main_test.go:739: exit 1, want 0
+          stdout:
+          stderr: SEND FAIL /home/ubuntu/nova-bench/swarm-root/111/jobs/card-8008/scratch/TestSendIgnoresDotNovaBusPerCloneState94340199/001/note.md: the bus's checkout holds changes that are not this note: .nova-bus/defaults
+
+Green: go test ./cmd/nova-bus/ ok
+
+Note: `go test ./...` shows a pre-existing, unrelated failure in
+internal/swarm TestPullWaitsForResult (cp "copy of nothing" naming), not touched
+by this card; cmd/... and internal/bus all pass.

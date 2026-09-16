@@ -722,3 +722,20 @@ func TestReceiptMaxWordsDefaultsFromBusFileThenEnv(t *testing.T) {
 		mustCode(t, 0).
 		mustContain(t, "stdout", "receipts=0")
 }
+
+// A fresh clone that wrote <bus>/.nova-bus/defaults -- its per-clone state, the file
+// `inbox` reads for --receipt-max-words -- must be able to `send` a note with no hand step
+// in between. The dirty-checkout guard used to refuse over .nova-bus/defaults as "changes
+// that are not this note", so every fresh bus clone locked: inbox demands the file, send
+// then refuses the checkout that holds it.
+func TestSendIgnoresDotNovaBusPerCloneState(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+	writeFile(t, checkout, ".nova-bus/defaults", "receipt-max-words=40\n")
+	note := filepath.Join(filepath.Dir(checkout), "note.md")
+	writeFile(t, filepath.Dir(checkout), "note.md", draft)
+	invoke(t, "", "send", "--bus", checkout, "--as", "Ada", "--file", note,
+		"--remote", "origin", "--branch", "main", "--attempts", "3", "--no-push").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "SEND OK id=ada-")
+}
