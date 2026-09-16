@@ -24,4 +24,5 @@
   :depends-on ("nova-work")
   :serial t
   :components ((:file "tests/harness")
-               (:file "tests/acceptance")))
+               (:file "tests/acceptance")
+               (:file "tests/s2")))
