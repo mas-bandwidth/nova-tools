@@ -409,6 +409,33 @@ func TestProbeProvesTheWall(t *testing.T) {
 	}
 }
 
+// Rule 10 with no --secret (issue #881): a key delivered by nova-secrets exec is never a
+// file, so a probe without one is sound -- the wall proves the other four checks and no
+// read_secret step is invented.
+func TestAProbeWithoutASecretProvesTheWall(t *testing.T) {
+	needDarwin(t)
+	j := newJob(t)
+	code, out, errOut := j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write)
+	if code != 0 {
+		t.Fatalf("probe without --secret exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, want := range []string{
+		"PROBE STEP name=write_outside_control expect=allow got=allow",
+		"PROBE STEP name=write_outside expect=deny got=deny",
+		"PROBE STEP name=write_inside expect=allow got=allow",
+		"PROBE STEP name=read_root expect=allow got=allow",
+		"PROBE OK backend=sandbox-exec",
+		"steps=4 passed=4",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the probe did not print %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "read_secret") {
+		t.Fatalf("a probe without --secret must not invent a read_secret step:\n%s", out)
+	}
+}
+
 // Rule 4 and the refusal grammar, through the binary's own argv.
 func TestRefusalsThroughTheArgv(t *testing.T) {
 	j := newJob(t)
@@ -1160,13 +1187,18 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 		if code != 2 {
 			t.Fatalf("exit = %d, want 2:\n%s", code, errOut)
 		}
-		for _, want := range []string{"--secret is required", "--write is required"} {
+		for _, want := range []string{"--write is required"} {
 			if !strings.Contains(errOut, want) {
 				t.Errorf("a bare probe does not name %q; a first run must not be sequenced into one run per mistake:\n%s", want, errOut)
 			}
 		}
-		if lines := strings.Count(strings.TrimSpace(errOut), "\n") + 1; lines < 2 {
-			t.Errorf("both refusals must be printed, one line each:\n%s", errOut)
+		// --secret is no longer required (issue #881): a key delivered by nova-secrets
+		// exec is never a file, so a probe without one is a probe, not a refusal.
+		if strings.Contains(errOut, "--secret is required") {
+			t.Errorf("a bare probe demands a --secret that is no longer required:\n%s", errOut)
+		}
+		if lines := strings.Count(strings.TrimSpace(errOut), "\n") + 1; lines < 1 {
+			t.Errorf("the refusal must be printed, one line:\n%s", errOut)
 		}
 		// One refusal per problem, and every one of them inside the published
 		// grammar: a bare probe's missing --write is reason=check naming bad_write,
@@ -1194,8 +1226,11 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 
 	t.Run("only --write", func(t *testing.T) {
 		code, _, errOut := j.tool(t, j.env(), "probe", "--write", j.write)
-		if code != 2 || !strings.Contains(errOut, "--secret is required") {
-			t.Errorf("exit = %d; the missing --secret is not named:\n%s", code, errOut)
+		// --secret is no longer required (issue #881), so the missing one is never
+		// named: a probe without a --secret is a probe, and its refusal (if any) is
+		// about the wall, never about a file the caller's nova-secrets delivery has.
+		if code == 2 && strings.Contains(errOut, "--secret is required") {
+			t.Errorf("a probe without --secret is refused for one:\n%s", errOut)
 		}
 	})
 

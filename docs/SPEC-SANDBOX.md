@@ -275,14 +275,19 @@ near the end.
    run, because a wall that lets the job start and kills its first git
    command is the silent sandbox rule 1 exists to prevent.
 10. **The probe proves the wall before the work runs.** `nova-sandbox probe
-    --write <dir> [--read <dir>...] --secret <path>` runs five checks under the
+    --write <dir> [--read <dir>...] [--secret <path>]` runs five checks under the
     real policy for this platform: the control write outside the wall must
     succeed; a write **outside** every named path must fail; a read of the
     named secret file must fail; a write **inside** the write set must
     succeed; and a **read of the probe's own executable** must succeed. Any
     check that comes back the wrong way is `PROBE REFUSED` at exit 1 naming
     the check. The last two are not decoration: a wall that denies the work
-    too is broken, and a two-check probe would call it a pass. **The probe
+    too is broken, and a two-check probe would call it a pass. **`--secret` is
+    optional (issue #881).** A caller whose key is delivered by `nova-secrets
+    exec` into the environment has **no key file** for the wall to protect —
+    the key is never a file on disk — so the probe runs its other four checks
+    and no `read_secret` step is invented; the `secret_inside_allow` check of
+    rule 6 is skipped for the same reason. **The probe
     takes no command**, and that is why the last check reads the probe's own
     binary: `probe` re-executes `os.Executable()` under the policy it just
     generated, so the resolved command of that wrapped run is `nova-sandbox`
@@ -390,7 +395,7 @@ near the end.
 
 ```
 nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
-nova-sandbox probe   --write <dir>... [--read <dir>...] --secret <path> [--net-deny] [--max <n>]
+nova-sandbox probe   --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny] [--max <n>]
 nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] [-- <command> <args...>]
 nova-sandbox fence   --out <file> [--webfetch allow|deny]
 nova-sandbox grant   --name <container> [--read <dir>]... [--write <dir>]...
@@ -1029,11 +1034,15 @@ HOME=<jobdir>/home nova-sandbox probe --write <jobdir> --secret ~/.config/<provi
 check runs before the policy is built, so a probe run with the dispatcher's own
 `HOME` — which is outside every `--write` by construction — is
 `PROBE REFUSED reason=check ... home_outside` and every swarm pass would refuse
-with it. A caller that runs the probe runs it with the job's data home.
+with it. A caller that runs the probe runs it with the job's data home. A caller
+whose key is delivered by `nova-secrets exec` names **no `--secret`** (issue
+#881): the key is never a file, so there is no secret file to prove unreadable,
+and the probe runs the other four checks.
 
 Five checks, under the real policy for this platform, each one line — the five
 are the five rows below, `write_outside_control` included, and the names in the
-`PROBE STEP` grammar are exactly these five. `probe` is the one verb that
+`PROBE STEP` grammar are exactly these five; a probe **without `--secret`** runs
+four (no `read_secret`). `probe` is the one verb that
 **re-executes the tool itself** under the generated policy (an internal verb,
 not a shell, not a caller command): it has no command to wrap, and running the
 checks in-process would test nothing, because on linux the restriction is
@@ -1645,6 +1654,9 @@ One per rule:
     `PROBE REFUSED`, not `PROBE OK`; a policy with no wall at all fails
     `write_outside` and `read_secret`; a correct policy is
     `PROBE OK steps=5 passed=5`; the secret file's contents are never read.
+    A probe **without `--secret`** (issue #881) prints `PROBE OK steps=4
+    passed=4` with no `read_secret` step — the key delivered by `nova-secrets
+    exec` is never a file.
     And the shape rule 10 fixes, which is what makes `read_root` mean anything:
     the printed `path=` of `read_root` **is `os.Executable()`**, the probe's own
     binary, and no step's `path=` is a shell. `/bin` is a fixed root in the
