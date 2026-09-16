@@ -155,6 +155,9 @@ func TestAReadFromAnotherMachineReachesTheCoordinatorsNextPass(t *testing.T) {
 // absent from the decision, silently. The fold is the only source of records other
 // machines wrote; swallowing its failure is the failure rule 22 exists to close.
 func TestAVerbThatCannotTakeTheCheckoutLockExitsTwoAndNamesTheHolder(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a held lock across two verbs; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	l := newLab(t)
 	setupPR(t, l, 951, "feature-a", "a.txt", false)
@@ -218,6 +221,9 @@ func TestAStatusWhosePullFailedStillReportsAndSaysWhatIsMissing(t *testing.T) {
 // so a reader asking for their own packet while the coordinator's pass held the checkout
 // was answered with exit 2 and a lock refusal, which is the answer given to a writer.
 func TestAPacketIsHandedOverWhileTheCheckoutIsHeld(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a held lock and runs repeated verbs; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
@@ -252,6 +258,9 @@ func TestAPacketIsHandedOverWhileTheCheckoutIsHeld(t *testing.T) {
 // comes BEFORE the pass -- no RUN PASS line -- and names the holder, which is what rule 2
 // asks of a verb that could not take a lock.
 func TestAFoldWhoseStateWriteIsRefusedIsNotSilent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: runs a pass against a held state lock over real git; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	l := newLab(t)
 	setupPR(t, l, 951, "feature-a", "a.txt", true)
@@ -337,6 +346,9 @@ func TestAPacketStopsOnARecordWhosePathNamesNoEntry(t *testing.T) {
 // holds a packet shows never go backwards -- a half-written file read once and dropped is
 // exactly how they would.
 func TestAPacketIsHandedOverCorrectlyWhileAFlushRuns(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: spawns racing reads and repeated packets in a loop; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
@@ -392,6 +404,9 @@ func TestAPacketIsHandedOverCorrectlyWhileAFlushRuns(t *testing.T) {
 // The lock is taken INSIDE the pass -- the fold has already happened, so the refusal can
 // only be this write -- by a hand at the clone's first Git operation.
 func TestAPassWhoseOwnStateWriteIsRefusedIsNotSilent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: runs a pass against a held state lock over real git; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	l := newLab(t)
 	setupPR(t, l, 951, "feature-a", "a.txt", true)

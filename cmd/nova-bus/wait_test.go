@@ -84,6 +84,9 @@ func push(dir string) error {
 // harness wakes when the call RETURNS, and the caller must then issue the next wait. The
 // line is always last, so a harness reading the tail of the transcript finds it.
 func TestWaitEndsWithRearmLine(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -160,6 +163,9 @@ func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
 // It is asserted on the WAIT line, which is where a caller who named no interval is told
 // what they got. --timeout is short: what is under test is the number, not the sleeping.
 func TestTheDefaultWaitIntervalIsTenSeconds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -175,6 +181,9 @@ func TestTheDefaultWaitIntervalIsTenSeconds(t *testing.T) {
 // Nothing arrives: the wait stops when it said it would, says so, and exits 0. A timeout
 // is the answer "nothing yet", not an error -- the caller issues the next one.
 func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -432,6 +441,9 @@ func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
 // rather than spinning in a zero-delay loop, and returns only when a note arrives or
 // the deadline passes. A settled reader with nothing new sits out the whole timeout.
 func TestWaitWithoutAdvanceBlocksWhenCursorIsUnadvanced(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -490,6 +502,9 @@ func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(
 // one WAIT ADVANCED line says so, and the wait blocks for a genuinely new note instead of
 // returning.
 func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
@@ -542,6 +557,9 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 // the push, tested next. Here --beat is far longer than the wait, so nothing is pushed and
 // the only trace is the working-tree file, rewritten down to its last tick.
 func TestWaitWritesBeatEachTick(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -575,6 +593,9 @@ func TestWaitWritesBeatEachTick(t *testing.T) {
 // awake`. So the exit beat extends until=now+--beat-lease out over that gap, and the
 // lease is what keeps a working manager cycle reading awake.
 func TestWaitWritesLeaseOnExit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -606,6 +627,9 @@ func TestWaitWritesLeaseOnExit(t *testing.T) {
 // short enough that a push MUST happen, and the assertion is that pushes never outrun the
 // polls -- a beat pushed once per poll would be a poller, not a beat.
 func TestWaitBeatPushBounded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -638,6 +662,9 @@ func TestWaitBeatPushBounded(t *testing.T) {
 // space and all -- rather than splitting it in two. splitShellWords tokenizes the way a
 // shell would for the grammar rearmCommand emits; the emitted command text is never executed.
 func TestRearmCommandQuotesArgumentsWithSpaces(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	hermetic(t)
 	_, bare := busDir(t)
