@@ -350,7 +350,10 @@ Those three usage lines are the string `nova-update help` prints, byte for byte:
 in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
-name, `send` implying `--send` (rule 20); its `help` prints those two lines the same way.
+name, `send` implying `--send` (rule 20), and `nova-version snapshot --bin <dir> --out
+<manifest> [--owner <name>]` writes the manifest `report` reads (the opening paragraph);
+its `help` prints those three lines the same way, snapshot's `--out` distinct from
+report's `--snapshot <path>` option.
 `nova-version report --as x --to y` prints the inventory and composes nothing (rule 26);
 Emma's ready-to-send draft (#121) is `nova-version report --draft …`, the flag typed.
 

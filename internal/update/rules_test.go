@@ -393,6 +393,18 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	}
 }
 
+// #592: the snapshot verb is callable and produces report's manifest, yet help
+// never prints it. Its whole usage line belongs beside report so a reader
+// discovers the manifest-writing verb, distinguishable from report's unrelated
+// --snapshot <path> option by the verb spelling and its --bin/--out flags.
+func TestHelpNamesTheSnapshotVerb(t *testing.T) {
+	var printed bytes.Buffer
+	help("nova-version", &printed)
+	if !strings.Contains(printed.String(), "nova-version snapshot --bin <dir> --out <manifest> [--owner <name>]") {
+		t.Fatalf("nova-version help omits the snapshot verb:\n%s", printed.String())
+	}
+}
+
 // #406 item 2: the usage line says what --file is and its shape, so a reader of
 // the help is told the file is a manifest (one line per tool, six tab-separated
 // fields) before a run, and the missing-file refusal says the same sentence.
