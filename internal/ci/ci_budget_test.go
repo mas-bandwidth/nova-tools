@@ -138,6 +138,14 @@ var clTierCeilings = map[string]int{
 	// The aggregate reads results and checks nothing out.
 	"ci-ok": 1,
 
+	// The platform legs a PR runs only when it touches platform-specific paths
+	// (internal/sandbox on ubuntu-latest, the bus on windows-latest). A hosted
+	// runner starts cold (checkout, setup-go, cache restore) and cmd/nova-bus
+	// measured 439 s on windows-latest before its -short gate (#682); the leg
+	// runs -short, and 6 is the same cap the sharded matrix carries. A PR that
+	// does not touch those paths pays a checkout and skips. (2026-09-16)
+	"test-hosted-pr": 6,
+
 	// The sharded test matrix, and the one number the move to self-hosted
 	// runners actually changed. The two minutes are the CL FEEDBACK PATH: how
 	// long a change waits. On GitHub-hosted runners every leg starts at once,
