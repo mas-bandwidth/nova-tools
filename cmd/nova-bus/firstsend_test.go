@@ -148,6 +148,19 @@ func TestARefusalNamesEveryProblemOnItsOwnLine(t *testing.T) {
 	}
 }
 
+// A fresh clone must run inbox then send with no hand step in between. Inbox refuses to
+// guess --receipt-max-words, so its failure spells the fix: write <bus>/.nova-bus/defaults.
+// That file is the tool's own per-clone state, never a note, and send must not refuse over
+// it as an unrelated change.
+func TestFreshCloneSendsAfterWritingDefaults(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	writeFile(t, checkout, ".nova-bus/defaults", "receipt-max-words=1\n")
+	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3", "--no-push").
+		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=ada-")
+}
+
 // The draft verb: its stdout is a FILE, and the file is a note this tool's own parser
 // reads back and this tool's own send accepts.
 func TestDraftPrintsASkeletonTheParserReadsBack(t *testing.T) {

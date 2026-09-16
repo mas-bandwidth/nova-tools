@@ -642,6 +642,9 @@ func EnsureClean(dir string, allow []string) error {
 		status, path := rec[:2], rec[3:]
 		if path == BusStateDir || strings.HasPrefix(path, BusStateDir+"/") {
 			// The tool's own per-clone state, never a note and never somebody else's work.
+			// .nova-bus/ is this tool's own per-clone state (defaults, and the like), never
+			// a note on the bus; a fresh clone that said yes to inbox's hint and wrote
+			// .nova-bus/defaults must not be told its checkout is dirty for it.
 			continue
 		}
 		if strings.ContainsAny(status, "RC") {
