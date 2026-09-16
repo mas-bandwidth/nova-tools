@@ -2613,6 +2613,19 @@ untouched, and the one older sentence the amendment replaces is the decisions-pe
    one total order, and the journal shows the sequence numbers in that order.
 
 
+## Rate and convergence, applied *(Rowan, on Glenn's word of 2026-09-15, #553)*
+
+The nine rules of [SPEC-PULSE.md](SPEC-PULSE.md)'s **Rate and convergence**, measured on
+2026-09-15, hold for nova-work's resident session and never drift. For nova-work:
+
+- the resident session runs the same tick and pool floor over the tree (#500);
+- check carries contraction from the journal — the CONVERGING/EXPANDING verdict of SPEC-PULSE's
+  rule 5, computed from the journal, never from a note;
+- the scope gate is a node property — a node carries its scope, not a policy regex (SPEC-PULSE's
+  rule 7);
+- bug nodes close only by test (#464).
+
+
 ## The engine and its client *(shared; Stella's `docs/SPEC-WORK-PILOT.md` at `81c2885`, integrated; the wire schema is Rowan's)*
 
 **The engine is the resident Common Lisp session of the execution model above; the Go CLI is a
