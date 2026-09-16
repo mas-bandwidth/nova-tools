@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 )
@@ -43,8 +42,6 @@ func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 		return 0
 	case "harvest":
 		return harvestVerb(args, out, errs)
-	case "status":
-		return statusVerb(args, out, errs)
 	}
 	return refusal(errs, "PULSE", fmt.Errorf("unknown verb %s (run %s help)", verb, name))
 }
@@ -80,38 +77,5 @@ func harvestVerb(args []string, out, errs io.Writer) int {
 	return Harvest(HarvestInput{
 		ID: o.id, Root: o.root, Sources: o.sources, Templates: o.templates,
 		MaxBodyBytes: o.maxBodyBytes, Max: o.max, Stdout: out, Stderr: errs,
-	})
-}
-
-func statusVerb(args []string, out, errs io.Writer) int {
-	o := struct {
-		queue, roots, day string
-		timeout, max      int
-	}{timeout: 120, max: 20}
-	f := flag.NewFlagSet("status", flag.ContinueOnError)
-	f.SetOutput(io.Discard)
-	f.StringVar(&o.queue, "queue", "", "the queue directory")
-	f.StringVar(&o.roots, "roots", "", "the benches to report, comma separated")
-	f.StringVar(&o.day, "day", "", "the day the window starts at, YYYY-MM-DD")
-	f.IntVar(&o.timeout, "timeout", 120, "bound on each gh child, seconds")
-	f.IntVar(&o.max, "max", 20, "per-kind output cap")
-	if err := f.Parse(args); err != nil {
-		return refusal(errs, "STATUS", fmt.Errorf("%s (run nova-pulse help)", err))
-	}
-	if len(f.Args()) != 0 {
-		return refusal(errs, "STATUS", fmt.Errorf("status takes no positional arguments (run nova-pulse help)"))
-	}
-	if o.queue == "" {
-		return refusal(errs, "STATUS", fmt.Errorf("missing --queue; refusing to guess (supply the queue directory)"))
-	}
-	if o.roots == "" {
-		return refusal(errs, "STATUS", fmt.Errorf("missing --roots; refusing to guess (supply the benches, comma separated)"))
-	}
-	if o.max < 0 || o.timeout < 1 {
-		return refusal(errs, "STATUS", fmt.Errorf("invalid bound (use --max >= 0 and --timeout >= 1)"))
-	}
-	return Status(StatusInput{
-		Queue: o.queue, Roots: o.roots, Day: o.day, Max: o.max,
-		Timeout: time.Duration(o.timeout) * time.Second, Stdout: out, Stderr: errs,
 	})
 }

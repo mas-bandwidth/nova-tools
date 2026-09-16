@@ -699,45 +699,6 @@ The things a first run gets wrong, and what each one wants:
 - **a verb on a directory that is not a lane** — exit 2, with the whole `init`
   command in the refusal, and nothing written on the way past.
 
-## nova-pulse
-
-One tool for parallel work: enumerate bounded work, cut cards, admit them
-through `nova-swarm batch`, and fold what comes back. It makes no model call.
-`pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
-`status` below is the one-verb answer to the all-day questions.
-
-### status
-
-```
-nova-pulse status --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>]
-```
-
-`status` prints, no model, counted from the queue, `usage.tsv`, the ADOPT
-files and a cached `gh` step, at most `--max` lines per capped kind (default
-20, `0` for all), eight line kinds each one line:
-
-```
-STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
-STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
-STATUS RATE cards_per_hour=<n> p50_s=<n> p90_s=<n> usd_per_card=<x.xxxx> parallelism=<n.n>
-STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
-STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
-STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
-STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
-STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
-STATUS TOOLS merged_since_adoption=<n> <names>
-```
-
-`WIDTH` prints one line per bench in `--roots` (running jobs, slots, load and
-headroom from each bench's slot files); `--roots` is the scope — a bench or
-friend outside it is nowhere on any line. `REMAINING` counts what is still in
-flight in scope only. `ADOPTION` prints one line per friend, the coordinator
-included (its `version=` reads `-` until there is an ADOPT file for it).
-Sources: the queue directory (`pending`, `launched`, `done`, `failed`, and the
-`COORDINATOR`, `REPO`, `UNREAD`, `DIRTY`, `UNCARDED`, `HOLD`, `ESCALATE`,
-`DOGFOOD` state files), each bench's `pool/slots/*.json` and `usage.tsv` rows,
-and each bench's `ADOPT/<friend>` files. Prototype: `bin/status.sh`.
-
 ## nova-review
 
 One bounded, exact-revision **review packet** at the review layer, specified in
