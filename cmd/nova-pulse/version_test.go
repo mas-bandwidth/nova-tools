@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +83,47 @@ func TestVersionRefusesFlagsAndArguments(t *testing.T) {
 		}
 		if !strings.Contains(errOut.String(), "takes no flags and no arguments") {
 			t.Errorf("%v: refusal does not say why: %q", args, errOut.String())
+		}
+	}
+}
+
+// The order in version.go's header, one case per rank, because an order asserted only by
+// the build the test happens to run under is asserted by one case out of four. This is the
+// issue's own test: the module version is what field two holds, and the four-character
+// "dev" this binary used to print is nowhere in any rank.
+func TestVersionResolvesInOrder(t *testing.T) {
+	t.Parallel()
+	installed := &debug.BuildInfo{Main: debug.Module{Version: "v1.4.0"}}
+	built := func(settings ...debug.BuildSetting) *debug.BuildInfo {
+		return &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}, Settings: settings}
+	}
+	revision := debug.BuildSetting{Key: "vcs.revision", Value: "0123456789abcdef0123456789abcdef01234567"}
+	stamp := debug.BuildSetting{Key: "vcs.time", Value: "2026-09-09T11:22:33Z"}
+	dirty := debug.BuildSetting{Key: "vcs.modified", Value: "true"}
+	clean := debug.BuildSetting{Key: "vcs.modified", Value: "false"}
+
+	cases := []struct {
+		name    string
+		stamped string
+		info    *debug.BuildInfo
+		ok      bool
+		want    string
+	}{
+		{"the ldflags stamp wins over everything", "v2.0.0", installed, true, "v2.0.0"},
+		{"and over a vcs build", "v2.0.0", built(revision, stamp, clean), true, "v2.0.0"},
+		{"a stamp of only spaces is no stamp", "   ", installed, true, "v1.4.0"},
+		{"an installed module version", "", installed, true, "v1.4.0"},
+		{"a vcs build is time then short revision", "", built(revision, stamp, clean), true, "20260909112233-0123456789ab"},
+		{"an edited tree says so", "", built(revision, stamp, dirty), true, "20260909112233-0123456789ab-dirty"},
+		{"a revision with no time is still an answer", "", built(revision), true, "0123456789ab"},
+		{"an unparseable time falls back to the revision", "", built(revision, debug.BuildSetting{Key: "vcs.time", Value: "yesterday"}), true, "0123456789ab"},
+		{"no revision at all is the floor", "", built(clean), true, "devel"},
+		{"no build information at all is the floor", "", nil, false, "devel"},
+		{"(devel) alone is the floor, not a version", "", built(), true, "devel"},
+	}
+	for _, c := range cases {
+		if got := resolveVersion(c.stamped, c.info, c.ok); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
 	}
 }
