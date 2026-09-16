@@ -47,10 +47,31 @@ type fleetSurveyResult struct {
 
 func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " fleet", "a sub-verb is required (survey, suspend, wake, reboot, secrets)")
+		return refuse(stderr, " fleet", "a sub-verb is required (add, restart, probe, phantoms, survey, suspend, wake, reboot, secrets)")
 	}
 	sub, rest := args[0], args[1:]
+	// add, restart, probe and phantoms name the thing they act on first, the way a person
+	// says it: `fleet add studio --host studio.local`.
+	var subject string
 	switch sub {
+	case "add", "restart", "probe", "phantoms":
+		if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+			subject, rest = rest[0], rest[1:]
+		}
+	}
+	switch sub {
+	case "add":
+		return cmdFleetAdd(subject, rest, stdout, stderr)
+	case "restart":
+		return cmdFleetRestart(subject, rest, stdout, stderr)
+	case "probe":
+		return cmdFleetProbe(subject, rest, stdout, stderr)
+	case "phantoms":
+		if subject != "" {
+			fmt.Fprintf(stderr, "nova-pulse fleet phantoms: takes no positional arguments, got %q (the repository is --repo)\n", subject)
+			return 2
+		}
+		return cmdFleetPhantoms(rest, stdout, stderr)
 	case "survey":
 		return cmdFleetSurvey(rest, stdout, stderr)
 	case "suspend":
@@ -62,7 +83,7 @@ func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	case "secrets":
 		return cmdFleetSecrets(rest, stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are survey, suspend, wake, reboot, secrets; run: nova-pulse help)\n", sub)
+	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are add, restart, probe, phantoms, survey, suspend, wake, reboot, secrets; run: nova-pulse help)\n", sub)
 	return 2
 }
 
