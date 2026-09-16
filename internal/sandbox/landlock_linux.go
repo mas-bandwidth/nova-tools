@@ -68,11 +68,33 @@ const (
 	scopeSignal             = 1 << 1
 )
 
-// maxKnownABI is the highest row of the spec's ABI table. A kernel that reports more than
-// this defines accesses this tool has never heard of, so the tool REFUSES rather than
-// advertise a wall with an unchecked hole in it (reason=landlock_abi_unknown). The fix is
-// one row here, one row in the spec, and a release.
-const maxKnownABI = 6
+// maxKnownABI is the highest row of the spec's ABI table, and minKnownABI is the lowest.
+// A kernel that reports more than maxKnownABI defines accesses this tool has never heard
+// of; the wall is then BUILT AT maxKnownABI and the SANDBOX OK line says `used=6`, because
+// Landlock's own contract is that a newer kernel accepts a ruleset built for an older ABI
+// (the kernel documentation tells a program to use the highest ABI it knows that is at or
+// below the kernel's). Refusing instead made every new kernel a maintenance trap until the
+// table grew -- abi 7 arrived on ubuntu-latest and took main red -- and what it refused was
+// a wall the kernel would have enforced exactly as asked. What is still true is that the
+// rights the newer ABI added are not handled, which is why the clamp is SAID rather than
+// swallowed, and the fix is still one row here, one row in the spec, and a release.
+//
+// Below minKnownABI there is no row to clamp to and no ruleset this tool can describe, so
+// that stays a refusal (reason=landlock_abi_unknown).
+const (
+	minKnownABI = 1
+	maxKnownABI = 6
+)
+
+// wallABI is the ABI the wall is BUILT at, given the one the kernel reports, and whether
+// that is a clamp. It is a function of one number and nothing else so that the decision
+// can be read -- and tested -- without applying a domain that cannot be lifted.
+func wallABI(abi int) (used int, clamped bool) {
+	if abi > maxKnownABI {
+		return maxKnownABI, true
+	}
+	return abi, false
+}
 
 // fsABI1 is the ABI 1 set: every bit through MAKE_SYM.
 const fsABI1 = fsExecute | fsWriteFile | fsReadFile | fsReadDir | fsRemoveDir | fsRemoveFile |
