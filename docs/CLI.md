@@ -873,7 +873,7 @@ nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sa
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
-nova-swarm template --name read-pr|probe-row|fix-card|result|worker                         # the conditions, baked in, so they are not retyped and not forgotten
+nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup                    # the conditions, baked in, so they are not retyped and not forgotten; setup is #184's agreement form, not a task template
 nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
@@ -996,6 +996,17 @@ failed samples end the job `RUN BUDGET-UNVERIFIABLE`.
 
 `nova-swarm template --name worker` prints this description with every field in it, so the
 one file a first run cannot start without is the one file you do not have to invent.
+
+`nova-swarm template --name setup` prints the per-friend safety-setup agreement form
+(issue #184): the proposal half and the friend's own agreement half — a friend may agree,
+propose an alternative, decline, or stay silent, and missing feedback is pending, never
+assent — a guarantee table whose rows say who enforces each guarantee (the OS wall, a
+cooperating harness, or the launcher outside the wall), and generic wall, fence, seat and
+launcher examples with placeholder values only. It is a form, not a task's conditions:
+`add --template setup` is refused the way `add --template result` is, no secret, key,
+token or private path is ever printed by it, and an agreed form supplies no account
+access — implementation, credential migration and deployment are separate staged work
+with their own authorization.
 
 ### The harness contract
 

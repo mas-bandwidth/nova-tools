@@ -1,25 +1,42 @@
-CARD-8012 / issue #559: nova-merge lane as the merge queue for nova-tools.
+CARD-8101 / issue #184: agree on per-friend safety configurations before staged
+security implementation. Near-term endpoint: review and agreement only, published as
+generic configuration examples and an agreement/evidence template, never private
+security details.
 
 Red test (before the fix), verbatim:
-  --- FAIL: TestManagerHandsMergeToLane (0.00s)
-      manager_test.go:407: exit = 2 (stdout="")
+  --- FAIL: TestTheSetupTemplateIsTheAgreementFormNotThePrivateConfig (0.00s)
+      setup_test.go:23: template setup: --name wants one of fix-card, probe-row, read-pr, result, worker, got "setup"
 
-Root cause: the manager policy had no `lane` key, so `lane=<dir>` was an unknown
-policy key and the shift refused (exit 2). Even with the key, `mergeOne` merged via
-`gh pr merge` rather than handing the PR to the lane.
+Root cause: nova-swarm's template verb is the repository's one mechanism for publishing a
+practice a caller must not retype (WORKER-CARDS.md: "a promoted practice lands in
+nova-swarm template"), and it had no template for #184's per-friend safety-setup
+agreement: the form each friend reviews (attributed proposal, agreement or unresolved
+choice), the guarantee table separating what the OS wall enforces from what only a
+cooperating harness does, and the generic wall/fence/seat/launcher examples. The binary
+refused the name, so a coordinator had no publishable form to put in front of a friend.
 
 Fix (smallest change):
-  - internal/pulse/manager.go: add `lane` to the policy (struct field + key + parse).
-  - internal/pulse/manager.go mergeOne: replace `gh pr merge --squash --delete-branch`
-    with `nova-merge add --lane <lane> --pr <n>`; print `MANAGER LANE ref=… head=…`.
-    With no `lane` configured the approval stays on file and nothing is merged.
+  - internal/swarm/templates.go: add templateSetup (the agreement/evidence form, every
+    value a placeholder), answer "setup" in Template, list it in TemplateNames, and
+    refuse it in WrapTemplate the way `result` is refused (it is a form, not a task's
+    conditions).
+  - cmd/nova-swarm/main.go: the usage banner's template line names setup, so the banner
+    and the refusal keep naming the same set.
 
 Docs updated byte for byte:
-  - docs/SPEC-PULSE.md: manager tier now hands approved PRs to the lane; policy keys
-    gain `lane`; tripwire and "No merging" note the manager's `nova-merge add` exception;
-    replays list gains `manager-hands-merge-to-lane`.
-  - docs/CLI.md: no nova-pulse section, nothing to change.
+  - docs/SPEC-SWARM.md: the verb table gains setup; a new "The setup agreement form"
+    section carries the template verbatim and its refusal from add --template; work-list
+    item 6 names it.
+  - docs/CLI.md: the template line gains setup and a paragraph says what it is.
 
-Note: `go test ./...` also fails `internal/swarm` TestPullWaitsForResult, but only
-because TMPDIR=scratch lives under a path containing "swarm-root", and that test's
-scp filter trips on the substring "-r". Pre-existing and unrelated to this card.
+Note: SPEC-SWARM.md's verb table also lists a `profiles` template name the binary does
+not answer to (owed by the SPEC-SWARM-PROFILES proposal and its own gates, pre-existing
+before this card); this card neither implements nor removes it.
+
+Note: `go test ./internal/swarm` also fails TestPullWaitsForResult, but only because
+TMPDIR=scratch lives under a path containing "swarm-root", and that test's scp filter
+trips on the substring "-r". Verified pre-existing: with this card's changes stashed the
+same test fails the same way. `go test -skip TestPullWaitsForResult ./internal/swarm` and
+`go test ./cmd/nova-swarm` are both green (32s and 70s; go build ./... 10s).
+
+(End of file)
