@@ -83,14 +83,17 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    `skipped.tsv` with `no template <name>`; `cut` never falls back to another template.
 5. **Every card is the practice-17 shape, and the template guarantees it.** Line 1 is the
    `RESULT` contract line, `RESULT <label> sha=<sha12 of the card text below line 1>`; line 2
-   is the role and the wall (the job directory, `./scratch` as `TMPDIR`, never `/tmp`, `~`
-   or `..`, no stdlib or toolchain source, the deadline held by the machinery). `STEP 1` is
-   `mkdir -p scratch`, `export TMPDIR=$PWD/scratch`, the https clone, `git checkout -b
-   <branch>`; every step is numbered with one check; the final step writes `RESULT.md` with
-   line 1 equal to the card's line 1, line 2 the verdict, then a `BRANCH <name>` line and a
-   `REPO <owner>/<name>` line. Scratch notes live in the repo directory, never `../scratch`.
-   `cut` refuses a template whose rendered card violates any of these — `CUT REFUSED
-   template=<name>: <which>` — because a card that drifts here is a card that stalls.
+   is the role and the wall (the job directory, the `TMPDIR` the runner already exported and
+   a card never sets, never `/tmp`, `~` or `..`, no stdlib or toolchain source, the deadline
+   held by the machinery). `STEP 1` is `mkdir -p scratch`, the https clone, `git checkout -b
+   <branch>`, and no `TMPDIR` of its own: the runner exports `TMPDIR=<slot>/tmp/<label>`,
+   outside every repo ([SPEC-SWARM.md](SPEC-SWARM.md), #460), and a card that sets its own
+   puts its temp dir inside the job's repo; every step is numbered with one check; the final
+   step writes `RESULT.md` with line 1 equal to the card's line 1, line 2 the verdict, then
+   a `BRANCH <name>` line and a `REPO <owner>/<name>` line. Scratch notes live in the repo
+   directory, never `../scratch`. `cut` refuses a template whose rendered card violates any
+   of these — `CUT REFUSED template=<name>: <which>` — because a card that drifts here is a
+   card that stalls.
 6. **Text-only templates forbid the build.** `read`, `text` and `tone` carry the line `Do not
    run go build, go test or any toolchain; read and write only`, and `cut` refuses a text
    template that lacks it; `fix`, `replay` and `drift` carry rule 4 of WORKER-CARDS: red
@@ -398,8 +401,8 @@ one remedy in parentheses.
 
 ```
 RESULT <label> sha=<sha12>
-You are a worker. Job directory only; ./scratch is TMPDIR; never /tmp, ~ or ..; no stdlib or toolchain source; the deadline is the machinery's: <s> s.
-STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://github.com/<owner>/<name>.git . && git checkout -b <branch>
+You are a worker. Job directory only; the TMPDIR the runner already exported, never one of your own; never /tmp, ~ or ..; no stdlib or toolchain source; the deadline is the machinery's: <s> s.
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<owner>/<name>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints <head>. Else write RESULT.md with line 2 BLOCKED head=<yours> and stop.
 STEP 2..n. <the template's numbered steps, one command per line, one check each>
 STEP last. Write RESULT.md: line 1 exactly the line 1 of this card; line 2 one of DONE, ABSTAIN <why>, BLOCKED <why>; then BRANCH <branch>; REPO <owner>/<name>; then the RESULT template's sections.
@@ -525,8 +528,8 @@ handoff (rule **The manager tier**).
    `retry` one in `pool.tsv` and the `carded` one in `seen=1`, not in the pool.
 6. `cut-line1-is-contract`: every card written has line 1 `RESULT <label> sha=<sha12>`, the
    hash equal to SHA-256 of the bytes below line 1, and `STEP 1` carrying `mkdir -p scratch`,
-   `TMPDIR`, an `https://` clone and `checkout -b`; a template whose rendered line 1 is
-   prose, or whose `STEP 1` clones `git@`, is `CUT REFUSED` naming the rule, no card written.
+   an `https://` clone and `checkout -b`; a template whose rendered line 1 is prose, or
+   whose `STEP 1` clones `git@`, is `CUT REFUSED` naming the rule, no card written.
 7. `cut-text-template-forbids-build`: `read`, `text` and `tone` cards each carry the no-build
    line; a `text.md` fixture lacking it is `CUT REFUSED template=text`; `fix`, `replay` and
    `drift` cards carry the red-then-green row rule; no template mentions `../scratch`.
@@ -667,6 +670,11 @@ handoff (rule **The manager tier**).
 48. `under-width-counts-admitted-only`: a pool of one admitted and one gate-refused card with
     free slots is `PULSE UNDER-WIDTH pool=1 free=<f>: launch`, exit 2 — the refused card is
     not counted.
+49. `cut-step-one-sets-no-tmpdir`: a template whose `STEP 1` only mkdirs, clones over
+    `https://` and checks out is cut with no `TMPDIR` on the line, and one whose `STEP 1`
+    sets a `TMPDIR` is `CUT REFUSED` naming the rule, no card written — the runner exports
+    `TMPDIR` outside every repo (#460), and a card that set its own put its temp dir inside
+    the job's repo, the red cards 247, 266 and 353 reported and did not cause.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 

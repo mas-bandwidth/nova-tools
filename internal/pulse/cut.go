@@ -187,10 +187,17 @@ func renderCard(tmpl string, row PoolRow) (string, string) {
 	if !ok {
 		return "", "rule 5: no STEP 1 line (a card wants STEP 1 as the mkdir/clone/checkout)"
 	}
-	for _, want := range []string{"mkdir -p scratch", "TMPDIR", "checkout -b"} {
+	for _, want := range []string{"mkdir -p scratch", "checkout -b"} {
 		if !strings.Contains(step1, want) {
-			return "", fmt.Sprintf("rule 5: STEP 1 lacks %q (STEP 1 must carry mkdir -p scratch, TMPDIR and checkout -b)", want)
+			return "", fmt.Sprintf("rule 5: STEP 1 lacks %q (STEP 1 must carry mkdir -p scratch and checkout -b)", want)
 		}
+	}
+	// STEP 1 sets no TMPDIR of its own (#460): the runner exports TMPDIR=<slot>/tmp/<label> —
+	// the slot directory is never a repo, while admission git-inits the job directory — and a
+	// card that exports its own puts its temp dir inside the job's repo, the red cards 247,
+	// 266 and 353 reported and did not cause.
+	if strings.Contains(step1, "TMPDIR") {
+		return "", "rule 5: STEP 1 sets TMPDIR (the runner exports TMPDIR outside every repo; a card sets none of its own)"
 	}
 	if strings.Contains(step1, "git@") || !strings.Contains(step1, "https://") {
 		return "", "rule 5: STEP 1 does not clone over https (the clone URL is https, never git@)"
