@@ -30,9 +30,12 @@ usage:
                                                      then nocode. Both run even if the
                                                      first says NO.
   nova-check attest --home <dir> --manifest <file>   did the full self load
-  nova-check links  --dir <dir> [--exclude <prefix>] every relative md link resolves;
-                                                     --exclude (repeatable) leaves a subtree
-                                                     unscanned and skips links into it
+  nova-check links  --dir <dir> [--file <path>] [--exclude <prefix>]
+                                                     every relative md link resolves;
+                                                     --file (repeatable) checks just those
+                                                     files, not the whole tree; --exclude
+                                                     leaves a subtree unscanned and skips
+                                                     links into it
   nova-check kernel --file <file> --max-bytes <n>    kernel size budget, in bytes
   nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>
                                                      kernel size budget, in tokens
@@ -304,13 +307,23 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 	failMax := addFailMax(fs)
 	var exclude repeatable
 	fs.Var(&exclude, "exclude", "path prefix not scanned, and links into it not checked (repeatable; empty by default)")
+	var files repeatable
+	fs.Var(&files, "file", "one markdown file to scan, narrowing the walk to just these (repeatable; --dir is still the resolution root)")
 	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
 		return 2
 	}
 	if !checkFailMax(fs, *failMax, stderr) {
 		return 2
 	}
-	res, err := check.LinksExcluding(*dir, exclude)
+	var (
+		res check.LinksResult
+		err error
+	)
+	if len(files) > 0 {
+		res, err = check.LinksFiles(*dir, files, exclude)
+	} else {
+		res, err = check.LinksExcluding(*dir, exclude)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-check links: %s\n", oneline.Err(err))
 		return 2
