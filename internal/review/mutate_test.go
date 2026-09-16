@@ -296,6 +296,16 @@ func TestSignBig(t *testing.T) {
 	commit(t, dir, "a change whose test is green without it")
 
 	before := strings.Count(run(t, dir, "git", "worktree", "list"), "\n")
+	// Only the directories THIS run makes are its own: a leftover from some other
+	// process in the same temp directory is not this test's evidence either way.
+	prior := map[string]bool{}
+	was, err := filepath.Glob(filepath.Join(os.TempDir(), "nova-review-mutate-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range was {
+		prior[p] = true
+	}
 	res, err := mutateFixture(t, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -311,8 +321,10 @@ func TestSignBig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("temp worktree directories left behind: %v", entries)
+	for _, p := range entries {
+		if !prior[p] {
+			t.Fatalf("a temp worktree directory was left behind: %s", p)
+		}
 	}
 }
 
