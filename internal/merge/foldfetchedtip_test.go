@@ -77,7 +77,7 @@ func TestFoldFetchedTipUsesPinnedTreeWithoutCheckoutLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, nil), time.Millisecond)
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, nil), time.Millisecond)
 	if _, err := records.FoldTip(tip); err == nil {
 		t.Fatal("legacy FoldTip must retain its checkout lock")
 	}
@@ -110,7 +110,7 @@ func TestFoldFetchedTipUsesPinnedTreeWithoutCheckoutLock(t *testing.T) {
 
 func TestFoldTipRetainsLegacyTreeishInput(t *testing.T) {
 	lane, _, _ := fetchedTipLab(t)
-	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, nil), time.Second)
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, nil), time.Second)
 	folded, err := records.FoldTip("HEAD")
 	if err != nil {
 		t.Fatalf("legacy tree-ish HEAD must remain accepted: %v", err)
@@ -152,7 +152,7 @@ func (r *countingExec) count(args ...string) int {
 func TestFoldFetchedTipRereadsOnlyProblemPaths(t *testing.T) {
 	lane, tip, _ := fetchedTipLab(t)
 	runner := &countingExec{}
-	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, runner), time.Second)
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
 	folded, err := records.FoldFetchedTip(tip)
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func (r *tipRunner) Run(_ context.Context, _ string, _ string, args ...string) (
 func TestFoldFetchedTipRefusesMutableAndNonCommitTipsBeforeTreeWalk(t *testing.T) {
 	runner := &tipRunner{}
 	lane := t.TempDir()
-	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, runner), time.Second)
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
 	if _, err := records.FoldFetchedTip("FETCH_HEAD"); err == nil || !strings.Contains(err.Error(), "full 40-character sha") {
 		t.Fatalf("mutable name must refuse before Git, got %v", err)
 	}
