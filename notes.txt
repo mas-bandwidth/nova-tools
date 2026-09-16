@@ -1,5 +1,0 @@
-red (before fix): go test -run TestPullCopiesResultUpFromRepo
---- FAIL: TestPullCopiesResultUpFromRepo (0.78s)
-    benchpull_test.go:186: the pull did not say where it found the result:
-        want: BATCH NOTE a RESULT.md copied up from <...>/bench/1/jobs/a/repo/nova-tools/RESULT.md
-        got: SPACE NOTE RESULT.md copied up from <...>/bench/1/jobs/a/repo/nova-tools/RESULT.md
