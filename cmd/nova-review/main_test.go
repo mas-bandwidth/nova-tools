@@ -928,3 +928,18 @@ func TestPacketRefusalNamesAddRemedy(t *testing.T) {
 		t.Fatalf("refusal does not name the add remedy; got %q want %q", errb.String(), want)
 	}
 }
+
+func TestPacketMissingEntryRefusalNamesRemedy(t *testing.T) {
+	lane, _ := packetLab(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--pr", "415", "--who", "Rowan", "--out", "p.md"}, &out, &errb); code != 2 {
+		t.Fatalf("unknown entry code=%d, want 2", code)
+	}
+	want := "the lane does not hold this entry; add it with nova-merge add --lane <dir> --pr <n> --needs-read (or add-branch --branch <name>)"
+	if !strings.Contains(errb.String(), want) {
+		t.Fatalf("refusal does not name the add remedy; got %q want %q", errb.String(), want)
+	}
+}
