@@ -51,6 +51,15 @@ on:
   schedule:
     - cron: "41 3 * * *"
   workflow_dispatch:
+    inputs:
+      bench:
+        description: "fleet-probe: bench label to prove (hulk, vision, mini); empty runs no probe"
+        required: false
+        default: ""
+      slots:
+        description: "fleet-probe: parallel jobs, one per runner slot"
+        required: false
+        default: "0"
 
 permissions:
   contents: read
@@ -63,7 +72,7 @@ concurrency:
   # dev is an integration branch with the same steady merge stream (2026-09-16
   # 16:35Z: dev's rerun was cancelled by the next merge and the mechanical gate
   # read the cancellation as red), so dev keys on the sha like main does.
-  group: ci-${{ github.event.pull_request.number || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.sha) || github.ref }}-${{ github.event_name }}
+  group: ci-${{ github.event.pull_request.number || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.sha) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
   # A push to main never cancels main's running verdict: with a steady merge
   # stream every main run was cancelled by the next merge (2026-09-16 04:41Z and
   # 04:53Z), so main had no completed run for the mechanical red gate to read.
@@ -98,7 +107,7 @@ jobs:
           set -euo pipefail
           if ! command -v go >/dev/null 2>&1; then
             for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
             done
           fi
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
@@ -167,7 +176,7 @@ jobs:
           set -euo pipefail
           if ! command -v go >/dev/null 2>&1; then
             for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
             done
           fi
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
@@ -356,7 +365,7 @@ jobs:
           set -euo pipefail
           if ! command -v go >/dev/null 2>&1; then
             for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
             done
           fi
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
@@ -578,7 +587,7 @@ jobs:
           set -euo pipefail
           if ! command -v go >/dev/null 2>&1; then
             for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && echo "$d" >> "$GITHUB_PATH"
+              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
             done
           fi
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
@@ -611,6 +620,9 @@ jobs:
       - name: install sbcl if missing
         # The self-hosted runners need no sudo; install directly when sbcl is absent.
         run: |
+          # A runner user keeps sbcl in its own ~/.local/bin (hulk, vision); a listener started
+          # before its .path file saw none of it (2026-09-16), so the step finds it itself.
+          for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
           if ! command -v sbcl >/dev/null 2>&1; then
             apt-get update -qq
             apt-get install -y --no-install-recommends sbcl
@@ -619,6 +631,48 @@ jobs:
 
       - name: nova-work acceptance
         run: ./lisp/nova-work/run-tests.sh
+
+  # fleet-probe: prove a bench's runners BEFORE the loop trusts them (Glenn, 2026-09-16:
+  # "run some tests to make sure that hulk and vision actually work, before trusting them";
+  # the pattern was new things thrown into the work loop and trusted while not working).
+  # One job per runner slot, targeted by the bench label, doing what a CI job does. Read the
+  # result by runner_name from the wire; a bench is trusted when every name is green. Runs
+  # only on a workflow_dispatch that names a bench; lives here because a new workflow file
+  # cannot be dispatched until it is on the default branch.
+  fleet-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.bench != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: [self-hosted, "${{ inputs.bench }}"]
+    timeout-minutes: 2
+    steps:
+      - name: this slot is in the ask
+        id: want
+        run: |
+          [ "${{ matrix.slot }}" -le "${{ inputs.slots }}" ] && echo "run=yes" >> "$GITHUB_OUTPUT" || echo "run=no" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: steps.want.outputs.run == 'yes'
+      - name: toolchains the way ci.yml finds them
+        if: steps.want.outputs.run == 'yes'
+        run: |
+          if ! command -v go >/dev/null 2>&1; then
+            for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
+              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
+            done
+          fi
+          for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
+          echo "PROBE runner=$RUNNER_NAME slot=${{ matrix.slot }} go=$(command -v go || echo -) sbcl=$(command -v sbcl || echo -) home=$HOME"
+          command -v go >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no Go on PATH"; exit 1; }
+          command -v sbcl >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no sbcl on PATH"; exit 1; }
+          go version; sbcl --version
+      - name: build, one real package, write beside the repo
+        if: steps.want.outputs.run == 'yes'
+        run: |
+          go build ./... && go test -count=1 ./internal/oneline/
+          t="$(dirname "$GITHUB_WORKSPACE")/fleet-probe-$RUNNER_NAME.txt"; echo ok > "$t" && rm -f "$t"
+          echo "PROBE OK runner=$RUNNER_NAME slot=${{ matrix.slot }}"
 
   ci-ok:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
