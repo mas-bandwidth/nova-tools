@@ -21,6 +21,9 @@ import (
 //
 // The fake harness prints that line, with its paint, and exits 1 (FAKE-INPUT-LIMIT).
 func TestAnInputLimitIsNamedAndNotRetried(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a read of two whole specs\nFAKE-INPUT-LIMIT\nFAKE-LAUNCHES\nFAKE-USAGE 10 5 - - -\n")
@@ -71,6 +74,9 @@ func TestAnInputLimitIsNamedAndNotRetried(t *testing.T) {
 // it BEFORE the launch, so a task that cannot fit is refused for nothing rather than paid
 // for. The refusal carries the class and the MEASURED size.
 func TestATaskOverItsMaxInputIsRefusedBeforeTheLaunch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a task whose prompt cannot fit the window it names\nFAKE-LAUNCHES\n", "--max-input", "200")
@@ -101,6 +107,9 @@ func TestATaskOverItsMaxInputIsRefusedBeforeTheLaunch(t *testing.T) {
 // transcript. The supervisor's own line lands in its log, and the job is still named, not
 // retried, in one line.
 func TestAStructuredInputLimitSignalIsEmittedByTheSupervisor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a read of a whole spec\nFAKE-INPUT-LIMIT-SIGNAL token 12345 8192\nFAKE-LAUNCHES\n")
