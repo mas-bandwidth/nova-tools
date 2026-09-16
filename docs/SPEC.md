@@ -2473,8 +2473,7 @@ SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
 INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
-INBOX OPEN carrying=<n> heard=<m> large=<true|false> remedy=inbox --advance|reply or receipt each note, or close --before <instant> as an explicit bulk cutoff
-INBOX OPEN listed=<n> and <k> more (--open-max to widen)
+INBOX OPEN carrying=<n> heard=<n> large=<true|false> remedy=inbox --advance
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNREADABLE count=<n> unchanged=<true|false> first=<path>
 INBOX UNADDRESSED path=<path>: <reason>
@@ -2562,25 +2561,12 @@ the other end. Nothing is hidden: the same counts are on `INBOX OK`, and the
 entries themselves are in `OPEN`, which is a file a person can open.
 
 *The carried list, under `--open`* — and under `--full`, because a full read is
-what a person asks for when they want the whole picture. **It is capped at
-`--open-max`, default 20**, and a listing that stopped early ends with one
-`INBOX OPEN listed=<n> and <k> more (--open-max to widen)` line. The cap is the
+what a person asks for when they want the whole picture. The cap is the
 footgun itself, closed: a flag whose cost grows with the backlog, reached for by
 the reader with the biggest backlog, printed into a context window that has no
 way to refuse it. The cap counts entries PRINTED, so a capped listing is the
 first `<n>` of the order a full one would have printed — the notes first and the
 bare acknowledgements last, which is the right end to lose.
-
-**Past `--open-warn` carried, default 40, every return adds one line saying the
-list is large and the three ways out**: `INBOX OPEN carrying=<n> is large; answer
-with Re: <id>, receipt --note <id>, or start over: <command>`, where the command
-is `inbox … --full --legacy-now --advance` with this run's own values in it,
-quoted the way `INBOX SWITCH` quotes them. Two of the three are per note and the
-third is the whole backlog at once. It is a **note and not a refusal**: the run
-does what it was asked, exit codes are untouched, and nothing moves until the
-reader runs the command it names. A backlog grows one unanswered note at a time
-and no single run says it is growing — `carrying=74` is a number, and a number is
-not a sentence.
 
 `INBOX UNREADABLE` is printed whichever way the run was
 asked, because a file nobody can read is not a listing choice — the one exception
