@@ -107,8 +107,56 @@
    #:kernel-next-rev
    #:submit
    #:ask-size
-   #:open-issue-count
-   #:open-leaf-count))
+    #:open-issue-count
+    #:open-leaf-count
+    ;; applicable/delegation replays (Go card 8132)
+    #:note-id
+    #:make-note
+    #:candidate-role
+    #:candidate-model
+    #:constraint-p
+    #:constraint-deny
+    #:constraint-prefer
+    #:constraint-reason
+    #:deny-matches-p
+    #:constraint-excludes-p
+    #:applicable
+    #:make-applicable-answer
+    #:applicable-answer-p
+    #:applicable-answer-rev
+    #:applicable-answer-from
+    #:applicable-answer-verdicts
+    #:applicable-answer-notes
+    #:applicable-answer-fail
+    #:verdict-eligible-p
+    #:verdict-unknown-p
+    #:verdict-planning-p
+    #:verdict-excluded-p
+    #:excluded-note-ids
+    #:price-route
+    #:route-selection
+    #:build-card
+    #:*delegation-packet-fields*
+    #:delegation-admission
+    #:gate-2-refusal
+    #:gate-3-refusal
+    #:admission
+    #:admission-expect
+    #:gate-4-refusal
+    #:offer-to
+    #:non-terminating-p
+    #:uncertain-outcome-p
+    #:retry-permitted-p
+    #:make-execution-record
+    #:execution-record-requested-limit
+    #:execution-record-expiry
+    #:execution-record-stop
+    #:make-machinery-receipt
+    #:machinery-receipt-head
+    #:machinery-receipt-result
+    #:book-receipt
+    #:review-binds-p
+    #:review-reusable-p))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
