@@ -99,9 +99,9 @@ and an unknown :kind is refused naming the field. :needs is the reference edge a
 need is refused naming the field and the id, and a :needs cycle is refused by validator
 rule 3, both at load before the graph is published.
 
-The session verbs are the thin client of the resident work session: `session start`,
-`session status` and `session stop`, then the clip slice's `snapshot` and `clip`, and
-the `operation status|list|wait|cancel` family. The client sends one request line over
+The session verbs are the thin client of the resident work session: session start,
+session status and session stop, then the clip slice's snapshot and clip, and
+the operation status|list|wait|cancel family. The client sends one request line over
 the Unix socket --session names and prints the session's one answer line, byte for
 byte: OK, ROW, NOTE and MORE to stdout at exit 0, FAIL, RACED and REFUSED to stderr at
 exit 1, and what cannot run at all is one WORK REFUSED line on stderr at exit 2 ending
