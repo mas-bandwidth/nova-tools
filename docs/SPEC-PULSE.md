@@ -108,7 +108,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    run go build, go test or any toolchain; read and write only`, and `cut` refuses a text
    template that lacks it; `fix`, `replay` and `drift` carry rule 4 of WORKER-CARDS: red
    line then green line, one row per item.
-7. **The route is the cheapest capable, from a cost table, never a hand.** `cut` reads the
+7. SPEC-AHEAD: #468 — **The route is the cheapest capable, from a cost table, never a hand.** `cut` reads the
    cost table `--benches <file>` (default `benches.tsv` beside `--templates`; a `routes.tsv`
    beside it is read the same way): one column per model, three rows — a `model` row naming
    each model, then `cost`, a class `zero|flat|metered` with a `usd per Mtok`, and
@@ -1274,11 +1274,11 @@ handoff (rule **The manager tier**).
     `pool.tsv` rows whose `id` is the node id, and `candidates=2`; a node that is leased or
     blocked is nowhere; the id is carried on the card's line 1 so `harvest` records the
     attempt on the node.
-24. `cut-picks-cheapest-capable-route`: a benches table with a zero-cost local, a flat Go and
+24. SPEC-AHEAD: #468 `cut-picks-cheapest-capable-route`: a benches table with a zero-cost local, a flat Go and
     a metered Zen, and one card per capability class, yields `route=<model> reason=<class>`
     on `CUT ROUTE` for the cheapest capable model — the mutation that matters: a pick that
     ignores cost and takes a route by kind.
-25. `retry-moves-one-class-up`: a card rewritten from `retry.tsv` after an abstain routes one
+25. SPEC-AHEAD: #468 `retry-moves-one-class-up`: a card rewritten from `retry.tsv` after an abstain routes one
     capability class above the first attempt's, so `CUT ROUTE` names a stronger class and a
     `reason` that reflects it.
 26. `handoff-writes-record-and-note`: `handoff --to <name>` ends the shift — `SHIFT END` on
