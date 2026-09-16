@@ -161,6 +161,11 @@ func Batch(in BatchInput) int {
 			fmt.Fprintln(in.Stderr, err)
 			return 2
 		}
+		// Bench probe: run the card-shaped probe once per bench per build identity before
+		// the first card. A bench whose probe fails carries no card (ABSTAIN reason=bench-probe).
+		if err := runBenchProbes(cards, benches, in.Root, in.Benches, in.Stdout, in.Stderr); err != nil {
+			fmt.Fprintf(in.Stderr, "nova-swarm batch: bench probe: %s\n", oneline.Err(err))
+		}
 	} else {
 		lo, hi, err := ParseSlotRange(in.Slots)
 		if err != nil {
@@ -465,10 +470,15 @@ func Batch(in BatchInput) int {
 		rows[i].label = c.label
 		rows[i].slot = c.slot
 		// A card refused at admission never ran: no slot to read, and its reason is the
-		// refusal itself.
+		// refusal itself. bench-probe is its own token (SPEC-SWARM, "Benches"): the bench
+		// probe failed, so the bench is not trusted to run any card.
 		if c.admitWhy != "" {
 			rows[i].state = "abstain"
-			rows[i].reason = "admission " + c.admitWhy
+			if c.admitWhy == "bench-probe" {
+				rows[i].reason = "bench-probe"
+			} else {
+				rows[i].reason = "admission " + c.admitWhy
+			}
 			abstain++
 			continue
 		}
@@ -1510,4 +1520,75 @@ func mentionsLauncher(lines []string) bool {
 		}
 	}
 	return false
+}
+
+// runBenchProbes runs the card-shaped probe once per bench per build identity before the
+// first card. A bench whose probe fails has every card on it marked with
+// admitWhy="bench-probe", which becomes ABSTAIN reason=bench-probe on the packet. The
+// probe result is cached per (bench, binary sha256) in <root>/bench-probe.tsv.
+func runBenchProbes(cards []batchCard, benches map[string]Bench, root, benchesFile string, stdout, stderr io.Writer) error {
+	// Find the binary path from the benches table or from PATH.
+	binaryPath, err := exec.LookPath("nova-swarm")
+	if err != nil {
+		return fmt.Errorf("nova-swarm not on PATH for probe")
+	}
+	binSHA, err := BinarySHA256(binaryPath)
+	if err != nil {
+		return fmt.Errorf("binary sha256: %w", err)
+	}
+
+	// Collect unique benches that have cards assigned.
+	benchSeen := map[string]bool{}
+	for _, c := range cards {
+		if c.bench != "" && c.admitWhy == "" {
+			benchSeen[c.bench] = true
+		}
+	}
+
+	scratchDir := os.Getenv("OLDPWD")
+	if scratchDir != "" {
+		scratchDir = filepath.Join(scratchDir, "scratch")
+	}
+
+	for benchName := range benchSeen {
+		b, ok := benches[benchName]
+		if !ok {
+			continue
+		}
+		// Check the cache first.
+		if ReadBenchProbeCache(root, benchName, binSHA) {
+			fmt.Fprintf(stdout, "BENCH PROBE bench=%s go=cached test=ok file=ok\n", benchName)
+			continue
+		}
+		// Run the probe.
+		res, err := ProbeBench(benchName, b.Host, b.Root, binaryPath, "https://github.com/mas-bandwidth/nova-tools.git", scratchDir)
+		if err != nil {
+			// Probe failed; mark all cards on this bench.
+			for i := range cards {
+				if cards[i].bench == benchName && cards[i].admitWhy == "" {
+					cards[i].admitWhy = "bench-probe"
+				}
+			}
+			fmt.Fprintf(stderr, "BENCH PROBE bench=%s go=%s test=FAIL file=FAIL err=%s\n", benchName, res.GoVer, err)
+			_ = WriteBenchProbeCache(root, benchName, binSHA, "fail")
+			continue
+		}
+		// Print the probe result line.
+		fmt.Fprintln(stdout, res.BenchProbeLine())
+		// Cache the result.
+		cacheResult := "fail"
+		if res.ProbeOK() {
+			cacheResult = "ok"
+		}
+		_ = WriteBenchProbeCache(root, benchName, binSHA, cacheResult)
+		// If the probe failed, mark all cards on this bench.
+		if !res.ProbeOK() {
+			for i := range cards {
+				if cards[i].bench == benchName && cards[i].admitWhy == "" {
+					cards[i].admitWhy = "bench-probe"
+				}
+			}
+		}
+	}
+	return nil
 }

@@ -1136,6 +1136,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `admission` | was refused at admission; the reason follows the token |
 | `input-limit` | was refused for size, by the provider's own structured signal (issue #163) |
 | `bench-unreachable` | ran on a bench the pull could not reach, so nothing about it is known here |
+| `bench-probe` | the bench probe failed (clone, go test, scratch write), so the bench is not trusted to run any card |
 
 **The RESULT is the contract, and `harness-silent` is for a card that has none.**
 A `RESULT.md` whose line 1 matches the card is **`done` whatever the harness exit
@@ -1198,7 +1199,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable|bench-probe> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1423,6 +1424,14 @@ BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>
 BENCH REFUSED name=<name> check=<first failing check>: <reason> (more <n>)
 ```
 
+**`bench probe` also runs a card-shaped probe** on each bench before the batch's first card: clone the repo, run `go version`, run `go test ./internal/oneline/`, write `scratch/probe.txt`, and print a RESULT. The probe runs in a card-shaped environment (own HOME under the slot, no network beyond git and the provider) and prints:
+
+```
+BENCH PROBE bench=<b> go=<version> test=<ok|FAIL> file=<ok|FAIL>
+```
+
+A bench whose probe fails carries no card: every card on that bench is `ABSTAIN reason=bench-probe`. The probe result is cached per `(bench, binary sha256)` in `<root>/bench-probe.tsv`; a passing probe is not re-run for the same build identity within one hour.
+
 With `--bench` the `BATCH` line gains `benches=<n>`, followed by one `BENCH`
 line per named bench, before the first `CARD` line; `in` and `out` are the
 bench's token sums from the pulled `usage.tsv` rows, `-` when none came back;
@@ -1457,7 +1466,8 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 1. `bench-table-parsed` — the seven columns, a `-` cores row, and each refusal above by name.
 2. `bench-probe-refuses-version-mismatch` — `BENCH REFUSED check=version` names both identities.
 3. `bench-probe-never-reads-auth` — the fake ssh sees `stat` on the auth path and never a read of it; mode `0644` is a refusal.
-4. `batch-pins-slot-to-core` — slot 3 on `cores=1-15` runs under `taskset -c 3`, and every remote argv carries `taskset`.
+4. `bench-probe-card-failing-makes-batch-abstain` — a fake harness whose RESULT has `test: FAIL` makes every card on that bench `ABSTAIN reason=bench-probe`; a passing probe is cached and not re-run for the same build identity.
+5. `batch-pins-slot-to-core` — slot 3 on `cores=1-15` runs under `taskset -c 3`, and every remote argv carries `taskset`.
 5. `batch-refuses-more-slots-than-cores` — 16 slots on `1-15` is `ADMIT REFUSED bench=b2 slots=16 cores=15` and no card starts.
 6. `batch-copies-card-only` — exactly one file crosses before the run, and it is the card.
 7. `batch-pulls-result-and-usage` — `RESULT.md`, `usage.tsv` and a bounded `native.log` land under `<root>/<bench>-<n>/jobs/<label>/`, and `gather` folds them unchanged.
@@ -1522,7 +1532,7 @@ BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable|bench-probe> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1530,6 +1540,7 @@ HOLD: <one bounded quoted line>
 BENCH CHECK name=<name> check=<ssh|root|harness|version|cores|pin|auth|wall> ok=<true|false> [<one bounded value>]
 BENCH OK name=<name> cores=<n|-> pin=<taskset|none> wall=<sandbox|none>
 BENCH REFUSED name=<name> check=<first failing check>: <reason> (more <n>)
+BENCH PROBE bench=<name> go=<version> test=<ok|FAIL> file=<ok|FAIL>
 BENCH WIDTH bench=<name> width=<W> cores=<n> rows=<n>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|false> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path> [profile=<id> model_requested=<id> model_observed=<id>]
