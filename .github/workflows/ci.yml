@@ -41,6 +41,9 @@ on:
   push:
     # dev is the integration branch (Glenn 2026-09-16): every merge lands there and the
     # push run, hosted legs included, is the evidence a promotion to main waits for.
+    # THE SAME BRANCHES as the concurrency list below, and the one place that
+    # cannot read it: `on:` takes no expressions. internal/ci's
+    # TestIntegrationBranchesAreOneList holds the two spellings equal.
     branches: [main, dev]
   pull_request:
   # merge_group: the merge queue builds a group commit of the PRs about to land and
@@ -65,19 +68,32 @@ permissions:
   contents: read
 
 concurrency:
+  # THE INTEGRATION BRANCHES ARE ONE LIST, and this `fromJSON` is it. Adding a
+  # branch is this edit; internal/ci's TestIntegrationBranchesAreOneList fails
+  # on any other copy of the names, and names the two spellings GitHub will not
+  # let read the list (the `on: push: branches:` lines here and in
+  # certification.yml, which take no expression at all). The list cannot be a
+  # workflow-level `env:` either: `concurrency` is the one key whose
+  # expressions cannot see the env context — github, inputs and vars only — so
+  # it lives here, where every other rule can be made to do without it.
+  #
   # A pending run is evicted by a newly queued run in the same group before it
-  # ever starts. So a push to main keys on the commit sha (no two main runs
-  # share a group, none can evict another); a PR still keys on its number so its
-  # newest head supersedes older runs; a non-main branch with no PR keys on ref.
-  # dev is an integration branch with the same steady merge stream (2026-09-16
-  # 16:35Z: dev's rerun was cancelled by the next merge and the mechanical gate
-  # read the cancellation as red), so dev keys on the sha like main does.
-  group: ci-${{ github.event.pull_request.number || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.sha) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
-  # A push to main never cancels main's running verdict: with a steady merge
-  # stream every main run was cancelled by the next merge (2026-09-16 04:41Z and
-  # 04:53Z), so main had no completed run for the mechanical red gate to read.
-  # Branch runs still cancel each other (only the newest head matters there).
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+  # ever starts. So a push to an integration branch keys on the commit SHA: no
+  # two of its runs share a group, so none can evict or cancel another, and the
+  # mechanical red gate always has a completed run to read (2026-09-16 04:41Z
+  # and 04:53Z on main; 16:35Z on dev, whose rerun was cancelled by the next
+  # merge and read as red, freezing the bench — row 8 of #828, and the reason
+  # the branch names are not written twice any more). A PR keys on its number so
+  # its newest head supersedes older runs; every other branch keys on its ref.
+  # The trailing ${{ inputs.bench }} keeps a workflow_dispatch bench probe in a
+  # group of its own, apart from the ordinary run for the same commit.
+  group: ci-${{ github.event.pull_request.number || (contains(fromJSON('["refs/heads/main","refs/heads/dev"]'), github.ref) && github.sha) || github.ref }}-${{ github.event_name }}-${{ inputs.bench }}
+  # A CONSTANT, not the second copy of the branch list it used to be. The
+  # sha-keyed group above is what protects an integration branch's verdict: its
+  # group holds that one run and nothing else, so there is never a sibling for
+  # cancel-in-progress to cancel. Everywhere else — a PR's newest head, a
+  # branch push — only the newest run matters, which is what true means.
+  cancel-in-progress: true
 
 jobs:
   lint:
@@ -346,9 +362,10 @@ jobs:
     # Measured in run 35019905236 with the eight-and-eight fan-out: every studio leg and
     # three space legs were CANCELLED at 2:00 having done nothing wrong, while
     # five space legs passed at 80-118 s. The cause was oversubscription, since
-    # fixed: four runners share each machine (15 cores on space, 32 on the studio
-    # M3 Ultra) and each leg sized itself to the whole of it. A leg now takes a
-    # quarter. A ceiling that cancels honest work is not a
+    # fixed: several runners share each machine (15 cores on space, 32 on the
+    # studio M3 Ultra) and each leg sized itself to the whole of it. A leg now
+    # takes its share, the machine's own NOVA_RUNNERS_PER_MACHINE deciding how
+    # many ways to split it. A ceiling that cancels honest work is not a
     # budget, it is a coin flip. Six is a hang detector for a leg measured at
     # one to two minutes; the budget itself is the run, and the run is what to
     # hold to the law. The fast jobs — lint, test-packages, lisp at 32, 11 and
@@ -397,17 +414,25 @@ jobs:
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
 
-      - name: take a quarter of the machine, not all of it
+      - name: take this runner's share of the machine, not all of it
         if: matrix.entry.packages != ''
-        # FOUR runners share each of these machines, and `go test` defaults
-        # GOMAXPROCS to every core it can see -- so four concurrent legs ask for
-        # four times the machine and spend the difference context-switching.
+        # SEVERAL runners share each of these machines, and `go test` defaults
+        # GOMAXPROCS to every core it can see -- so concurrent legs each ask for
+        # the whole machine and spend the difference context-switching.
         # Measured: the same studio legs ran 208 and 251 s in run 35021822106
         # and 386 and 379 s in run 35023183602, the second pair cancelled at the
         # ceiling, on identical work. A leg takes its FAIR SHARE instead: cores
-        # divided by the four runners, never below 1. `go test -p` follows
-        # GOMAXPROCS, so this bounds both the package-level and the in-package
-        # parallelism with one number.
+        # divided by the runners on the machine, never below 1. `go test -p`
+        # follows GOMAXPROCS, so this bounds both the package-level and the
+        # in-package parallelism with one number.
+        #
+        # HOW MANY RUNNERS is the MACHINE's fact, not this file's: the runner
+        # service exports NOVA_RUNNERS_PER_MACHINE and the leg reads it. Written
+        # here it goes stale, and did -- the divisor stayed 4 when the fleet went
+        # to 8 runners a machine and CI alone put Space at load 39 on 15 cores
+        # (row 9 of #828, PR799). The default is today's fleet (8) for a machine
+        # that says nothing, and the number used is printed, so a leg's own log
+        # answers what it divided by. internal/ci: TestRunnersPerMachineIsOneNumber.
         shell: bash
         run: |
           set -euo pipefail
@@ -416,9 +441,11 @@ jobs:
           else
             cores=$(nproc)
           fi
-          share=$(( cores / 4 ))
+          runners="${NOVA_RUNNERS_PER_MACHINE:-8}"
+          case "$runners" in ''|*[!0-9]*|0) runners=8 ;; esac
+          share=$(( cores / runners ))
           [ "$share" -ge 1 ] || share=1
-          echo "$cores cores on this machine, 4 runners, this leg takes $share"
+          echo "$cores cores on this machine, $runners runners per machine (NOVA_RUNNERS_PER_MACHINE), this leg takes $share"
           echo "GOMAXPROCS=$share" >> "$GITHUB_ENV"
 
       # No actions/cache here. These runners are PERSISTENT: ~/.cache/go-build
