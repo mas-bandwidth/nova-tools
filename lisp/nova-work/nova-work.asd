@@ -17,11 +17,17 @@
                (:file "src/event")
                (:file "src/state")
                (:file "src/journal")
-               (:file "src/kernel")))
+               (:file "src/kernel")
+               (:file "src/s9-common")
+               (:file "src/s9-fleet")
+               (:file "src/s9-allocation")
+               (:file "src/s9-routes")
+               (:file "src/s9-profile")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
   :depends-on ("nova-work")
   :serial t
   :components ((:file "tests/harness")
-               (:file "tests/acceptance")))
+               (:file "tests/acceptance")
+               (:file "tests/s9")))

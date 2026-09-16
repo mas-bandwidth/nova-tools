@@ -108,7 +108,44 @@
    #:submit
    #:ask-size
    #:open-issue-count
-   #:open-leaf-count))
+   #:open-leaf-count
+   ;; slice 9 (S9): the fleet, the routes and the slots (own files)
+   #:s9-stamp< #:s9-stamp<= #:s9-join-names
+   ;; the fleet
+   #:make-s9-machine #:machine-id #:machine-name #:machine-owner #:machine-connect
+   #:machine-roles #:machine-permits #:machine-excludes #:machine-limits #:machine-facts
+   #:machine-retired-p #:make-s9-fleet #:fleet-machines #:fleet-order #:fleet-friends
+   #:fleet-revision #:fleet-live-machines #:fleet-find-machine
+   #:machine-register #:machine-retire #:machine-permit #:machine-exclude #:machine-limit
+   #:machine-fact #:fleet-query #:s9-machine-admits-p #:s9-machine-row #:s9-machine-event
+   ;; the slots
+   #:make-s9-allocation #:allocation-allocation-id #:allocation-machine
+   #:allocation-machine-revision #:allocation-machine-generation
+   #:allocation-allocation-generation #:allocation-slot #:allocation-slots
+   #:allocation-batch #:allocation-node #:allocation-offer #:allocation-attempt
+   #:allocation-holder #:allocation-parent #:allocation-suspect-p
+   #:allocation-expires-at #:allocation-fenced-p #:allocation-released-p
+   #:make-s9-allocator #:allocator-machines #:allocator-aliases #:allocator-writers
+   #:allocator-allocations #:allocator-order #:allocator-dedup #:allocator-next-number
+   #:allocator-resolve #:allocator-find-allocation #:allocator-live-allocations
+   #:allocator-used-slots #:take-allocation #:heartbeat-allocation #:release-allocation
+   #:allocation-suspect #:allocation-fence #:allocator-set-concurrent #:list-allocation
+   #:machine-probe
+   ;; the routes
+   #:make-s9-route #:route-id #:route-provider #:route-endpoint #:route-key-location
+   #:route-plan #:route-cost-per-mtok #:route-capabilities #:route-owner #:route-probe-record
+   #:route-abstains #:route-benched-until #:route-retired-p
+   #:make-s9-routes #:routes-routes #:routes-order #:routes-classes #:routes-friends
+   #:routes-revision #:routes-live-routes #:routes-find-route
+   #:route-register #:route-retire #:route-probe #:route-projection #:routes-query
+   #:s9-key-location-p #:s9-key-location-name #:s9-route-row #:s9-route-passes-p
+   ;; the prompt profile
+   #:make-s9-profile #:profile-name #:profile-model #:profile-harness #:profile-work-type
+   #:profile-pointer #:profile-digest #:profile-policy #:profile-evidence #:profile-expiry
+   #:profile-owner #:profile-revision #:profile-revisions
+   #:make-s9-profiles #:profiles-profiles #:profiles-order #:profiles-friends
+   #:profiles-revision #:profiles-find #:profile-write #:profile-edit
+   #:profile-status-line #:profile-digest-mismatch-p))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
