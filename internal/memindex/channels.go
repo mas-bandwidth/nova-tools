@@ -217,7 +217,13 @@ type FileHit struct {
 	FMType  string
 	Para    int
 	Snippet string
-	Fused   float64
+	// Raw is the verbatim span — the paragraph's original words before
+	// normalization — as opposed to Snippet, which is the normalized text the
+	// channels actually scored. A receipt carries both so a judge can recover
+	// what was actually said without loading the file, and can tell the exact
+	// wording from the derived form the index matched on.
+	Raw   string
+	Fused float64
 	// Native is the chunk's score in NativeChan, and NativeChan is the first
 	// NAMED channel that actually surfaced it — not unconditionally the first
 	// channel named. In a multi-channel run a chunk can reach the fused top-k
@@ -324,7 +330,7 @@ func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
 		n := native[id]
 		best[key] = FileHit{
 			File: ch.File, Root: ch.Root, Class: ch.Class, FMName: ch.FMName, FMType: ch.FMType,
-			Para: ch.Para, Snippet: snip, Fused: f, Native: n.score, NativeChan: n.chn,
+			Para: ch.Para, Snippet: snip, Raw: Truncate(ch.Raw, 120), Fused: f, Native: n.score, NativeChan: n.chn,
 		}
 	}
 	hits := make([]FileHit, 0, len(best))

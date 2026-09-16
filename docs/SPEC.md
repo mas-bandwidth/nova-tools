@@ -1996,7 +1996,8 @@ are `check`'s `source=`, `eval`'s `expected=`, and the caller's own `query=`
 on `SEARCH OK` and `EVAL MISS`, which is argv and so the one slot
 a caller controls outright (a query of `quokka class=poison` prints as
 `query=quokka\x20class\x3dpoison`, never as a second `class=` field). A receipt's fields end
-at the `: ` after `type=`; the `<file>:<para>` and the Go-quoted snippet that follow are the
+at the `: ` after `type=`; the `<file>:<para>`, the Go-quoted normalized snippet, and the
+Go-quoted `verbatim=` span that follow are the
 tail, the path escaped for one line and keeping its spaces, and the tail is never scanned for
 fields, as Conventions says. `MEMORY CAND`'s candidate and `VERIFY INFO`'s detail sit after the
 same `: ` for the same reason. The root, the candidate and the gold file in every
@@ -2160,15 +2161,23 @@ exists to remove.
 
 **Reports** the top k files for one query, best chunk each, with the receipt
 metadata a judge needs: class, frontmatter name and type, the `file:para`
-address to go read, and a normalized snippet.
+address to go read, a normalized snippet, and the verbatim original words.
 
 ```
 SEARCH OK query=<q> hits=<n> k=<n> channels=<list> files=<n> chunks=<n>
 SEARCH CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
-SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>"
+SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>" verbatim="<original words>"
 SEARCH MISS every query term is out of vocabulary for this corpus
 SEARCH NOTE <caveat>
 ```
+
+**The verbatim span is the source, the snippet is a derivation of it.** The
+index scores a *normalized* form — case-folded and de-marked — so the snippet
+prints that form, and `verbatim=` prints the paragraph exactly as written,
+capitalization, emphasis and line structure included. "Exact wording is
+evidence of a statement, not proof that the statement is correct", so a
+receipt carries both: the exact words to quote, and the derived form the index
+matched on, so a reader can tell the two apart without loading the file.
 
 **The calibration line is live, not remembered.** A fixed, corpus-unrelated
 English sentence is scored once per run, and its top score is printed as the
@@ -2211,7 +2220,7 @@ consolidation ritual calls in place of re-reading the whole self.
 MEMORY OK candidates=<n> source=<name> k=<n> channels=<list> files=<n> chunks=<n>
 MEMORY CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
 MEMORY CAND n=<i>: "<normalized candidate>"
-MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>"
+MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> root=<dir>: <file>:<para> "<snippet>" verbatim="<original words>"
 MEMORY MISS cand=<i> every query term is out of vocabulary for this corpus
 MEMORY NOTE <caveat>
 ```

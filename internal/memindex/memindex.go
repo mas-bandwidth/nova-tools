@@ -76,6 +76,13 @@ type Chunk struct {
 	Text  string
 	Terms map[string]int
 	Len   int
+	// Raw is the paragraph verbatim — before Normalize is applied, after the
+	// line-ending fold — so a receipt can quote the exact original words,
+	// capitalization, emphasis and line structure included. Text is the
+	// normalized form that was indexed and scored; Raw is the source Text was
+	// derived from, and the two differ whenever the writer used case or
+	// markdown. A judge who needs the exact wording reads Raw, never Text.
+	Raw string
 	// Frontmatter, carried as receipt metadata when the file has any. The
 	// tool surfaces whatever the corpus already writes; it invents nothing
 	// and requires nothing.
@@ -283,7 +290,7 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 			}
 			id := int32(len(c.Chunks))
 			c.Chunks = append(c.Chunks, Chunk{
-				File: f, Para: para, Class: class, Text: Normalize(p),
+				File: f, Para: para, Class: class, Text: Normalize(p), Raw: p,
 				Terms: tf, Len: len(terms), FMName: fmName, FMType: fmType,
 			})
 			for t := range tf {

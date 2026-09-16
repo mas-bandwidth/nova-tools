@@ -253,6 +253,33 @@ func TestSearchSpansMultipleRoots(t *testing.T) {
 	}
 }
 
+// The receipt returns the verbatim original words, not only the normalized
+// form (issue #224). The normalized snippet the index scores is case-folded
+// and de-marked, so "The lantern glazing" reaches a reader as "the lantern
+// glazing", and the exact wording — which the issue calls evidence of a
+// statement — was recoverable only by loading the file. A receipt must carry
+// the verbatim span beside the normalized one, so a judge can recover what was
+// actually said without rereading the file.
+func TestReceiptCarriesTheVerbatimSpan(t *testing.T) {
+	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "6", "salt", "haze", "glazing")
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
+	}
+	var sawLantern bool
+	for _, line := range strings.Split(stdout, "\n") {
+		if !strings.HasPrefix(line, "SEARCH HIT ") || !strings.Contains(line, "notes/lantern.md:") {
+			continue
+		}
+		sawLantern = true
+		if !strings.Contains(line, `verbatim="The lantern glazing`) {
+			t.Errorf("the receipt's verbatim span is missing the original capitalization:\n%s", line)
+		}
+	}
+	if !sawLantern {
+		t.Fatal("notes/lantern.md did not surface, so the verbatim span was never exercised")
+	}
+}
+
 // The calibration probe is part of what the schema version names — the spec
 // says changing it IS a schema change. Nothing enforced that: the probe lives
 // in this package, SchemaVersion lives in internal/memindex, and each could

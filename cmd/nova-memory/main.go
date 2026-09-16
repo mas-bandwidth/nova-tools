@@ -409,7 +409,10 @@ func scoreFields(score float64, chn string) string {
 // frontmatter prints as "-" so the field count never changes. The class, the
 // name and the type are the corpus's own text and are fields, so each is one
 // token; the file is a positional slot and keeps its spaces; the snippet is
-// Go-quoted, which is one line in a different escape form.
+// Go-quoted, which is one line in a different escape form; and verbatim= is
+// the paragraph's original words — the source the normalized snippet was
+// derived from — so a judge can recover the exact wording without loading the
+// file, and can tell the exact wording from the index's derived form.
 func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 	name, typ := h.FMName, h.FMType
 	if name == "" {
@@ -422,8 +425,8 @@ func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 	if root == "" {
 		root = "-"
 	}
-	return fmt.Sprintf("%s HIT %srank=%d %s fused=%.5f class=%s name=%s type=%s root=%s: %s:%d %q\n",
-		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Field(root), oneline.Escape(h.File), h.Para, h.Snippet)
+	return fmt.Sprintf("%s HIT %srank=%d %s fused=%.5f class=%s name=%s type=%s root=%s: %s:%d %q verbatim=%q\n",
+		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Field(root), oneline.Escape(h.File), h.Para, h.Snippet, h.Raw)
 }
 
 // ---------------------------------------------------------------------------
