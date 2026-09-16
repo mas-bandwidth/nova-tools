@@ -795,21 +795,29 @@ line with the swarm's reason.
 ### cut
 
 ```
-nova-pulse cut --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
+nova-pulse cut --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--validate-contract] [--max <n>]
 ```
 
 `cut` writes one practice-17 card per `pool.tsv` candidate from its typed
-template, plus a `cards.tsv` naming the model by kind. `--max` bounds the
+template, plus a `cards.tsv` naming the model by kind, refusing a template
+whose rendered card violates the practice-17 contract (line 1 `RESULT <label>
+sha=<sha12>`, `STEP 1` carrying `mkdir -p scratch`, an `https://` clone and
+`checkout -b`, no `TMPDIR` of its own, no `../scratch`). `--max` bounds the
 number of cards cut, in pool order (default 20, `0` for all) — `--max 6` cuts
 six cards and the rest of the pool waits for the next call — and also caps the
-`CUT SKIPPED` lines printed. One line on success:
+`CUT SKIPPED` lines printed. `--validate-contract` preflights before any card
+file is written: a candidate whose locator does not resolve (`gh repo view
+<owner/repo>` non-zero) is refused with the reason, and no card is written.
+One line on success:
 
 ```
 CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
+CUT SKIPPED source=<kind> id=<id> template=<name>: no template
+CUT REFUSED template=<name>: <which rule> (<remedy>)
+CUT REFUSED locator=<owner/repo>: does not resolve (check gh auth and the repo name)
 ```
 
 Exit 0 when every candidate was cut, 1 when any was skipped, 2 on a refusal.
-
 ### status
 
 ```
