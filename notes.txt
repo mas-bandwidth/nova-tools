@@ -1,0 +1,37 @@
+# CARD-8059: nova-pulse pool: help advertises --max, flag parser does not define it
+
+## Red test output (before fix)
+
+Test: TestPoolMaxFlagBoundsCandidates
+Command: GOTOOLCHAIN=local go test -count=1 ./cmd/nova-pulse/ -run TestPoolMaxFlagBoundsCandidates -v
+
+Failing line verbatim:
+    main_test.go:116: pool exit = 2, stderr=nova-pulse pool: flag provided but not defined: -max
+
+Full test output:
+=== RUN   TestPoolMaxFlagBoundsCandidates
+    main_test.go:116: pool exit = 2, stderr=nova-pulse pool: flag provided but not defined: -max
+--- FAIL: TestPoolMaxFlagBoundsCandidates (0.30s)
+FAIL
+FAIL	github.com/mas-bandwidth/nova-tools/cmd/nova-pulse	0.324s
+FAIL
+
+## Root cause
+
+The help text (main.go:21) advertises `[--max <n>]` for the pool verb,
+but the cmdPool function's flag set did not define the --max flag.
+
+## Fix
+
+Added `max := f.fs.Int("max", 0, "")` to cmdPool's flag set,
+added validation for negative values, and passed `Max: *max` to pulse.Pool().
+
+## Green test output (after fix)
+
+Test: TestPoolMaxFlagBoundsCandidates
+--- PASS: TestPoolMaxFlagBoundsCandidates (0.29s)
+
+## Files touched
+
+- cmd/nova-pulse/main.go (added --max flag definition, validation, and passing to Pool)
+- cmd/nova-pulse/main_test.go (TestPoolMaxFlagBoundsCandidates already present as red test)
