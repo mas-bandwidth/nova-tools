@@ -771,7 +771,7 @@ func TestReplyNeverOverwritesAnExistingDraft(t *testing.T) {
 // at the composed path, and no `.tmp` beside it.
 func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 	if testing.Short() {
-		t.Skip("the race wants real processes")
+		t.Skip("slow: spawns racing processes over one draft path; runs on the self-hosted legs and nightly")
 	}
 	t.Parallel()
 	hermetic(t)
