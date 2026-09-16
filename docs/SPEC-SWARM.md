@@ -658,14 +658,19 @@ one line `ADMIT REFUSED benchmark window open until <stamp>` when the file named
 by `NOVA_BENCH_WINDOW` (or `~/.config/nova/bench-window`, a single RFC 3339
 stamp) is in the future, so a local job never runs beside a benchmark.
 
-**A native run captures the harness's output to `<job>/harness.log`, walled or
-not** — the same file, the same bytes, alongside `<slot>/native.log` — so an
-unwalled card's failure is as diagnosable as a walled one's and
-`harness=silent` means a silent harness and never a lost log. `--no-wall`
-removes the containment and nothing else: it never removes the evidence. The
-log is appended to, never truncated, because a `batch` pins its runner's stdout
-to that same file before the run starts (issue #608, every Space no-result of
-2026-09-16).
+**A native run captures the child's output to `<job>/harness-output.log`,
+walled or not** — the same file, the same bytes, alongside `<slot>/native.log`
+— so an unwalled card's failure is as diagnosable as a walled one's.
+`--no-wall` removes the containment and nothing else: it never removes the
+evidence (issue #608, every Space no-result of 2026-09-16). **The two names are
+two writers and never one**: `harness.log` is THE HARNESS'S OWN, written by the
+process that runs the harness, and `harness=silent` reads it to ask whether the
+harness itself wrote anything; `harness-output.log` is what `native` captured
+around it, the wall's lines with the harness's. A capture written into
+`harness.log` would answer `ok` for a harness that said nothing at all. **Every
+writer of a job's logs appends and none truncates**, `batch`'s runner pipe
+included: two processes write a card's `harness.log` at their own offsets, and
+a truncating open destroys the head of what the other already wrote.
 
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
