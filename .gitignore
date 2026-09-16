@@ -19,3 +19,9 @@ tending/
 # inside one, and a release tarball that carries one is a supply-chain surface
 # with no provenance. Build them; do not commit them.
 /bin/
+
+# A worker's scratch notes, never committed (eleven PRs were held in one night for one).
+/notes.txt
+
+# Test scratch: internal/bus's TestMain writes throwaway hermetic gitconfigs under TMPDIR.
+/.tmp/
