@@ -228,6 +228,10 @@ func reasonRunner(t *testing.T, dir string) string {
 		runnerStep{Op: "write", Path: "{job}/RESULT.md", When: "line2==DONE-RC5",
 			Body: "{line1}\nall green\n"},
 		runnerStep{Op: "exit", N: 5, When: "line2==DONE-RC5"},
+		runnerStep{Op: "write", Path: "{job}/RESULT.md", When: "line2==LATE",
+			Body: "{line1}\nall green\n"},
+		runnerStep{Op: "sleep", Ms: 30000, When: "line2==LATE"},
+		runnerStep{Op: "exit", N: 0, When: "line2==LATE"},
 		publishCard("{job}"),
 	)
 }
@@ -265,6 +269,10 @@ func TestBatchAbstainNamesReason(t *testing.T) {
 		{
 			name: "deadline", model: "model", body: "RESULT: x\nSLEEP",
 			deadline: time.Second, want: "x slot=1: ABSTAIN reason=deadline log=0",
+		},
+		{
+			name: "result-after-deadline", model: "model", body: "RESULT: x\nLATE",
+			deadline: time.Second, want: "x slot=1: ABSTAIN reason=result-after-deadline log=0",
 		},
 		{
 			name: "card-abstain", model: "model", body: "RESULT: x\nABSTAIN the repo needs credentials",
