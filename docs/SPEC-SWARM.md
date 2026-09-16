@@ -1359,7 +1359,11 @@ reader wanted was one of them.
 **`RUN NOTE` is exactly one remedy line.** If anything failed it names
 `nova-swarm triage`; if the pool drained it says so; if a worker was killed at
 its deadline twice it names `requeue` with a smaller file budget, which is the
-remedy that worked in batch 3.
+remedy that worked in batch 3. **A stopped pool is its own case (issue #180):**
+the remedy names the stop and the act that lifts it — `rm <pool>/stop` — never a
+second run with more hours, because a pool a person asked to hold still is not an
+out-of-hours pool, and a recovering dispatcher must not override the stop
+decision.
 
 **`TRIAGE BATCH` is one line and it is the batch (rule 8).** It is the line
 this spec's own numbers table was assembled from by hand, printed by the tool
@@ -1486,7 +1490,12 @@ dispatcher starts nothing new and exits when the running workers finish or are
 killed. Glenn, 2026-09-09: **every ask, child or read has a written deadline and
 a default action; never wait forever.** A `stop` file in the pool stops new
 admissions on demand, but does not kill or cancel workers already running,
-including a retry that has already started.
+including a retry that has already started. A run that ends over a stopped pool
+names the stop in its remedy line — the stop is the concrete unavailable
+function, preserved across a dispatcher's death and the next run's recovery
+(issue #180): `the pool is stopped; <n> task(s) stay pending until the stop file
+is removed` when work remains, or `the pool is stopped and drained; remove the
+stop file to resume` when it does not.
 
 **A wait loop never ends by scanning for its own name.** The dispatcher waits on
 pids it started, and it never matches a process by its command line: that is how

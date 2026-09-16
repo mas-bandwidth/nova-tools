@@ -894,6 +894,7 @@ nova-swarm result   --pool <dir> --id <job>                                     
 nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup                    # the conditions, baked in, so they are not retyped and not forgotten; setup is #184's agreement form, not a task template
 nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
+nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
 ```
 
@@ -921,6 +922,14 @@ QUICKSTART NOTE the conditions are worth more than the model: nova-swarm templat
 $ nova-swarm status --pool ./pool --max 20
 STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
 ```
+
+**`stop` holds the pool still without killing anyone.** It writes a `stop` file that
+stops new admissions while workers already running finish under their own deadline. A
+`run` that ends over a stopped pool names the stop in its `RUN NOTE` remedy rather than
+guessing a second run would help — `the pool is stopped; <n> task(s) stay pending until the
+stop file is removed` when work remains, or `the pool is stopped and drained; remove the
+stop file to resume` when it does not. Remove `stop` to admit again; the stop survives a
+dispatcher's death and the next `run`'s recovery (issue #180).
 
 **`run` needs `nova-sandbox` before it needs anything else.** Every job runs inside it
 (docs/SPEC-SANDBOX.md): the job directory and its data home are the only writable paths, the
