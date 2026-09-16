@@ -19,7 +19,8 @@ window reads one line per cycle.
   that names `harvest`, and queues what did not fit.
 - `nova-pulse harvest` pushes and opens a PR for every card whose `RESULT.md` line 1 is its
   contract line, sends every abstain to `retry.tsv` with the harness's last refusal line,
-  cuts a read card per PR, and pulses again — queue first.
+  cuts a read card per PR, pulses again — queue first — and folds a root with no `cards.tsv`
+  job dir by job dir, its `RESULT.md`'s own line 1 standing as the contract.
 - `nova-pulse width` is the drift alarm: one line, and a non-zero exit when there is pool
   and there are free slots and nothing was launched.
 
@@ -157,7 +158,11 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     by explicit refspec — `git push <https url> <branch>:<branch>` from the job's clone,
     never `git push` bare, never to `main` (a `BRANCH main` line is `mismatch`) — and a
     draft PR is opened with `gh pr create --draft` whose body is the `RESULT.md` lines, capped
-    at `--max-body-bytes` (default 4096). One `HARVEST PR` line per PR.
+    at `--max-body-bytes` (default 4096). One `HARVEST PR` line per PR. A root with no
+    `cards.tsv` — the bench loop hands cards straight to `nova-swarm batch`
+    (bin/pulse-loop.sh) and never cuts one — is folded job dir by job dir under
+    `<root>/<slot>/jobs/`, the `RESULT.md`'s own line 1 standing as the contract the swarm
+    already verified at admission.
 13. **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
     appends (`pr`, `<repo>#<n>`, `read`, `<title>`, `read`) to `<root>/next.tsv` — template
     `read`, or `tone` for a seed page — which the next `pool` reads after `queue.tsv` and
@@ -678,6 +683,10 @@ handoff (rule **The manager tier**).
     draft yields `prs=2` on the `POOL` line and two `pool.tsv` rows of kind `read`, template
     `read`, one candidate per PR — the draft is nowhere, and the read candidate is the same
     shape harvest's own read card has (rule 13).
+51. `harvest-folds-bare-swarm-root`: a root with no `cards.tsv` and a done and an abstain
+    `RESULT.md` sitting in two `<root>/<slot>/jobs/<label>` dirs is folded job dir by job
+    dir — one push and draft PR, one `retry.tsv` row, `pushed=1 prs=1 abstain=1 retry=1` —
+    and refused nowhere.
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 

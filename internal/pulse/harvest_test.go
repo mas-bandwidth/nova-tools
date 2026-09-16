@@ -279,6 +279,50 @@ func TestThenGatedOnVerdict(t *testing.T) {
 	}
 }
 
+// TestHarvestFoldsBareSwarmRoot (issue #628): a root with no cards.tsv at all -- filled by
+// whoever, pulse-loop.sh and nova-swarm batch on the bench -- is folded job dir by job dir,
+// never refused. The RESULT.md's own line 1 is its contract (the swarm verified it at
+// admission), so a done card is pushed and opened and an abstain is retried.
+func TestHarvestFoldsBareSwarmRoot(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/42")
+	fakeTool(t, specs, "nova-pulse", fakeSpec{Log: arglog, Default: fakeRule{
+		Stdout: "PULSE OK id=p2 n=5 free-before=5 queued=1 batches=1 deadline=300",
+	}})
+
+	done := filepath.Join(root, "bench1", "jobs", "card-880")
+	if err := os.MkdirAll(done, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(done, "RESULT.md"),
+		[]byte("RESULT card-880 sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\n"), 0o644)
+	abstain := filepath.Join(root, "bench2", "jobs", "card-881")
+	if err := os.MkdirAll(abstain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(abstain, "RESULT.md"),
+		[]byte("RESULT card-881 sha=bbb\nABSTAIN -- idle 300s\nBRANCH bx\nREPO owner/repo\n"), 0o644)
+
+	out, errs := runHarvest(t, root)
+	if strings.Contains(errs, "HARVEST REFUSED") {
+		t.Fatalf("a bare swarm root must not be refused:\n%s", errs)
+	}
+	if !strings.Contains(out, "pushed=1") || !strings.Contains(out, "prs=1") {
+		t.Fatalf("want the done card pushed and opened as a PR, got:\n%s", out)
+	}
+	if !strings.Contains(out, "abstain=1") || !strings.Contains(out, "retry=1") {
+		t.Fatalf("want the abstain retried, got:\n%s", out)
+	}
+	rty, err := os.ReadFile(filepath.Join(root, "retry.tsv"))
+	if err != nil {
+		t.Fatalf("retry.tsv missing after an abstain: %v", err)
+	}
+	if !strings.Contains(string(rty), "card-881") {
+		t.Fatalf("retry.tsv must name the abstained card:\n%s", rty)
+	}
+}
+
 func writeTSV(t *testing.T, path string, lines []string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "")), 0o644); err != nil {

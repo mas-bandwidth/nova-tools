@@ -62,7 +62,11 @@ func Harvest(in HarvestInput) int {
 
 	cards, err := readCards(filepath.Join(in.Root, "cards.tsv"))
 	if err != nil {
-		return refusal(in.Stderr, "HARVEST", err)
+		// A bare swarm root has no cards.tsv: the bench loop hands cards straight to
+		// nova-swarm batch and never cuts one, so harvest folds every job dir's RESULT.md
+		// whoever put it there, its own line 1 standing as the contract the swarm verified
+		// at admission (issue #628).
+		cards = discoverJobs(in.Root)
 	}
 
 	var done, pushed, prs, abstain, mismatch, refused, retried int
@@ -180,6 +184,35 @@ func readCards(path string) ([]CardRow, error) {
 		out = append(out, CardRow{Label: p[0], Slot: p[1], Model: p[2], Card: p[3]})
 	}
 	return out, nil
+}
+
+// discoverJobs enumerates a bare swarm root's job dirs -- <root>/<slot>/jobs/<label> -- as
+// cards whose own RESULT.md is the contract, so harvest folds a root no cut filled: the
+// bench loop (bin/pulse-loop.sh) hands cards straight to nova-swarm batch and never writes
+// a cards.tsv (issue #628).
+func discoverJobs(root string) []CardRow {
+	var out []CardRow
+	slots, _ := filepath.Glob(filepath.Join(root, "*"))
+	for _, slot := range slots {
+		info, err := os.Stat(slot)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		labels, _ := filepath.Glob(filepath.Join(slot, "jobs", "*"))
+		for _, label := range labels {
+			li, err := os.Stat(label)
+			if err != nil || !li.IsDir() {
+				continue
+			}
+			out = append(out, CardRow{
+				Label: filepath.Base(label),
+				Slot:  filepath.Base(slot),
+				Model: "-",
+				Card:  filepath.Join(label, "RESULT.md"),
+			})
+		}
+	}
+	return out
 }
 
 // jobDir is a card's job directory under the root: <root>/<slot>/jobs/<label>.

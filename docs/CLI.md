@@ -713,7 +713,12 @@ The things a first run gets wrong, and what each one wants:
 One tool for parallel work: enumerate bounded work, cut cards, admit them
 through `nova-swarm batch`, and fold what comes back. It makes no model call.
 `pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
-`status` below is the one-verb answer to the all-day questions.
+`status` below is the one-verb answer to the all-day questions. `harvest`
+folds a root whether or not a `cards.tsv` was cut into it: with no
+`cards.tsv` present it folds every `<root>/<slot>/jobs/<label>` directory's
+`RESULT.md`, whoever put it there, the result's own line 1 standing as its
+contract (the bench loop, `bin/pulse-loop.sh`, hands cards straight to
+`nova-swarm batch` and never cuts one).
 
 ### status
 
