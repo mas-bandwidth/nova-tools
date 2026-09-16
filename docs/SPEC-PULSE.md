@@ -418,8 +418,9 @@ after line 2. `<head>` is the repo's default-branch head at cut time, read once 
   abstain. No fallback provider, no per-card override, no hand on a route; the table is the
   whole policy, and changing it is a diff somebody read.
 - **No merging.** It opens draft PRs and cuts read cards. `nova-merge` and a person hold the
-  lane, the gate and the read condition; this tool never runs `nova-merge`, never labels,
-  never marks ready.
+  lane, the gate and the read condition; the scatter/gather verbs never run `nova-merge`,
+  never label, never mark ready — the manager tier hands approved PRs to the lane (it merges
+  nothing itself; **The manager tier**).
 - **No priority beyond source order.** `queue.tsv` first, `next.tsv` second, then the
   sources in file order, then the items in each source's own order. A person who wants an
   item first moves its source line up.
@@ -441,8 +442,9 @@ Stella's answer to Glenn's *"I want the intelligence; I don't want to spend it s
 and reading results"* is a third tier between planning and work. **Planning** is a person and
 the strong model: decisions, specs, rules; its output is cards and notes. **Manager** is a bounded
 controller on the cheapest qualified model: it owns the bus wait, harvests, triages abstains
-and HOLD reads by rewriting cards from templates, files dogfood issues, cuts fix cards, merges
-non-draft PRs on an approving read plus green CI, and escalates a decision as one line.
+and HOLD reads by rewriting cards from templates, files dogfood issues, cuts fix cards, hands
+non-draft PRs on an approving read plus green CI to nova-merge's lane, and escalates a
+decision as one line.
 **Work** is swarms and local models. Manager is where the intelligence is spent once and the
 scatter-gather is spent never.
 
@@ -479,27 +481,32 @@ quiet cycle makes); receipt every `START` and `DONE` note and append every other
 `RESULT.md` — push its branch by explicit refspec, open or update its PR, cut its read card
 from `<queue>/templates`, and refuse a fix PR carrying neither a `red:` line nor a test file
 in its diff; triage each abstain by its reason token, requeueing it once under a new number
-on the other bench and escalating the second; merge a non-draft PR whose read said `APPROVE`
-once the head revalidates and every check is `SUCCESS`, never on `HOLD`; refill the queue
+on the other bench and escalating the second; hand a non-draft PR whose read said `APPROVE`
+to the lane once the head revalidates and every check is `SUCCESS` — `nova-merge add
+--lane <dir> --pr <n>`, never `gh pr merge`, never on `HOLD`; refill the queue
 from the policy's sources to its floor, deduplicated on PR number, issue number and the
 contract sentence, in the policy's scope, leaving `AFTER: PR<n> merged` gates gated; and
 write one `MANAGER` line to `<queue>/MANAGER.log`. The policy is key=value lines —
-`wait-timeout`, `floor`, `scope-regex`, `sources`, `known-flakes`, `max-attempts` — and an
+`wait-timeout`, `floor`, `scope-regex`, `sources`, `known-flakes`, `max-attempts`, `lane` — and an
 unknown key is a refusal, exit 2, because a policy the tool half-understands is a policy
-nobody approved. `mirror` (rule 5 of **Rate and convergence**) is the one key proposed and
+nobody approved. `lane` is the nova-merge lane directory the manager hands approved PRs to
+(rule 20 of SPEC-MERGE: a lane `init` has made); with no `lane` the approval stays on file
+and nothing is merged. `mirror` (rule 5 of **Rate and convergence**) is the one key proposed and
 not landed (#553).
 
 Replays: `manager-never-expands-policy`, `manager-quiet-time-makes-no-call`,
 `manager-dedups-on-contract-line`, `manager-revalidates-head-before-merge`,
 `manager-never-merges-draft`, `manager-shift-ends-with-handoff`,
-`manager-requeues-once-then-escalates`, `manager-refuses-fix-pr-without-test`.
+`manager-requeues-once-then-escalates`, `manager-refuses-fix-pr-without-test`,
+`manager-hands-merge-to-lane`.
 
 ## Tests this spec demands
 
 Acceptance replays, one per rule that can be made red, each proven able to fail by a mutation
 first. Every `gh`, `git` and `nova-swarm` is a fixture on `PATH` that records its argv;
 tripwires: outside the docs, no `api.github.com`, no `os.UserHomeDir`, no `/tmp`, no
-`exec.Command("sh"`, `"-c"`, and no `nova-merge`.
+`exec.Command("sh"`, `"-c"`, and no `nova-merge` except the manager tier's `nova-merge add`
+handoff (rule **The manager tier**).
 
 1. `pool-reads-issue-label`: a fixture `gh issue list` answering three open issues, two
    labelled `card` and one dogfood-shaped without the label, yields `candidates=3 issues=3`

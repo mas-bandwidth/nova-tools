@@ -1,0 +1,25 @@
+CARD-8012 / issue #559: nova-merge lane as the merge queue for nova-tools.
+
+Red test (before the fix), verbatim:
+  --- FAIL: TestManagerHandsMergeToLane (0.00s)
+      manager_test.go:407: exit = 2 (stdout="")
+
+Root cause: the manager policy had no `lane` key, so `lane=<dir>` was an unknown
+policy key and the shift refused (exit 2). Even with the key, `mergeOne` merged via
+`gh pr merge` rather than handing the PR to the lane.
+
+Fix (smallest change):
+  - internal/pulse/manager.go: add `lane` to the policy (struct field + key + parse).
+  - internal/pulse/manager.go mergeOne: replace `gh pr merge --squash --delete-branch`
+    with `nova-merge add --lane <lane> --pr <n>`; print `MANAGER LANE ref=… head=…`.
+    With no `lane` configured the approval stays on file and nothing is merged.
+
+Docs updated byte for byte:
+  - docs/SPEC-PULSE.md: manager tier now hands approved PRs to the lane; policy keys
+    gain `lane`; tripwire and "No merging" note the manager's `nova-merge add` exception;
+    replays list gains `manager-hands-merge-to-lane`.
+  - docs/CLI.md: no nova-pulse section, nothing to change.
+
+Note: `go test ./...` also fails `internal/swarm` TestPullWaitsForResult, but only
+because TMPDIR=scratch lives under a path containing "swarm-root", and that test's
+scp filter trips on the substring "-r". Pre-existing and unrelated to this card.
