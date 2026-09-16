@@ -1,0 +1,124 @@
+CARD-8061 / #496 nova-tools: nova-tokens sum --swarm-root is not in help; --out is a file, help says dir
+
+Branch: rowan/issue-496 (base: origin/main @ a9fa1a6)
+Tool: cmd/nova-tokens
+Author: Rowan Claude (Go card 8061) <rowan@mas-bandwidth.com>
+
+Read before any edit
+---------------------
+* docs/SPEC-TOKENS.md, "The verbs" (lines 446-462) and "### sum" (line 512-).
+* cmd/nova-tokens/main.go, the usage= constant (lines 43-115) and cmdSum (lines 1141-1213 with --swarm-root branch at 1155-1167).
+* cmd/nova-tokens/sumswarm.go, the whole file: cardColumns, ledgerColumns, sumSwarmRoot, writeLedger.
+* cmd/nova-tokens/help_test.go (TestHelpListsSwarmRootForm, lines 9-14).
+* cmd/nova-tokens/sumswarm_test.go (TestSumRefusesOutDirectory, lines 64-75; preamble "// Before #496 the tmp-rename leaked 'file exists'", line 63).
+
+The issue, verbatim (the card, on commit a041498 the day #455 landed)
+----------------------------------------------------------------------
+Help pinned (before #494/#496):
+  nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+no --swarm-root, no --day, and --out for the second sum form is the LEDGER FILE, not a directory.
+
+Worse: --out a directory returned, exit 2:
+  SUM REFUSED: --out /tmp/johnny-sum-out: rename /tmp/johnny-sum-out.tmp /tmp/johnny-sum-out: file exists
+With a file (ledger.tsv) the same flags returned exit 0:
+  SUM OK day=2026-09-15 models=0 cards=0 in=0 out=0 usd=0.0000
+
+Expected: Help names --swarm-root and --day; --out a directory refuses by name (file vs directory), not by the OS rename error.
+
+Smallest fix: one usage line for swarm-root mode; refuse --out that is an existing directory before the tmp rename. Test: help mentions --swarm-root; --out a dir exits 2 naming directory vs file.
+
+The red tests already pinned by the repository (TestHelpListsSwarmRootForm, cmd/nova-tokens/help_test.go:9-14; TestSumRefusesOutDirectory, cmd/nova-tokens/sumswarm_test.go:64-75) describe exactly this. They were laid down with the fix, so the failing branch had to be re-derived before the test could be re-run and reported red below.
+
+Red (the two tests, with the help banner/stat-check reverted so the bug returns)
+--------------------------------------------------------------------------------
+export PATH=/home/ubuntu/sdk/go1.26.0/bin:$PATH
+export TMPDIR=/home/ubuntu/nova-bench/swarm-root/121/jobs/card-8061/scratch
+go test -count=1 -v -run 'TestHelpListsSwarmRootForm|TestSumRefusesOutDirectory' ./cmd/nova-tokens/
+
+Output:
+=== RUN   TestHelpListsSwarmRootForm
+    help_test.go:13: output does not contain "--swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>":
+        nova-tokens: token spend, folded per day, keyed by (day, model, repo) (see docs/SPEC-TOKENS.md)
+
+        usage:
+          nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
+                              [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+                              [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
+          nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
+                              [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <label>=<file>]...
+                              [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
+          nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+          nova-tokens check   --out <dir> [--max <n>]
+          nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--max <n>]
+          nova-tokens profiles --swarm-root <dir>
+          nova-tokens version
+          ...
+--- FAIL: TestHelpListsSwarmRootForm (0.00s)
+=== RUN   TestSumRefusesOutDirectory
+    sumswarm_test.go:72: output does not contain "not a directory":
+        SUM REFUSED: --out /home/ubuntu/nova-bench/swarm-root/121/jobs/card-8061/scratch/TestSumRefusesOutDirectory2192503068/001/swarm-sum-out: rename /home/ubuntu/nova-bench/swarm-root/121/jobs/card-8061/scratch/TestSumRefusesOutDirectory2192503068/001/swarm-sum-out.tmp /home/ubuntu/nova-bench/swarm-root/121/jobs/card-8061/scratch/TestSumRefusesOutDirectory2192503068/001/swarm-sum-out: file exists
+    sumswarm_test.go:73: output does not contain "ledger":
+        SUM REFUSED: --out /home/ubuntu/nova-bench/swarm-root/121/jobs/card-8061/scratch/TestSumRefusesOutDirectory2192503068/001/swarm-sum-out: rename /home/ubuntu/nova-bench/swarm-root/121/jobs/card-8061/scratch/TestSumRefusesOutDirectory2192503068/001/swarm-sum-out.tmp /home/ubuntu/nova-bench/swarm-root/121/jobs/card-8061/scratch/TestSumRefusesOutDirectory2192503068/001/swarm-sum-out: file exists
+    sumswarm_test.go:74: output contains "file exists" and should not:
+        SUM REFUSED: --out /home/ubuntu/nova-bench/swarm-root/121/jobs/card-8061/scratch/TestSumRefusesOutDirectory2192503068/001/swarm-sum-out: rename /home/ubuntu/nova-bench/swarm-root/121/jobs/card-8061/scratch/TestSumRefusesOutDirectory2192503068/001/swarm-sum-out.tmp /home/ubuntu/nova-bench/swarm-root/121/jobs/card-8061/scratch/TestSumRefusesOutDirectory2192503068/001/swarm-sum-out: file exists
+--- FAIL: TestSumRefusesOutDirectory (0.00s)
+
+The two verbatim failing lines:
+* help_test.go:13: output does not contain "--swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>":
+* sumswarm_test.go:74: output contains "file exists" and should not: SUM REFUSED: --out .../swarm-sum-out: rename .../swarm-sum-out.tmp .../swarm-sum-out: file exists
+
+The smallest change (the fix)
+------------------------------
+In cmd/nova-tokens/main.go the usage block at line 53 needs the --swarm-root continuation aligned to the verb column (2-space indent, 22-space continuation, exactly as the existing report/sources bug already does):
+  -                       --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
+
+In cmd/nova-tokens/sumswarm.go writeLedger, refuse --out that is an existing directory before os.Rename gets that bad "file exists":
+  + if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+  +     return fmt.Errorf("--out is a directory; it must be a file, the ledger path (<ledger>.tsv), not a directory")
+  + }
+
+Nothing else changes -- no other binary output line moves.
+
+The SPEC, byte for byte with what the binary now prints
+-------------------------------------------------------
+Binary, help banner, lines 52-53 of cmd/nova-tokens/main.go:
+  nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+                      --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
+
+docs/SPEC-TOKENS.md, lines 446-462 ("The verbs" block). The SPEC used the same verb-only block (no leading 2-space indent, 20-space continuation) and only listed the month-sum form for `sum`. Adding the same continuation as the binary:
+  nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+                      --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
+
+That brings the SPEC verb block in step with what the binary prints on `nova-tokens help` (the existing drift between SPEC (0 leading) and binary (2 leading) on this block predates this card and is unchanged).
+
+docs/CLI.md has no usage block for nova-tokens; the section is prose that names every verb and the things a first run gets wrong. No byte-for-byte update needed.
+
+Green (after the smallest change)
+---------------------------------
+export PATH=/home/ubuntu/sdk/go1.26.0/bin:$PATH
+export TMPDIR=/home/ubuntu/nova-bench/swarm-root/121/jobs/card-8061/scratch
+go test -count=1 -v -run 'TestHelpListsSwarmRootForm|TestSumRefusesOutDirectory' ./cmd/nova-tokens/
+
+=== RUN   TestHelpListsSwarmRootForm
+--- PASS: TestHelpListsSwarmRootForm (0.00s)
+=== RUN   TestSumRefusesOutDirectory
+--- PASS: TestSumRefusesOutDirectory (0.00s)
+PASS
+ok      github.com/mas-bandwidth/nova-tools/cmd/nova-tokens      0.005s
+
+Whole package (`go test -count=1 ./cmd/nova-tokens/`):
+ok      github.com/mas-bandwidth/nova-tools/cmd/nova-tokens      2.624s
+
+Manual cross-check against the card
+------------------------------------
+$ nova-tokens help | grep -A2 'nova-tokens sum'
+  nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+                      --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
+
+$ nova-tokens sum --swarm-root /tmp/swarm-root --day 2026-09-11 --out /tmp/johnny-sum-out  # /tmp/johnny-sum-out a dir
+SUM REFUSED: --out /tmp/johnny-sum-out: --out is a directory; it must be a file, the ledger path (<ledger>.tsv), not a directory
+exit 2
+
+$ nova-tokens sum --swarm-root /tmp/swarm-root --day 2026-09-11 --out /tmp/johnny-ledger.tsv
+SUM OK day=2026-09-11 models=1 cards=1 in=1000 out=200 usd=0.0100
+exit 0
