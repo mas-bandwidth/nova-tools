@@ -210,6 +210,25 @@ func TestStatusAdoptionIncludesCoordinator(t *testing.T) {
 	}
 }
 
+// status-rate-unknowns-stay-visible: with no measured usage in the window, the RATE line
+// leaves every metric unknown (-) rather than inventing a zero cost and latency (#186:
+// "Do not invent the cost or quality", "Unknowns remain visible").
+func TestStatusRateUnknownsStayVisible(t *testing.T) {
+	base := t.TempDir()
+	rootA := filepath.Join(base, "a")
+	queue, roots, bindir, now := setupStatus(t, rootA)
+	fakeGh(t, bindir, "[]")
+	writeStatusFile(t, queue, "COORDINATOR", "glenn\n")
+	writeSlots(t, rootA, []string{"free"})
+	out, _, code := runStatus(t, queue, roots, now, 20)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(out, "STATUS RATE cards_per_hour=- p50_s=- p90_s=- usd_per_card=- parallelism=-") {
+		t.Errorf("RATE must leave unmeasured metrics unknown (-), got:\n%s", out)
+	}
+}
+
 // status-remaining-counts-in-scope-only: a bench or friend outside --roots is nowhere on
 // the line; only in-scope benches get a WIDTH line and only their friends an ADOPTION line.
 func TestStatusRemainingCountsInScopeOnly(t *testing.T) {

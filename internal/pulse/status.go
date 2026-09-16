@@ -100,8 +100,12 @@ func Status(in StatusInput) int {
 		queue.pending, queue.gated, queue.launched, queue.done, queue.failed)
 
 	rate := rateOf(rows, dayStart, now)
-	fmt.Fprintf(out, "STATUS RATE cards_per_hour=%d p50_s=%d p90_s=%d usd_per_card=%s parallelism=%s\n",
-		rate.cardsPerHour, rate.p50, rate.p90, rate.usdPerCard, rate.parallelism)
+	if rate.known {
+		fmt.Fprintf(out, "STATUS RATE cards_per_hour=%d p50_s=%d p90_s=%d usd_per_card=%s parallelism=%s\n",
+			rate.cardsPerHour, rate.p50, rate.p90, rate.usdPerCard, rate.parallelism)
+	} else {
+		fmt.Fprintln(out, "STATUS RATE cards_per_hour=- p50_s=- p90_s=- usd_per_card=- parallelism=-")
+	}
 
 	remaining := remainingOf(addCards(queue.pending, queue.gated), in.Queue, rate)
 	fmt.Fprintf(out, "STATUS REMAINING queue=%d unread_prs=%d dirty_prs=%d uncarded_issues=%d hours=%d\n",
@@ -252,6 +256,7 @@ func parseUsage(path string) (usageRow, bool) {
 }
 
 type rateLine struct {
+	known        bool
 	cardsPerHour int
 	p50, p90     int
 	usdPerCard   string
@@ -266,10 +271,10 @@ func rateOf(rows []usageRow, dayStart, now time.Time) rateLine {
 			in = append(in, r)
 		}
 	}
-	r := rateLine{usdPerCard: "0.0000", parallelism: "0.0"}
 	if len(in) == 0 {
-		return r
+		return rateLine{} // known=false: a cost or latency never measured is unknown, never zero
 	}
+	r := rateLine{known: true}
 	minStart, maxEnd := in[0].started, in[0].ended
 	var busy, usd float64
 	for _, u := range in {
