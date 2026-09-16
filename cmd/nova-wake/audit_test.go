@@ -60,6 +60,11 @@ var wakeAudit = audit.Config{
 		// errors import above: a path joiner, not a source an escape can reach.
 		`"path/filepath"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		// internal/dispatch is the queued|dispatching|delivered|uncertain file
+		// discipline over internal/wake's State. It writes state records and
+		// returns strings/ints the caller prints through oneline.Field; it
+		// prints nothing and shadows nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/dispatch"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/wake"`,
 	},
