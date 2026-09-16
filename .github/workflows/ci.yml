@@ -39,7 +39,9 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    # dev is the integration branch (Glenn 2026-09-16): every merge lands there and the
+    # push run, hosted legs included, is the evidence a promotion to main waits for.
+    branches: [main, dev]
   pull_request:
   schedule:
     - cron: "41 3 * * *"
