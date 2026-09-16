@@ -784,7 +784,10 @@ line that then goes silent is `stale=true` past `--stale` and is takeable again 
 `--anyway`; a take or a close over somebody's *live* take is refused at exit 1 and names
 the holder. Two backends, one format: a directory of card files (`--dir`, which this tool
 appends to and never commits — landing it is yours) and issue comments (`--issue` with
-`--gh-timeout <seconds>`, durable when the command returns).
+`--gh-timeout <seconds>`, durable when the command returns). On the issue backend, the
+comment's actual author (from GitHub's `user.login`) is used for card ownership and
+closing; the `--as` value remains as a display label on the event. The file backend has
+no author, so it uses `--as` as before.
 
 ### First run
 

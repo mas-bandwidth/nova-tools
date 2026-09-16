@@ -79,7 +79,10 @@ no default issue number, no default directory and no default `--as`.
 **`--as <name>` is required on every verb that writes** — `add`, `take`, `close` —
 and is the name that goes in the event. It is not a credential and proves nothing:
 the forge or the file's git history holds who actually wrote, and the name is what
-the board *says*. A tool that pretended `--as` was an identity would be claiming
+the board *says*. On the issue backend, the fold uses the comment's actual author
+(from GitHub's `user.login`) for card ownership and closing; `--as` is a display
+label on the event. On the file backend, which has no author, `--as` is used for
+ownership as before. A tool that pretended `--as` was an identity would be claiming
 something it cannot check.
 
 **No guessed anything, with one exception:** `--max`, which defaults to **20** as
@@ -315,6 +318,15 @@ caller's, and saying so is more honest than a push hidden inside `add`. That is
 the one asymmetry between the backends, and it is named rather than hidden: an
 `add --dir` is durable when the caller lands it, and an `add --issue` is durable
 when the command returns.
+
+**The two backends differ on what an event is when `--as` and the author disagree.**
+The issue backend carries the comment's author (`user.login` from the GitHub API)
+and uses it for card ownership and closing; `--as` is a display label on the event.
+The file backend has no author and uses `--as` for ownership as before. A history
+migrated from one backend to the other will therefore fold differently if any event
+line's `--as` does not match the comment's actual author. This is the cost of closing
+the security finding that anybody who may comment could impersonate any `--as` name
+(security#30, finding 6).
 
 **The read is the whole log. There is no window.** The prototype read the last 40
 comments, which means a card older than forty events *vanishes* — and a vanished
@@ -723,13 +735,20 @@ Each is proven able to fail by a mutation before it is trusted.
 ## Known limits
 
 - **`--as` is a label, not an identity.** The board says who claims to have acted.
-  Who actually wrote is the forge's record or the file's git history, and this tool
-  neither checks nor pretends to.
+  On the issue backend, the fold uses the comment's actual author (GitHub's
+  `user.login`) for ownership and closing; `--as` is a display label on the event
+  and cannot be used to impersonate another name. On the file backend, which has
+  no author, `--as` is used for ownership. Who actually wrote is the forge's record
+  or the file's git history, and this tool neither checks nor pretends to.
 - **The board's guarantee is exactly the issue's comment permission.** On the
-  issue backend a comment is folded without its author, so anybody who may
-  comment on the issue may move this board — take a card, close a card — under
-  any `--as` name they like, and the only thing that narrows that is narrowing
-  who may comment on the issue to the participants.
+  issue backend a comment is folded on its author (`user.login` from the GitHub
+  API), not on the `--as` label the event line carries. The `--as` value remains
+  a display label on the event, but the card's owner and the closer's name come
+  from the comment's actual author. Anybody who may comment on the issue may still
+  move this board, but they can only do so under their own name, never under
+  another `--as` value. The file backend has no author, so the two backends differ
+  on what an event is when `--as` and the author disagree — the issue backend uses
+  the author, the file backend uses `--as` as before.
 - **A stale take is a guess about a clock, never about a line.** A line working
   hard for twenty minutes without touching the board looks exactly like a line
   that died. The remedy is a second `take`, which is one command and is why takes
