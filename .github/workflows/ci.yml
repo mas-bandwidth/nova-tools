@@ -524,7 +524,10 @@ jobs:
         # No path filter exists elsewhere in this file to reuse, so
         # dorny/paths-filter is pinned by sha. On a pull_request it reads the
         # diff via the REST API and reports whether any changed file matches
-        # this leg's patterns.
+        # this leg's patterns. It runs directly after checkout so a PR that does
+        # not touch this platform pays only the checkout on the hosted runner:
+        # setup-go, the cache and the test step all run only when the filter
+        # reports a change.
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
         with:
@@ -551,6 +554,9 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: test the packages this leg filters
+        # -short gates the slow multi-process bus tests (issue #682), so a hosted
+        # leg that fits the six-minute cap does not panic on Go's ten-minute
+        # default. The leg's filter keeps the diff to this platform's packages.
         if: steps.filter.outputs.changed == 'true'
         run: go test -short -count=1 ${{ matrix.leg.packages }}
 
