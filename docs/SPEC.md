@@ -2428,6 +2428,9 @@ nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remo
 nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
 nova-bus names --bus <dir>
+nova-bus prepare --bus <dir> --as <name> (--file <draft> | --stdin) [--slug <slug>]
+nova-bus version
+nova-bus help
 
 every verb that runs git also takes [--git-timeout <seconds>], default 60
 ```
@@ -2537,12 +2540,31 @@ BUS REFUSED: <reason>
 NAMES NAME name="<x>" lane=<lane|-> aliases="<a>";"<b>"
 NAMES GROUP name="<x>" members="<a>";"<b>"
 NAMES OK participants=<n> groups=<n> senders=<n>
+DRAFT OK path=<path>
+DRAFT OK path=<path> re=<id> from=<name> to=<names> cc=<names|-> at=<commit> moved=<true|false> bytes=<n>
+PREPARE NOTE <what a tolerance did to this draft>
+PREPARE FAIL <path or (stdin)>: <reason>
+INBOX BODIES printed=<n> bytes=<n> oversize=<n> gaps=<n> drained=<true|false> complete=<true|false> next=<token|->
+INBOX BODIES GAP id=<id> kind=<kind> retry-max-bytes=<n> path=<path>
+INBOX BODY OVERSIZE id=<id> bytes=<n> max-bytes=<n> path=<path>
+INBOX BODY id=<id> bytes=<n>
+INBOX BODY END id=<id>
+WAIT DONE reason=<new|timeout|signal> rearm=required next=<command>
+WAIT ADVANCED from=<sha8> to=<sha8> heard=<n>
 ```
 
 `draft` prints a **skeleton and nothing else** on stdout -- no `OK` line under it --
 because its stdout is a FILE: `nova-bus draft ... > draft.md` has to produce a
-draft. Everything it has to say instead of one is a `DRAFT REFUSED` on stderr,
-and it prints **every** refusal rather than the first.
+draft. With `--file <path>` it writes that skeleton to the file and prints one
+`DRAFT OK path=<path>` on stdout instead. Everything it has to say instead of a
+draft is a `DRAFT REFUSED` on stderr, and it prints **every** refusal rather
+than the first.
+
+The three verbs this spec now names but once omitted — `prepare`, `version` and
+`help` — ship in the binary, and the grammar above gains their lines plus the
+`DRAFT OK`, `PREPARE`, `INBOX BODY*` and `WAIT DONE`/`WAIT ADVANCED` lines the
+code prints; the verb list and grammar are what the binary emits, not what an
+earlier draft promised. (drift audit, 2026-09-15)
 
 `SEND NOTE` is one tolerance, on stdout with the informational lines, printed
 before the `SEND OK` that follows it. There is one line per thing the tool did to

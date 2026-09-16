@@ -1,6 +1,7 @@
 # Prepared bus delivery — proposal for the version-report recovery gap
 
-Status: independently approved specification, not implemented. This is the bounded
+Status: implemented — `nova-bus prepare` and `send --prepared`/`--prepared-stdin`
+ship in the binary (drift audit, 2026-09-15). This is the bounded
 dependency of SPEC-UPDATE rules 24–25. Johnny approved the exact contract at
 5f73dc1 (johnny-2b82f17a9453), review only; the two requested clarifications follow. Existing ordinary send is
 unchanged. No new timer, service, friend identity or update policy is introduced.

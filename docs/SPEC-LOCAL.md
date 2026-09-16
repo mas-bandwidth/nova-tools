@@ -1,5 +1,9 @@
 # nova-local — specification
 
+Status: **not built** — there is no `cmd/nova-local` binary in the tree yet; every
+verb and output line below is a spec gate for a future build, not a shipped
+promise (drift audit, 2026-09-15).
+
 [Unified execution coverage](PROPOSAL-USAGE-COVERAGE.md) specifies the proposed shared token and cost accounting for AI friends, swarms, one-shots and local inference. It preserves existing formats and distinguishes local zero API cost from missing usage.
 
 **What this tool is for, in one sentence (Glenn, 2026-09-12):** *"somebody should

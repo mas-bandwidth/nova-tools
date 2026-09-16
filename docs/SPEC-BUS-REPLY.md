@@ -1,6 +1,8 @@
 # The reply transaction — a reply drafted without a hand-built header
 
-Status: **proposed, not implemented.** This is the first bounded slice of
+Status: **implemented** — the `draft --reply-to` form ships in the binary
+(`cmd/nova-bus/reply.go`), reached only by that flag (drift audit, 2026-09-15).
+This is the first bounded slice of
 nova-tools issue #246, written to be read before it is built. It is an
 extension of the existing `nova-bus draft` verb: no second binary, no second
 delivery protocol, no change to any verb or flag that exists today.
