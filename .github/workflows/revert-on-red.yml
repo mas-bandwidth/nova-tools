@@ -1,0 +1,62 @@
+# revert-on-red.yml: the mechanical revert of the push that turned main red.
+#
+# No person in the loop. When `ci` concludes FAILURE on a push to main whose
+# parent ci run on main was green, this workflow reverts that push -- `git
+# revert -m 1` for a merge commit, a plain revert otherwise -- pushes the
+# revert to main, and posts ONE comment on the merged pull request naming the
+# revert. If the repository ruleset refuses the direct push by the
+# github-actions app, it opens a `revert/<sha>` pull request with auto-merge
+# enabled instead; the comment is posted either way.
+#
+# The guards that keep it from ever fighting itself, all a skip with a notice
+# and exit 0 rather than a failure:
+#   * the head commit is itself a revert      -> no revert loops
+#   * the parent commit's ci run was not green -> the red predates this push
+#   * main has moved past this commit          -> the newer run decides
+#
+# Everything else is the plain "stop the red" path. The repository ruleset is
+# the one manual step this may need: it must let the github-actions app push
+# to main or auto-merge a revert/<sha> pull request (see docs/CONTRIBUTING.md).
+#
+# Actions are pinned by sha, and the script is one file so the workflow stays
+# a list of steps rather than a program.
+
+name: revert-on-red
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+
+concurrency:
+  # One revert at a time, and a queued run waits rather than cancels: two red
+  # pushes must never race each other's push to main.
+  group: revert-on-red
+  cancel-in-progress: false
+
+jobs:
+  revert-on-red:
+    # The trigger fires on every completed ci run on main; only a FAILURE of a
+    # PUSH run (not schedule, not dispatch) is a push that turned main red.
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 50
+
+      - name: revert the push that turned main red
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: .github/scripts/revert-on-red.sh
