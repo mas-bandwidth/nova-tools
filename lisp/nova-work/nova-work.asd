@@ -16,8 +16,10 @@
                (:file "src/value")
                (:file "src/event")
                (:file "src/state")
+               (:file "src/lock")
                (:file "src/journal")
                (:file "src/kernel")
+               (:file "src/command-thread")
                (:file "src/session")))
 
 (defsystem "nova-work/tests"

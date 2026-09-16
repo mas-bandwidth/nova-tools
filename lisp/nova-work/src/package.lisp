@@ -28,6 +28,8 @@
    #:journal-uncertain-write
    #:journal-uncertain-write-path
    #:journal-uncertain-write-reason
+   #:journal-held
+   #:journal-held-path
    ;; restricted data and canonical serialization
    #:+absent+
    #:absentp
@@ -100,6 +102,11 @@
    #:journal-uncertain-p
    #:sync-stream
    #:sync-directory
+   #:journal-bench
+   #:journal-lock
+   #:bench-identity
+   #:take-journal-lock
+   #:release-journal-lock
    ;; kernel
    #:make-kernel
    #:kernel-state
@@ -117,6 +124,7 @@
    #:owner-token
    #:owner-stamp
    #:owner-until
+   #:owner-bench
    #:owner-successor
    #:evaluate-ownership-claim
    #:parse-ownership-record

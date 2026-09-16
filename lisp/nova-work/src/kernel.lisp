@@ -21,12 +21,23 @@
 (in-package #:nova-work)
 
 (defstruct (kernel (:constructor %make-kernel))
-  state journal next-rev)
+  state journal next-rev
+  ;; The single-writer kernel (SPEC-WORK.md SPEC-AHEAD #500, rule 6): one command
+  ;; thread owns O and C and applies mutations in order; readers never touch it.
+  ;; The queue holds accepted commands, Q-LOCK/Q-CVAR guard the mailbox, THREAD
+  ;; is the command thread, and CLOSED-P refuses further enqueues on shutdown.
+  queue q-lock q-cvar thread closed-p)
 
 (defvar *before-apply-hook* nil
   "A test seam. When bound, it is called with the envelope after the journal has
 recorded it and before any of it is applied, so a stop can be injected exactly
 at the ordering boundary SPEC-WORK.md:307 names.")
+
+(defstruct (kernel-command (:conc-name cmd-))
+  "One mutation enqueued for the kernel's single command thread. REPLY carries the
+results back to the caller; BEFORE-APPLY-HOOK is the captured dynamic value of
+*BEFORE-APPLY-HOOK* at submit time, since special bindings are thread-local."
+  request before-apply-hook results error done-p lock cvar)
 
 (defun make-kernel (&key state journal rev-base)
   "REV-BASE defaults to one past the state's own revision, so a kernel opened
@@ -39,9 +50,16 @@ below the state's revision is refused rather than silently reissued."
       (error 'unsupported-input
              :what (format nil "rev-base ~D is at or below the state's own revision ~D"
                            rev-base (state-revision state))))
-    (%make-kernel :state state
-                  :journal (or journal (make-ordering-journal))
-                  :next-rev (or rev-base (1+ (state-revision state))))))
+    (let ((k (%make-kernel :state state
+                           :journal (or journal (make-ordering-journal))
+                           :next-rev (or rev-base (1+ (state-revision state)))
+                           :queue '()
+                           :q-lock (sb-thread:make-mutex)
+                           :q-cvar (sb-thread:make-waitqueue)
+                           :thread nil
+                           :closed-p nil)))
+      (setf (kernel-thread k) (start-command-thread k))
+      k)))
 
 ;;; What a request may carry, per verb. SPEC-WORK.md:3227
 ;;; `every-field-has-an-owning-verb` wants every field mapped to its owning
@@ -257,9 +275,11 @@ applied and the journal can be appended first."
           word (event-id requester) (work-event-request requester)
           (work-event-node requester) (work-event-rev session)))
 
-(defun submit (kernel request)
-  "Answer (values OK-P LINE EXIT-CODE ENVELOPE). Nothing is applied unless the
-whole envelope is applied."
+(defun %dispatch (kernel request)
+  "Run one mutation request synchronously and answer
+(values OK-P LINE EXIT-CODE ENVELOPE). This is the per-command body of the
+single command thread; it is never an independent mutation path (SPEC-WORK.md
+rule 6: a mutation outside the command loop is a defect)."
   (handler-case (%submit kernel request)
     (unsupported-input (c)
       (values nil (format nil "~A FAIL node=~A: ~A"
