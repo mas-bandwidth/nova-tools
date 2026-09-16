@@ -126,6 +126,64 @@ func TestPacketMechanicallySelectsRulesAndPrintsEveryDiffFile(t *testing.T) {
 	}
 }
 
+const scopedNamedSpec = `## The rules, numbered
+1. One
+2. Two
+3. Three
+4. Four
+5. Five
+6. Six
+7. Seven
+8. Eight
+9. **Nine is the rule a caller names with --rule.** It runs for several lines so the saved read is measurable.
+10. Ten
+`
+
+func TestRuleFlagScopesPacketToThatRuleOnly(t *testing.T) {
+	lane, _ := packetLab(t)
+	repo := filepath.Join(lane, merge.RepoDir)
+	git := func(args ...string) {
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		if b, e := c.CombinedOutput(); e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "docs", "SPEC.md"), []byte(scopedNamedSpec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "docs/SPEC.md")
+	git("commit", "-qm", "add spec")
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	if err := os.Chdir(lane); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	args := []string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", "rule.md", "--spec", "docs/SPEC.md#The rules, numbered", "--rule", "docs/SPEC.md:9"}
+	if code := run(args, &out, &errb); code != 0 {
+		t.Fatalf("packet=%d stderr=%s", code, errb.String())
+	}
+	body, err := os.ReadFile("rule.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(body)
+	for _, want := range []string{"### docs/SPEC.md:10 rule 9", "> 9. **Nine is the rule a caller names with --rule.**", "touched by: caller (named)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("scoped rule packet lacks %q:\n%s", want, got)
+		}
+	}
+	for _, absent := range []string{"## This head", "## Your prior verdicts", "## All verdicts", "## Open findings", "## Diff ", "## Not included", "--git a/a.txt"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("scoped rule packet must hold only rule 9's section, found %q:\n%s", absent, got)
+		}
+	}
+}
+
 func TestChangedSpecHunkQuotesBothExactSides(t *testing.T) {
 	lane, _ := packetLab(t)
 	repo := filepath.Join(lane, merge.RepoDir)
