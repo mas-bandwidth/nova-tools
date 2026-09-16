@@ -352,6 +352,7 @@ func Batch(in BatchInput) int {
 			host:      b.Host,
 			remoteJob: b.Root + "/" + strconv.Itoa(c.slot) + "/jobs/" + c.label,
 			localJob:  filepath.Join(in.Root, scratchName(c), "jobs", c.label),
+			label:     c.label,
 			wait:      in.PullWait,
 			poll:      in.PullPoll,
 			notes:     in.Stderr,
