@@ -90,6 +90,17 @@ catalog is implementation-ready.
 | credentials | Required strings `kind`, `store`, `seat`, `age_key`, `sops`, `gate`, `launcher` | `kind` is exactly `nova-secrets`; no alternate plaintext or inherited-environment credential source |
 | prompt | Required `mode` string, `prefix` string, `tools` string array | Existing `legacy`/`compact`, byte bound and adapter allow-list rules above |
 
+`worker.execution` owns the native adapter identity and its compatibility
+revision, both closed implementation identifiers (issue #296): `adapter` must be
+exactly `opencode-native/1` and `adapter_revision` exactly `1`. They are
+implementation identifiers, never provider or model names. An unknown adapter or a
+mismatched revision is an exit-2 refusal naming the field, before any gate or
+provider use, and a missing one is the missing-member refusal:
+`PROFILE REFUSED profile.<id>.worker.execution.adapter: a native adapter must be
+the supported closed identifier opencode-native/1`, and
+`PROFILE REFUSED profile.<id>.worker.execution.adapter_revision: a compatibility
+revision must be the supported closed identifier 1`.
+
 `worker.provider`, `worker.model`, `worker.base_url`, `worker.env_var`,
 `worker.key_file` and `worker.board` are forbidden in a profile. In particular,
 even a duplicate that agrees with the canonical field is refused. The common
