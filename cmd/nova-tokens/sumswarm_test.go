@@ -74,6 +74,41 @@ func TestSumRefusesOutDirectory(t *testing.T) {
 	wantNotContains(t, r.stderr, "file exists")
 }
 
+// TestSumSwarmAllUnknownModelIsDashNeverZero is #495's other face: a model whose only
+// card reported none of the three kept fields — a dash in, an empty out, a malformed usd —
+// lands `-`, `-`, `-` with a dashes count of 1,1,1, never the 0, 0, 0.0000 that reads as
+// a free route, while a fully reported model on the same day keeps its numbers and a
+// dashes count of 0,0,0. The header is pinned byte for byte to the eight columns the
+// binary writes and refuses a ledger for, `dashes` last.
+func TestSumSwarmAllUnknownModelIsDashNeverZero(t *testing.T) {
+	dir := t.TempDir()
+	root := mkdir(t, filepath.Join(dir, "root"))
+	ledger := filepath.Join(dir, "ledger.tsv")
+
+	cardUsageFile(t, filepath.Join(root, "batch-a", "jobs", "j1", "usage.tsv"),
+		"deepseek", "deepseek-v4", "2026-09-11T10:00:00Z", "1000", "200", "0.0100")
+	cardUsageFile(t, filepath.Join(root, "batch-b", "jobs", "j2", "usage.tsv"),
+		"deepseek", "deepseek-v3", "2026-09-11T11:00:00Z", "-", "", "0.0xy")
+
+	r := invoke(t, "sum", "--swarm-root", root, "--day", "2026-09-11", "--out", ledger)
+	wantExit(t, r, 0)
+	wantContains(t, r.stdout, "SUM OK day=2026-09-11 models=2 cards=2 in=1000 out=200 usd=0.0100")
+
+	lines := strings.Split(strings.TrimRight(read(t, ledger), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("ledger has %d lines, want header + one row per model:\n%s", len(lines), read(t, ledger))
+	}
+	if want := "day\tmodel\ttokens_in\ttokens_out\tusd\tcards\tdashes"; lines[0] != want {
+		t.Errorf("ledger header is %q, want %q", lines[0], want)
+	}
+	if want := "2026-09-11\tdeepseek-v3\t-\t-\t-\t1\t1,1,1"; lines[1] != want {
+		t.Errorf("the all-unknown model's row is %q, want %q -- a kept field no card reported is -, never a 0 that reads as a free route", lines[1], want)
+	}
+	if want := "2026-09-11\tdeepseek-v4\t1000\t200\t0.0100\t1\t0,0,0"; lines[2] != want {
+		t.Errorf("the fully reported model's row is %q, want %q", lines[2], want)
+	}
+}
+
 func TestSumSwarmMixedKnownUnknownDailyAggregate(t *testing.T) {
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))

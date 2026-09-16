@@ -524,7 +524,7 @@ and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 writes: it walks every card's `usage.tsv` under `<dir>/*/jobs/*/`, keeps the
 rows whose `started` stamp is on `--day`, and appends one row per model to the
 ledger in the ledger's own column order — `day`, `model`, `tokens_in`,
-`tokens_out`, `usd`, `cards` — reading the header and refusing (exit 2) when it
+`tokens_out`, `usd`, `cards`, `dashes` — reading the header and refusing (exit 2) when it
 differs, so a ledger filled by hand and one filled by this verb agree. A second
 run for the same day replaces that day's rows, never doubling, so the ledger can
 be filled again and again; a kept field a card did not report is `-` in the ledger, never 0,
