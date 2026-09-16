@@ -682,6 +682,15 @@ harness parses, the adoption probe tries the configured local models in order
 and records which answer (`probe-local-model-supports-tools`), and a batch
 gives the local route one slot at most.
 
+**A native run captures the harness's output to `<job>/harness.log`, walled or
+not** — the same file, the same bytes, alongside `<slot>/native.log` — so an
+unwalled card's failure is as diagnosable as a walled one's and
+`harness=silent` means a silent harness and never a lost log. `--no-wall`
+removes the containment and nothing else: it never removes the evidence. The
+log is appended to, never truncated, because a `batch` pins its runner's stdout
+to that same file before the run starts (issue #608, every Space no-result of
+2026-09-16).
+
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
 `requeue`, `note`, `finalize` and `reclaim` are the verbs that act; `supervise`
