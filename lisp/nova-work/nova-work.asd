@@ -75,4 +75,5 @@
                (:file "tests/replays-8663")
                 (:file "tests/replays-8664")
                 (:file "tests/decide")
-                (:file "tests/replays-8682")))
+                (:file "tests/replays-8682")
+                (:file "tests/s4")))
