@@ -37,8 +37,6 @@ func TestConfigReadsEveryKeyFromTheFile(t *testing.T) {
 		"refill.cadence = 7",
 		"integration.branches = main, dev, next",
 		"runners.per-machine = 8",
-		"launch.files = 40",
-		"launch.tokens = unmetered",
 		"",
 	}, "\n"))
 
@@ -58,9 +56,6 @@ func TestConfigReadsEveryKeyFromTheFile(t *testing.T) {
 	}
 	if got := strings.Join(cfg.IntegrationBranches, ","); got != "main,dev,next" {
 		t.Errorf("integration branches = %q, want main,dev,next", got)
-	}
-	if cfg.Files != 40 || cfg.Tokens != "unmetered" {
-		t.Errorf("files=%d tokens=%q, want 40 and unmetered", cfg.Files, cfg.Tokens)
 	}
 	lines := nonEmptyLines(out.String())
 	if len(lines) != 1 || !strings.HasPrefix(lines[0], "CONFIG OK ") {
@@ -219,66 +214,5 @@ func TestConfigReadsSectionsAndArrays(t *testing.T) {
 	}
 	if got := strings.Join(cfg.IntegrationBranches, ","); got != "main,dev" {
 		t.Fatalf("integration branches = %q, want main,dev", got)
-	}
-}
-
-// launch-files-budget-is-configuration (issue #869): the wired launch carries a file budget
-// because `nova-swarm batch` refuses without one; the key is `[launch] files`, its default is
-// the documented 40, and a configuration that does not carry it says so ONCE like every other
-// key. The mutation that matters: the key read but never announced, so the first tick of the
-// switch refused with "--files is required and is at least 1, got 0" and no line said why.
-func TestConfigLaunchFilesDefaultsAndIsPrintedOnce(t *testing.T) {
-	dir := t.TempDir()
-	writeConfig(t, dir, "slots.studio = 6\n")
-
-	var first bytes.Buffer
-	cfg, err := LoadConfig(dir, &first, 20)
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-	if cfg.Files != DefaultLaunchFiles {
-		t.Errorf("files = %d, want the documented default %d", cfg.Files, DefaultLaunchFiles)
-	}
-	if n := strings.Count(first.String(), "DEFAULT launch.files="); n != 1 {
-		t.Fatalf("want exactly one DEFAULT launch.files line, got %d:\n%s", n, first.String())
-	}
-
-	var second bytes.Buffer
-	if _, err := LoadConfig(dir, &second, 20); err != nil {
-		t.Fatalf("second LoadConfig: %v", err)
-	}
-	if strings.Contains(second.String(), "launch.files") {
-		t.Fatalf("the default was announced twice:\n%s", second.String())
-	}
-
-	writeConfig(t, dir, "slots.studio = 6\n[launch]\nfiles = 12\n")
-	var third bytes.Buffer
-	cfg, err = LoadConfig(dir, &third, 20)
-	if err != nil {
-		t.Fatalf("third LoadConfig: %v", err)
-	}
-	if cfg.Files != 12 {
-		t.Fatalf("files = %d, want the file's 12", cfg.Files)
-	}
-}
-
-// config-headroom-takes-a-decimal (issue #869, the smaller edge): the spec's headroom is a
-// ratio of cores, so 2.5 is a value a person writes; the loader used Atoi and refused it with
-// "wants a whole number". The mutation that matters: 2.5 truncated to 2 at load, which is a
-// different bench width than the file asked for.
-func TestConfigHeadroomTakesADecimal(t *testing.T) {
-	dir := t.TempDir()
-	writeConfig(t, dir, "headroom.studio = 2.5\nheadroom.space = 4\n")
-
-	var out bytes.Buffer
-	cfg, err := LoadConfig(dir, &out, 20)
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-	if cfg.Headroom["studio"] != 2.5 {
-		t.Errorf("headroom.studio = %v, want 2.5", cfg.Headroom["studio"])
-	}
-	if cfg.Headroom["space"] != 4 {
-		t.Errorf("headroom.space = %v, want 4", cfg.Headroom["space"])
 	}
 }

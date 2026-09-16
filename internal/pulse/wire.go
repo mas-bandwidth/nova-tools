@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -506,7 +505,10 @@ func (w *Wiring) Launch(tick int) (int, int, error) {
 		}
 		openSlots := freeSlots(root, slots, w.in.Now())
 		free += openSlots
-		take := headroomTake(openSlots, headroom)
+		take := openSlots
+		if headroom > 0 && take > headroom {
+			take = headroom // fill the machine, never oversaturate it
+		}
 		if take <= 0 {
 			continue
 		}
@@ -539,7 +541,6 @@ func (w *Wiring) Launch(tick int) (int, int, error) {
 		var out, errs bytes.Buffer
 		code := Launch(LaunchInput{
 			Cards: tsv, Root: root, Slots: slots, Deadline: strconv.Itoa(int(w.in.Deadline / time.Second)),
-			Files: cfg.Files, Tokens: cfg.Tokens,
 			QueueDir: w.in.Queue, Stdout: &out, Stderr: &errs, Now: w.in.Now,
 		})
 		w.log(out.String())
@@ -555,20 +556,6 @@ func (w *Wiring) Launch(tick int) (int, int, error) {
 		launched += len(rows)
 	}
 	return launched, free, nil
-}
-
-// headroomTake caps a tick's take at the bench's headroom -- "fill the machine, never
-// oversaturate it". Headroom is a ratio of cores, so it is a decimal (issue #869), and half
-// a card is not a card: the cap is the whole cards that fit under it. A headroom of zero is
-// no cap at all, which is what it has always been.
-func headroomTake(open int, headroom float64) int {
-	if headroom <= 0 {
-		return open
-	}
-	if float64(open) <= headroom {
-		return open
-	}
-	return int(math.Floor(headroom))
 }
 
 // modelFor is the card's route: its own MODEL: line, else the next route in the queue's
