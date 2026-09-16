@@ -38,6 +38,7 @@ type rule struct {
 	Equals     string `json:"equals,omitempty"`
 	Stdout     string `json:"stdout,omitempty"`
 	StdoutFile string `json:"stdoutFile,omitempty"`
+	Stderr     string `json:"stderr,omitempty"`
 	Exit       int    `json:"exit,omitempty"`
 }
 
@@ -96,6 +97,13 @@ func main() {
 			out += "\n"
 		}
 		fmt.Print(out)
+	}
+	if r.Stderr != "" {
+		out := r.Stderr
+		if !strings.HasSuffix(out, "\n") {
+			out += "\n"
+		}
+		fmt.Fprint(os.Stderr, out)
 	}
 	os.Exit(r.Exit)
 }

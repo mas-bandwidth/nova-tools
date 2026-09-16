@@ -715,6 +715,29 @@ through `nova-swarm batch`, and fold what comes back. It makes no model call.
 `pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
 `status` below is the one-verb answer to the all-day questions.
 
+### launch
+
+```
+nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+```
+
+`launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>card`), counts the
+free slots under `<root>` (`<root>/pool/slots/<n>.json` absent or `state=free`,
+never a log age), fills every free slot in `cards.tsv` order, and queues the
+rest under `<root>/queue.tsv` when `--queue` is set. The admitted cards are
+written as their own TSV under `<root>/cards/<id>/cards.tsv` and handed to
+`nova-swarm batch` in its **card form** — the only form that runs a card:
+
+```
+nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s> --runner nova-native-runner.sh --root <root> --then "nova-pulse harvest --id <id> --root <root>"
+```
+
+The pool form (`--pool --tasks --label`) wants `--files` and `--tokens`, which
+no launch flag supplies, so launch never calls it (issue #630). `--runner` is
+the deployment's native runner on PATH; the one batch is recorded in
+`<root>/pulses/<id>.tsv`. A swarm refusal is relayed as one `PULSE REFUSED`
+line with the swarm's reason.
+
 ### status
 
 ```

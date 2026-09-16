@@ -31,6 +31,7 @@ type fakeRule struct {
 	Equals     string `json:"equals,omitempty"`
 	Stdout     string `json:"stdout,omitempty"`
 	StdoutFile string `json:"stdoutFile,omitempty"`
+	Stderr     string `json:"stderr,omitempty"`
 	Exit       int    `json:"exit,omitempty"`
 }
 
