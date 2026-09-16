@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,36 @@ const (
 
 // RefusalExitCode is the exit status (2) mandated for all package refusals.
 const RefusalExitCode = 2
+
+// THE MODE RULE IS A UNIX RULE, AND IT IS CHECKED WHERE UNIX MODE BITS EXIST.
+//
+// PROPOSAL-TOKENS-RECORDS-185 §4.3: "Permissions: Every file must be mode `100644`; every
+// directory mode `0755`." That rule is about a POSIX filesystem's permission bits -- the
+// same durability section that pins mkdir(dir, 0755), link/unlink no-replace and the
+// fsync trace -- and a package is validated on the filesystem that holds it.
+//
+// Windows carries no such bits. Go synthesises a mode from the read-only attribute alone:
+// EVERY directory reads back 0777 and every writable file 0666, whatever was asked for at
+// creation, so `Perm() != 0755` is not a package that was built wrong -- it is a question
+// the filesystem cannot answer, and one no chmod there can make it answer. Checking it
+// anyway refused thirty of this package's own freshly written, entirely valid packages on
+// the windows leg, naming a rule the platform cannot express.
+//
+// So the CHECK is skipped where the bits are not carried, and nothing else is: symlinks,
+// stray files, temp files, digests, closure and the count equations are checked on every
+// platform exactly as before. This is keyed off the platform rather than off any test
+// flag, because it is a fact about the filesystem and not about the test.
+func modeBitsCarried() bool { return runtime.GOOS != "windows" }
+
+// dirModeInvalid and fileModeInvalid are that one decision, in one place, so the six
+// check sites cannot drift apart.
+func dirModeInvalid(fi os.FileInfo) bool {
+	return modeBitsCarried() && fi.Mode().Perm() != 0755
+}
+
+func fileModeInvalid(fi os.FileInfo) bool {
+	return modeBitsCarried() && fi.Mode().Perm() != 0644
+}
 
 // PackageRefusal is the error type returned whenever package directory structure,
 // envelopes, mappings, inventories, or counts fail validation.
@@ -291,7 +322,7 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 	if !fi.IsDir() {
 		return &PackageRefusal{Rule: RulePackageStrayFile, Path: dir, Detail: "package root must be a directory"}
 	}
-	if fi.Mode().Perm() != 0755 {
+	if dirModeInvalid(fi) {
 		return &PackageRefusal{Rule: RulePermissionsInvalid, Path: dir, Detail: fmt.Sprintf("expected dir permissions 0755, got 0%o", fi.Mode().Perm())}
 	}
 
@@ -319,7 +350,7 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 		if !batchFi.Mode().IsRegular() {
 			return &PackageRefusal{Rule: RulePackageStrayFile, Path: batchPath, Detail: "batch.json must be a regular file"}
 		}
-		if batchFi.Mode().Perm() != 0644 {
+		if fileModeInvalid(batchFi) {
 			return &PackageRefusal{Rule: RulePermissionsInvalid, Path: batchPath, Detail: fmt.Sprintf("expected file permissions 0644, got 0%o", batchFi.Mode().Perm())}
 		}
 		raw, err := os.ReadFile(batchPath)
@@ -338,7 +369,7 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 			if !ownedFi.Mode().IsRegular() {
 				return &PackageRefusal{Rule: RulePackageStrayFile, Path: ownedPath, Detail: "owned marker temp must be a regular file"}
 			}
-			if ownedFi.Mode().Perm() != 0644 {
+			if fileModeInvalid(ownedFi) {
 				return &PackageRefusal{Rule: RulePermissionsInvalid, Path: ownedPath, Detail: fmt.Sprintf("expected file permissions 0644, got 0%o", ownedFi.Mode().Perm())}
 			}
 		}
@@ -376,11 +407,11 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 		}
 
 		if entryFi.IsDir() {
-			if entryFi.Mode().Perm() != 0755 {
+			if dirModeInvalid(entryFi) {
 				return &PackageRefusal{Rule: RulePermissionsInvalid, Path: relPath, Detail: fmt.Sprintf("expected dir permissions 0755, got 0%o", entryFi.Mode().Perm())}
 			}
 		} else {
-			if entryFi.Mode().Perm() != 0644 {
+			if fileModeInvalid(entryFi) {
 				return &PackageRefusal{Rule: RulePermissionsInvalid, Path: relPath, Detail: fmt.Sprintf("expected file permissions 0644, got 0%o", entryFi.Mode().Perm())}
 			}
 		}
@@ -829,7 +860,7 @@ func validatePackage(dir string, isCandidate bool, ownedMarkerTempName string, c
 			if !invFi.Mode().IsRegular() {
 				return &PackageRefusal{Rule: RulePackageStrayFile, Path: invRelPath, Detail: "inventory must be a regular file"}
 			}
-			if invFi.Mode().Perm() != 0644 {
+			if fileModeInvalid(invFi) {
 				return &PackageRefusal{Rule: RulePermissionsInvalid, Path: invRelPath, Detail: fmt.Sprintf("expected inventory file permissions 0644, got 0%o", invFi.Mode().Perm())}
 			}
 

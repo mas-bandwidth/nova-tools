@@ -12,30 +12,23 @@ import (
 
 func itoa(n int) string { return strconv.Itoa(n) }
 
-// The batch tests drive scatter/wait/gather with a fake runner: a shell script the test
-// writes into a temp directory, one process per card, exactly what a real harness stands in
-// for. The runner is handed label, slot, model, card path and root as arguments, and it
-// publishes RESULT.md under <root>/<slot>/jobs/<label>/RESULT.md the way a worker does:
-// line 1 is the contract (line 1 of the card's text) and line 2 is the disposition.
+// The batch tests drive scatter/wait/gather with a fake runner: a real executable the test
+// places in a temp directory (see fakerunner_test.go), one process per card, exactly what a
+// real harness stands in for. The runner is handed label, slot, model, card path and root as
+// arguments, and it publishes RESULT.md under <root>/<slot>/jobs/<label>/RESULT.md the way a
+// worker does: line 1 is the contract (line 1 of the card's text) and line 2 is the
+// disposition.
 
-// fakeRunner writes a runner script that publishes the first two lines of a card as
-// RESULT.md, unless the card's second line is the word MISSING -- which stands for a worker
-// that produced no result at all.
+// fakeRunner is a runner that publishes the first two lines of a card as RESULT.md, unless
+// the card's second line is the word MISSING -- which stands for a worker that produced no
+// result at all. The job directory is made either way, as a worker that started makes it.
 func fakeRunner(t *testing.T, dir string) string {
 	t.Helper()
-	path := filepath.Join(dir, "runner.sh")
-	body := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"path=\"$root/$slot/jobs/$label/RESULT.md\"\n" +
-		"mkdir -p \"$(dirname \"$path\")\"\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"if [ \"$line2\" = \"MISSING\" ]; then exit 0; fi\n" +
-		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$path\"\n"
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return runnerDoing(t, dir, "runner",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "exit", N: 0, When: "line2==MISSING"},
+		publishCard("{job}"),
+	)
 }
 
 // fakeRunnerLog is fakeRunner plus a run log: it publishes the card's first two lines as
@@ -48,20 +41,12 @@ func fakeRunnerLog(t *testing.T, dir, name, body string) string {
 	if err := os.WriteFile(logSrc, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "runner-log.sh")
-	script := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"job=\"$root/$slot/jobs/$label\"\n" +
-		"mkdir -p \"$job\"\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"if [ \"$line2\" = \"MISSING\" ]; then exit 0; fi\n" +
-		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n" +
-		"cp " + strconv.Quote(logSrc) + " \"$root/$slot/native.log\"\n"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return runnerDoing(t, dir, "runner-log",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "exit", N: 0, When: "line2==MISSING"},
+		publishCard("{job}"),
+		runnerStep{Op: "copy", Path: "{root}/{slot}/native.log", Body: logSrc},
+	)
 }
 
 func writeCard(t *testing.T, dir, name, body string) string {
@@ -98,10 +83,10 @@ func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) 
 }
 
 // testIdleBudget is the --idle every test in the idle family passes, and the
-// margin is the point. These tests drive a /bin/sh runner that writes every 150
+// margin is the point. These tests drive a fake runner that writes every 150
 // to 200 ms and then assert either that it was left alone or that a silent one
 // was killed. A one-second budget makes the nominal margin 5x, which is not a
-// margin on a SHARED runner: `sleep 0.2` in a shell loop is 200 ms of sleeping
+// margin on a SHARED runner: a 200 ms sleep in a loop is 200 ms of sleeping
 // plus however long the machine takes to schedule the process again, and four
 // runners share each of these machines. Run 35019905236 caught
 // it both ways at once — in test (3/8 studio) a card that kept writing was
@@ -181,16 +166,11 @@ func TestBatchNamesMissingResultOnCleanExit(t *testing.T) {
 	tsv := writeCards(t, dir, [][2]string{
 		{"a", "RESULT: a\nMISSING"},
 	})
-	runner := filepath.Join(dir, "clean-no-result.sh")
-	script := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; root=\"$5\"\n" +
-		"job=\"$root/$slot/jobs/$label\"\n" +
-		"mkdir -p \"$job\"\n" +
-		"echo \"line one\" > \"$root/$slot/native.log\"\n" +
-		"exit 0\n"
-	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "clean-no-result",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "write", Path: "{root}/{slot}/native.log", Body: "line one"},
+		runnerStep{Op: "exit", N: 0},
+	)
 	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
 	if code != 1 {
 		t.Fatalf("a clean exit with no RESULT.md is an abstain, exits 1, got %d:\n%s", code, out)
@@ -215,11 +195,10 @@ func TestBatchAbstainsWrongLine1(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A runner that writes a result whose line 1 is NOT the contract line: a stranger's card.
-	runner := filepath.Join(dir, "wrong.sh")
-	body := "#!/bin/sh\nmkdir -p \"$5/$2/jobs/$1\"\nprintf '%s\\n%s\\n' \"RESULT: someone-else\" \"all green\" > \"$5/$2/jobs/$1/RESULT.md\"\n"
-	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "wrong",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "write", Path: "{job}/RESULT.md", Body: "RESULT: someone-else\nall green\n"},
+	)
 	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
 	if code != 1 {
 		t.Fatalf("a wrong line 1 exits 1, got %d:\n%s", code, out)
@@ -238,10 +217,7 @@ func TestBatchKillsAtDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A runner that sleeps past the deadline and publishes nothing.
-	runner := filepath.Join(dir, "slow.sh")
-	if err := os.WriteFile(runner, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "slow", runnerStep{Op: "sleep", Ms: 30000})
 	start := time.Now()
 	code, out, _ := runBatch(t, tsv, root, runner, 1*time.Second)
 	if time.Since(start) > 5*time.Second {
@@ -265,10 +241,7 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 	}
 	// A runner that writes nothing to its log and never publishes a result: its harness.log
 	// stays empty, so the idle monitor kills it long before the batch's own deadline.
-	runner := filepath.Join(dir, "idle.sh")
-	if err := os.WriteFile(runner, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "idle", runnerStep{Op: "sleep", Ms: 30000})
 	start := time.Now()
 	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if time.Since(start) > 10*time.Second {
@@ -295,19 +268,11 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 	}
 	// A runner whose log grows the whole time: it writes to stdout every tick, then publishes
 	// its result. The idle monitor must leave it alone because its log never sits still.
-	runner := filepath.Join(dir, "writing.sh")
-	body := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"path=\"$root/$slot/jobs/$label/RESULT.md\"\n" +
-		"mkdir -p \"$(dirname \"$path\")\"\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"i=0\n" +
-		"while [ $i -lt 6 ]; do echo \"working $i\"; sleep 0.15; i=$((i+1)); done\n" +
-		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$path\"\n"
-	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "writing",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "stdout", Body: "working {i}", N: 6, Ms: 150},
+		publishCard("{job}"),
+	)
 	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
 	if code != 0 {
 		t.Fatalf("a batch over a card that keeps writing exits 0, got %d; stderr: %s", code, errs)
@@ -328,18 +293,11 @@ func TestBatchLineCountsIdle(t *testing.T) {
 		{"b", "RESULT: b\ndone and clean"},
 	})
 	// One runner that idles card a (writes nothing) and finishes card b (writes then publishes).
-	runner := filepath.Join(dir, "mixed.sh")
-	body := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"path=\"$root/$slot/jobs/$label/RESULT.md\"\n" +
-		"mkdir -p \"$(dirname \"$path\")\"\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"if [ \"$label\" = \"a\" ]; then sleep 30; fi\n" +
-		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$path\"\n"
-	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "mixed",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "sleep", Ms: 30000, When: "label==a"},
+		publishCard("{job}"),
+	)
 	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if code != 1 {
 		t.Fatalf("a batch with one idle kill exits 1, got %d:\n%s", code, out)
@@ -363,19 +321,11 @@ func TestIdleWatchesNativeLog(t *testing.T) {
 	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	runner := filepath.Join(dir, "native-writes.sh")
-	body := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"job=\"$root/$slot/jobs/$label\"\n" +
-		"mkdir -p \"$job\"\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"i=0\n" +
-		"while [ $i -lt 12 ]; do echo \"line $i\" >> \"$root/$slot/native.log\"; sleep 0.2; i=$((i+1)); done\n" +
-		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n"
-	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "native-writes",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "appendn", Path: "{root}/{slot}/native.log", Body: "line {i}", N: 12, Ms: 200},
+		publishCard("{job}"),
+	)
 	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
 	if code != 0 {
 		t.Fatalf("a card writing native.log is never idle-killed, exits 0, got %d; stderr: %s", code, errs)
@@ -399,15 +349,10 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	runner := filepath.Join(dir, "native-stops.sh")
-	body := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; root=\"$5\"\n" +
-		"i=0\n" +
-		"while [ $i -lt 3 ]; do echo \"line $i\" >> \"$root/$slot/native.log\"; sleep 0.2; i=$((i+1)); done\n" +
-		"sleep 30\n"
-	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "native-stops",
+		runnerStep{Op: "appendn", Path: "{root}/{slot}/native.log", Body: "line {i}", N: 3, Ms: 200},
+		runnerStep{Op: "sleep", Ms: 30000},
+	)
 	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if code != 1 {
 		t.Fatalf("a card whose native.log stops growing is idle-killed, exits 1, got %d:\n%s", code, out)
@@ -628,10 +573,7 @@ func TestBatchRefusesDuplicateSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 	sentinel := filepath.Join(dir, "launched")
-	runner := filepath.Join(dir, "marker.sh")
-	if err := os.WriteFile(runner, []byte("#!/bin/sh\ntouch "+sentinel+"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "marker", runnerStep{Op: "touch", Path: sentinel})
 	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch that names one slot twice exits 1, got %d; stderr: %s", code, errs)
@@ -703,18 +645,12 @@ func TestGatherCountsNativeLog(t *testing.T) {
 	tsv := writeCards(t, dir, [][2]string{
 		{"a", "RESULT: a\nall green"},
 	})
-	runner := filepath.Join(dir, "native-log.sh")
-	script := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"job=\"$root/$slot/jobs/$label\"\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n" +
-		"printf 'SANDBOX OK backend=fake-wall cmd=opencode\\nline one\\nline two\\n' > \"$root/$slot/native.log\"\n" +
-		"echo 'NATIVE OK label=a rc=0'\n"
-	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "native-log",
+		publishCard("{job}"),
+		runnerStep{Op: "write", Path: "{root}/{slot}/native.log",
+			Body: "SANDBOX OK backend=fake-wall cmd=opencode\nline one\nline two\n"},
+		runnerStep{Op: "stdout", Body: "NATIVE OK label=a rc=0"},
+	)
 	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
 	if code != 0 {
 		t.Fatalf("a clean card exits 0, got %d; stderr: %s", code, errs)
@@ -779,20 +715,14 @@ func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
 	tsv := writeCards(t, dir, [][2]string{
 		{"a", "RESULT: a\nall green"},
 	})
-	// The runner records $5 and NOVA_SWARM_ROOT beside the root, then publishes RESULT.md.
-	runner := filepath.Join(dir, "record.sh")
-	body := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"printf '%s\\n' \"$5\" > \"$root/.arg5\"\n" +
-		"printf '%s\\n' \"$NOVA_SWARM_ROOT\" > \"$root/.envroot\"\n" +
-		"path=\"$root/$slot/jobs/$label/RESULT.md\"\n" +
-		"mkdir -p \"$(dirname \"$path\")\"\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$path\"\n"
-	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	// The runner records its fifth argument and NOVA_SWARM_ROOT beside the root, then
+	// publishes RESULT.md.
+	runner := runnerDoing(t, dir, "record",
+		runnerStep{Op: "write", Path: "{root}/.arg5", Body: "{arg5}"},
+		runnerStep{Op: "write", Path: "{root}/.envroot", Body: "{env:NOVA_SWARM_ROOT}"},
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		publishCard("{job}"),
+	)
 	// Run from a foreign working directory so a relative root is meaningful: relRoot is the
 	// same directory as root, spelled without its leading path.
 	foreign := t.TempDir()
@@ -851,18 +781,13 @@ func TestBatchScoresInputLimit(t *testing.T) {
 		{"a", "RESULT: a\ndone and green"},
 		{"b", "RESULT: b\nMISSING"},
 	})
-	runner := filepath.Join(dir, "runner-inputlimit.sh")
-	script := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"job=\"$root/$slot/jobs/$label\"\n" +
-		"mkdir -p \"$job\"\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"if [ \"$line2\" = \"MISSING\" ]; then printf '%s\\n' 'INPUT LIMIT class=token value=12345 limit=8192' > \"$root/$slot/native.log\"; exit 0; fi\n" +
-		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n"
-	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "runner-inputlimit",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "write", Path: "{root}/{slot}/native.log", When: "line2==MISSING",
+			Body: "INPUT LIMIT class=token value=12345 limit=8192"},
+		runnerStep{Op: "exit", N: 0, When: "line2==MISSING"},
+		publishCard("{job}"),
+	)
 	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch with an input-limited card is not green, got %d; stderr: %s", code, errs)
@@ -942,25 +867,17 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 	// One runner, two cards: `spin` starts a silent grandchild that burns CPU for far longer
 	// than --idle and then publishes its result; `sleeps` sleeps past the idle window. Neither
 	// writes one byte to its log.
-	runner := filepath.Join(dir, "silent.sh")
-	body := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"job=\"$root/$slot/jobs/$label\"\n" +
-		"mkdir -p \"$job\"\n" +
-		"if [ \"$label\" = \"sleeps\" ]; then sleep 30; exit 0; fi\n" +
-		// The spinner burns CPU and writes nothing, and it carries its own deadline so that a
-		// red run of this test leaves no process behind: it ends on its own at 20 s whatever
-		// happens to its parent.
-		"/bin/sh -c 'end=$(($(date +%s)+20)); while [ $(date +%s) -lt $end ]; do i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done; done' &\n" +
-		"spin=$!\n" +
-		"sleep 5\n" +
-		"kill $spin 2>/dev/null\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/RESULT.md\"\n"
-	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	// The spinner burns CPU and writes nothing, and it carries its own deadline so that a red
+	// run of this test leaves no process behind: it ends on its own at 20 s whatever happens
+	// to its parent. It is a GRANDCHILD of the card, which is the point -- the monitor reads
+	// the whole process tree's CPU time.
+	runner := runnerDoing(t, dir, "silent",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "sleep", Ms: 30000, When: "label==sleeps"},
+		runnerStep{Op: "exit", N: 0, When: "label==sleeps"},
+		runnerStep{Op: "spin", N: 20000, Ms: 5000},
+		publishCard("{job}"),
+	)
 	code, out, errs := runBatchIdle(t, tsv, root, runner, 30*time.Second, 2*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch holding one idle card exits 1, got %d; stderr: %s", code, errs)
@@ -987,17 +904,10 @@ func TestGatherCopiesResultUpFromRepo(t *testing.T) {
 	tsv := writeCards(t, dir, [][2]string{
 		{"a", "RESULT: a\nall green from the clone"},
 	})
-	runner := filepath.Join(dir, "runner-in-repo.sh")
-	script := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"job=\"$root/$slot/jobs/$label\"\n" +
-		"mkdir -p \"$job/repo\"\n" +
-		"line1=$(sed -n 1p \"$card\")\n" +
-		"line2=$(sed -n 2p \"$card\")\n" +
-		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/repo/RESULT.md\"\n"
-	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "runner-in-repo",
+		runnerStep{Op: "mkdir", Path: "{job}/repo"},
+		publishCard("{job}/repo"),
+	)
 	code, out, errs := runBatch(t, tsv, root, runner, 10*time.Second)
 	if code != 0 {
 		t.Fatalf("a card that published inside repo/ is done, got exit %d; stderr: %s", code, errs)
@@ -1036,7 +946,7 @@ func TestBatchScoresHarnessSilent(t *testing.T) {
 		{"c", "RESULT: c\nMISSING"},
 		{"d", "RESULT: d\nMISSING"},
 	})
-	runner := filepath.Join(dir, "silent-harness.sh")
+	var runner string
 	// The runner is the native command's stand-in: its stdout is the job's harness.log, and
 	// the NATIVE OK line it prints there is where the gather reads the harness's state --
 	// the token `native` decided by looking at its own capture, never a file this batch
@@ -1044,24 +954,20 @@ func TestBatchScoresHarnessSilent(t *testing.T) {
 	// (37 bytes of the child's words in the capture) and published nothing; card c's harness
 	// was silent and the runner then exited 3; card d's runner prints no NATIVE OK line at
 	// all, the way any runner but `native` behaves.
-	script := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; root=\"$5\"\n" +
-		"job=\"$root/$slot/jobs/$label\"\n" +
-		"mkdir -p \"$job\"\n" +
-		"state=silent\n" +
-		"if [ \"$label\" = \"b\" ]; then\n" +
-		"  state=ok\n" +
-		"  printf 'fake harness: twenty-two-characters!\\n' > \"$job/harness-output.log\"\n" +
-		"fi\n" +
-		"if [ \"$label\" != \"d\" ]; then\n" +
-		"  echo \"NATIVE OK label=$label job=$job rc=0 wall=0.42s sandbox=none-by-flag " +
-		"card_sha256=- binary_sha256=- config=- harness=$state\"\n" +
-		"fi\n" +
-		"if [ \"$label\" = \"c\" ]; then exit 3; fi\n" +
-		"exit 0\n"
-	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	const nativeOK = "NATIVE OK label={label} job={job} rc=0 wall=0.42s sandbox=none-by-flag " +
+		"card_sha256=- binary_sha256=- config=- harness="
+	runner = runnerDoing(t, dir, "silent-harness",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		// Card b's harness SPOKE: 37 bytes of the child's words in the capture.
+		runnerStep{Op: "write", Path: "{job}/harness-output.log", When: "label==b",
+			Body: "fake harness: twenty-two-characters!\n"},
+		runnerStep{Op: "stdout", Body: nativeOK + "ok", When: "label==b"},
+		runnerStep{Op: "stdout", Body: nativeOK + "silent", When: "label==a"},
+		runnerStep{Op: "stdout", Body: nativeOK + "silent", When: "label==c"},
+		// Card d's runner prints no NATIVE OK line at all, the way any runner but `native` behaves.
+		runnerStep{Op: "exit", N: 3, When: "label==c"},
+		runnerStep{Op: "exit", N: 0},
+	)
 	code, out, _ := runBatch(t, tsv, root, runner, 10*time.Second)
 	if code != 1 {
 		t.Fatalf("four abstaining cards exit 1, got %d:\n%s", code, out)
@@ -1111,16 +1017,11 @@ func TestBatchLogAppendsNeverTruncates(t *testing.T) {
 
 	// A runner that publishes the card and says one line of its own on stdout.
 	const later = "RUNNER SAID THIS"
-	runner := filepath.Join(dir, "runner-say.sh")
-	body := "#!/bin/sh\n" +
-		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
-		"job=\"$root/$slot/jobs/$label\"\n" +
-		"mkdir -p \"$job\"\n" +
-		"sed -n 1,2p \"$card\" > \"$job/RESULT.md\"\n" +
-		"echo " + strconv.Quote(later) + "\n"
-	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runner := runnerDoing(t, dir, "runner-say",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		publishCard("{job}"),
+		runnerStep{Op: "stdout", Body: later},
+	)
 
 	if code, out, errb := runBatch(t, cards, root, runner, 30*time.Second); code != 0 {
 		t.Fatalf("the batch exits 0, got %d:\n%s\n%s", code, out, errb)
