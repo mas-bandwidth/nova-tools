@@ -153,9 +153,17 @@ the end. The date on a rule is the day it was learned.
    it, and the packet says so with `rules=0` on that file's own line in the
    packet's **Rules touched** section — one line per file of the diff, in the
    order git prints it, before any rule text (draft 3) — rather than
-   guessing. (2026-09-11: five of 67 swarm findings were wrong, "each a
-   paraphrase" — SPEC-SWARM.md:985; a rule quoted from memory is not the
-   rule.)
+    guessing. (2026-09-11: five of 67 swarm findings were wrong, "each a
+    paraphrase" — SPEC-SWARM.md:985; a rule quoted from memory is not the
+    rule.)
+    **A rule question reads one rule, not the whole packet.** When the caller
+    names any rule with `--rule <spec>:<n>`, `packet` writes a **scoped**
+    packet: the first line and nothing but the rule's section, the named
+    rule's text quoted at the head, both sides when the rule changed since the
+    packet's base — a rule named on a rule question is not a diff, and the
+    packet that answers it reads no diff, no verdict and no finding
+    (Johnny, a token-efficiency iteration: a whole-packet build is a
+    SPEC-WORK-sized read, and a rule question asks for one rule).
 3. **Open findings travel with the packet and a repeat is a `dup`.** A
    finding is open from the record that raised it until that same reader
    closes it explicitly, with a `close <id>` row of their own, and a later
@@ -886,6 +894,26 @@ touched by: <path>:<hunk header> (cited | changed | named)
 (one line per cut file; "nothing" when cut=0)
 ```
 
+**A scoped packet, for a rule question.** `packet` given `--rule <spec>:<n>`
+writes only the first line and the "Rules touched" section, quoting only the
+rule(s) the caller named — no "This head", no verdicts, no findings, no diff,
+no "Not included", and no per-file `rules=` lines. It reads no diff and no
+fold: it opens the spec at the head, and the same file at the packet's base
+only to replay a rule whose text changed. A named rule that changed since the
+base is quoted both sides, as in the full packet:
+
+```
+nova-review packet v1 id=<hex12> entry=<n-or-name> head=<sha> base=<sha> range=<r> who=<name> built=<utc stamp> bytes=<n> cut=0
+
+## Rules touched
+### <spec path>:<line> rule <n>
+> <verbatim text of the rule, at this head>
+touched by: caller (named)
+```
+
+The receipt line is the full packet's: `files=0 hunks=0 prior=0 open=0 cut=0`
+and `rules=<n>` for the named rule(s).
+
 **Every section of the packet is a cap, a count and a remedy**, not only the
 diff: a truncation anywhere in it is stated on the line that truncates, with
 the exact command that prints the rest, so a reader never has to wonder
@@ -1540,8 +1568,15 @@ One line per rule. Each must be seen red before it is trusted.
    inside rule 4 quotes both sides of rule 4; a hunk citing nothing prints
    `rules=0` on that file's own line in the packet's **Rules touched**
    section, one such line per file of the diff (draft 3); the spec is read at the head (a fixture where the
-   spec on disk differs from the spec at the head quotes the head's text); a
-   spec with no numbered list gives `rules=0` and no error.
+    spec on disk differs from the spec at the head quotes the head's text); a
+    spec with no numbered list gives `rules=0` and no error.
+    **`TestRuleFlagScopesPacketToThatRuleOnly`** (rule 2, the rule question):
+    `packet --spec <spec> --rule <spec>:<n>` writes a packet whose body holds
+    only the named rule's section — its `### <spec>:<line> rule <n>`, its
+    verbatim `> ` text and `touched by: caller (named)` — and none of "This
+    head", "Your prior verdicts", "All verdicts", "Open findings", "Diff" or
+    "Not included"; a mutation that still ships the diff or the fold turns it
+    red.
 3. `TestOpenFindingsTravel`: `stella` holds at H1 with two findings; the
    packet for `emma` at H2 lists both with ids; `emma`'s findings file with
    `dup <id1>` records a verdict whose `dup=1`, creates no new finding, and

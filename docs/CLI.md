@@ -717,7 +717,11 @@ it reads one entry on a lane at one head and writes one bounded file, capped at
 the command that prints the rest; `--max` (default 20) caps the prior-verdicts
 table, the open-findings table and the rules section inside it. `--reuse
 <file>` hands a second reader with the same range the same bytes and reads no
-tree at all.
+tree at all. `--rule <spec>:<n>` (with the matching `--spec`) writes a
+**scoped** packet — the first line and only that rule's section, its text
+quoted at the head, both sides when the rule changed since the base — and reads
+no diff, no verdicts and no findings, so a rule question costs one rule, not a
+SPEC-WORK-sized whole-packet build.
 
 **Reading it.** Success writes the packet to `--out` exclusively — packets are
 immutable, and an `--out` that already exists is a refusal — and prints one

@@ -1,0 +1,33 @@
+CARD-8034 nova-tools #676
+
+Red test: TestRuleFlagScopesPacketToThatRuleOnly (cmd/nova-review/spec_test.go)
+
+Failing output (verbatim, before the fix):
+
+    spec_test.go:182: scoped rule packet must hold only rule 9's section, found "## This head":
+        nova-review packet v1 id=e847b8296eba entry=feature head=e5d1d610e751b4a4ac22c4e5727e38ea830c7873 base=80a90811b018c3be2ae06268a07e82b93bcf31d5 range=80a90811b018...e5d1d610e751 who=emma built=2026-09-16T03:42:59Z bytes=2042 cut=0
+
+        ## This head
+        add spec
+
+        the author says:
+        (no description provided)
+
+        ## Your prior verdicts on this entry
+        none; this packet is the whole change, 80a90811b018...e5d1d610e751
+
+        ## All verdicts at earlier heads
+        none recorded
+
+        ## Open findings (answer with `dup <id>` if you see the same thing)
+        none recorded
+
+        ## Rules touched
+        a.txt: rules=0
+        docs/SPEC.md: rules=10
+        ### docs/SPEC.md:2 rule 1
+        ...
+
+The packet ships the whole seven-section packet (author intent, prior verdicts,
+all verdicts, open findings, all 10 rules described as "changed at head", and
+the full diff) when the caller asked for one rule by name. The bound is missing.
