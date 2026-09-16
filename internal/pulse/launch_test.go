@@ -9,19 +9,14 @@ import (
 	"time"
 )
 
-// fakeSwarm writes a fake nova-swarm on PATH that records each invocation's argv, one space
-// separated line per run, and exits 0.
+// fakeSwarm puts a fake nova-swarm on PATH that records each invocation's argv, one line
+// per run, and exits 0. It was a `#!/bin/sh` script, which Windows does not execute: the
+// lookup fell through to a nova-swarm that is not installed on a runner and the launch
+// refused with "executable file not found".
 func fakeSwarm(t *testing.T, argvLog string) {
 	t.Helper()
-	dir := t.TempDir()
-	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"$*\" >> \"$SWARM_ARGV_LOG\"\n" +
-		"exit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "nova-swarm"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
-	t.Setenv("SWARM_ARGV_LOG", argvLog)
+	specs := fakePATH(t)
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Log: argvLog})
 }
 
 // writeCards writes cards.tsv with n cards under a root, one model, and returns the card
@@ -127,6 +122,9 @@ func TestLaunchQueuesRemainder(t *testing.T) {
 		t.Fatalf("one batch run, got %d:\n%s", len(lines), raw)
 	}
 	argv := strings.Fields(lines[0])
+	if argv[0] != "nova-swarm" || argv[1] != "batch" {
+		t.Fatalf("the fake nova-swarm recorded %q; want it to lead `nova-swarm batch`", lines[0])
+	}
 	tasksDir := ""
 	for i, a := range argv {
 		if a == "--tasks" && i+1 < len(argv) {

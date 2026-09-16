@@ -49,12 +49,14 @@ var linuxReadRoots = []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc",
 // Permission denied", which is a wall that denies the work.
 var linuxWriteFiles = []string{"/dev/null", "/dev/tty"}
 
-// available is the seam the ABI refusals are tested through, as on darwin: a test replaces
-// it and the tool must then REFUSE rather than run. What it carries here is the DISCOVERED
-// ABI rather than a yes-or-no, so the refusal it is actually reached for is rule 11's --
-// TestUnknownLandlockABIRefusesOnLinux forces an ABI ABOVE maxKnownABI, which no kernel on
-// the fleet reports and which Run below must refuse. Rule 1's own no_sandbox refusal goes
-// through the same seam and has no linux test of its own; darwin's covers that rule.
+// available is the seam the ABI decisions are tested through, as on darwin: a test replaces
+// it and the tool must then behave as the reported number demands. What it carries here is
+// the DISCOVERED ABI rather than a yes-or-no, because two of the three answers depend on
+// the number -- an ABI above maxKnownABI is CLAMPED to the table and said so
+// (TestNewerLandlockABIIsClampedToTheTableOnLinux), an ABI below minKnownABI is refused
+// (TestLandlockABIBelowTheTableRefusesOnLinux), and no landlock at all is rule 1's
+// no_sandbox refusal (TestNoLandlockRefusesOnLinux). No kernel on the fleet reports any of
+// the three, so without the seam none of them has a test on the platform whose body is built.
 var available = landlockABI
 
 // Available answers rule 1's question for this machine. The string is what the check
@@ -79,11 +81,30 @@ func ABI() string {
 	return strconv.Itoa(abi)
 }
 
+// ClampedABI is the abi= field's companion: the ABI the wall is actually BUILT at, and
+// whether that is below the one the kernel reports. The tool prints `used=<n>` only when
+// the two differ, so the line on an ordinary machine is the line it has always been.
+func ClampedABI() (int, bool) {
+	abi, ok := available()
+	if !ok {
+		return 0, false
+	}
+	return wallABI(abi)
+}
+
 // NetEnforceable is rule 7 for this platform: TCP bind/connect arrived at ABI 4, so a
 // kernel below it cannot enforce --net-deny and must refuse rather than pretend.
 func NetEnforceable() bool {
 	abi, ok := available()
-	return ok && abi >= 4
+	if !ok {
+		return false
+	}
+	// The wall's ABI, not the kernel's: the clamp is what the ruleset is built at, and
+	// answering from a number the ruleset will not use is how a promise gets made that
+	// the wall does not keep. Clamping never crosses 4 downward -- the table's maximum
+	// is 6 -- so this is the same answer either way today, and it stays true when it is not.
+	used, _ := wallABI(abi)
+	return used >= 4
 }
 
 // Note is the one clause the check verb prints about this backend.
@@ -91,6 +112,10 @@ func Note() string {
 	abi, ok := available()
 	if !ok {
 		return "no landlock in this kernel: below 5.13, not compiled in, or not in the boot-time lsm= list"
+	}
+	if used, clamped := wallABI(abi); clamped {
+		return "landlock abi " + strconv.Itoa(abi) + " is above this tool's table: the wall is built at abi " +
+			strconv.Itoa(used) + " (clamped), which this kernel enforces as asked; the rights this abi added are not handled until the table grows"
 	}
 	switch {
 	case abi < 4:
@@ -122,28 +147,35 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	if !ok {
 		return ExitRefused, refuse("no_sandbox", "this kernel has no landlock: it is below 5.13, or landlock is not compiled in, or it is not in the boot-time lsm= list. This tool does not run a command it cannot contain")
 	}
-	// The table ends at maxKnownABI, and a kernel above it defines accesses this tool
-	// does not handle. Handling less than the whole set is a hole with no line in any
-	// log, so the answer is NO and the number is in the line (rule 11: no workaround
-	// here; the caller's is nova-swarm run --no-sandbox).
-	if abi > maxKnownABI {
+	// BELOW the table's first row there is no ruleset this tool can describe and nothing
+	// to clamp to, so this stays the ABI refusal (rule 11: no workaround here; the
+	// caller's is nova-swarm run --no-sandbox). No kernel reports it -- landlockABI
+	// already answers "no landlock" below 1 -- and it is here because the table has a
+	// bottom as well as a top, and a number outside it must be said rather than assumed.
+	if abi < minKnownABI {
 		return ExitRefused, refuse("landlock_abi_unknown",
-			"this kernel reports landlock abi %d and the highest this tool's table knows is %d: a newer abi defines accesses this build does not handle, and an unhandled access is one the kernel does not check. Update the abi table in internal/sandbox/landlock_linux.go and docs/SPEC-SANDBOX.md, or run the job with nova-swarm run --no-sandbox",
-			abi, maxKnownABI)
+			"this kernel reports landlock abi %d and the lowest row of this tool's table is %d: there is no ruleset this build can describe for it. Update the abi table in internal/sandbox/landlock_linux.go and docs/SPEC-SANDBOX.md, or run the job with nova-swarm run --no-sandbox",
+			abi, minKnownABI)
 	}
+	// ABOVE it is a CLAMP, not a refusal: a newer kernel accepts a ruleset built for an
+	// older ABI, and the kernel's own documentation tells a program to use the highest
+	// ABI it knows that is at or below the kernel's. The wall is built at the table's
+	// maximum and the SANDBOX OK line carries used=<n> so the clamp is on the record.
+	used, _ := wallABI(abi)
 	// Rule 7: an enforced denial the backend cannot give is a refusal, never a weaker
-	// wall than the caller asked for.
-	if p.NetDeny && abi < 4 {
+	// wall than the caller asked for. The number that decides is the wall's, not the
+	// kernel's, for the reason NetEnforceable gives.
+	if p.NetDeny && used < 4 {
 		return ExitRefused, refuse("net_unenforceable",
 			"--net-deny needs landlock abi 4 (kernel 6.7) for TCP bind/connect and this kernel reports abi %d: this tool will not print net=denied over a network it cannot close", abi)
 	}
 
-	rulesetFd, err := createRuleset(abi, p.NetDeny)
+	rulesetFd, err := createRuleset(used, p.NetDeny)
 	if err != nil {
-		return ExitRefused, refuse("sandbox_failed", "the landlock ruleset could not be created at abi %d: %v", abi, err)
+		return ExitRefused, refuse("sandbox_failed", "the landlock ruleset could not be created at abi %d: %v", used, err)
 	}
 	defer syscall.Close(rulesetFd)
-	if err := addRules(rulesetFd, p, abi); err != nil {
+	if err := addRules(rulesetFd, p, used); err != nil {
 		return ExitRefused, refuse("sandbox_failed", "%v", err)
 	}
 
@@ -180,7 +212,7 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	// goroutine exits still locked, which is the disposal wanted.
 	runtime.LockOSThread()
 	if err := restrictSelf(rulesetFd); err != nil {
-		return ExitRefused, refuse("sandbox_failed", "landlock_restrict_self at abi %d: %v", abi, err)
+		return ExitRefused, refuse("sandbox_failed", "landlock_restrict_self at abi %d: %v", used, err)
 	}
 	if err := cmd.Start(); err != nil {
 		return ExitNotExecuted, refuse("sandbox_failed", "%s could not be started inside the wall: %v", p.Command, err)

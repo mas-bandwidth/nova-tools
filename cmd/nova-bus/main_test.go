@@ -81,8 +81,44 @@ func TestMain(m *testing.M) {
 // noMaintenanceConfig is the whole of that global config: no auto-gc anywhere, and if some
 // git runs one anyway it runs in the foreground, where the call that started it waits for
 // it and nothing outlives the test.
-const noMaintenanceConfig = "[gc]\n\tauto = 0\n\tautoDetach = false\n[maintenance]\n\tauto = false\n[receive]\n\tautoGc = false\n"
+const noMaintenanceConfig = "[gc]\n\tauto = 0\n\tautoDetach = false\n" +
+	"[maintenance]\n\tauto = false\n" +
+	"[receive]\n\tautoGc = false\n" +
+	// Durability is not a property of a fixture that lives inside t.TempDir and is
+	// deleted at the end of the test. core.fsync=none stops git calling fsync once per
+	// loose object, and compression=0 stops it deflating notes that are a few hundred
+	// bytes each -- which between them is most of the cost of `git add` plus `git
+	// commit` plus `git push` over the ten-thousand-note fixture, on every platform and
+	// most of all on the one where a file operation is expensive. A git too old to know
+	// either key ignores it; nothing here depends on the setting taking.
+	"[core]\n\tfsync = none\n\tcompression = 0\n" +
+	"[pack]\n\tcompression = 0\n"
 
+// WHICH TESTS IN THIS PACKAGE ARE SERIAL, and why the rest are not.
+//
+// A top-level test that does not call t.Parallel is WALL TIME, alone, one after another --
+// and on a two-core hosted runner that is most of what the package costs, because the
+// parallel ones are only ever two at a time while a serial one is one at a time. Measured
+// 2026-09-15: cmd/nova-bus took 567 s on windows-latest against the house rule of a package
+// under a minute, and some two hundred seconds of it was tests that were serial for no
+// reason at all -- bodies, continuation and the read half, each of which builds its own bus
+// under its own t.TempDir and shares nothing. Those now say t.Parallel.
+//
+// What stays serial, and must: a test that writes PROCESS-WIDE state. That is the whole
+// list, and every one of them is serial for a named reason --
+//
+//	bus.NoteParses          one counter for the process, so a sibling parsing a note
+//	                        while it counts makes the count somebody else's work
+//	                        (TestInboxParsesOnlyWhatIsNewSinceTheCursor, TestHeardSurvivesTheCursor)
+//	refreshCheckout,        package variables taken out at the seam and put back
+//	publishDraft,           (withoutFetch, and the two tests that stand in for a
+//	checkoutLockWait,       filesystem, a held lock and a stamp)
+//	version
+//	t.Setenv, t.Chdir       process-wide by construction, and testing panics if a test
+//	                        that has called t.Parallel calls either
+//
+// The rule for a new test here: it may be parallel unless it writes one of those.
+//
 // hermetic is the call each git-running test keeps, and it asserts what TestMain set rather
 // than setting it. Kept as a call rather than deleted so that the dependency stays written
 // at every site that has it, and so that a future TestMain that stopped doing this would

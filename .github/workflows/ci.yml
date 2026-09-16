@@ -333,7 +333,16 @@ jobs:
     # touches it: a change's feedback path is the self-hosted matrix above.
     # Windows has no self-hosted runner, so its coverage lives here and in the
     # certification tier.
-    if: github.event_name == 'push' || github.event_name == 'schedule'
+    #
+    # workflow_dispatch is in the list for ONE reason: a Windows-only breakage
+    # cannot be reproduced or proved fixed anywhere else. Without it the only
+    # way to see the Windows leg go green is to merge the fix to main and find
+    # out, which is exactly the "prove the tip before any merge" rule inverted.
+    # A manual run on a branch is a deliberate, named spend of hosted compute;
+    # it is not on the pull_request path, so the default feedback path is still
+    # the self-hosted matrix and costs nothing here. ci-ok does not gate on it
+    # for a dispatch: the run is evidence to read, not an automatic merge gate.
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
