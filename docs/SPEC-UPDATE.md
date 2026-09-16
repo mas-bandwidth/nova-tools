@@ -26,7 +26,7 @@ reads the counts in the morning; the tool has no clock of its own — no daemon,
 no `--watch`, no state file of its own (rule 25's snapshot is the caller's, named by flag)
 — nothing reacts to its exit code, no verdict starts an `apply`.
 
-`nova-version snapshot --bin <dir> --out <file> [--owner <name>]` writes the rule-2 manifest a report needs as a hand-editable draft (card 306): it scans the directory for `nova-*` executables, runs each with a single `version` argument (bounded, 5s each, rule 4's read of its first line), and writes one tab-separated line per tool with `kind=binary`, `installed=<version>`, `latest=-` and `apply=-` — unknown, never guessed — and `owner` from `--owner` or `-`. A tool whose version cannot be read is counted in `unreadable=` on the single `SNAPSHOT OK tools=<n> unreadable=<n> out=<path>` line and never written, so no line pretends a version it could not read; the first line is rule 2's header, byte for byte, for a person to promote `kind` by hand.
+`nova-version snapshot --file <manifest>` reads the adopted rule-2 manifest and reports its entry count on a single `SNAPSHOT OK known=<n> file=<path>` line. A directory scan would count every `nova-*` executable found there — 32 where the person adopted 16 — so the verb reports the manifest, never a scan.
 
 ## The rules, numbered
 
@@ -357,11 +357,12 @@ nova-update help
 Those three usage lines are the string `nova-update help` prints, byte for byte: one string
 in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
+`nova-version snapshot …` reads the adopted manifest and reports its count on one line,
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
-name, `send` implying `--send` (rule 20), and `nova-version snapshot --bin <dir> --out
-<manifest> [--owner <name>]` writes the manifest `report` reads (the opening paragraph);
-its `help` prints those three lines the same way, snapshot's `--out` distinct from
-report's `--snapshot <path>` option.
+<<<<<<< HEAD
+name, `send` implying `--send` (rule 20), and `nova-version snapshot --file <manifest>` reports
+the adopted manifest, not every executable on PATH (the opening paragraph);
+its `help` prints those three lines the same way.
 `nova-version report --as x --to y` prints the inventory and composes nothing (rule 26);
 Emma's ready-to-send draft (#121) is `nova-version report --draft …`, the flag typed.
 

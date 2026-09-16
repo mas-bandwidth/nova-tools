@@ -400,7 +400,7 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 func TestHelpNamesTheSnapshotVerb(t *testing.T) {
 	var printed bytes.Buffer
 	help("nova-version", &printed)
-	if !strings.Contains(printed.String(), "nova-version snapshot --bin <dir> --out <manifest> [--owner <name>]") {
+	if !strings.Contains(printed.String(), "nova-version snapshot --file <manifest") {
 		t.Fatalf("nova-version help omits the snapshot verb:\n%s", printed.String())
 	}
 }
