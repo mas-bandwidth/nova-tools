@@ -41,6 +41,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # merge_group: the merge queue builds a group commit of the PRs about to land and
+  # runs this workflow on it; ci-ok on the group is the merge gate, so every PR is
+  # proved against the main it actually lands on (2026-09-16: with the up-to-date
+  # rule and no queue, every merge invalidated every other PR's evidence).
+  merge_group:
   schedule:
     - cron: "41 3 * * *"
   workflow_dispatch:
@@ -204,6 +209,46 @@ jobs:
           done < <(go list ./cmd/... ./internal/...)
 
           [ "${#all[@]}" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
+
+          # A PULL REQUEST TESTS WHAT IT TOUCHED. Measured 15:56Z 2026-09-16: eight
+          # PRs opened in twelve minutes, each fanning 16 studio shards onto 8
+          # studio runners, put 128 studio legs in the queue and held the merge
+          # group's own run behind them; a run that needs no runner time of its
+          # own waited sixteen minutes (35117977336). The full matrix is the
+          # merge gate: it runs on merge_group (the queue's group commit) and on
+          # push to dev and main, so nothing merges without the whole tree
+          # green. On pull_request the shards carry only the Go packages whose
+          # files the PR changed and every in-repo package that imports them;
+          # a PR that changes no Go package (docs, lisp, workflow) tests
+          # ./internal/ci, the package that holds this file's own law, so the
+          # fan-out is never empty and never green by default.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            git fetch -q --depth=1 origin "$base" 2>/dev/null || true
+            changed_dirs=$(git diff --name-only "$base" HEAD -- '*.go' 'go.mod' 'go.sum' | xargs -r -n1 dirname | sort -u)
+            if git diff --name-only "$base" HEAD | grep -q -E '^(go\.mod|go\.sum)$'; then
+              changed_pkgs=("${all[@]}")
+            else
+              want=""
+              for d in $changed_dirs; do want="$want ./$d"; done
+              # dependents: every package in the tree that imports a changed one
+              while read -r pkg deps; do
+                p="./${pkg#github.com/mas-bandwidth/nova-tools/}"
+                for dep in $deps; do
+                  case "$dep" in github.com/mas-bandwidth/nova-tools/*) ;; *) continue ;; esac
+                  dp="./${dep#github.com/mas-bandwidth/nova-tools/}"
+                  case " $want " in *" $dp "*) want="$want $p"; break ;; esac
+                done
+              done < <(go list -f '{{.ImportPath}}{{range .Deps}} {{.}}{{end}}' ./cmd/... ./internal/...)
+              changed_pkgs=()
+              for pkg in "${all[@]}"; do case " $want " in *" $pkg "*) changed_pkgs+=("$pkg") ;; esac; done
+            fi
+            [ "${#changed_pkgs[@]}" -gt 0 ] || changed_pkgs=("./internal/ci")
+            echo "pull_request: ${#changed_pkgs[@]} of ${#all[@]} packages (changed and their dependents): ${changed_pkgs[*]}"
+            all=("${changed_pkgs[@]}")
+            SPACE_SHARDS=4
+            STUDIO_SHARDS=4
+          fi
 
           declare -a space_grp studio_grp
           s=0
@@ -443,27 +488,11 @@ jobs:
                 - 'internal/bus/**'
                 - '**/*_windows.go'
     runs-on: ${{ matrix.leg.os }}
-    timeout-minutes: 2
+    # 6 is the CL cap the two-minute law allows; 2 killed the windows leg by the clock
+    # (cmd/nova-bus measured 439 s there). The legs run -short (#682).
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          # This workflow manages caching explicitly; do not probe for a missing go.sum.
-          cache: false
-
-      - name: cache go build and module cache
-        # A GitHub-hosted runner is a fresh machine, so the cache pays for itself
-        # here exactly as it does in test-hosted.
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
 
       - name: filter the PR diff for this platform's paths
         # No path filter exists elsewhere in this file to reuse, so
@@ -475,9 +504,29 @@ jobs:
         with:
           filters: ${{ matrix.leg.filters }}
 
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        if: steps.filter.outputs.changed == 'true'
+        with:
+          go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
+
+      - name: cache go build and module cache
+        if: steps.filter.outputs.changed == 'true'
+        # A GitHub-hosted runner is a fresh machine, so the cache pays for itself
+        # here exactly as it does in test-hosted.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
       - name: test the packages this leg filters
         if: steps.filter.outputs.changed == 'true'
-        run: go test -count=1 ${{ matrix.leg.packages }}
+        run: go test -short -count=1 ${{ matrix.leg.packages }}
 
   e2e:
     # THE SEQUENCES A FRIEND RUNS, end to end, one job. The sharded `test` job above runs
@@ -579,8 +628,11 @@ jobs:
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 1
     steps:
-      - name: every CL-tier job succeeded (pull request or manual)
-        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+      - name: every CL-tier job succeeded (pull request, merge group or manual)
+        # merge_group is the queue's group commit: ci-ok on it is THE merge gate,
+        # so this step must run there too; a guard that names no event lets ci-ok
+        # report success over red needs (read of #766).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           set -uo pipefail
