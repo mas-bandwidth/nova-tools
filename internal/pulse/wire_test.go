@@ -39,9 +39,9 @@ func wiredFixture(t *testing.T, now time.Time) (queue, root string, work *fakeWo
 	}
 
 	// The configuration the tick runs on: one bench, two slots, two cards a tick.
-	write(ConfigFile, "[slots]\nstudio = 2\nspace = 0\nlocal = 0\n\n[headroom]\nstudio = 2\nspace = 0\nlocal = 0\n\nrefill.cadence = 1\n")
+	write(ConfigFile, "[slots]\nstudio = 2\nspace = 0\nlocal = 0\n\n[headroom]\nstudio = 2\nspace = 0\nlocal = 0\n\nrefill.cadence = 1\n\n[routes]\ncode = [\"opencode/deepseek-v4-flash\"]\ntext = [\"opencode/deepseek-v4-flash\"]\n")
 	write("WORKSET", "# the work this bench is allowed to touch\n812\n601\n")
-	write("ROUTES-code", "opencode/deepseek-v4-flash\n")
+	// The routes are configuration now (class M), not a file per class beside the queue.
 	write("pending/card-5.md", "RESULT: CARD-5 nova-tools #777 fixed with its red test first: a card already cut\nSTEP 1. do the thing\n")
 
 	// An approval that landed while the loop was not looking: the sweep closes it and
@@ -57,7 +57,7 @@ func wiredFixture(t *testing.T, now time.Time) (queue, root string, work *fakeWo
 	writeBusySince(queue, map[string]time.Time{"space-nova-1": now.Add(-20 * time.Minute)})
 
 	work = &fakeWork{
-		prs:    []OpenPR{{Number: 812, Head: "abcd1234ef567890", Title: "the PR owed a read"}},
+		prs:    []OpenPR{{Number: 812, Head: "abcd1234ef567890", Base: "dev", Title: "the PR owed a read"}},
 		issues: []OpenIssue{{Number: 601, Title: "the issue owed a fix", Body: "what is wrong"}},
 	}
 	return queue, root, work, &fakeRestarter{}

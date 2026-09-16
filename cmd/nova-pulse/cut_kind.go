@@ -35,6 +35,7 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	repo := f.fs.String("repo", "", "")
 	pr := f.fs.Int("pr", 0, "")
 	head := f.fs.String("head", "", "")
+	base := f.fs.String("base", "", "")
 	issue := f.fs.Int("issue", 0, "")
 	title := f.fs.String("title", "", "")
 	bodyFile := f.fs.String("body-file", "", "")
@@ -47,10 +48,21 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	// The route a card takes is the queue's configuration, never a template's memory: the
+	// cutter rewrites a MODEL: line to routes.rewrite_model_to (class M, #828). A queue
+	// whose configuration cannot be read is a refusal here, not a card on an unknown route.
+	rewrite := ""
+	if *queue != "" {
+		cfg, err := pulse.LoadConfig(*queue, io.Discard, 0)
+		if err != nil {
+			return refuse(stderr, " cut", err.Error())
+		}
+		rewrite = cfg.Routes.RewriteModelTo
+	}
 	return pulse.CutKind(pulse.CutKindInput{
-		Kind: *kind, Repo: *repo, PR: *pr, Head: *head, Issue: *issue, Title: *title,
+		Kind: *kind, Repo: *repo, PR: *pr, Head: *head, Base: *base, Issue: *issue, Title: *title,
 		BodyFile: *bodyFile, Prior: *prior, PriorCard: *priorCard, Names: *names, SpecLines: *specLines,
-		Out: *out, Queue: *queue, Version: buildinfo.Version(version),
+		Out: *out, Queue: *queue, Version: buildinfo.Version(version), RewriteModelTo: rewrite,
 		Stdout: stdout, Stderr: stderr,
 	})
 }

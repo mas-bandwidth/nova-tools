@@ -20,7 +20,7 @@ const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
-nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--prior-card <card-N>] [--names <a,b>] [--spec-lines <L1-L2>]
+nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--base <branch>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--prior-card <card-N>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--unstamped-ok] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
@@ -30,6 +30,9 @@ nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hour
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
+nova-pulse rules   --queue <dir> [--check] [--seed-from <POLICY.md>] [--max <n>]
+nova-pulse routes  --queue <dir> [--class text|code] [--bench <model>] [--unbench <model>]
+nova-pulse brief   --as <name> --queue <dir> [--roots <dirs>] [--bus <clone>] [--friend]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -96,6 +99,35 @@ docs-only, nosha, orphan, fence and hold-line.
 
 example:
   nova-pulse triage --case nosha --queue ./queue --out ./cards/triage-nosha.md --ref card-892
+
+rules is the rule table: nova-pulse rules --queue <dir> prints its one line, --check
+refuses a row no verb can execute, and --seed-from <POLICY.md> turns every dated line of
+the prose into a row -- kind guessed from its words, source the line's own date, and
+kind=record for a line that records what happened rather than ruling what happens. Class M
+(#828): a rule lives in pulse.toml, in RULES.tsv or in a test; POLICY.md keeps the record.
+
+example:
+  nova-pulse rules --queue ./queue --seed-from ./queue/POLICY.md
+  nova-pulse rules --queue ./queue --check
+
+routes is the [routes] table of pulse.toml and its only editor: it prints the live
+rotation per class (the class list minus what a probe benched) and the route cut
+rewrites a card's MODEL: line to. --bench takes a route out of every class's rotation and
+--unbench puts it back, each one line, each written into pulse.toml.
+
+example:
+  nova-pulse routes --queue ./queue
+  nova-pulse routes --queue ./queue --bench opencode/kimi-k2.7-code
+
+brief renders the one-pulse brief from the configuration and the rule table, so the page a
+fresh pulse reads never drifts from the bench it describes: the commands to run, the rows
+of kind stop, hold and admission it may decide, and the one line it answers with. --friend
+renders a friend's shape (wake, the one note, the one thing, the reply). No line is over
+200 bytes, and the log is read with tail -n and never by a clock.
+
+example:
+  nova-pulse brief --as Rowan --queue ./queue --roots ./swarm-root,./swarm-root-space
+  nova-pulse brief --as Stella --queue ./queue --friend
 
 status --oneline is the whole day in one line under 400 bytes: width per bench,
 pool, STOP, the day's reds, merges, cards done and failed, spend, and the pit-stop
@@ -174,6 +206,12 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdSweep(rest, stdout, stderr)
 	case "reap":
 		return cmdReap(rest, stdout, stderr)
+	case "rules":
+		return cmdRules(rest, stdout, stderr)
+	case "routes":
+		return cmdRoutes(rest, stdout, stderr)
+	case "brief":
+		return cmdBrief(rest, stdout, stderr)
 	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2

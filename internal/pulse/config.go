@@ -49,6 +49,13 @@ const (
 	DefaultRunnersPerMachine = 8
 )
 
+// DefaultRoute is the one route a card takes unless the queue's configuration names
+// another (Glenn 2026-09-16, locked: DeepSeek Flash via OpenCode Zen is the card route;
+// Pro goes via the DeepSeek API and only when he says so). It is the default of
+// routes.text, routes.code and routes.rewrite_model_to, which is the whole of that rule:
+// a card cut on this bench carries this route whatever a template wrote.
+const DefaultRoute = "opencode/deepseek-v4-flash"
+
 // DefaultIntegrationBranches is the one list of integration branches (class B, bug 8: dev
 // inherited main's cancellation bug because the branch name was written twice).
 var DefaultIntegrationBranches = []string{"main", "dev"}
@@ -57,7 +64,8 @@ var DefaultIntegrationBranches = []string{"main", "dev"}
 var Benches = []string{"studio", "space", "local"}
 
 // Config is the loop's whole configuration: slots and headroom per bench, the tick, the
-// refill cadence, the integration branches and the runners each machine runs.
+// refill cadence, the integration branches, the runners each machine runs, and the routes
+// cards take.
 type Config struct {
 	Slots               map[string]int
 	Headroom            map[string]int
@@ -65,7 +73,56 @@ type Config struct {
 	RefillCadence       int
 	IntegrationBranches []string
 	RunnersPerMachine   int
+	Routes              Routes
 }
+
+// Routes is the [routes] table: the model routes each class of card may take, the routes a
+// probe has benched, and the route `cut` rewrites a card's MODEL: line to. Pit stop 3,
+// class M (#828): this lived in four files in the queue directory (ROUTES-text, ROUTES-code,
+// one ROUTE-BENCHED-<model> file per benched route) that only a person or a model knew to
+// edit, so "Flash via Zen, Pro only when Glenn says" was a sentence in POLICY.md rather
+// than a value anything could read.
+type Routes struct {
+	Text           []string // the routes a text card (a read, a spec, a docs edit) may take
+	Code           []string // the routes a code card may take
+	Benched        []string // routes no card takes, whatever class: a probe found them broken
+	RewriteModelTo string   // the route cut rewrites a card's MODEL: line to; empty is no rewrite
+}
+
+// Live is the class's routes with every benched one removed, in the file's order. A class
+// whose every route is benched is empty here, and the caller says so rather than launching
+// onto a route a probe has already failed.
+func (r Routes) Live(class string) []string {
+	benched := map[string]bool{}
+	for _, b := range r.Benched {
+		benched[b] = true
+	}
+	var out []string
+	for _, route := range r.ForClass(class) {
+		if !benched[route] {
+			out = append(out, route)
+		}
+	}
+	return out
+}
+
+// ForClass is the class's routes, benched ones included. An unknown class is the code
+// class: a card whose class nobody could name is work, not text.
+func (r Routes) ForClass(class string) []string {
+	if class == RouteClassText {
+		return r.Text
+	}
+	return r.Code
+}
+
+// RouteClasses are the two classes of card, in the order a line prints them.
+const (
+	RouteClassText = "text"
+	RouteClassCode = "code"
+)
+
+// RouteClasses is the two classes as a list, for a flag's refusal to name them.
+var RouteClasses = []string{RouteClassText, RouteClassCode}
 
 // configKeys is every key the file may carry, in the order the CONFIG line and the
 // refusal name them. The loop never expands its configuration: an unknown key is a
@@ -75,21 +132,26 @@ var configKeys = []string{
 	"slots.studio", "slots.space", "slots.local",
 	"headroom.studio", "headroom.space", "headroom.local",
 	"tick.seconds", "refill.cadence", "integration.branches", "runners.per-machine",
+	"routes.text", "routes.code", "routes.benched", "routes.rewrite_model_to",
 }
 
 // defaultValues is each key's documented default, as the file would have written it.
 func defaultValues() map[string]string {
 	return map[string]string{
-		"slots.studio":         strconv.Itoa(DefaultSlotsStudio),
-		"slots.space":          strconv.Itoa(DefaultSlotsSpace),
-		"slots.local":          strconv.Itoa(DefaultSlotsLocal),
-		"headroom.studio":      strconv.Itoa(DefaultHeadroomStudio),
-		"headroom.space":       strconv.Itoa(DefaultHeadroomSpace),
-		"headroom.local":       strconv.Itoa(DefaultHeadroomLocal),
-		"tick.seconds":         strconv.Itoa(DefaultTickSeconds),
-		"refill.cadence":       strconv.Itoa(DefaultRefillCadence),
-		"integration.branches": strings.Join(DefaultIntegrationBranches, ","),
-		"runners.per-machine":  strconv.Itoa(DefaultRunnersPerMachine),
+		"slots.studio":            strconv.Itoa(DefaultSlotsStudio),
+		"slots.space":             strconv.Itoa(DefaultSlotsSpace),
+		"slots.local":             strconv.Itoa(DefaultSlotsLocal),
+		"headroom.studio":         strconv.Itoa(DefaultHeadroomStudio),
+		"headroom.space":          strconv.Itoa(DefaultHeadroomSpace),
+		"headroom.local":          strconv.Itoa(DefaultHeadroomLocal),
+		"tick.seconds":            strconv.Itoa(DefaultTickSeconds),
+		"refill.cadence":          strconv.Itoa(DefaultRefillCadence),
+		"integration.branches":    strings.Join(DefaultIntegrationBranches, ","),
+		"runners.per-machine":     strconv.Itoa(DefaultRunnersPerMachine),
+		"routes.text":             DefaultRoute,
+		"routes.code":             DefaultRoute,
+		"routes.benched":          "",
+		"routes.rewrite_model_to": DefaultRoute,
 	}
 }
 
@@ -194,6 +256,22 @@ func configFrom(v map[string]string, path string) (Config, error) {
 	if cfg.RunnersPerMachine, err = num("runners.per-machine", 1); err != nil {
 		return Config{}, err
 	}
+	cfg.Routes = Routes{
+		Text:           splitList(v["routes.text"]),
+		Code:           splitList(v["routes.code"]),
+		Benched:        splitList(v["routes.benched"]),
+		RewriteModelTo: strings.TrimSpace(v["routes.rewrite_model_to"]),
+	}
+	for _, class := range RouteClasses {
+		if len(cfg.Routes.ForClass(class)) == 0 {
+			return Config{}, fmt.Errorf("%s: routes.%s wants at least one route, got %q (a class with no route launches nothing; the default is %s)",
+				path, class, v["routes."+class], DefaultRoute)
+		}
+		if len(cfg.Routes.Live(class)) == 0 {
+			return Config{}, fmt.Errorf("%s: every route of routes.%s is benched (%s); unbench one with nova-pulse routes --unbench <model>",
+				path, class, strings.Join(cfg.Routes.Benched, ","))
+		}
+	}
 	cfg.IntegrationBranches = splitList(v["integration.branches"])
 	if len(cfg.IntegrationBranches) == 0 {
 		return Config{}, fmt.Errorf("%s: integration.branches wants at least one branch, got %q (the list is one fact: %s)",
@@ -231,7 +309,7 @@ func readKV(path string) (map[string]string, error) {
 		if section != "" {
 			key = section + "." + key
 		}
-		out[key] = unarray(strings.TrimSpace(value))
+		out[key] = unquote(unarray(strings.TrimSpace(value)))
 	}
 	return out, nil
 }
@@ -251,6 +329,17 @@ func writeKV(path string, keys []string, v map[string]string) error {
 		return fmt.Errorf("cannot write %s: %s", path, oneline.Err(err))
 	}
 	return nil
+}
+
+// unquote takes the quotes off a scalar toml string, so `rewrite_model_to = "x"` and
+// `rewrite_model_to = x` are one value written two ways -- as they are inside an array.
+func unquote(v string) string {
+	for _, q := range []string{`"`, "'"} {
+		if len(v) >= 2 && strings.HasPrefix(v, q) && strings.HasSuffix(v, q) {
+			return v[1 : len(v)-1]
+		}
+	}
+	return v
 }
 
 // unarray reads a toml array of strings as the comma-separated list this file's flat

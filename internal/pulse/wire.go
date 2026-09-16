@@ -52,6 +52,7 @@ type WorkSource interface {
 type OpenPR struct {
 	Number int
 	Head   string
+	Base   string // the branch this PR merges into: what its read card diffs against
 	Draft  bool
 	Title  string
 	Body   string
@@ -353,9 +354,14 @@ func (w *Wiring) refillReads(workset map[int]bool) int {
 		if w.cardExists(fmt.Sprintf("PR%d at %s", pr.Number, head), "pending", "launched", "done") {
 			continue
 		}
+		if strings.TrimSpace(pr.Base) == "" {
+			w.log(fmt.Sprintf("REFILL NOTE PR%d names no base branch: no read card is cut for it (a read diffs against the PR's own base)", pr.Number))
+			continue
+		}
 		if w.cutKind(CutKindInput{
-			Kind: "read", Repo: w.in.Repo, PR: pr.Number, Head: head, Title: pr.Title,
+			Kind: "read", Repo: w.in.Repo, PR: pr.Number, Head: head, Base: pr.Base, Title: pr.Title,
 			Out: filepath.Join(w.in.Queue, "pending"), Queue: w.in.Queue,
+			RewriteModelTo: w.in.Config().Routes.RewriteModelTo,
 		}) {
 			cut++
 		}
@@ -405,6 +411,7 @@ func (w *Wiring) refillFixes(workset map[int]bool) int {
 			Kind: "fix", Repo: w.in.Repo, Issue: issue.Number, Title: issue.Title,
 			BodyFile: body, Prior: w.priorAttempts(issue.Number),
 			Out: filepath.Join(w.in.Queue, "pending"), Queue: w.in.Queue,
+			RewriteModelTo: w.in.Config().Routes.RewriteModelTo,
 		}) {
 			cut++
 		}
@@ -558,9 +565,11 @@ func (w *Wiring) Launch(tick int) (int, int, error) {
 	return launched, free, nil
 }
 
-// modelFor is the card's route: its own MODEL: line, else the next route in the queue's
-// list for its class, round robin, skipping a benched one. Every provider is its own rate
-// limit, so a spread of routes is a wider bench (Glenn 2026-09-16).
+// modelFor is the card's route: its own MODEL: line, else the next route of the queue's
+// configured rotation for its class, round robin, skipping a benched one. Every provider is
+// its own rate limit, so a spread of routes is a wider bench (Glenn 2026-09-16). The
+// rotation is pulse.toml's [routes] table (class M, #828): it used to be two files and a
+// marker file per benched route, which only a person knew how to edit.
 func (w *Wiring) modelFor(card string) string {
 	raw, err := os.ReadFile(card)
 	if err != nil {
@@ -572,35 +581,22 @@ func (w *Wiring) modelFor(card string) string {
 			return strings.TrimSpace(m)
 		}
 	}
-	list := "ROUTES-code"
-	for _, mark := range []string{"TEXT-ONLY", "a reader", "a writer", "spec reader", "spec editor", "docs editor"} {
-		if strings.Contains(text, mark) {
-			list = "ROUTES-text"
-			break
-		}
-	}
-	var routes []string
-	for _, l := range readLines(filepath.Join(w.in.Queue, list)) {
-		r := strings.TrimSpace(l)
-		if r == "" || strings.HasPrefix(r, "#") {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(w.in.Queue, "ROUTE-BENCHED-"+strings.ReplaceAll(r, "/", "_"))); err == nil {
-			continue
-		}
-		routes = append(routes, r)
-	}
-	if len(routes) == 0 {
+	live := w.in.Config().Routes.Live(RouteClassOf(text))
+	if len(live) == 0 {
 		return defaultModel
 	}
-	rr := filepath.Join(w.in.Queue, "ROUTE-RR")
-	n := 0
-	if raw, err := os.ReadFile(rr); err == nil {
-		n, _ = strconv.Atoi(strings.TrimSpace(string(raw)))
+	return AdvanceRouteCounter(w.in.Queue, live)
+}
+
+// RouteClassOf is a card's class, read off the card: a card that says it is read-only is
+// text, and everything else is code. The marks are the ones the templates write.
+func RouteClassOf(card string) string {
+	for _, mark := range []string{"TEXT-ONLY", "a reader", "a writer", "spec reader", "spec editor", "docs editor"} {
+		if strings.Contains(card, mark) {
+			return RouteClassText
+		}
 	}
-	n++
-	_ = os.WriteFile(rr, []byte(strconv.Itoa(n)+"\n"), 0o644)
-	return routes[n%len(routes)]
+	return RouteClassCode
 }
 
 // ---------------------------------------------------------------------------- the shared
@@ -740,6 +736,7 @@ type ghPRRow struct {
 	Number  int    `json:"number"`
 	IsDraft bool   `json:"isDraft"`
 	Head    string `json:"headRefOid"`
+	Base    string `json:"baseRefName"`
 	Title   string `json:"title"`
 	Body    string `json:"body"`
 }
@@ -752,7 +749,7 @@ type ghIssueRow struct {
 
 func (g GHWork) OpenPRs(repo string) ([]OpenPR, error) {
 	raw, err := ghJSON(g.Timeout, "pr", "list", "-R", repo, "--state", "open", "--limit", "100",
-		"--json", "number,isDraft,headRefOid,title,body")
+		"--json", "number,isDraft,headRefOid,baseRefName,title,body")
 	if err != nil {
 		return nil, err
 	}
@@ -762,7 +759,7 @@ func (g GHWork) OpenPRs(repo string) ([]OpenPR, error) {
 	}
 	out := make([]OpenPR, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, OpenPR{Number: r.Number, Head: r.Head, Draft: r.IsDraft, Title: r.Title, Body: r.Body})
+		out = append(out, OpenPR{Number: r.Number, Head: r.Head, Base: r.Base, Draft: r.IsDraft, Title: r.Title, Body: r.Body})
 	}
 	return out, nil
 }

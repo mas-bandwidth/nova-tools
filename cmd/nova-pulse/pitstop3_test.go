@@ -111,7 +111,7 @@ func TestCutKindVerbNumbersFromTheStateFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := []string{"cut", "--kind", "read", "--repo", "mas-bandwidth/nova-tools", "--pr", "812",
-		"--head", "5f544272a1b0", "--title", "the reaper", "--out", out, "--queue", queue}
+		"--head", "5f544272a1b0", "--base", "dev", "--title", "the reaper", "--out", out, "--queue", queue}
 	var stdout, stderr bytes.Buffer
 	if code := run(args, &stdout, &stderr, time.Now().UTC()); code != 0 {
 		t.Fatalf("cut --kind exit = %d, stderr=%s", code, stderr.String())

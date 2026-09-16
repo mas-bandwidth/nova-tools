@@ -54,16 +54,6 @@ var TriageVerdicts = []string{"ADMIT", "REFUSE", "HOLD", "RETRY", "ESCALATE"}
 // NewRule is the third field of a verdict that no row in the table decided.
 const NewRule = "NEW"
 
-// RuleRow is one row of <queue>/RULES.tsv: the case kind it decides, the condition in the
-// evidence that selects it, the verdict it gives, and its state (`pending` until a person
-// has read it).
-type RuleRow struct {
-	Kind      string
-	Condition string
-	Verdict   string
-	State     string
-}
-
 // Packet is the decision packet: everything the triage route is given.
 type Packet struct {
 	Case    string
@@ -92,25 +82,15 @@ func knownVerdict(v string) bool {
 	return false
 }
 
-// ReadRules reads <queue>/RULES.tsv. A missing file is no rows and not an error: the first
-// day of a queue has no table yet, and every verdict that day is NEW.
+// ReadRules is the queue's rule table as triage reads it (rules.go is the one reader and
+// the one writer of RULES.tsv). A missing or unreadable table is no rows and not an error:
+// the first day of a queue has no table yet, and every verdict that day is NEW.
 func ReadRules(queue string) []RuleRow {
-	var out []RuleRow
-	for _, l := range readLines(filepath.Join(queue, "RULES.tsv")) {
-		if strings.HasPrefix(l, "#") {
-			continue
-		}
-		f := strings.Split(l, "\t")
-		if len(f) < 3 {
-			continue
-		}
-		r := RuleRow{Kind: strings.TrimSpace(f[0]), Condition: strings.TrimSpace(f[1]), Verdict: strings.TrimSpace(f[2])}
-		if len(f) >= 4 {
-			r.State = strings.TrimSpace(f[3])
-		}
-		out = append(out, r)
+	rows, err := LoadRules(queue)
+	if err != nil {
+		return nil
 	}
-	return out
+	return rows
 }
 
 // CandidateRules are the rows that could decide this case: the rows of its own kind, and
@@ -128,22 +108,23 @@ func CandidateRules(rules []RuleRow, kind string) []RuleRow {
 
 // AppendRule writes one row to <queue>/RULES.tsv marked pending. It is what a NEW verdict
 // costs: the decision is recorded as policy the same hour, and a person reading the table
-// sees which rows have not been read yet.
+// sees which rows have not been read yet. The row goes through the one writer, so a row a
+// triage wrote and a row `rules --seed-from` wrote are the same five columns and a state.
 func AppendRule(queue string, r RuleRow) error {
 	if r.State == "" {
 		r.State = "pending"
 	}
+	if r.Source == "" {
+		r.Source = "triage"
+	}
 	if err := os.MkdirAll(queue, 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(queue, "RULES.tsv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	rows, err := LoadRules(queue)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = fmt.Fprintf(f, "%s\t%s\t%s\t%s\n",
-		oneline.Field(r.Kind), oneline.Field(r.Condition), oneline.Field(r.Verdict), oneline.Field(r.State))
-	return err
+	return WriteRules(queue, append(rows, r))
 }
 
 // BuildPacket assembles a packet for one case from the queue's rule table.

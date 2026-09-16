@@ -33,7 +33,7 @@ func TestCutKindReadWritesTheContractLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, line, errs, card := cutKind(t, CutKindInput{
-		Kind: "read", Repo: "mas-bandwidth/nova-tools", PR: 812, Head: "abc123def456",
+		Kind: "read", Repo: "mas-bandwidth/nova-tools", PR: 812, Head: "abc123def456", Base: "dev",
 		Title: "reap kills the orphans", Out: out, Queue: queue,
 	})
 	if code != 0 {
@@ -139,5 +139,74 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 		if !strings.Contains(errs.String(), "CUT REFUSED") || !strings.Contains(errs.String(), c.want) || !strings.Contains(errs.String(), "(") {
 			t.Errorf("%s: refusal = %q, want CUT REFUSED naming %s and a remedy", c.name, errs.String(), c.want)
 		}
+	}
+}
+
+// cut-kind-read-diffs-against-the-pr-base: today's read of #848 held a hunk of ci.yml that
+// was already on dev, because nothing on the card said which branch the PR merges into and
+// the reader took main. The base is on the card, the diff command names it, and a read card
+// cannot be cut without it.
+func TestCutKindReadDiffsAgainstThePRBase(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs, card := cutKind(t, CutKindInput{
+		Kind: "read", Repo: "mas-bandwidth/nova-tools", PR: 848, Head: "5f544272a1b0", Base: "dev",
+		Title: "pulse.toml is the configuration", Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	if !strings.Contains(card, "BASE: dev") {
+		t.Errorf("the card does not carry its base branch:\n%s", card)
+	}
+	if !strings.Contains(card, "git diff origin/dev...5f544272a1b0") {
+		t.Errorf("the card does not name the diff against its base:\n%s", card)
+	}
+	if strings.Contains(card, "origin/main...") {
+		t.Errorf("the card diffs against main, which is not this PR's base:\n%s", card)
+	}
+
+	// A read card with no base is refused at the cutter, which is the only place a card is
+	// made: no card, and no reader guessing.
+	code, _, errs, _ = cutKind(t, CutKindInput{
+		Kind: "read", Repo: "mas-bandwidth/nova-tools", PR: 848, Head: "5f544272a1b0",
+		Title: "no base", Out: out, Queue: queue,
+	})
+	if code != 2 || !strings.Contains(errs, "--base is required for a read card") {
+		t.Errorf("a read cut with no base: exit %d, stderr %q", code, errs)
+	}
+}
+
+// cut-rewrites-the-model-line: the route is the queue's configuration, and a card that
+// names another model is rewritten at cut and says so on its one line (Glenn 2026-09-16
+// 17:55Z; class M, #828).
+func TestCutKindRewritesTheModelLine(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	body := filepath.Join(dir, "body.md")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(body, []byte("MODEL: opencode/kimi-k2.7-code\nSTEP 1. do the thing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, line, errs, card := cutKind(t, CutKindInput{
+		Kind: "fix", Repo: "mas-bandwidth/nova-tools", Issue: 828, Title: "a card on the wrong route",
+		BodyFile: body, Out: out, Queue: queue, RewriteModelTo: DefaultRoute,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	if !strings.Contains(card, "MODEL: "+DefaultRoute) || strings.Contains(card, "kimi") {
+		t.Errorf("the MODEL line was not rewritten:\n%s", card)
+	}
+	if !strings.Contains(line, "rewrote="+DefaultRoute) {
+		t.Errorf("the CUT line does not say it rewrote the route: %q", line)
+	}
+	if !CheckStamp(card).Valid {
+		t.Errorf("the rewritten card's stamp does not match its body: a rewrite after the stamp is an edited card")
 	}
 }

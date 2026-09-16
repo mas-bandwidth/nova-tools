@@ -38,6 +38,7 @@ type CutKindInput struct {
 	Repo     string // owner/name; line 1 names the repo for every kind
 	PR       int    // read
 	Head     string // read
+	Base     string // read: the PR's own base branch, which is what the read diffs against
 	Issue    int    // fix
 	Title    string // fix, spec, and the parenthesised title of a read
 	BodyFile string // fix, spec: the numbered steps this card carries
@@ -51,8 +52,11 @@ type CutKindInput struct {
 	Out       string // the directory the card is written into
 	Queue     string // the queue directory holding the state file and its lock
 	Version   string // this build's identity; it goes on the card's CUT stamp (stamp.go)
-	Stdout    io.Writer
-	Stderr    io.Writer
+	// RewriteModelTo is pulse.toml's routes.rewrite_model_to: the route a MODEL: line is
+	// rewritten to at cut. Empty rewrites nothing.
+	RewriteModelTo string
+	Stdout         io.Writer
+	Stderr         io.Writer
 }
 
 // CutKind writes one card of one kind under the next number and prints one line. It returns
@@ -85,7 +89,11 @@ func CutKind(in CutKindInput) int {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s (the number comes only from the state file under %s)\n", oneline.Err(err), oneline.Field(in.Queue))
 		return 2
 	}
-	card := Stamp(renderKindCard(in, n, body), in.Version)
+	// The route is configuration, not a template's memory (class M, #828; Glenn
+	// 2026-09-16 17:55Z: cards run on the configured route and a MODEL: line naming
+	// another model is rewritten HERE, at the only cutter).
+	text, rewrote := RewriteModelLine(renderKindCard(in, n, body), in.RewriteModelTo)
+	card := Stamp(text, in.Version)
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
 		return 2
@@ -95,8 +103,12 @@ func CutKind(in CutKindInput) int {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s (pass a writable --out directory)\n", oneline.Field(name), oneline.Err(err))
 		return 2
 	}
-	fmt.Fprintf(in.Stdout, "CUT CARD card=%s kind=%s number=%d out=%s stamp=%s\n",
-		oneline.Field(name), oneline.Field(in.Kind), n, oneline.Field(in.Out), CheckStamp(card).Version)
+	route := "-"
+	if rewrote {
+		route = in.RewriteModelTo
+	}
+	fmt.Fprintf(in.Stdout, "CUT CARD card=%s kind=%s number=%d out=%s stamp=%s rewrote=%s\n",
+		oneline.Field(name), oneline.Field(in.Kind), n, oneline.Field(in.Out), CheckStamp(card).Version, oneline.Field(route))
 	return 0
 }
 
@@ -142,6 +154,12 @@ func cutKindProblem(in CutKindInput) string {
 			return "--pr is required for a read card (pass the pull request number)"
 		case strings.TrimSpace(in.Head) == "":
 			return "--head is required for a read card; a verdict on an unnamed head cannot be revalidated (pass --head <sha>)"
+		case strings.TrimSpace(in.Base) == "":
+			// 2026-09-16: a read of #848 held a hunk of ci.yml that was already on dev,
+			// because the card named no base and the reader diffed against main. The base
+			// is the PR's own, it is known to whoever cut the card, and a card that does
+			// not carry it cannot be read correctly by anybody.
+			return "--base is required for a read card; a read diffs against the PR's OWN base branch (pass --base dev for a dev PR), never main by default"
 		}
 	case "fix":
 		switch {
@@ -183,6 +201,7 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 	case "read":
 		fmt.Fprintf(&b, "RESULT: CARD-%d read of %s PR%d at %s (%s)\n", n, repo, in.PR, oneline.Field(in.Head), oneline.Escape(in.Title))
 		fmt.Fprintf(&b, "SOURCE: %s %s#%d\n", in.Repo, in.Repo, in.PR)
+		fmt.Fprintf(&b, "BASE: %s\n", oneline.Field(in.Base))
 	case "fix":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s #%d fixed with its red test first: %s\n", n, repo, in.Issue, oneline.Escape(in.Title))
 		fmt.Fprintf(&b, "SOURCE: %s %s#%d\n", in.Repo, in.Repo, in.Issue)
@@ -208,10 +227,14 @@ func kindInstruction(in CutKindInput) string {
 	switch in.Kind {
 	case "read":
 		return fmt.Sprintf(`Read pull request %d of %s at head %s. Quote the rule beside every line you hold.
+The diff is this PR against ITS OWN base branch %s, and nothing else:
+  git fetch -q origin %s && git diff origin/%s...%s
+A hunk that is already on %s belongs to another PR: do not hold it, and never diff against
+main unless main is the base.
 Do not run go build, go test or any toolchain; read and write only.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE, then exactly one verdict line:
 PR%d: APPROVE|HOLD head=%s repo=%s
-`, in.PR, in.Repo, in.Head, in.PR, in.Head, in.Repo)
+`, in.PR, in.Repo, in.Head, in.Base, in.Base, in.Base, in.Head, in.Base, in.PR, in.Head, in.Repo)
 	case "fix":
 		return fmt.Sprintf(`Fix %s #%d with its reproducing test first: the red line, then the green line, one row per item.
 A fix whose diff carries no test is not admitted.

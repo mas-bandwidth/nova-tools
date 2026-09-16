@@ -138,7 +138,10 @@ func TestTriageNewVerdictBecomesAPendingRule(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("RULES.tsv has %d rows, want 1", len(rows))
 	}
-	want := RuleRow{Kind: "orphan", Condition: "no\\x20job\\x20dir\\x2010\\x20min\\x20after\\x20launch", Verdict: "RETRY", State: "pending"}
+	// The row goes through the one writer of RULES.tsv (rules.go): five columns and the
+	// state, with `-` where a triage-written row has nothing to say. The columns are tab
+	// separated, so a space inside a cell stays a space and the row reads as a sentence.
+	want := RuleRow{Kind: "orphan", Condition: "no job dir 10 min after launch", Verdict: "RETRY", Since: "-", Source: "triage", State: "pending"}
 	if rows[0] != want {
 		t.Errorf("row is %+v, want %+v", rows[0], want)
 	}

@@ -750,6 +750,55 @@ Sources: the queue directory (`pending`, `launched`, `done`, `failed`, and the
 `DOGFOOD` state files), each bench's `pool/slots/*.json` and `usage.tsv` rows,
 and each bench's `ADOPT/<friend>` files. Prototype: `bin/status.sh`.
 
+### rules, routes, brief
+
+```
+nova-pulse rules   --queue <dir> [--check] [--seed-from <POLICY.md>] [--max <n>]
+nova-pulse routes  --queue <dir> [--class text|code] [--bench <model>] [--unbench <model>]
+nova-pulse brief   --as <name> --queue <dir> [--roots <dirs>] [--bus <clone>] [--friend]
+```
+
+Class M of pit stop 3 (nova-tools #828): a rule lives in `pulse.toml`, in
+`RULES.tsv` or in a test, and `POLICY.md` keeps the record.
+
+`rules` is the rule table `<queue>/RULES.tsv`: `kind`, `condition`, `verdict`,
+`since`, `source` (and the triage's `state`), tab separated. With no flag it
+prints one line — `RULES file=<path> rows=<n> kinds=<kind:n,...>`. `--check`
+refuses a row no verb can execute (an unknown kind, an empty condition, verdict
+or source), naming each bad row and counting them. `--seed-from <POLICY.md>` is
+the migration: every **dated** line of the prose becomes a row, its kind guessed
+from its words (`stop`, `revert`, `hold`, `route`, `slots`, `read`, `bypass`,
+`admission`, `requeue`, else `rule`), its `source` the line's own date, and
+`kind=record` for a line that records what happened rather than ruling what
+happens. An undated line is not a row: a rule nobody can date is prose.
+
+`routes` is the `[routes]` table of `pulse.toml` and its only editor:
+
+```
+[routes]
+text = ["opencode/deepseek-v4-flash"]
+code = ["opencode/deepseek-v4-flash"]
+benched = opencode/kimi-k2.7-code
+rewrite_model_to = "opencode/deepseek-v4-flash"
+```
+
+It prints one `ROUTES` line: the live rotation per class (the class list minus
+every benched route), the route the next card of that class takes, what is
+benched, and the route `cut` rewrites a card's `MODEL:` line to. `--bench
+<model>` takes a route out of every class's rotation and `--unbench` puts it
+back, each written into `pulse.toml` in place — comments and every other key
+kept. Benching the last live route of a class is refused: a class with no route
+launches nothing.
+
+`brief` renders the one-pulse brief from the configuration and the rule table,
+so the page a fresh pulse reads never drifts from the bench it describes: the
+commands to run (the tool's own verbs), the rows of kind `stop`, `hold` and
+`admission` it may decide, the bench's configured width and routes, and the one
+line it answers with. `--friend` renders a friend's shape — wake, the one note,
+the one thing, the reply. No rendered line is over 200 bytes, and the log is
+read with `tail -n` and never by a clock: a clock filter matched yesterday's
+lines on 2026-09-16 and read a busy hour as a silent one.
+
 ## nova-review
 
 One bounded, exact-revision **review packet** at the review layer, specified in

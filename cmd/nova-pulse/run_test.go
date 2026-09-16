@@ -189,3 +189,59 @@ func TestHelpNamesTheThreeVerbsOfClassG(t *testing.T) {
 		}
 	}
 }
+
+// TestRulesRoutesBriefAtTheCommandLine: the sequence a coordinator actually types when the
+// rules move -- seed the table from the prose, check it, bench a route a probe failed, and
+// render the brief the next pulse reads. Class M (#828). Nothing here reaches the network.
+func TestRulesRoutesBriefAtTheCommandLine(t *testing.T) {
+	queue := t.TempDir()
+	write(t, filepath.Join(queue, "pulse.toml"),
+		"[slots]\nstudio = 64\nspace = 128\n\n[routes]\ntext = [\"opencode/deepseek-v4-flash\", \"opencode/kimi-k2.7-code\"]\ncode = [\"opencode/deepseek-v4-flash\", \"opencode/kimi-k2.7-code\"]\n")
+	write(t, filepath.Join(queue, "POLICY.md"), strings.Join([]string{
+		"STOP on red (added 03:50Z): on MAIN-RED write queue/STOP; nothing new launches until main is green.",
+		"- 2026-09-16 18:20Z read cards diff against the PR's own base branch, never main by default.",
+		"- 2026-09-16 19:07Z Glenn: Studio card slots are 64, and no bench may take more.",
+		"PIT STOP 2 OVER (16:00Z): items 1-6 landed or carded.",
+		"",
+	}, "\n"))
+
+	exit, out, errs := invokePulse(t, "rules", "--queue", queue, "--seed-from", filepath.Join(queue, "POLICY.md"))
+	if exit != 0 || !strings.Contains(out, "rows=4") {
+		t.Fatalf("seed exit %d: %s%s", exit, out, errs)
+	}
+	if exit, out, errs := invokePulse(t, "rules", "--queue", queue, "--check"); exit != 0 || !strings.HasPrefix(out, "RULES CHECK OK ") {
+		t.Fatalf("check exit %d: %s%s", exit, out, errs)
+	}
+
+	exit, out, errs = invokePulse(t, "routes", "--queue", queue, "--bench", "opencode/kimi-k2.7-code")
+	if exit != 0 || !strings.Contains(out, "ROUTES BENCHED") {
+		t.Fatalf("bench exit %d: %s%s", exit, out, errs)
+	}
+	exit, out, errs = invokePulse(t, "routes", "--queue", queue, "--class", "code")
+	if exit != 0 || !strings.Contains(out, "code=opencode/deepseek-v4-flash ") ||
+		!strings.Contains(out, "benched=opencode/kimi-k2.7-code") {
+		t.Fatalf("routes exit %d, the benched route is still in the rotation: %s%s", exit, out, errs)
+	}
+
+	exit, out, errs = invokePulse(t, "brief", "--as", "Rowan", "--queue", queue, "--roots", "./swarm-root")
+	if exit != 0 {
+		t.Fatalf("brief exit %d: %s%s", exit, out, errs)
+	}
+	if !strings.Contains(out, "nova-pulse status --queue "+queue) || !strings.Contains(out, "tail -n ") {
+		t.Errorf("the brief is not the bench's own commands:\n%s", out)
+	}
+	if !strings.Contains(out, "on MAIN-RED write queue/STOP") {
+		t.Errorf("the brief carries no stop row:\n%s", out)
+	}
+	if strings.Contains(out, "text=opencode/deepseek-v4-flash,opencode/kimi-k2.7-code") {
+		t.Errorf("the brief offers a benched route:\n%s", out)
+	}
+	for i, l := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if len(l) > 200 {
+			t.Errorf("brief line %d is %d bytes, over 200:\n%s", i+1, len(l), l)
+		}
+	}
+	if exit, _, errs := invokePulse(t, "brief", "--as", "Stella", "--queue", queue, "--friend"); exit != 0 {
+		t.Fatalf("friend brief exit %d: %s", exit, errs)
+	}
+}

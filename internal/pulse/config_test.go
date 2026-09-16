@@ -37,6 +37,11 @@ func TestConfigReadsEveryKeyFromTheFile(t *testing.T) {
 		"refill.cadence = 7",
 		"integration.branches = main, dev, next",
 		"runners.per-machine = 8",
+		"[routes]",
+		`text = ["opencode/deepseek-v4-flash"]`,
+		`code = ["opencode/deepseek-v4-flash", "opencode/kimi-k2.7-code"]`,
+		"benched = opencode/kimi-k2.7-code",
+		`rewrite_model_to = "opencode/deepseek-v4-flash"`,
 		"",
 	}, "\n"))
 
@@ -56,6 +61,17 @@ func TestConfigReadsEveryKeyFromTheFile(t *testing.T) {
 	}
 	if got := strings.Join(cfg.IntegrationBranches, ","); got != "main,dev,next" {
 		t.Errorf("integration branches = %q, want main,dev,next", got)
+	}
+	// The [routes] table is configuration like the rest: the class lists, what a probe
+	// benched, and the route cut rewrites a MODEL: line to (class M, #828).
+	if got := strings.Join(cfg.Routes.Code, ","); got != "opencode/deepseek-v4-flash,opencode/kimi-k2.7-code" {
+		t.Errorf("routes.code = %q, want both routes", got)
+	}
+	if got := strings.Join(cfg.Routes.Live(RouteClassCode), ","); got != "opencode/deepseek-v4-flash" {
+		t.Errorf("live code routes = %q, want the benched one gone", got)
+	}
+	if cfg.Routes.RewriteModelTo != "opencode/deepseek-v4-flash" {
+		t.Errorf("rewrite_model_to = %q, want the flash route with its quotes off", cfg.Routes.RewriteModelTo)
 	}
 	lines := nonEmptyLines(out.String())
 	if len(lines) != 1 || !strings.HasPrefix(lines[0], "CONFIG OK ") {
