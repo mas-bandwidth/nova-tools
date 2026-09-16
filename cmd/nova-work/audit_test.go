@@ -37,6 +37,11 @@ var workAudit = audit.Config{
 		// worklang is the bounded plan reader; it parses bytes into values and every
 		// field it yields is printed through oneline.
 		`"github.com/mas-bandwidth/nova-tools/internal/worklang"`,
+		// bytes and errors are the wire reader's buffer index and its closed-early
+		// error; net is the Unix-socket dial the thin client is. None of the three
+		// writes: bytes only searches, errors only names, and net's one write goes
+		// through fmt.Fprintf with the request escaped.
+		`"bytes"`, `"errors"`, `"net"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,

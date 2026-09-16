@@ -1496,10 +1496,101 @@ It checks plans as data, without evaluating Lisp code, and reports why a node
 is blocked. The broader scheduling design is in [SPEC-JOBS.md](SPEC-JOBS.md)
 and [SPEC-WORKLANG.md](SPEC-WORKLANG.md).
 
-```sh
-nova-work plan check --file ./work.work
-nova-work plan expand --file ./work.work --out ./cards
-nova-work ready --graph ./graph.json --node task-a
+`nova-work` is also the thin client of the resident work session
+([docs/SPEC-WORK.md](SPEC-WORK.md), "The engine and its client"): it sends one
+request line over the Unix socket `--session` names and prints the session's one
+answer line, byte for byte. The session is the engine -- Common Lisp in the
+first pilot -- and it owns every fact: the state, the journal, the indexes, the
+ordering. The client owns none of them, and a fresh CLI process is never a fresh
+parse.
+
+```
+nova-work: the job graph, the bounded .work reader (see docs/SPEC-JOBS.md, docs/SPEC-WORKLANG.md)
+           and the thin client of the resident work session (see docs/SPEC-WORK.md)
+
+usage:
+  nova-work version
+  nova-work dependencies --graph <file> [--node <id> --needs <id>[,<id>...]]
+  nova-work ready --node X --graph <file>
+  nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
+  nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --cache <path> --repo <path> --remote <name> --branch <name>
+                           --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --skew <duration> --clip-every <duration> --clip-after <n> --retain <duration>
+                           --savepoint-every <duration> --savepoint-after <n> --max-frame-bytes <n> --silence-ping <duration>
+                           --index-cache <n> --page-bytes <n> --page-records <n> [--closed-window <duration>] [--render-root <root-id>=<owner/name>:<directory> ...]
+                           [--resolver <scheme>=<command> ...] --git-timeout <seconds> [--attempts <n>] [--repair] [--foreground] [--max <n>] [--now <stamp>]
+  nova-work session status --session <path>
+  nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
+  nova-work query size     --session <path> [--node <id>]
+  nova-work query remaining --session <path> [--node <id>]
+  nova-work query ready    --session <path> [--node <id>] [--order <discovery|priority>]
+  nova-work version        print this build identity (--version also accepted)
+  nova-work help
+
+verbs:
+  nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)
+  nova-work ready --node X is the ready set
+  nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
+  nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
+  nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
+  nova-work session start  starts the resident work session over the socket --session names
+  nova-work session status prints the session's own SESSION OK line, byte for byte
+  nova-work session stop   asks the session to stop, then prints its own line
+  nova-work query size     asks the session for the required-leaf count under one scope
+  nova-work query remaining asks the session for the leaves that are not done
+  nova-work query ready    asks the session for the work that can actually be started
+
+A node is ready only when every need is terminal accepted, and every row that cannot
+proceed prints its exact blocker and its resolver. A :deps cycle is refused before
+publication, so the ready set is finite and the graph can never deadlock.
+
+A plan is read as data, never as a program: a `#.` dispatch macro anywhere in code
+position is refused at exit 2 naming its byte offset, string and comment text is opaque,
+and an unknown :kind is refused naming the field. :needs is the reference edge and
+:blocks its inverse, so the kernel derives whichever a node did not give; an absent
+need is refused naming the field and the id, and a :needs cycle is refused by validator
+rule 3, both at load before the graph is published.
+
+flags:
+  --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
+                  Required on both graph verbs; there is no default and no discovery.
+  --node <id>     dependencies: the node to write a needs edge to, creating it when the
+                  graph does not hold it yet. ready: the one node to evaluate; without
+                  it, ready prints one row per node in seed order.
+  --needs <ids>   a comma-separated list of needs for --node. --needs needs --node;
+                  --node alone creates a node needing nothing.
+  --file <path>   plan check and plan expand: the plan to read. Required, always:
+                  there is no default file and no discovery from the working directory.
+  --out <dir>     plan expand: the directory to write one card per node into. Required;
+                  a card already there is left byte-identical, so a re-expansion appends
+                  only the new card and mints no id.
+  --max-bytes <n> plan check: the byte ceiling (default 65536). A file past it is
+                  refused before a byte is parsed, never truncated.
+  --max-depth <n> plan check: the nesting ceiling (default 64). A form past it is
+                  refused at its opening byte.
+  --max-nodes <n> plan check: the atom ceiling (default 4096). A plan past it is refused
+                  at the atom's byte.
+
+wire:
+  one line in, one line out over the Unix socket --session names. The request
+  line is the verb and its flags in the order above, each as --name <value>,
+  values escaped through internal/oneline's field form (one token per value:
+  a space is \x20, an equals is \x3d), bools as --name true, the whole line
+  newline-terminated. The reply is the session's own answer line, printed byte
+  for byte: OK, ROW, NOTE and MORE to stdout, exit 0; FAIL, RACED and REFUSED
+  to stderr, exit 1. What cannot run at all is one WORK REFUSED line on
+  stderr, exit 2, ending "run: nova-work help". Values travel as given: the
+  session validates every one and refuses with its own naming.
+
+exit codes: 0 ran and passed; 2 could not run (bad invocation, an unreadable graph or
+plan, a :deps cycle, an unknown node, a refusal).
+
+example:
+  nova-work dependencies --graph ./deps.json --node b
+  nova-work dependencies --graph ./deps.json --node a --needs b
+  nova-work ready --node a --graph ./deps.json
+  nova-work plan check --file ./work.work --max-bytes 65536
 ```
 
 `plan check` and `plan expand` require a plan path; the default reader limits are
@@ -1515,6 +1606,38 @@ are terminal and accepted; it does not acquire a lease or reserve a slot.
 `nova-work help` also describes `clip`, which commits and harvests a worker's
 result before resetting its worktree. Use that mutating workflow only with the
 intended worktree, branch, base and harvest destination.
+
+`session start`, `session status` and `session stop` are the socket verbs of the
+first pilot, and `SESSION OK` is one shape printed by all three alike. The session
+validates every value itself and refuses with its own naming, so the client
+refuses to guess and second-guesses nothing: a missing `--session` (the socket
+has no default path) or a socket nothing answers is one `WORK REFUSED` line on
+stderr, exit 2, ending `run: nova-work help`. The session's own refusals -- `FAIL`,
+`RACED`, `REFUSED` -- reach stderr and exit 1. Use `nova-work version` for this
+build's identity before asking anything else.
+
+**The three query verbs** send a single ask over the socket and print the
+session's answer whole:
+
+- `nova-work query size --session <path> [--node <id>]` -- total required leaves
+  under the scope, with `done=`, `unknown=`, `deferred=`, `cancelled=`,
+  `superseded=`, `required=`, `since-baseline=` and the open/closed split on the
+  `QUERY OK` scope line. The `--node` flag narrows to one subtree; absent, it
+  answers for the whole open set.
+- `nova-work query remaining --session <path> [--node <id>]` -- what is still
+  outstanding under the open set, with the same scope line and one `QUERY ROW`
+  per required leaf that is not `done`. The `--node` flag narrows to one subtree.
+- `nova-work query ready --session <path> [--node <id>] [--order <discovery|priority>]`
+  -- the work that can actually be started, derived from dependencies, agreed
+  scope, acceptance readiness, ownership, availability and resource limits; every
+  row that cannot proceed prints its exact reason and who can resolve it.
+  `--order` defaults to `discovery`; `priority` orders by the tree's priority
+  ranks.
+
+All three answer `QUERY OK` (and `QUERY ROW` lines) to stdout on exit 0, and the
+session's own `QUERY FAIL` / `QUERY REFUSED` to stderr on exit 1. The session
+validates the `--node` identity, the `--order` spelling, and the scope bounds,
+and refuses with its own naming.
 
 ## nova-cairn
 
