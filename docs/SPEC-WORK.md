@@ -3724,7 +3724,7 @@ for routes — and are proposals under #500 like every rule here.
    - `:owner` — a friend of `friends`, **required**: the person whose word admits work on the
      route, as a machine's owner does.
    - `:probe` — a **dated probe record**: a **known-answer card** (`:card <pointer>`, the exact
-     question the probe asks), `:pass` (`true` or `false`), `:wall <duration>`, `:usd <amount>` and
+     question the probe asks), `:pass` (`true`, `false` or `absent`), `:wall <duration>`, `:usd <amount>` and
      `:at <stamp>`; and **`:benched-until <stamp>` when the last probe failed**, the date a benched
      route may be tried again. The probe record is **ACTIVE evidence** (rule 3) and the declared
      `:id`, `:provider`, `:endpoint`, `:key-location`, `:plan`, `:cost-per-mtok`, `:capabilities`
@@ -3736,7 +3736,7 @@ for routes — and are proposals under #500 like every rule here.
    class** — the task class a card is cut for, by *Delegation*'s `:task-class` — maps to an
    **ordered route list**: a **projection** of the route registry at a named scope revision,
    computed and cached in memory and never written as authority, by *The root is COW*'s projection
-   sentence. The order is **cheapest first**: `flat` before `metered` before anything else, and
+   sentence. The order is **cheapest first**: `flat` before `free` before `metered`, and
    within one plan by `:cost-per-mtok` ascending, a tie by bytewise stable id — the same unhashed
    ordering *Retention* uses for its keys. **A route listed n times gets n shares**: the projection
    may list one route more than once, and each listing is one share of the class's routing. **A
@@ -5178,7 +5178,7 @@ QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows whose bodies the r
 QUERY ROW <lease-id> node=<id> kind=<lease|heartbeat|release|handoff> rev=<n> at=<stamp> from=<name|-> to=<name|-> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|->   (handoffs)
 QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
 QUERY ROW <machine-id> kind=machine name=<text> owner=<name> roles=<build,test,profile> admits=<kind|-> concurrent=<n|-> arch=<text|-> os=<text|-> declared-by=<name> declared-at=<stamp>   (fleet)
-QUERY ROW <route-id> kind=route provider=<name> endpoint=<text> key-location=<path|env-name> plan=<flat|metered|free|local> cost-per-mtok=<n|-> capabilities=<text,code,tool-calls> owner=<name> probe=<pass|fail|absent|none> at=<stamp|-> benched-until=<stamp|->   (routes; probe= is the newest dated probe's pass, absent for an abstain, and benched-until= is live only for a benched route; under --class the rows are the projection's order, cheapest first, and every row printed carries a passing probe)
+QUERY ROW <route-id> kind=route provider=<name> endpoint=<text> key-location=<path|env-name> plan=<flat|metered|free|local> cost-per-mtok=<n|-> capabilities=<text,code,tool-calls> owner=<name> probe=<true|false|absent|-> at=<stamp|-> benched-until=<stamp|->   (routes; probe= is the newest dated probe's pass — true, false, or absent for an abstain, and - for a route with no probe record yet; benched-until= is live only for a benched route; under --class the rows are the projection's order, cheapest first, and every row printed carries a passing probe)
 QUERY FAIL ask=fleet rows=0 shown=0: <id> excludes <kind>   (--for with --node on a member that excludes the kind: a refusal, never an empty answer)
 QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable
 QUERY FAIL ask=<kind> after=<cursor> pinned=<rev> current=<rev>: page expired   (a continuation whose captured revision the session can no longer serve; never a drifted page)
@@ -5204,7 +5204,7 @@ MACHINE OK id=<event-id> request=<id> machine=<id> change=<register|retire|permi
 MACHINE FAIL machine=<id|->: <reason>   (no owner, no id, unknown owner, connect held by <id>, credential in record, unknown role, fact without provenance: nothing written, the value never echoed)
 ROUTE OK id=<event-id> request=<id> route=<id> change=<register|retire|probe> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>   (route: the mutation form; a probe change writes the dated ACTIVE probe record and touches no CONFIG field)
 PROBE OK route=<id> card=<card> pass=<true|false|absent> wall=<duration|-> usd=<amount|-> at=<stamp> source=<pointer>   (route probe: ACTIVE evidence with its date, its source and its last-contact stamp, by *Model routes* rule 3)
-ROUTE FAIL route=<id|->: <reason>   (no owner, no id, unknown owner, credential in record, a metered route with no cost-per-mtok, unknown capability: nothing written, the value never echoed)
+ROUTE FAIL route=<id|->: <reason>   (no owner, no id, unknown owner, credential in record, a metered route with no cost-per-mtok, unknown capability: nothing written, the route registry left intact, the value never echoed)
 MODEL OK id=<event-id> request=<id> model=<id> change=<register|rate|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>
 OBSERVE OK id=<event-id> request=<id> friend=<name> change=<state|attempt> rev=<n> pushed=<rev|-> emitted=<bytes>
 GOAL OK id=<event-id> request=<id> scope=<scope> goal=<id|-> change=<set|clear|progress|evidence|blocked|stop> kind=<goal|transition|evidence> rev=<n> pushed=<rev|-> emitted=<bytes>   (goal set and goal update: change= is the form the caller used, evidence for --progress with the evidence triple and progress for --progress alone; kind= is the event written, :goal for set and clear, the node's own :transition or :evidence for update)
