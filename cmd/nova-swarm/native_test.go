@@ -1400,6 +1400,82 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 	}
 }
 
+// TestNativeFenceAllowsWorktreeBesideRepo: the harness's own fence names the WHOLE job
+// directory INTERNAL (issue #644), so a card that clones into repo/ and works beside it --
+// a `../<name>` the harness's `external_directory` permission evaluates relative to its cwd
+// -- is allowed, not auto-rejected. The card writes under ../<name> and reads it back; the run
+// is NATIVE OK with a RESULT.md and no fence rejection on the line.
+func TestNativeFenceAllowsWorktreeBesideRepo(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "a-label"
+	jobDir := filepath.Join(slot, "jobs", label)
+	if err := os.MkdirAll(filepath.Join(jobDir, "repo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	card := []byte("FAKE-CWD repo\nFAKE-FENCE-WRITE ../wt-pr530/note.txt\nFAKE-FENCE-READ ../wt-pr530/note.txt\n")
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: card, slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+	}
+	if res.fence != "" {
+		t.Fatalf("the fence rejected a path inside the job directory: %q", res.fence)
+	}
+	if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err != nil {
+		t.Fatalf("the card published no RESULT.md: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(jobDir, "wt-pr530", "note.txt")); err != nil {
+		t.Fatalf("the write beside repo/ did not land: %v", err)
+	}
+}
+
+// TestNativeNoWallFenceRejectionNamedOnLine: on a --no-wall run the harness's fence is the
+// only line between the card and the system paths it reads. A card that reads a path it did
+// not declare is refused by the fence, and the refusal is reported on the NATIVE line as
+// `fence=rejected path=<p>`; a card that declares the path on a READ line reads it back.
+func TestNativeNoWallFenceRejectionNamedOnLine(t *testing.T) {
+	bin := nativeHarness(t)
+
+	t.Run("undeclared_read_rejected", func(t *testing.T) {
+		root, slot := aSlot(t)
+		label := "rejected-read"
+		var errOut bytes.Buffer
+		res, code := nativeRun(nativeRunConfig{
+			binary: bin, model: "fake/fake-model", label: label,
+			card:    []byte("FAKE-FENCE-READ /sys/kernel/security/lsm\nFAKE-NORESULT\n"),
+			slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+		}, &errOut)
+		if code != 0 {
+			t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+		}
+		if res.fence != "/sys/kernel/security/lsm" {
+			t.Fatalf("the fence rejected %q, want /sys/kernel/security/lsm", res.fence)
+		}
+	})
+
+	t.Run("declared_read_allowed", func(t *testing.T) {
+		root, slot := aSlot(t)
+		label := "declared-read"
+		var errOut bytes.Buffer
+		res, code := nativeRun(nativeRunConfig{
+			binary: bin, model: "fake/fake-model", label: label,
+			card:    []byte("READ /sys/kernel/security/lsm\nFAKE-FENCE-READ /sys/kernel/security/lsm\n"),
+			slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+		}, &errOut)
+		if code != 0 {
+			t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+		}
+		if res.fence != "" {
+			t.Fatalf("a declared read was refused: %q", res.fence)
+		}
+	})
+}
+
 // TestNativeCaptureRefusesSymlink: the capture is the first file this process opens inside
 // the JOB, which is the card's own writable directory. A symlink planted there -- by an
 // earlier run of the same card, or by the card itself -- would carry the child's output to

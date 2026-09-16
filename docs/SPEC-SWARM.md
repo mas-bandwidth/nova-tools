@@ -775,6 +775,17 @@ model whose tool calls the harness never parsed (issue #591): no tool ran, nothi
 was written, the child exited 0 and the line said OK. `gather` scores such a card
 `ABSTAIN reason=harness-silent`, before `no-result` and before `rc=<n>`.
 
+**The harness fence is configured by `native`, from the job** (issue #644). The
+whole job directory — `<slot>/jobs/<label>/**` — is the one INTERNAL region, so a
+card that clones into `repo/` and works beside it (`git worktree add ../wt-pr530`)
+is not "external" to the harness whose `external_directory` permission evaluates
+`../<name>` relative to its own cwd. On a `--no-wall` run the fence is the only
+line between the card and the system paths it reads, so the read-only paths a card
+declares on a `READ <absolute-path>` line are allowed; a path it did not declare is
+refused. A refusal the fence makes is reported on the `NATIVE OK` line as
+`fence=rejected path=<p>` and scored `ABSTAIN reason=fence`, never `no-result` —
+a card the fence stopped short did not choose to publish nothing.
+
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
 `requeue`, `note`, `finalize` and `reclaim` are the verbs that act; `supervise`
@@ -924,6 +935,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `admission` | was refused at admission; the reason follows the token |
 | `input-limit` | was refused for size, by the provider's own structured signal (issue #163) |
 | `bench-unreachable` | ran on a bench the pull could not reach, so nothing about it is known here |
+| `fence` | was refused by the harness's own fence — `fence=rejected path=<p>` on its `NATIVE OK` line — so the card never reached a result (issue #644) |
 
 **The RESULT is the contract, and `harness-silent` is for a card that has none.**
 A `RESULT.md` whose line 1 matches the card is **`done` whatever the harness exit

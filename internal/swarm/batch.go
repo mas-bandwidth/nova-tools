@@ -641,6 +641,14 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		if cardHarnessSilent(job) {
 			return "abstain", "harness-silent", "job=" + job, ""
 		}
+		// A fence rejection is the harness's own refusal (issue #644): it is reported on the
+		// runner's NATIVE OK line as `fence=rejected path=<p>` and is scored `fence`, never
+		// `no-result` -- a card the fence refused is a card the fence stopped short, not one
+		// that chose to publish nothing. It comes before the rc/no-result pair, exactly as a
+		// harness that never ran the card comes before them.
+		if cardEndsFence(job) {
+			return "abstain", "fence", "job=" + job, ""
+		}
 		// A card that ran to a clean exit and published nothing named no result; a card that
 		// ended non-zero names the code it ended with, which is the thing to go and read.
 		if rc != 0 {
@@ -844,6 +852,28 @@ func cardFenceRejected(job string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// cardEndsFence reports whether the runner's own `NATIVE OK` line said the harness's fence
+// rejected a path -- `fence=rejected path=<p>` -- the token `native` writes when its capture
+// holds the fence's own rejection (issue #644). The token is read, never recomputed, from the
+// job's `harness.log`, exactly as `harness=silent` is.
+func cardEndsFence(job string) bool {
+	raw, err := readRegular(filepath.Join(job, "harness.log"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "NATIVE OK ") {
+			continue
+		}
+		for _, tok := range strings.Fields(line) {
+			if tok == "fence=rejected" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }

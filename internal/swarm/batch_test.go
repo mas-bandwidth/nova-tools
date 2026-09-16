@@ -993,6 +993,50 @@ func TestBatchScoresHarnessSilent(t *testing.T) {
 	}
 }
 
+// TestBatchFenceRejectionNeverNoResult: a card whose runner's `NATIVE OK` line names a fence
+// rejection -- `fence=rejected path=<p>` -- is `ABSTAIN reason=fence`, never `no-result`
+// (issue #644). A fence rejection is the harness's own refusal, which stopped the card short;
+// `no-result` is a card that chose to publish nothing, and the two remedies are not the same.
+// The token is read off the runner's NATIVE OK line, never recomputed from files this batch
+// wrote, exactly as `harness=silent` is; the path it was stopped at is the remedy the line
+// carries, so the packet names `path=<p>`.
+func TestBatchFenceRejectionNeverNoResult(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nMISSING"},
+		{"b", "RESULT: b\nMISSING"},
+	})
+	runner := filepath.Join(dir, "fenced-runner.sh")
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"fence=\"\"\n" +
+		"if [ \"$label\" = \"a\" ]; then\n" +
+		"  fence=\" fence=rejected path=/sys/kernel/security/lsm\"\n" +
+		"fi\n" +
+		"echo \"NATIVE OK label=$label job=$job rc=0 wall=0.42s sandbox=none-by-flag " +
+		"card_sha256=- binary_sha256=- config=- harness=ok$fence\"\n" +
+		"exit 0\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runBatch(t, tsv, root, runner, 10*time.Second)
+	if code != 1 {
+		t.Fatalf("two abstaining cards exit 1, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "a slot=1: ABSTAIN reason=fence log=1 path=/sys/kernel/security/lsm") {
+		t.Fatalf("a fence rejection is reason=fence and names the path it was stopped at:\n%s", out)
+	}
+	if strings.Contains(out, "a slot=1: ABSTAIN reason=no-result") {
+		t.Fatalf("a fence rejection is never no-result:\n%s", out)
+	}
+	if !strings.Contains(out, "b slot=2: ABSTAIN reason=no-result") {
+		t.Fatalf("the card whose runner named no fence still scores no-result:\n%s", out)
+	}
+}
+
 // TestBatchLogAppendsNeverTruncates: the batch pins its runner's stdout to <job>/harness.log
 // with O_APPEND, so bytes already in that file survive the run and the runner's own lines
 // land after them, in order. Two processes write a card's harness log -- the batch's runner

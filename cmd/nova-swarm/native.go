@@ -67,7 +67,7 @@ type nativeRunResult struct {
 	configSHA    string  // sha8 of the carried provider config, "" when --config named none
 	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
 	harness      string  // ok | silent: silent when the capture holds no words of the child's and no result was found
-	fence        string  // the first path the harness's own fence auto-rejected, "" when it rejected nothing
+	fence        string  // the first path the harness's own fence auto-rejected, "" when it rejected nothing (issue #644)
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -276,6 +276,20 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if cfg.worker != nil {
 		secretEnv = cfg.worker.Secret
 	}
+	// THE FENCE (issue #644). The harness's own permission config is written here, from the
+	// job: the whole job directory is INTERNAL, and on a --no-wall run the read-only system
+	// paths a card declared on its READ lines are readable. Without the internal job
+	// directory a card's worktree beside repo/ -- a `../<name>` the harness's
+	// `external_directory` permission evaluates relative to its cwd -- is "external" to the
+	// harness and auto-rejected. The child reads it from NOVA_SWARM_FENCE.
+	var fenceReads []string
+	if cfg.noWall {
+		fenceReads = cardReadLines(cfg.card)
+	}
+	if err := writeNativeFence(dataHome, jobDir, fenceReads); err != nil {
+		refuseNative(errOut, fmt.Sprintf("the harness fence %s could not be written: %s", oneline.Field(filepath.Join(dataHome, "fence.json")), oneline.Escape(err.Error())))
+		return nativeRunResult{}, 2
+	}
 	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, secretEnv)
 	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
 	devNull, err := os.Open(os.DevNull)
@@ -388,6 +402,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// to publish nothing. The path is carried onto the NATIVE OK line, where the batch reads
 	// it and scores the card `fence` instead of `no-result`.
 	res.fence = fenceRejected(jobDir)
+	if p, ok := fencedPath(jobDir); ok {
+		res.fence = p
+	}
 
 	if wall != "" {
 		backend, cwd, ok := wallNamed(wallOut.String())
@@ -523,6 +540,54 @@ func wroteBytes(path string) bool {
 	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
 }
 
+// writeNativeFence writes the harness's own fence config (issue #644): the whole job
+// directory is the one INTERNAL region, and the read-only paths a --no-wall card declared on
+// its READ lines are readable. The file is the child's own, beside its data home, and
+// NOVA_SWARM_FENCE names it.
+func writeNativeFence(dataHome, jobDir string, reads []string) error {
+	body, err := json.Marshal(struct {
+		Internal string   `json:"internal"`
+		Reads    []string `json:"reads"`
+	}{Internal: jobDir, Reads: reads})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dataHome, "fence.json"), body, 0o600)
+}
+
+// cardReadLines returns the read-only system paths a card declared on its `READ <path>` lines,
+// each an absolute path. A relative spelling is not a system path and is skipped.
+func cardReadLines(card []byte) []string {
+	var reads []string
+	for _, line := range strings.Split(string(card), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "READ ") {
+			continue
+		}
+		if p := strings.TrimSpace(strings.TrimPrefix(line, "READ ")); filepath.IsAbs(p) {
+			reads = append(reads, p)
+		}
+	}
+	return reads
+}
+
+// fencedPath reads the run's own capture for a fence rejection and returns the path the fence
+// named. The line is the harness's own `FENCE DENIED path=<p>`, which the capture holds the
+// same as any other word the child wrote; a walled run's SANDBOX lines never match it.
+func fencedPath(jobDir string) (string, bool) {
+	raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "FENCE DENIED path=") {
+			continue
+		}
+		return strings.TrimSpace(strings.TrimPrefix(line, "FENCE DENIED path=")), true
+	}
+	return "", false
+}
+
 // refuseNative writes the one REFUSED line the run owes its caller.
 func refuseNative(w io.Writer, reason string) {
 	fmt.Fprintf(w, "NATIVE REFUSED: %s\n", oneline.Escape(reason))
@@ -595,7 +660,7 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, secretEnv string) []string {
 			kept = append(kept, kv)
 		}
 	}
-	remove := []string{"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR"}
+	remove := []string{"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "NOVA_SWARM_FENCE", "TMPDIR"}
 	if secretEnv != "" {
 		remove = append(remove, secretEnv)
 	}
@@ -606,6 +671,7 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, secretEnv string) []string {
 		"HOME="+dataHome,
 		"XDG_DATA_HOME="+dataHome,
 		"NOVA_SWARM_JOB="+jobDir,
+		"NOVA_SWARM_FENCE="+filepath.Join(dataHome, "fence.json"),
 		"TMPDIR="+tmpDir,
 	)
 	if secretEnv != "" {

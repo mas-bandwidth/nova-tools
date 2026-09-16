@@ -8,6 +8,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -83,6 +84,15 @@ func main() {
 			f.Close()
 		}
 	}
+	// FAKE-CWD changes the harness's own working directory, so a card that cloned into
+	// repo/ and works beside it (git worktree add ../<name>) is modelled: the fence's
+	// `external_directory` question is asked relative to THIS cwd, and the fence below
+	// answers it by resolving the path against it.
+	if dir, ok := directive(prompt, "FAKE-CWD"); ok && dir != "" {
+		if err := os.Chdir(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "fake harness: chdir %s: %v\n", dir, err)
+		}
+	}
 
 	// FAKE-PUBLISH-FIRST publishes the revision BEFORE the directives that spend, sleep or
 	// get this worker killed. It is how a budget, an unverifiable source and a deadline are
@@ -118,6 +128,35 @@ func main() {
 			fmt.Printf("fake harness: cat %s: %v\n", path, err)
 		} else {
 			fmt.Printf("fake harness: cat %s: ok len=%d\n", path, len(body))
+		}
+	}
+	// FAKE-FENCE-WRITE and FAKE-FENCE-READ ask the harness's OWN fence (issue #644): can the
+	// model write or read the named path, judged against the native run's fence config -- the
+	// whole job directory is internal, and a --no-wall card's READ lines are readable. The
+	// version of the question asked with `external_directory` is answered relative to the
+	// harness's cwd, so `../<name>` beside repo/ is resolved before it is judged. The answer
+	// is one line each: `ok`, or the fence's own rejection -- `FENCE DENIED path=<p>` -- the
+	// line native reads to report `fence=rejected path=<p>` on its NATIVE OK line.
+	if path, ok := directive(prompt, "FAKE-FENCE-WRITE"); ok && path != "" {
+		f := readFence()
+		abs := fenceAbs(path)
+		if !fenceAllows(f, abs, false) {
+			fmt.Fprintf(os.Stderr, "FENCE DENIED path=%s\n", abs)
+		} else if err := writeFenced(abs); err != nil {
+			fmt.Printf("fake harness: fence write %s: %v\n", path, err)
+		} else {
+			fmt.Printf("fake harness: fence write %s: ok\n", path)
+		}
+	}
+	if path, ok := directive(prompt, "FAKE-FENCE-READ"); ok && path != "" {
+		f := readFence()
+		abs := fenceAbs(path)
+		if !fenceAllows(f, abs, true) {
+			fmt.Fprintf(os.Stderr, "FENCE DENIED path=%s\n", abs)
+		} else if body, err := os.ReadFile(abs); err != nil {
+			fmt.Printf("fake harness: fence read %s: %v\n", path, err)
+		} else {
+			fmt.Printf("fake harness: fence read %s: ok len=%d\n", path, len(body))
 		}
 	}
 	// FAKE-RECORD-CONFIG records the provider config the harness would resolve from its own
@@ -478,6 +517,87 @@ func number(prompt, name string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// fence is the harness's own fence, read from the config the native run wrote: the directory
+// that is INTERNAL (the whole job directory) and the read-only paths a --no-wall card declared
+// on its READ lines. A path the model asks to touch that sits in neither list is a fence
+// rejection. An absent or unparsable config is a fence that knows nothing: internal is empty
+// and every read is refused, which is the honest default rather than an unwalled guess.
+type fence struct {
+	Internal string
+	Reads    []string
+}
+
+// readFence reads the fence config from the path native named in NOVA_SWARM_FENCE.
+func readFence() fence {
+	var f fence
+	p := os.Getenv("NOVA_SWARM_FENCE")
+	if p == "" {
+		return f
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return f
+	}
+	var parsed struct {
+		Internal string   `json:"internal"`
+		Reads    []string `json:"reads"`
+	}
+	if json.Unmarshal(raw, &parsed) != nil {
+		return f
+	}
+	f.Internal, f.Reads = parsed.Internal, parsed.Reads
+	return f
+}
+
+// fenceAbs is the path the fence judges: the asked path made absolute against the harness's
+// own cwd, because the question `external_directory` asks is relative to where the harness
+// stands. A card that cloned into repo/ and asks for ../<name> is asking for a sibling of
+// repo/, not of anything above the job.
+func fenceAbs(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
+}
+
+// fenceAllows says whether the model may touch abs: a write is allowed only under the internal
+// job directory, and a read is allowed there or under a path the card declared on a READ line.
+func fenceAllows(f fence, abs string, isRead bool) bool {
+	if under(f.Internal, abs) {
+		return true
+	}
+	if isRead {
+		for _, r := range f.Reads {
+			if under(r, abs) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// under reports whether path sits at or under root, lexically, without touching the
+// filesystem (the same judgement native uses for the slot and its root).
+func under(root, path string) bool {
+	if root == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// writeFenced writes a single byte at abs, making the directories above it, so the model's
+// write of a worktree beside repo/ succeeds once the fence allows it.
+func writeFenced(abs string) error {
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(abs, []byte("a worker wrote here\n"), 0o644)
 }
 
 // checkInvocation is what a real harness requires of its argv: its own subcommand, the

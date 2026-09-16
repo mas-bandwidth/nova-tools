@@ -942,6 +942,7 @@ the natural `&&` chain would file exactly the duplicates.
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--max-input <bytes>]   # queue one task from a file, never from an argument
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--max-input <bytes>]           # queue a directory of them under one batch id
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sandbox <path>] [--no-sandbox]   # the dispatcher: one slot, one data home, one deadline, one WALL per worker
+nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--sandbox <path>] [--no-wall]   # one card under a frozen configuration (issue #296)
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
