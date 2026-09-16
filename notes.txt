@@ -1,0 +1,16 @@
+#684 / #694 merge fetch-timeout test — weather fix (card 8043)
+
+Old failing test: internal/merge TestWithFetchedReportTipTimesOutFetchAndCleansOwnedMarker
+(6.56s under swarm load; package leg 94.106s vs 60s bar).
+
+Old failing line (fetchedreporttip_test.go, pre-fix):
+  records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, 150*time.Millisecond, runner), time.Second)
+The runner then did `<-ctx.Done()` and returned ctx.Err(), i.e. the fetch timeout was asserted
+against a real 150 ms wall-clock deadline — weather. The assertion at the old line 446 also
+checked errors.Is(err, context.DeadlineExceeded), the elapsed-second-shaped outcome.
+
+Fix: the timeout is now injected. The stub timedOutFetchRunner blocks the fetch on a channel
+and, when the test closes it, answers context.DeadlineExceeded exactly as a hung fetch would
+once its deadline passed. No wall-clock sleep; assertion is on the printed refusal line
+("could not fetch report tip") and the cleaned owned marker, plus one fresh bounded cleanup
+call. Git timeout left at reportTestGitTimeout (5s) so cleanup's context never expires.
