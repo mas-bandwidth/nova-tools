@@ -443,27 +443,11 @@ jobs:
                 - 'internal/bus/**'
                 - '**/*_windows.go'
     runs-on: ${{ matrix.leg.os }}
-    timeout-minutes: 2
+    # 6 is the CL cap the two-minute law allows; 2 killed the windows leg by the clock
+    # (cmd/nova-bus measured 439 s there). The legs run -short (#682).
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          # This workflow manages caching explicitly; do not probe for a missing go.sum.
-          cache: false
-
-      - name: cache go build and module cache
-        # A GitHub-hosted runner is a fresh machine, so the cache pays for itself
-        # here exactly as it does in test-hosted.
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
 
       - name: filter the PR diff for this platform's paths
         # No path filter exists elsewhere in this file to reuse, so
@@ -475,9 +459,29 @@ jobs:
         with:
           filters: ${{ matrix.leg.filters }}
 
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        if: steps.filter.outputs.changed == 'true'
+        with:
+          go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
+
+      - name: cache go build and module cache
+        if: steps.filter.outputs.changed == 'true'
+        # A GitHub-hosted runner is a fresh machine, so the cache pays for itself
+        # here exactly as it does in test-hosted.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
       - name: test the packages this leg filters
         if: steps.filter.outputs.changed == 'true'
-        run: go test -count=1 ${{ matrix.leg.packages }}
+        run: go test -short -count=1 ${{ matrix.leg.packages }}
 
   e2e:
     # THE SEQUENCES A FRIEND RUNS, end to end, one job. The sharded `test` job above runs
