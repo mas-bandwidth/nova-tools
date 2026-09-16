@@ -24,6 +24,10 @@ const Backend = "sandbox-exec"
 // ABI is the abi= field, which only linux fills.
 func ABI() string { return "-" }
 
+// ClampedABI is linux's alone: only Landlock has a numbered table this tool can be newer
+// or older than. Here there is no number, so there is nothing to clamp and no used= field.
+func ClampedABI() (int, bool) { return 0, false }
+
 // sandboxExecPath is where the OS ships the backend. It is looked up on the PATH first,
 // so a machine that moved it is not a refusal. A backend that is not there at all is
 // reason=no_sandbox (rule 1).

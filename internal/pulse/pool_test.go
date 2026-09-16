@@ -20,23 +20,27 @@ func writeTestFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
-// ghFixture writes a fake `gh` on PATH that serves issue list JSON and records argv.
-func ghFixture(t *testing.T, dir, jsonBody string) {
+// ghFixture puts a fake `gh` on PATH that serves issue list JSON and records every argv it
+// was called with, and returns the path of that record. The record is the proof: a real gh
+// writes nothing to it, so a test that asserts the argv cannot pass on a bench that merely
+// happens to be logged in.
+func ghFixture(t *testing.T, dir, jsonBody string) string {
 	t.Helper()
-	bin := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// The fixture only needs to answer `gh issue list`; the JSON is a file so paths with
-	// spaces and quotes survive the shell.
-	script := "#!/bin/sh\ncat " + shellQuote(jsonBody)
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	specs := fakePATH(t)
+	log := filepath.Join(dir, "gh-argv.log")
+	fakeTool(t, specs, "gh", fakeSpec{Log: log, Default: fakeRule{StdoutFile: jsonBody}})
+	return log
 }
 
-func shellQuote(s string) string { return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"` }
+// ghCalls is the fake gh's argv record, one line per invocation.
+func ghCalls(t *testing.T, log string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		return nil
+	}
+	return nonempty(string(raw))
+}
 
 func TestPoolReadsIssueLabel(t *testing.T) {
 	dir := t.TempDir()
@@ -46,7 +50,7 @@ func TestPoolReadsIssueLabel(t *testing.T) {
   {"number": 3, "title": "three", "labels": [], "body": "tool: x\ncommand: y\nverbatim output: z\nexpected: a\nsmallest fix: b"},
   {"number": 4, "title": "four", "labels": [], "body": "not a card"}
 ]`)
-	ghFixture(t, dir, jsonBody)
+	ghLog := ghFixture(t, dir, jsonBody)
 
 	root := filepath.Join(dir, "root")
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -58,6 +62,12 @@ func TestPoolReadsIssueLabel(t *testing.T) {
 	code := Pool(PoolInput{Sources: sources, Root: root, Stdout: &out, Stderr: &errb})
 	if code != 0 {
 		t.Fatalf("Pool exit = %d, stderr=%s", code, errb.String())
+	}
+	// The fake answered, not the real gh: the argv it recorded is the only thing that can
+	// have produced the rows below.
+	calls := ghCalls(t, ghLog)
+	if len(calls) != 1 || !strings.Contains(calls[0], "gh issue list --repo owner/repo") {
+		t.Fatalf("the fake gh recorded %v; want one `gh issue list --repo owner/repo`", calls)
 	}
 	if !strings.Contains(out.String(), "candidates=3") || !strings.Contains(out.String(), "issues=3") {
 		t.Fatalf("POOL OK line wrong: %q", out.String())
@@ -85,14 +95,9 @@ func TestPoolRefusesUnreadableSource(t *testing.T) {
 	}
 
 	// A gh that exits 1: the issues source is unreadable.
-	bin := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	specs := fakePATH(t)
+	ghLog := filepath.Join(dir, "gh-argv.log")
+	fakeTool(t, specs, "gh", fakeSpec{Log: ghLog, Default: fakeRule{Exit: 1}})
 
 	sources := writeTestFile(t, dir, "sources.tsv", "issues\towner/repo\tfix\n")
 	var out, errb bytes.Buffer
@@ -105,5 +110,8 @@ func TestPoolRefusesUnreadableSource(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "pool.tsv")); !os.IsNotExist(err) {
 		t.Fatalf("pool.tsv was written despite the refusal")
+	}
+	if calls := ghCalls(t, ghLog); len(calls) != 1 {
+		t.Fatalf("the fake gh recorded %v; the refusal must come from the fake, not a real gh", calls)
 	}
 }

@@ -194,6 +194,7 @@ func retoken(t *testing.T, token, old, new string) string {
 // TestBodiesWithinBudgetPrintsEveryNewNoteAndSaysComplete: three bodies, one per commit,
 // inside both limits.
 func TestBodiesWithinBudgetPrintsEveryNewNoteAndSaysComplete(t *testing.T) {
+	t.Parallel()
 	checkout := settledBus(t)
 	bodies := []string{fill(204), fill(204), fill(204)}
 	for i, body := range bodies {
@@ -231,6 +232,7 @@ func TestBodiesWithinBudgetPrintsEveryNewNoteAndSaysComplete(t *testing.T) {
 // TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse: exercise both limits and
 // the invalid zero and over-ceiling values; no partial frame anywhere.
 func TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse(t *testing.T) {
+	t.Parallel()
 	checkout := settledBus(t)
 	for i := 1; i <= 3; i++ {
 		commitFiles(t, checkout, fmt.Sprintf("over %d", i),
@@ -286,6 +288,7 @@ func TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse(t *testing.T)
 // TestABodyHoldingFakeStatusLinesIsDeliveredVerbatimAndParsedCorrectly: only the exact byte
 // count plus the separator and closing-line validation establish a frame.
 func TestABodyHoldingFakeStatusLinesIsDeliveredVerbatimAndParsedCorrectly(t *testing.T) {
+	t.Parallel()
 	checkout := settledBus(t)
 	fake := "INBOX NOTE id=bo-ffffffffffff from=Nobody addr=to at=- path=from-bo/nope.md: not a line\n" +
 		"INBOX BODY id=bo-ffffffffffff bytes=99999\n" +
@@ -320,6 +323,7 @@ func TestABodyHoldingFakeStatusLinesIsDeliveredVerbatimAndParsedCorrectly(t *tes
 // TestTheFrameSeparatorIsExactBytesIncludingAnEmptyBody: a body ending in a newline, a body
 // that does not, and the empty body -- the case that needs both halves of the condition.
 func TestTheFrameSeparatorIsExactBytesIncludingAnEmptyBody(t *testing.T) {
+	t.Parallel()
 	checkout := settledBus(t)
 	commitFiles(t, checkout, "three separators",
 		busFile{"from-bo/s1.md", noteFrom("n1", "s1", "ok\n")},
@@ -365,6 +369,7 @@ func TestTheFrameSeparatorIsExactBytesIncludingAnEmptyBody(t *testing.T) {
 // TestBodiesModeCapsTheNewSummaryLinesToo: R3 -- the cap is the NEW half, not the bodies
 // alone, and the same fixture without the flag prints every line it prints today.
 func TestBodiesModeCapsTheNewSummaryLinesToo(t *testing.T) {
+	t.Parallel()
 	checkout := settledBus(t)
 	files := make([]busFile, 0, 50)
 	for i := 1; i <= 50; i++ {
@@ -449,6 +454,16 @@ func TestBodiesModeCapsTheNewSummaryLinesToo(t *testing.T) {
 func todayGolden(t *testing.T, name, checkout string, r result) {
 	t.Helper()
 	normal := func(s string) string {
+		// The QUOTED spelling first, then the bare one. wait's re-arm line prints every
+		// argument through the binary's own shellQuote, so on a platform whose temporary
+		// directory holds a character shellQuote acts on -- a Windows path's backslashes
+		// and its RUNNER~1 tilde -- the bus arrives as '<path>' and replacing only the
+		// bare path left `--bus '<bus>'` against a golden that says `--bus <bus>`. The
+		// golden is the same bytes on every platform because BOTH spellings normalize to
+		// the same word; quoted first, because the bare path is a substring of it.
+		if q := shellQuote(checkout); q != checkout {
+			s = strings.ReplaceAll(s, q, "<bus>")
+		}
 		s = strings.ReplaceAll(s, checkout, "<bus>")
 		var b strings.Builder
 		for {
@@ -494,6 +509,7 @@ func todayGolden(t *testing.T, name, checkout string, r result) {
 // verbs with the flag absent -- stdout, stderr and exit code unchanged, including at 600
 // carried items and with --open, --open-max and --full.
 func TestInboxAndWaitWithoutBodiesAreByteIdenticalToTodays(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	base := []string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40"}

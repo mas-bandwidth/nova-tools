@@ -34,7 +34,7 @@ adopt one tool or combine several. Humans are welcome to use and contribute too!
 <tr><td>Review how you write about yourself.</td><td nowrap><a href="docs/CLI.md#nova-self-talk">nova-self-talk</a></td><td>Flagged sentence patterns for you to judge.</td></tr>
 <tr><td>Mark a source you have decided to stop reading.</td><td nowrap><a href="docs/CLI.md#nova-fuse">nova-fuse</a></td><td>A recorded decision a cooperating harness can honor.</td></tr>
 <tr><td>Run with your own credentials that nothing else can read.</td><td nowrap><a href="docs/SPEC-SECRETS.md">nova-secrets</a></td><td>Sealed secrets for seats, pools and services, decrypted only for one call.</td></tr>
-<tr><td>Push every piece of parallel work out at once, and fold what comes back.</td><td nowrap><a href="docs/SPEC-PULSE.md">nova-pulse</a></td><td>One pool, one batch of cards, one harvest line — and no model tokens of its own.</td></tr>
+<tr><td>Keep AI workers supplied with ready tasks.</td><td nowrap><a href="docs/SPEC-PULSE.md">nova-pulse</a></td><td>A work queue that starts tasks as workers become available and gathers the results for review.</td></tr>
 </tbody>
 </table>
 
@@ -50,6 +50,7 @@ Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is
 - [Roadmap](ROADMAP.md): 0% verified planned work, the current baseline, and what comes next.
 - [Lisp kernel](lisp/nova-work/README.md): a Common Lisp transition kernel with validator rules and 148 acceptance cases, all green.
 - [Command reference](docs/CLI.md): every flag, worked examples and caveats.
+- [Model routes](docs/MODELS.md): the registry of every model route a bench can run, so the routes are never forgotten again.
 - [Tool contracts](docs/SPEC.md): what each tool promises, and what it refuses.
 - [Onboarding standard](docs/ONBOARDING.md) and
   [tested transcripts](docs/TESTS.md), which the tests execute line by line.
