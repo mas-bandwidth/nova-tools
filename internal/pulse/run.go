@@ -498,7 +498,7 @@ func (f fileNotifier) Note(subject, body string) error {
 	if err := os.MkdirAll(filepath.Join(dir, "packets"), 0o755); err != nil {
 		return err
 	}
-	name := filepath.Join(dir, "packets", oneline.Field(subject)+".md")
+	name := filepath.Join(dir, "packets", packetFileName(subject)+".md")
 	if err := os.WriteFile(name, []byte(body), 0o644); err != nil {
 		return err
 	}
@@ -538,4 +538,22 @@ func (b busNotifier) Note(subject, body string) error {
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("nova-bus send did not answer in %s", childTimeout)
 	}
+}
+
+// packetFileName makes a note subject safe as ONE file name on every OS. oneline.Field
+// escapes a space as `\x20`, and on Windows that backslash is a path separator, so the
+// packet write failed and ESCALATE stayed empty (the dev Windows leg, 2026-09-16): every
+// rune outside [A-Za-z0-9._-] becomes `_`.
+func packetFileName(subject string) string {
+	var b strings.Builder
+	b.Grow(len(subject))
+	for _, r := range subject {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
 }

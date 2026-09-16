@@ -74,7 +74,7 @@ func reapFixture(t *testing.T, now time.Time) (root, queue string, procs *fakePr
 	// three launched cards: one orphaned and overdue, one whose job is still on the bench,
 	// one launched a minute ago.
 	launched := filepath.Join(queue, "launched")
-	for _, d := range []string{"pending", "failed", launched} {
+	for _, d := range []string{"pending", "failed", "launched"} { // relative: joining the absolute launched path under queue is garbage on Windows (the dev leg, 2026-09-16)
 		if err := os.MkdirAll(filepath.Join(queue, d), 0o755); err != nil {
 			t.Fatal(err)
 		}

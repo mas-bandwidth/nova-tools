@@ -423,3 +423,16 @@ func field2(line, key string) string {
 	}
 	return rest
 }
+
+// TestPacketFileNameIsOneNameOnEveryOS: the packet beside ESCALATE is one file, never a
+// path: no space escape, no separator, nothing a Windows name refuses.
+func TestPacketFileNameIsOneNameOnEveryOS(t *testing.T) {
+	got := packetFileName("UNDECIDED fence card-7 pr=12 a/b:c\\d")
+	want := "UNDECIDED_fence_card-7_pr_12_a_b_c_d"
+	if got != want {
+		t.Fatalf("packetFileName = %q, want %q", got, want)
+	}
+	if strings.ContainsAny(got, `\/: `) {
+		t.Fatalf("packetFileName %q still carries a separator", got)
+	}
+}

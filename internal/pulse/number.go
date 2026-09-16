@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -81,7 +82,10 @@ func lockQueue(queue string) (func(), error) {
 		if err == nil {
 			return func() { _ = os.Remove(path) }, nil
 		}
-		if !os.IsExist(err) {
+		// On Windows a lock directory another cutter is removing answers mkdir with
+		// "Access is denied" until the removal completes: the same contention as EEXIST
+		// (50 concurrent cuts on the dev Windows leg, 2026-09-16), so it retries too.
+		if !os.IsExist(err) && !(runtime.GOOS == "windows" && os.IsPermission(err)) {
 			return nil, fmt.Errorf("the card lock %s cannot be taken: %w", path, err)
 		}
 		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > staleLock {
