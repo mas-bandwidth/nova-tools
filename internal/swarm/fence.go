@@ -22,15 +22,20 @@ import (
 // cwd external -- and a rejection it makes is invisible to the reader, who sees only the
 // absence of a result.
 //
-// WHY THE JOB'S PARENT IS NAMED TOO. The fence resolves a command's path arguments against
-// the harness's OWN cwd (the job directory), NOT against the cwd the shell is in when the
-// command runs. A card whose STEP 1 is `cd repo` and which then writes `../scratch/TOUCHED`
-// means <job>/scratch; the fence reads that same `../scratch` as <job>/../scratch, one
-// directory up, and asks about `<slot>/jobs/scratch/*`. That is the pattern the rejections
-// on the record carry -- `external_directory (/Users/.../1/jobs/*)` -- so a rule naming only
-// the job directory would not have admitted a single one of them. The job's own `jobs`
-// parent is the slot's own work area and nothing above it; the WALL, not the fence, is what
-// keeps a card inside the job (SPEC-SANDBOX rule 1), and the wall's rules are untouched here.
+// WHAT IS NAMED AND WHAT IS NOT. The job directory and everything under it, and nothing
+// else -- not the job's `jobs` parent. An earlier draft of this fix named the parent too, on
+// the belief that the fence resolves a card's `../scratch` against the HARNESS's cwd rather
+// than the shell's cwd after `cd repo`; a real run of both binaries against the harness
+// showed it resolving after the `cd`, with no rejection either way, so the parent rule bought
+// nothing and widened a job's fence to every SIBLING job in the same slot on a --no-wall
+// bench. The WALL, not the fence, is what keeps a card inside its job (SPEC-SANDBOX rule 1),
+// and a fence rule is no place to hand one card another's work.
+//
+// BOTH WILDCARD SPELLINGS ARE WRITTEN, and not because `*` stops at a separator -- it does
+// not: the harness's own matcher turns `*` into `.*`, which crosses `/` freely, so `<job>/*`
+// already admits `<job>/scratch/*`. `<job>/**` is written beside it because it is the
+// spelling a person reads as "everything under here", and a matcher that ever tightened `*`
+// to one segment would leave the rule meaning what it says.
 const (
 	// FenceAllow and FenceAsk are the harness's own permission actions. `ask` in a
 	// non-interactive `run` is a rejection, which is the whole of this issue.
@@ -42,22 +47,15 @@ const (
 )
 
 // FenceJobPatterns is every pattern that makes ONE JOB internal to the harness's fence: the
-// job directory and everything under it, and the `jobs` directory the fence resolves a
-// card's `../<name>` into. Both the `/*` and the `/**` spellings are named: the harness
-// matches a rule pattern against the pattern it is asking about, and `*` does not cross a
-// separator, so `<job>/*` alone does not admit the `<job>/scratch/*` a card's own worktree
-// or scratch directory produces.
+// job directory and everything under it, in both wildcard spellings, and NOTHING ABOVE IT.
+// A card's own `../scratch` and `../wt-<n>` live under the job directory, which is where the
+// card was told to put them; a sibling job's directory does not, and is not this card's.
 func FenceJobPatterns(jobDir string) []string {
 	job := fencePath(jobDir)
 	if job == "" {
 		return nil
 	}
-	jobs := path.Dir(job)
-	out := []string{job + "/*", job + "/**"}
-	if jobs != "" && jobs != "/" && jobs != job {
-		out = append(out, jobs+"/*", jobs+"/**")
-	}
-	return out
+	return []string{job + "/*", job + "/**"}
 }
 
 // FenceReadPatterns is every pattern that admits ONE read-only path a card named on its

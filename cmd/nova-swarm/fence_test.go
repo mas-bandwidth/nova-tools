@@ -21,9 +21,9 @@ import (
 
 // TestNativeConfigNamesTheJobDirectory: every native run writes a harness config, whether or
 // not --config named one, and its permission block makes the job's own directories internal
-// to the fence. RED WITHOUT THE CHANGE: before it, a run with no --config wrote no config at
-// all and a run with one wrote the provider's bytes with no permission block, so the harness
-// ran on its default fence and `../scratch` was external.
+// to the fence, and nothing above them. RED WITHOUT THE CHANGE: before it, a run with no
+// --config wrote no config at all and a run with one wrote the provider's bytes with no
+// permission block, so what the fence called external was left entirely to the harness.
 func TestNativeConfigNamesTheJobDirectory(t *testing.T) {
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
@@ -51,13 +51,13 @@ func TestNativeConfigNamesTheJobDirectory(t *testing.T) {
 			t.Errorf("the permission block allows %s (the job's own directory); it holds %v", want, external)
 		}
 	}
-	// The fence resolves a card's `../scratch` against the HARNESS's cwd -- the job
-	// directory -- so the pattern it asks about is the job's parent, which is the pattern
-	// every rejection on the record carried.
+	// AND NOTHING ABOVE THE JOB. The harness resolves a card's `../scratch` after its own
+	// `cd repo`, so the job's `jobs` parent buys nothing -- and naming it would hand one
+	// card every sibling job in the slot on a bench with no wall.
 	jobs := filepath.Dir(job)
-	for _, want := range []string{jobs + "/*", jobs + "/**"} {
-		if external[want] != "allow" {
-			t.Errorf("the permission block allows %s (what `../scratch` from repo/ resolves to); it holds %v", want, external)
+	for _, never := range []string{jobs + "/*", jobs + "/**"} {
+		if _, named := external[never]; named {
+			t.Errorf("%s is above the job and is never named; it holds %v", never, external)
 		}
 	}
 	if external["*"] != "ask" {

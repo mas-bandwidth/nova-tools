@@ -677,17 +677,29 @@ provider's bytes and its own rules are carried beside the fence block, never
 replaced), and its `permission.external_directory` allows:
 
 - **the job directory and everything under it**, in both the `/*` and `/**`
-  spellings, because `*` does not cross a separator; and
-- **the job's `jobs` parent**, because the fence resolves a command's path
-  arguments against the HARNESS's cwd — the job directory — and not against the
-  cwd the shell is in when the command runs. A card whose STEP 1 is `cd repo`
-  and which then writes `../scratch/TOUCHED` means `<job>/scratch`; the fence
-  reads the same `../scratch` one directory up and asks about `<slot>/jobs/*`,
-  which is the pattern every rejection on the record carried; and
+  spellings — the harness's own matcher turns `*` into `.*`, which crosses `/`,
+  so `<job>/*` already admits `<job>/scratch/*`; `/**` is written beside it
+  because that is the spelling a person reads as "everything under here"; and
 - **on a `--no-wall` run only**, every absolute path the card named on a
   `READ:` line, and that path's parent with a `/*` on it, which is what the
   fence asks about for a file. A walled run takes none of them: the WALL owns
   what the child may read (SPEC-SANDBOX rule 1), and the fence is not a wall.
+
+**Nothing ABOVE the job is ever named** — not the `jobs` parent. The harness
+resolves a card's `../scratch` after the card's own `cd repo`, so a parent rule
+buys nothing, and on a bench with no wall it would hand one card every sibling
+job in the slot.
+
+**What is proven and what is not.** The reporting half is proven: a harness that
+prints its rejection line and exits 0 is reported and scored `fence`. The
+config half is **defence, not a demonstrated cure**: a real run of this harness
+build (OpenCode 1.18.20) against a card that writes `../scratch` from `repo/`,
+and against one that reads a path outside the job, was rejected NEITHER with the
+block NOR without it, so this build was not shown to honour
+`permission.external_directory` at all. The block pins what was otherwise left
+entirely to the harness's defaults, and the rejections on the record
+(`git worktree add ../wt-<n>` on the Studio, `/sys/kernel/security/lsm` on
+Space) were not reproduced here.
 
 Everything else is still `ask`, which in a `run` is a rejection — and a
 rejection is now REPORTED: `native` reads its own capture and carries

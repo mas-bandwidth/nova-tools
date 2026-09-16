@@ -36,6 +36,31 @@ func TestAFenceRejectionIsNeverNoResult(t *testing.T) {
 	}
 }
 
+// TestFenceComesBeforeHarnessSilent: a run that was fenced AND left no word of its own scores
+// `fence`, not `harness-silent`. The order matters because the two say opposite things to a
+// reader: `harness-silent` sends them to the harness and the model (it never ran the card),
+// and `fence` names the path this tool's own machinery shut. RED WITHOUT THE ORDERING: the
+// silent check ran first and the card was read as a harness that never spoke.
+func TestFenceComesBeforeHarnessSilent(t *testing.T) {
+	root := t.TempDir()
+	job := filepath.Join(root, "1", "jobs", "a")
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := "NATIVE OK label=a job=" + job + " tmp=/t rc=0 wall=1.00s sandbox=none-by-flag " +
+		"card_sha256=aa binary_sha256=bb config=cc harness=silent fence=rejected path=/sys/kernel/security/*\n"
+	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
+	if state != "abstain" || reason != "fence" {
+		t.Fatalf("a fenced card scores reason=fence even when the harness also left no words, got %s reason=%s", state, reason)
+	}
+	if tail != "path=/sys/kernel/security/*" {
+		t.Errorf("the reason carries the path the card was stopped at, got %q", tail)
+	}
+}
+
 // TestFenceRejectionReadsTheHarnesssOwnWords: the line OpenCode 1.18.20 prints, colours and
 // all, is the one this parses; a capture with no rejection in it says so.
 func TestFenceRejectionReadsTheHarnesssOwnWords(t *testing.T) {
@@ -72,10 +97,11 @@ func TestFenceRejectionReadsTheHarnesssOwnWords(t *testing.T) {
 	}
 }
 
-// TestFencePermissionNamesTheWholeJob: the block a job runs under names the job directory
-// and the directory the fence resolves `../scratch` into, in both wildcard spellings, and
-// still asks about everything else.
-func TestFencePermissionNamesTheWholeJob(t *testing.T) {
+// TestFencePermissionNamesTheWholeJobAndNothingAboveIt: the block a job runs under names the
+// job directory in both wildcard spellings and the read-only paths the card asked for, still
+// asks about everything else, and NAMES NOTHING ABOVE THE JOB -- a sibling job in the same
+// slot is another card's work, and a fence rule is no place to hand it over.
+func TestFencePermissionNamesTheWholeJobAndNothingAboveIt(t *testing.T) {
 	block := FencePermission("/root/1/jobs/a", []string{"/sys/kernel/security/lsm"})
 	external, ok := block[FenceExternalDirectory].(map[string]any)
 	if !ok {
@@ -83,11 +109,15 @@ func TestFencePermissionNamesTheWholeJob(t *testing.T) {
 	}
 	for _, want := range []string{
 		"/root/1/jobs/a/*", "/root/1/jobs/a/**",
-		"/root/1/jobs/*", "/root/1/jobs/**",
 		"/sys/kernel/security/lsm", "/sys/kernel/security/*",
 	} {
 		if external[want] != FenceAllow {
 			t.Errorf("%s is allowed; the block holds %v", want, external)
+		}
+	}
+	for _, never := range []string{"/root/1/jobs/*", "/root/1/jobs/**", "/root/1/*", "/root/*"} {
+		if _, named := external[never]; named {
+			t.Errorf("%s is ABOVE the job and is never named: %v", never, external)
 		}
 	}
 	if external["*"] != FenceAsk {
