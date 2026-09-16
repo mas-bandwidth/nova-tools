@@ -24,6 +24,9 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	once := f.fs.Bool("once", false, "")
 	bus := f.fs.String("bus", "", "")
 	as := f.fs.String("as", "", "")
+	deadline := f.fs.Int("deadline", int(pulse.DefaultCardDeadline/time.Second), "")
+	timeout := f.fs.Int("timeout", 120, "")
+	tempGlob := f.fs.String("temp-glob", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 
 	if !f.parse(args, stderr) {
@@ -37,6 +40,12 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *tick < 1 {
 		f.add(fmt.Sprintf("--tick wants a whole number of seconds, got %d", *tick))
 	}
+	if *deadline < 1 {
+		f.add(fmt.Sprintf("--deadline wants a whole number of seconds, got %d; it is the deadline a card may not outlive", *deadline))
+	}
+	if *timeout < 1 {
+		f.add(fmt.Sprintf("--timeout wants a whole number of seconds, got %d; it bounds every gh, git and nova-swarm child", *timeout))
+	}
 	if *max < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
 	}
@@ -47,13 +56,29 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if h < 0 {
 		h = 0
 	}
-	return pulse.Run(pulse.RunInput{
+
+	in := pulse.RunInput{
 		Queue: *queue, Roots: *roots, Repo: *repo, Branch: *branch,
 		Hours: h, Tick: time.Duration(*tick) * time.Second, Once: *once,
 		Bus: *bus, As: *as, Max: *max,
 		Stdout: stdout, Stderr: stderr,
-		Now: func() time.Time { return now },
-	})
+		Now: func() time.Time { return time.Now().UTC() },
+	}
+	// The seams, wired to the shipped verbs: gate, harvest, sweep, reap, refill (cut --kind)
+	// and launch. The configuration is read once per tick by the loop and handed here, so
+	// the steps run on the values the WIDTH line was written under.
+	cfg := pulse.DefaultConfig()
+	in.Configured = func(c pulse.Config) { cfg = c }
+	pulse.Wire(&in, pulse.NewWiring(pulse.WiringInput{
+		Queue: *queue, Roots: *roots, Repo: *repo, Branch: *branch,
+		Deadline: time.Duration(*deadline) * time.Second,
+		Timeout:  time.Duration(*timeout) * time.Second,
+		Max:      *max,
+		TempGlob: *tempGlob,
+		Now:      func() time.Time { return time.Now().UTC() },
+		Config:   func() pulse.Config { return cfg },
+	}))
+	return pulse.Run(in)
 }
 
 func cmdTriage(args []string, stdout, stderr io.Writer) int {

@@ -146,6 +146,14 @@ func Sweep(in SweepInput) int {
 		case !strings.EqualFold(view.State, "OPEN") && view.State != "":
 			closed++
 			marks = append(marks, mark(row, row.EnqueuedAt, stamp, row.Verdict))
+			// A merge is the day's one durable fact about this PR, and the only place it
+			// is written down: `nova-pulse status --oneline` counts merges=<n> out of
+			// <queue>/MERGED (statusline.go's countDay), and nothing was writing that file.
+			// A closed-unmerged PR is not a merge and is not written here.
+			if strings.EqualFold(view.State, "MERGED") {
+				appendRow(filepath.Join(in.Queue, "MERGED"), stamp, "MERGED",
+					fmt.Sprintf("%s#%d", oneline.Field(in.Repo), row.PR))
+			}
 		case view.Head != "" && view.Head != row.Head:
 			stale++ // a read is owed on the new head; this approval no longer stands
 			marks = append(marks, mark(row, row.EnqueuedAt, stamp, "STALE"))
@@ -426,4 +434,20 @@ func (g GHEnqueuer) Enqueue(repo string, pr int) error {
 		return fmt.Errorf("gh pr merge %d --auto: %s", pr, oneline.Cap(strings.TrimSpace(string(out)), 120))
 	}
 	return nil
+}
+
+// appendRow appends one tab-separated record. It is appendLine's sibling, and the
+// difference is the point: each FIELD is escaped to one line, and the tabs between them are
+// left alone, because this file is a table a reader splits on them.
+func appendRow(path string, fields ...string) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	escaped := make([]string, 0, len(fields))
+	for _, v := range fields {
+		escaped = append(escaped, oneline.Escape(v))
+	}
+	fmt.Fprintln(f, strings.Join(escaped, "\t"))
 }

@@ -26,7 +26,7 @@ nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <di
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeout <s>] [--max <n>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>]
-nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--bus <clone>] [--as <name>] [--max <n>]
+nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--max <n>]
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
@@ -74,6 +74,16 @@ mechanical; it makes no model call, and it writes ONE bus note -- carrying the
 triage packet of nova-pulse triage -- only when a rule cannot decide, once per
 (case, ref). --once runs exactly one tick. With no --bus a note is appended to
 <queue>/ESCALATE with its packet beside it.
+
+Every step is the verb of the same name, wired: the gate over --branch, the
+harvest of every bench with cards in flight, the sweep of the approvals ledger,
+the reap of what the benches leak, the refill that cuts a read card per unread PR
+head and a fix card per uncut issue in <queue>/WORKSET, and the launch that fills
+the free slots (while a STOP stands, only the red's own card). Each verb's one
+line goes to <queue>/pulse.log; the console keeps the WIDTH line. <queue>/pulse.toml
+is re-read every tick -- a changed value takes effect on the next one and is named
+on one CONFIG line, with no restart -- and the counters live in <queue>/pulse.state,
+so a restart carries on rather than starting again.
 
 example:
   nova-pulse run --queue ./queue --roots ./swarm-root,./swarm-root-space --repo mas-bandwidth/nova-tools --branch dev --hours 6

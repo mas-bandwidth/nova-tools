@@ -17,6 +17,7 @@ package pulse
 // skipped, because a step that silently does nothing reads as a quiet day.
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -119,6 +120,10 @@ type RunInput struct {
 	// each say how often the probe is worth its seconds.
 	GateEvery int
 
+	// Configured, when set, is handed the configuration after every re-read, so the seams
+	// run on the same values this loop does and pulse.toml has ONE reader per tick.
+	Configured func(Config)
+
 	Gate     Gater
 	Harvest  Harvester
 	Sweep    Sweeper
@@ -143,8 +148,13 @@ type runner struct {
 
 	noted map[string]bool // the (case, ref) keys already sent, loaded from <queue>/NOTED
 
-	ticks, sent, reds, stops, undecided int
-	seamed                              map[string]bool
+	// cfg is the tick's configuration, re-read from <queue>/pulse.toml every tick: a value
+	// edited between two ticks takes effect on the next one, with no restart and nothing
+	// forgotten (class A, bugs 2 and 3).
+	cfg Config
+
+	ticks, shift, sent, reds, stops, undecided, gateRuns int
+	seamed                                               map[string]bool
 }
 
 // Run holds the loop for --hours and prints one WIDTH line per tick. It returns 0 when the
@@ -177,18 +187,32 @@ func Run(in RunInput) int {
 		return refusal(in.Stderr, "RUN", fmt.Errorf("cannot open the queue: %s (name a writable --queue)", oneline.Err(err)))
 	}
 
+	// The counters are a FILE, not a shell variable: a loop restarted to take a change used
+	// to lose them, and the gate counter it lost was the reason a green branch stayed
+	// stopped for thirty minutes (class A, bug 3). A malformed state file is a refusal and
+	// never a zero state.
+	state, err := LoadState(in.Queue)
+	if err != nil {
+		return refusal(in.Stderr, "RUN", err)
+	}
+
 	r := &runner{
 		in:     in,
 		roots:  splitList(in.Roots),
 		notes:  bounded.Capped(in.Stderr, in.Max, "RUN", "note", "read "+filepath.Join(in.Queue, "ESCALATE")),
 		noted:  loadNoted(in.Queue),
 		seamed: map[string]bool{},
+		cfg:    defaultConfig(),
 	}
+	// The tick number carries on across a restart, so the gate's cadence and the log's own
+	// numbering are one run of numbers and not one per process.
+	r.ticks, r.gateRuns = state.Tick, state.Gate
 
 	start := in.Now()
 	end := start.Add(time.Duration(in.Hours * float64(time.Hour)))
 	for {
 		r.ticks++
+		r.shift++
 		r.tick()
 		if in.Once || !in.Now().Before(end) {
 			break
@@ -197,7 +221,7 @@ func Run(in RunInput) int {
 	}
 	r.notes.More()
 	fmt.Fprintf(in.Stdout, "RUN OK ticks=%d notes=%d reds=%d stops=%d undecided=%d hours=%v\n",
-		r.ticks, r.sent, r.reds, r.stops, r.undecided, in.Hours)
+		r.shift, r.sent, r.reds, r.stops, r.undecided, in.Hours)
 	return 0
 }
 
@@ -208,10 +232,15 @@ func (r *runner) tick() {
 	t.n = r.ticks
 	t.benches = len(r.roots)
 
+	// 0. The configuration, re-read. It is not a step of the loop and takes no line unless
+	// it moved: a CONFIG line every tick is the poll this verb exists to end.
+	r.loadConfig()
+
 	var undecided []Undecided
 
-	// 1. Gate. A red branch is STOP, and STOP skips the work of the tick: a broken branch
-	// is stop everything and fix the red (Glenn 2026-09-11, "red means stop").
+	// 1. Gate. A red branch is STOP, and STOP skips the work of the tick -- every step but
+	// the launcher, which admits the red's own fix card and nothing else (step 6). A broken
+	// branch is stop everything and fix the red (Glenn 2026-09-11, "red means stop").
 	stopped, red := r.gate(r.ticks)
 	if red != nil {
 		undecided = append(undecided, *red)
@@ -253,14 +282,17 @@ func (r *runner) tick() {
 		} else {
 			r.seam("refill", "rowan/pulse-config-gate-admission")
 		}
-		// 6. Launch.
-		if s := r.in.Launcher; s != nil {
-			launched, free, err := s.Launch(r.ticks)
-			t.launched, t.free = launched, free
-			r.stepErr("launch", err)
-		} else {
-			r.seam("launch", "the shipped nova-pulse launch verb")
-		}
+	}
+	// 6. Launch, STOPPED OR NOT. While the gate's STOP stands the launcher admits only the
+	// cards whose line 1 names the red (admission.go), which is class C: an all-or-nothing
+	// STOP stopped the red's own fix card and it went out by hand three times (bug 6).
+	// Nothing else runs behind a red -- never pile work onto a red.
+	if s := r.in.Launcher; s != nil {
+		launched, free, err := s.Launch(r.ticks)
+		t.launched, t.free = launched, free
+		r.stepErr("launch", err)
+	} else {
+		r.seam("launch", "the shipped nova-pulse launch verb")
 	}
 
 	// The one call to a person this tick may make: ONE note, for the first undecided case
@@ -272,6 +304,48 @@ func (r *runner) tick() {
 	}
 
 	fmt.Fprintln(r.in.Stdout, t.line())
+	r.saveState()
+}
+
+// loadConfig re-reads <queue>/pulse.toml. The last good configuration stands when the file
+// is unreadable: a typo in a value is not a reason to change how the bench runs.
+func (r *runner) loadConfig() {
+	var buf bytes.Buffer
+	cfg, err := LoadConfig(r.in.Queue, &buf, r.in.Max)
+	if err != nil {
+		r.stepErr("config", err)
+		return
+	}
+	r.cfg = cfg
+	if r.in.Configured != nil {
+		r.in.Configured(cfg)
+	}
+	// ONE line, and only when a value moved. LoadConfig compares against the snapshot in
+	// the queue, not against this process, so a value edited while the loop was down is a
+	// change the next tick names -- and a first load on a fresh queue, which changed
+	// nothing, says nothing.
+	if !strings.Contains(buf.String(), "changed=0") {
+		fmt.Fprint(r.in.Stdout, buf.String())
+	}
+}
+
+// saveState writes the counters this loop owns -- the tick and the gate -- and touches
+// nothing else in the file. next_card is the cutter's, taken under the cutter's lock, and a
+// loop that wrote back the number it read at the start of the shift would hand out a number
+// that is already on a launched card (bug 1, the five overwritten cards).
+func (r *runner) saveState() {
+	state, err := LoadState(r.in.Queue)
+	if err != nil {
+		r.stepErr("state", err)
+		return
+	}
+	state.Tick, state.Gate = r.ticks, r.gateRuns
+	if n := peekNextCard(r.in.Queue); n > state.NextCard {
+		state.NextCard = n
+	}
+	if err := state.Save(r.in.Queue); err != nil {
+		r.stepErr("state", err)
+	}
 }
 
 // tickCounts is what one tick did, and the WIDTH line is exactly these fields: counts, one
@@ -306,6 +380,7 @@ func (r *runner) gate(tick int) (stopped bool, red *Undecided) {
 	// same at every > 1 and is never true at every == 1, which is a gate a test (or a bench
 	// that wants a probe per tick) silently never calls.
 	if g := r.in.Gate; g != nil && (tick-1)%every == 0 {
+		r.gateRuns++
 		isRed, why, err := g.Gate(tick)
 		r.stepErr("gate", err)
 		switch {
@@ -321,8 +396,14 @@ func (r *runner) gate(tick int) (stopped bool, red *Undecided) {
 			if !r.noted[u.key()] {
 				r.reds++
 				r.stops++
-				_ = os.WriteFile(stopPath, []byte(fmt.Sprintf("MAIN-RED %s repo=%s branch=%s at=%s: revert first, then fix on a branch\n",
-					oneline.Field(why), field(r.in.Repo), field(r.in.Branch), r.in.Now().Format(time.RFC3339))), 0o644)
+				// The gate verb writes a STOP of its own, and its line 2 is the admission
+				// name the launcher reads while red. Rewriting it here would drop that name
+				// and shut the red's own fix card out, so this STOP is only ever the one
+				// for a bench whose gate wrote none.
+				if !strings.HasPrefix(firstLine(stopPath), StopMark) {
+					_ = os.WriteFile(stopPath, []byte(fmt.Sprintf("MAIN-RED %s repo=%s branch=%s at=%s: revert first, then fix on a branch\n",
+						oneline.Field(why), field(r.in.Repo), field(r.in.Branch), r.in.Now().Format(time.RFC3339))), 0o644)
+				}
 				appendLine(filepath.Join(r.in.Queue, "REDS"), fmt.Sprintf("%s\tMAIN-RED\t%s\t%s",
 					r.in.Now().Format(time.RFC3339), oneline.Field(r.in.Branch), oneline.Field(why)))
 				red = &u

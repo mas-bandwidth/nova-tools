@@ -22,11 +22,28 @@ func invokePulse(t *testing.T, args ...string) (int, string, string) {
 }
 
 // TestRunOnceIsOneWidthLineAndOneVerdict: the shape of the coordinator's whole reading of a
-// tick.
+// tick, and the proof that the verbs behind the seams are the shipped ones. `run` wires
+// gate, harvest, sweep, reap, refill and launch itself (the card that made the loop real),
+// so a tick here runs all six -- against the fakes on PATH, never the network -- and the
+// console still carries one WIDTH line and one verdict, with each verb's own line in
+// <queue>/pulse.log where the hand loop wrote it.
 func TestRunOnceIsOneWidthLineAndOneVerdict(t *testing.T) {
-	queue := t.TempDir()
-	exit, out, errs := invokePulse(t, "run", "--queue", queue, "--roots", t.TempDir(),
-		"--repo", "mas-bandwidth/nova-tools", "--branch", "dev", "--once")
+	specs := fakePATH(t)
+	// One green ci run for the gate; the same body is harmless to the refill's listings,
+	// which find no number they are allowed to touch.
+	fakeTool(t, specs, "gh", fakeSpec{Default: fakeRule{
+		Stdout: `[{"databaseId":77,"status":"completed","conclusion":"success","headSha":"0123456789abcdef"}]`,
+	}})
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stdout: "BATCH OK\n"}})
+
+	queue, root := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(queue, "pulse.toml"), "[slots]\nstudio = 2\nspace = 0\nlocal = 0\n")
+	write(t, filepath.Join(queue, "pending", "card-5.md"),
+		"RESULT: CARD-5 nova-tools #777 fixed with its red test first: a card waiting\nSTEP 1. do the thing\n")
+
+	exit, out, errs := invokePulse(t, "run", "--queue", queue, "--roots", root,
+		"--repo", "mas-bandwidth/nova-tools", "--branch", "dev", "--once",
+		"--temp-glob", filepath.Join(t.TempDir(), "*swarmtest*"))
 	if exit != 0 {
 		t.Fatalf("exit %d: %s%s", exit, out, errs)
 	}
@@ -37,11 +54,39 @@ func TestRunOnceIsOneWidthLineAndOneVerdict(t *testing.T) {
 	if !strings.HasPrefix(lines[0], "PULSE WIDTH tick=1 ") || !strings.HasPrefix(lines[1], "RUN OK ticks=1 ") {
 		t.Errorf("the two lines are\n%s", out)
 	}
-	// Every unwired step is named once, so a bench that has not wired one knows.
-	for _, seam := range []string{"seam=harvest", "seam=sweep", "seam=reap", "seam=refill", "seam=launch"} {
-		if !strings.Contains(errs, seam) {
-			t.Errorf("stderr does not name %s:\n%s", seam, errs)
+	// Every step is wired: a seam nobody wired names itself on stderr, once, and none does.
+	if strings.Contains(errs, "seam=") {
+		t.Errorf("a step of the tick is still a stub:\n%s", errs)
+	}
+	log, err := os.ReadFile(filepath.Join(queue, "pulse.log"))
+	if err != nil {
+		t.Fatalf("the tick wrote no log: %v", err)
+	}
+	for _, want := range []string{"GATE GREEN", "SWEEP repo=", "REAP roots=", "REFILL ", "PULSE OK"} {
+		if !strings.Contains(string(log), want) {
+			t.Errorf("pulse.log does not carry %q:\n%s", want, log)
 		}
+	}
+	// The card went to the bench, and it is in exactly one place.
+	if got := strings.Contains(string(log), "PULSE OK"); !got {
+		t.Errorf("no batch was admitted:\n%s", log)
+	}
+	if _, err := os.Stat(filepath.Join(queue, "launched", "card-5.md")); err != nil {
+		t.Errorf("the waiting card did not launch: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(queue, "pending", "card-5.md")); err == nil {
+		t.Errorf("the launched card is still pending: a card is in one place")
+	}
+}
+
+// write is a file and its directories, for a fixture.
+func write(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

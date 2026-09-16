@@ -66,9 +66,18 @@ type ReapInput struct {
 	Procs    ProcessTable
 	TempGlob string        // default "/tmp/*swarmtest*"; a test points it at its own directory
 	TempAge  time.Duration // default 30 minutes
-	Now      func() time.Time
-	Stdout   io.Writer
-	Stderr   io.Writer
+
+	// Rule E2 (runners.go): a runner busy with no in-progress run on Repo for longer than
+	// RunnerIdle is restarted through its service. With no Repo and no Runners table the
+	// rule does not run and the count is zero: a bench with no self-hosted runner has no
+	// jam to clear.
+	Repo       string
+	Runners    RunnerTable
+	Restarter  RunnerRestarter
+	RunnerIdle time.Duration // default DefaultRunnerIdle (5 minutes)
+	Now        func() time.Time
+	Stdout     io.Writer
+	Stderr     io.Writer
 }
 
 // Reap runs one collection over the roots and the queue and prints one REAP line. It
@@ -103,9 +112,10 @@ func Reap(in ReapInput) int {
 	locks := reapSlotLocks(in, roots)
 	requeued, failed := reapLaunchedCards(in, roots, now())
 	temp := reapTempDirs(in, tempGlob, tempAge, now())
+	restarted := reapStuckRunners(in, now())
 
-	fmt.Fprintf(in.Stdout, "REAP roots=%d killed=%d locks=%d requeued=%d failed=%d temp=%d dry-run=%t\n",
-		len(roots), killed, locks, requeued, failed, temp, in.DryRun)
+	fmt.Fprintf(in.Stdout, "REAP roots=%d killed=%d locks=%d requeued=%d failed=%d temp=%d restarted=%d dry-run=%t\n",
+		len(roots), killed, locks, requeued, failed, temp, restarted, in.DryRun)
 	return 0
 }
 
