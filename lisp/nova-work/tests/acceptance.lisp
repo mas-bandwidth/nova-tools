@@ -3716,3 +3716,39 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
       (handler-case (read-restricted json-number)
         (restricted-data-violation () (setf refused t)))
        (ok refused "a wire frame carrying the JSON number ~A is refused" json-number))))
+
+;;; ------------------------------------------------------------------
+;;; bug node kind (SPEC-WORK.md:1851-1871, #463)
+;;; ------------------------------------------------------------------
+
+(deftest "bug-at-epic-level-is-legal" "docs/SPEC-WORK.md:1851-1871"
+    "expected=bug-counted-as-leaf;bug-closes-and-reopens"
+  (let* ((seed '((:id "root"       :type :work-set :parent nil   :state :unknown)
+                 (:id "root/f"     :type :feature  :parent "root" :state :unknown)
+                 (:id "root/f/b1"  :type :bug      :parent "root/f" :state :doing
+                  :found-during "root/f")
+                 (:id "root/t1"    :type :task     :parent "root" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    ;; A bug is counted as a leaf alongside tasks.
+    (check-equal 2 (open-leaf-count k) "open leaf count includes the bug")
+    (check-equal 4 (state-open-count (kernel-state k)) "|O| at seed with one bug")
+    ;; A bug can close (state-to-done) with evidence.
+    (multiple-value-bind (okp line code)
+        (submit k (list :verb :state-to-done :node "root/f/b1" :by "rowan"
+                        :reason "fixed" :evidence '("ev-bug-1")
+                        :request "bug-close-1" :stamp "2026-09-15T10:00:00Z"
+                        :clock :tool :generation-owner "gen-1"))
+      (ok okp "bug close refused: ~A" line)
+      (check-equal 0 code "bug close exit code"))
+    (check-equal 1 (open-leaf-count k) "open leaf count after bug close")
+    (check-equal :c (node-branch (kernel-state k) "root/f/b1") "bug moved to C")
+    ;; A bug can reopen.
+    (multiple-value-bind (okp line code)
+        (submit k (list :verb :event-reopen :node "root/f/b1" :by "rowan"
+                        :reason "regressed"
+                        :request "bug-reopen-1" :stamp "2026-09-15T11:00:00Z"
+                        :clock :tool :generation-owner "gen-1"))
+      (ok okp "bug reopen refused: ~A" line)
+      (check-equal 0 code "bug reopen exit code"))
+    (check-equal 2 (open-leaf-count k) "open leaf count after bug reopen")
+    (check-equal :o (node-branch (kernel-state k) "root/f/b1") "bug moved back to O")))

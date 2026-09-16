@@ -147,7 +147,7 @@ own id would not be the same counting rule one level down. Decision for review."
         (incf (wnode-required-open parent) delta)))
     (incf (wstate-root-open state) delta)
     (decf (wstate-closed state) delta)
-    (when (eq :task (wnode-type node))
+    (when (member (wnode-type node) '(:task :bug))
       (incf (wstate-leaf-open state) delta))
     (incf (wstate-issue-open state) (* delta (length (wnode-links node))))))
 
