@@ -271,6 +271,9 @@ func packet(args []string, out, errOut io.Writer) int {
 	if _, err := gitOut(ctx, repo, "rev-parse", baseSHA+"^{commit}"); err != nil {
 		return refuse(errOut, "the lane does not hold the recorded base commit")
 	}
+	if len(rules) > 0 {
+		return scopedRulePacket(ctx, repo, out, errOut, *dest, id, packetID, current, base, baseSHA, rangeText, diffBase, *who, specs, rules)
+	}
 	diff, err := gitOut(ctx, repo, diffArgs(fullRange, *diffOnly, *filesGlob)...)
 	if err != nil {
 		return refuse(errOut, "could not read the selected diff")
@@ -1063,6 +1066,96 @@ func selectedRules(ctx context.Context, repo, base, head, diff string, specFlags
 	}
 	if len(files) == 0 {
 		out = append(out, "No changed files.")
+	}
+	return strings.Join(out, "\n"), len(selected), nil
+}
+
+// scopedRulePacket writes a packet holding only the rule section for the rules
+// the caller named with --rule. It reads no diff, no verdicts and no findings:
+// a rule question answers from the spec at the head (and the base, replayed,
+// when the rule changed), which is the SPEC-WORK-sized read a rule question
+// must never pay.
+func scopedRulePacket(ctx context.Context, repo string, out, errOut io.Writer, dest, id, packetID, head, base, baseSHA, rangeText, diffBase, who string, specFlags, requested []string) int {
+	ruleText, ruleCount, err := namedRules(ctx, repo, diffBase, head, specFlags, requested)
+	if err != nil {
+		return refuse(errOut, err.Error())
+	}
+	hdr := packetHeader{
+		ID:    packetID,
+		Entry: id,
+		Head:  head,
+		Base:  base,
+		Range: rangeText,
+		Who:   who,
+		Built: time.Now().UTC().Format(time.RFC3339),
+		Cut:   0,
+	}
+	body := formatPacket(hdr, "## Rules touched\n"+ruleText+"\n")
+	return writePacket(dest, body, out, id, packetID, head, base, baseSHA, rangeText, 0, 0, ruleCount, 0, 0, len(body), 0, false)
+}
+
+func namedRules(ctx context.Context, repo, base, head string, specFlags, requested []string) (string, int, error) {
+	var specs []scopedSpec
+	headings := map[string]string{}
+	for _, flag := range specFlags {
+		p, heading, err := splitSpecFlag(flag)
+		if err != nil {
+			return "", 0, err
+		}
+		text, err := gitOut(ctx, repo, "show", head+":"+p)
+		if err != nil {
+			return "", 0, fmt.Errorf("--spec %s is not readable at head", p)
+		}
+		spec, err := parseScopedSpec(p, text, heading)
+		if err != nil {
+			return "", 0, err
+		}
+		specs = append(specs, spec)
+		headings[p] = heading
+	}
+	selected := map[string]specRule{}
+	var order []string
+	for _, flag := range requested {
+		p, nText, ok := strings.Cut(flag, ":")
+		if !ok || p == "" || nText == "" {
+			return "", 0, fmt.Errorf("--rule wants <spec>:<n>")
+		}
+		n, err := strconv.Atoi(nText)
+		if err != nil || n <= 0 {
+			return "", 0, fmt.Errorf("--rule wants <spec>:<n>")
+		}
+		var found specRule
+		exists := false
+		for _, spec := range specs {
+			if spec.Path == p {
+				found, exists = spec.Rules[n]
+				break
+			}
+		}
+		if !exists {
+			return "", 0, fmt.Errorf("--rule %s names no scoped rule at head; add a matching --spec", flag)
+		}
+		key := fmt.Sprintf("%s:%d", found.Path, found.Line)
+		if _, dup := selected[key]; dup {
+			continue
+		}
+		selected[key] = found
+		order = append(order, key)
+	}
+	var out []string
+	for _, key := range order {
+		rule := selected[key]
+		quoted := fmt.Sprintf("> %s", strings.ReplaceAll(rule.Text, "\n", "\n> "))
+		if oldText, err := gitOut(ctx, repo, "show", base+":"+rule.Path); err == nil {
+			if oldSpec, err := parseScopedSpec(rule.Path, oldText, headings[rule.Path]); err == nil {
+				if oldRule, ok := oldSpec.Rules[rule.Number]; ok && oldRule.Text != rule.Text {
+					quoted = fmt.Sprintf("> head:\n> %s\n> base:\n> %s",
+						strings.ReplaceAll(rule.Text, "\n", "\n> "),
+						strings.ReplaceAll(oldRule.Text, "\n", "\n> "))
+				}
+			}
+		}
+		out = append(out, fmt.Sprintf("### %s:%d rule %d\n%s\ntouched by: caller (named)", rule.Path, rule.Line, rule.Number, quoted))
 	}
 	return strings.Join(out, "\n"), len(selected), nil
 }
