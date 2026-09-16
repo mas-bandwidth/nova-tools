@@ -1,0 +1,27 @@
+CARD-8066 nova-tools #487 — nova-wake awake: max= (and as=) in .nova-wake/config are ignored
+
+Read the whole code path first (docs/SPEC-WAKE.md config section, cmd/nova-wake/main.go
+wakeConfig/loadWakeConfig + cmdAwake, cmd/nova-wake/awake_test.go). The issue's
+"smallest fix" is ALREADY present in origin/main, so I could not write a red test:
+the behaviour is already green.
+
+Evidence the fix is pre-applied (commit 1e55df9 "nova-wake: config keys max and as
+honoured (#487) (#506)", squash of 5a4b4d6 from an earlier card):
+  - main.go:350  maxN := fs.Int("max", cfg.cfgInt("max", DefaultAwakeMax), "")
+                 (the pre-fix state was `fs.Int("max", DefaultAwakeMax, "")`).
+  - main.go:214-231 comments name `bus, window, max` for awake and `bus, state, as`
+                 for watch/quickstart — `as=` is no longer claimed for awake.
+  - awake_test.go:67 TestAwakeReadsMaxAndAsFromConfig covers config `bus=…/as=rowan/max=2`.
+  - docs/SPEC-WAKE.md:350-356 and docs/CLI.md:443-448 already updated.
+
+Red test: none possible. The closest test (config max bounds the FRIEND listing)
+already passes green:
+  go test -count=1 -run 'TestAwakeReadsMaxAndAsFromConfig|TestAwakeBoundsLines' -v ./cmd/nova-wake/
+  --- PASS: TestAwakeReadsMaxAndAsFromConfig (0.01s)
+  --- PASS: TestAwakeBoundsLines (0.01s)
+  ok   github.com/mas-bandwidth/nova-tools/cmd/nova-wake  0.026s
+
+Unaddressed anywhere: the issue's "expected" also names "Unknown keys should refuse,
+not vanish", which is NOT implemented — loadWakeConfig (main.go:235-253) silently
+stores every key and ignores lines without `=`. That clause is not part of the
+"smallest fix" and the accepted fix (#506) does not implement it, so it is left alone.
