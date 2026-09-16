@@ -60,6 +60,10 @@ type BatchInput struct {
 	// slot column is optional in either case; a hand slot outside the range is that card's
 	// own admission refusal (issue #618).
 	Slots string
+	// Now is the clock the batch reads for the idle monitor's activity baseline. Nil takes
+	// the batch clock (the real one in production); a test injects one so its idle window is
+	// decided by the test, not by the wall (issue #694).
+	Now func() time.Time
 	// PullWait and PullPoll bound the pull that brings a remote card's files back: how
 	// long to wait for RESULT.md to exist on the bench, and how often to ask. Zero takes
 	// the spec's own numbers (30 s, one second), and the tests take short ones.
@@ -124,6 +128,10 @@ func Batch(in BatchInput) int {
 	clk := in.clock
 	if clk == nil {
 		clk = realClock{}
+	}
+	now := in.Now
+	if now == nil {
+		now = clk.Now
 	}
 	// The root is absolute AND symlink-resolved from here on: absolute alone left `/var/...`
 	// and `/private/var/...` naming one directory two ways on darwin (issue #578).
@@ -256,7 +264,7 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 		_ = logFile.Close()
-		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label, lastGrow: clk.Now()}
+		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label, lastGrow: now()}
 	}
 
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"

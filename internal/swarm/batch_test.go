@@ -547,8 +547,18 @@ func TestBatchSumsUsage(t *testing.T) {
 	}
 }
 
-// Lesson 24: when usage.tsv is in <root>/<slot>/usage.tsv rather than <root>/<slot>/jobs/<label>/usage.tsv,
-// the batch gather still reads the slot fallback and sums in/out/usd onto the BATCH line.
+// Lesson 24: when usage.tsv is in <root>/<slot>/usage.tsv rather than
+// <root>/<slot>/jobs/<label>/usage.tsv, the batch gather still reads the slot fallback and
+// sums in/out/usd onto the BATCH line.
+//
+// ISSUE #694: the old test handed the batch a 5 s deadline and two real fake-runner
+// processes, and the deadline raced the processes into place -- on a loaded bench a runner
+// was scheduled after the deadline, its card scored `deadline`, and `done=2` came back short
+// ("weather"). The test now lays the OBSERVABLE file state down itself -- the RESULT.md and
+// the slot usage.tsv a finished run leaves -- and hands the batch a stub runner that only
+// exits, a deadline held past any real schedule, and an injected clock. The ordering is the
+// test's, the wait is against the injected clock, not the wall, and the assertion is on the
+// printed BATCH line and the file state, never on elapsed time.
 func TestBatchSumsUsageFromSlotFallback(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -563,7 +573,14 @@ func TestBatchSumsUsageFromSlotFallback(t *testing.T) {
 		{"b", "8", "5", "0.7500"},
 	} {
 		slot := filepath.Join(root, itoa(i+1))
-		if err := os.MkdirAll(slot, 0o755); err != nil {
+		job := filepath.Join(slot, "jobs", spec.label)
+		if err := os.MkdirAll(job, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// The RESULT.md one card leaves is written by the test, not by a racing worker: the
+		// gather reads this file exactly as a run that already finished would have left it.
+		if err := os.WriteFile(filepath.Join(job, "RESULT.md"),
+			[]byte("RESULT: "+spec.label+"\nall green\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		row := UsageRow{
@@ -577,13 +594,24 @@ func TestBatchSumsUsageFromSlotFallback(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	runner := fakeRunner(t, dir)
-	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
+	// A stub runner that only exits: the batch's scatter/wait/gather machinery still runs,
+	// but nothing it reads depends on how quickly this process is scheduled, so there is no
+	// real process race and the deadline never has work to race. The clock is injected so the
+	// batch's idle baseline is decided here, not by the wall, and the deadline is a bound the
+	// test chose past any real schedule, never a racer.
+	runner := runnerDoing(t, dir, "stub", runnerStep{Op: "exit", N: 0})
+	fixed := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	var out, errb bytes.Buffer
+	code := Batch(BatchInput{
+		ID: "B1", Deadline: time.Hour, Cards: tsv, Root: root, Runner: runner,
+		Now:    func() time.Time { return fixed },
+		Stdout: &out, Stderr: &errb,
+	})
 	if code != 0 {
-		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errs)
+		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errb.String())
 	}
-	if !strings.Contains(out, "BATCH B1 n=2 done=2 abstain=0 in=108 out=55 usd=1.0000") {
-		t.Fatalf("the BATCH line sums tokens and dollars from slot fallback usage.tsv:\n%s", out)
+	if !strings.Contains(out.String(), "BATCH B1 n=2 done=2 abstain=0 in=108 out=55 usd=1.0000") {
+		t.Fatalf("the BATCH line sums tokens and dollars from slot fallback usage.tsv:\n%s", out.String())
 	}
 }
 
