@@ -530,6 +530,19 @@ run for the same day replaces that day's rows, never doubling, so the ledger can
 be filled again and again; a kept field a card did not report is `-` in the ledger, never 0,
 and the trailing `dashes` column counts how many cards left each of input, output and usd unknown.
 
+A receipt that carries a `tool` column names the nova tool whose work the card
+is, and `sum --swarm-root` counts those receipts per tool and prints one `TOOLS`
+line after `SUM OK`, a `tool:n` per named tool in sorted order —
+
+```
+SUM OK day=<d> models=<n> cards=<n> in=<n> out=<n> usd=<x.xxxx>
+TOOLS <tool>:<n>,<tool>:<n>,…
+```
+
+— so a tool nobody used in the day has no name on the line and is visible by its
+absence. A receipt with no `tool` column, or a `-`, names no tool and is not
+counted; until the swarm's card receipt carries the column, no `TOOLS` line prints.
+
 **Cost per completed task per (model, repo), the shape, filed before the
 counts land (issue #64, Rowan's MODELS.md pass, 2026-09-11).** The ledger
 carries price per token today; the routing metric every independent index in
