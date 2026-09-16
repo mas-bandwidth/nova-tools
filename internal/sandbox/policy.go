@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -646,7 +647,12 @@ func ChildEnv(env []string, tmp string) []string {
 		}
 		out = append(out, kv)
 	}
-	return append(out, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp, "TMPPREFIX="+filepath.Join(tmp, "zsh"))
+	// TMPPREFIX is a path THE CHILD SHELL READS, not a path this process opens, so it is
+	// joined with `path` and never with `filepath`: the separator belongs to the shell
+	// inside the wall, which is a unix one, and filepath.Join would spell it with the
+	// HOST's separator. On the windows leg that wrote TMPPREFIX=\w\.nova-sandbox-tmp\zsh
+	// for the value /w/.nova-sandbox-tmp/zsh -- a name no zsh would ever open.
+	return append(out, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp, "TMPPREFIX="+path.Join(tmp, "zsh"))
 }
 
 // isAgentVar is rule 9's scrub, and it is by EXCLUSION on the name. Revision 7 states the

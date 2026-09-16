@@ -112,6 +112,7 @@ func (f *probeFixture) probe(t *testing.T, args ...string) (int, string, string,
 
 // A matching bench probes green: BENCH OK with cores, pin and wall read from the row.
 func TestBenchProbeOK(t *testing.T) {
+	windowsIsNotABench(t)
 	f := newProbeFixture(t)
 	table := f.writeTable(t, "1-15", "sandbox")
 	writeScript(t, filepath.Join(f.fakeBin, "taskset"), "exit 0")
@@ -126,6 +127,7 @@ func TestBenchProbeOK(t *testing.T) {
 
 // Different identities are refused, naming both.
 func TestBenchProbeRefusesVersionMismatch(t *testing.T) {
+	windowsIsNotABench(t)
 	f := newProbeFixture(t)
 	writeScript(t, filepath.Join(f.root, "bin", "nova-swarm"), "printf 'nova-swarm WRONG linux/amd64 go1.20\\n'")
 	writeScript(t, filepath.Join(f.fakeBin, "taskset"), "exit 0")
@@ -141,6 +143,7 @@ func TestBenchProbeRefusesVersionMismatch(t *testing.T) {
 
 // The auth file is only ever stat'd (never read), and mode 0644 is a refusal.
 func TestBenchProbeNeverReadsAuth(t *testing.T) {
+	windowsIsNotABench(t)
 	f := newProbeFixture(t)
 	if err := os.Chmod(f.auth, 0o644); err != nil {
 		t.Fatal(err)
@@ -167,6 +170,7 @@ func TestBenchProbeNeverReadsAuth(t *testing.T) {
 // cores=- on a bench without taskset probes pin=none and admits; a list on the same
 // bench is refused check=pin.
 func TestPinNoneRowAdmitsWithoutTaskset(t *testing.T) {
+	windowsIsNotABench(t)
 	f := newProbeFixture(t)
 	table := f.writeTable(t, "-", "sandbox")
 	exit, stdout, _, _ := f.probe(t, "--benches", table, "--bench", "b2")

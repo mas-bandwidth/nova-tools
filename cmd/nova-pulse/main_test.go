@@ -21,17 +21,14 @@ func writeMainFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
-func mainGhFixture(t *testing.T, dir, jsonBody string) {
+// mainGhFixture puts a fake `gh` on PATH that serves issue list JSON and records every
+// argv it was called with, and returns the path of that record.
+func mainGhFixture(t *testing.T, dir, jsonBody string) string {
 	t.Helper()
-	bin := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	script := "#!/bin/sh\ncat " + `"` + strings.ReplaceAll(jsonBody, `"`, `\"`) + `"`
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	specs := fakePATH(t)
+	log := filepath.Join(dir, "gh-argv.log")
+	fakeTool(t, specs, "gh", fakeSpec{Log: log, Default: fakeRule{StdoutFile: jsonBody}})
+	return log
 }
 
 func TestHelpListsOnlyBuiltVerbs(t *testing.T) {
@@ -105,7 +102,7 @@ func TestPoolMaxFlagBoundsCandidates(t *testing.T) {
   {"number": 2, "title": "two", "labels": [{"name": "card"}], "body": ""},
   {"number": 3, "title": "three", "labels": [{"name": "card"}], "body": ""}
 ]`)
-	mainGhFixture(t, dir, jsonBody)
+	ghLog := mainGhFixture(t, dir, jsonBody)
 
 	root := filepath.Join(dir, "root")
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -117,6 +114,12 @@ func TestPoolMaxFlagBoundsCandidates(t *testing.T) {
 	code := run([]string{"pool", "--sources", sources, "--root", root, "--max", "1"}, &out, &errb, time.Now().UTC())
 	if code != 0 {
 		t.Fatalf("pool exit = %d, stderr=%s", code, errb.String())
+	}
+	// The fake answered, not the real gh: the argv it recorded is the only thing that can
+	// have produced the row below.
+	calls, err := os.ReadFile(ghLog)
+	if err != nil || !strings.Contains(string(calls), "gh issue list --repo owner/repo") {
+		t.Fatalf("the fake gh recorded %q (err=%v); want one `gh issue list --repo owner/repo`", calls, err)
 	}
 	if !strings.Contains(out.String(), "candidates=1") || !strings.Contains(out.String(), "issues=1") {
 		t.Fatalf("POOL OK line bounds not honored: %q", out.String())
