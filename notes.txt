@@ -21,3 +21,15 @@ A default wait still ignores beat/cursor-only changes (they are not notes, so
 r.New stays 0 and it keeps blocking); --quiet-beats opts into the cheap
 presence wake. Existing tests are unaffected because none passes the new flag.
 
+
+Green (go test): PASS — TestWaitQuietBeatsPrintsOneWAITLineForABeatCommit.
+go vet ./...: clean.
+
+Saving on a beat-only wake (fixture, from-bo/BEAT commit):
+  before = 4 lines / 297 bytes   INBOX SCOPE + INBOX LEGACY + INBOX OPEN + INBOX OK (the frame)
+  after  = 1 line  /  31 bytes  "WAIT OK new=0 after=0s polls=1"
+
+docs/SPEC.md already carried the --quiet-beats design (synopsis + the
+"--quiet-beats turns a beat into a cheap presence wake" paragraph, ~200 tokens
+per frame); the implementation realises it. docs/CLI.md gained the matching
+sentence.
