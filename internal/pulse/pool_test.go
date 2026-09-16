@@ -116,6 +116,58 @@ func TestPoolRefusesUnreadableSource(t *testing.T) {
 	}
 }
 
+// pool-reads-open-non-draft-prs (issue #638): a `prs` source kind pools open, non-draft
+// pull requests as read candidates -- one candidate per PR, the read half of the loop
+// harvest itself describes ("cuts a read card per PR"). A draft PR is nowhere, and the
+// fake gh's argv record is the proof the rows came from the fake, never the network.
+func TestPoolPRsSourcePoolsOpenNonDraftPRs(t *testing.T) {
+	dir := t.TempDir()
+	jsonBody := writeTestFile(t, dir, "prs.json", `[
+  {"number": 11, "title": "one", "isDraft": false},
+  {"number": 12, "title": "two", "isDraft": true},
+  {"number": 13, "title": "three", "isDraft": false}
+]`)
+	ghLog := ghFixture(t, dir, jsonBody)
+
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sources := writeTestFile(t, dir, "sources.tsv", "prs\tmas-bandwidth/nova-tools\tread\n")
+
+	var out, errb bytes.Buffer
+	code := Pool(PoolInput{Sources: sources, Root: root, Stdout: &out, Stderr: &errb})
+	if code != 0 {
+		t.Fatalf("pool exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	// The fake answered, not the real gh: the argv it recorded is the only thing that can
+	// have produced the rows below.
+	calls := ghCalls(t, ghLog)
+	if len(calls) != 1 || !strings.Contains(calls[0], "gh pr list --repo mas-bandwidth/nova-tools") {
+		t.Fatalf("the fake gh recorded %v; want one `gh pr list --repo mas-bandwidth/nova-tools`", calls)
+	}
+	if !strings.Contains(out.String(), "candidates=2") || !strings.Contains(out.String(), "prs=2") {
+		t.Fatalf("POOL OK line wrong: %q", out.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "pool.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	want := []string{
+		"prs\t11\tread\tone\tread",
+		"prs\t13\tread\tthree\tread",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("want %d pool rows, got %d: %q", len(want), len(lines), string(raw))
+	}
+	for i, w := range want {
+		if lines[i] != w {
+			t.Fatalf("row %d = %q, want %q", i, lines[i], w)
+		}
+	}
+}
+
 // pool-roadmap-kind-is-card-kind: a roadmap source enumerates one row per cell whose :card
 // names a template; the kind column of pool.tsv is the card kind (the template name), not
 // the source kind, because cut keys rule 6 (and rule 7's routing) on row.Kind, and a

@@ -715,6 +715,29 @@ through `nova-swarm batch`, and fold what comes back. It makes no model call.
 `pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
 `status` below is the one-verb answer to the all-day questions.
 
+### pool
+
+```
+nova-pulse pool --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
+```
+
+`pool` enumerates bounded open work from the declared sources into `pool.tsv`.
+`--sources` is a tab-separated file, one source per line: `kind`, `locator`,
+`template`. Six kinds: `issues` (`owner/repo` — open issues carrying label
+`card`, or the dogfood shape), `audits` (`owner/repo` — open issues whose body
+has a `MISSING:` or `DRIFT` line, one candidate per such line), `bus` (a
+nova-bus checkout — open notes whose body has a `slices:` block), `roadmap` (a
+lisp file under `docs/roadmaps/` — every cell whose `:card` names a template),
+`prs` (`owner/repo` — open, non-draft pull requests, one read candidate per PR),
+`work` (a nova-work checkout). A `prs` source is the read half of the harvest
+loop: every open, non-draft PR is one read candidate, and a draft PR is nowhere.
+A source that cannot be read is one refusal and no `pool.tsv` is written:
+
+```
+POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> prs=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
+POOL REFUSED source=<kind>:<locator>: <reason> (<remedy>)
+```
+
 ### status
 
 ```
