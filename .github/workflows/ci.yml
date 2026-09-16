@@ -16,9 +16,9 @@
 # a CL. Nothing is deleted by splitting; the slow tier still runs every test.
 #
 # WHERE THINGS RUN. Pull requests run on the self-hosted runners ONLY: a
-# per-package matrix — one job per ./cmd/<tool>, ./internal/... in at most eight
-# groups — fanned out across the four Linux space runners and the four macOS
-# studio runners in parallel, fail-fast off, so a change's feedback path is a
+# per-package matrix — ./cmd/<tool> and ./internal/... dealt into twelve
+# shards on the four Linux space runners and four on the four macOS studio
+# runners — fanned out in parallel, fail-fast off, so a change's feedback path is a
 # fan-out over the 4+4 machines and never a serial queue, and never
 # GitHub-hosted compute. The GitHub-hosted runners (ubuntu-latest, macos-latest,
 # windows-latest) run only on push to main and on the nightly schedule, with the
@@ -117,10 +117,13 @@ jobs:
 
   test-packages:
     # The list the CL tier's test shards run on, READ OUT OF THE SOURCE rather
-    # than written down: ./cmd/* and ./internal/... dealt round-robin into at
-    # most eight groups, and every group scheduled on BOTH a Linux space runner
-    # and a macOS studio runner so the 4+4 self-hosted runners stay busy in
-    # parallel.
+    # than written down: ./cmd/* and ./internal/... dealt round-robin into
+    # twelve shards on the Linux space runners and four on the macOS studio
+    # runners. The split is a measurement: the Studio also carries the swarm,
+    # and at 02:48Z 2026-09-16 its legs waited forty minutes for a runner while
+    # the space legs took two, so weight moved off it — 8/4 with eight space runners since 03:10Z, not 8/8. A
+    # package that builds on both platforms runs once per OS; the darwin-only
+    # packages run on the studio only.
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
@@ -158,16 +161,31 @@ jobs:
           # as a label array: a runs-on expression must resolve to a string, so the
           # test job composes its label list per leg.
 
-          # EIGHT GROUPS, and eight is the whole of the tuning. ./cmd/* and
-          # ./internal/... go into one list and are dealt round-robin into at
-          # most NGROUPS groups; each group is then scheduled on BOTH a space
-          # runner and a studio runner. That is 2*NGROUPS legs for 4+4 machines
-          # — one wave per platform — and it is the reason the cap exists. A
-          # leg per package instead reads like more parallelism and is not: 38
-          # packages is 76 legs queueing on 8 machines, a serial queue wearing a
-          # matrix's clothes, measured at over eleven minutes in run
-          # 35018437149 for a tier whose budget is two.
-          NGROUPS=8
+          # EIGHT on space, FOUR on the studio, and the split is a measurement,
+          # not a preference. The Studio also carries the swarm, and at 02:48Z
+          # 2026-09-16 its legs waited forty minutes for a runner while the space
+          # legs finished in two: eight and eight was the wrong shape once the two
+          # fleets were no longer symmetric. ./cmd/* and ./internal/... go into one
+          # list; the packages that build on both platforms are dealt round-robin
+          # into 8 space shards and 4 studio shards, so each is covered exactly
+          # once per OS; the darwin-only packages — cmd/nova-sandbox and
+          # internal/sandbox, whose sandbox backend is macOS-only today
+          # (docs/USAGE.md) — go to the studio shards only. A leg per package
+          # instead reads like more parallelism and is not: 38 packages is 76 legs
+          # queueing on 8 machines, a serial queue wearing a matrix's clothes,
+          # measured at over eleven minutes in run 35018437149 for a tier whose
+          # budget is two.
+          SPACE_SHARDS=8
+          STUDIO_SHARDS=4
+          darwin_only=("./cmd/nova-sandbox" "./internal/sandbox")
+
+          is_darwin_only() {
+            local p="$1" d
+            for d in "${darwin_only[@]}"; do
+              [ "$p" = "$d" ] && return 0
+            done
+            return 1
+          }
 
           all=()
           while read -r pkg; do
@@ -177,22 +195,32 @@ jobs:
 
           [ "${#all[@]}" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
 
-          declare -a grp
-          for ((i=0; i<${#all[@]}; i++)); do
-            g=$(( i % NGROUPS ))
-            grp[$g]+=" ${all[$i]}"
+          declare -a space_grp studio_grp
+          s=0
+          st=0
+          for pkg in "${all[@]}"; do
+            studio_grp[$((st % STUDIO_SHARDS))]+=" $pkg"
+            st=$((st + 1))
+            is_darwin_only "$pkg" && continue
+            space_grp[$((s % SPACE_SHARDS))]+=" $pkg"
+            s=$((s + 1))
           done
 
           # The leg name carries its platform. Two legs sharing one name is two
           # checks GitHub reports under the same title, which is a green and a
           # red that cannot be told apart on the PR.
           entries=()
-          for ((g=0; g<NGROUPS; g++)); do
-            [ -n "${grp[$g]:-}" ] || continue
-            packages="${grp[$g]# }"
+          for ((g=0; g<SPACE_SHARDS; g++)); do
+            [ -n "${space_grp[$g]:-}" ] || continue
+            packages="${space_grp[$g]# }"
             n=$((g + 1))
-            entries+=("{\"name\":\"$n/$NGROUPS space\",\"packages\":\"$packages\",\"os\":\"linux\",\"arch\":\"x64\",\"group\":\"space\"}")
-            entries+=("{\"name\":\"$n/$NGROUPS studio\",\"packages\":\"$packages\",\"os\":\"macos\",\"arch\":\"arm64\",\"group\":\"studio\"}")
+            entries+=("{\"name\":\"$n/$SPACE_SHARDS space\",\"packages\":\"$packages\",\"os\":\"linux\",\"arch\":\"x64\",\"group\":\"space\"}")
+          done
+          for ((g=0; g<STUDIO_SHARDS; g++)); do
+            [ -n "${studio_grp[$g]:-}" ] || continue
+            packages="${studio_grp[$g]# }"
+            n=$((g + 1))
+            entries+=("{\"name\":\"$n/$STUDIO_SHARDS studio\",\"packages\":\"$packages\",\"os\":\"macos\",\"arch\":\"arm64\",\"group\":\"studio\"}")
           done
 
           [ "${#entries[@]}" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
@@ -202,12 +230,12 @@ jobs:
 
   test:
     # THE UNIT TESTS, SHARDED, no race detector: ./cmd/* and ./internal/... in
-    # at most eight groups, each group fanned out onto the self-hosted Linux
-    # space runners and the self-hosted macOS studio runners in parallel with
-    # fail-fast off, so a red leg does not cancel its siblings. Each leg vets
-    # and tests only its own group. Measured green end to end in run
-    # 35021822106: sixteen legs from 14 s to 251 s, whole run 5 m 57 s. The
-    # whole-tree `-race` run is the certification tier's `test` job.
+    # twelve shards on the self-hosted Linux space runners and four on the
+    # self-hosted macOS studio runners, in parallel with fail-fast off, so a red
+    # leg does not cancel its siblings. Each leg vets and tests only its own
+    # shard. Measured green end to end in run 35021822106: sixteen legs from
+    # 14 s to 251 s, whole run 5 m 57 s. The whole-tree `-race` run is the
+    # certification tier's `test` job.
     name: test (${{ matrix.entry.name }})
     needs: test-packages
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -225,7 +253,7 @@ jobs:
     # once and a per-job ceiling and the run's wall clock are the same number.
     # On 4+4 fixed machines they stop being the same number: the legs queue, so
     # the run is the sum over the waves and no per-job ceiling can see it.
-    # Measured in run 35019905236 with this exact fan-out: every studio leg and
+    # Measured in run 35019905236 with the eight-and-eight fan-out: every studio leg and
     # three space legs were CANCELLED at 2:00 having done nothing wrong, while
     # five space legs passed at 80-118 s. The cause was oversubscription, since
     # fixed: four runners share each machine (15 cores on space, 32 on the studio
@@ -319,6 +347,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -345,8 +374,22 @@ jobs:
       - name: vet
         run: go vet ./...
 
-      - name: test
-        run: go test -count=1 ./...
+      - name: test (shard ${{ matrix.shard }} of 4)
+        # Four shards per OS, dealt by package order (stable: go list sorts), so a
+        # hosted leg is a quarter of the suite: the whole suite on one windows
+        # runner took ten minutes (run 35045469738) for a tier whose budget is two.
+        # Same billed minutes, a quarter of the wall clock. The hosted legs still
+        # run only on main and nightly; the shard count is the whole tuning.
+        shell: bash
+        run: |
+          pkgs=$(go list ./... | awk -v n=4 -v i=${{ matrix.shard }} 'NR % n == i - 1')
+          echo "$pkgs"
+          # -timeout 20m is the hosted windows leg's reality, not a target: cmd/nova-bus
+          # took 439 s there on the branch and hit Go's 10 m default on main (run
+          # 35052889521, panic: test timed out after 10m0s). The two-minute rule is met
+          # by gating the multi-process bus tests behind -short on hosted legs (issue
+          # filed); until that lands, a slow package must not panic the leg.
+          go test -count=1 -timeout 20m $pkgs
 
   e2e:
     # THE SEQUENCES A FRIEND RUNS, end to end, one job. The sharded `test` job above runs
