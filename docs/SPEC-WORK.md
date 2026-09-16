@@ -3309,6 +3309,25 @@ never called configuration**; it references CONFIG's stable identity and revisio
 copying a definition into every activity record; and its updates and observations are journaled and
 retained under the event and accounting contracts this document already has.
 
+**A manager's prompt is CONFIG data, tracked per model as a `prompt profile`, and never as memory.**
+Glenn, 2026-09-16: *"prompt engineering is a major part of getting the right results, so the prompt
+per model is tracked as data, not memory."* SPEC-AHEAD: #500. A **prompt profile** is a CONFIG
+member **keyed by manager model** — for example `sonnet`, `opus`, `sol` and `deepseek-v4-pro`, each
+name a team's own configuration and none of them the tool's, by the rule that names no model in
+nova-work — and each profile holds five things: a **pointer to the prompt text**, a file path in the
+repository (the example shape `prompts/<model>.md`) and **never inline**; the **policy version** it
+was written against, a pinned revision of the approved policy record of *The duty tier* it
+executes; the **evidence**, a **dated measurement** of that model as a manager — **cost per accepted
+decision, wrong or missed decisions and recovery latency**, the three gates the coordination measure
+already names, each stamped with the date it was measured; an **expiry date** after which the
+profile is stale and must be re-measured; and an **owner**, a friend of `friends`. **A manager
+session names its profile**, and **a stale or absent profile is printed on the status line as such**
+— `profile-state=stale` with the expired date, or `profile-state=absent`, never guessed and never
+silently swapped for another model's prompt. **Profiles are edited by the coordinator only**, under
+the one writer and the one journal like every CONFIG change, and **every edit is a versioned record
+with `:by`**, so the journal answers who last edited a prompt and when, as it answers whose word
+every event is. Replay: `prompt-profile-expired-shows-on-the-status-line`.
+
 **The coordinator is a friend in `friends` and is tracked by the same indexes as everyone else** —
 her or his own tasks, executions, model, bench, usage and availability, through the same queries.
 **Coordinator ownership is a role with the single-writer and fencing rules of the execution model,
@@ -5955,6 +5974,30 @@ being the amendment's additions to *Output grammar*:**
   --generation <n>` is refused `ALLOC FAIL machine=m-a1 slots=1 holder=<name>: capacity` at exit 1
   even though fourteen cores sit idle, because slots are bounded by declared concurrency and cores
   are a separate constraint validated independently.
+
+**The replays of the prompt profile (#500), for the manager prompt as CONFIG data, the status-line
+stale profile, the coordinator-only edit and the versioned `:by` record.** The roadmap acceptance
+rows below join the six fleet allocation rows of PR678, each **SPEC-AHEAD: #500** with its replay
+name; the fleet rows stand as appended there and are not renumbered:
+
+| rule | replay |
+|---|---|
+| machines as CONFIG, equipment never completes | SPEC-AHEAD: #500 — `machine-is-config-and-never-a-work-tree-node` |
+| ACTIVE allocation binds machine, slot and generation | SPEC-AHEAD: #500 — `allocation-binds-machine-slot-generation` |
+| `take` is atomic and idempotent | SPEC-AHEAD: #500 — `allocation-take-is-atomic-and-idempotent` |
+| expiry marks an allocation suspect | SPEC-AHEAD: #500 — `expiry-marks-suspect-reuse-needs-fencing` |
+| probes record observed ACTIVE and never CONFIG | SPEC-AHEAD: #500 — `probe-records-observed-active-and-touches-no-config` |
+| one allocator per machine | SPEC-AHEAD: #500 — `one-allocator-per-machine-aliases-share-nested-conserve` |
+| prompt profile as CONFIG, keyed by manager model | SPEC-AHEAD: #500 — `prompt-profile-expired-shows-on-the-status-line` |
+
+- **`prompt-profile-expired-shows-on-the-status-line`** — a manager whose profile expired yesterday:
+  `session status` prints `SESSION OK … profile=sonnet profile-state=stale profile-expired=2026-09-15
+  profile-owner=<name> …`, the stale profile printed on the status line as such, never silently
+  re-measured and never swapped for another model's prompt; a manager with no profile prints
+  `profile=sonnet profile-state=absent`; a current one prints `profile=sonnet profile-state=current
+  profile-expires=<stamp>`; a manager session names its profile on that same line; and only the
+  coordinator's `profile` verb writes a profile, every edit a versioned record carrying `:by` and
+  its own revision, so the journal answers who last edited the prompt and when.
 
 ## Preservation and recovery acceptance *(Stella, `docs/SPEC-WORK-VALIDATION.md` at `81c2885`)*
 
