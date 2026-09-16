@@ -9,6 +9,17 @@ import (
 	"time"
 )
 
+// hasFilterArg reports whether filter appears as a standalone argument in the
+// space-separated scp log line, not merely as a substring of a path.
+func hasFilterArg(line, filter string) bool {
+	for _, arg := range strings.Fields(line) {
+		if arg == filter {
+			return true
+		}
+	}
+	return false
+}
+
 // The bench fakes: an `ssh` and an `scp` on PATH that record their argv and work against a
 // directory on this machine standing in for the bench's disk. The fake ssh runs the command
 // it was given through a shell, exactly as a real one hands its joined arguments to the
@@ -135,7 +146,7 @@ func TestPullWaitsForResult(t *testing.T) {
 	}
 	for _, l := range copies {
 		for _, filter := range []string{"--include", "--exclude", "-r", "*"} {
-			if strings.Contains(l, filter) {
+			if hasFilterArg(l, filter) {
 				t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
 			}
 		}
