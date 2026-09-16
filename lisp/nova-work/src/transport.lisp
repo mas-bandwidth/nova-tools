@@ -317,7 +317,7 @@ the reader's bound refuses whole, before any payload is answered (:2663-2665)."
     (subseq trimmed 1 (1- (length trimmed)))))
 
 (defun %wire-key (pair)
-  "The key of one `"key": value` top-level pair, or NIL when it has no colon or
+  "The key of one `\"key\": value` top-level pair, or NIL when it has no colon or
 its key is not a quoted string."
   (let* ((colon (position #\: pair))
          (key (and colon (wire-trim (subseq pair 0 colon)))))

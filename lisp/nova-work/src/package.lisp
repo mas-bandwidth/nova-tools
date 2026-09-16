@@ -1994,7 +1994,49 @@
     #:state-export-wait
     #:snapshot-state-export
     #:export-wire-op
-    #:state-export-cancel-ack))
+    #:state-export-cancel-ack
+;; S4 --- the pool is the tree (#466): records and pure functions for the
+    ;; dep reverse index, released=, the under/ready asks, priority and the
+    ;; partition rules. Wiring into the command thread is a later card.
+    #:pool
+    #:pool-node
+    #:pool-get
+    #:pool-order
+    #:pool-branch
+    #:pool-type
+    #:pool-id
+    #:pool-parent
+    #:pool-deps
+    #:pool-responsible
+    #:pool-holder
+    #:make-pool
+    #:dependents
+    #:released-of
+    #:partition-counts
+    #:closed-in
+    #:rule-18-finding
+    #:disposition-row
+    #:s4-disposition-row
+    #:print-disposition-row
+    #:under-scope
+    #:under-query
+    #:rank-value
+    #:set-priority
+    #:container-path
+    #:effective-priority
+    #:s4-effective-priority
+    #:priority-rank-compare
+    #:rank-label
+    #:context-label
+    #:ready-p
+    #:s4-ready-p
+    #:ready-row
+    #:s4-ready-row
+    #:print-ready-row
+    #:ready-scope
+    #:ancestor-ids
+    #:ready-query
+    #:check-query-ask))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

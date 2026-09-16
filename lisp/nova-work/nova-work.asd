@@ -45,7 +45,11 @@
                (:file "src/compaction")
                (:file "src/new-verbs")
                (:file "src/decide")
-               (:file "src/replays-verdict-state")))
+               (:file "src/replays-verdict-state")
+               (:file "src/s4-forest")
+               (:file "src/s4-priority")
+               (:file "src/s4-ready")
+               (:file "src/s4-args")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -75,4 +79,5 @@
                (:file "tests/replays-8663")
                 (:file "tests/replays-8664")
                 (:file "tests/decide")
-                (:file "tests/replays-8682")))
+                (:file "tests/replays-8682")
+               (:file "tests/s4")))
