@@ -60,6 +60,7 @@ type nativeRunResult struct {
 	configSHA    string  // sha8 of the carried provider config, "" when --config named none
 	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
 	harness      string  // ok | silent: silent when the capture holds no words of the child's and no result was found
+	fence        string  // the first path the harness's own fence auto-rejected, "" when it rejected nothing
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -173,14 +174,23 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// file is carried verbatim and not checked -- this run never calls them, and checking
 	// them refused local-model cards for an absent inception key on every adoption pass
 	// (#523 follow-up).
-	configSHA := ""
-	if cfg.configFile != "" {
-		sha8, reason := copyProviderConfig(cfg.configFile, cfg.authFile, provider, dataHome)
-		if reason != "" {
-			refuseNative(errOut, reason)
-			return nativeRunResult{}, 2
-		}
-		configSHA = sha8
+	//
+	// (4c) AND THE JOB'S OWN FENCE (issue #644). The harness's `permission` block is written
+	// into the SAME file, whether or not --config named one, because a run with no config at
+	// all still runs under the harness's default fence -- which auto-rejects the job's own
+	// `../scratch` and every read-only path a card names -- and that fence is what killed 8
+	// of 30 cards on 2026-09-16. The block names this job's directories; the carried
+	// provider config keeps its own bytes and its own rules beside them (internal/swarm/fence.go).
+	// On a walled bench the wall owns what the child may read, so only a --no-wall run takes
+	// the card's `READ:` paths: with no OS wall there is nothing else to open them.
+	var reads []string
+	if cfg.noWall {
+		reads = swarm.CardReadPaths(cfg.card)
+	}
+	configSHA, reason := writeJobConfig(cfg.configFile, cfg.authFile, provider, dataHome, jobDir, reads, errOut)
+	if reason != "" {
+		refuseNative(errOut, reason)
+		return nativeRunResult{}, 2
 	}
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
@@ -300,6 +310,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
 	// logs are closed, so every byte the child wrote is on disk -- and carried on the OK line.
 	res.harness = harnessState(jobDir)
+	// AND WHETHER THE FENCE STOPPED THE CARD (issue #644), asked of the same capture and for
+	// the same reason: the harness prints its own rejection and then the model stops, so a
+	// run that ends with no result and a rejection in its capture is not a model that chose
+	// to publish nothing. The path is carried onto the NATIVE OK line, where the batch reads
+	// it and scores the card `fence` instead of `no-result`.
+	res.fence = fenceRejected(jobDir)
 
 	if wall != "" {
 		backend, cwd, ok := wallNamed(wallOut.String())
@@ -318,6 +334,22 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// can fold the card's tokens and dollars without re-reading the harness.
 	res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], start, time.Now(), res.rc, errOut)
 	return res, 0
+}
+
+// fenceRejected is the first path the harness's own fence auto-rejected in this job's
+// capture, or "" when it rejected nothing. It is asked OF THE RUN'S OWN CAPTURE,
+// `<job>/harness-output.log` (issue #608), the file with one writer -- never `harness.log`,
+// which carries the runner's stdout and this very line.
+func fenceRejected(jobDir string) string {
+	raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
+	if err != nil {
+		return ""
+	}
+	path, ok := swarm.FenceRejection(raw)
+	if !ok {
+		return ""
+	}
+	return path
 }
 
 // harnessState is the `harness=<ok|silent>` token the NATIVE OK line always carries. ONE
@@ -667,27 +699,45 @@ func copyAuth(src, provider, dataHome string) string {
 	return ""
 }
 
-// copyProviderConfig copies an opencode.json provider config beside the carried auth copy
-// in the job's own data home, mode 0600, and returns the sha8 the NATIVE OK line names. The
-// config's entry for THE MODEL'S provider is refused when its key is absent from the auth
-// file: that provider is exactly the one the harness is about to call, and the refusal names
-// the provider, never the key. The bytes are copied verbatim even when they are not a JSON
-// object this side can parse -- the refusal check is best-effort, the copy is not.
-func copyProviderConfig(configPath, authPath, provider, dataHome string) (sha8, reason string) {
-	raw, err := os.ReadFile(configPath)
-	if err != nil {
-		return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error()))
+// writeJobConfig writes the ONE opencode.json the job's harness reads, beside the carried
+// auth copy in the job's own data home, mode 0600, and returns the sha8 the NATIVE OK line
+// names -- the sha8 OF THE BYTES THE CHILD SEES, which is the only config any later reader
+// can check the run against.
+//
+// It carries two things. The provider config a caller named with --config (issue #465),
+// whose entry for THE MODEL'S provider is refused when its key is absent from the auth file:
+// that provider is exactly the one the harness is about to call, and the refusal names the
+// provider, never the key. And this job's own fence block (issue #644), which is written
+// WHETHER OR NOT a config was named, because the harness's default fence auto-rejects the
+// card's own `../scratch` and every path it names on a `READ:` line.
+//
+// A config file this side cannot parse is still carried verbatim -- the refusal check is
+// best-effort and the copy is not -- and then the fence cannot be merged into it, which is
+// said once on stderr as a NATIVE NOTE rather than refused: a run with an unparseable config
+// is a run the caller has already chosen, and it is better fenced-by-default than not run.
+func writeJobConfig(configPath, authPath, provider, dataHome, jobDir string, reads []string, notes io.Writer) (sha8, reason string) {
+	var raw []byte
+	if configPath != "" {
+		body, err := os.ReadFile(configPath)
+		if err != nil {
+			return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error()))
+		}
+		if modelProviderMissingAuth(body, authPath, provider) {
+			return "", fmt.Sprintf("the config file %s names provider %s, whose key is absent from the auth file %s; add it to --auth or drop the provider from --config",
+				oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(authPath)))
+		}
+		raw = body
 	}
-	if modelProviderMissingAuth(raw, authPath, provider) {
-		return "", fmt.Sprintf("the config file %s names provider %s, whose key is absent from the auth file %s; add it to --auth or drop the provider from --config",
-			oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(authPath)))
+	body, merged := swarm.MergeFencePermission(raw, jobDir, reads)
+	if !merged && notes != nil {
+		fmt.Fprintf(notes, "NATIVE NOTE: the config %s is not a JSON object this tool can read, so the job's fence rules were not written into it; the harness runs on its own defaults and a rejection is reported as fence=rejected\n", oneline.Field(dash(configPath)))
 	}
-	sum := sha256.Sum256(raw)
+	sum := sha256.Sum256(body)
 	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error()))
 	}
-	if err := os.WriteFile(dst, raw, 0o600); err != nil {
+	if err := os.WriteFile(dst, body, 0o600); err != nil {
 		return "", fmt.Sprintf("the config copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error()))
 	}
 	return hex.EncodeToString(sum[:])[:8], ""

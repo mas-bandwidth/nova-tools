@@ -125,6 +125,7 @@ nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--fro
                                                                        coverage, backlinks, wikilinks, frontmatter — it finds, you decide
 nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--fail-max <n>] <gold.tsv>
                                                                        known-answer harness: recall@k and MRR, fails below the floor
+nova-memory boot   --root <dir> --pin <file>                            the session loads exactly the pinned memories, never walks the directory
 ```
 
 ### First run
@@ -183,6 +184,8 @@ MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=note
 **What the flags want.** `--channels` is a retrieval method, `bm25` or `trigram`, never a directory. `--k` is the number of hits, your reading budget; there is no default. `--root` is your corpus, written out every run. A run short two flags prints two sentences and stops once.
 
 **`verify` and `eval` are bounded**, per kind: at most `--fail-max` findings per kind, one `MORE` line per kind that elided anything, then the count line. On a 5,000-entry corpus `verify` used to print 10,000 lines and no total. `eval` lists misses only; a passing row is a number, not a line.
+
+**`boot` loads a pin, not a directory.** The pin file names the few memories a session loads — one slash path per line relative to `--root`, `#` comments and blank lines ignored, order = boot order — and boot reads exactly those files, reporting `BOOT OK files=<n> bytes=<n>`. It never walks the directory: search answers the rest from the index. A boot that cannot name a memory (missing file, empty file, non-canonical path) is a refusal, because a self that loaded less than it thinks is the failure this verb exists to remove.
 
 **Why it exists.** A mind that keeps its memory as markdown answers "do I already know this?" by re-reading everything it is: n new learnings against m existing ones is O(n·m), m grows every day, and the failure is silent. This makes membership a lookup: a BM25 index, optionally with character trigrams, rebuilt in memory from your tree on every run, so the judgment budget per new learning is k receipts, a constant. No database, no cache, nothing to sync; the tree is the store and the index stops existing when the process exits. It never writes your corpus and never replaces the linear read: query for work, traverse for self. `eval` is the point of shipping it: the tool is run-proven on one line and value-unproven in general, so build a gold set from your own record (`cmd/nova-memory/testdata/example-gold.tsv` is the form), run it before and after any change, and measure instead of believing.
 
@@ -283,7 +286,7 @@ nova-bus draft --bus ~/bus --as Ada --to Bo --subject 'the gate' > draft.md
 nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Ada --remote origin --branch main
 ```
 
-A `Re:` line is how a note gets closed: your reply carrying `Re: <id>` takes that note off your open list. If a draft has no `Re:` and reads like a reply, `send` says so in one line and sends it anyway. It refuses a draft that already carries `Id:`, an unknown header key, a recipient the roster does not know, a sender with no lane, a `Re:` naming nothing, an empty body, and a checkout that is dirty, on the wrong branch, or ahead of the remote with somebody else's work. Every refusal in a draft is reported in one run. A conflict on the tool's own files never reaches you: `INDEX` and `RECEIPTS` merge as unions, `CURSOR` takes the further read, and the first send writes a `.gitattributes` so your own pulls settle the same way. The one conflict left is two benches writing the same note in the same second, which is yours to decide.
+A `Re:` line is how a note gets closed: your reply carrying `Re: <id>` takes that note off your open list. If a draft has no `Re:` and reads like a reply, `send` says so in one line and sends it anyway. It refuses a draft that already carries `Id:`, an unknown header key, a recipient the roster does not know, a sender with no lane, a `Re:` naming nothing, an empty body, and a checkout that is dirty, on the wrong branch, or ahead of the remote with somebody else's work. The `.nova-bus/` directory is the tool's own per-clone state, never a note, so a `<bus>/.nova-bus/defaults` file written for `inbox` does not count as a dirty checkout; a fresh clone runs `inbox` then `send` with no hand step in between. Every refusal in a draft is reported in one run. A conflict on the tool's own files never reaches you: `INDEX` and `RECEIPTS` merge as unions, `CURSOR` takes the further read, and the first send writes a `.gitattributes` so your own pulls settle the same way. The one conflict left is two benches writing the same note in the same second, which is yours to decide.
 
 Four things a first draft gets wrong, and what `send` does about each, one `SEND NOTE` line per fix so nothing is rewritten silently: a markdown heading at the top becomes the `Subject:` when the draft has none; a pasted `Date:` is replaced from the clock; a missing `From:` is written from `--as`; bold asterisks around a key come off and blank lines above the header are skipped. The refusals that remain are the ones that would be a guess about what you meant.
 
@@ -445,14 +448,20 @@ There is another that asks who is awake rather than watching who changes.
 friend's last beat, `awake` inside `--window` (default 300s), `asleep` past it,
 `unknown` where no cursor was ever written, one `FRIEND` line each capped by
 `--max` (default 50) and one `AWAKE OK` verdict (docs/SPEC-WORK.md, **Presence**,
-source `bus-cursor`):
+source `bus-cursor`). A `from-<name>/BEAT` file is also read, from its own
+content, and a beat whose stamp is newer than the cursor reads `source=bus-beat`.
+The beat carries a `until=<stamp>` lease written by `wait` on entry, every poll
+tick and exit (`--beat-lease`, default 10m); a beat whose lease is still in the
+future reads `awake` `source=bus-beat` even when its stamp and cursor are both
+past `--window` — a line whose manager process is alive between two `wait` calls:
 
 ```
 $ nova-wake awake --bus ./bus
 FRIEND alice awake age=10 source=bus-cursor
 FRIEND bob asleep age=600 source=bus-cursor
 FRIEND carol unknown age=- source=bus-cursor
-AWAKE OK friends=3 awake=1 asleep=1 unknown=1 window=300
+FRIEND rowan awake age=500 source=bus-beat
+AWAKE OK friends=4 awake=2 asleep=1 unknown=1 window=300
 ```
 
 ### First run
@@ -699,6 +708,47 @@ The things a first run gets wrong, and what each one wants:
 - **a verb on a directory that is not a lane** — exit 2, with the whole `init`
   command in the refusal, and nothing written on the way past.
 
+## nova-pulse
+
+One tool for parallel work: enumerate bounded work, cut cards, admit them
+through `nova-swarm batch`, and fold what comes back. It makes no model call.
+`pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
+`status` below is the one-verb answer to the all-day questions.
+
+### status
+
+```
+nova-pulse status --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>]
+```
+
+`status` prints, no model, counted from the queue, `usage.tsv`, the ADOPT
+files and a cached `gh` step, at most `--max` lines per capped kind (default
+20, `0` for all), eight line kinds each one line:
+
+```
+STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
+STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
+STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
+STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
+STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
+STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
+STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
+STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
+STATUS TOOLS merged_since_adoption=<n> <names>
+```
+
+`WIDTH` prints one line per bench in `--roots` (running jobs, slots, load and
+headroom from each bench's slot files); `--roots` is the scope — a bench or
+friend outside it is nowhere on any line. `REMAINING` counts what is still in
+flight in scope only. `ADOPTION` prints one line per friend, the coordinator
+included (its `version=` reads `-` until there is an ADOPT file for it).
+With no `usage.tsv` rows in the window every `RATE` metric reads `-` — a cost
+or latency never measured is unknown, never zero.
+Sources: the queue directory (`pending`, `launched`, `done`, `failed`, and the
+`COORDINATOR`, `REPO`, `UNREAD`, `DIRTY`, `UNCARDED`, `HOLD`, `ESCALATE`,
+`DOGFOOD` state files), each bench's `pool/slots/*.json` and `usage.tsv` rows,
+and each bench's `ADOPT/<friend>` files. Prototype: `bin/status.sh`.
+
 ## nova-review
 
 One bounded, exact-revision **review packet** at the review layer, specified in
@@ -784,7 +834,10 @@ line that then goes silent is `stale=true` past `--stale` and is takeable again 
 `--anyway`; a take or a close over somebody's *live* take is refused at exit 1 and names
 the holder. Two backends, one format: a directory of card files (`--dir`, which this tool
 appends to and never commits — landing it is yours) and issue comments (`--issue` with
-`--gh-timeout <seconds>`, durable when the command returns).
+`--gh-timeout <seconds>`, durable when the command returns). On the issue backend, the
+comment's actual author (from GitHub's `user.login`) is used for card ownership and
+closing; the `--as` value remains as a display label on the event. The file backend has
+no author, so it uses `--as` as before.
 
 ### First run
 
@@ -834,7 +887,7 @@ nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sa
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
-nova-swarm template --name read-pr|probe-row|fix-card|result|worker                         # the conditions, baked in, so they are not retyped and not forgotten
+nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup                    # the conditions, baked in, so they are not retyped and not forgotten; setup is #184's agreement form, not a task template
 nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
@@ -957,6 +1010,17 @@ failed samples end the job `RUN BUDGET-UNVERIFIABLE`.
 
 `nova-swarm template --name worker` prints this description with every field in it, so the
 one file a first run cannot start without is the one file you do not have to invent.
+
+`nova-swarm template --name setup` prints the per-friend safety-setup agreement form
+(issue #184): the proposal half and the friend's own agreement half — a friend may agree,
+propose an alternative, decline, or stay silent, and missing feedback is pending, never
+assent — a guarantee table whose rows say who enforces each guarantee (the OS wall, a
+cooperating harness, or the launcher outside the wall), and generic wall, fence, seat and
+launcher examples with placeholder values only. It is a form, not a task's conditions:
+`add --template setup` is refused the way `add --template result` is, no secret, key,
+token or private path is ever printed by it, and an agreed form supplies no account
+access — implementation, credential migration and deployment are separate staged work
+with their own authorization.
 
 ### The harness contract
 
@@ -1116,7 +1180,7 @@ which is the fastest way to see the wall a set of flags actually makes.
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
-Five verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
+Five verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line.
 
 ### First run
 
@@ -1126,7 +1190,7 @@ What a first run gets wrong, and what each one wants:
 
 - **No `--repos`.** There is no built-in list of repos, because the two the prototype carried disagreed about three of them. It wants a file of `<name><TAB><regexp>` lines in priority order; the `unknown=` and `other=` shares on every `TOKENS DAY` line are how you see whether yours is good enough.
 - **Expecting exit 0 with an unreadable file.** A declared source is a claim that the report covers it, so an unreadable one is one `TOKENS UNREADABLE` line, one in `unreadable=`, and exit 1 — and the day files still land. `written=true` is about the files; the exit code is about the claim.
-- **Reading a `-` as a zero.** A dash is "this source did not report that type" and a zero is a measurement. `sum` counts the dashes per column beside the totals, and nothing here folds one type into another.
+- **Reading a `-` as a zero.** A dash is "this source did not report that type" and a zero is a measurement. `sum` counts the dashes per column beside the totals, and nothing here folds one type into another. The daily ledger `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes keeps the rule: its columns are `day`, `model`, `tokens_in`, `tokens_out`, `usd`, `cards`, `dashes`, a kept field a card did not report is `-` never 0, and the trailing `dashes` column counts the cards that left input, output and usd unknown.
 - **Sending a second tokens note for a day.** Two notes in one lane for one day are `TOKENS CONFLICT` and fold nothing, because no winner can be read off a clock, a filename or a git history. A correction names what it corrects: `supersedes=<id>[,<id>…]` in the subject, which `report --supersedes` writes for you.
 - **Reusing one label across two kinds.** A label is unique across the whole run, not per flag: `--claude bench=… --opencode bench=…` is `TOKENS REFUSED … the label bench is used twice`, exit 2, before anything is read. Two sources with one label would make the `sources` column a lie. A `--provider` is the one flag whose label carries its parser too — `--provider google:emma=<export>` — so two friends' exports from one provider are `google:emma` and `google:freddy`.
 - **Declaring one harness twice.** **One harness is one `--claude`.** This fold does not de-duplicate across sources, by design (SPEC-TOKENS, *what it deliberately does not do*), so two declared directories holding the same transcripts count every message twice and the day file, `check` and `sum` are all green about it. Measured on this bench: `~/.claude/projects/<session>/subagents/agent-*.jsonl` and `/private/tmp/claude-501/*/tasks/*.output` were the same 10,281 messages for one day, and the doubled fold said `written=true`. A fold that sees two sources feed one message id now says so on its `TOKENS NOTE` line, naming both labels and the count — it is a warning, not a correction: the numbers are still doubled and the remedy is to drop one flag.

@@ -452,6 +452,7 @@ nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <label>=<file>]...
                     [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
 nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+                    --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
 nova-tokens check   --out <dir> [--max <n>]
 nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
@@ -524,11 +525,24 @@ and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 writes: it walks every card's `usage.tsv` under `<dir>/*/jobs/*/`, keeps the
 rows whose `started` stamp is on `--day`, and appends one row per model to the
 ledger in the ledger's own column order — `day`, `model`, `tokens_in`,
-`tokens_out`, `usd`, `cards` — reading the header and refusing (exit 2) when it
+`tokens_out`, `usd`, `cards`, `dashes` — reading the header and refusing (exit 2) when it
 differs, so a ledger filled by hand and one filled by this verb agree. A second
 run for the same day replaces that day's rows, never doubling, so the ledger can
 be filled again and again; a kept field a card did not report is `-` in the ledger, never 0,
 and the trailing `dashes` column counts how many cards left each of input, output and usd unknown.
+
+A receipt that carries a `tool` column names the nova tool whose work the card
+is, and `sum --swarm-root` counts those receipts per tool and prints one `TOOLS`
+line after `SUM OK`, a `tool:n` per named tool in sorted order —
+
+```
+SUM OK day=<d> models=<n> cards=<n> in=<n> out=<n> usd=<x.xxxx>
+TOOLS <tool>:<n>,<tool>:<n>,…
+```
+
+— so a tool nobody used in the day has no name on the line and is visible by its
+absence. A receipt with no `tool` column, or a `-`, names no tool and is not
+counted; until the swarm's card receipt carries the column, no `TOOLS` line prints.
 
 **Cost per completed task per (model, repo), the shape, filed before the
 counts land (issue #64, Rowan's MODELS.md pass, 2026-09-11).** The ledger

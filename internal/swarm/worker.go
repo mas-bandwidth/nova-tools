@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // THE WORKER DESCRIPTION: which provider, which model, which environment variable the
@@ -576,11 +578,83 @@ var refusalMarks = []string{
 // the job directory by `reclaim`. A line whose key is wrong had no printed route to the
 // word `unauthorized` (the new-user audit, F5, 2026-09-11).
 func HarnessTail(jobDir string) string {
-	raw, err := readRegular(filepath.Join(jobDir, "harness.log"))
-	if err != nil {
+	kept, dropped := tailBytes(filepath.Join(jobDir, "harness.log"), oneline.TailBytes)
+	if kept == "" {
 		return ""
 	}
-	return strings.TrimSpace(string(raw))
+	if dropped <= 0 {
+		return kept
+	}
+	return fmt.Sprintf("...+%dB", dropped) + kept
+}
+
+// tailBytes streams the LAST n bytes of a worker-writable regular file, never holding the
+// file whole, and returns the retained tail plus the number of bytes dropped in front of it.
+// It opens on openRegularRead's terms (a symlink or FIFO is refused before a byte is asked
+// for) and cuts on a line boundary, so the tail opens on a complete line rather than a
+// fragment the seek landed in the middle of.
+func tailBytes(path string, n int) (string, int64) {
+	f, err := openRegularRead(path)
+	if err != nil {
+		return "", 0
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", 0
+	}
+	size := fi.Size()
+	if size == 0 {
+		return "", 0
+	}
+	if size <= int64(n) {
+		raw, err := io.ReadAll(f)
+		if err != nil {
+			return "", 0
+		}
+		return strings.TrimSpace(string(raw)), 0
+	}
+	// Read only the tail window: the ceiling plus slack for the mark and for the leading
+	// line the seek lands in the middle of.
+	const slack = 4096
+	window := int64(n + slack)
+	off := size - window
+	if off < 0 {
+		off = 0
+	}
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return "", 0
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, window))
+	if err != nil {
+		return "", 0
+	}
+	s := string(raw)
+	if nl := strings.IndexByte(s, '\n'); nl >= 0 {
+		s = s[nl+1:]
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", 0
+	}
+	// Reserve the widest the mark can be, then keep the last line-bounded bytes that fit
+	// under the ceiling, the way oneline.Cap reserves its own mark before cutting.
+	maxMark := len(fmt.Sprintf("...+%dB", size))
+	budget := n - maxMark
+	if budget < 1 {
+		budget = 1
+	}
+	if len(s) > budget {
+		s = s[len(s)-budget:]
+		if nl := strings.IndexByte(s, '\n'); nl >= 0 {
+			s = s[nl+1:]
+		}
+		s = strings.TrimSpace(s)
+	}
+	if s == "" {
+		return "", 0
+	}
+	return s, size - int64(len(s))
 }
 
 // CountRefusals reads a harness log and counts its own refusal lines. It reads the file in
