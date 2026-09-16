@@ -50,6 +50,7 @@ Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is
 - [Roadmap](ROADMAP.md): 0% verified planned work, the current baseline, and what comes next.
 - [Lisp kernel](lisp/nova-work/README.md): a Common Lisp transition kernel with validator rules and 148 acceptance cases, all green.
 - [Command reference](docs/CLI.md): every flag, worked examples and caveats.
+- [Model routes](docs/MODELS.md): the registry of every model route a bench can run, so the routes are never forgotten again.
 - [Tool contracts](docs/SPEC.md): what each tool promises, and what it refuses.
 - [Onboarding standard](docs/ONBOARDING.md) and
   [tested transcripts](docs/TESTS.md), which the tests execute line by line.
