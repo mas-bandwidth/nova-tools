@@ -686,6 +686,109 @@ func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
 	}
 }
 
+// TestNativeWalledCwdReceiptRoundTrips: a wall names the cwd it applied on its SANDBOX OK
+// line, and native must read that path back byte-for-byte -- a path holding a space, a
+// literal backslash escape or a non-ASCII name is still the same directory it was applied
+// to. The readable cwd=<dir> field is rendered through oneline.Field, which is NOT
+// injective (a literal backslash is not escaped), so native never infers the path from it;
+// the receipt is the cwdb64=<base64url> field, a strict encoding of the raw path bytes. A
+// run whose receipt decodes to the job directory must finish and reach usage.tsv beside
+// RESULT.md -- never be refused because the readable spelling read back wrong.
+func TestNativeWalledCwdReceiptRoundTrips(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	for _, tc := range []struct {
+		name string
+		root string
+	}{
+		{"space", filepath.Join(t.TempDir(), "a root with a space")},
+		{"literal_backslash_escape", filepath.Join(t.TempDir(), "a\\x20root")},
+		{"non_ascii", filepath.Join(t.TempDir(), "café-東京")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			slot := filepath.Join(tc.root, "slot-1")
+			if err := os.MkdirAll(slot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			label := "roundtrip-label"
+			var errOut bytes.Buffer
+			_, code := nativeRun(nativeRunConfig{
+				binary: bin, model: "fake/fake-model", label: label,
+				card: []byte("FAKE-PWD\n"), slotDir: slot, root: tc.root, deadline: 30 * time.Second,
+				sandbox: sandbox,
+			}, &errOut)
+			if code != 0 {
+				t.Fatalf("the walled run exits 0, got %d:\n%s", code, errOut.String())
+			}
+			jobDir := filepath.Join(slot, "jobs", label)
+			raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+			if err != nil {
+				t.Fatalf("the child did not write pwd into RESULT.md under the job directory: %v", err)
+			}
+			got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
+			if !sameDir(got, jobDir) {
+				t.Errorf("the child's cwd is %q, want the job directory %q", got, jobDir)
+			}
+			if _, err := os.Stat(filepath.Join(jobDir, "usage.tsv")); err != nil {
+				t.Fatalf("usage.tsv not found beside RESULT.md: the run was refused before usage reporting: %v", err)
+			}
+		})
+	}
+}
+
+// TestNativeWalledCwdWrongReceiptRefuses: a wall that names a cwd other than the job
+// directory on its receipt is a wall that did not apply the cwd the caller asked for, and
+// the run is refused with the --cwd refusal -- a completed child's output is never accepted
+// from the wrong directory, and no usage row is written beside RESULT.md for a refused run.
+func TestNativeWalledCwdWrongReceiptRefuses(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Setenv("NOVA_SWARM_FAKE_RECEIPT", "wrong")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	label := "wrong-cwd-label"
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		sandbox: sandbox,
+	}, &errOut)
+	if code != 2 {
+		t.Fatalf("the wrong-cwd run is refused with exit 2, got %d:\n%s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "--cwd was not applied") {
+		t.Fatalf("the refusal is the --cwd refusal, got:\n%s", errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(slot, "jobs", label, "usage.tsv")); err == nil {
+		t.Fatal("a refused run records no usage.tsv beside RESULT.md")
+	}
+}
+
+// TestNativeWalledCwdMalformedReceiptRefuses: the cwdb64 receipt is STRICTLY parsed; a wall
+// that prints a receipt that is not valid base64url cannot name the cwd it applied, and the
+// run is refused rather than the path being guessed at from the readable field.
+func TestNativeWalledCwdMalformedReceiptRefuses(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	t.Setenv("NOVA_SWARM_FAKE_RECEIPT", "malformed")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	label := "malformed-receipt-label"
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		sandbox: sandbox,
+	}, &errOut)
+	if code != 2 {
+		t.Fatalf("the malformed-receipt run is refused with exit 2, got %d:\n%s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "not valid base64url") {
+		t.Fatalf("the refusal names the malformed receipt, got:\n%s", errOut.String())
+	}
+}
+
 // TestNativeOKNamesTheWall: NATIVE OK names the wall it ran inside, copied from the wall's
 // own SANDBOX OK line, and says none when no wall was named -- so a run without a wall is
 // visible in the one line a caller reads.

@@ -123,7 +123,7 @@ PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise
 
 $ HOME=/Users/me/pool/jobs/j1/home nova-sandbox --read /Users/me/pool/ref --write /Users/me/pool/jobs/j1 -- /bin/sh -c 'echo hello > report.md; cat /Users/me/.config/anthropic/env'
 SANDBOX NOTE dropped from the child's environment: GPG_AGENT_INFO SSH_AGENT_PID SSH_AUTH_SOCK; an agent socket speaks for a key the wall denies
-SANDBOX OK backend=sandbox-exec abi=- read=1 write=1 net=nopromise cwd=/Users/me/pool/jobs/j1 cmd=sh
+SANDBOX OK backend=sandbox-exec abi=- read=1 write=1 net=nopromise cwd=/Users/me/pool/jobs/j1 cwdb64=L1VzZXJzL21lL3Bvb2wvam9icy9qMQ cmd=sh
 cat: /Users/me/.config/anthropic/env: Operation not permitted
 ```
 

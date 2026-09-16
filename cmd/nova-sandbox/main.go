@@ -15,6 +15,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -276,9 +277,9 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 			fmt.Fprintf(stderr, "SANDBOX NOTE landlock abi %s is above this tool's table: the wall is built at abi %s (clamped), which this kernel enforces as asked; the rights the newer abi added are not handled until the table grows\n",
 				oneline.Field(sandbox.ABI()), oneline.Field(strconv.Itoa(n)))
 		}
-		fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s%s read=%d write=%d net=%s cwd=%s ancestors=%d cmd=%s\n",
+		fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s%s read=%d write=%d net=%s cwd=%s cwdb64=%s ancestors=%d cmd=%s\n",
 			oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), used, len(p.Reads), len(p.Writes),
-			oneline.Field(p.Net()), oneline.Field(p.Cwd), p.AncestorCount(), oneline.Field(p.CmdName()))
+			oneline.Field(p.Net()), oneline.Field(p.Cwd), base64.RawURLEncoding.EncodeToString([]byte(p.Cwd)), p.AncestorCount(), oneline.Field(p.CmdName()))
 		if flusher, ok := stderr.(interface{ Sync() error }); ok {
 			_ = flusher.Sync()
 		}

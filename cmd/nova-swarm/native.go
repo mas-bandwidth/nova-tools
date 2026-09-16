@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -318,9 +319,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	res.fence = fenceRejected(jobDir)
 
 	if wall != "" {
-		backend, cwd, ok := wallNamed(wallOut.String())
-		if !ok {
-			refuseNative(errOut, fmt.Sprintf("%s wall ran without a SANDBOX OK line naming its backend; the run is refused rather than silently unwalled", oneline.Field(cfg.label)))
+		backend, cwd, reason := wallNamed(wallOut.String())
+		if reason != "" {
+			refuseNative(errOut, fmt.Sprintf("%s wall %s; the run is refused rather than silently unwalled", oneline.Field(cfg.label), oneline.Escape(reason)))
 			return nativeRunResult{}, 2
 		}
 		res.wall = backend
@@ -559,28 +560,43 @@ func keepNativeSecretName(name string) bool {
 }
 
 // wallNamed reads the SANDBOX OK line out of the wall's captured stderr and returns the
-// backend it named and the cwd it applied. A wall that printed no SANDBOX OK line -- one
-// that refused, or a stand-in that says nothing -- is a run this tool cannot trust to name
-// its own containment, and the second return is false (SPEC-SANDBOX rules 1 and 11: never
-// silently degraded, and a wall that cannot say what it is is no wall).
-func wallNamed(out string) (backend, cwd string, ok bool) {
+// backend it named and the cwd it applied. The cwd is read from the cwdb64=<base64url>
+// field ALONE -- the machine-readable receipt, a strict base64url encoding of the raw path
+// bytes the wall applied, so a path holding a space, a literal backslash, or a non-ASCII
+// name survives the line exactly. The cwd=<dir> field beside it is the readable rendering
+// of the same path (cmd/nova-sandbox main.go prints both) and is never decoded for the
+// comparison: oneline.Field is not injective, so its escapes cannot be reversed to the
+// bytes. A wall that printed no SANDBOX OK line, or one whose receipt is absent or not
+// valid base64url, is a run this tool cannot trust to name its own containment, and the
+// reason is returned (SPEC-SANDBOX rules 1 and 11: never silently degraded, and a wall
+// that cannot say what it is is no wall).
+func wallNamed(out string) (backend, cwd, reason string) {
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.HasPrefix(line, "SANDBOX OK ") {
 			continue
 		}
+		receipt := false
 		for _, tok := range strings.Fields(line) {
 			switch {
 			case strings.HasPrefix(tok, "backend="):
 				backend = strings.TrimPrefix(tok, "backend=")
-			case strings.HasPrefix(tok, "cwd="):
-				cwd = strings.TrimPrefix(tok, "cwd=")
+			case strings.HasPrefix(tok, "cwdb64="):
+				raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(tok, "cwdb64="))
+				if err != nil {
+					return backend, "", "printed a SANDBOX OK line whose cwdb64 receipt is not valid base64url"
+				}
+				cwd = string(raw)
+				receipt = true
 			}
 		}
 		if backend != "" {
-			return backend, cwd, true
+			if !receipt {
+				return backend, "", "printed a SANDBOX OK line with no cwdb64 receipt"
+			}
+			return backend, cwd, ""
 		}
 	}
-	return "", "", false
+	return "", "", "ran without a SANDBOX OK line naming its backend"
 }
 
 // sameDir asks whether two paths name the same directory once symlinks are resolved, so a
