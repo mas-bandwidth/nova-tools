@@ -1301,6 +1301,13 @@ For recovery across process death, name `--snapshot`; retries retain the prepare
 note. Version statuses should go to your chosen integrator, with optional Cc;
 participation and updates remain voluntary.
 
+The one `--watch` is adoption, not a timer. After a rebuild, run
+`nova-update watch --adopt <checks.tsv> [--rebuild <sha>]`: it runs the checks the
+file names, prints `ADOPT OK|REFUSED` per check and `ADOPT DONE sha=... ok=... refused=...`
+last, hands every refusal to the duty tier as `ADOPT ESCALATE`, and posts the receipt
+as the coordinator's own under `--send` (or prints it under `--draft`). Each check is one
+`name argv` line; its argv is run directly, no shell, bounded by `--timeout`.
+
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
 `--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,

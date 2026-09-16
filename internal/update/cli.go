@@ -26,11 +26,11 @@ type Environment struct {
 	Client *http.Client
 }
 type options struct {
-	file, host, snapshot, as, to, bus, remote, branch, target, adopt string
-	max                                                              int
-	timeout, budget                                                  time.Duration
-	kinds                                                            kindFlags
-	draft, send                                                      bool
+	file, host, snapshot, as, to, bus, remote, branch, target, adopt, rebuild string
+	max                                                                       int
+	timeout, budget                                                           time.Duration
+	kinds                                                                     kindFlags
+	draft, send                                                               bool
 }
 type kindFlags []string
 
@@ -62,7 +62,7 @@ func refusal(w io.Writer, token string, err error) int {
 const updateVerbs = `nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
+nova-update watch --adopt <checks.tsv> [--rebuild <sha>] [--host <label>] [--timeout <d>] [--budget <d>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>]
 nova-update help`
 
 // manifestShape is the one sentence that says what the file --file names holds:
@@ -71,6 +71,10 @@ nova-update help`
 // reads as if --file were an output. No verb writes the file, so no verb is
 // named; the spec carries the same shape once (SPEC-UPDATE rule 2).
 const manifestShape = "one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand"
+
+// checksShape is the one sentence that says what the file --adopt names holds:
+// the rule-27 checks file, one tab-separated line per check, written by hand.
+const checksShape = "one check per line, two tab-separated fields name argv, written by hand"
 
 const versionVerbs = `nova-version snapshot --file <manifest: ` + manifestShape + `>
 nova-version report --file <manifest: ` + manifestShape + `> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
@@ -188,6 +192,8 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if verb == "report" {
 		f.StringVar(&o.host, "host", "", "execution bench label")
 		f.StringVar(&o.snapshot, "snapshot", "", "explicit state file")
+	}
+	if verb == "report" {
 		f.BoolVar(&o.draft, "draft", false, "print note only")
 		f.BoolVar(&o.send, "send", impliedSend, "explicit delivery")
 		for flagName, p := range map[string]*string{"as": &o.as, "to": &o.to, "bus": &o.bus, "remote": &o.remote, "branch": &o.branch} {
@@ -243,9 +249,10 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 			}
 		}
 	}
-	file, err := os.Open(o.file)
+	path, flag, shape := o.file, "--file", manifestShape
+	file, err := os.Open(path)
 	if err != nil {
-		return refusal(errs, token, fmt.Errorf("cannot open %s (supply a readable --file: %s)", o.file, manifestShape))
+		return refusal(errs, token, fmt.Errorf("cannot open %s (supply a readable %s: %s)", path, flag, shape))
 	}
 	entries, err := Load(file)
 	file.Close()

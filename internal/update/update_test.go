@@ -44,6 +44,10 @@ func TestHelperProcess(t *testing.T) {
 	case "fail":
 		fmt.Print("v9.9.9\n")
 		os.Exit(3)
+	case "checkfail":
+		b, _ := base64.StdEncoding.DecodeString(a[1])
+		fmt.Print(string(b))
+		os.Exit(1)
 	case "hang":
 		time.Sleep(30 * time.Second)
 	case "huge":

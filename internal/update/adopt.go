@@ -244,12 +244,15 @@ func watchMain(name string, args []string, out, errs io.Writer, env Environment)
 	f := flag.NewFlagSet("watch", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	f.StringVar(&o.adopt, "adopt", "", "checks file")
+	f.StringVar(&o.rebuild, "rebuild", "", "rebuild sha")
 	f.StringVar(&o.bus, "bus", "", "bus dir")
 	f.StringVar(&o.remote, "remote", "", "remote")
 	f.StringVar(&o.branch, "branch", "", "branch")
 	f.StringVar(&o.as, "as", "", "coordinator name")
 	f.StringVar(&o.to, "to", "", "duty tier")
 	f.StringVar(&o.host, "host", "", "bench label")
+	f.BoolVar(&o.draft, "draft", false, "print note only")
+	f.BoolVar(&o.send, "send", false, "explicit delivery")
 	f.DurationVar(&o.timeout, "timeout", o.timeout, "one check deadline")
 	f.DurationVar(&o.budget, "budget", o.budget, "whole pass deadline")
 	if err := f.Parse(interspersed(f, args)); err != nil {
@@ -264,25 +267,49 @@ func watchMain(name string, args []string, out, errs io.Writer, env Environment)
 	if o.timeout <= 0 || o.budget <= 0 {
 		return refusal(errs, "ADOPT", fmt.Errorf("invalid bound (use positive --timeout/--budget)"))
 	}
-	withBus := o.bus != "" || o.remote != "" || o.branch != "" || o.as != "" || o.to != ""
-	if withBus {
-		for _, x := range []struct{ n, v string }{{"bus", o.bus}, {"remote", o.remote}, {"branch", o.branch}, {"as", o.as}, {"to", o.to}} {
+	if o.draft && o.send {
+		return refusal(errs, "ADOPT", fmt.Errorf("draft and send are exclusive (choose --draft or --send)"))
+	}
+	named := o.draft || o.send || o.as != "" || o.to != "" || o.bus != "" || o.remote != "" || o.branch != ""
+	withBus := o.send || o.bus != "" || o.remote != "" || o.branch != ""
+	if named {
+		for _, x := range []struct{ n, v string }{{"as", o.as}, {"to", o.to}} {
 			if x.v == "" {
 				return refusal(errs, "ADOPT", fmt.Errorf("missing --%s; refusing to guess (supply each named flag; run: %s help)", x.n, name))
 			}
 		}
+	}
+	if withBus {
+		for _, x := range []struct{ n, v string }{{"bus", o.bus}, {"remote", o.remote}, {"branch", o.branch}} {
+			if x.v == "" {
+				return refusal(errs, "ADOPT", fmt.Errorf("missing --%s; refusing to guess (supply each named flag; run: %s help)", x.n, name))
+			}
+		}
+	}
+	if named || withBus {
 		for _, s := range []string{o.as, o.to, o.host} {
 			if strings.ContainsAny(s, "\r\n") {
 				return refusal(errs, "ADOPT", fmt.Errorf("note header contains a newline (use a single-line --as, --to and --host)"))
 			}
 		}
 	}
-	checks, err := loadAdoptFile(o.adopt)
+	raw, err := os.ReadFile(o.adopt)
 	if err != nil {
 		return refusal(errs, "ADOPT", fmt.Errorf("cannot adopt %s (supply a readable --adopt checks file: %v)", o.adopt, err))
 	}
 	started := env.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), o.budget)
 	defer cancel()
+	if firstLine(string(raw)) == checksHeader {
+		checks, err := loadChecks(bytes.NewReader(raw))
+		if err != nil {
+			return refusal(errs, "ADOPT", fmt.Errorf("cannot adopt %s (supply a readable --adopt checks file: %v)", o.adopt, err))
+		}
+		return watchAdoptNamed(checks, o, out, errs, env)
+	}
+	checks, err := LoadAdopt(bytes.NewReader(raw))
+	if err != nil {
+		return refusal(errs, "ADOPT", fmt.Errorf("cannot adopt %s (supply a readable --adopt checks file: %v)", o.adopt, err))
+	}
 	return watchAdopt(ctx, checks, o, started, out, errs, env)
 }

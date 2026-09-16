@@ -107,7 +107,7 @@ func report(ctx context.Context, all, entries []Entry, o options, kinds string, 
 		return 1
 	}
 	if o.send {
-		sent, err = deliver(ctx, o, state, seen, body.Bytes(), out, env)
+		sent, err = deliver(ctx, o, state, seen, body.Bytes(), out, env, "REPORT")
 		if err != nil {
 			fmt.Fprintf(errs, "REPORT NOTE %s\n", oneline.Err(err))
 			code = 1
@@ -211,7 +211,7 @@ func deliveryAllowance(ctx context.Context, now time.Time) time.Duration {
 	}
 	return deadline.Sub(now)
 }
-func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observed, body []byte, out io.Writer, env Environment) (string, error) {
+func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observed, body []byte, out io.Writer, env Environment, token string) (string, error) {
 	scope := snapshotScope(o)
 	save := func() error {
 		if o.snapshot != "" {
@@ -245,7 +245,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 		if err := save(); err != nil {
 			return "uncertain", err
 		}
-		fmt.Fprintf(out, "REPORT SENT to=%s via=%s line=%s\n", field(o.to), field(strings.Join(args, " ")), field(line))
+		fmt.Fprintf(out, "%s SENT to=%s via=%s line=%s\n", token, field(o.to), field(strings.Join(args, " ")), field(line))
 		return "yes", nil
 	}
 	sent := "no"
@@ -262,7 +262,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 	}
 	if d, ok := s.Delivered[scope]; ok && sameObserved(d.Observed, seen) {
 		if sent == "no" {
-			fmt.Fprintf(out, "REPORT NOTE unchanged since %s to %s; nothing sent\n", field(d.ID), field(o.to))
+			fmt.Fprintf(out, "%s NOTE unchanged since %s to %s; nothing sent\n", token, field(d.ID), field(o.to))
 		}
 		return sent, nil
 	}
