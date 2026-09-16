@@ -51,7 +51,7 @@ func admitRefusalLine(label, why string) string {
 type BatchInput struct {
 	ID       string        // the batch id, printed on the BATCH line
 	Deadline time.Duration // the whole batch's own deadline
-	Idle     time.Duration // per-card idle timeout: a card whose log AND harness tree sit still this long is killed
+	Idle     time.Duration // per-card idle timeout: a card's log not growing this long is killed
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
 	Runner   string        // the command, one process per card
@@ -154,13 +154,13 @@ func Batch(in BatchInput) int {
 		bench      string
 		label      string
 		idleLog    string // the file the idle monitor watched; set only on an idle kill
+		cpu        uint64 // the card's process tree's CPU time at the last sample; guarded by doneMu
+		haveCPU    bool   // whether cpu holds a sample to compare against; guarded by doneMu
 		done       bool   // guarded by doneMu
 		idleKilled bool   // guarded by doneMu
 		deadKilled bool   // killed at the batch deadline; guarded by doneMu
 		rc         int    // the child's exit code; guarded by doneMu
 		lastGrow   time.Time
-		lastCPU    int64 // the harness tree's CPU ticks at last look; guarded by doneMu
-		lastIO     int64 // the harness tree's I/O bytes at last look; guarded by doneMu
 	}
 	var doneMu sync.Mutex
 	procs := make([]proc, len(cards))
@@ -214,12 +214,11 @@ func Batch(in BatchInput) int {
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
 	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
 	// --idle is set, one monitor re-reads each running card's own log -- <slot>/native.log
-	// when the child wrote one, else the job's harness.log -- and, when the log sat still,
-	// the harness process tree's own CPU and I/O (issue #593): a card whose log has stopped
-	// growing AND whose tree has stopped moving for the idle window is killed, so a dead
-	// card is removed from the wait and the batch returns on its slowest still-working card.
-	// A child go test that prints nothing for minutes still advances its own CPU, so it is
-	// never killed as idle.
+	// when the child wrote one, else the job's harness.log -- AND its process tree's CPU
+	// time, and kills a card only when neither has moved for the idle window: a dead card is
+	// removed from the wait, so the batch returns on its slowest still-working card rather
+	// than burning the whole deadline, and a card whose harness is busy and silent -- a
+	// `go test` that prints nothing for minutes -- is not a dead card (issue #593).
 	var wg sync.WaitGroup
 	allDone := make(chan struct{})
 	for i := range procs {
@@ -253,6 +252,7 @@ func Batch(in BatchInput) int {
 			ticker := time.NewTicker(idlePollInterval)
 			defer ticker.Stop()
 			lastSize := make([]int64, len(procs))
+			var lastSample time.Time
 			for {
 				select {
 				case <-stopMonitor:
@@ -260,6 +260,13 @@ func Batch(in BatchInput) int {
 				case <-allDone:
 					return
 				case now := <-ticker.C:
+					// The process table is read once per activity poll, outside the lock, and
+					// every card is asked of that one snapshot (issue #593).
+					var snap *procSnapshot
+					if now.Sub(lastSample) >= activityInterval(in.Idle) {
+						snap = newProcSnapshot()
+						lastSample = now
+					}
 					doneMu.Lock()
 					for i := range procs {
 						if procs[i].done || procs[i].idleKilled {
@@ -271,17 +278,18 @@ func Batch(in BatchInput) int {
 							procs[i].lastGrow = now
 							continue
 						}
-						// The log sat still this tick, but the harness tree may still be
-						// working: a child go test prints nothing for minutes while burning
-						// CPU and moving bytes. Treat any advance in the tree's own CPU or
-						// I/O exactly as log growth, so a silent long test is never killed
-						// as idle (issue #593).
-						if pid := procs[i].cmd.Process; pid != nil {
-							if cpu, io, ok := ProcTreeActivity(pid.Pid); ok && (cpu != procs[i].lastCPU || io != procs[i].lastIO) {
-								procs[i].lastCPU = cpu
-								procs[i].lastIO = io
-								procs[i].lastGrow = now
-								continue
+						// A silent log is not a silent card: a harness inside a `go test` that
+						// prints nothing for minutes is working, and its work is CPU its process
+						// tree spent -- its children's as much as its own. A card is idle only
+						// when NEITHER its log NOR its tree moved for the whole --idle window.
+						if snap != nil && procs[i].cmd != nil && procs[i].cmd.Process != nil {
+							if cpu, ok := snap.TreeCPU(procs[i].cmd.Process.Pid); ok {
+								grew := procs[i].haveCPU && cpu > procs[i].cpu
+								procs[i].cpu, procs[i].haveCPU = cpu, true
+								if grew {
+									procs[i].lastGrow = now
+									continue
+								}
 							}
 						}
 						if now.Sub(procs[i].lastGrow) >= in.Idle {
@@ -396,6 +404,10 @@ func Batch(in BatchInput) int {
 			abstain++
 			continue
 		}
+		// A result the card wrote inside its clone is the card's result, not a missing one
+		// (issue #594): it is copied up to the job root before the card is scored, and the
+		// copy is said once on stderr so the packet's own bytes stay bounded by n.
+		liftResult(filepath.Join(in.Root, scratchName(c), "jobs", c.label), c.label, in.Stderr)
 		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
 		rows[i].state, rows[i].reason, rows[i].tail, rows[i].line2 = state, reason, tail, line2
 		if state == "done" {
@@ -444,6 +456,78 @@ func Batch(in BatchInput) int {
 		return 0
 	}
 	return 1
+}
+
+// resultLiftDepth is how far below the job root gather looks for a result the card wrote
+// somewhere else: repo/RESULT.md, and one directory down from there -- repo/<clone>/RESULT.md,
+// the cwd of a model that cloned into its clone. Deeper is not searched: a result further
+// down than that is a file the card left behind, not the result it published.
+const resultLiftDepth = 2
+
+// liftResult copies a card's RESULT.md up to the job root when the card wrote it inside its
+// clone instead (issue #594). STEP 1 of a card makes repo/ the model's cwd, so the model
+// publishes there; gather read only the job root, scored the card reason=no-result, and the
+// work was lost. The job root wins whenever it holds a result of its own -- nothing is ever
+// overwritten -- and the copy is said once on stderr, never in the packet, so the packet's
+// bytes stay bounded by n. The RESULT contract is untouched: line 1 is still the card's
+// contract line, and scoreCard still decides.
+func liftResult(job, label string, notes io.Writer) {
+	root := filepath.Join(job, "RESULT.md")
+	if fileExists(root) {
+		return
+	}
+	from, ok := findResultBelow(job, resultLiftDepth)
+	if !ok {
+		return
+	}
+	raw, err := readRegular(from)
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(root, raw, 0o644); err != nil {
+		return
+	}
+	if notes != nil {
+		fmt.Fprintf(notes, "BATCH NOTE %s RESULT.md copied up from %s\n", oneline.Field(label), oneline.Field(from))
+	}
+}
+
+// findResultBelow is the first RESULT.md under dir, breadth first and in name order, no
+// deeper than depth directories down: repo/ is looked at before any other name, because
+// repo/ is the directory the card's own STEP 1 makes. A symlinked directory is not followed
+// -- the wall is not a wall if the thing outside it will fetch (regular.go).
+func findResultBelow(dir string, depth int) (string, bool) {
+	if depth <= 0 {
+		return "", false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	// repo/ first, then the rest in the order the directory was read (ReadDir sorts by name).
+	for i, name := range dirs {
+		if name == "repo" {
+			dirs = append([]string{name}, append(dirs[:i:i], dirs[i+1:]...)...)
+			break
+		}
+	}
+	for _, name := range dirs {
+		if p := filepath.Join(dir, name, "RESULT.md"); fileExists(p) {
+			return p, true
+		}
+	}
+	for _, name := range dirs {
+		if p, ok := findResultBelow(filepath.Join(dir, name), depth-1); ok {
+			return p, true
+		}
+	}
+	return "", false
 }
 
 // scoreCard decides one card's state and, when it abstains, its ONE reason token
@@ -565,9 +649,8 @@ func readCards(path string) ([]batchCard, error) {
 }
 
 // logSize is the byte length of a card's log file, or zero when the file is not there yet.
-// Growth is one signal the idle monitor trusts; a card that has written nothing, or has
-// stopped writing, reads the same size twice and is then on the clock unless its harness
-// tree's own CPU or I/O is still advancing (issue #593).
+// Growth is the only signal the idle monitor trusts: a card that has written nothing, or has
+// stopped writing, reads the same size twice and is on the clock.
 func logSize(path string) int64 {
 	fi, err := os.Stat(path)
 	if err != nil {

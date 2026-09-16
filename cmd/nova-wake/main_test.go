@@ -109,14 +109,70 @@ func install(t *testing.T, dir, name string) string {
 	return out
 }
 
+// TestMain owns the one directory in this package outside t.TempDir(): the shared
+// PATH directory fakeBinDir builds the fake nova-bus and gh into. It has to outlive
+// the first test that asks for it and be gone when the process is, so it is made here
+// and removed on every path out, including a failing run.
+func TestMain(m *testing.M) {
+	os.Exit(func() int {
+		dir, err := os.MkdirTemp("", "nova-wake-fakes-")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "the fake PATH directory: %v\n", err)
+			return 2
+		}
+		defer os.RemoveAll(dir)
+		fakeRoot = dir
+		return m.Run()
+	}())
+}
+
+// The shared PATH directory: the two fakes every test puts in front of PATH, written
+// ONCE for the process. They used to be written into each test's own directory, which
+// is ten megabytes of copying per test across 69 callers and a large part of this
+// package's 163 s (#516, Glenn's two-minute rule). Sharing the BINARIES shares no
+// state: what a test records is recorded in its own NOVA_WAKE_FAKE_BUS and
+// NOVA_WAKE_FAKE_GH directories, which stay per-test, and no test writes over these
+// two names.
+var (
+	fakeRoot      string // TestMain's directory, the parent of the shared bin dir
+	sharedBinOnce sync.Once
+	sharedBinDir  string
+	sharedBinErr  error
+)
+
+func fakeBinDir(t *testing.T) string {
+	t.Helper()
+	buildFakes(t)
+	sharedBinOnce.Do(func() {
+		dir := filepath.Join(fakeRoot, "bin")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			sharedBinErr = err
+			return
+		}
+		for _, name := range []string{"nova-bus", "gh"} {
+			out := filepath.Join(dir, name)
+			if runtime.GOOS == "windows" {
+				out += ".exe"
+			}
+			if err := os.WriteFile(out, fakeBins[name], 0o755); err != nil {
+				sharedBinErr = err
+				return
+			}
+		}
+		sharedBinDir = dir
+	})
+	if sharedBinErr != nil {
+		t.Fatal(sharedBinErr)
+	}
+	return sharedBinDir
+}
+
 // fakes puts the fake nova-bus and gh at the front of PATH and hands back the
 // directories they record into.
 func fakes(t *testing.T) (busDir, ghDir string) {
 	t.Helper()
-	bin := t.TempDir()
+	bin := fakeBinDir(t)
 	busDir, ghDir = t.TempDir(), t.TempDir()
-	install(t, bin, "nova-bus")
-	install(t, bin, "gh")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("NOVA_WAKE_FAKE_BUS", busDir)
 	// The fake answers the version this build of nova-wake is written against,

@@ -34,8 +34,11 @@ itself (12). **Rollback:** the previous card. **Held by:** Rowan (measured); Emm
 
 ## 2. RULES first, and the wall
 
-The first block is RULES and its first sentence is the wall: the job directory, `./scratch` as
-`TMPDIR`, never `/tmp`, `~` or `..`, no stdlib or toolchain source, a key file read as data
+The first block is RULES and its first sentence is the wall: the job directory, the `TMPDIR`
+the runner already exported (a native card never sets one: the runner hands it
+`<slot>/tmp/<label>`, outside every repo, and a card that re-exported `$PWD/scratch` put its
+temp dir inside the job's repo and failed nova-wake's `TestAwakeRefusesNonBus` for a reason it
+did not cause, #460), never `/tmp`, `~` or `..`, no stdlib or toolchain source, a key file read as data
 and never sourced, the deadline held by the machinery and named in the card, and a refused
 read is not the end of the run. **Measured:** seven of seven Mercury jobs rc 0 with a report
 in shape, none ended on a refused read; the four of 15:27Z ran with no rephrasing, no

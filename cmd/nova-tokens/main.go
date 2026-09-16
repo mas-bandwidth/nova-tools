@@ -50,8 +50,10 @@ usage:
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+                      --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
   nova-tokens check   --out <dir> [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--max <n>]
+  nova-tokens profiles --swarm-root <dir>
   nova-tokens version
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
@@ -144,6 +146,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdCheck(rest, stdout, stderr, now)
 	case "sources":
 		return cmdSources(rest, stdout, stderr, now)
+	case "profiles":
+		return cmdProfiles(rest, stdout, stderr, now)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}

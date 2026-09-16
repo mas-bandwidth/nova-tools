@@ -97,6 +97,26 @@ func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) 
 	return code, out.String(), errb.String()
 }
 
+// testIdleBudget is the --idle every test in the idle family passes, and the
+// margin is the point. These tests drive a /bin/sh runner that writes every 150
+// to 200 ms and then assert either that it was left alone or that a silent one
+// was killed. A one-second budget makes the nominal margin 5x, which is not a
+// margin on a SHARED runner: `sleep 0.2` in a shell loop is 200 ms of sleeping
+// plus however long the machine takes to schedule the process again, and four
+// runners share each of these machines. Run 35019905236 caught
+// it both ways at once — in test (3/8 studio) a card that kept writing was
+// idle-killed, and in an earlier local run a card that publishes immediately
+// was killed before it could. Four seconds is a 20-27x margin on the same tick,
+// so a failure means the monitor watched the wrong file, not that the runner
+// was slow. It costs the three tests that DO expect a kill their budget each,
+// about nine seconds, and buys a test that means what it says.
+const testIdleBudget = 4 * time.Second
+
+// idleReason is the ABSTAIN token the batch prints for an idle kill -- batch.go
+// formats it as "idle=<seconds>" -- derived from the budget so the two cannot
+// drift apart when the budget is retuned.
+var idleReason = "ABSTAIN reason=idle=" + itoa(int(testIdleBudget.Seconds()))
+
 func runBatchIdle(t *testing.T, cards, root, runner string, deadline, idle time.Duration) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
@@ -250,7 +270,7 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if time.Since(start) > 10*time.Second {
 		t.Fatalf("the wait ends when the idle card is killed, it does not burn the deadline")
 	}
@@ -260,7 +280,7 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the idle kill is counted as an abstain and the idle count:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN reason=idle=1 log=0") {
+	if !strings.Contains(out, "a slot=1: "+idleReason+" log=0") {
 		t.Fatalf("an idle-killed card names its idle reason token:\n%s", out)
 	}
 }
@@ -288,7 +308,7 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, 2*time.Second)
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
 	if code != 0 {
 		t.Fatalf("a batch over a card that keeps writing exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -320,14 +340,14 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if code != 1 {
 		t.Fatalf("a batch with one idle kill exits 1, got %d:\n%s", code, out)
 	}
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the BATCH line counts the idle kill in its own idle=<n> field:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN reason=idle=1") || !strings.Contains(out, "b slot=2: done and clean") {
+	if !strings.Contains(out, "a slot=1: "+idleReason) || !strings.Contains(out, "b slot=2: done and clean") {
 		t.Fatalf("the idle card is named with its reason and the done card is folded:\n%s", out)
 	}
 }
@@ -356,7 +376,7 @@ func TestIdleWatchesNativeLog(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, 1*time.Second)
+	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
 	if code != 0 {
 		t.Fatalf("a card writing native.log is never idle-killed, exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -388,14 +408,14 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, 1*time.Second)
+	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
 	if code != 1 {
 		t.Fatalf("a card whose native.log stops growing is idle-killed, exits 1, got %d:\n%s", code, out)
 	}
 	if !strings.Contains(out, "BATCH B1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("the stopped native.log card is counted idle:\n%s", out)
 	}
-	if !strings.Contains(out, "a slot=1: ABSTAIN reason=idle=1 log=3 watched="+filepath.Join(resolvedPath(t, root), "1", "native.log")) {
+	if !strings.Contains(out, "a slot=1: "+idleReason+" log=3 watched="+filepath.Join(resolvedPath(t, root), "1", "native.log")) {
 		t.Fatalf("the ABSTAIN reason names the child's log it watched:\n%s", out)
 	}
 }
@@ -421,7 +441,7 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 		"line1=$(sed -n 1p \"$card\")\n" +
 		"line2=$(sed -n 2p \"$card\")\n" +
 		"if [ \"$label\" = \"spinner\" ]; then\n" +
-		"  ( start=$(date +%s); while [ $(( $(date +%s) - start )) -lt 3 ]; do :; done ) &\n" +
+		"  ( end=$(($(date +%s)+3)); while [ $(date +%s) -lt $end ]; do i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done; done ) &\n" +
 		"  busy=$!\n" +
 		"  wait $busy\n" +
 		"  printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$path\"\n" +
@@ -898,5 +918,43 @@ func TestBatchScoresInputLimit(t *testing.T) {
 	}
 	if !strings.Contains(out, "a slot=1: done and green") {
 		t.Fatalf("a card that fits still scores its line 2:\n%s", out)
+	}
+}
+
+// ISSUE #594: A RESULT.MD WRITTEN INSIDE repo/ IS THE CARD'S RESULT, NOT A MISSING ONE.
+// A model's cwd after STEP 1 is the clone, so it publishes RESULT.md there; gather scored
+// the card reason=no-result and the work was lost. Gather reads the job root first, else
+// repo/RESULT.md or one directory down, copies it up to the job root and says so once on
+// stderr. The RESULT contract is unchanged: line 1 is still the card's contract line.
+func TestGatherCopiesResultUpFromRepo(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green from the clone"},
+	})
+	runner := filepath.Join(dir, "runner-in-repo.sh")
+	script := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job/repo\"\n" +
+		"line1=$(sed -n 1p \"$card\")\n" +
+		"line2=$(sed -n 2p \"$card\")\n" +
+		"printf '%s\\n%s\\n' \"$line1\" \"$line2\" > \"$job/repo/RESULT.md\"\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runBatch(t, tsv, root, runner, 10*time.Second)
+	if code != 0 {
+		t.Fatalf("a card that published inside repo/ is done, got exit %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "a slot=1: all green from the clone") {
+		t.Fatalf("the result written inside repo/ is folded, line 2 verbatim:\n%s", out)
+	}
+	job := filepath.Join(resolvedPath(t, root), "1", "jobs", "a")
+	if !strings.Contains(errs, "BATCH NOTE a RESULT.md copied up from "+filepath.Join(job, "repo", "RESULT.md")) {
+		t.Fatalf("the copy up is said once on stderr, naming where it came from:\n%s", errs)
+	}
+	if got := readTestFile(t, filepath.Join(job, "RESULT.md")); got != "RESULT: a\nall green from the clone\n" {
+		t.Fatalf("the result is copied to the job root byte for byte, got %q", got)
 	}
 }

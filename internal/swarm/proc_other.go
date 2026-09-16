@@ -53,9 +53,5 @@ func StartStamp(pid int) string { return "-" }
 // GroupMembers counts the processes in a group other than self. Unavailable here.
 func GroupMembers(pgid, self int) (int, bool) { return 0, false }
 
-// ProcTreeActivity has no route to the CPU/I/O counters here. ok=false says the measurement
-// could not be made, and the idle watch falls back to the card's log alone.
-func ProcTreeActivity(pid int) (cpu, io int64, ok bool) { return 0, 0, false }
-
 // pgidOf has no process group to report here, so a process is its own group of one.
 func pgidOf(pid int) int { return pid }

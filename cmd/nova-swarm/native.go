@@ -58,6 +58,7 @@ type nativeRunResult struct {
 	usageState   string  // the store path the NATIVE OK line names when no store answered, "" otherwise
 	usageReason  string  // no-rows | no-store | no-sqlite3, "" when the store answered
 	configSHA    string  // sha8 of the carried provider config, "" when --config named none
+	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -136,6 +137,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		refuseNative(errOut, fmt.Sprintf("the data directory %s could not be made: %s", oneline.Field(dataHome), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
+	// TMPDIR is the slot's own tmp/<label>, never the job directory (which admission git-inits
+	// into a repo): a card's temp dir inside a repo is exactly what makes nova-wake's
+	// TestAwakeRefusesNonBus fail for a reason the card did not cause (#460). The slot
+	// directory is never a repo, so a temp file made here sits outside every repository the
+	// card's work could touch. It is made here so the child's TMPDIR exists before it starts.
+	tmpDir := filepath.Join(cfg.slotDir, "tmp", cfg.label)
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		refuseNative(errOut, fmt.Sprintf("the temp directory %s could not be made: %s", oneline.Field(tmpDir), oneline.Escape(err.Error())))
+		return nativeRunResult{}, 2
+	}
 
 	// (4) THE AUTH COPY. One entry, the model's provider's, moved to the data home so
 	// the child's account resolves, and left mode 0600. A source that is looser than
@@ -198,7 +209,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			return nativeRunResult{}, 2
 		}
 		runPath = wall
-		runArgv = nativeSandboxArgv(bin, cfg, dataHome, jobDir)
+		runArgv = nativeSandboxArgv(bin, cfg, dataHome, jobDir, tmpDir)
 	} else if len(cfg.repos) > 0 {
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
@@ -208,7 +219,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// own group) is killed when the wall runs out, not merely handed a suggestion.
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.deadline)
 	defer cancel()
-	childEnv := nativeChildEnv(dataHome, jobDir)
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir)
 	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
 	cmd := exec.CommandContext(ctx, runPath, runArgv...)
 	cmd.Env = childEnv
@@ -225,12 +236,29 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		refuseNative(errOut, fmt.Sprintf("the run log %s could not be opened: %s", oneline.Field(filepath.Join(cfg.slotDir, "native.log")), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
+	// ONE CAPTURE PATH, WALLED OR NOT (issue #608). The child's output also lands in the
+	// job's own `harness.log`, the name every other part of this tool reads a run's evidence
+	// by: `finish` counts refusals there, the input-limit reader looks for the provider's
+	// words there, batch's idle watch measures it, and `harness=silent` (#604) asks whether
+	// it holds bytes. Before this the native path wrote only <slot>/native.log, so an
+	// UNWALLED card -- every Space card -- that produced no RESULT left no evidence at all
+	// and its failure could not be diagnosed; a silent harness and a lost log read the same.
+	// The file is opened O_APPEND and never truncated: a batch opens this same path and
+	// pins its runner's stdout to it before this process starts, and truncating it here
+	// would cut the runner's own lines out from under it.
+	harnessLog, err := os.OpenFile(filepath.Join(jobDir, "harness.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		log.Close()
+		refuseNative(errOut, fmt.Sprintf("the harness log %s could not be opened: %s", oneline.Field(filepath.Join(jobDir, "harness.log")), oneline.Escape(err.Error())))
+		return nativeRunResult{}, 2
+	}
 	// The wall's own stderr is split out of the log: the SANDBOX OK line the wall prints
 	// is where the tool learns the wall's name and the cwd it actually applied, and neither
-	// is guessed. The log still carries every byte; the buffer holds stderr for the parse.
+	// is guessed. The logs still carry every byte; the buffer holds stderr for the parse.
 	var wallOut bytes.Buffer
-	cmd.Stdout = log
-	cmd.Stderr = io.MultiWriter(log, &wallOut)
+	capture := io.MultiWriter(log, harnessLog)
+	cmd.Stdout = capture
+	cmd.Stderr = io.MultiWriter(capture, &wallOut)
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -239,6 +267,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		job:          jobDir,
 		wall:         "none",
 		configSHA:    configSHA,
+		tmp:          tmpDir,
 	}
 	if cfg.noWall {
 		res.wall = "none-by-flag"
@@ -253,6 +282,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	res.wallSeconds = time.Since(start).Seconds()
 	log.Close()
+	harnessLog.Close()
 
 	if wall != "" {
 		backend, cwd, ok := wallNamed(wallOut.String())
@@ -294,14 +324,16 @@ func sandboxHostRules(sandbox string) bool {
 // nativeSandboxArgv is the wrap for a native run: the wall's flags, then --, then the
 // harness verbatim (SPEC-SANDBOX rule 12). The job directory is the first --write and the
 // --cwd (rule 13); the data home is the second --write and the child's HOME (rule 9); the
+// temp directory is a --write so the child's TMPDIR is usable inside the wall; the
 // slot directory is the read set. Each repo the card named is a --repo allow rule, and a
 // recipient never appears: a bus send is denied by the wall itself, not granted by the
 // caller, so no allow rule is ever built for one.
-func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir string) []string {
+func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir string) []string {
 	argv := []string{
 		"--read", cfg.slotDir,
 		"--write", jobDir,
 		"--write", dataHome,
+		"--write", tmpDir,
 		"--cwd", jobDir,
 	}
 	// The shell launcher read the harness's own directory and /opt/homebrew so git and the
@@ -324,11 +356,12 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir string)
 // allowlist survives the caller's own environment (PATH, LANG, TERM, the XDG_ and
 // NOVA_SWARM_ families, and any provider credential whose name carries KEY, TOKEN or
 // SECRET), and the names this run owns are then set exactly once. HOME and XDG_DATA_HOME
-// point at the data home, NOVA_SWARM_JOB names the job directory, and TMPDIR sits under the
-// data home (inside a --write) instead of the caller's own, which the wall denies.
+// point at the data home, NOVA_SWARM_JOB names the job directory, and TMPDIR is the slot's
+// own tmp/<label> (never the job directory, which admission git-inits into a repo) instead
+// of the caller's own, which the wall denies.
 // XDG_CONFIG_HOME and XDG_CACHE_HOME are dropped, never inherited, so the harness defaults
 // them under HOME and never follows them outside the wall.
-func nativeChildEnv(dataHome, jobDir string) []string {
+func nativeChildEnv(dataHome, jobDir, tmpDir string) []string {
 	var kept []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -343,7 +376,7 @@ func nativeChildEnv(dataHome, jobDir string) []string {
 		"HOME="+dataHome,
 		"XDG_DATA_HOME="+dataHome,
 		"NOVA_SWARM_JOB="+jobDir,
-		"TMPDIR="+filepath.Join(dataHome, "tmp"),
+		"TMPDIR="+tmpDir,
 	)
 }
 
