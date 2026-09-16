@@ -2,14 +2,21 @@ package pulse
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
-	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // THE FIXTURE IS THE REAL BINARY. The launch fixture used to be a three-line stub that
@@ -18,31 +25,75 @@ import (
 // has no runner). Every test here builds nova-swarm from this tree and asserts against what
 // that binary actually accepts.
 
-var (
-	swarmOnce sync.Once
-	swarmBin  string
-	swarmErr  error
-)
+// TestMain builds cmd/nova-swarm ONCE for the whole package, before any test runs, into a
+// content-addressed cache under the system temp directory: the tests drive the real binary,
+// and building it per test (or per call) put a full link inside the measured time of every
+// package that did it -- internal/swarm went from 63 s to 95 s that way.
+func TestMain(m *testing.M) {
+	flag.Parse()
+	if !testing.Short() {
+		if err := buildSwarm(); err != nil {
+			fmt.Fprintf(os.Stderr, "the tests drive a real nova-swarm and it could not be built: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	os.Exit(m.Run())
+}
 
-// realSwarm builds cmd/nova-swarm once per test binary and returns its path.
+var swarmBin string
+
+// buildSwarm links cmd/nova-swarm into <temp>/nova-tools-testbin-<sum>/nova-swarm, where
+// <sum> is over the sources that go into it, and reuses the binary when it is already
+// there: a second run of this package in the same hour pays nothing.
+func buildSwarm() error {
+	sum, err := sourceSum()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(os.TempDir(), "nova-tools-testbin-"+sum)
+	out := filepath.Join(dir, "nova-swarm")
+	if fi, err := os.Stat(out); err == nil && fi.Mode()&0o111 != 0 {
+		swarmBin = out
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	cmd := exec.Command("go", "build", "-o", out, "github.com/mas-bandwidth/nova-tools/cmd/nova-swarm")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("go build nova-swarm: %v: %s", err, b)
+	}
+	swarmBin = out
+	return nil
+}
+
+// sourceSum is a digest of the Go sources the binary is built from, so an edit anywhere in
+// the tree links a new binary and a cached one is never stale.
+func sourceSum() (string, error) {
+	h := sha256.New()
+	root := filepath.Join("..", "..")
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		fi, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		fmt.Fprintf(h, "%s %d %d\n", path, fi.Size(), fi.ModTime().UnixNano())
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16], nil
+}
+
+// realSwarm is the binary TestMain built, or a skip when the run is -short.
 func realSwarm(t *testing.T) string {
 	t.Helper()
-	swarmOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "nova-swarm-bin")
-		if err != nil {
-			swarmErr = err
-			return
-		}
-		out := filepath.Join(dir, "nova-swarm")
-		cmd := exec.Command("go", "build", "-o", out, "github.com/mas-bandwidth/nova-tools/cmd/nova-swarm")
-		if b, err := cmd.CombinedOutput(); err != nil {
-			swarmErr = fmt.Errorf("go build nova-swarm: %v: %s", err, b)
-			return
-		}
-		swarmBin = out
-	})
-	if swarmErr != nil {
-		t.Fatal(swarmErr)
+	if swarmBin == "" {
+		t.Skip("-short: this case drives a real nova-swarm")
 	}
 	return swarmBin
 }
@@ -112,7 +163,10 @@ func runLaunch(t *testing.T, in LaunchInput) (int, string, string) {
 	return code, out.String(), errb.String()
 }
 
-// waitBatchesDone waits until every batch this root started has printed its BATCH line.
+// waitBatchesDone waits until every batch this root started has printed its BATCH line, and
+// kills any that has not: a detached batch still writing under t.TempDir() when the test
+// returns is `TempDir RemoveAll cleanup: directory not empty` (Emma's adoption edge). Wait
+// first -- the assertions want the real end -- then kill by the pid launch wrote down.
 func waitBatchesDone(t *testing.T, root string) {
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
@@ -126,11 +180,32 @@ func waitBatchesDone(t *testing.T, root string) {
 			}
 		}
 		if done {
-			return
+			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Log("a batch had not printed its BATCH line when the test ended")
+	killBatches(t, root)
+}
+
+// killBatches ends any batch of this root still running, by the pid file launch wrote.
+func killBatches(t *testing.T, root string) {
+	t.Helper()
+	pids, _ := filepath.Glob(filepath.Join(root, "batch-*.pid"))
+	for _, p := range pids {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err != nil || pid <= 0 {
+			continue
+		}
+		if swarm.Alive(pid, "") {
+			t.Logf("killing a batch still running at cleanup: pid=%d", pid)
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
 }
 
 // waitFor polls until cond holds or the deadline passes.

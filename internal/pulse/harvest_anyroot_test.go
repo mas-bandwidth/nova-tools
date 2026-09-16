@@ -115,3 +115,72 @@ func TestHarvestPrintsThePublishCommandForABranchCard(t *testing.T) {
 		t.Fatalf("the publish command is not runnable as printed: %q", out)
 	}
 }
+
+// TestHarvestNamesTheRealClassOfEveryCard is the repair the read asked for: three different
+// things used to come out as "line 1 is not the card's contract line" -- a read card whose
+// verdict is `PR<n>: APPROVE` and which never had a branch, a writing card that named no
+// branch, and a card that named main. Each has a different remedy, so each now says which it
+// is. The non-test lines it needs are classify's "read", "no-branch" and "branch-main"
+// returns and the switch arms that print them.
+func TestHarvestNamesTheRealClassOfEveryCard(t *testing.T) {
+	root := t.TempDir()
+	// A read card: a verdict, no branch, and nothing wrong with it.
+	writeJob(t, root, "1", "card-read", map[string]string{
+		"RESULT.md": "RESULT card-read sha=abc\nPR643: APPROVE -- the argv is the card form\n",
+	})
+	// A writing card that did work and named no branch.
+	writeJob(t, root, "2", "card-nobranch", map[string]string{
+		"RESULT.md": "RESULT card-nobranch sha=def\nDONE\nREPO mas-bandwidth/nova-tools\n",
+	})
+	// A card that named main.
+	writeJob(t, root, "3", "card-main", map[string]string{
+		"RESULT.md": "RESULT card-main sha=ghi\nDONE\nBRANCH main\nREPO mas-bandwidth/nova-tools\n",
+	})
+	// And a card that really does have the wrong line 1, with its card on disk to compare.
+	cardPath := filepath.Join(root, "card-wrong.md")
+	if err := os.WriteFile(cardPath, []byte("RESULT card-wrong sha=jkl\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeJob(t, root, "4", "card-wrong", map[string]string{
+		"RESULT.md": "RESULT card-wrong sha=WRONG\nDONE\nBRANCH rowan/x\nREPO mas-bandwidth/nova-tools\n",
+	})
+	stamp := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	var rows strings.Builder
+	for _, l := range []string{"card-read", "card-nobranch", "card-main", "card-wrong"} {
+		card := "-"
+		if l == "card-wrong" {
+			card = cardPath
+		}
+		_ = card
+		fmt.Fprintf(&rows, "TP2\t%s\t-\t-\tflash\tsha123\t%s\n", l, stamp)
+	}
+	if err := os.WriteFile(filepath.Join(root, "launch.tsv"), []byte(rows.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// harvest finds each card's text where cut leaves it, so the wrong-line-1 card has its
+	// contract to be compared against.
+	if err := os.MkdirAll(filepath.Join(root, "cards", "TP2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cards", "TP2", "card-wrong.md"), []byte("RESULT card-wrong sha=jkl\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, _ := harvestIn(t, HarvestInput{ID: "TP2", Root: root})
+	if code != 1 {
+		t.Fatalf("exit=%d, want 1; out=%q", code, out)
+	}
+	for _, want := range []string{
+		"HARVEST READ label=card-read pr=643 verdict=APPROVE",
+		"HARVEST NO-BRANCH label=card-nobranch",
+		"HARVEST MISMATCH label=card-main reason=branch-main",
+		"HARVEST MISMATCH label=card-wrong reason=line1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the fold does not name the class %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "read=1") || !strings.Contains(out, "no-branch=1") || !strings.Contains(out, "mismatch=2") {
+		t.Fatalf("the HARVEST line does not count the classes:\n%s", out)
+	}
+}

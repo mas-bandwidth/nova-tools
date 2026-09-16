@@ -153,6 +153,13 @@ func TestHelpNamesEveryVerbTheSwitchAccepts(t *testing.T) {
 			named[f[1]] = true
 		}
 	}
+	// The banner counts the SHIPPED verbs, and it said "five verbs" while the switch
+	// answered six: a stranger counting the lines finds the document wrong about itself.
+	shipped := []string{"pool", "cut", "launch", "check", "harvest", "manager"}
+	words := map[int]string{4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight"}
+	if want := "one tool, " + words[len(shipped)] + " verbs"; !strings.Contains(out.String(), want) {
+		t.Errorf("the help banner does not say %q for the %d verbs it ships", want, len(shipped))
+	}
 	// Every verb run() answers. A new case here without a help line fails this test.
 	for _, verb := range []string{"pool", "cut", "launch", "check", "harvest", "manager", "width", "version", "help"} {
 		if !named[verb] {

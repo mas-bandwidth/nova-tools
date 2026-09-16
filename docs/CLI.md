@@ -917,9 +917,11 @@ LAUNCH-OK id=20260916T014455Z-pulse-7c1a20 bench=- started=6/6
 
 `harvest` folds `<root>/launch.tsv` first, then a `cards.tsv`, then the job directories
 themselves, so a root filled by `nova-swarm batch` by hand folds like any other; `--id` is
-optional. Each card is one line with its abstain reason token, the spend is the sum of the
-cards' own `usage.tsv` rows, and a launched card with no job directory after three minutes
-is an orphan rather than an abstain. Pushing stays with `nova-swarm publish`: the command is
+optional. Each card is one line naming its real class -- `READ` (a `PR<n>: APPROVE|HOLD` verdict and no
+branch, which is not a mismatch), `NO-BRANCH`, `MISMATCH reason=line1`, `MISMATCH
+reason=branch-main`, `RETRY` with its abstain reason token, `ORPHAN`, `BRANCH` -- the spend
+is the sum of the cards' own `usage.tsv` rows, and a launched card with no job directory
+after three minutes is an orphan rather than an abstain. Pushing stays with `nova-swarm publish`: the command is
 printed per `BRANCH` card and run only under `--publish`.
 
 ```
@@ -927,7 +929,7 @@ $ nova-pulse harvest --root ./swarm-root
 HARVEST RETRY label=card-700 reason=deadline: -
 HARVEST BRANCH label=card-801 branch=rowan/fix-801 job=./swarm-root/1/jobs/card-801
 HARVEST PUBLISH nova-swarm publish --job ./swarm-root/1/jobs/card-801/repo --branch rowan/fix-801 --base main --title card-801 --body-file ./swarm-root/1/jobs/card-801/RESULT.md
-HARVEST OK id=- source=jobs done=1 pushed=0 prs=0 abstain=1 mismatch=0 refused=0 orphan=0 retry=1 usd=0.0249 took=3ms
+HARVEST OK id=- source=jobs done=1 pushed=0 prs=0 read=0 abstain=1 mismatch=0 no-branch=0 refused=0 orphan=0 retry=1 usd=0.0249 took=3ms
 ```
 
 ## nova-swarm

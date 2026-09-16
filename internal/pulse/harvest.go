@@ -90,7 +90,7 @@ func Harvest(in HarvestInput) int {
 		return 2
 	}
 
-	var done, pushed, prs, abstain, mismatch, refused, retried, orphans int
+	var done, pushed, prs, abstain, mismatch, refused, retried, orphans, reads, noBranch int
 	lines := make([]string, 0) // HARVEST PR / RETRY / ORPHAN / REFUSED per-card lines
 	usdTotal := 0.0
 
@@ -117,7 +117,25 @@ func Harvest(in HarvestInput) int {
 		case "mismatch":
 			mismatch++
 			writeSeen(in.Root, c, "mismatch")
-			lines = append(lines, fmt.Sprintf("HARVEST MISMATCH label=%s: line 1 is not the card's contract line", field(hc.Label)))
+			lines = append(lines, fmt.Sprintf("HARVEST MISMATCH label=%s reason=line1: the RESULT's line 1 is not the card's contract line", field(hc.Label)))
+		case "blocked":
+			mismatch++
+			writeSeen(in.Root, c, "blocked")
+			lines = append(lines, fmt.Sprintf("HARVEST BLOCKED label=%s: the card says BLOCKED; nothing is pushed", field(hc.Label)))
+		case "read":
+			reads++
+			verdict := readVerdict(resultLines)
+			writeSeen(in.Root, c, "read")
+			lines = append(lines, fmt.Sprintf("HARVEST READ label=%s pr=%d verdict=%s",
+				field(hc.Label), verdict.PR, field(verdict.Say)))
+		case "no-branch":
+			noBranch++
+			writeSeen(in.Root, c, "no-branch")
+			lines = append(lines, fmt.Sprintf("HARVEST NO-BRANCH label=%s: a RESULT with a verdict and no BRANCH line; nothing to push (ask the card for its branch)", field(hc.Label)))
+		case "branch-main":
+			mismatch++
+			writeSeen(in.Root, c, "branch-main")
+			lines = append(lines, fmt.Sprintf("HARVEST MISMATCH label=%s reason=branch-main: a card may not push to main", field(hc.Label)))
 		case "abstain":
 			abstain++
 			retried++
@@ -181,11 +199,11 @@ func Harvest(in HarvestInput) int {
 
 	code := 0
 	result := "OK"
-	if mismatch > 0 || abstain > 0 || refused > 0 || orphans > 0 {
+	if mismatch > 0 || abstain > 0 || refused > 0 || orphans > 0 || noBranch > 0 {
 		code = 1
 	}
-	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s source=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d orphan=%d retry=%d usd=%s took=%s\n",
-		result, field(in.ID), source, done, pushed, prs, abstain, mismatch, refused, orphans, retried, usd,
+	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s source=%s done=%d pushed=%d prs=%d read=%d abstain=%d mismatch=%d no-branch=%d refused=%d orphan=%d retry=%d usd=%s took=%s\n",
+		result, field(in.ID), source, done, pushed, prs, reads, abstain, mismatch, noBranch, refused, orphans, retried, usd,
 		in.Now().Sub(started).Round(time.Millisecond))
 
 	// Rule 15: harvest pulses again, queue first. The PULSE line (or PULSE POOL EMPTY) is
@@ -289,7 +307,14 @@ func classify(jobDir string, c CardRow, contract string) (state, branch, repo st
 		return "abstain", "", "", lines
 	}
 	if strings.HasPrefix(line2, "BLOCKED") {
-		return "mismatch", "", "", lines
+		return "blocked", "", "", lines
+	}
+	// A READ CARD IS NOT A BRANCH CARD. Its verdict is `PR<n>: APPROVE|HOLD`, it has no
+	// branch and never had one, and calling it a mismatch (which is what "no BRANCH line"
+	// used to fall through to) told a coordinator its line 1 was wrong when the card had
+	// done exactly what it was cut to do.
+	if v := readVerdict(lines); v != nil {
+		return "read", "", "", lines
 	}
 	for _, l := range lines {
 		t := strings.TrimSpace(l)
@@ -301,8 +326,14 @@ func classify(jobDir string, c CardRow, contract string) (state, branch, repo st
 			repo = strings.TrimPrefix(repo, "github.com/")
 		}
 	}
-	if branch == "" || branch == "main" || branch == "master" {
-		return "mismatch", branch, repo, lines
+	// Three different things used to be one "mismatch": a wrong line 1, a card that named
+	// no branch, and a card that named main. Each now says which it is, because the remedy
+	// differs: fix the card, ask the worker for the branch, refuse the push.
+	if branch == "" {
+		return "no-branch", "", repo, lines
+	}
+	if branch == "main" || branch == "master" {
+		return "branch-main", branch, repo, lines
 	}
 	if c.Model == "pro" && !hasRedLine(lines) {
 		return "refused", branch, repo, lines

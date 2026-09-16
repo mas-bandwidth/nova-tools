@@ -115,3 +115,50 @@ func TestPoolRefusesUnreadableSource(t *testing.T) {
 		t.Fatalf("the fake gh recorded %v; the refusal must come from the fake, not a real gh", calls)
 	}
 }
+
+// TestPoolWritesTheLocatorNotTheKind is the pool half of issue #631, and it had no test:
+// pool.tsv field 1 carried the source KIND ("issues"), `cut` renders that field as
+// <source>, and every card came out cloning `https://github.com/issues.git` and died at
+// STEP 1 having spent its admission. The non-test line it needs is pool.go's
+// `PoolRow{Source: s.locator` (four of them, one per source kind).
+func TestPoolWritesTheLocatorNotTheKind(t *testing.T) {
+	dir := t.TempDir()
+	jsonBody := writeTestFile(t, dir, "issues.json", `[
+  {"number": 614, "title": "one", "labels": [{"name": "card"}], "body": ""}
+]`)
+	ghFixture(t, dir, jsonBody)
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sources := writeTestFile(t, dir, "sources.tsv", "issues\tmas-bandwidth/nova-tools\tfix\n")
+
+	var out, errb bytes.Buffer
+	if code := Pool(PoolInput{Sources: sources, Root: root, Stdout: &out, Stderr: &errb}); code != 0 {
+		t.Fatalf("Pool exit = %d, stderr=%s", code, errb.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "pool.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := strings.Split(strings.TrimSpace(string(raw)), "\n")[0]
+	fields := strings.Split(row, "\t")
+	if fields[0] != "mas-bandwidth/nova-tools" {
+		t.Fatalf("pool.tsv field 1 is the locator a card clones, got %q in %q", fields[0], row)
+	}
+	// And the whole point: the card cut from this row clones the repo it is about.
+	code, stdout, stderr, cards := runCut(t, map[string]string{"fix": fixTemplate}, string(raw))
+	if code != 0 {
+		t.Fatalf("cut of the pooled row = %d; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	card, err := os.ReadFile(filepath.Join(cards, "614.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(card), "https://github.com/mas-bandwidth/nova-tools.git") {
+		t.Fatalf("the card pool and cut produced together does not clone the repo it is about:\n%s", card)
+	}
+	if strings.Contains(string(card), "github.com/issues.git") {
+		t.Fatalf("the card clones the source KIND:\n%s", card)
+	}
+}

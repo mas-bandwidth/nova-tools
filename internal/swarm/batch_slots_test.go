@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,7 +15,10 @@ func slotsCard(t *testing.T, dir, label, slot string) string {
 	t.Helper()
 	card := filepath.Join(dir, label+".md")
 	body := "RESULT " + label + " sha=000000000000\nYou are a worker.\n" +
-		"STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://github.com/mas-bandwidth/nova-tools.git . && git checkout -b rowan/" + label + "\n" +
+		// NO github URL in a test card: admission probes every repository a card names
+		// over the real network (admitrepo.go), which is seconds per card and a flake in
+		// CI. The shape practice 17 wants is the STEP 1 line, not a clone.
+		"STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && work in the job directory\n" +
 		"STEP 2. write RESULT.md\n"
 	if err := os.WriteFile(card, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -123,44 +125,6 @@ func TestBatchTreatsALiveBatchLockAsBusy(t *testing.T) {
 	}
 }
 
-// TestBatchRunsACardThroughItsOwnNativeWithNoRunner is issue #636's red test: with no
-// --runner, batch refused the whole invocation ("--runner is required; it wants the command
-// to start once per card"), although `native` lives in this same binary. Now --harness names
-// the harness and each card runs through this binary's own native verb: the harness.log
-// carries native's own NATIVE OK line.
-func TestBatchRunsACardThroughItsOwnNativeWithNoRunner(t *testing.T) {
-	if testing.Short() {
-		t.Skip("starts a real native run under the wall")
-	}
-	dir := t.TempDir()
-	root := filepath.Join(dir, "root")
-	harness := filepath.Join(dir, "harness")
-	if err := os.WriteFile(harness, []byte("#!/bin/sh\necho FAKE-HARNESS \"$@\"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	self := filepath.Join(dir, "nova-swarm")
-	if b, err := exec.Command("go", "build", "-o", self, "github.com/mas-bandwidth/nova-tools/cmd/nova-swarm").CombinedOutput(); err != nil {
-		t.Fatalf("go build nova-swarm: %v: %s", err, b)
-	}
-	tsv := slotsCard(t, dir, "card-d", "-")
-	var out, errb bytes.Buffer
-	Batch(BatchInput{
-		ID: "R4", Deadline: 25 * time.Second, Cards: tsv, Root: root,
-		Harness: harness, Slots: "1-2", Self: self,
-		Stdout: &out, Stderr: &errb,
-	})
-	if strings.Contains(errb.String(), "--runner is required") {
-		t.Fatalf("batch still demands a runner script: %q", errb.String())
-	}
-	raw, err := os.ReadFile(filepath.Join(root, "1", "jobs", "card-d", "harness.log"))
-	if err != nil {
-		t.Fatalf("no harness log under the slot, so no native ran: %v; err=%q", err, errb.String())
-	}
-	if !strings.Contains(string(raw), "NATIVE OK label=card-d") {
-		t.Fatalf("the card did not run through this binary's own native: %q", raw)
-	}
-}
-
 // TestBatchRefusesWithNeitherRunnerNorHarness: one refusal naming both doors.
 func TestBatchRefusesWithNeitherRunnerNorHarness(t *testing.T) {
 	dir := t.TempDir()
@@ -201,5 +165,56 @@ func TestParseSlotRange(t *testing.T) {
 		if err != nil || lo != tc.lo || hi != tc.hi {
 			t.Fatalf("%q -> %d,%d,%v", tc.in, lo, hi, err)
 		}
+	}
+}
+
+// TestSelfNativeBuildsTheNativeArgv is #636's cheap half, and it is the half that runs on
+// every PR: the end-to-end case (a real nova-swarm, a real wall) costs a `go build` and
+// lives behind the slow tag in batch_selfnative_slow_test.go. This one asserts the argv the
+// batch hands its own `native` -- the contract bin/nova-native-runner.sh used to carry by
+// hand -- in process, in microseconds.
+func TestSelfNativeBuildsTheNativeArgv(t *testing.T) {
+	dir := t.TempDir()
+	log, err := os.CreateTemp(dir, "log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	c := batchCard{label: "card-f", slot: 7, model: "opencode/deepseek-v4-flash", cardPath: filepath.Join(dir, "card.md")}
+	in := BatchInput{Root: dir, Deadline: 1500 * time.Second, Harness: "/opt/harness/opencode", Auth: "/opt/auth.json", Self: "/opt/bin/nova-swarm"}
+	cmd, err := selfNative(c, in, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/opt/bin/nova-swarm", "native",
+		"--harness", "/opt/harness/opencode",
+		"--model", "opencode/deepseek-v4-flash",
+		"--label", "card-f",
+		"--card", c.cardPath,
+		// THE SLOT DIRECTORY, not the job directory: native makes <slot>/jobs/<label>
+		// itself, which is what bin/nova-native-runner.sh passes and what the space runner
+		// passes. A job directory here would nest jobs/<label>/jobs/<label>.
+		"--slot", filepath.Join(dir, "7"),
+		"--root", dir,
+		"--deadline", "1500s",
+		"--auth", "/opt/auth.json",
+	}
+	if strings.Join(cmd.Args, " ") != strings.Join(want, " ") {
+		t.Fatalf("argv\n got: %v\nwant: %v", cmd.Args, want)
+	}
+	if cmd.SysProcAttr == nil {
+		t.Fatalf("a card runs in its own process group, so the deadline reaches everything it started")
+	}
+}
+
+// TestSwarmSelfRefusesWithNoBinaryToRunNativeFrom: the refusal names both doors rather than
+// running whatever binary happens to be executing (a test binary, once).
+func TestSwarmSelfRefusesWithNoBinaryToRunNativeFrom(t *testing.T) {
+	if got, err := swarmSelf("/opt/bin/nova-swarm"); err != nil || got != "/opt/bin/nova-swarm" {
+		t.Fatalf("a named binary is used as named: %q %v", got, err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	if _, err := swarmSelf(""); err == nil || !strings.Contains(err.Error(), "--runner") {
+		t.Fatalf("with no nova-swarm anywhere the refusal names --runner: %v", err)
 	}
 }

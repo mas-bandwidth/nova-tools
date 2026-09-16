@@ -11,9 +11,10 @@ import (
 
 // pulseVerbs is SPEC-PULSE's verbs block, byte for byte (docs/SPEC-PULSE.md, "The verbs").
 const pulseVerbs = `nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--model <id>] [--local <tag>] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --deadline <s> [--slots <lo-hi>] [--benches <file>] [--bench <names>] [--id <id>] [--runner <cmd>] [--harness <path>] [--auth <path>] [--idle <s>] [--check <s>] [--swarm <path>] [--max <n>]
+nova-pulse check   --root <dir> [--id <pulse id>] [--after <s>] [--benches <file>] [--bench <names>]
+nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--publish] [--deadline <s>] [--slots <lo-hi>] [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse width   --root <dir> --pool <pool.tsv>
 nova-pulse version

@@ -360,6 +360,10 @@ func startBatch(in LaunchInput, id, tsv string, lo, hi int) int {
 	if err := cmd.Start(); err != nil {
 		return launchRefused(in.Stderr, "swarm", oneline.Err(err))
 	}
+	// The batch outlives this verb, so its pid is written down: a pulse that must be ended
+	// is ended by name, and a test kills what it started rather than racing its own
+	// temporary directory (Emma's adoption edge on this PR).
+	_ = os.WriteFile(filepath.Join(in.Root, "batch-"+id+".pid"), []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
 	// The child is released, not waited on: its own deadline ends it, and `check` reads
 	// what it did. Reaping it here would hold this verb for the whole pulse.
 	go func() { _ = cmd.Wait() }()
