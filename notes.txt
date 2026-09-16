@@ -1,0 +1,36 @@
+notes.txt — card-8048 (fix #679)
+
+Red test: TestHelpIsTheSpecsVerbsBlock (internal/pulse/cli_test.go)
+
+Failing output verbatim (go test ./internal/pulse/ -run TestHelpIsTheSpecsVerbsBlock -count=1):
+
+--- FAIL: TestHelpIsTheSpecsVerbsBlock (0.00s)
+    cli_test.go:34: help has drifted from the spec's verbs block:
+        spec:
+        nova-pulse pool    --sources <file> --work <nova-work root> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
+        nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--benches <benches.tsv>] [--timeout <s>] [--max <n>]
+        nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--spend-max <usd>] [--max-attempts <n>] [--scope <file>] [--timeout <s>] [--max <n>]
+        nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--timeout <s>] [--max <n>]
+        nova-pulse handoff --to <name> --root <dir> [--timeout <s>]
+        nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--timeout <s>] [--max <n>]
+        nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
+        nova-pulse width   --root <dir> --pool <pool.tsv>
+        nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>]
+        nova-pulse version
+        nova-pulse help
+        help:
+        nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
+        nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
+        nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+        nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
+        nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
+        nova-pulse width   --root <dir> --pool <pool.tsv>
+        nova-pulse version
+        nova-pulse help
+FAIL
+FAIL	github.com/mas-bandwidth/nova-tools/internal/pulse	0.584s
+FAIL
+
+Fix: cut the seven unshipped verbs/flags from SPEC-PULSE.md's "The verbs" block so it
+matches pulseVerbs byte for byte (handoff, takeover, status, --timeout on cut/launch/harvest,
+launch's three admission gates, pool --work, cut --benches).
