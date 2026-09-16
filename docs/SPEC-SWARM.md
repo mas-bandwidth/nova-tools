@@ -526,7 +526,7 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
 ```
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
+nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> (--runner <cmd> | --harness <path> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
 nova-swarm bench    probe --benches <file> --bench <name>
 nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
 nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>]
@@ -1022,6 +1022,19 @@ reads, prints or copies `auth`; it names the path on the bench's `native`
 command line and checks that it exists with mode `0600` (`stat`, never a
 read). Rule 6 seen from a bench: the key is data, and here not even data this
 tool holds.
+
+**`--harness <path>` on `batch --cards`** runs every local card through this same
+binary's own `native`, with no runner script at all (#636: `native` lives in the
+binary that was demanding an external command to reach it, and every caller wrote
+the same eight-line shim). `--auth` names the harness's auth file; a `local` row in
+`--benches` supplies both when neither flag is given.
+
+**`--slots <lo>-<hi>` on `batch --cards`** is the range allocation comes from: a card
+whose slot column is `-` takes the lowest free slot in the range, and a hand slot outside
+it is that card's own `ADMIT REFUSED slot=<n> range=<lo>-<hi>` at admission rather than an
+`rc=2` with no log inside a runner (#618). Free means the slot's own `BATCH` lock is absent
+or its holder pid is dead — never a process probe, which disagrees with the lock for the
+whole of a card's clone.
 
 **`--bench <name>[,<name>...]` on `batch --cards`** allocates the cards across
 the named benches. The cards file's `slot` column is `<n>` (local slot n, as

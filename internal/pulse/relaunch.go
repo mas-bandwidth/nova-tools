@@ -89,12 +89,28 @@ func render(c Candidate, templatesDir string) string {
 // the same "flash"/"pro" it has always written.
 var relaunchTiers = map[string]string{"flash": "flash", "pro": "pro"}
 
-// runLaunchSubprocess invokes nova-pulse launch --queue as a subprocess and relays its output, so the
-// batch admission goes through the launch verb, never re-implemented here.
+// relaunchDeadline is the deadline a relaunch carries when the caller named none. Rule 15's
+// launch needs one, and the harvest that could not supply it printed
+// `--deadline is required and wants a whole number of seconds, got ""` every cycle, so the
+// loop's last step never ran (probe issue 11).
+const relaunchDeadline = "1500"
+
+// runLaunchSubprocess invokes nova-pulse launch as a subprocess and relays its output, so the
+// batch admission goes through the launch verb, never re-implemented here. It carries this
+// harvest's own --deadline and --slots: a relaunch with neither is a refusal, which is what
+// closed the loop's last step (probe issue 11).
 func runLaunchSubprocess(in HarvestInput, cardsTSV string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "nova-pulse", "launch", "--cards", cardsTSV, "--root", in.Root, "--queue")
+	deadline := strings.TrimSpace(in.Deadline)
+	if deadline == "" {
+		deadline = relaunchDeadline
+	}
+	args := []string{"launch", "--cards", cardsTSV, "--root", in.Root, "--deadline", deadline}
+	if strings.TrimSpace(in.Slots) != "" {
+		args = append(args, "--slots", in.Slots)
+	}
+	cmd := exec.CommandContext(ctx, "nova-pulse", args...)
 	cmd.Stdout = in.Stdout
 	cmd.Stderr = in.Stderr
 	if err := cmd.Run(); err != nil {

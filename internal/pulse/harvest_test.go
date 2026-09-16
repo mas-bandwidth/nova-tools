@@ -71,7 +71,7 @@ func runHarvest(t *testing.T, root string) (string, string) {
 	var out, errs bytes.Buffer
 	code := Harvest(HarvestInput{
 		ID: "p1", Root: root, Sources: filepath.Join(root, "sources.tsv"),
-		Templates: root, MaxBodyBytes: 4096, Max: 20,
+		Templates: root, MaxBodyBytes: 4096, Max: 20, Publish: true,
 		Stdout: &out, Stderr: &errs,
 	})
 	_ = code
@@ -228,8 +228,10 @@ func TestHarvestRelaunchesQueueFirst(t *testing.T) {
 	for _, l := range arglogLines(t, arglog) {
 		if strings.HasPrefix(l, "nova-pulse launch") {
 			launched = true
-			if !strings.Contains(l, "--queue") {
-				t.Fatalf("relaunch must pass --queue, got: %s", l)
+			// Probe issue 11: the relaunch used to pass neither --slots nor --deadline, so
+			// launch refused it every cycle and the loop's last step never ran.
+			if !strings.Contains(l, "--deadline ") {
+				t.Fatalf("relaunch must carry a --deadline, got: %s", l)
 			}
 		}
 	}

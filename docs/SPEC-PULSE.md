@@ -109,15 +109,28 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    zero, Go is flat, Zen is metered. It prints `route=<model> reason=<class>` on its
    `CUT ROUTE` line, `class` the cost class. A retry after an abstain (rule 14) moves the pick
    one capability class up (`read` → `text` → `code` → `replay`), so a rewritten card routes
-   to a stronger class. There is no `--model` flag on any verb: the table is the whole
-   policy, in git, edited once. `cards.tsv` is five fields per line: `label`, `slot`, `model`,
+   to a stronger class. `cut` takes a `--model <id>` that holds a whole pulse to one model, and then the table is
+   not read at all. The rule used to say there was no `--model` flag on any verb, and the
+   dogfood probe (#635) found the cost it bought: the table cannot say "flash only tonight"
+   without a row per night, so a manager holding a shift to Flash had no way to say it and
+   every fix card routed to `pro`. The table stays the standing policy in git; `--model` is
+   the one-night override a person types and a receipt records. `cards.tsv` is five fields per line: `label`, `slot`, `model`,
    `tokens`, `card` (the card's path); `slot` is `-` until `launch` allocates, and `tokens` is
    the card's admission token bound, which rule 10 sums for the batch's `--tokens`.
-8. **A slot is free when the swarm's slot lock files say so.** `launch` reads the swarm pool
-   under `--root`: a slot is free when its slot lock file `<pool>/slots/<n>.json` is absent
-   or `state=free` — the swarm's own lock files (issue #457), never a log age and never a
-   120 s rule: a slot freed under a writer is the hurt of SPEC-SWARM rule 17. `free-before=<n>`
-   on the `PULSE` line is that count before admission; `--slots <n>` caps it.
+8. **A slot is free when the batch's own lock says so, and the batch allocates.** `launch`
+   reads `<root>/<slot>/BATCH`, the lock `nova-swarm batch` writes from allocation to slot
+   end (SPEC-SWARM, issue #457): a slot is free when that file is absent or its holder pid
+   is dead, and by nothing else. **Never a process probe.** Measured, 2026-09-16: the
+   launcher decided busy by a running process and the batch by its lock, and between a
+   card's clone and its first harness line there is no process — so the launcher handed out
+   a locked slot, the batch refused that card at admission
+   (`ABSTAIN reason=admission slot=<n> held-by=<batch> pid=<p>`), and ten of twenty cards in
+   one shift were wasted. Better than agreeing on the predicate is not needing it twice:
+   `launch` writes `-` in every card's slot column and hands the batch a range
+   (`--slots <lo>-<hi>`), so the batch allocates under the same lock it writes and nothing
+   can change between the check and the lock. `free=<n>` on the `LAUNCH` line is the count
+   in the range before admission; on a bench it is one ssh with a deadline, and a probe that
+   does not answer leaves nothing free.
 9. **Launch fills every free slot on every bench, and only with admitted work.** Maximum
    available throughput is the default, Glenn: every free slot rule 8 counts — under the
    per-tick headroom of **Rate and convergence** rule 3 — is filled in `cards.tsv` order and
@@ -133,10 +146,19 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    from gated work (rule 16). An admission refusal is not a failed run: `launch` fills the
    slots it can and exits 0. There is no `UNDER-SLOTS` refusal any more — a pulse never
    refuses for being wider than the bench; the remainder queues, always.
-10. **Every card goes through `batch`, never a single `add`.** `launch` runs exactly one
-    `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>
-    --files <n> --tokens <n> --then "nova-pulse harvest --id <id> --root <root>"` per model
-    route present, so at most two admissions, both under one pulse id recorded in
+10. **Every card goes through `batch`'s CARD form, never the pool form and never a single
+    `add`.** `launch` runs exactly one
+    `nova-swarm batch --id <id> --cards <tsv> --deadline <s> --root <root> --slots <lo>-<hi>
+    [--runner <cmd> | --harness <path>] [--benches <file> --bench <names>]` per pulse. The
+    pool form (`--pool --tasks --files --tokens`) queues tasks and runs no card: launch
+    called it until 2026-09-16 and every pulse died at
+    `--files is required and is at least 1, got 0` (#630). The batch is started detached and
+    `launch` does not wait for it — its deadline is the batch's — and a `--check <s>`
+    (default 90) counts the started cards afterwards by job directory:
+    `LAUNCH-OK`, `LAUNCH-DEAD`, or `LAUNCH-UNKNOWN` when a bench did not answer. One launch
+    per root, by a pid file in it, refused with the holder's pid. Every launched card is one
+    row of `<root>/launch.tsv`: `id`, `label`, `slot`, `bench`, `model`, card `sha12`,
+    `stamp`. The old per-model-route wording said, so at most two admissions, both under one pulse id recorded in
     `<root>/pulses/<id>.tsv` (`batch id`, `model`, `n`). `<n>` on `--files` and `--tokens` is
     that route's card count and summed token bound taken from its `cards.tsv` columns, so the
     admission is bounded exactly as the cards say. The `--then` argv is `nova-swarm batch`'s
@@ -149,6 +171,15 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     waits for a read. A chain that waits on mergeability waits on a person, and the pulse
     stalls behind the one thing this tool was built not to wait for (the chain-gate lesson,
     cairn 0b737f92).
+11b. **`harvest` folds ANY root.** Its cards come from `<root>/launch.tsv` first, then a
+    `cards.tsv` a `cut` wrote, then the job directories under the root themselves, so a root
+    that `nova-swarm batch` filled by hand folds like one this tool cut (#628: a fold that
+    refused such a root lost four real outcomes in one shift). `--id` is optional: with one
+    it folds that pulse's rows, without one every card in the root. A launched card with no
+    job directory anywhere three minutes after its launch is `HARVEST ORPHAN label=<l>`, not
+    an abstain: nothing ran, so there is no harness log to quote. Pushing and opening the PR
+    stay with `nova-swarm publish`: `harvest` prints the publish command per `BRANCH` card
+    and runs it only under `--publish`.
 12. **Line 1 must match, or nothing is pushed.** For every done card `harvest` runs
     `nova-swarm verify --result <job>/RESULT.md --contract <card line 1> --label <label>`;
     a mismatch is `mismatch=<n>` on the `HARVEST` line, the card's row in `seen.tsv` is
@@ -208,8 +239,9 @@ The loop ends only when the pool and the queue are both empty, and then it says 
 
 ```
 nova-pulse pool    --sources <file> --work <nova-work root> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--benches <benches.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--spend-max <usd>] [--max-attempts <n>] [--scope <file>] [--timeout <s>] [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--benches <benches.tsv>] [--model <id>] [--local <tag>] [--timeout <s>] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --deadline <s> [--slots <lo-hi>] [--benches <file>] [--bench <names>] [--id <id>] [--runner <cmd>] [--harness <path>] [--auth <path>] [--idle <s>] [--check <s>] [--swarm <path>] [--spend-max <usd>] [--max-attempts <n>] [--scope <file>] [--timeout <s>] [--max <n>]
+nova-pulse check   --root <dir> [--id <pulse id>] [--after <s>] [--benches <file>] [--bench <names>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--timeout <s>] [--max <n>]
 nova-pulse handoff --to <name> --root <dir> [--timeout <s>]
 nova-pulse takeover --as <name> --root <dir> --sources <file> --templates <dir> [--timeout <s>] [--max <n>]

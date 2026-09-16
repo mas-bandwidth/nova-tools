@@ -19,28 +19,36 @@ import (
 const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--model <id>] [--local <tag>] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --deadline <s> [--slots <lo-hi>] [--benches <file>] [--bench <names>] [--id <id>] [--runner <cmd>] [--harness <path>] [--auth <path>] [--idle <s>] [--check <s>] [--swarm <path>] [--max <n>]
+nova-pulse check   --root <dir> [--id <pulse id>] [--after <s>] [--benches <file>] [--bench <names>]
+nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--publish] [--deadline <s>] [--slots <lo-hi>] [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--timeout <s>] [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
 
-launch reads a cards.tsv of label<TAB>slot<TAB>model<TAB>card, counts the free
-slots in <root>/pool, and hands the cards that fit one model at a time to nova-swarm
-batch, queueing the rest only when --queue is set. --slots is the ceiling on the
-free slots it may use, and --deadline is the whole pulse's one deadline in whole
-seconds. It makes no model call itself: nova-swarm must be on your PATH.
+launch reads a cards.tsv of label<TAB>slot<TAB>model<TAB>card and hands it to
+"nova-swarm batch" in its card form -- --id --cards --deadline --root, with
+--runner or --harness, and --benches/--bench for a bench -- which is the form that
+runs a card. It fills only free slots: A SLOT IS FREE WHEN THE BATCH LOCK
+<root>/<slot>/BATCH is absent or its holder pid is dead, never when a process
+probe says so, and the allocation itself is the batch's, under that lock. A card
+that is empty or younger than five seconds is skipped by name. Every launched card
+is one row of <root>/launch.tsv (id, label, slot, bench, model, card sha, stamp),
+and --check <s> (default 90) counts the started cards afterwards by job directory:
+LAUNCH-OK, LAUNCH-DEAD or LAUNCH-UNKNOWN. One launch per root: a second one is
+refused with the holder's pid.
 
 example:
-  nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
-  nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
+  nova-pulse launch --cards ./cards.tsv --root ./swarm-root --deadline 1500 --slots 1-16 --harness /path/to/opencode
+  nova-pulse launch --cards ./cards.tsv --root ./swarm-root --deadline 1500 --slots 101-160 --benches ./benches.tsv --bench space
+  nova-pulse check  --root ./swarm-root --id <pulse id>
 
-./cards.tsv and . there are a pulse root of your own; cmd/nova-pulse/testdata/example-pulse
-in this repo is a fixture the size of a first run, and every line above is run
-against it by the tests.
+check counts the cards of a pulse that have a job directory -- made before the
+harness's first line -- and says so in one line; a bench that does not answer is
+LAUNCH-UNKNOWN, never dead.
 
 manager is the manager tier: a bounded controller, no model call. Each cycle is
 wait, notes, harvest, triage, merge, refill and one MANAGER line; an unknown
@@ -92,6 +100,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdCut(rest, stdout, stderr)
 	case "harvest":
 		return cmdHarvest(rest, stdout, stderr)
+	case "check":
+		return cmdCheck(rest, stdout, stderr)
 	case "manager":
 		return cmdManager(rest, stdout, stderr)
 	case "status":
@@ -181,21 +191,29 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("launch")
 	cards := f.fs.String("cards", "", "")
 	root := f.fs.String("root", "", "")
-	slots := f.fs.Int("slots", 0, "")
+	slots := f.fs.String("slots", "", "")
 	deadline := f.fs.String("deadline", "", "")
-	queue := f.fs.Bool("queue", false, "")
+	benches := f.fs.String("benches", "", "")
+	bench := f.fs.String("bench", "", "")
+	id := f.fs.String("id", "", "")
+	runner := f.fs.String("runner", "", "")
+	harness := f.fs.String("harness", "", "")
+	auth := f.fs.String("auth", "", "")
+	idle := f.fs.Int("idle", 0, "")
+	check := f.fs.Int("check", 90, "")
+	swarmBin := f.fs.String("swarm", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.want(*cards, "cards", "a cards.tsv of label, slot, model, card path")
-	f.want(*root, "root", "the pulse root this pulse's state hangs under")
-	if *slots < 1 {
-		f.add(fmt.Sprintf("--slots is required and is at least 1, got %d; it is the ceiling on the free slots this pulse may use", *slots))
-	}
+	f.want(*root, "root", "the swarm root this pulse's slots and job directories hang under")
 	if !isDeadlineSeconds(*deadline) {
 		f.add(fmt.Sprintf("--deadline is required and wants a whole number of seconds, got %q", *deadline))
+	}
+	if *check < 0 {
+		f.add(fmt.Sprintf("--check is 0 or more seconds, got %d; 0 runs no launch check", *check))
 	}
 	if *max < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
@@ -204,8 +222,34 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	return pulse.Launch(pulse.LaunchInput{
-		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline, Queue: *queue,
+		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline,
+		Benches: *benches, Bench: *bench, ID: *id, Runner: *runner,
+		Harness: *harness, Auth: *auth, Idle: *idle, Check: *check, Max: *max,
+		Swarm:  *swarmBin,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
+	})
+}
+
+func cmdCheck(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("check")
+	id := f.fs.String("id", "", "")
+	root := f.fs.String("root", "", "")
+	after := f.fs.Int("after", 0, "")
+	benches := f.fs.String("benches", "", "")
+	bench := f.fs.String("bench", "", "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*root, "root", "the swarm root the pulse's job directories hang under")
+	if *after < 0 {
+		f.add(fmt.Sprintf("--after is 0 or more seconds, got %d; 0 counts the started cards now", *after))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.Check(pulse.CheckInput{
+		ID: *id, Root: *root, After: *after, Benches: *benches, Bench: *bench,
+		Stdout: stdout, Stderr: stderr,
 	})
 }
 
@@ -217,11 +261,13 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	templates := f.fs.String("templates", "", "")
 	maxBodyBytes := f.fs.Int("max-body-bytes", 4096, "")
 	max := f.fs.Int("max", 20, "")
+	publish := f.fs.Bool("publish", false, "")
+	deadline := f.fs.String("deadline", "", "")
+	slots := f.fs.String("slots", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	f.want(*id, "id", "the pulse id whose cards this harvest folds")
 	f.want(*root, "root", "the pulse root this pulse's state hangs under")
 	if *maxBodyBytes <= 0 {
 		f.add(fmt.Sprintf("--max-body-bytes wants a positive byte count, got %d", *maxBodyBytes))
@@ -235,6 +281,9 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	return pulse.Harvest(pulse.HarvestInput{
 		ID:           *id,
 		Root:         *root,
+		Publish:      *publish,
+		Deadline:     *deadline,
+		Slots:        *slots,
 		Sources:      *sources,
 		Templates:    *templates,
 		MaxBodyBytes: *maxBodyBytes,
@@ -331,6 +380,7 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	out := f.fs.String("out", "", "")
 	root := f.fs.String("root", "", "")
 	local := f.fs.String("local", "", "")
+	model := f.fs.String("model", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 	if !f.parse(args, stderr) {
 		return 2
@@ -351,6 +401,7 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 		Out:       *out,
 		Root:      *root,
 		Local:     *local,
+		Model:     *model,
 		Max:       *max,
 		Stdout:    stdout,
 		Stderr:    stderr,

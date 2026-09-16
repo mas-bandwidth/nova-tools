@@ -23,10 +23,29 @@ type HarvestInput struct {
 	Templates    string
 	MaxBodyBytes int
 	Max          int
+	Publish      bool   // run the publish command per BRANCH card; without it the command is printed
+	Deadline     string // the deadline the relaunch carries (rule 15's launch needs one)
+	Slots        string // the slot range the relaunch carries
 	Stdout       io.Writer
 	Stderr       io.Writer
 	Now          func() time.Time
 }
+
+// harvestCard is one card this harvest folds, whoever launched it: a label, the model it ran
+// on, the bench it ran on, the card's path when a launch recorded one, and the stamp it was
+// launched at (zero when unknown).
+type harvestCard struct {
+	Label    string
+	Model    string
+	Bench    string
+	Card     string
+	Launched time.Time
+}
+
+// orphanAfter is how long after a launch a card with no job directory anywhere is an orphan
+// rather than a card still being copied to its bench. It is the 23:36Z class: the batch was
+// admitted, no job dir was ever made, and the coordinator read a silent root as idle.
+const orphanAfter = 3 * time.Minute
 
 func field(s string) string {
 	if strings.TrimSpace(s) == "" {
@@ -53,63 +72,106 @@ func Harvest(in HarvestInput) int {
 	}
 	started := in.Now()
 
-	if strings.TrimSpace(in.ID) == "" {
-		return refusal(in.Stderr, "HARVEST", fmt.Errorf("missing --id; refusing to guess (supply the pulse id)"))
-	}
+	// #628: --id is optional. A harvest with one folds that pulse's rows; a harvest without
+	// one folds every card in the root, whoever launched it.
 	if strings.TrimSpace(in.Root) == "" {
 		return refusal(in.Stderr, "HARVEST", fmt.Errorf("missing --root; refusing to guess (supply the root directory)"))
 	}
 
-	cards, err := readCards(filepath.Join(in.Root, "cards.tsv"))
+	// #628: A ROOT IS FOLDED BY WHAT IS IN IT, NOT BY WHO CUT IT. launch.tsv first (this
+	// tool's own record), then a cards.tsv a cut wrote, and last the job directories
+	// themselves, so a root filled by `nova-swarm batch` by hand folds like any other.
+	cards, source, err := harvestCards(in.Root, in.ID)
 	if err != nil {
 		return refusal(in.Stderr, "HARVEST", err)
 	}
+	if len(cards) == 0 {
+		fmt.Fprintf(in.Stderr, "HARVEST REFUSED reason=no-card root=%s (no launch.tsv, no cards.tsv and no job directory under it)\n", oneline.Field(in.Root))
+		return 2
+	}
 
-	var done, pushed, prs, abstain, mismatch, refused, retried int
-	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
+	var done, pushed, prs, abstain, mismatch, refused, retried, orphans int
+	lines := make([]string, 0) // HARVEST PR / RETRY / ORPHAN / REFUSED per-card lines
+	usdTotal := 0.0
 
-	for _, c := range cards {
-		jobDir := jobDir(in.Root, c.Slot, c.Label)
-		contract := cardContract(c.Card)
-		state, branch, repo, resultLines := classify(jobDir, c, contract)
+	for _, hc := range cards {
+		c := CardRow{Label: hc.Label, Slot: "-", Model: hc.Model, Card: hc.Card}
+		jd := findJobDir(in.Root, hc.Label)
+		if jd == "" {
+			// A launched card with no job directory anywhere is an orphan, not an abstain:
+			// nothing ran, so there is no harness log to quote and no reason to triage.
+			if hc.Launched.IsZero() || in.Now().Sub(hc.Launched) >= orphanAfter {
+				orphans++
+				lines = append(lines, fmt.Sprintf("HARVEST ORPHAN label=%s bench=%s: no job directory under the root %s after launch (the batch was admitted and no card started)",
+					field(hc.Label), field(hc.Bench), field(in.Root)))
+				writeSeen(in.Root, c, "orphan")
+				continue
+			}
+			jd = jobDir(in.Root, "0", hc.Label)
+		}
+		usdTotal += readCardUSD(filepath.Join(jd, "usage.tsv"))
+		contract := cardContract(hc.Card)
+		state, branch, repo, resultLines := classify(jd, c, contract)
 
 		switch state {
 		case "mismatch":
 			mismatch++
 			writeSeen(in.Root, c, "mismatch")
+			lines = append(lines, fmt.Sprintf("HARVEST MISMATCH label=%s: line 1 is not the card's contract line", field(hc.Label)))
 		case "abstain":
 			abstain++
 			retried++
-			refusal := lastRefusal(filepath.Join(jobDir, "harness.log"))
+			// #12: the reason token the packet already scored, never the runner's NATIVE
+			// line. `deadline`, `no-result`, `card-abstain` -- one token a coordinator can
+			// count -- and the harness's own last refusal after it, when there is one.
+			reason := cardAbstainReason(jd, resultLines)
+			tail := lastRefusal(filepath.Join(jd, "harness.log"))
 			writeSeen(in.Root, c, "retry")
-			lines = append(lines, fmt.Sprintf("HARVEST RETRY label=%s card=%s: %s",
-				field(c.Label), field(c.Card), oneline.Escape(refusal)))
-			appendRetry(in.Root, c, refusal)
+			lines = append(lines, fmt.Sprintf("HARVEST RETRY label=%s reason=%s: %s",
+				field(hc.Label), reason, oneline.Escape(tail)))
+			appendRetry(in.Root, c, reason+" "+tail)
 		case "refused":
 			refused++
 			writeSeen(in.Root, c, "refused")
-			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: fix card with no red: line and no test file in its diff (add the red test output before the fix)\n", field(c.Label))
+			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: fix card with no red: line and no test file in its diff (add the red test output before the fix)\n", field(hc.Label))
 		case "done":
 			done++
+			cmdline := publishCommand(jd, branch, hc.Label)
+			if !in.Publish {
+				// The event line carries fields; the command a person copies is its own
+				// line, whole, because a command line is not one token (SPEC.md's field law)
+				// and a half-escaped command is not runnable.
+				lines = append(lines, fmt.Sprintf("HARVEST BRANCH label=%s branch=%s job=%s",
+					field(hc.Label), field(branch), oneline.Field(jd)))
+				lines = append(lines, "HARVEST PUBLISH "+oneline.Escape(cmdline))
+				writeSeen(in.Root, c, "branch")
+				continue
+			}
 			url := pushURL(repo)
-			if err := push(in, jobDir, url, branch); err != nil {
-				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
+			if err := push(in, jd, url, branch); err != nil {
+				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(hc.Label), oneline.Err(err))
 				continue
 			}
 			pushed++
-			pr, err := openPR(in, jobDir, url, c.Label, branch, resultLines)
+			pr, err := openPR(in, jd, url, hc.Label, branch, resultLines)
 			if err != nil {
-				fmt.Fprintf(in.Stderr, "HARVEST NOTE pr failed label=%s: %s\n", field(c.Label), oneline.Err(err))
+				fmt.Fprintf(in.Stderr, "HARVEST NOTE pr failed label=%s: %s\n", field(hc.Label), oneline.Err(err))
 				continue
 			}
 			prs++
 			lines = append(lines, fmt.Sprintf("HARVEST PR repo=%s pr=%d label=%s branch=%s",
-				field(repo), pr, field(c.Label), field(branch)))
-			appendNext(in.Root, repo, pr, c.Label)
+				field(repo), pr, field(hc.Label), field(branch)))
+			appendNext(in.Root, repo, pr, hc.Label)
 		}
 	}
 
-	usd := readUSD(filepath.Join(in.Root, "pulses", in.ID+".packet"))
+	// #12: the spend is the cards' own usage.tsv rows, summed, and the packet's usd only
+	// when no card wrote one. A harvest that lost the batch's spend printed usd=- while the
+	// BATCH line said usd=0.0498.
+	usd := formatUSD(usdTotal)
+	if usdTotal == 0 {
+		usd = readUSD(filepath.Join(in.Root, "pulses", in.ID+".packet"))
+	}
 
 	grouped := bound(in.Stdout, in.Max)
 	for _, l := range lines {
@@ -119,11 +181,11 @@ func Harvest(in HarvestInput) int {
 
 	code := 0
 	result := "OK"
-	if mismatch > 0 || abstain > 0 || refused > 0 {
+	if mismatch > 0 || abstain > 0 || refused > 0 || orphans > 0 {
 		code = 1
 	}
-	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d usd=%s took=%s\n",
-		result, field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, usd,
+	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s source=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d orphan=%d retry=%d usd=%s took=%s\n",
+		result, field(in.ID), source, done, pushed, prs, abstain, mismatch, refused, orphans, retried, usd,
 		in.Now().Sub(started).Round(time.Millisecond))
 
 	// Rule 15: harvest pulses again, queue first. The PULSE line (or PULSE POOL EMPTY) is
@@ -212,7 +274,11 @@ func classify(jobDir string, c CardRow, contract string) (state, branch, repo st
 	norm := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	lines := strings.Split(norm, "\n")
 	line1 := strings.TrimSpace(firstNonEmpty(lines))
-	if line1 != contract {
+	// The contract is checked WHEN THE CARD IS ON DISK. A root folded without its cards
+	// (#628: a root nova-swarm batch filled by hand) has no contract line to compare, and
+	// calling every card of it a mismatch is how the fold used to lose four real outcomes;
+	// such a card is disposed by its own two lines instead.
+	if contract != "" && line1 != contract {
 		return "mismatch", "", "", lines
 	}
 	line2 := ""
@@ -416,3 +482,164 @@ func appendNext(root, repo string, pr int, label string) {
 }
 
 const childTimeout = 120 * time.Second
+
+
+// harvestCards is where a harvest's cards come from, most authoritative first: this tool's
+// own launch.tsv, then a cards.tsv a cut wrote, then the job directories under the root
+// (#628: a root filled by `nova-swarm batch` by hand folds like any other). It returns the
+// cards and the name of the source it read, which the HARVEST line carries.
+func harvestCards(root, id string) ([]harvestCard, string, error) {
+	if rows, err := readLaunchTSV(filepath.Join(root, "launch.tsv"), id); err == nil && len(rows) > 0 {
+		var out []harvestCard
+		for _, r := range rows {
+			stamp, _ := time.Parse("2006-01-02T15:04:05Z", r.Stamp)
+			out = append(out, harvestCard{Label: r.Label, Model: r.Model, Bench: r.Bench, Card: cardPathFor(root, id, r.Label), Launched: stamp})
+		}
+		return out, "launch.tsv", nil
+	}
+	if rows, err := readCards(filepath.Join(root, "cards.tsv")); err == nil && len(rows) > 0 {
+		var out []harvestCard
+		for _, r := range rows {
+			out = append(out, harvestCard{Label: r.Label, Model: r.Model, Bench: "-", Card: r.Card})
+		}
+		return out, "cards.tsv", nil
+	}
+	labels, err := jobLabels(root)
+	if err != nil {
+		return nil, "", fmt.Errorf("cannot read %s (a harvest folds launch.tsv, cards.tsv or the job directories under the root): %s", root, oneline.Err(err))
+	}
+	var out []harvestCard
+	for _, l := range labels {
+		out = append(out, harvestCard{Label: l, Model: "-", Bench: "-"})
+	}
+	return out, "jobs", nil
+}
+
+// cardPathFor finds the card file a launch row named, looking where launch and cut put them.
+func cardPathFor(root, id, label string) string {
+	for _, p := range []string{
+		filepath.Join(root, "cards", id, label+".md"),
+		filepath.Join(root, "cards", label+".md"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	// The card's own copy inside the job is the contract line's last home.
+	if jd := findJobDir(root, label); jd != "" {
+		if p := filepath.Join(jd, "card.md"); fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
+// jobLabels lists every label with a job directory under the root, in slot order.
+func jobLabels(root string) ([]string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		jobs, err := os.ReadDir(filepath.Join(root, e.Name(), "jobs"))
+		if err != nil {
+			continue
+		}
+		for _, j := range jobs {
+			if !j.IsDir() || seen[j.Name()] {
+				continue
+			}
+			seen[j.Name()] = true
+			out = append(out, j.Name())
+		}
+	}
+	return out, nil
+}
+
+// findJobDir is a label's job directory under any slot of the root, remote slots included
+// (<bench>-<n>), or "" when no slot holds one.
+func findJobDir(root, label string) string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		p := filepath.Join(root, e.Name(), "jobs", label)
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			return p
+		}
+	}
+	return ""
+}
+
+// abstainReason is the ONE token an abstain is counted by (#12 of the probe's issues): the
+// card's own ABSTAIN reason when it wrote one, `no-result` when it wrote no RESULT.md, and
+// `deadline` when the job holds the batch's own deadline mark.
+func cardAbstainReason(jobDir string, resultLines []string) string {
+	if r := abstainReason(resultLines); r != "" {
+		return oneline.Field(r)
+	}
+	if !fileExists(filepath.Join(jobDir, "RESULT.md")) {
+		if fileExists(filepath.Join(jobDir, "harness.log")) {
+			return "no-result"
+		}
+		return "no-job"
+	}
+	return "no-result"
+}
+
+// publishCommand is the `nova-swarm publish` a person (or --publish) runs for a done card.
+// Pushing and opening a PR stays with publish: harvest names the command and never grows a
+// second implementation of it.
+func publishCommand(jobDir, branch, label string) string {
+	return fmt.Sprintf("nova-swarm publish --job %s --branch %s --base main --title %s --body-file %s",
+		filepath.Join(jobDir, "repo"), branch, label, filepath.Join(jobDir, "RESULT.md"))
+}
+
+// readCardUSD reads the usd column of one card's usage.tsv (thirteen columns, one header
+// line and one row), or 0 when there is none.
+func readCardUSD(path string) float64 {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) < 2 {
+		return 0
+	}
+	head := strings.Split(lines[0], "\t")
+	row := strings.Split(lines[1], "\t")
+	for i, h := range head {
+		if strings.TrimSpace(h) != "usd" || i >= len(row) {
+			continue
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(row[i]), 64)
+		if err != nil {
+			return 0
+		}
+		return v
+	}
+	return 0
+}
+
+// formatUSD prints a spend the way the swarm's own BATCH line does: four decimals, or "-"
+// when nothing was spent.
+func formatUSD(v float64) string {
+	if v == 0 {
+		return "-"
+	}
+	return strconv.FormatFloat(v, 'f', 4, 64)
+}

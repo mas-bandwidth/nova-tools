@@ -213,7 +213,7 @@ func poolIssues(s source, seen map[string]bool, in PoolInput, kind string) ([]Po
 		if t := bodyTemplate(iss.Body); t != "" {
 			tpl = t
 		}
-		rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: kind, Title: iss.Title, Template: tpl})
+		rows = append(rows, PoolRow{Source: s.locator, ID: id, Kind: kind, Title: iss.Title, Template: tpl})
 	}
 	return rows, plan, seenCount, nil
 }
@@ -238,7 +238,7 @@ func poolAudits(s source, seen map[string]bool, in PoolInput) ([]PoolRow, int, i
 				seenCount++
 				continue
 			}
-			rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: "audit", Title: iss.Title, Template: "drift"})
+			rows = append(rows, PoolRow{Source: s.locator, ID: id, Kind: "audit", Title: iss.Title, Template: "drift"})
 		}
 	}
 	return rows, 0, seenCount, nil
@@ -277,7 +277,7 @@ func poolBus(s source, seen map[string]bool) ([]PoolRow, int, int, error) {
 			seenCount++
 			continue
 		}
-		rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: "slice", Title: noteTitle(body), Template: tpl})
+		rows = append(rows, PoolRow{Source: s.locator, ID: id, Kind: "slice", Title: noteTitle(body), Template: tpl})
 	}
 	return rows, 0, seenCount, nil
 }
@@ -307,7 +307,7 @@ func poolRoadmap(s source, seen map[string]bool) ([]PoolRow, int, int, error) {
 			if seen[key] {
 				seenCount++
 			} else {
-				rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: "roadmap", Title: id, Template: tpl})
+				rows = append(rows, PoolRow{Source: s.locator, ID: id, Kind: "roadmap", Title: id, Template: tpl})
 			}
 		}
 		idx = start + len(":card")

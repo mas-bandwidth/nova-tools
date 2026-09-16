@@ -864,6 +864,72 @@ is two boards with one name. `--by` or `--default` missing on `add`: a card with
 cannot be filed. And reading `check`'s exit backwards: 1 means *found it, do not file*, so
 the natural `&&` chain would file exactly the duplicates.
 
+## nova-pulse
+
+```
+nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--model <id>] [--local <tag>] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --deadline <s> [--slots <lo-hi>] [--benches <file>] [--bench <names>] [--id <id>] [--runner <cmd>] [--harness <path>] [--auth <path>] [--idle <s>] [--check <s>] [--swarm <path>] [--max <n>]
+nova-pulse check   --root <dir> [--id <pulse id>] [--after <s>] [--benches <file>] [--bench <names>]
+nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--publish] [--deadline <s>] [--slots <lo-hi>] [--max-body-bytes <n>] [--max <n>]
+nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
+```
+
+Those lines are `nova-pulse help`'s own, and a test walks the verb switch against them.
+
+### launch: the cards actually run
+
+`launch` hands the cards to `nova-swarm batch` in its **card form** — `--id --cards
+--deadline --root`, with `--runner <cmd>` or `--harness <path>`, and `--benches/--bench`
+for a bench. The pool form (`--pool --tasks --files --tokens`) queues tasks and starts no
+card, which is why a pulse used to end at `--files is required and is at least 1, got 0`.
+
+A slot is free when its batch lock `<root>/<slot>/BATCH` is absent or its holder pid is
+dead, and by nothing else: **never a process probe**, which says free for the whole of a
+card's clone while the lock says held. `launch` counts the free slots in `--slots
+<lo>-<hi>`, takes that many cards, writes `-` in every slot column and lets the batch
+allocate under the same lock it writes.
+
+```
+$ nova-pulse launch --cards ./cards.tsv --root ./swarm-root --deadline 1500 --slots 1-16 --harness /path/to/opencode
+LAUNCH OK id=20260916T014455Z-pulse-7c1a20 bench=- cards=6 slots=1-16 free=16 deadline=1500
+```
+
+Every launched card is one row of `<root>/launch.tsv` (`id`, `label`, `slot`, `bench`,
+`model`, card `sha12`, `stamp`), the batch's own output is `<root>/batch-<id>.out`, and a
+refusal is one line naming its reason: `LAUNCH REFUSED reason=no-free-slot slots=1-2
+cards=2`, `reason=running pid=<n>` (one launch per root), `reason=no-card-ready`. A card
+that is empty or younger than five seconds is skipped by name, not launched half-written.
+
+### check: did anything start
+
+`--check <s>` (default 90) starts this same check detached, appending to `<root>/pulse.log`;
+by hand it is one verb. A job directory is made before the harness's first line, so its
+absence is what a dead launch looks like — and a bench that does not answer is never called
+dead.
+
+```
+$ nova-pulse check --root ./swarm-root --id 20260916T014455Z-pulse-7c1a20
+LAUNCH-OK id=20260916T014455Z-pulse-7c1a20 bench=- started=6/6
+```
+
+### harvest: any root, not only one it cut
+
+`harvest` folds `<root>/launch.tsv` first, then a `cards.tsv`, then the job directories
+themselves, so a root filled by `nova-swarm batch` by hand folds like any other; `--id` is
+optional. Each card is one line with its abstain reason token, the spend is the sum of the
+cards' own `usage.tsv` rows, and a launched card with no job directory after three minutes
+is an orphan rather than an abstain. Pushing stays with `nova-swarm publish`: the command is
+printed per `BRANCH` card and run only under `--publish`.
+
+```
+$ nova-pulse harvest --root ./swarm-root
+HARVEST RETRY label=card-700 reason=deadline: -
+HARVEST BRANCH label=card-801 branch=rowan/fix-801 job=./swarm-root/1/jobs/card-801
+HARVEST PUBLISH nova-swarm publish --job ./swarm-root/1/jobs/card-801/repo --branch rowan/fix-801 --base main --title card-801 --body-file ./swarm-root/1/jobs/card-801/RESULT.md
+HARVEST OK id=- source=jobs done=1 pushed=0 prs=0 abstain=1 mismatch=0 refused=0 orphan=0 retry=1 usd=0.0249 took=3ms
+```
+
 ## nova-swarm
 
 ```

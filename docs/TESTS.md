@@ -345,21 +345,17 @@ STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=
 
 ## nova-pulse
 
-Fixture: `cmd/nova-pulse/testdata/example-pulse`, a pulse root the size of a first run: three cards (gate, hash, fold), all on one `pro` model, and the `cards.tsv` that names them. `launch` counts the free slots under `<root>/pool` (here empty, so every slot is free), then hands the cards that fit to `nova-swarm batch` one model at a time. The fixture ships a stub `bin/nova-swarm` that records the batch argv and exits 0, so the two `PULSE OK` lines below were produced by RUNNING launch on this fixture with that stub on PATH — no model call happens here, and no line reaches a network.
-
-A first sitting is three runs: one refusal (three cards into two slots), one whole pulse (three into three), and the queued form (three into two with `--queue`).
-
-### First run
+Fixture: none that lies. The stub `bin/nova-swarm` this section used to run against — three lines, `exit 0` for any argv — is deleted: it exited 0 for the form of `nova-swarm batch` that starts no card, so the `PULSE OK` lines it produced were the tool reporting success at launching nothing (#630). The tests in `internal/pulse` now build `cmd/nova-swarm` from this tree and drive the real binary, with a runner script that writes `RESULT.md`, so every line below is what the real pair prints.
 
 ```
-$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120
-PULSE REFUSED UNDER-SLOTS cards=3 free=2 (pass --queue, or wait)
+$ nova-pulse launch --cards ./cards.tsv --root ./swarm-root --deadline 60 --slots 1-4 --runner ./runner.sh
+LAUNCH OK id=20260916T014455Z-pulse-7c1a20 bench=- cards=2 slots=1-4 free=4 deadline=60
 
-$ nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
-PULSE OK id=20260915T161450Z-pulse-e33494 n=3 free-before=3 queued=0 batches=1 deadline=120
+$ nova-pulse check --root ./swarm-root --id 20260916T014455Z-pulse-7c1a20
+LAUNCH-OK id=20260916T014455Z-pulse-7c1a20 bench=- started=2/2
 
-$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
-PULSE OK id=20260915T161450Z-pulse-600cc3 n=3 free-before=2 queued=1 batches=1 deadline=120
+$ nova-pulse launch --cards ./cards.tsv --root ./swarm-root --deadline 60 --slots 1-2 --runner ./runner.sh   # both slots hold a live BATCH lock
+LAUNCH REFUSED reason=no-free-slot slots=1-2 cards=2 (every slot in the range holds a live BATCH lock)
 ```
 
 Cut one card of each kind out of the fixture pool, into a fresh `./cards` and

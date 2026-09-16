@@ -2,25 +2,73 @@ package pulse
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
-// fakeSwarm puts a fake nova-swarm on PATH that records each invocation's argv, one line
-// per run, and exits 0. It was a `#!/bin/sh` script, which Windows does not execute: the
-// lookup fell through to a nova-swarm that is not installed on a runner and the launch
-// refused with "executable file not found".
-func fakeSwarm(t *testing.T, argvLog string) {
+// THE FIXTURE IS THE REAL BINARY. The launch fixture used to be a three-line stub that
+// exited 0 for any argv, so no test could see that launch called a form of `nova-swarm
+// batch` that cannot run a card (issue #630: the pool form wants --files and --tokens and
+// has no runner). Every test here builds nova-swarm from this tree and asserts against what
+// that binary actually accepts.
+
+var (
+	swarmOnce sync.Once
+	swarmBin  string
+	swarmErr  error
+)
+
+// realSwarm builds cmd/nova-swarm once per test binary and returns its path.
+func realSwarm(t *testing.T) string {
 	t.Helper()
-	specs := fakePATH(t)
-	fakeTool(t, specs, "nova-swarm", fakeSpec{Log: argvLog})
+	swarmOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "nova-swarm-bin")
+		if err != nil {
+			swarmErr = err
+			return
+		}
+		out := filepath.Join(dir, "nova-swarm")
+		cmd := exec.Command("go", "build", "-o", out, "github.com/mas-bandwidth/nova-tools/cmd/nova-swarm")
+		if b, err := cmd.CombinedOutput(); err != nil {
+			swarmErr = fmt.Errorf("go build nova-swarm: %v: %s", err, b)
+			return
+		}
+		swarmBin = out
+	})
+	if swarmErr != nil {
+		t.Fatal(swarmErr)
+	}
+	return swarmBin
 }
 
-// writeCards writes cards.tsv with n cards under a root, one model, and returns the card
-// paths in order.
+// fakeRunner writes a runner script of the shape `nova-swarm batch --runner` starts: one
+// process per card, given label slot model card-path root. It writes the card's own line 1
+// into RESULT.md, which is what a done card looks like.
+func fakeRunner(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "runner.sh")
+	script := `#!/bin/sh
+label="$1"; slot="$2"; card="$4"; root="$5"
+job="$root/$slot/jobs/$label"
+mkdir -p "$job"
+head -1 "$card" > "$job/RESULT.md"
+echo "BRANCH rowan/$label" >> "$job/RESULT.md"
+echo "REPO mas-bandwidth/nova-tools" >> "$job/RESULT.md"
+echo "RUNNER OK label=$label slot=$slot"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// writeCards writes n card files and a cards.tsv naming them, each old enough to admit.
 func writeCards(t *testing.T, root string, n int) (string, []string) {
 	t.Helper()
 	cardsDir := filepath.Join(root, "src")
@@ -29,14 +77,19 @@ func writeCards(t *testing.T, root string, n int) (string, []string) {
 	}
 	var sb strings.Builder
 	paths := make([]string, n)
+	old := time.Now().Add(-time.Hour)
 	for i := 0; i < n; i++ {
-		label := "card-" + strings.Repeat("x", 0) + string(rune('a'+i))
-		path := filepath.Join(cardsDir, label)
-		if err := os.WriteFile(path, []byte("RESULT "+label+" sha=000000000000\nbody "+label+"\n"), 0o644); err != nil {
+		label := fmt.Sprintf("card-%d", i)
+		path := filepath.Join(cardsDir, label+".md")
+		body := "RESULT " + label + " sha=000000000000\nYou are a worker.\nSTEP 1. do the thing.\n"
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, old, old); err != nil {
 			t.Fatal(err)
 		}
 		paths[i] = path
-		sb.WriteString(label + "\t-\tpro\t" + path + "\n")
+		sb.WriteString(label + "\t-\topencode/deepseek-v4-flash\t" + path + "\n")
 	}
 	cards := filepath.Join(root, "cards.tsv")
 	if err := os.WriteFile(cards, []byte(sb.String()), 0o644); err != nil {
@@ -54,129 +107,225 @@ func runLaunch(t *testing.T, in LaunchInput) (int, string, string) {
 	return code, out.String(), errb.String()
 }
 
-func pulseID(t *testing.T, out string) string {
+// waitFor polls until cond holds or the deadline passes.
+func waitFor(t *testing.T, d time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// TestLaunchCallsTheCardFormOfBatchAndTheCardRuns is issue #630's red test. Without the
+// change it fails on the first assertion: launch called `nova-swarm batch --pool --tasks`,
+// whose own refusal (`--files is required and is at least 1`) came back as
+// `PULSE REFUSED`, exit 2, and no card ever started. The non-test line it needs is
+// launch.go's startBatch, which passes --id --cards --deadline --root --runner --slots.
+func TestLaunchCallsTheCardFormOfBatchAndTheCardRuns(t *testing.T) {
+	root := t.TempDir()
+	cards, _ := writeCards(t, root, 2)
+	code, out, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Deadline: "60", Slots: "1-4",
+		Runner: fakeRunner(t, root), Swarm: realSwarm(t), Check: 0,
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stdout=%q stderr=%q", code, out, errb)
+	}
+	if !strings.HasPrefix(out, "LAUNCH OK id=") || !strings.Contains(out, "cards=2 slots=1-4 free=4") {
+		t.Fatalf("LAUNCH OK line wrong: %q", out)
+	}
+	// The real batch ran the cards: each card's job directory holds the RESULT.md the
+	// runner wrote, under a slot of the range.
+	for i := 0; i < 2; i++ {
+		label := fmt.Sprintf("card-%d", i)
+		waitFor(t, 30*time.Second, label+" RESULT.md", func() bool {
+			jd := findJobDir(root, label)
+			if jd == "" {
+				return false
+			}
+			_, err := os.Stat(filepath.Join(jd, "RESULT.md"))
+			return err == nil
+		})
+	}
+	// And the batch's own packet is in the root beside it.
+	waitFor(t, 30*time.Second, "the BATCH line", func() bool {
+		raw, err := os.ReadFile(filepath.Join(root, "batch-"+launchID(t, out)+".out"))
+		return err == nil && strings.Contains(string(raw), "BATCH ")
+	})
+}
+
+func launchID(t *testing.T, out string) string {
 	t.Helper()
 	for _, f := range strings.Fields(out) {
-		if strings.HasPrefix(f, "id=") {
-			return strings.TrimPrefix(f, "id=")
+		if v, ok := strings.CutPrefix(f, "id="); ok {
+			return v
 		}
 	}
-	t.Fatalf("no id= field in %q", out)
+	t.Fatalf("no id= in %q", out)
 	return ""
 }
 
-func TestLaunchRefusesUnderSlots(t *testing.T) {
+// TestLaunchRecordsEveryLaunchedCard: launch.tsv is the row harvest and check fold from.
+// Red without recordLaunch in launch.go: there is no launch.tsv at all.
+func TestLaunchRecordsEveryLaunchedCard(t *testing.T) {
 	root := t.TempDir()
-	argvLog := filepath.Join(root, "argv.log")
-	fakeSwarm(t, argvLog)
-	cards, _ := writeCards(t, root, 8)
-
+	cards, _ := writeCards(t, root, 2)
 	code, out, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 4, Deadline: "120",
-		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
+		Cards: cards, Root: root, Deadline: "60", Slots: "1-4", ID: "TP9",
+		Runner: fakeRunner(t, root), Swarm: realSwarm(t),
 	})
-
-	if code != 2 {
-		t.Fatalf("exit=%d, want 2; stderr=%s", code, errb)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, errb)
 	}
-	if errb != "PULSE REFUSED UNDER-SLOTS cards=8 free=4 (pass --queue, or wait)\n" {
-		t.Fatalf("stderr=%q", errb)
+	rows, err := readLaunchTSV(filepath.Join(root, "launch.tsv"), "TP9")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if out != "" {
-		t.Fatalf("stdout=%q, want empty", out)
+	if len(rows) != 2 {
+		t.Fatalf("launch.tsv holds %d rows, want 2", len(rows))
 	}
-	if raw, err := os.ReadFile(argvLog); err == nil && strings.TrimSpace(string(raw)) != "" {
-		t.Fatalf("zero batch runs, got %q", raw)
+	if rows[0].Label != "card-0" || rows[0].Model != "opencode/deepseek-v4-flash" || rows[0].SHA == "-" || rows[0].Stamp == "" {
+		t.Fatalf("row 0 does not carry label, model, sha and stamp: %+v", rows[0])
 	}
-	if _, err := os.Stat(filepath.Join(root, "queue.tsv")); err == nil {
-		t.Fatalf("no queue.tsv written on a refusal")
+	if !strings.Contains(out, "id=TP9") {
+		t.Fatalf("the named id is not on the LAUNCH line: %q", out)
 	}
 }
 
-func TestLaunchQueuesRemainder(t *testing.T) {
+// TestLaunchFillsOnlyFreeSlotsByTheBatchLock is the measured cause of ten wasted cards:
+// the launcher decided busy by a running process, the batch by its own lock, and during a
+// clone there is no process. Red without swarm.FreeSlots in launch.go's freeSlotCount:
+// a launcher that probed processes counts four free slots here and launches four cards.
+func TestLaunchFillsOnlyFreeSlotsByTheBatchLock(t *testing.T) {
 	root := t.TempDir()
-	argvLog := filepath.Join(root, "argv.log")
-	fakeSwarm(t, argvLog)
-	cards, paths := writeCards(t, root, 8)
-
+	cards, _ := writeCards(t, root, 4)
+	// Slots 1, 2 and 3 hold a live BATCH lock (this test's own pid); no process of theirs
+	// is running, which is exactly the clone/scp window that cost the cards.
+	for _, n := range []int{1, 2, 3} {
+		dir := filepath.Join(root, fmt.Sprintf("%d", n))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		line := fmt.Sprintf("id=other pid=%d at=2026-09-16T00:00:00Z\n", os.Getpid())
+		if err := os.WriteFile(filepath.Join(dir, "BATCH"), []byte(line), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	code, out, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 4, Deadline: "120", Queue: true,
-		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
+		Cards: cards, Root: root, Deadline: "60", Slots: "1-4",
+		Runner: fakeRunner(t, root), Swarm: realSwarm(t),
 	})
-
 	if code != 0 {
-		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
+		t.Fatalf("exit=%d stderr=%q", code, errb)
 	}
-	id := pulseID(t, out)
-	if !strings.Contains(out, "n=8 free-before=4 queued=4 batches=1 deadline=120") {
-		t.Fatalf("PULSE OK line wrong: %q", out)
+	if !strings.Contains(out, "cards=1 slots=1-4 free=1") {
+		t.Fatalf("launch did not stop at the one free slot: %q", out)
 	}
+}
 
-	// One batch run, holding exactly the first four cards in cards.tsv order.
-	raw, err := os.ReadFile(argvLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("one batch run, got %d:\n%s", len(lines), raw)
-	}
-	argv := strings.Fields(lines[0])
-	if argv[0] != "nova-swarm" || argv[1] != "batch" {
-		t.Fatalf("the fake nova-swarm recorded %q; want it to lead `nova-swarm batch`", lines[0])
-	}
-	tasksDir := ""
-	for i, a := range argv {
-		if a == "--tasks" && i+1 < len(argv) {
-			tasksDir = argv[i+1]
+// TestLaunchRefusesWhenEverySlotIsHeld: nothing is free, so nothing is launched, and the
+// refusal names the range. Red without the free=0 branch: launch handed every card to a
+// batch that refused them one by one at admission.
+func TestLaunchRefusesWhenEverySlotIsHeld(t *testing.T) {
+	root := t.TempDir()
+	cards, _ := writeCards(t, root, 2)
+	for n := 1; n <= 2; n++ {
+		dir := filepath.Join(root, fmt.Sprintf("%d", n))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		line := fmt.Sprintf("id=other pid=%d at=2026-09-16T00:00:00Z\n", os.Getpid())
+		if err := os.WriteFile(filepath.Join(dir, "BATCH"), []byte(line), 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if tasksDir == "" {
-		t.Fatalf("no --tasks dir in argv: %q", lines[0])
+	code, out, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Deadline: "60", Slots: "1-2",
+		Runner: fakeRunner(t, root), Swarm: realSwarm(t),
+	})
+	if code != 2 {
+		t.Fatalf("exit=%d, want 2; stdout=%q", code, out)
 	}
-	var names []string
-	entries, _ := os.ReadDir(tasksDir)
-	for _, e := range entries {
-		names = append(names, e.Name())
+	if !strings.Contains(errb, "LAUNCH REFUSED reason=no-free-slot slots=1-2 cards=2") {
+		t.Fatalf("refusal wrong: %q", errb)
 	}
-	if len(names) != 4 {
-		t.Fatalf("--tasks dir holds %d files, want 4: %v", len(names), names)
-	}
-	for i, p := range paths[:4] {
-		want, _ := os.ReadFile(p)
-		got, err := os.ReadFile(filepath.Join(tasksDir, names[i]))
-		if err != nil || !bytes.Equal(want, got) {
-			t.Fatalf("task %d does not carry card %d", i, i)
-		}
-	}
-	if !strings.Contains(lines[0], "--label pulse-"+id) {
-		t.Fatalf("argv lacks --label pulse-%s: %q", id, lines[0])
-	}
-	if !strings.Contains(lines[0], "--then nova-pulse harvest --id "+id+" --root "+root) {
-		t.Fatalf("argv lacks --then harvest: %q", lines[0])
-	}
+}
 
-	// queue.tsv holds the other four cards.
-	q, err := os.ReadFile(filepath.Join(root, "queue.tsv"))
-	if err != nil {
+// TestLaunchRefusesASecondLaunchInOneRoot: one launch per root, the holder named by pid.
+// Red without takePID: two launches race over one root's free slots.
+func TestLaunchRefusesASecondLaunchInOneRoot(t *testing.T) {
+	root := t.TempDir()
+	cards, _ := writeCards(t, root, 1)
+	if err := os.WriteFile(filepath.Join(root, "pulse.pid"), []byte(fmt.Sprintf("%d", os.Getpid())), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	qLines := strings.Split(strings.TrimSpace(string(q)), "\n")
-	if len(qLines) != 4 {
-		t.Fatalf("queue.tsv holds %d rows, want 4: %q", len(qLines), q)
+	code, _, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Deadline: "60", Slots: "1-2",
+		Runner: fakeRunner(t, root), Swarm: realSwarm(t),
+	})
+	if code != 2 {
+		t.Fatalf("exit=%d, want 2", code)
 	}
-	for i, p := range paths[4:] {
-		if !strings.Contains(qLines[i], p) {
-			t.Fatalf("queue.tsv row %d lacks card %s", i, p)
-		}
+	if !strings.Contains(errb, fmt.Sprintf("LAUNCH REFUSED reason=running pid=%d", os.Getpid())) {
+		t.Fatalf("refusal does not name the holder: %q", errb)
 	}
+}
 
-	// pulses/<id>.tsv names the batch.
-	pulses, err := os.ReadFile(filepath.Join(root, "pulses", id+".tsv"))
-	if err != nil {
+// TestLaunchSkipsAnEmptyCardAndAYoungOne: a card still being written admits under the wrong
+// line 1. Red without cardNotReady: both are handed to the batch.
+func TestLaunchSkipsAnEmptyCardAndAYoungOne(t *testing.T) {
+	root := t.TempDir()
+	cards, paths := writeCards(t, root, 3)
+	if err := os.WriteFile(paths[0], nil, 0o644); err != nil { // empty
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(pulses), "pulse-"+id+"\tpro\t4") {
-		t.Fatalf("pulses/%s.tsv does not name the batch: %q", id, pulses)
+	now := time.Now()
+	if err := os.Chtimes(paths[1], now, now); err != nil { // younger than five seconds
+		t.Fatal(err)
+	}
+	code, out, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Deadline: "60", Slots: "1-4",
+		Runner: fakeRunner(t, root), Swarm: realSwarm(t),
+		Now: func() time.Time { return now },
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, errb)
+	}
+	if !strings.Contains(errb, "LAUNCH SKIPPED label=card-0 reason=card-empty") ||
+		!strings.Contains(errb, "LAUNCH SKIPPED label=card-1 reason=card-young") {
+		t.Fatalf("skips not named: %q", errb)
+	}
+	if !strings.Contains(out, "cards=1") {
+		t.Fatalf("one card should have launched: %q", out)
+	}
+}
+
+// TestCheckCountsStartedCardsByJobDirectory is the shim's launch_check: the job directory is
+// made before the harness's first line, so its absence is a dead launch and its presence is
+// not. Red without Check in launch.go: there is no check verb at all.
+func TestCheckCountsStartedCardsByJobDirectory(t *testing.T) {
+	root := t.TempDir()
+	stamp := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	rows := fmt.Sprintf("TP1\tcard-a\t-\t-\tm\tabc123\t%s\nTP1\tcard-b\t-\t-\tm\tdef456\t%s\n", stamp, stamp)
+	if err := os.WriteFile(filepath.Join(root, "launch.tsv"), []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	code := Check(CheckInput{ID: "TP1", Root: root, Stdout: &out, Stderr: &errb})
+	if code != 1 || !strings.Contains(out.String(), "LAUNCH-DEAD id=TP1") || !strings.Contains(out.String(), "cards=2 started=0") {
+		t.Fatalf("no job dir should be LAUNCH-DEAD: exit=%d out=%q", code, out.String())
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, "3", "jobs", "card-a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	code = Check(CheckInput{ID: "TP1", Root: root, Stdout: &out, Stderr: &errb})
+	if code != 0 || !strings.Contains(out.String(), "LAUNCH-OK id=TP1 bench=- started=1/2") {
+		t.Fatalf("one started card should be LAUNCH-OK 1/2: exit=%d out=%q", code, out.String())
 	}
 }

@@ -68,11 +68,14 @@ func TestHelpDropsNotYetImplementedForHarvest(t *testing.T) {
 			}
 		}
 	}
-	if code := run([]string{"harvest", "--root", "/tmp/root"}, &out, &errb, time.Now().UTC()); code != 2 {
-		t.Fatalf("harvest without --id exit = %d, want 2", code)
+	// #628: harvest folds ANY root, so --id is optional -- but a root with nothing in it is
+	// still a refusal that names what it looked for.
+	errb.Reset()
+	if code := run([]string{"harvest", "--root", t.TempDir()}, &out, &errb, time.Now().UTC()); code != 2 {
+		t.Fatalf("harvest of an empty root exit = %d, want 2", code)
 	}
-	if !strings.Contains(errb.String(), "--id is required") {
-		t.Errorf("harvest without --id did not name the remedy: %q", errb.String())
+	if !strings.Contains(errb.String(), "HARVEST REFUSED reason=no-card") {
+		t.Errorf("harvest of an empty root did not name what it looked for: %q", errb.String())
 	}
 }
 
@@ -131,5 +134,35 @@ func TestPoolMaxFlagBoundsCandidates(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
 	if len(lines) != 1 {
 		t.Fatalf("want 1 pool row, got %d: %q", len(lines), string(raw))
+	}
+}
+
+// TestHelpNamesEveryVerbTheSwitchAccepts walks run()'s switch: a verb the binary answers
+// that its help does not name is a verb nobody can find, and a help line for a verb the
+// switch does not answer is a promise the binary breaks. Red without `check` in the usage
+// string, which the launch check's own verb needs.
+func TestHelpNamesEveryVerbTheSwitchAccepts(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"help"}, &out, &errb, time.Now().UTC()); code != 0 {
+		t.Fatalf("help exit = %d, stderr=%s", code, errb.String())
+	}
+	named := map[string]bool{}
+	for _, line := range strings.Split(out.String(), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[0] == "nova-pulse" {
+			named[f[1]] = true
+		}
+	}
+	// Every verb run() answers. A new case here without a help line fails this test.
+	for _, verb := range []string{"pool", "cut", "launch", "check", "harvest", "manager", "width", "version", "help"} {
+		if !named[verb] {
+			t.Errorf("help does not name the verb %q that the switch answers", verb)
+		}
+		var o, e bytes.Buffer
+		if code := run([]string{verb}, &o, &e, time.Now().UTC()); strings.Contains(e.String(), "unknown subcommand") {
+			t.Errorf("help names %q but the switch does not answer it", verb)
+		} else {
+			_ = code
+		}
 	}
 }

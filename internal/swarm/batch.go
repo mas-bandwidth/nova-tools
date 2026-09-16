@@ -54,7 +54,20 @@ type BatchInput struct {
 	Idle     time.Duration // per-card idle timeout: a card's log not growing this long is killed
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
-	Runner   string        // the command, one process per card
+	Runner   string        // the command, one process per card; "" runs `nova-swarm native` in this binary
+	// Harness and Auth are the native path's own configuration, read only when Runner is
+	// empty: with no runner script a local card runs through this binary's own `native`
+	// verb (issue #636), the way a bench row's card already does.
+	Harness string
+	Auth    string
+	// Self is the nova-swarm binary a runnerless batch runs `native` from. Empty resolves
+	// this process's own executable, and then "nova-swarm" on PATH: a test driving Batch
+	// directly is not nova-swarm, and a batch that ran the test binary ran nothing.
+	Self string
+	// Slots is the slot range this batch allocates from: "<lo>-<hi>", or "<n>" for 1-<n>.
+	// Empty keeps the old behaviour, allocation from 1 with no ceiling. A hand slot outside
+	// the range is that card's own admission refusal (issue #618).
+	Slots string
 	// PullWait and PullPoll bound the pull that brings a remote card's files back: how
 	// long to wait for RESULT.md to exist on the bench, and how often to ask. Zero takes
 	// the spec's own numbers (30 s, one second), and the tests take short ones.
@@ -110,9 +123,22 @@ func Batch(in BatchInput) int {
 		fmt.Fprintf(in.Stderr, "BATCH REFUSED: %s holds no card; a batch of no cards is a typo\n", oneline.Field(in.Cards))
 		return 1
 	}
+	// #636: a local card with no --runner runs through this binary's own `native` verb, so
+	// a caller needs a runner script only for a runner of its own. The harness is the one
+	// thing native cannot derive: it comes from --harness, else from the benches table's
+	// `local` row.
 	if in.Runner == "" && in.Bench == "" && !anyCardNamesBench(cards) {
-		fmt.Fprintln(in.Stderr, "nova-swarm batch: --runner is required; it wants the command one process per card runs")
-		return 2
+		if in.Harness == "" {
+			in.Harness = localHarness(in.Benches, &in.Auth)
+		}
+		if in.Harness == "" {
+			fmt.Fprintln(in.Stderr, "nova-swarm batch: --runner or --harness is required; with --harness <path> each card runs through this binary's own `nova-swarm native`, and a `local` row in --benches names one too; refusing to guess")
+			return 2
+		}
+		if _, err := os.Stat(in.Harness); err != nil {
+			fmt.Fprintf(in.Stderr, "nova-swarm batch: --harness %s: %s\n", oneline.Field(in.Harness), oneline.Err(err))
+			return 2
+		}
 	}
 	// Admission is per card: every refusal is said once, by name, and the card is scored
 	// ABSTAIN reason=admission on the packet rather than taking the batch down with it.
@@ -129,9 +155,23 @@ func Batch(in BatchInput) int {
 			fmt.Fprintln(in.Stderr, err)
 			return 2
 		}
-	} else if err := assignSlots(cards, in.Root); err != nil {
-		fmt.Fprintln(in.Stderr, err)
-		return 1
+	} else {
+		lo, hi, err := ParseSlotRange(in.Slots)
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
+			return 2
+		}
+		if err := assignSlots(cards, in.Root, lo, hi); err != nil {
+			fmt.Fprintln(in.Stderr, err)
+			return 1
+		}
+		// A card the range could not seat, or one whose hand slot is outside it, is its own
+		// ADMIT REFUSED line and abstains with reason=admission; the batch's others run.
+		for _, c := range cards {
+			if c.slot == 0 && c.admitWhy != "" {
+				fmt.Fprintln(in.Stderr, admitRefusalLine(c.label, c.admitWhy))
+			}
+		}
 	}
 	// Issue #457: a batch writes its own lock on every local slot it takes, so a slot already
 	// in use is refused -- for the card that named it, per issue #529, never for the batch --
@@ -199,6 +239,14 @@ func Batch(in BatchInput) int {
 			// On a remote bench the batch builds the native command itself: ssh <host>
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
 			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), logFile)
+			if err != nil {
+				_ = logFile.Close()
+				fmt.Fprintln(in.Stderr, err)
+				return 2
+			}
+		} else if in.Runner == "" {
+			// #636: no runner script, so this binary runs the card through its own `native`.
+			cmd, err = selfNative(c, in, logFile)
 			if err != nil {
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
@@ -932,7 +980,7 @@ func busySlots(root string) map[int]bool {
 		if err != nil || n < 1 {
 			continue
 		}
-		if slotLocked(root, n) {
+		if SlotHeld(root, n) {
 			out[n] = true
 		}
 	}
@@ -943,20 +991,32 @@ func busySlots(root string) map[int]bool {
 // it; a slot named by two cards is refused outright. A card that asked for allocation (slot
 // zero) takes the lowest free slot under the root -- free means neither busy on disk (a live
 // lock) nor already assigned to another card in this batch.
-func assignSlots(cards []batchCard, root string) error {
+func assignSlots(cards []batchCard, root string, lo, hi int) error {
 	busy := busySlots(root)
 	assigned := map[int]string{}
 	for i := range cards {
 		label := cards[i].label
 		if cards[i].slot != 0 {
+			if hi > 0 && (cards[i].slot < lo || cards[i].slot > hi) {
+				// #618: a hand slot outside the range is refused AT ADMISSION, by name,
+				// never inside the runner where it costs a whole card's deadline.
+				cards[i].admitWhy = fmt.Sprintf("slot=%d range=%d-%d", cards[i].slot, lo, hi)
+				cards[i].slot = 0
+				continue
+			}
 			if prev, ok := assigned[cards[i].slot]; ok {
 				return fmt.Errorf("BATCH REFUSED slot %d named twice (%s, %s)", cards[i].slot, prev, label)
 			}
 			assigned[cards[i].slot] = label
 			continue
 		}
-		n := 1
+		n := lo
 		for {
+			if hi > 0 && n > hi {
+				cards[i].admitWhy = fmt.Sprintf("no-free-slot range=%d-%d", lo, hi)
+				n = 0
+				break
+			}
 			if busy[n] {
 				n++
 				continue
@@ -968,9 +1028,126 @@ func assignSlots(cards []batchCard, root string) error {
 			break
 		}
 		cards[i].slot = n
-		assigned[n] = label
+		if n > 0 {
+			assigned[n] = label
+		}
 	}
 	return nil
+}
+
+// ParseSlotRange parses --slots: "" is no range at all (allocate from 1, no ceiling),
+// "<n>" is 1-<n>, and "<lo>-<hi>" is itself. lo is where allocation starts and hi is the
+// last slot it may take; hi 0 means no ceiling.
+func ParseSlotRange(s string) (lo, hi int, err error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 1, 0, nil
+	}
+	if a, b, ok := strings.Cut(s, "-"); ok {
+		l, err1 := strconv.Atoi(strings.TrimSpace(a))
+		h, err2 := strconv.Atoi(strings.TrimSpace(b))
+		if err1 != nil || err2 != nil || l < 1 || h < l {
+			return 0, 0, fmt.Errorf("--slots wants <lo>-<hi> with 1 <= lo <= hi, got %q", s)
+		}
+		return l, h, nil
+	}
+	n, e := strconv.Atoi(s)
+	if e != nil || n < 1 {
+		return 0, 0, fmt.Errorf("--slots wants a slot count or a <lo>-<hi> range, got %q", s)
+	}
+	return 1, n, nil
+}
+
+// FreeSlots is THE free-slot predicate, and every caller shares it: a slot is free when the
+// batch lock <root>/<slot>/BATCH is absent or its holder pid is dead, and no job under it
+// holds a live lock. It is never a process probe: a card between its clone and its first
+// harness line has no process and a live lock, and a launcher that probed processes handed
+// that slot out and the batch refused it (ADMIT REFUSED slot=<n> held-by=<id>), which cost
+// half of one shift's cards.
+func FreeSlots(root string, lo, hi int) []int {
+	var out []int
+	for n := lo; n <= hi; n++ {
+		if SlotHeld(root, n) {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// SlotHeld reports whether a slot is held: a live BATCH lock, or a live job lock under it.
+func SlotHeld(root string, n int) bool {
+	if _, pid, ok := readBatchLock(root, n); ok && Alive(pid, "") {
+		return true
+	}
+	return slotLocked(root, n)
+}
+
+// localHarness reads the benches table's `local` row for the harness (and, when the caller
+// named none, the auth) a runnerless batch runs native with. It returns "" when there is no
+// table or no local row: the caller's refusal says so.
+func localHarness(benchesPath string, auth *string) string {
+	if strings.TrimSpace(benchesPath) == "" {
+		return ""
+	}
+	table, err := LoadBenchTable(benchesPath)
+	if err != nil {
+		return ""
+	}
+	for _, b := range table {
+		if b.Name != "local" {
+			continue
+		}
+		if auth != nil && *auth == "" {
+			*auth = b.Auth
+		}
+		return b.Harness
+	}
+	return ""
+}
+
+// swarmSelf resolves the nova-swarm binary a runnerless batch runs native from: the caller's
+// own choice, else this process when it is nova-swarm itself, else nova-swarm on PATH.
+func swarmSelf(named string) (string, error) {
+	if strings.TrimSpace(named) != "" {
+		return named, nil
+	}
+	if exe, err := os.Executable(); err == nil && strings.HasPrefix(filepath.Base(exe), "nova-swarm") && !strings.HasSuffix(exe, ".test") {
+		return exe, nil
+	}
+	if path, err := exec.LookPath("nova-swarm"); err == nil {
+		return path, nil
+	}
+	return "", fmt.Errorf("nova-swarm batch: no nova-swarm binary to run `native` from; pass --runner <cmd>, or put nova-swarm on PATH")
+}
+
+// selfNative builds the command a local card runs when the caller named no runner: this
+// binary's own `native` verb, with the same arguments bin/nova-native-runner.sh passed by
+// hand (issue #636). The slot argument is the SLOT directory, not the job directory: native
+// makes <slot>/jobs/<label> itself.
+func selfNative(c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error) {
+	self, err := swarmSelf(in.Self)
+	if err != nil {
+		return nil, err
+	}
+	argv := []string{"native",
+		"--harness", in.Harness,
+		"--model", c.model,
+		"--label", c.label,
+		"--card", c.cardPath,
+		"--slot", filepath.Join(in.Root, strconv.Itoa(c.slot)),
+		"--root", in.Root,
+		"--deadline", strconv.Itoa(int(in.Deadline.Seconds())) + "s",
+	}
+	if in.Auth != "" {
+		argv = append(argv, "--auth", in.Auth)
+	}
+	cmd := exec.Command(self, argv...)
+	cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	ownGroup(cmd)
+	return cmd, nil
 }
 
 // batchLockPath is the lock a batch writes on a slot it takes: <root>/<slot>/BATCH, one line

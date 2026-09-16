@@ -2,6 +2,7 @@ package pulse
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"encoding/hex"
 	"os"
 	"path/filepath"
@@ -234,7 +235,7 @@ func TestCutTextTemplateForbidsBuild(t *testing.T) {
 // ids come from models.tsv; --local names an ollama/<tag> for read and text.
 func TestCutModelByKind(t *testing.T) {
 	tmpls := map[string]string{"read": readTemplate, "fix": fixTemplate, "text": readTemplate, "tone": readTemplate, "replay": fixTemplate, "drift": fixTemplate}
-	pool := "s\t1\tread\tt\tread\ns\t2\tfix\tt\tfix\ns\t3\ttext\tt\ttext\ns\t4\ttone\tt\ttone\ns\t5\treplay\tt\treplay\ns\t6\tdrift\tt\tdrift\n"
+	pool := "owner/repo\t1\tread\tt\tread\nowner/repo\t2\tfix\tt\tfix\nowner/repo\t3\ttext\tt\ttext\nowner/repo\t4\ttone\tt\ttone\nowner/repo\t5\treplay\tt\treplay\nowner/repo\t6\tdrift\tt\tdrift\n"
 	code, stdout, _, out := runCut(t, tmpls, pool)
 	if code != 0 {
 		t.Fatalf("cut = %d, want 0; stdout=%s", code, stdout)
@@ -256,14 +257,106 @@ func TestCutModelByKind(t *testing.T) {
 	}
 
 	// A candidate whose template does not exist is skipped, one CUT SKIPPED line, exit 1.
-	code, stdout, stderr, out := runCut(t, map[string]string{"read": readTemplate}, "s\t1\tread\tt\tread\ns\t2\tread\tt\tprobe\n")
+	code, stdout, stderr, out := runCut(t, map[string]string{"read": readTemplate}, "owner/repo\t1\tread\tt\tread\nowner/repo\t2\tread\tt\tprobe\n")
 	if code != 1 {
 		t.Fatalf("skip = %d, want 1; stdout=%s stderr=%s", code, stdout, stderr)
 	}
 	if !strings.Contains(stdout, "cards=1 skipped=1") {
 		t.Fatalf("stdout=%q, want cards=1 skipped=1", stdout)
 	}
-	if !strings.Contains(stderr, "CUT SKIPPED source=s id=2 template=probe: no template") {
+	if !strings.Contains(stderr, "CUT SKIPPED source=owner/repo id=2 template=probe: no template") {
 		t.Fatalf("stderr=%q, want a CUT SKIPPED line", stderr)
+	}
+}
+
+// runCutIn is runCut with the whole CutInput in the caller's hands (--max, --model).
+func runCutIn(t *testing.T, templates map[string]string, pool string, in CutInput) (int, string, string, string) {
+	t.Helper()
+	td := t.TempDir()
+	tmpl := filepath.Join(td, "templates")
+	out := filepath.Join(td, "out")
+	writeTemplates(t, tmpl, templates)
+	poolPath := filepath.Join(td, "pool.tsv")
+	if err := os.WriteFile(poolPath, []byte(pool), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	in.Pool, in.Templates, in.Out, in.Root = poolPath, tmpl, out, filepath.Join(td, "root")
+	in.Stdout, in.Stderr = &stdout, &stderr
+	code := Cut(in)
+	return code, stdout.String(), stderr.String(), out
+}
+
+// TestCutRendersTheLocatorIntoTheCloneURL is issue #631's red test: pool.tsv field 1 held
+// the source KIND, so <source> rendered `git clone https://github.com/issues.git` into every
+// card and every card died at STEP 1 having spent its admission. The non-test lines it needs
+// are pool.go's `PoolRow{Source: s.locator` and cut.go's locator check in renderCard.
+func TestCutRendersTheLocatorIntoTheCloneURL(t *testing.T) {
+	code, stdout, stderr, out := runCut(t, map[string]string{"fix": fixTemplate},
+		"mas-bandwidth/nova-tools\t417\tfix\tTitle\tfix\n")
+	if code != 0 {
+		t.Fatalf("cut = %d; stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "417.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "https://github.com/mas-bandwidth/nova-tools.git") {
+		t.Fatalf("the card does not clone the repo it is about:\n%s", raw)
+	}
+
+	// And a pool row that carries a bare kind is refused by name, never cut into a card
+	// that clones github.com/issues.git.
+	code, _, stderr, _ = runCut(t, map[string]string{"fix": fixTemplate}, "issues\t417\tfix\tTitle\tfix\n")
+	if code != 2 || !strings.Contains(stderr, "is not an owner/name locator") {
+		t.Fatalf("a bare kind must be refused: code=%d stderr=%q", code, stderr)
+	}
+}
+
+// TestCutMaxCapsTheCardsWritten is issue #634's red test: --max 6 wrote eighteen cards, so a
+// coordinator who asked for six paid for three times the pulse. The non-test line it needs
+// is cut.go's `if in.Max > 0 && len(cards) >= in.Max { break }`.
+func TestCutMaxCapsTheCardsWritten(t *testing.T) {
+	var pool strings.Builder
+	for i := 1; i <= 18; i++ {
+		fmt.Fprintf(&pool, "owner/repo\t%d\tfix\tt\tfix\n", i)
+	}
+	code, stdout, stderr, out := runCutIn(t, map[string]string{"fix": fixTemplate}, pool.String(), CutInput{Max: 6})
+	if code != 0 {
+		t.Fatalf("cut = %d; stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "cards=6") || !strings.Contains(stdout, "pool=18") {
+		t.Fatalf("--max 6 did not cap the cut, and the line does not say what the pool held: %q", stdout)
+	}
+	rows, err := os.ReadFile(filepath.Join(out, "cards.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(nonempty(string(rows))); n != 6 {
+		t.Fatalf("cards.tsv holds %d rows, want 6", n)
+	}
+}
+
+// TestCutModelHoldsThePulseToOneModel is issue #635's red test: every fix card routed to pro
+// and no flag or table could say "flash only tonight". The non-test line it needs is cut.go's
+// `model := in.Model`.
+func TestCutModelHoldsThePulseToOneModel(t *testing.T) {
+	pool := "owner/repo\t1\tread\tt\tread\nowner/repo\t2\tfix\tt\tfix\n"
+	code, stdout, stderr, out := runCutIn(t, map[string]string{"read": readTemplate, "fix": fixTemplate}, pool,
+		CutInput{Max: 20, Model: "opencode/deepseek-v4-flash"})
+	if code != 0 {
+		t.Fatalf("cut = %d; stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "model=opencode/deepseek-v4-flash") {
+		t.Fatalf("the CUT line does not name the held model: %q", stdout)
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "cards.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range nonempty(string(raw)) {
+		if f := strings.Split(row, "\t"); f[2] != "opencode/deepseek-v4-flash" {
+			t.Fatalf("a card escaped the held model: %q", row)
+		}
 	}
 }

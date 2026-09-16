@@ -28,7 +28,8 @@ type CutInput struct {
 	Out       string // the directory the card files go into
 	Root      string // the state root; skipped.tsv is written here
 	Local     string // an optional ollama tag that overrides the flash model for read and text cards
-	Max       int    // per-kind cap on skipped lines; 0 prints all
+	Model     string // hold this whole pulse to one model id; empty routes by kind from models.tsv
+	Max       int    // the ceiling on the cards this cut writes, and on its skipped lines; 0 is all
 	Stdout    io.Writer
 	Stderr    io.Writer
 }
@@ -42,10 +43,17 @@ func Cut(in CutInput) int {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	models, err := readModels(filepath.Join(in.Templates, "models.tsv"))
-	if err != nil {
-		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(err))
-		return 2
+	// #635: --model holds the whole pulse to one model id, and then the models.tsv is not
+	// read at all -- a spend rule ("flash only tonight") is a thing the coordinator says on
+	// the command line, and the table cannot say it without a row per night.
+	models := map[string]string{}
+	if strings.TrimSpace(in.Model) == "" {
+		var err error
+		models, err = readModels(filepath.Join(in.Templates, "models.tsv"))
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(err))
+			return 2
+		}
 	}
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
@@ -57,6 +65,12 @@ func Cut(in CutInput) int {
 	var cards []CardRow
 
 	for _, row := range pool {
+		// #634: --max is a ceiling on the cards this cut writes, not a print cap. A cut that
+		// ignored it wrote eighteen cards for a --max 6 and the pulse spent three times what
+		// the coordinator asked for.
+		if in.Max > 0 && len(cards) >= in.Max {
+			break
+		}
 		name := row.Template
 		raw, err := os.ReadFile(filepath.Join(in.Templates, name+".md"))
 		if err != nil {
@@ -74,7 +88,10 @@ func Cut(in CutInput) int {
 			fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s\n", oneline.Field(cardName), oneline.Err(err))
 			return 2
 		}
-		model := modelFor(row.Kind, in.Local, models)
+		model := in.Model
+		if model == "" {
+			model = modelFor(row.Kind, in.Local, models)
+		}
 		if isFlashKind(row.Kind) {
 			flash++
 		} else {
@@ -98,7 +115,8 @@ func Cut(in CutInput) int {
 			return 2
 		}
 	}
-	fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d flash=%d pro=%d out=%s\n", len(cards), skipped, flash, pro, oneline.Field(in.Out))
+	fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d flash=%d pro=%d model=%s pool=%d out=%s\n",
+		len(cards), skipped, flash, pro, field(in.Model), len(pool), oneline.Field(in.Out))
 	if skipped > 0 {
 		return 1
 	}
@@ -201,6 +219,12 @@ func renderCard(tmpl string, row PoolRow) (string, string) {
 	}
 	if strings.Contains(step1, "git@") || !strings.Contains(step1, "https://") {
 		return "", "rule 5: STEP 1 does not clone over https (the clone URL is https, never git@)"
+	}
+	// #631: <source> is the LOCATOR (owner/name), never the source kind. A pool row that
+	// carries the kind rendered `git clone https://github.com/issues.git` into every card,
+	// and every card failed at STEP 1 having spent its admission.
+	if !strings.Contains(row.Source, "/") {
+		return "", fmt.Sprintf("rule 5: the source %q is not an owner/name locator, so STEP 1 would clone https://github.com/%s.git (pool.tsv field 1 is the locator, not the source kind)", row.Source, row.Source)
 	}
 	if textKinds[row.Kind] {
 		if !strings.Contains(strings.ToLower(rendered), "do not run go build") {
