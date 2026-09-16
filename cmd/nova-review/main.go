@@ -27,7 +27,7 @@ import (
 const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REVIEW.md)
 
 usage:
-  nova-review packet --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--reuse <file>] [--timeout <seconds>]
+  nova-review packet --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>]
   nova-review version    print this build identity (--version also accepted)
   nova-review help
 
@@ -85,6 +85,8 @@ func packet(args []string, out, errOut io.Writer) int {
 	maxBytes := fs.Int("max-bytes", 131072, "")
 	maxFlag := fs.Int("max", 20, "")
 	timeout := fs.Int("timeout", 120, "")
+	diffOnly := fs.Bool("diff-only", false, "")
+	filesGlob := fs.String("files", "", "")
 	var specs, rules stringsFlag
 	fs.Var(&specs, "spec", "")
 	fs.Var(&rules, "rule", "")
@@ -112,8 +114,8 @@ func packet(args []string, out, errOut io.Writer) int {
 	if _, err := os.Lstat(*dest); err == nil {
 		return refuse(errOut, "--out already exists; packets are immutable")
 	}
-	if *reuse != "" && (len(specs) != 0 || len(rules) != 0 || *maxBytes != 131072) {
-		return refuse(errOut, "--reuse cannot be combined with --spec, --rule or --max-bytes")
+	if *reuse != "" && (len(specs) != 0 || len(rules) != 0 || *maxBytes != 131072 || *diffOnly || *filesGlob != "") {
+		return refuse(errOut, "--reuse cannot be combined with --spec, --rule, --max-bytes, --diff-only or --files")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeout)*time.Second)
@@ -269,9 +271,12 @@ func packet(args []string, out, errOut io.Writer) int {
 	if _, err := gitOut(ctx, repo, "rev-parse", baseSHA+"^{commit}"); err != nil {
 		return refuse(errOut, "the lane does not hold the recorded base commit")
 	}
-	diff, err := gitOut(ctx, repo, "diff", "--no-ext-diff", "--unified=3", fullRange)
+	diff, err := gitOut(ctx, repo, diffArgs(fullRange, *diffOnly, *filesGlob)...)
 	if err != nil {
 		return refuse(errOut, "could not read the selected diff")
+	}
+	if *diffOnly {
+		diff = stripHunkContext(diff)
 	}
 	fileDiffs := parseFileDiffs(diff)
 	files := len(fileDiffs)
@@ -333,6 +338,37 @@ func packet(args []string, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "PACKET MORE kind=prior shown=%d total=%d nova-review packet --lane %s %s --max 0\n", *maxFlag, priorCount, shellQuote(*lane), entryFlag)
 	}
 	return writePacket(*dest, body, out, id, packetID, current, base, baseSHA, rangeText, files, hunks, ruleCount, priorCount, openCount, len(body), cut, false)
+}
+
+func diffArgs(fullRange string, diffOnly bool, filesGlob string) []string {
+	args := []string{"diff", "--no-ext-diff"}
+	if diffOnly {
+		args = append(args, "--unified=0")
+	} else {
+		args = append(args, "--unified=3")
+	}
+	args = append(args, fullRange)
+	if filesGlob != "" {
+		args = append(args, "--", filesGlob)
+	}
+	return args
+}
+
+// stripHunkContext removes the function/section name git appends to a zero-context
+// hunk header (`@@ -3 +3 @@ beta`) so a --diff-only packet carries changed lines and
+// nothing unchanged. It parses each `@@` line and cuts everything after the closing
+// `@@` that ends the line range, leaving the header bare.
+func stripHunkContext(diff string) string {
+	lines := strings.Split(diff, "\n")
+	for i, l := range lines {
+		if !strings.HasPrefix(l, "@@ ") {
+			continue
+		}
+		if idx := strings.Index(l[3:], " @@"); idx >= 0 {
+			lines[i] = l[:3+idx+3]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func gitOut(ctx context.Context, repo string, args ...string) (string, error) {

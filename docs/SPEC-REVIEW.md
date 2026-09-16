@@ -588,7 +588,7 @@ the end. The date on a rule is the day it was learned.
 ## The verbs
 
 ```
-nova-review packet  --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max <n>]
+nova-review packet  --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max <n>] [--diff-only] [--files <glob>]
 nova-review verdict --lane <dir> (--pr <n>|--branch <name>) --who <name> --model <id> --kind line|child|card [--of <line>] [--job <id>] --head <sha> [--base <sha>] --verdict approve|hold|abstain (--findings <file> | --reason <text>) [--note <text>] [--usage <file> --usage-source <id> --bench <name> | --receipt <id>] [--started <stamp>] [--max <n>] [--max-rows <n>] [--max-input-bytes <n>] [--max-line-bytes <n>]
 nova-review answer  --lane <dir> (--pr <n>|--branch <name>) --who <name> --finding <id> --head <sha> --as fixed|declined|dup [--of <id>] [--note <text>]
 nova-review policy  --lane <dir> (--pr <n>|--branch <name>) --who <name> --readers <name,...> --reserved <name,...> --deadline <stamp> --reason <text> --head <sha>
@@ -731,7 +731,7 @@ the verb could not run, rather than ran and said no.
 |------|---------|
 | 0 | the verb ran and passed: a packet written, a verdict, answer or policy recorded and pushed, a roster that is ratified, a dedupe or cost report printed **whatever it holds** |
 | 1 | the verb ran and said **NO**: `roster` with `ratified=false`, a packet refused as stale, a record written but not pushed (`pushed=false`, re-run the same verb) |
-| 2 | could not run: missing flag, unreadable lane, a directory that is not a lane, a findings row that fails rule 4 or rule 5, a `close <id>` of a finding that is not open or is another reader's (rule 8), a findings file past `--max-rows`, input past `--max-input-bytes` or a line past `--max-line-bytes` (rule 12), a usage file whose header is not SPEC-SWARM rule 12's, `--usage` without `--usage-source` or `--bench`, `--usage` with `--receipt`, one receipt identity with two digests (`COST RECEIPT`), a `--spec` with no heading in a file of several rule sequences, `--readers` together with `--policy`, `--reserved` without `--deadline` or the reverse, a `policy` whose `--who` is one of its own readers or reserved, a `--policy <id>` no record on the lane carries (rule 7), a `policy` with no `--head`, a `--policy <id>` whose record's `head` is not the head being rostered (`ROSTER POLICY HEAD`, rule 7, draft 6), an APPROVE standing over that reader's own open `block` or `fix` that the file neither closes nor dups (rule 8), a `base:` row with no `--base` or a `--base` that names no commit (rule 4), a `--reuse` whose id is not this reader's or given beside `--spec`, `--rule` or `--max-bytes` (`PACKET REUSE`), a record that does not decode (`<VERB> FOLD`), a read-and-review pair that disagrees (`ROSTER PAIR`, `DEDUPE PAIR`, `COST PAIR`), a `--who` of `answer` or `policy`, or beginning `answer-` or `policy-`, `--max-bytes`, `--max-input-bytes` or `--max-line-bytes` of zero or less, a negative `--max`, bad invocation, `git` or `gh` absent |
+| 2 | could not run: missing flag, unreadable lane, a directory that is not a lane, a findings row that fails rule 4 or rule 5, a `close <id>` of a finding that is not open or is another reader's (rule 8), a findings file past `--max-rows`, input past `--max-input-bytes` or a line past `--max-line-bytes` (rule 12), a usage file whose header is not SPEC-SWARM rule 12's, `--usage` without `--usage-source` or `--bench`, `--usage` with `--receipt`, one receipt identity with two digests (`COST RECEIPT`), a `--spec` with no heading in a file of several rule sequences, `--readers` together with `--policy`, `--reserved` without `--deadline` or the reverse, a `policy` whose `--who` is one of its own readers or reserved, a `--policy <id>` no record on the lane carries (rule 7), a `policy` with no `--head`, a `--policy <id>` whose record's `head` is not the head being rostered (`ROSTER POLICY HEAD`, rule 7, draft 6), an APPROVE standing over that reader's own open `block` or `fix` that the file neither closes nor dups (rule 8), a `base:` row with no `--base` or a `--base` that names no commit (rule 4),     a `--reuse` whose id is not this reader's or given beside `--spec`, `--rule`, `--max-bytes`, `--diff-only` or `--files` (`PACKET REUSE`), a record that does not decode (`<VERB> FOLD`), a read-and-review pair that disagrees (`ROSTER PAIR`, `DEDUPE PAIR`, `COST PAIR`), a `--who` of `answer` or `policy`, or beginning `answer-` or `policy-`, `--max-bytes`, `--max-input-bytes` or `--max-line-bytes` of zero or less, a negative `--max`, bad invocation, `git` or `gh` absent |
 
 A findings row that fails its check is exit 2 and not 1 because nothing was
 recorded and nothing was judged: the invocation was unusable, and the remedy
@@ -886,6 +886,17 @@ touched by: <path>:<hunk header> (cited | changed | named)
 (one line per cut file; "nothing" when cut=0)
 ```
 
+**`--diff-only` and `--files <glob>` trim a large PR's packet before the byte
+budget does.** `--diff-only` drops the context lines around every change — the
+diff is `--unified=0`, and the section name git leaves on an otherwise bare
+zero-context hunk header (`@@ -3 +3 @@ beta`) is stripped too — so a
+multi-file PR contributes only its changed lines and none of the unchanged
+whole-file context. `--files <glob>` narrows the diff to the paths matching
+the glob, `git diff <range> -- <glob>`. Both are a reader's own decision about
+how much of a large change to pay for, both are refused beside `--reuse` (a
+reused packet already holds its bytes), and neither changes the packet's
+grammar or its receipt line.
+
 **Every section of the packet is a cap, a count and a remedy**, not only the
 diff: a truncation anywhere in it is stated on the line that truncates, with
 the exact command that prints the rest, so a reader never has to wonder
@@ -919,9 +930,9 @@ that resolves the entry's current head. It prints `PACKET OK … reused=true`.
 When the two ids differ it is refused, exit 2, `PACKET REUSE asked=<id>
 found=<id> file=<path>`, naming both, because a reader whose range differs
 must have their own packet and never a mislabeled one; `--reuse` with
-`--spec`, `--rule` or `--max-bytes` is refused the same way, since those flags
-change what a packet would hold and a reused packet holds what it already
-holds.
+`--spec`, `--rule`, `--max-bytes`, `--diff-only` or `--files` is refused the
+same way, since those flags change what a packet would hold and a reused
+packet holds what it already holds.
 
 **What is reused and what never is.** A second reader reuses the delta, the
 ground the first build already read at this head — the diff, the rule text
@@ -1513,9 +1524,10 @@ One line per rule. Each must be seen red before it is trusted.
    all** — the test counts the run's `git` invocations and its opens under the
    clone and asserts none beyond the one host call that resolves the head, so
    a mutation that rebuilds the diff turns it red — and prints `PACKET OK …
-   reused=true`; a `--reuse` of a packet built for another range is exit 2
-   `PACKET REUSE asked=<id> found=<id>` and writes no file; `--reuse` with
-   `--spec`, `--rule` or `--max-bytes` is exit 2; and no reader's verdict, and
+    reused=true`; a `--reuse` of a packet built for another range is exit 2
+    `PACKET REUSE asked=<id> found=<id>` and writes no file; `--reuse` with
+    `--spec`, `--rule`, `--max-bytes`, `--diff-only` or `--files` is exit 2;
+    and no reader's verdict, and
    no validation of another reader's findings, is carried by a reused packet
    (the verdict binds to `--who` and `--head`, demanded test 6).
    **`/StaleAndCurrentArePrinted`** (draft 5, the two lines that had no
@@ -1524,7 +1536,13 @@ One line per rule. Each must be seen red before it is trusted.
    current=<sha12>`; a `packet` with no `--head` writes the entry's current
    head on its first line; `VERDICT OK` prints `current=true` at that head and
    `current=false` at an earlier one, and a mutation that prints `current=true`
-   for a stale head turns the test red.
+    for a stale head turns the test red.
+   **`TestPacketDiffOnlyStripsUnchangedContext`** (#673): a two-file PR built
+   with `--diff-only` holds a diff of only the changed lines (`-gamma`
+   `+GAMMA`, `-three` `+THREE`) and no unchanged line of either file (`alpha`,
+   `beta`, `delta`, `epsilon`, `one`, `two`, `four`, `five`) — including none
+   that git leaves as a section name on a zero-context hunk header (`@@ -3 +3 @@
+   beta`); a `--diff-only` that leaks an unchanged line turns the test red.
 2. `TestARuleIsTouchedMechanically`: the fixture spec holds **two** sequences
    starting at `^1. ` at column 0, under `## The rules, numbered` and under
    `## Tests this spec demands`, with a different rule 3 in each — the shape
