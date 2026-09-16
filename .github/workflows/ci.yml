@@ -60,12 +60,15 @@ concurrency:
   # ever starts. So a push to main keys on the commit sha (no two main runs
   # share a group, none can evict another); a PR still keys on its number so its
   # newest head supersedes older runs; a non-main branch with no PR keys on ref.
-  group: ci-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.sha) || github.ref }}-${{ github.event_name }}
+  # dev is an integration branch with the same steady merge stream (2026-09-16
+  # 16:35Z: dev's rerun was cancelled by the next merge and the mechanical gate
+  # read the cancellation as red), so dev keys on the sha like main does.
+  group: ci-${{ github.event.pull_request.number || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.sha) || github.ref }}-${{ github.event_name }}
   # A push to main never cancels main's running verdict: with a steady merge
   # stream every main run was cancelled by the next merge (2026-09-16 04:41Z and
   # 04:53Z), so main had no completed run for the mechanical red gate to read.
   # Branch runs still cancel each other (only the newest head matters there).
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
 jobs:
   lint:
