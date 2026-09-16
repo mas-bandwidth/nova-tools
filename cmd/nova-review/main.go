@@ -402,6 +402,14 @@ func gitOut(ctx context.Context, repo string, args ...string) (string, error) {
 	return string(b), nil
 }
 
+// githubRemote is the fetch URL a PR entry's refs live under: the GitHub remote the lane's
+// --repo names (https://github.com/<owner>/<name>.git). A PR head and its base come from
+// here, never from the lane's --remote, so a local rehearsal remote with no pull/*/head refs
+// still reaches the real PR (#449, #493).
+func githubRemote(hostRepo string) string {
+	return fmt.Sprintf("https://github.com/%s.git", hostRepo)
+}
+
 // fetchEntryHead fetches the entry's current head into the lane's clone: the pull request's
 // `pull/<n>/head` for a PR, the branch itself for a branch, then reads the fetched commit
 // back out of FETCH_HEAD. The fetch is the verb's one way to learn a head the remote moved
@@ -416,7 +424,7 @@ func fetchEntryHead(ctx context.Context, repo string, pr int, branch, hostRepo s
 	remote := "origin"
 	if pr > 0 {
 		refspec = fmt.Sprintf("pull/%d/head", pr)
-		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
+		remote = githubRemote(hostRepo)
 	}
 	if _, err := gitOut(ctx, repo, "fetch", remote, refspec); err != nil {
 		return "", fmt.Errorf("fetching %q from %q: %w", refspec, remote, err)
@@ -432,7 +440,7 @@ func fetchBase(ctx context.Context, repo string, pr int, base, hostRepo string) 
 	remote := "origin"
 	refOut := "refs/remotes/origin/" + base + "^{commit}"
 	if pr > 0 {
-		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
+		remote = githubRemote(hostRepo)
 		refOut = "FETCH_HEAD"
 	}
 	if _, err := gitOut(ctx, repo, "fetch", remote, base); err != nil {
