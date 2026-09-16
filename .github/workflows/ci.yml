@@ -267,7 +267,7 @@ jobs:
     # one to two minutes; the budget itself is the run, and the run is what to
     # hold to the law. The fast jobs — lint, test-packages, lisp at 32, 11 and
     # 12 s — keep the 2 they always had.
-    timeout-minutes: 6
+    timeout-minutes: 12 # the Studio at load 55 (swarm + CI) runs a shard in 6-7 min; 6 killed two shards per run on 2026-09-16 (05:16Z). The bar stays two minutes; the timeout is the panic guard, not the target.
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
