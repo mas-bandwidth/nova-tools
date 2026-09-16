@@ -76,3 +76,10 @@ is compared against; it is never the path `query --ask size` takes."
 (dolist (f *acceptance-slices*)
   (load (asdf:system-relative-pathname :nova-work/tests
           (concatenate 'string "tests/acceptance/" f))))
+
+;;; The named replay slices (one file per slice, issue #560), loaded alongside
+;;; the numbered slices above so every slice file is included.
+(load (asdf:system-relative-pathname :nova-work/tests "tests/acceptance/durable-journal-replay.lisp"))
+(load (asdf:system-relative-pathname :nova-work/tests "tests/acceptance/cow-closed-history.lisp"))
+(load (asdf:system-relative-pathname :nova-work/tests "tests/acceptance/draft-25-27-replays.lisp"))
+(load (asdf:system-relative-pathname :nova-work/tests "tests/acceptance/replays-3600-end.lisp"))

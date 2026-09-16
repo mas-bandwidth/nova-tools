@@ -899,3 +899,19 @@ by `lisp/nova-work/tests/acceptance.lisp` (WORKER-CARDS.md practice 26).
 - [Open questions](spec-pulse/14-open-questions-each-with-a-default-and-the-default-stands-un.md)
 - [CI wall](spec-pulse/15-ci-wall.md)
 - [Layout](spec-pulse/16-layout.md)
+
+The named section files the parallel amendments edit, in document order:
+
+- [The loop, in words](spec-pulse/the-loop-in-words.md)
+- [The rules, numbered](spec-pulse/the-rules-numbered.md)
+- [The verbs](spec-pulse/the-verbs.md)
+- [Handoff](spec-pulse/handoff.md)
+- [Status](spec-pulse/status.md)
+- [Progress](spec-pulse/progress.md)
+- [Rate and convergence](spec-pulse/rate-and-convergence.md)
+- [Exit codes and the output grammar](spec-pulse/exit-codes-and-the-output-grammar.md)
+- [The card, as `cut` writes it](spec-pulse/the-card-as-cut-writes-it.md)
+- [What this draft does not do](spec-pulse/what-this-draft-does-not-do.md)
+- [The manager tier](spec-pulse/the-manager-tier.md)
+- [Tests this spec demands](spec-pulse/tests-this-spec-demands.md)
+- [Open questions — each with a default, and the default stands unless Glenn says otherwise](spec-pulse/open-questions.md)

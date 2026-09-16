@@ -354,11 +354,15 @@ one file under `lisp/nova-work/tests/acceptance/` per replay slice (loaded by
 `lisp/nova-work/tests/acceptance.lisp`). Every replay PR used to append to one
 `acceptance.lisp` and every SPEC-PULSE amendment edited one file, and all of
 them conflicted (nova-tools #560). Parallel PRs that touch different sections
-now touch different files and merge clean.
-**Measured:** nothing yet; this practice licenses the layout, and the first two
-parallel amendment PRs that merge without conflict are its evidence.
-**Expires** when the layout changes. **Rollback:** the single-file specs.
-**Held by:** Rowan.
+now touch different files and merge clean. A card edits one section file, so
+two parallel cards never touch the same line. A spec amendment edits
+`docs/spec-pulse/<section>.md`, included by the top `SPEC-PULSE.md`; a replay
+appends `lisp/nova-work/tests/acceptance/<slice>.lisp`, loaded by the top
+`acceptance.lisp`.
+**Measured:** 2026-09-15, every replay PR appended the one `acceptance.lisp`
+and every SPEC-PULSE amendment edited one 700-line file; all conflicted.
+**Not measured:** contention after the split. **Expires** when the layout
+changes. **Rollback:** none; a remerge is a revert. **Held by:** Rowan.
 
 ## Open
 

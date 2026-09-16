@@ -9,7 +9,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 )
 
-// pulseVerbs is SPEC-PULSE's verbs block, byte for byte (docs/SPEC-PULSE.md, "The verbs").
+// pulseVerbs is SPEC-PULSE's verbs block, byte for byte (docs/spec-pulse/the-verbs.md, "The verbs").
 const pulseVerbs = `nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]

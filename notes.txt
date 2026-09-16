@@ -1,0 +1,51 @@
+CARD-8013 / nova-tools #560 — one file per replay slice and per spec section
+
+Red test (written first): TestSpecPulseSectionsSplitIntoFiles in
+internal/pulse/sections_test.go. It asserts every `## ` section of
+docs/SPEC-PULSE.md lives in its own docs/spec-pulse/<slug>.md (heading intact)
+and is listed by the top file. Recorded failing output, verbatim:
+
+  --- FAIL: TestSpecPulseSectionsSplitIntoFiles (0.00s)
+      sections_test.go:41: the-loop-in-words: section file missing: open ../../docs/spec-pulse/the-loop-in-words.md: no such file or directory
+      sections_test.go:41: the-rules-numbered: section file missing: open ../../docs/spec-pulse/the-rules-numbered.md: no such file or directory
+      sections_test.go:41: the-verbs: section file missing: open ../../docs/spec-pulse/the-verbs.md: no such file or directory
+      sections_test.go:41: handoff: section file missing: open ../../docs/spec-pulse/handoff.md: no such file or directory
+      sections_test.go:41: status: section file missing: open ../../docs/spec-pulse/status.md: no such file or directory
+      sections_test.go:41: progress: section file missing: open ../../docs/spec-pulse/progress.md: no such file or directory
+      sections_test.go:41: rate-and-convergence: section file missing: open ../../docs/spec-pulse/rate-and-convergence.md: no such file or directory
+      sections_test.go:41: exit-codes-and-the-output-grammar: section file missing: open ../../docs/spec-pulse/exit-codes-and-the-output-grammar.md: no such file or directory
+      sections_test.go:41: the-card-as-cut-writes-it: section file missing: open ../../docs/spec-pulse/the-card-as-cut-writes-it.md: no such file or directory
+      sections_test.go:41: what-this-draft-does-not-do: section file missing: open ../../docs/spec-pulse/what-this-draft-does-not-do.md: no such file or directory
+      sections_test.go:41: the-manager-tier: section file missing: open ../../docs/spec-pulse/the-manager-tier.md: no such file or directory
+      sections_test.go:41: tests-this-spec-demands: section file missing: open ../../docs/spec-pulse/tests-this-spec-demands.md: no such file or directory
+      sections_test.go:41: open-questions: section file missing: open ../../docs/spec-pulse/open-questions.md: no such file or directory
+  FAIL
+  FAIL	github.com/mas-bandwidth/nova-tools/internal/pulse	0.004s
+  FAIL
+
+Fix (smallest that turns it green, no other printed line changed):
+- Split docs/SPEC-PULSE.md into 13 per-section files under docs/spec-pulse/,
+  one `## ` section each; the top file keeps the title, preamble and a
+  "## Sections" index linking each file.
+- Split lisp/nova-work/tests/acceptance.lisp into four slice files under
+  tests/acceptance/, each starting (in-package #:nova-work/tests); the top
+  acceptance.lisp keeps the shared preamble and loads each via
+  (asdf:system-relative-pathname :nova-work/tests ...).
+- Added WORKER-CARDS.md practice 26 "An amendment edits one section file".
+- internal/pulse/cli.go comment now names docs/spec-pulse/the-verbs.md.
+
+Verification:
+- go vet ./... clean.
+- go test ./internal/pulse/ ... ok (0.073s).
+- ./lisp/nova-work/run-tests.sh ... NOVA-WORK SLICE1 total=148 pass=148 fail=0.
+
+Toolchain note: go.mod wants go1.26; the sandbox /usr/bin/go is 1.22.2, so
+tests were run with GOTOOLCHAIN=go1.26.0 (toolchain cached at
+$GOPATH/pkg/mod). Full `go test ./...` also surfaces three failures unrelated
+to this change and unreproduced-by-diff (no file I touched is involved):
+  - cmd/nova-tokens TestSourcesIsBoundedAtTheLargestPlausibleState /
+    TestCheckIsBoundedAtTheLargestPlausibleState (size over 8 KB)
+  - internal/swarm TestPullWaitsForResult (copy filter)
+  - internal/update TestRule25SnapshotSurvivesAReporterKilledWhileWriting
+    (timing barrier)
+No CLI output changed, so docs/CLI.md and the binary prints are untouched.
