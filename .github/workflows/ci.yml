@@ -41,6 +41,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # merge_group: the merge queue builds a group commit of the PRs about to land and
+  # runs this workflow on it; ci-ok on the group is the merge gate, so every PR is
+  # proved against the main it actually lands on (2026-09-16: with the up-to-date
+  # rule and no queue, every merge invalidated every other PR's evidence).
+  merge_group:
   schedule:
     - cron: "41 3 * * *"
   workflow_dispatch:
