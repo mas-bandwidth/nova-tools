@@ -248,28 +248,108 @@ synthetic secrets and disposable repositories and record both runs:
 a denied destructive operation and successful permitted work.
 `
 
+// THE PULSE CARD TEMPLATES (docs/SPEC-PULSE.md rule 4). nova-pulse `cut` reads a templates
+// directory holding read.md, fix.md, text.md, replay.md, drift.md, tone.md and models.tsv,
+// and renders one card per pool candidate from the template the candidate names. Until the
+// dogfood probe 2026-09-16 the directory was copied out of cmd/nova-pulse/testdata by hand;
+// now every card is a constant here and `template --name <kind>` prints it, so a templates
+// dir can be built from the tool. A text-only card (read, text, tone) carries rule 6's
+// no-build line, and a writing card (fix, replay, drift) carries the red-then-green row.
+
+const pulseRead = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Read the named files and write notes.txt in the repo directory.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseFix = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Make the fix; report the red line and then the green line, one row per item.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseText = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Make the text change and write notes.txt in the repo directory.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseReplay = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Replay the rule; report the red line and then the green line, one row per item.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseDrift = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Close the drift; report the red line and then the green line, one row per item.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseTone = `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+Do not run go build, go test or any toolchain; read and write only.
+STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Fix the tone of the named page and write notes.txt in the repo directory.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.
+`
+
+const pulseModels = `flash opencode/deepseek-v4-flash
+pro opencode/deepseek-v4-pro
+`
+
+// templateTable maps every printable card name -- task template, card template, report or
+// worker description -- to its body. `models.tsv` is the one non-card: the cost table
+// nova-pulse rule 7 reads beside the .md templates.
+var templateTable = map[string]string{
+	"read-pr":    templateReadPR,
+	"probe-row":  templateProbeRow,
+	"fix-card":   templateFixCard,
+	"result":     templateResult,
+	"worker":     templateWorker,
+	"setup":      templateSetup,
+	"read":       pulseRead,
+	"fix":        pulseFix,
+	"text":       pulseText,
+	"replay":     pulseReplay,
+	"drift":      pulseDrift,
+	"tone":       pulseTone,
+	"models.tsv": pulseModels,
+}
+
+// pulseNames are the card templates and the cost table nova-pulse `cut` reads (SPEC-PULSE
+// rule 4). They are cards cut renders, never task templates to wrap.
+var pulseNames = map[string]bool{
+	"read": true, "fix": true, "text": true, "replay": true, "drift": true, "tone": true, "models.tsv": true,
+}
+
 // Template returns one template by name.
 func Template(name string) (string, error) {
-	switch name {
-	case "read-pr":
-		return templateReadPR, nil
-	case "probe-row":
-		return templateProbeRow, nil
-	case "fix-card":
-		return templateFixCard, nil
-	case "result":
-		return templateResult, nil
-	case "worker":
-		return templateWorker, nil
-	case "setup":
-		return templateSetup, nil
+	if body, ok := templateTable[name]; ok {
+		return body, nil
 	}
 	return "", fmt.Errorf("--name wants one of %s, got %q", strings.Join(TemplateNames(), ", "), name)
 }
 
 // TemplateNames is every name Template answers to, in a fixed order.
 func TemplateNames() []string {
-	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup"}
+	names := make([]string, 0, len(templateTable))
+	for name := range templateTable {
+		names = append(names, name)
+	}
 	sort.Strings(names)
 	return names
 }
@@ -287,6 +367,10 @@ func WrapTemplate(name string, files int, text []byte) ([]byte, error) {
 	}
 	if name == "setup" {
 		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `setup` is the per-friend agreement form of issue #184, printed by `template --name setup`")
+	}
+	if pulseNames[name] {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `%s` is a nova-pulse card template, printed by `template --name %s`, not a task template", name, name)
+	}
 	}
 	body = strings.ReplaceAll(body, "<n> files", fmt.Sprintf("%d files", files))
 	var b strings.Builder
