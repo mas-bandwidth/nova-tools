@@ -122,6 +122,7 @@ func TestPublishRefusesUntouchedFile(t *testing.T) {
 // TestPublishPushesByRefspec: a topic branch with one admitted commit is pushed by the
 // explicit refspec, the remote branch now exists, and main did not move.
 func TestPublishPushesByRefspec(t *testing.T) {
+	windowsIsNotABench(t)
 	job, bare, mainSHA := makeGitRepo(t)
 	runGit(t, job, "checkout", "-b", "topic")
 	if err := os.WriteFile(filepath.Join(job, "allowed.txt"), []byte("allowed\n"), 0o644); err != nil {
@@ -160,6 +161,7 @@ func TestPublishPushesByRefspec(t *testing.T) {
 
 // TestPublishPrintsPRURL: the PUBLISH OK line carries the draft PR URL the stub gh printed.
 func TestPublishPrintsPRURL(t *testing.T) {
+	windowsIsNotABench(t)
 	job, _, _ := makeGitRepo(t)
 	runGit(t, job, "checkout", "-b", "topic")
 	if err := os.WriteFile(filepath.Join(job, "allowed.txt"), []byte("allowed\n"), 0o644); err != nil {

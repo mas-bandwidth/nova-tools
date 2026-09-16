@@ -858,6 +858,7 @@ func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
 // for --idle. The fake harness here spins in a grandchild and writes nothing at all; the
 // other one sleeps and writes nothing, and only that one is killed.
 func TestIdleWatchCountsChildActivity(t *testing.T) {
+	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
