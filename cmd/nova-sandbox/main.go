@@ -266,7 +266,7 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 				oneline.Escape(strings.Join(dropped, " ")))
 		}
 		fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s read=%d write=%d net=%s cwd=%s ancestors=%d cmd=%s\n",
-			oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI), len(p.Reads), len(p.Writes),
+			oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), len(p.Reads), len(p.Writes),
 			oneline.Field(p.Net()), oneline.Field(p.Cwd), p.AncestorCount(), oneline.Field(p.CmdName()))
 		if flusher, ok := stderr.(interface{ Sync() error }); ok {
 			_ = flusher.Sync()
@@ -319,7 +319,7 @@ func checkVerb(stdout io.Writer) int {
 		note = note + "; backend at " + backend
 	}
 	fmt.Fprintf(stdout, "CHECK OK backend=%s abi=%s net=%s hosts=none note=%s\n",
-		oneline.Field(name), oneline.Field(sandbox.ABI), oneline.Field(net), oneline.Escape(note))
+		oneline.Field(name), oneline.Field(sandbox.ABI()), oneline.Field(net), oneline.Escape(note))
 	return 0
 }
 
@@ -479,7 +479,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		return sandbox.ExitProbeFailed
 	}
 	fmt.Fprintf(stdout, "PROBE OK backend=%s abi=%s steps=%d passed=%d net=%s\n",
-		oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI), len(steps), passed, oneline.Field(p.Net()))
+		oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), len(steps), passed, oneline.Field(p.Net()))
 	return 0
 }
 

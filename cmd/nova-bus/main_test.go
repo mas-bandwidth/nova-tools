@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -70,6 +71,9 @@ func TestMain(m *testing.M) {
 		os.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
 		os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 		os.Setenv("GIT_TERMINAL_PROMPT", "0")
+		// The bus fixture busDir copies is built under this directory too, so it is
+		// removed with it on every path out of this function.
+		busFixtureRoot = dir
 		return m.Run()
 	}())
 }
@@ -116,35 +120,98 @@ func writeFile(t *testing.T, root, path, content string) {
 	}
 }
 
-// bus builds a bare remote and one checkout of it, with a roster and two notes from
-// Bo already on the bus: one carrying a question, one a bare acknowledgement.
+// busDir hands a test its own bare remote and checkout of it, with a roster and two
+// notes from Bo already on the bus: one carrying a question, one a bare
+// acknowledgement.
+//
+// The fixture is BUILT ONCE for the process and COPIED per test. It used to be built
+// per test, and building it is six git subprocesses -- init, clone, checkout, add,
+// commit, push -- which 135 calls in this package turned into some eight hundred git
+// spawns and 124 s of `go test ./cmd/nova-bus/` (#516, Glenn's two-minute rule). A
+// copy plus one `remote set-url` is far cheaper and hands out the same bytes: same
+// roster, same two notes, same INDEX, same commit. Each test still gets its OWN
+// directories and may push, rewrite and corrupt them freely -- nothing is shared
+// after the copy.
 func busDir(t *testing.T) (checkout, bare string) {
 	t.Helper()
-	bare = filepath.Join(t.TempDir(), "bus.git")
-	if err := os.MkdirAll(bare, 0o755); err != nil {
-		t.Fatal(err)
+	busFixtureOnce.Do(func() { busFixtureDir, busFixtureErr = buildBusFixture() })
+	if busFixtureErr != nil {
+		t.Fatalf("the bus fixture: %v", busFixtureErr)
 	}
-	gitIn(t, bare, "init", "--bare", "--quiet", "--initial-branch=main")
-	checkout = filepath.Join(t.TempDir(), "checkout")
-	gitIn(t, filepath.Dir(checkout), "clone", "--quiet", bare, checkout)
-	gitIn(t, checkout, "checkout", "-q", "-B", "main")
-	writeFile(t, checkout, "participants.json", rosterJSON)
-	writeFile(t, checkout, "from-bo/2026-09-07T0001Z-a-question-abcdef012345.md",
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS(busFixtureDir)); err != nil {
+		t.Fatalf("copying the bus fixture: %v", err)
+	}
+	bare = filepath.Join(root, "bus.git")
+	checkout = filepath.Join(root, "checkout")
+	// The copied checkout still names the TEMPLATE's bare remote; origin has to be
+	// this test's own copy or a push would reach the fixture every other test reads.
+	gitIn(t, checkout, "remote", "set-url", "origin", bare)
+	return checkout, bare
+}
+
+// The process-wide fixture busDir copies. busFixtureDir holds `bus.git` and
+// `checkout`; it is made under TestMain's directory and removed with it.
+var (
+	busFixtureOnce sync.Once
+	busFixtureDir  string
+	busFixtureErr  error
+	busFixtureRoot string // set by TestMain, the parent the fixture is built under
+)
+
+// buildBusFixture builds the template once, with the same git calls busDir used to
+// make per test. It takes no *testing.T: it runs under sync.Once, where the caller
+// that loses the race is not the test whose failure it would be.
+func buildBusFixture() (string, error) {
+	dir, err := os.MkdirTemp(busFixtureRoot, "bus-fixture-")
+	if err != nil {
+		return "", err
+	}
+	var fail error
+	git := func(at string, args ...string) {
+		if fail != nil {
+			return
+		}
+		out, err := exec.Command("git", append([]string{"-C", at}, args...)...).CombinedOutput()
+		if err != nil {
+			fail = fmt.Errorf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	write := func(path, content string) {
+		if fail != nil {
+			return
+		}
+		full := filepath.Join(dir, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			fail = err
+			return
+		}
+		fail = os.WriteFile(full, []byte(content), 0o644)
+	}
+	bare := filepath.Join(dir, "bus.git")
+	if err := os.MkdirAll(bare, 0o755); err != nil {
+		return "", err
+	}
+	git(bare, "init", "--bare", "--quiet", "--initial-branch=main")
+	checkout := filepath.Join(dir, "checkout")
+	git(dir, "clone", "--quiet", bare, checkout)
+	git(checkout, "checkout", "-q", "-B", "main")
+	write("checkout/participants.json", rosterJSON)
+	write("checkout/from-bo/2026-09-07T0001Z-a-question-abcdef012345.md",
 		"From: Bo Quill\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: A question about the gate\n\nShould the gate run on the merge queue too?\n")
-	writeFile(t, checkout, "from-bo/2026-09-07T0002Z-heard-111111111111.md",
+	write("checkout/from-bo/2026-09-07T0002Z-heard-111111111111.md",
 		"From: Bo\nTo: Ada\nDate: Mon Sep  7 00:02:00 UTC 2026\nId: bo-111111111111\nSubject: Heard\n\nHeard, thank you.\n")
-	// The lane's catalogue, which send would have written. A bus whose notes are not in
-	// an INDEX is a bus check --full warns about, so the fixture is a bus in the shape
-	// this tool leaves one in -- and TestCheckFullWarnsAboutANoteWithNoIndexLine covers the
-	// other shape deliberately.
-	writeFile(t, checkout, "from-bo/INDEX", strings.Join([]string{
+	write("checkout/from-bo/INDEX", strings.Join([]string{
 		"bo-abcdef012345\tfrom-bo/2026-09-07T0001Z-a-question-abcdef012345.md\t2026-09-07T00:01:00Z\tAda\t-",
 		"bo-111111111111\tfrom-bo/2026-09-07T0002Z-heard-111111111111.md\t2026-09-07T00:02:00Z\tAda\t-",
 	}, "\n")+"\n")
-	gitIn(t, checkout, "add", "-A")
-	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "the bus")
-	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
-	return checkout, bare
+	git(checkout, "add", "-A")
+	git(checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "the bus")
+	git(checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+	if fail != nil {
+		return "", fail
+	}
+	return dir, nil
 }
 
 type result struct {
@@ -197,6 +264,20 @@ func TestUsageAndUnknownVerb(t *testing.T) {
 	invoke(t, "").mustCode(t, 2).mustContain(t, "stderr", "nova-bus:")
 	invoke(t, "", "help").mustCode(t, 0).mustContain(t, "stdout", "usage:")
 	invoke(t, "", "wibble").mustCode(t, 2).mustContain(t, "stderr", `unknown subcommand "wibble"`)
+}
+
+// The wait usage must say plainly that an unadvanced cursor makes wait return at once
+// -- so a caller with a backlog knows to run inbox first -- and the example loop must
+// show --advance, which is what makes the second wait a real one. (#328)
+func TestWaitUsageStatesUnadvancedCursorReturnsAtOnce(t *testing.T) {
+	t.Parallel()
+	banner := invoke(t, "", "help").mustCode(t, 0).stdout
+	if !strings.Contains(banner, "unadvanced cursor makes wait return AT ONCE") {
+		t.Fatalf("the usage text does not say plainly that an unadvanced cursor makes wait return at once:\n%s", banner)
+	}
+	if !strings.Contains(banner, "--advance --remote origin --branch main") {
+		t.Fatalf("the wait example loop does not show --advance:\n%s", banner)
+	}
 }
 
 // Every required flag, refused by name. A missing one is never a guess.

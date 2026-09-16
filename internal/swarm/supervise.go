@@ -85,8 +85,12 @@ func Supervise(in SuperviseInput) int {
 	// (5) RELEASE TO WORK: the harness, as this supervisor's child, in a process group of
 	// the JOB's own so that the survivor check after it exits asks about the job and not
 	// about the supervisor asking.
+	// EVERY WRITER OF THIS FILE APPENDS (issue #608). A `batch` opens this same path for the
+	// same card and holds its own offset; with O_TRUNC this descriptor starts at 0 and writes
+	// over whatever the other writer already put there, which is how the head of a card's
+	// evidence was lost. O_APPEND makes every write land at the end, whoever wrote last.
 	logPath := filepath.Join(jobDir, "harness.log")
-	logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness log could not be opened: " + redactedReason(err)}, attest, 0, "")
 	}
@@ -179,6 +183,16 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			end := EndDone
 			if rc != 0 {
 				end = EndFailed
+			}
+			// ISSUE #163: A STRUCTURED SIGNAL BEFORE THE HEURISTIC. A harness adapter records
+			// the provider's refusal as a field -- class, value, limit -- and this
+			// supervisor reads that field and re-emits it as one line the next reader
+			// trusts, instead of re-reading the transcript like everybody else. No mark, no
+			// bare-word bound, no list-marker or event-prefix rule is asked to decide it.
+			if sig, ok := inputLimitSignalFromJob(jobDir); ok {
+				fmt.Fprintln(in.Stderr, InputLimitSignalLine(sig))
+				reason := fmt.Sprintf("%s limit: a request of %d did not fit a %d ceiling", sig.Class, sig.Value, sig.Limit)
+				return ExitRecord{RC: rc, Signal: signal, End: EndInputLimit, Spent: spent, Observed: observed, Partial: partial, Reason: reason}
 			}
 			// AND A PROVIDER'S INPUT LIMIT IS ITS OWN CLASS, named by the process that
 			// watched the harness say it (#103). Two Freddy reads of whole specs died

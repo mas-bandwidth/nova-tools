@@ -78,7 +78,8 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 			// door. It used to be the banner itself, which cost between 1,900 and
 			// 6,500 bytes to say that no arguments is not an invocation — and cost
 			// the same on every flag typo, which is the common case.
-			exit, stdout, stderr := runBare(t, root, tool, nil)
+			bin := buildTool(t, root, tool)
+			exit, stdout, stderr := runBare(t, root, tool, bin, nil)
 			if exit != 2 {
 				t.Errorf("a bare `%s` exits %d, want 2 (could not run — no arguments is not an invocation)", tool, exit)
 			}
@@ -102,7 +103,7 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 
 			// (a), second half: the door opens, on stdout, at exit 0, and what is
 			// behind it ends in runnable lines.
-			exit, banner, helpErr := runBare(t, root, tool, []string{"help"})
+			exit, banner, helpErr := runBare(t, root, tool, bin, []string{"help"})
 			if exit != 0 {
 				t.Errorf("`%s help` exits %d, want 0; stderr: %s", tool, exit, helpErr)
 			}
@@ -122,10 +123,12 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 	}
 }
 
-// runBare builds the command and runs it with the arguments given (none, or
-// `help`). It is BUILT rather than called as a package, because what this test
-// is about is what a stranger meets at a shell prompt.
-func runBare(t *testing.T, root, tool string, args []string) (exit int, stdout, stderr string) {
+// buildTool builds one command and returns its path. It is BUILT rather than called
+// as a package, because what this test is about is what a stranger meets at a shell
+// prompt. Each tool is built ONCE per subtest and run twice (bare, then `help`):
+// building it per invocation made this the slowest package in the tree for no extra
+// evidence -- the same binary answers both questions (#516).
+func buildTool(t *testing.T, root, tool string) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), tool)
 	if runtime.GOOS == "windows" {
@@ -136,6 +139,12 @@ func runBare(t *testing.T, root, tool string, args []string) (exit int, stdout, 
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building %s: %v\n%s", tool, err, out)
 	}
+	return bin
+}
+
+// runBare runs the built command with the arguments given (none, or `help`).
+func runBare(t *testing.T, root, tool, bin string, args []string) (exit int, stdout, stderr string) {
+	t.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = root
 	var out, errb bytes.Buffer

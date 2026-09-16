@@ -169,6 +169,47 @@ func TestAwakeBoundsLines(t *testing.T) {
 	}
 }
 
+// THE BEAT CARRIES A LEASE, and it outruns both the cursor and the window. A line whose
+// manager process is alive but between two waits stops writing a beat while it works the note
+// it was just handed, and over a slow note that gap outruns --window, so by cursor age
+// alone it reads asleep. The exit beat wrote until=now+--beat-lease, so the friend stays
+// awake inside the lease even though both its cursor and its beat stamp are old.
+func TestAwakeHonoursBeatLease(t *testing.T) {
+	dir := awakeBus(t)
+	cursorCommit(t, dir, "rowan", at.Add(-472*time.Second)) // asleep by cursor alone
+	write(t, filepath.Join(dir, "from-rowan", "BEAT"),
+		at.Add(-500*time.Second).Format(time.RFC3339Nano)+" rowansha until="+at.Add(5*time.Minute).Format(time.RFC3339Nano)+"\n")
+
+	r := wakeRun(t, "awake", "--bus", dir)
+	if r.exit != 0 {
+		t.Fatalf("awake exit %d, want 0; stderr=%s", r.exit, r.stderr)
+	}
+	for _, want := range []string{
+		"FRIEND rowan awake age=500 source=bus-beat\n",
+		"AWAKE OK friends=1 awake=1 asleep=0 unknown=0 window=300\n",
+	} {
+		if !strings.Contains(r.stdout, want) {
+			t.Fatalf("awake output missing %q\nstdout=%s", want, r.stdout)
+		}
+	}
+
+	// A lease that has run out keeps nobody awake: the beat is old AND its until is past,
+	// so the line falls back to its cursor, which is also asleep.
+	dir = awakeBus(t)
+	cursorCommit(t, dir, "eve", at.Add(-472*time.Second))
+	write(t, filepath.Join(dir, "from-eve", "BEAT"),
+		at.Add(-500*time.Second).Format(time.RFC3339Nano)+" evesha until="+at.Add(-1*time.Minute).Format(time.RFC3339Nano)+"\n")
+	r = wakeRun(t, "awake", "--bus", dir)
+	for _, want := range []string{
+		"FRIEND eve asleep age=472 source=bus-cursor\n",
+		"AWAKE OK friends=1 awake=0 asleep=1 unknown=0 window=300\n",
+	} {
+		if !strings.Contains(r.stdout, want) {
+			t.Fatalf("expired-lease output missing %q\nstdout=%s", want, r.stdout)
+		}
+	}
+}
+
 // THE BEAT WINS OVER THE CURSOR. A waiting line's cursor does not move, so by the cursor
 // commit alone it reads asleep -- but its BEAT file keeps advancing every poll, and where
 // the beat is newer than the cursor commit the friend reads awake, source=bus-beat. The

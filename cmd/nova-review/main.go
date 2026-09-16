@@ -432,11 +432,46 @@ func underDir(root, path string) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
+	// Both sides are resolved before they are compared, or a directory fails to
+	// contain itself. On darwin /var is a symlink to /private/var and the
+	// per-user temp tree lives under it, so os.Getwd() hands back the resolved
+	// spelling while an absolute --out the caller typed keeps the unresolved
+	// one: filepath.Rel then reads two names for one directory as ".." and
+	// refuses a path that is plainly inside the current directory. Resolving
+	// also closes the other direction — a symlinked --out pointing out of the
+	// lane is now seen for where it really lands.
+	rootAbs = resolveExisting(rootAbs)
+	pathAbs = resolveExisting(pathAbs)
 	rel, err := filepath.Rel(rootAbs, pathAbs)
 	if err != nil {
 		return false
 	}
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// resolveExisting returns path with its longest EXISTING ancestor replaced by
+// that ancestor's symlink-resolved form, the remainder re-appended as written.
+// The remainder has to survive unresolved because the paths this is asked about
+// do not exist yet — --out names a file whose absence is the point — and
+// filepath.EvalSymlinks refuses a path it cannot stat. A path with no existing
+// ancestor at all comes back unchanged.
+func resolveExisting(path string) string {
+	rest := ""
+	cur := path
+	for {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			if rest == "" {
+				return real
+			}
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return path
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
 }
 
 func diffCounts(diff string) (files, hunks int) {

@@ -8,3 +8,6 @@ const (
 	oNoFollow = 0
 	oNonBlock = 0
 )
+
+// ONoFollow is oNoFollow for callers outside this package; zero here, as above.
+const ONoFollow = oNoFollow

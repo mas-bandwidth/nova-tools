@@ -126,6 +126,17 @@ packages in a workflow goes stale silently — and a bound in seconds is evidenc
 about the machine as much as about the tool, which is why it gates a release and
 not a change.
 
+Where CI runs follows the cost of the machine, not the shape of the change.
+Pull requests run on the self-hosted runners only: one job per `./cmd/<tool>`
+plus `./internal/...` grouped into at most eight groups, fanned out across the
+four Linux space runners and the four macOS studio runners in parallel with
+fail-fast off, and every self-hosted job is guarded so fork code never runs on
+our machines. The GitHub-hosted runners (ubuntu-latest, macos-latest,
+windows-latest) run only on push to main and on the nightly schedule, with the
+full suite, and a new push to a pull request cancels the in-progress run.
+`ci-ok` aggregates the self-hosted matrix on a pull request and the hosted
+matrix on main too, so the ruleset check never changes shape.
+
 The built binary is smoke-tested for `nova-check nocode` and for the specific
 properties that job names — not for all of `nocode`, and four of those steps are
 skipped on Windows, the platform those steps most needed to cover. Everything

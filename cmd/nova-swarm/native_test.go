@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,7 +72,7 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir)
+	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	harnessDir := filepath.Dir(bin)
 	if !hasFlagPair(argv, "--read", harnessDir) {
 		t.Errorf("the wall argv does not read the harness directory %s:\n%s", harnessDir, strings.Join(argv, " "))
@@ -89,6 +90,20 @@ func hasFlagPair(argv []string, flag, val string) bool {
 	for i, a := range argv {
 		if a == flag && i+1 < len(argv) && argv[i+1] == val {
 			return true
+		}
+	}
+	return false
+}
+
+// hasFlagPairResolved is hasFlagPair with the value compared by symlink-resolved path: on
+// macOS t.TempDir() lands under /var -> /private/var, so the wall argv carries the resolved
+// spelling while the test holds the unresolved one.
+func hasFlagPairResolved(argv []string, flag, want string) bool {
+	for i, a := range argv {
+		if a == flag && i+1 < len(argv) {
+			if got, err := filepath.EvalSymlinks(argv[i+1]); err == nil && got == want {
+				return true
+			}
 		}
 	}
 	return false
@@ -331,9 +346,10 @@ func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
 	}
 }
 
-// TestNativeRefusesConfigProviderWithoutKey: a --config that names a provider whose key is
-// absent from --auth is refused before anything runs, in one line, naming the provider and
-// never the key.
+// TestNativeRefusesConfigProviderWithoutKey: a --config whose entry for THE MODEL'S OWN
+// provider has no key in --auth is refused before anything runs, in one line, naming the
+// provider and never the key. That provider is the one the harness is about to call, so its
+// missing key is a run that dies rc=1 in under a second.
 func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -348,12 +364,12 @@ func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
 
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
-		binary: bin, model: "fake/fake-model", label: "lbl",
+		binary: bin, model: "zeta/zeta-model", label: "lbl",
 		card: []byte("a card\n"), slotDir: slot, root: root, authFile: auth,
 		configFile: cfgPath, deadline: time.Second,
 	}, &errOut)
 	if code != 2 {
-		t.Fatalf("a config naming a provider without a key exits 2, got %d:\n%s", code, errOut.String())
+		t.Fatalf("a config whose entry for the model's provider has no key exits 2, got %d:\n%s", code, errOut.String())
 	}
 	if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
 		t.Fatalf("the refusal is one REFUSED line:\n%s", errOut.String())
@@ -366,6 +382,125 @@ func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
 	}
 	if got := strings.Count(strings.TrimSpace(errOut.String()), "\n") + 1; got != 1 {
 		t.Fatalf("exactly one REFUSED line, got %d:\n%s", got, errOut.String())
+	}
+}
+
+// TestNativeConfigChecksOnlyTheModelsProvider: a --config may name every provider a person
+// keeps in ~/.config/opencode, and only the one the --model names is checked for a key. The
+// config here names two -- a keyless ollama the model uses, and an inception that has no
+// entry in --auth and that this run never calls -- and the run is admitted. Checking all of
+// them turned every adoption pass on this bench into `names provider inception, whose key is
+// absent` for a card that wanted a local model (issue #523 follow-up).
+func TestNativeConfigChecksOnlyTheModelsProvider(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}},"inception":{}}}` + "\n"
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "ollama/north-mini-code-32k", label: "lbl",
+		card: []byte("a card\n"), slotDir: slot, root: root, authFile: auth,
+		configFile: cfgPath, deadline: 30 * time.Second, noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("a provider the model does not use is not checked, got exit %d:\n%s", code, errOut.String())
+	}
+	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Fatalf("no refusal for a provider this run never calls:\n%s", errOut.String())
+	}
+	if strings.Contains(errOut.String(), "inception") {
+		t.Fatalf("the unused provider is not named at all:\n%s", errOut.String())
+	}
+}
+
+// TestNativeConfigKeylessProviderAdmitted: a --config that names a provider whose entry is
+// absent from --auth is admitted, not refused, when that provider's options carry a baseURL
+// and no apiKey field -- ollama on localhost needs no key, so there is no key to be absent.
+// The config is still copied verbatim, mode 0600, and the run records its sha8.
+func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "ollama/north-mini-code-32k", label: "lbl",
+		card: []byte("FAKE-RECORD-CONFIG\n"), slotDir: slot, root: root, authFile: auth,
+		configFile: cfgPath, deadline: 30 * time.Second, noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("a keyless provider (baseURL, no apiKey) is admitted, got exit %d:\n%s", code, errOut.String())
+	}
+	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Fatalf("the keyless provider is not refused, got:\n%s", errOut.String())
+	}
+	wantSum := sha256.Sum256([]byte(config))
+	wantSHA := hex.EncodeToString(wantSum[:])[:8]
+	if res.configSHA != wantSHA {
+		t.Errorf("the run records config sha8 %q, want %q", res.configSHA, wantSHA)
+	}
+	assertConfigRecord(t, slot, "0600", config)
+}
+
+// TestFriendSequenceLocalModelCard runs one known-answer card on a fake local provider: the
+// harness is the fake, the provider is a keyless ollama (baseURL, no apiKey, no auth entry),
+// and the card FAKE-PWD answers with the job directory. The run is walled, admitted without a
+// refusal, and the wall's own name and the card's known answer both land where a reader looks.
+func TestFriendSequenceLocalModelCard(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	label := "local-model-card"
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "ollama/north-mini-code-32k", label: label,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, authFile: auth,
+		configFile: cfgPath, deadline: 30 * time.Second, sandbox: sandbox,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the keyless local provider runs walled, got exit %d:\n%s", code, errOut.String())
+	}
+	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Fatalf("the local provider card is admitted, not refused:\n%s", errOut.String())
+	}
+	if res.wall != "fake-wall" {
+		t.Errorf("the run names the wall it ran inside, got %q", res.wall)
+	}
+	jobDir := filepath.Join(slot, "jobs", label)
+	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+	if err != nil {
+		t.Fatalf("the card's known answer was not written: %v", err)
+	}
+	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
+	if !sameDir(got, jobDir) {
+		t.Errorf("the card's known answer is %q, want the job directory %q", got, jobDir)
 	}
 }
 
@@ -765,10 +900,11 @@ func TestNativeRunsWalledWithoutHostRulesWhenNoRepos(t *testing.T) {
 
 // TestNativeEnvIsCleanAndInsideTheWall: the walled child is handed a clean environment, not
 // the caller's. HOME and XDG_DATA_HOME appear exactly once and point at the data home, TMPDIR
-// sits under a --write, and XDG_CONFIG_HOME / XDG_CACHE_HOME do not survive to point outside
-// the wall. A planted foreign HOME/XDG_CONFIG_HOME/XDG_CACHE_HOME/TMPDIR and a provider key
-// are set first, and the run happens from a foreign cwd, proving the child's own environment
-// and directory are the run's, not the caller's.
+// is the slot's own tmp/<label> (outside the git-inited job directory), and XDG_CONFIG_HOME /
+// XDG_CACHE_HOME do not survive to point outside the wall. A planted foreign
+// HOME/XDG_CONFIG_HOME/XDG_CACHE_HOME/TMPDIR and a provider key are set first, and the run
+// happens from a foreign cwd, proving the child's own environment and directory are the
+// run's, not the caller's.
 func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 	bin := nativeHarness(t)
@@ -822,7 +958,8 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 		t.Fatalf("the run recorded no native-argv.log: %v", err)
 	}
 	env := nativeLoggedEnv(t, string(rawLog))
-	dataHome := filepath.Join(slot, "data")
+	// The slot admission recorded is symlink-resolved (issue #578), so the expectation is too.
+	dataHome := filepath.Join(resolvedPath(t, slot), "data")
 
 	if got := env["HOME"]; len(got) != 1 {
 		t.Errorf("the child has %d HOME entries, want 1: %v", len(got), got)
@@ -844,8 +981,10 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	if len(tmp) != 1 {
 		t.Fatalf("the child has %d TMPDIR entries, want 1: %v", len(tmp), tmp)
 	}
-	if rel, err := filepath.Rel(dataHome, tmp[0]); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		t.Errorf("TMPDIR %q is not inside the data home %q (a --write)", tmp[0], dataHome)
+	// The run symlink-resolves the slot it was handed (#586), so the two spellings of one
+	// directory are compared as directories, not as strings.
+	if want := filepath.Join(slot, "tmp", label); !sameDir(tmp[0], want) {
+		t.Errorf("TMPDIR is %q, want the slot's own tmp dir %q", tmp[0], want)
 	}
 	if got := env["FAKE_KEY"]; len(got) != 1 || got[0] != "<redacted>" {
 		t.Errorf("the secret's value is not redacted in the log: %v", got)
@@ -948,11 +1087,26 @@ func TestNativeRunWritesUsageInJobDirectory(t *testing.T) {
 	}
 }
 
+// resolvedPath is a path made absolute and symlink-resolved, which is the form admission
+// records. A test that builds its expectation from t.TempDir() must resolve it too: on
+// darwin the temp directory is handed out under /var, a symlink to /private/var, so the
+// unresolved spelling and the recorded one are two names for one directory and a string
+// compare between them fails on every macOS bench (issue #578).
+func resolvedPath(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolving %s: %v", path, err)
+	}
+	return real
+}
+
 // TestNativeRelativeSlotIsAbsolutized: the native run absolutizes --slot and --root at
-// admission, so the wall's argv reads the slot and writes the job by absolute path -- the
-// wall's refusal of `--read ./root/1` and `--write root/1/...` is what this absolutization
-// exists to prevent. The run starts from a foreign working directory with the slot and root
-// spelled relatively, and the test asserts the wall argv carries the absolute slot.
+// admission -- absolute and symlink-resolved -- so the wall's argv reads the slot and writes
+// the job by that one path; the wall's refusal of `--read ./root/1` and `--write root/1/...`
+// is what this absolutization exists to prevent. The run starts from a foreign working
+// directory with the slot and root spelled relatively, and the test asserts the wall argv
+// carries the resolved absolute slot.
 func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 	bin := nativeHarness(t)
@@ -990,7 +1144,280 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
 	}
 	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
-	if !hasFlagPair(strings.Fields(argv), "--read", slot) {
+	want, err := filepath.EvalSymlinks(slot)
+	if err != nil {
+		t.Fatalf("resolving the slot %q: %v", slot, err)
+	}
+	if !hasFlagPairResolved(strings.Fields(argv), "--read", want) {
 		t.Errorf("the wall argv does not read the slot by absolute path %s:\n%s", slot, argv)
+	}
+}
+
+// TestNativeTmpDirIsOutsideAnyRepo: the native run hands the child a TMPDIR that is the slot's
+// own tmp/<label>, not the job directory. Native admission git-inits the job directory into a
+// repo, and a card's temp dir inside a repo is exactly what makes nova-wake's
+// TestAwakeRefusesNonBus fail for a reason the card did not cause (#460). The test git-inits
+// the job directory the way admission does, then runs `git rev-parse --show-toplevel` from
+// inside the exported TMPDIR and asserts it does not resolve into the job's repo.
+func TestNativeTmpDirIsOutsideAnyRepo(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "tmp-outside-repo"
+
+	// git-init the job directory the way native admission does, before the run starts.
+	jobDir := filepath.Join(slot, "jobs", label)
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", "-q", jobDir).CombinedOutput(); err != nil {
+		t.Skipf("git init unavailable: %v: %s", err, out)
+	}
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("a card\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
+	}
+
+	// The exported TMPDIR is the slot's own tmp/<label>, not under the job directory. The run
+	// symlink-resolves the slot it was handed (#586), so the two spellings of one directory
+	// are compared as directories, not as strings.
+	want := filepath.Join(slot, "tmp", label)
+	if !sameDir(res.tmp, want) {
+		t.Errorf("TMPDIR is %q, want %q", res.tmp, want)
+	}
+	if st, err := os.Stat(res.tmp); err != nil || !st.IsDir() {
+		t.Fatalf("the exported TMPDIR %q is not a made directory: %v", res.tmp, err)
+	}
+
+	// A git rev-parse from inside the exported TMPDIR must not resolve into the job's repo.
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = res.tmp
+	out, err := cmd.CombinedOutput()
+	toplevel := strings.TrimSpace(string(out))
+	if err == nil && sameDir(toplevel, jobDir) {
+		t.Errorf("git rev-parse --show-toplevel from TMPDIR %q resolved into the job's repo %q", res.tmp, toplevel)
+	}
+}
+
+// TestNativeNoWallWritesHarnessLog: the UNWALLED run captures the harness's output to
+// <job>/harness-output.log, exactly as the walled run does. Before this, `native --no-wall`
+// pinned the child's stdout and stderr to <slot>/native.log alone and wrote nothing under
+// the job, so every unwalled Space card that produced no RESULT left NO evidence of what the
+// harness said -- the whole no-result class of 2026-09-16 was undiagnosable -- and
+// `harness=silent` (#604) could not tell a silent harness from a lost log (issue #608).
+//
+// The capture is NOT `harness.log`: that file is the harness's own, and `harness=silent`
+// reads it to ask whether the harness itself wrote anything. The test asserts both -- the
+// capture holds the lines, and `harness.log` is left alone by this process.
+//
+// The fake harness says one line on each stream; both modes hold both lines in the file.
+func TestNativeNoWallWritesHarnessLog(t *testing.T) {
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+
+	for _, tc := range []struct {
+		name    string
+		sandbox string
+		noWall  bool
+	}{
+		{"unwalled", "", true},
+		{"walled", sandbox, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.sandbox != "" {
+				t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+			}
+			root, slot := aSlot(t)
+			label := "harness-log-" + tc.name
+			touched := filepath.Join(t.TempDir(), "touched")
+			card := []byte("FAKE-SAY the-harness-said-this\nFAKE-TOUCH " + touched + "\n")
+
+			var errOut bytes.Buffer
+			_, code := nativeRun(nativeRunConfig{
+				binary: bin, model: "fake/fake-model", label: label,
+				card: card, slotDir: slot, root: root, deadline: 30 * time.Second,
+				sandbox: tc.sandbox, noWall: tc.noWall,
+			}, &errOut)
+			if code != 0 {
+				t.Fatalf("the %s run exits 0, got %d:\n%s", tc.name, code, errOut.String())
+			}
+
+			logPath := filepath.Join(slot, "jobs", label, "harness-output.log")
+			raw, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatalf("the %s run wrote no harness output log at %s: %v", tc.name, logPath, err)
+			}
+			// The harness's own file is not this process's to write: a capture landing there
+			// would answer `harness=silent` for a harness that said nothing at all (#604).
+			if _, err := os.Stat(filepath.Join(slot, "jobs", label, "harness.log")); err == nil {
+				t.Errorf("the %s run wrote the harness's own harness.log; the capture belongs in harness-output.log", tc.name)
+			}
+			for _, want := range []string{"the-harness-said-this", "touch " + touched} {
+				if !strings.Contains(string(raw), want) {
+					t.Errorf("the %s harness output log %s does not carry %q:\n%s", tc.name, logPath, want, raw)
+				}
+			}
+			// One capture path: whatever the harness log holds, the run log holds too, so a
+			// reader of either sees the same run.
+			runLog, err := os.ReadFile(filepath.Join(slot, "native.log"))
+			if err != nil {
+				t.Fatalf("the %s run wrote no native.log: %v", tc.name, err)
+			}
+			for _, want := range []string{"the-harness-said-this", "touch " + touched} {
+				if !strings.Contains(string(runLog), want) {
+					t.Errorf("the %s native.log does not carry %q:\n%s", tc.name, want, runLog)
+				}
+			}
+		})
+	}
+}
+
+// TestNativeSilentHarnessIsNotOK pins THE ONE DEFINITION of the token (issues #591, #594,
+// #608 folded): `harness=silent` exactly when the run's own capture
+// (<job>/harness-output.log, the file the test above proves is written walled or not) holds
+// nothing the CHILD said AND no RESULT.md is found anywhere the gather looks; `harness=ok`
+// otherwise, and the token is always present.
+//
+// The four cases are the four ways that can go, and each is a fault someone had:
+//   - silent: the run of issue #591 -- a local model whose tool calls the harness never
+//     parsed, so no tool ran, nothing was written, the child exited 0 and the line said OK.
+//   - spoke_no_result: a harness that SAID something and published nothing is `ok`, because
+//     there is evidence to read; the batch scores that card `no-result`, which is the model's
+//     own doing and a different remedy.
+//   - wall_lines_only: the wall's own `SANDBOX ` lines are in the capture too, and counting
+//     them would make a WALLED run -- the shape of #591 itself -- impossible to call silent.
+//   - result_under_repo: the result is looked for where the gather looks (#594), and the
+//     capture here is EMPTY on purpose, so this case fails the moment that lookup narrows
+//     back to the job root: it is the only path where the lookup alone decides.
+func TestNativeSilentHarnessIsNotOK(t *testing.T) {
+	bin := nativeHarness(t)
+	const label = "silent-label"
+	// The fake says this on its own stderr for FAKE-SAY: "fake harness: " + the word + "\n",
+	// which is 37 bytes -- the harness speaking, and nothing published.
+	const saidBytes = 37
+	for _, tc := range []struct {
+		name, card, want string
+		// resultInRepo plants a RESULT.md under <job>/repo before the run, the way a card
+		// whose STEP 1 cloned into repo/ publishes, while the run itself says nothing.
+		resultInRepo bool
+		// walled runs the case inside the fake wall instead of --no-wall, so the capture
+		// holds the wall's own SANDBOX lines and nothing else.
+		walled bool
+		// wantCapture is how many bytes of the child's own words the capture must hold.
+		wantCapture int
+	}{
+		{name: "silent", card: "FAKE-NORESULT\n", want: " harness=silent"},
+		{name: "wrote_a_result", card: "a card line 1\nline 2\n", want: " harness=ok"},
+		{name: "spoke_no_result", card: "FAKE-SAY twenty-two-characters!\nFAKE-NORESULT\n", want: " harness=ok", wantCapture: saidBytes},
+		{name: "wall_lines_only", card: "FAKE-NORESULT\n", want: " harness=silent", walled: true},
+		{name: "result_under_repo", card: "FAKE-NORESULT\n", want: " harness=ok", resultInRepo: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.walled {
+				t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+			}
+			root, slot := aSlot(t)
+			jobDir := filepath.Join(slot, "jobs", label)
+			if tc.resultInRepo {
+				repo := filepath.Join(jobDir, "repo")
+				if err := os.MkdirAll(repo, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(repo, "RESULT.md"), []byte("a card line 1\nall green from the clone\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cardPath := filepath.Join(root, "card.md")
+			if err := os.WriteFile(cardPath, []byte(tc.card), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"native", "--harness", bin, "--model", "fake/fake-model",
+				"--label", label, "--card", cardPath, "--slot", slot, "--root", root,
+				"--deadline", "30s"}
+			if tc.walled {
+				args = append(args, "--sandbox", nativeSandbox(t))
+			} else {
+				args = append(args, "--no-wall")
+			}
+			var stdout, stderr bytes.Buffer
+			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+			if rc != 0 {
+				t.Fatalf("the run exits 0, got %d:\n%s", rc, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), tc.want) {
+				t.Fatalf("the NATIVE OK line carries%s:\n%s", tc.want, stdout.String())
+			}
+			// The capture is the file the token is asked of, so the case that says the
+			// harness spoke proves the bytes are in it.
+			if tc.wantCapture > 0 {
+				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
+				if err != nil {
+					t.Fatalf("the capture the token reads is missing: %v", err)
+				}
+				if len(raw) != tc.wantCapture {
+					t.Errorf("the capture holds %d bytes of the child's words, want %d:\n%s", len(raw), tc.wantCapture, raw)
+				}
+			}
+			// A silent run's capture holds no word of the child's: either nothing at all, or
+			// the wall's own header lines.
+			if tc.want == " harness=silent" {
+				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
+				if err != nil {
+					t.Fatalf("the capture is written even for a silent run: %v", err)
+				}
+				for _, line := range strings.Split(string(raw), "\n") {
+					if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "SANDBOX ") {
+						t.Errorf("a silent run's capture carries a line the child wrote: %q", line)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestNativeCaptureRefusesSymlink: the capture is the first file this process opens inside
+// the JOB, which is the card's own writable directory. A symlink planted there -- by an
+// earlier run of the same card, or by the card itself -- would carry the child's output to
+// wherever it points, written by a process that has no wall around it (security#30's class).
+// The open carries O_NOFOLLOW, so the run refuses by name and the target is untouched.
+func TestNativeCaptureRefusesSymlink(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "planted-capture"
+	jobDir := filepath.Join(slot, "jobs", label)
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(victim, []byte("the bytes outside the wall\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(jobDir, "harness-output.log")); err != nil {
+		t.Skipf("this platform will not plant a symlink: %v", err)
+	}
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-SAY planted\n"), slotDir: slot, root: root,
+		deadline: 30 * time.Second, noWall: true,
+	}, &errOut)
+	if code != 2 {
+		t.Fatalf("a planted symlink at the capture path is a refusal (exit 2), got %d:\n%s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Errorf("the refusal does not name itself:\n%s", errOut.String())
+	}
+	raw, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "the bytes outside the wall\n" {
+		t.Errorf("the run wrote through the planted symlink; the file outside now holds:\n%s", raw)
 	}
 }

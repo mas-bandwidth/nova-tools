@@ -58,6 +58,8 @@ type nativeRunResult struct {
 	usageState   string  // the store path the NATIVE OK line names when no store answered, "" otherwise
 	usageReason  string  // no-rows | no-store | no-sqlite3, "" when the store answered
 	configSHA    string  // sha8 of the carried provider config, "" when --config named none
+	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
+	harness      string  // ok | silent: silent when the capture holds no words of the child's and no result was found
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -65,15 +67,18 @@ type nativeRunResult struct {
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
 func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
-	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute at admission so a
-	// relative spelling cannot reach the wall (which refuses `--read ./x` and `--write x/...`).
-	abslot, err := filepath.Abs(cfg.slotDir)
+	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute AND symlink-resolved at
+	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
+	// `--write x/...`), and so the run's own paths cannot disagree with each other: on darwin
+	// `/var` is a symlink to `/private/var`, so an absolute spelling and a relative one of one
+	// directory came out as two different names (issue #578).
+	abslot, err := swarm.AbsResolved(cfg.slotDir)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the slot directory %s could not be made absolute: %s", oneline.Field(cfg.slotDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
 	cfg.slotDir = abslot
-	absroot, err := filepath.Abs(cfg.root)
+	absroot, err := swarm.AbsResolved(cfg.root)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the configured root %s could not be made absolute: %s", oneline.Field(cfg.root), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
@@ -133,6 +138,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		refuseNative(errOut, fmt.Sprintf("the data directory %s could not be made: %s", oneline.Field(dataHome), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
+	// TMPDIR is the slot's own tmp/<label>, never the job directory (which admission git-inits
+	// into a repo): a card's temp dir inside a repo is exactly what makes nova-wake's
+	// TestAwakeRefusesNonBus fail for a reason the card did not cause (#460). The slot
+	// directory is never a repo, so a temp file made here sits outside every repository the
+	// card's work could touch. It is made here so the child's TMPDIR exists before it starts.
+	tmpDir := filepath.Join(cfg.slotDir, "tmp", cfg.label)
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		refuseNative(errOut, fmt.Sprintf("the temp directory %s could not be made: %s", oneline.Field(tmpDir), oneline.Escape(err.Error())))
+		return nativeRunResult{}, 2
+	}
 
 	// (4) THE AUTH COPY. One entry, the model's provider's, moved to the data home so
 	// the child's account resolves, and left mode 0600. A source that is looser than
@@ -149,11 +164,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// ollama, inception, zen -- is unknown to the harness and the run dies rc=1 in under a
 	// second. --config copies an opencode.json beside the carried auth file, mode 0600, so
 	// the harness resolves the provider exactly as it does when a person adds it to
-	// ~/.config/opencode. A config that names a provider whose key is absent from --auth is
-	// refused before anything runs, naming the provider and never the key.
+	// ~/.config/opencode. Only THE MODEL'S OWN provider is checked: a config whose entry for
+	// it has no key in --auth is refused before anything runs, naming the provider and never
+	// the key; a provider whose options carry a baseURL and no apiKey field has no key to be
+	// absent (ollama on localhost) and is admitted without one. Every other provider in the
+	// file is carried verbatim and not checked -- this run never calls them, and checking
+	// them refused local-model cards for an absent inception key on every adoption pass
+	// (#523 follow-up).
 	configSHA := ""
 	if cfg.configFile != "" {
-		sha8, reason := copyProviderConfig(cfg.configFile, cfg.authFile, dataHome)
+		sha8, reason := copyProviderConfig(cfg.configFile, cfg.authFile, provider, dataHome)
 		if reason != "" {
 			refuseNative(errOut, reason)
 			return nativeRunResult{}, 2
@@ -190,7 +210,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			return nativeRunResult{}, 2
 		}
 		runPath = wall
-		runArgv = nativeSandboxArgv(bin, cfg, dataHome, jobDir)
+		runArgv = nativeSandboxArgv(bin, cfg, dataHome, jobDir, tmpDir)
 	} else if len(cfg.repos) > 0 {
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
@@ -200,7 +220,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// own group) is killed when the wall runs out, not merely handed a suggestion.
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.deadline)
 	defer cancel()
-	childEnv := nativeChildEnv(dataHome, jobDir)
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir)
 	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
 	cmd := exec.CommandContext(ctx, runPath, runArgv...)
 	cmd.Env = childEnv
@@ -217,12 +237,40 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		refuseNative(errOut, fmt.Sprintf("the run log %s could not be opened: %s", oneline.Field(filepath.Join(cfg.slotDir, "native.log")), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
+	// ONE CAPTURE PATH, WALLED OR NOT (issue #608). The child's output also lands under the
+	// JOB, in `harness-output.log`, so the evidence sits with the card's own work rather
+	// than one directory up with the slot's. Before this the native path wrote only
+	// <slot>/native.log, so an UNWALLED card -- every Space card -- that produced no RESULT
+	// left no evidence of what the harness said: the whole no-result class of 2026-09-16
+	// could not be diagnosed, and a silent harness and a lost log read the same.
+	//
+	// IT IS NOT `harness.log`, DELIBERATELY. That name has two owners already -- the legacy
+	// supervisor pins the harness's output to it, and a `batch` pins its runner's stdout to
+	// it, which is where the NATIVE OK line lands -- and a third writer at one path is how
+	// evidence gets cut out from under a reader. This capture has its own name and one
+	// writer, and `harness=silent` (#604) is asked OF THIS FILE: whether the child itself
+	// said anything at all.
+	//
+	// It is opened O_APPEND and never truncated, so a second writer at the same path (a
+	// retried run, a batch that opened it first) appends rather than cutting bytes out
+	// from under the first. It is opened O_NOFOLLOW as well: this is the first file this
+	// process opens inside the JOB, which is the card's own writable directory, and a
+	// symlink planted there by an earlier run of the same card would carry the child's
+	// output out of the wall, through a process that has no wall (security#30's class).
+	outLog := filepath.Join(jobDir, "harness-output.log")
+	harnessOut, err := os.OpenFile(outLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND|swarm.ONoFollow, 0o644)
+	if err != nil {
+		log.Close()
+		refuseNative(errOut, fmt.Sprintf("the harness output log %s could not be opened: %s", oneline.Field(outLog), oneline.Escape(err.Error())))
+		return nativeRunResult{}, 2
+	}
 	// The wall's own stderr is split out of the log: the SANDBOX OK line the wall prints
 	// is where the tool learns the wall's name and the cwd it actually applied, and neither
-	// is guessed. The log still carries every byte; the buffer holds stderr for the parse.
+	// is guessed. The logs still carry every byte; the buffer holds stderr for the parse.
 	var wallOut bytes.Buffer
-	cmd.Stdout = log
-	cmd.Stderr = io.MultiWriter(log, &wallOut)
+	capture := io.MultiWriter(log, harnessOut)
+	cmd.Stdout = capture
+	cmd.Stderr = io.MultiWriter(capture, &wallOut)
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -231,6 +279,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		job:          jobDir,
 		wall:         "none",
 		configSHA:    configSHA,
+		tmp:          tmpDir,
 	}
 	if cfg.noWall {
 		res.wall = "none-by-flag"
@@ -245,6 +294,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	res.wallSeconds = time.Since(start).Seconds()
 	log.Close()
+	harnessOut.Close()
+	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
+	// logs are closed, so every byte the child wrote is on disk -- and carried on the OK line.
+	res.harness = harnessState(jobDir)
 
 	if wall != "" {
 		backend, cwd, ok := wallNamed(wallOut.String())
@@ -263,6 +316,80 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// can fold the card's tokens and dollars without re-reading the harness.
 	res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], start, time.Now(), res.rc, errOut)
 	return res, 0
+}
+
+// harnessState is the `harness=<ok|silent>` token the NATIVE OK line always carries. ONE
+// DEFINITION, and this is it (issues #591, #594, #608 folded): a run is `silent` when the
+// capture above holds nothing the child said AND no `RESULT.md` is found anywhere the gather
+// looks for one. Anything else is `ok`.
+//
+// A SILENT HARNESS IS NOT A QUIET MODEL. The run this closes was a local model whose tool
+// calls the harness never parsed: the child emitted them as raw text, no tool ran, nothing
+// was written, and the process exited 0, so the one line a coordinator reads said OK and the
+// batch behind it scored `no-result` -- the token for a model that chose to publish nothing.
+// The two are different faults with different remedies (a harness that cannot drive this
+// model; a model that had nothing to say), and the line now tells them apart. A harness that
+// SPOKE and published nothing is `ok` and scores `no-result`: there is evidence to read.
+//
+// THE FILE IS THE RUN'S OWN CAPTURE, `<job>/harness-output.log` (issue #608) -- never
+// `harness.log`, which the legacy supervisor and a `batch`'s runner pin already own. Reading
+// the capture rather than a file this process does not write is what keeps the token honest
+// on a bench, where the batch's own runner pin may not exist at all.
+//
+// THE WALL'S OWN LINES ARE NOT THE HARNESS SPEAKING. The wall prints `SANDBOX ...` on the
+// child's stderr, which this capture also holds, and counting those bytes would make a WALLED
+// run -- the very run that wrote issue #591 -- impossible to call silent. They are skipped
+// here exactly as the gather's own `log=<n>` count skips them (internal/swarm/batch.go).
+//
+// THE RESULT IS LOOKED FOR WHERE THE GATHER LOOKS FOR IT, by the gather's own lookup
+// (swarm.FindCardResult): the job root, then `repo/` and one directory below it (issue #594).
+// A card's STEP 1 makes `repo/` the model's cwd, so a working run publishes there and the
+// batch copies it up; a shallower lookup here would print `harness=silent` about a run that
+// worked, which is the same class of fault this token exists to end.
+func harnessState(jobDir string) string {
+	if harnessSpoke(filepath.Join(jobDir, "harness-output.log")) {
+		return "ok"
+	}
+	if result, ok := swarm.FindCardResult(jobDir); ok && wroteBytes(result) {
+		return "ok"
+	}
+	return "silent"
+}
+
+// captureHeadBytes bounds what harnessSpoke reads of a capture: a wall's own header is a
+// handful of lines, so a capture larger than this holds words of the child's whatever its
+// head says, and a run's capture can be megabytes that nobody needs read to answer a yes/no.
+const captureHeadBytes = 64 << 10
+
+// harnessSpoke says whether the capture holds a line the CHILD wrote: any non-blank line that
+// is not one of the wall's own `SANDBOX ` lines. An absent or empty file is a harness that
+// said nothing, and so is one holding the wall's header alone.
+func harnessSpoke(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() == 0 {
+		return false
+	}
+	if fi.Size() > captureHeadBytes {
+		return true
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "SANDBOX ") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// wroteBytes says whether a path is a regular file holding at least one byte: the test
+// harnessState applies to a result, so an empty RESULT.md is nothing published.
+func wroteBytes(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
 }
 
 // refuseNative writes the one REFUSED line the run owes its caller.
@@ -286,14 +413,16 @@ func sandboxHostRules(sandbox string) bool {
 // nativeSandboxArgv is the wrap for a native run: the wall's flags, then --, then the
 // harness verbatim (SPEC-SANDBOX rule 12). The job directory is the first --write and the
 // --cwd (rule 13); the data home is the second --write and the child's HOME (rule 9); the
+// temp directory is a --write so the child's TMPDIR is usable inside the wall; the
 // slot directory is the read set. Each repo the card named is a --repo allow rule, and a
 // recipient never appears: a bus send is denied by the wall itself, not granted by the
 // caller, so no allow rule is ever built for one.
-func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir string) []string {
+func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir string) []string {
 	argv := []string{
 		"--read", cfg.slotDir,
 		"--write", jobDir,
 		"--write", dataHome,
+		"--write", tmpDir,
 		"--cwd", jobDir,
 	}
 	// The shell launcher read the harness's own directory and /opt/homebrew so git and the
@@ -316,11 +445,12 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir string)
 // allowlist survives the caller's own environment (PATH, LANG, TERM, the XDG_ and
 // NOVA_SWARM_ families, and any provider credential whose name carries KEY, TOKEN or
 // SECRET), and the names this run owns are then set exactly once. HOME and XDG_DATA_HOME
-// point at the data home, NOVA_SWARM_JOB names the job directory, and TMPDIR sits under the
-// data home (inside a --write) instead of the caller's own, which the wall denies.
+// point at the data home, NOVA_SWARM_JOB names the job directory, and TMPDIR is the slot's
+// own tmp/<label> (never the job directory, which admission git-inits into a repo) instead
+// of the caller's own, which the wall denies.
 // XDG_CONFIG_HOME and XDG_CACHE_HOME are dropped, never inherited, so the harness defaults
 // them under HOME and never follows them outside the wall.
-func nativeChildEnv(dataHome, jobDir string) []string {
+func nativeChildEnv(dataHome, jobDir, tmpDir string) []string {
 	var kept []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -335,7 +465,7 @@ func nativeChildEnv(dataHome, jobDir string) []string {
 		"HOME="+dataHome,
 		"XDG_DATA_HOME="+dataHome,
 		"NOVA_SWARM_JOB="+jobDir,
-		"TMPDIR="+filepath.Join(dataHome, "tmp"),
+		"TMPDIR="+tmpDir,
 	)
 }
 
@@ -536,20 +666,19 @@ func copyAuth(src, provider, dataHome string) string {
 }
 
 // copyProviderConfig copies an opencode.json provider config beside the carried auth copy
-// in the job's own data home, mode 0600, and returns the sha8 the NATIVE OK line names. A
-// config that names a provider whose entry is absent from the auth file is refused before
-// anything runs: that provider is exactly the one the harness would call unknown, and the
-// refusal names the provider, never the key. The bytes are copied verbatim even when they
-// are not a JSON object this side can parse -- the refusal check is best-effort, the copy
-// is not.
-func copyProviderConfig(configPath, authPath, dataHome string) (sha8, reason string) {
+// in the job's own data home, mode 0600, and returns the sha8 the NATIVE OK line names. The
+// config's entry for THE MODEL'S provider is refused when its key is absent from the auth
+// file: that provider is exactly the one the harness is about to call, and the refusal names
+// the provider, never the key. The bytes are copied verbatim even when they are not a JSON
+// object this side can parse -- the refusal check is best-effort, the copy is not.
+func copyProviderConfig(configPath, authPath, provider, dataHome string) (sha8, reason string) {
 	raw, err := os.ReadFile(configPath)
 	if err != nil {
 		return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error()))
 	}
-	if missing := configProvidersMissingAuth(raw, authPath); missing != "" {
+	if modelProviderMissingAuth(raw, authPath, provider) {
 		return "", fmt.Sprintf("the config file %s names provider %s, whose key is absent from the auth file %s; add it to --auth or drop the provider from --config",
-			oneline.Field(configPath), oneline.Field(missing), oneline.Field(dash(authPath)))
+			oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(authPath)))
 	}
 	sum := sha256.Sum256(raw)
 	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")
@@ -562,36 +691,62 @@ func copyProviderConfig(configPath, authPath, dataHome string) (sha8, reason str
 	return hex.EncodeToString(sum[:])[:8], ""
 }
 
-// configProvidersMissingAuth returns the first provider an opencode.json config names whose
-// entry is absent from the auth file, or "" when every named provider has one (or when the
-// config does not parse into a "provider" object, which the copy still performs verbatim).
-// The provider names are the keys of the config's top-level "provider" object.
-func configProvidersMissingAuth(raw []byte, authPath string) string {
+// modelProviderMissingAuth reports whether the one provider this run will call -- the
+// --model's -- is named by the config and has no entry in the auth file. Only that provider
+// is asked about. A config is the whole of a person's ~/.config/opencode and names every
+// provider they keep; the ones this model does not use are never reached by the child, so
+// their keys are not this run's business, and refusing on them refused good cards (#523).
+//
+// It answers false when the config does not parse into a "provider" object (the copy is
+// still performed verbatim), when the config does not name this provider at all, and when
+// the entry's options carry a baseURL and no apiKey field -- ollama on localhost has no key
+// to be absent.
+func modelProviderMissingAuth(raw []byte, authPath, provider string) bool {
 	var cfg map[string]any
 	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return ""
+		return false
 	}
 	providers, ok := cfg["provider"].(map[string]any)
 	if !ok {
-		return ""
+		return false
 	}
-	entries := map[string]bool{}
-	if authPath != "" {
-		if authRaw, err := os.ReadFile(authPath); err == nil {
-			var a map[string]any
-			if json.Unmarshal(authRaw, &a) == nil {
-				for p := range a {
-					entries[p] = true
-				}
-			}
-		}
+	entry, named := providers[provider]
+	if !named || keylessProvider(entry) {
+		return false
 	}
-	for p := range providers {
-		if !entries[p] {
-			return p
-		}
+	if authPath == "" {
+		return true
 	}
-	return ""
+	authRaw, err := os.ReadFile(authPath)
+	if err != nil {
+		return true
+	}
+	var entries map[string]any
+	if json.Unmarshal(authRaw, &entries) != nil {
+		return true
+	}
+	_, has := entries[provider]
+	return !has
+}
+
+// keylessProvider reports whether a provider entry needs no key: its options carry a baseURL
+// and no apiKey field, so the harness reaches it (for example ollama on localhost) with no
+// credential to be absent.
+func keylessProvider(v any) bool {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	opts, ok := m["options"].(map[string]any)
+	if !ok {
+		return false
+	}
+	baseURL, _ := opts["baseURL"].(string)
+	if baseURL == "" {
+		return false
+	}
+	_, hasKey := opts["apiKey"]
+	return !hasKey
 }
 
 // fileSHA256 returns the lowercase hex sha256 of a file's bytes.

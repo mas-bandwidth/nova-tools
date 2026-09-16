@@ -19,10 +19,11 @@ import (
 const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
-nova-pulse width   --root <dir> --pool <pool.tsv>
+nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
+nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
 
@@ -40,6 +41,13 @@ example:
 in this repo is a fixture the size of a first run, and every line above is run
 against it by the tests.
 
+manager is the manager tier: a bounded controller, no model call. Each cycle is
+wait, notes, harvest, triage, merge, refill and one MANAGER line; an unknown
+policy key is a refusal; --hours 0 runs one cycle and the shift ends SHIFT END.
+
+example:
+  nova-pulse manager --policy ./queue/POLICY --queue ./queue --roots ./swarm-root,./swarm-root-space --bus ./bus --as Rowan --hours 6
+
 example:
   nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
 
@@ -49,6 +57,9 @@ The line above runs "nova-pulse pool" from the repo root — it reads the roadma
 skips the cell without a card, and writes the two candidates to ./root/pool.tsv.
 That is a whole first run of the pool verb, no network and no model call, and
 docs/TESTS.md carries the transcript it prints.
+
+example:
+  nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
 `
 
 // refuse is what an unusable invocation costs: one line naming what was wrong and the door
@@ -71,13 +82,18 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
-		fmt.Fprintln(stdout, "nova-pulse dev")
-		return 0
+		return cmdVersion(rest, stdout, stderr)
 	case "pool":
 		return cmdPool(rest, stdout, stderr)
 	case "launch":
 		return cmdLaunch(rest, stdout, stderr, now)
-	case "cut", "harvest", "width":
+	case "cut":
+		return cmdCut(rest, stdout, stderr)
+	case "harvest":
+		return cmdHarvest(rest, stdout, stderr)
+	case "manager":
+		return cmdManager(rest, stdout, stderr)
+	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
 	}
@@ -190,6 +206,74 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	})
 }
 
+func cmdHarvest(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("harvest")
+	id := f.fs.String("id", "", "")
+	root := f.fs.String("root", "", "")
+	sources := f.fs.String("sources", "", "")
+	templates := f.fs.String("templates", "", "")
+	maxBodyBytes := f.fs.Int("max-body-bytes", 4096, "")
+	max := f.fs.Int("max", 20, "")
+
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*id, "id", "the pulse id whose cards this harvest folds")
+	f.want(*root, "root", "the pulse root this pulse's state hangs under")
+	if *maxBodyBytes <= 0 {
+		f.add(fmt.Sprintf("--max-body-bytes wants a positive byte count, got %d", *maxBodyBytes))
+	}
+	if *max < 0 {
+		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.Harvest(pulse.HarvestInput{
+		ID:           *id,
+		Root:         *root,
+		Sources:      *sources,
+		Templates:    *templates,
+		MaxBodyBytes: *maxBodyBytes,
+		Max:          *max,
+		Stdout:       stdout,
+		Stderr:       stderr,
+	})
+}
+
+func cmdManager(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("manager")
+	policy := f.fs.String("policy", "", "")
+	queue := f.fs.String("queue", "", "")
+	roots := f.fs.String("roots", "", "")
+	bus := f.fs.String("bus", "", "")
+	as := f.fs.String("as", "", "")
+	hours := f.fs.Float64("hours", -1, "")
+	max := f.fs.Int("max", bounded.Default, "")
+
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*policy, "policy", "the approved policy file this shift executes, key=value lines")
+	f.want(*queue, "queue", "the queue directory holding pending, launched, done and the state files")
+	f.want(*roots, "roots", "the benches this shift harvests, comma separated")
+	f.want(*bus, "bus", "the nova-bus clone this shift is the single waiter on")
+	f.want(*as, "as", "the name this shift waits and receipts as")
+	if *hours < 0 {
+		f.add(fmt.Sprintf("--hours is required and is 0 or more, got %v; 0 runs exactly one cycle", *hours))
+	}
+	if *max < 0 {
+		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.Manager(pulse.ManagerInput{
+		Policy: *policy, Queue: *queue, Roots: *roots, Bus: *bus, As: *as,
+		Hours: *hours, Max: *max, Stdout: stdout, Stderr: stderr,
+	})
+}
+
 func isDeadlineSeconds(s string) bool {
 	if s == "" {
 		return false
@@ -202,4 +286,37 @@ func isDeadlineSeconds(s string) bool {
 		n = n*10 + int(r-'0')
 	}
 	return n >= 1
+}
+
+func cmdCut(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("cut")
+	pool := f.fs.String("pool", "", "")
+	templates := f.fs.String("templates", "", "")
+	out := f.fs.String("out", "", "")
+	root := f.fs.String("root", "", "")
+	local := f.fs.String("local", "", "")
+	max := f.fs.Int("max", bounded.Default, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*pool, "pool", "the pool.tsv of candidates to cut")
+	f.want(*templates, "templates", "the directory holding the typed templates and models.tsv")
+	f.want(*out, "out", "the directory the cut cards go into")
+	f.want(*root, "root", "the state root; skipped.tsv is written here")
+	if *max < 0 {
+		f.problems = append(f.problems, fmt.Sprintf("--max is 0 or more, got %d; 0 already means all, so a negative ceiling is a typo with two readings", *max))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.Cut(pulse.CutInput{
+		Pool:      *pool,
+		Templates: *templates,
+		Out:       *out,
+		Root:      *root,
+		Local:     *local,
+		Max:       *max,
+		Stdout:    stdout,
+		Stderr:    stderr,
+	})
 }
