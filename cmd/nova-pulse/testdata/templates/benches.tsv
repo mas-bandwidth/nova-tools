@@ -1,0 +1,3 @@
+model	opencode/deepseek-v4-flash	opencode/deepseek-v4-pro
+cost	flat 1.0	flat 1.5
+capability	read|text|replay	code

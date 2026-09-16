@@ -365,7 +365,7 @@ PULSE OK id=20260915T161450Z-pulse-600cc3 n=3 free-before=2 queued=1 batches=1 d
 Cut one card of each kind out of the fixture pool, into a fresh `./cards` and
 `./root` in the checkout. The fixture lives at `cmd/nova-pulse/testdata/`: a
 two-line `pool.tsv` (a read and a fix candidate) and a `templates` directory
-with `models.tsv`, `read.md` and `fix.md`.
+with `benches.tsv`, `read.md` and `fix.md`.
 
 `pool` runs against the same directory from the other end: a `sources.tsv`
 declaring one `roadmap` source, and that roadmap — two cells naming a card and
@@ -375,7 +375,9 @@ and neither makes a model call.
 
 ```text
 $ nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
-CUT OK cards=2 skipped=0 flash=1 pro=1 out=./cards
+CUT ROUTE route=opencode/deepseek-v4-flash reason=flat
+CUT ROUTE route=opencode/deepseek-v4-pro reason=flat
+CUT OK cards=2 skipped=0 zero=0 flat=2 metered=0 out=./cards
 
 $ nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
 POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 next=0 plan=0 seen=0 took=0s out=root/pool.tsv

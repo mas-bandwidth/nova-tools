@@ -28,6 +28,10 @@ func relaunch(in HarvestInput) int {
 	if err := os.MkdirAll(cardsDir, 0o755); err != nil {
 		return refusal(in.Stderr, "HARVEST", fmt.Errorf("cannot make cards dir: %s", oneline.Err(err)))
 	}
+	table := fallbackRoutes
+	if t, err := readCostTable(in.Templates); err == nil {
+		table = t
+	}
 	var rows []CardRow
 	for i, c := range ordered {
 		label := sanitizeID(c.ID)
@@ -35,7 +39,7 @@ func relaunch(in HarvestInput) int {
 		if err := os.WriteFile(cardPath, []byte(render(c, in.Templates)), 0o644); err != nil {
 			return refusal(in.Stderr, "HARVEST", fmt.Errorf("cannot cut %s: %s", label, oneline.Err(err)))
 		}
-		rows = append(rows, CardRow{Label: label, Slot: "-", Model: modelFor(c.Kind, "", relaunchTiers), Card: cardPath})
+		rows = append(rows, CardRow{Label: label, Slot: "-", Model: routeFor(c.Kind, false, table).Name, Card: cardPath})
 	}
 	if err := writeCardsTSV(filepath.Join(in.Root, "cards.tsv"), rows); err != nil {
 		return refusal(in.Stderr, "HARVEST", err)
@@ -83,11 +87,6 @@ func render(c Candidate, templatesDir string) string {
 	}
 	return "RESULT " + c.ID + " sha=000000000000\n" + c.Title + "\n"
 }
-
-// relaunchTiers names the two tiers a relaunch routes to. The relaunch has no models.tsv
-// and no --local of its own, so it routes by kind alone through cut's modelFor and gets
-// the same "flash"/"pro" it has always written.
-var relaunchTiers = map[string]string{"flash": "flash", "pro": "pro"}
 
 // runLaunchSubprocess invokes nova-pulse launch --queue as a subprocess and relays its output, so the
 // batch admission goes through the launch verb, never re-implemented here.
