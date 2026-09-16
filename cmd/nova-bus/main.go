@@ -72,6 +72,7 @@ usage:
         [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
+        [--quiet-beats]
         [--diagnostics]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
@@ -190,6 +191,15 @@ issue the next one. --timeout is required, because every wait has a deadline, an
 is at most 60m: a wait runs inside your harness's tool call, so ask your harness
 what its limit is and sit under it. The loop is wait, answer, wait, with --advance
 so the second wait is a real wait:
+
+  nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
+    --advance --remote origin --branch main
+
+--quiet-beats makes a wait return on a change that is ONLY beats and cursors --
+a lane's BEAT or CURSOR moving, no note -- with one WAIT OK line and NO inbox
+frame, instead of sleeping through it: a line polling presence that way spends
+one line per beat rather than a whole INBOX listing. Without it a beat commit
+is not a note and keeps sleeping, exactly as before.
 
   nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
     --advance --remote origin --branch main
@@ -1383,6 +1393,10 @@ type inboxOpts struct {
 	maxBytes     int64
 	after        string
 	diagnostics  bool
+	// quietBeats makes `wait` return on a change that is ONLY beats and cursors — no note —
+	// printing one WAIT line and no INBOX frame, instead of sleeping through it. It is `wait`'s
+	// only; `inbox` leaves it false.
+	quietBeats bool
 	// me is the reader resolved against the roster, carried so `wait` can write their beat
 	// without resolving the roster twice; beat is how often a wait pushes its BEAT file as
 	// its own commit; and lease is how far into the future each BEAT's until= promises the
@@ -1422,6 +1436,11 @@ type inboxReading struct {
 	// are still new to the open list (heard is not answered), but they are news the reader
 	// has already taken; `wait --advance` skips them rather than returning on them.
 	HeardNew    int
+	// Changed is how many lane paths the incremental diff named. It is scope.Changed, held
+	// here so `wait --quiet-beats` can tell a beat/cursor-only change from no change at all.
+	Changed int
+	// NoteChanges is how many of those changed paths were notes; see bus.InboxResult.
+	NoteChanges  int
 	Next        string
 	BodyBytes   int64
 	BodyPrinted int
@@ -1807,6 +1826,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	fmt.Fprintf(stdout, "INBOX OK as=%s carrying=%d open=%d notes=%d receipts=%d heard=%d unaddressed=%d unreadable=%d\n",
 		oneline.Field(me.Name), len(res.Open), notes+receipts, notes, receipts, heard, len(res.Unaddressed), len(res.Unreadable))
 	r.Me, r.Legacy, r.Cursor, r.Full = me, legacy, cursor.Commit, scope.Full
+	r.Changed, r.NoteChanges = scope.Changed, res.NoteChanges
 	if !o.bodies {
 		r.Open = res.Open
 	}
@@ -2247,6 +2267,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) are not carried on your open list, and are counted rather than listed")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
+	quietBeats := f.fs.Bool("quiet-beats", false, "return on a change that is only beats and cursors, printing one WAIT line and no INBOX frame instead of sleeping through it")
 	// --remote and --branch are required here and conditional on inbox, because a wait
 	// FETCHES: that is the difference between waiting and sleeping. A wait that read only
 	// what its checkout already held would wait out its whole timeout beside a bus full of
@@ -2346,6 +2367,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
 		me: me, beat: *beat, lease: *beatLease,
 		diagnostics: *diagnostics,
+		quietBeats:  *quietBeats,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
@@ -2491,7 +2513,15 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		// it blocks only while there is nothing new at all, until a note arrives or the
 		// deadline. #352 blocked over the backlog instead and broke byte-identity with
 		// inbox, which is why it was reverted.
-		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) }
+		//
+		// #674, --quiet-beats: a change that is ONLY beats and cursors -- no note in the diff,
+		// and no switch-day line hiding the whole wait -- is not news to a default wait, which
+		// sleeps through it. Under --quiet-beats it is a wake worth one WAIT line: the bus
+		// moved, and the caller is owed that for one token rather than none.
+		quietOnly := func(r inboxReading) bool {
+			return o.quietBeats && r.New == 0 && r.Changed > 0 && r.NoteChanges == 0 && !hiddenWholeWait(r.Legacy, horizon)
+		}
+		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) || quietOnly(r) }
 		// THE BEAT, written before the poll. A waiting line's cursor does not move --
 		// there was nothing to read, so nothing was recorded -- and a line whose cursor
 		// does not move reads asleep to `nova-wake awake`. The BEAT is the file that moves
@@ -2538,7 +2568,9 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 				fmt.Fprintf(stdout, "WAIT NOTE %s\n", oneline.Escape(hiddenReason(r.Legacy, pollNow)))
 			}
 			fmt.Fprintf(stdout, "WAIT OK new=%d after=%s polls=%d\n", r.New, oneline.Field(elapsed.String()), polls)
-			fmt.Fprint(stdout, lines)
+			if !quietOnly(r) {
+				fmt.Fprint(stdout, lines)
+			}
 			fmt.Fprintf(stdout, "WAIT DONE reason=new rearm=required next=%s\n", next)
 			landBeat()
 			return 0

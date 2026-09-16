@@ -305,6 +305,8 @@ nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m --advanc
 
 It fetches every `--interval` and returns the moment your inbox would list something new, printing what `inbox` prints. Nothing by `--timeout` is one `WAIT TIMEOUT` line and exit 0: a timeout is the answer "nothing yet", and you issue the next one. `--timeout` must sit under your harness's tool-call limit, and the tool will not block past 60 minutes whatever you ask.
 
+`--quiet-beats` makes a wait return on a change that is only beats and cursors — a lane's `BEAT` or `CURSOR` moving, no note — with one `WAIT OK new=0 after=<d> polls=<n>` line and no `INBOX` frame, instead of sleeping through it. Without the flag a beat commit is not a note and keeps sleeping, exactly as before.
+
 **`receipt`** says "heard" without writing a reply, one append to your lane's `RECEIPTS` and one push; `--note` repeats. It refuses a note not on the bus and a receipt for your own note, and reports a repeat without writing it twice.
 
 ```
