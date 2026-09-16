@@ -516,7 +516,7 @@ WAKE PING id=<id> to=<name> commit=<sha|-> pushed=<true|false> attempt=<n>: one 
 WAKE MORE kind=<bus|entry|report|line|pr|run|branch|lock> shown=<n> total=<t> n=<k> <remedy>
 WAKE REFUSED: <reason>
 WAKE HERE at=<stamp> load=<load|-> cpus=<n> procs=<n|->
-WAKE PROBE name=<name> state=<state> contact=<name|-> last=<stamp|-> silent=<d> commit=<sha|-> pinged=<stamp|-> pinged-id=<id|-> rest=<d> reconciled=<true|false> correlation=<id|-> remaining=<n> gaps=<n> silent-after=<d> answer-within=<d> head-at=<stamp|->
+WAKE PROBE name=<name> state=<state> contact=<name|-> last=<stamp|-> silent=<d|-> commit=<sha|-> pinged=<stamp|-> pinged-id=<id|-> rest=<d> reconciled=<true|false> correlation=<id|-> remaining=<n> gaps=<n> silent-after=<d> answer-within=<d> head-at=<stamp|->
 WAKE FIRED ids=<n> first=<id> rc=<n> redelivered=<0|1>
 WAKE UNCERTAIN id=<id> attempt=<n>: dispatch interrupted; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
 WAKE UNCERTAIN id=<id> attempt=<n> rc=<n>: retry not terminal; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
@@ -2302,7 +2302,7 @@ numbers and exits 0 on any reading, gating nothing. The scoped rule is under
 **Contact, not progress, not capacity — and contact is not eligibility.** The
 last sign is contact: a receipt proves a harness ran a receipt and nothing
 about a task (#178: *"A read receipt, wake delivery, task acceptance and
-progress are not the same event"*). The probe reports `last=<stamp> silent=<d>
+progress are not the same event"*). The probe reports `last=<stamp|-> silent=<d|->
 commit=<sha> contact=<FRESH|STALE|NONE>` and one state word, and **the two are
 printed side by side and never merged** (amended 2026-09-13, draft 4, from the
 Astra read, finding 3: draft 3 mapped fresh contact onto `PRESENT` and *any*
