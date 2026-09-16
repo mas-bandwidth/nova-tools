@@ -64,7 +64,10 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    a pool with a source silently missing would read as *no work* (the same law as nova-update
    rule 7: a dead source is never green).
 2. **`pool.tsv` is five fields, one candidate per line, in source order.** `source`, `id`,
-   `kind`, `title`, `template`. `id` is the issue number, the PR number, the audit line's
+   `kind`, `title`, `template`. `source` is the locator the sources line declares — an
+   `owner/repo` for the `issues` kind, so a template's `<source>` renders the repo the card
+   is about, never the source kind (#631: the card cloned `github.com/issues.git`). `id` is
+   the issue number, the PR number, the audit line's
    `<issue>#<n>`, the note id and slice ordinal, the roadmap cell name, or the work node id. `template` is
    the source's unless
    the item names one: an issue body line `template: <name>`, a slice's `template:` word, or
@@ -366,7 +369,7 @@ POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> 
 POOL REFUSED source=<kind>:<locator>: <reason> (<remedy>)
 CUT OK cards=<n> skipped=<n> zero=<n> flat=<n> metered=<n> out=<dir>
 CUT ROUTE route=<model> reason=<class>
-CUT SKIPPED source=<kind> id=<id> template=<name>: no template
+CUT SKIPPED source=<locator> id=<id> template=<name>: no template
 CUT REFUSED template=<name>: <which rule> (<remedy>)
 PULSE OK id=<id> n=<n> free-before=<n> queued=<n> batches=<n> deadline=<s>
 ADMIT REFUSED card=<label> gate=<spend|attempts|scope> <value> (<remedy>)
@@ -538,6 +541,10 @@ handoff (rule **The manager tier**).
    one per kind, never a route chosen by kind alone — and `zero=3 flat=2 metered=1` on
    `CUT OK`; a candidate with template `probe` is `skipped=1`, one `CUT SKIPPED` line,
    a `skipped.tsv` row, and exit 1.
+8b. `cut-source-is-locator-not-kind`: an `issues` source whose line names
+    `mas-bandwidth/nova-tools` yields a `pool.tsv` field 1 of `mas-bandwidth/nova-tools`, and
+    the card `cut` writes clones `https://github.com/mas-bandwidth/nova-tools.git` on its
+    `STEP 1` — never `https://github.com/issues.git` (#631, the red dogfood line).
 9. `launch-fills-every-free-slot`: eight admitted cards and four free slots admit exactly
    four — every free slot filled, none left idle, exit 0 and no `UNDER-SLOTS` anywhere in
    either stream; the mutation that matters: a launch that refuses instead of filling.

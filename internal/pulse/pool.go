@@ -237,7 +237,7 @@ func poolIssues(s source, seen map[string]bool, in PoolInput, kind string) ([]Po
 		if t := bodyTemplate(iss.Body); t != "" {
 			tpl = t
 		}
-		rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: kind, Title: iss.Title, Template: tpl})
+		rows = append(rows, PoolRow{Source: s.locator, ID: id, Kind: kind, Title: iss.Title, Template: tpl})
 	}
 	return rows, plan, seenCount, nil
 }

@@ -715,6 +715,19 @@ through `nova-swarm batch`, and fold what comes back. It makes no model call.
 `pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
 `status` below is the one-verb answer to the all-day questions.
 
+### cut
+
+```
+nova-pulse cut --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
+```
+
+`pool` writes one candidate per line into `pool.tsv`, field 1 the locator the
+sources line declares (an `owner/repo` for the `issues` kind, never the source
+kind). `cut` renders each card from its typed template, and a template's
+`<source>` in the `STEP 1` clone URL renders that locator — `git clone -q
+https://github.com/mas-bandwidth/nova-tools.git .` — so every card clones the
+repo it is about (the dogfood probe's red line cloned `github.com/issues.git`).
+
 ### status
 
 ```
