@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -202,5 +203,46 @@ func TestPoolMaxFlagBoundsCandidates(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
 	if len(lines) != 1 {
 		t.Fatalf("want 1 pool row, got %d: %q", len(lines), string(raw))
+	}
+}
+
+// cut-max-bounds-the-cards-cut (#634): `nova-pulse cut --max 6` cuts six cards, never the
+// whole pool. The dogfood probe ran
+// `nova-pulse cut --pool root/pool.tsv --templates ./templates --out ./cards --root ./root
+// --max 6` against an 18-candidate pool and got `CUT OK cards=18 skipped=0 flash=0 pro=18
+// out=./cards` -- --max was a print cap only and cut everything. A cap a caller names on cut
+// must bound the cards, the way pool --max bounds candidates.
+func TestCutMaxBoundsCardsCut(t *testing.T) {
+	dir := t.TempDir()
+	var pool strings.Builder
+	for i := 1; i <= 18; i++ {
+		fmt.Fprintf(&pool, "root\t%d\tfix\tFix %d\tfix\n", i, i)
+	}
+	poolPath := writeMainFile(t, dir, "pool.tsv", pool.String())
+	templates := filepath.Join("testdata", "templates")
+	out := filepath.Join(dir, "cards")
+	root := filepath.Join(dir, "root")
+
+	var stdout, errb bytes.Buffer
+	code := run([]string{"cut", "--pool", poolPath, "--templates", templates, "--out", out, "--root", root, "--max", "6"}, &stdout, &errb, time.Now().UTC())
+	if code != 0 {
+		t.Fatalf("cut exit = %d, want 0; stderr=%s", code, errb.String())
+	}
+	want := "CUT OK cards=6 skipped=0 flash=0 pro=6 out=" + out
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("stdout=%q, want it to carry %q", stdout.String(), want)
+	}
+	md := 0
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			md++
+		}
+	}
+	if md != 6 {
+		t.Fatalf("cards dir holds %d .md cards, want 6", md)
 	}
 }
