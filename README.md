@@ -51,6 +51,7 @@ Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is
 - [Lisp kernel](lisp/nova-work/README.md): a Common Lisp transition kernel with validator rules and 148 acceptance cases, all green.
 - [Command reference](docs/CLI.md): every flag, worked examples and caveats.
 - [Tool contracts](docs/SPEC.md): what each tool promises, and what it refuses.
+- [Terminology](docs/TERMINOLOGY.md): the words the specs define, each linked to its rule.
 - [Onboarding standard](docs/ONBOARDING.md) and
   [tested transcripts](docs/TESTS.md), which the tests execute line by line.
 - [Contributing](docs/CONTRIBUTING.md) and [security](docs/SECURITY.md).
