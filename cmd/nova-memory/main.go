@@ -42,14 +42,14 @@ const usage = `nova-memory: membership is a lookup, never a scan (see docs/SPEC.
 
 usage:
   nova-memory version    print this build identity (--version also accepted)
-  nova-memory quickstart --root <dir> [--words <w>]... [--draft <file>] [--exclude <glob>]...
-  nova-memory stats  --root <dir> [--exclude <glob>]...
-  nova-memory search --root <dir> --channels <list> --k <n> [--exclude <glob>]... <words>...
-  nova-memory check  --root <dir> --channels <list> --k <n> [--exclude <glob>]... <file|->
+  nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
+  nova-memory stats  --root <dir>... [--exclude <glob>]...
+  nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <words>...
+  nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <file|->
   nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                      [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
                      [--fail-max <n>]
-  nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--exclude <glob>]...
+  nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]...
                      [--fail-max <n>] <gold.tsv>
   nova-memory boot   --root <dir> --pin <file>
 
@@ -62,8 +62,11 @@ says so again at the end.
 flags:
   --root <dir>          the corpus root. Required, always: there is no
                         environment variable and no discovery from the working
-                        directory. A tool that guesses which corpus you meant
-                        can answer "you already know this" about someone else's.
+                        directory. Repeatable (--root <dir> --root <dir> ...):
+                        several roots are indexed together in one ranking, and
+                        every receipt names the root it came from. A tool that
+                        guesses which corpus you meant can answer "you already
+                        know this" about someone else's.
   --channels <list>     comma-separated retrieval channels: bm25, trigram.
                         Required: which retrieval you ran is part of what an
                         answer means, and no channel set is right by default —
@@ -125,7 +128,7 @@ example:
 // same guessing the tool refuses to do, moved onto the reader. Each hint says
 // what the flag IS and what a first run should put there.
 const (
-	rootHint = `--root <dir> is your corpus directory, the tree to index; it is never guessed from the working directory or the environment, so write it out every run`
+	rootHint = `--root <dir> is your corpus directory, the tree to index; it is never guessed from the working directory or the environment, so write it out every run — and repeat it to index several roots in one ranking (the cairn beside memory/)`
 	// The same sentence serves the missing flag and the unknown name, because
 	// naming a directory is exactly how the flag gets misread.
 	channelsHint = `--channels names a retrieval method, not a directory; the channels are bm25 and trigram, and bm25 alone is the usual start`
@@ -263,24 +266,22 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string
 
 // rootFlags carries the flags every verb needs to build an index.
 type rootFlags struct {
-	root     *string
+	root     multiFlag
 	excludes multiFlag
 }
 
 func addRootFlags(fs *flag.FlagSet) *rootFlags {
-	r := &rootFlags{root: fs.String("root", "", "corpus root directory (required)")}
+	r := &rootFlags{}
+	fs.Var(&r.root, "root", "corpus root directory, repeatable (required)")
 	fs.Var(&r.excludes, "exclude", "path or glob to skip, repeatable (nothing is excluded by default)")
 	return r
 }
 
 // build derives the index, or explains why it could not. Every failure here
-// is exit 2: the check could not run.
+// is exit 2: the check could not run. With several roots each is built on its
+// own filesystem and the corpuses merged, so one ranking spans them and each
+// chunk remembers which root it came from.
 func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time.Duration, bool) {
-	fi, err := os.Stat(*r.root)
-	if err != nil || !fi.IsDir() {
-		fmt.Fprintf(stderr, "nova-memory %s: --root %s is not a readable directory\n", name, oneline.Escape(*r.root))
-		return nil, 0, false
-	}
 	exclude := func(p string) bool {
 		for _, e := range r.excludes {
 			if p == e || strings.HasPrefix(p, e+"/") {
@@ -295,11 +296,21 @@ func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time
 		return false
 	}
 	t0 := time.Now()
-	c, err := memindex.Build(os.DirFS(*r.root), exclude)
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-memory %s: building the index over %s: %s\n", name, oneline.Escape(*r.root), oneline.Err(err))
-		return nil, 0, false
+	parts := make([]*memindex.Corpus, 0, len(r.root))
+	for _, root := range r.root {
+		fi, err := os.Stat(root)
+		if err != nil || !fi.IsDir() {
+			fmt.Fprintf(stderr, "nova-memory %s: --root %s is not a readable directory\n", name, oneline.Escape(root))
+			return nil, 0, false
+		}
+		c, err := memindex.Build(os.DirFS(root), exclude)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-memory %s: building the index over %s: %s\n", name, oneline.Escape(root), oneline.Err(err))
+			return nil, 0, false
+		}
+		parts = append(parts, c)
 	}
+	c := memindex.Merge(parts, r.root)
 	return c, time.Since(t0), true
 }
 
@@ -407,8 +418,12 @@ func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 	if typ == "" {
 		typ = "-"
 	}
-	return fmt.Sprintf("%s HIT %srank=%d %s fused=%.5f class=%s name=%s type=%s: %s:%d %q\n",
-		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Escape(h.File), h.Para, h.Snippet)
+	root := h.Root
+	if root == "" {
+		root = "-"
+	}
+	return fmt.Sprintf("%s HIT %srank=%d %s fused=%.5f class=%s name=%s type=%s root=%s: %s:%d %q\n",
+		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Field(root), oneline.Escape(h.File), h.Para, h.Snippet)
 }
 
 // ---------------------------------------------------------------------------
@@ -622,12 +637,15 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 
 	// Flags first, then positionals: package flag stops at the first
 	// non-flag argument, and every echoed line has to be one a reader can run.
-	common := []string{"--root", *rf.root}
+	var common []string
+	for _, r := range rf.root {
+		common = append(common, "--root", r)
+	}
 	for _, e := range rf.excludes {
 		common = append(common, "--exclude", e)
 	}
 	fmt.Fprintf(stdout, "QUICKSTART OK root=%s steps=3 channels=bm25 k=%s/%s words=%s words-source=%s candidate=%s\n",
-		oneline.Field(*rf.root), quickstartSearchK, quickstartCheckK,
+		oneline.Field(strings.Join(rf.root, " ")), quickstartSearchK, quickstartCheckK,
 		oneline.Field(strings.Join(words, " ")), oneline.Field(wordsSource), oneline.Field(candidate))
 
 	statsArgs := append([]string{"stats"}, common...)
@@ -1003,6 +1021,13 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	if bad {
 		return 2
 	}
+	if len(rf.root) != 1 {
+		// --coverage and --frontmatter globs and [[wikilink]] resolution all
+		// walk one tree, and a relative .md link resolves against one root, so
+		// verification names one root and no more.
+		fmt.Fprintf(stderr, "nova-memory verify: --root names exactly one tree for verification, but %d were given\n", len(rf.root))
+		return 2
+	}
 	if len(coverage) == 0 && len(front) == 0 && !gateLinks {
 		// Every check is off and wikilinks are informational: this run can
 		// only ever exit 0. A green that could not have been anything else is
@@ -1019,7 +1044,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	fsys := os.DirFS(*rf.root)
+	fsys := os.DirFS(rf.root[0])
 
 	var gating, info []memindex.Finding
 	for _, pair := range coverage {

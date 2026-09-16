@@ -211,6 +211,7 @@ func topK(scores map[int32]float64, k int) []Scored {
 // chunk for calibration, and the fused score that ordered it.
 type FileHit struct {
 	File    string
+	Root    string // the root this file came from, empty for a single-root build
 	Class   string
 	FMName  string
 	FMType  string
@@ -237,6 +238,14 @@ type FileHit struct {
 // needs no score normalization and never has to know what a channel's numbers
 // mean.
 const rrfK = 60.0
+
+// fileKey names a chunk's file as the retrieval unit must key it: root and
+// path together. Under one root the roots are all empty and this is the path
+// alone; under several, two roots may hold the same relative path and the key
+// keeps those files distinct.
+func fileKey(c *Corpus, id int32) string {
+	return c.Chunks[id].Root + "\x00" + c.Chunks[id].File
+}
 
 // Retrieve runs every channel, fuses by reciprocal rank, aggregates per file
 // by best fused chunk, and returns the top k files. With one channel this
@@ -296,7 +305,7 @@ func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
 		}
 		files := map[string]bool{}
 		for id := range fused {
-			files[c.Chunks[id].File] = true
+			files[fileKey(c, id)] = true
 		}
 		if len(files) >= k || exhausted || deep >= len(c.Chunks) {
 			break
@@ -306,14 +315,15 @@ func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
 	best := map[string]FileHit{}
 	for id, f := range fused {
 		ch := &c.Chunks[id]
-		prev, ok := best[ch.File]
+		key := fileKey(c, id)
+		prev, ok := best[key]
 		if ok && (prev.Fused > f || (prev.Fused == f && prev.Para <= ch.Para)) {
 			continue
 		}
 		snip := Truncate(ch.Text, 120)
 		n := native[id]
-		best[ch.File] = FileHit{
-			File: ch.File, Class: ch.Class, FMName: ch.FMName, FMType: ch.FMType,
+		best[key] = FileHit{
+			File: ch.File, Root: ch.Root, Class: ch.Class, FMName: ch.FMName, FMType: ch.FMType,
 			Para: ch.Para, Snippet: snip, Fused: f, Native: n.score, NativeChan: n.chn,
 		}
 	}
@@ -324,6 +334,9 @@ func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
 	sort.Slice(hits, func(i, j int) bool {
 		if hits[i].Fused != hits[j].Fused {
 			return hits[i].Fused > hits[j].Fused
+		}
+		if hits[i].Root != hits[j].Root {
+			return hits[i].Root < hits[j].Root
 		}
 		if hits[i].File != hits[j].File {
 			return hits[i].File < hits[j].File

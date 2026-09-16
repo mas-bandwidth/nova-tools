@@ -69,6 +69,10 @@ type Chunk struct {
 	File  string // slash path relative to the corpus root
 	Para  int    // ordinal among the file's indexable paragraphs
 	Class string // top-level directory, "." for root files — the corpus classifies itself
+	// Root is the root directory this chunk was indexed from, as the caller
+	// named it. It is empty for a single-root Build and set by Merge, so a
+	// receipt spanning several roots can name which one each hit came from.
+	Root  string
 	Text  string
 	Terms map[string]int
 	Len   int
@@ -304,4 +308,48 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 		}
 	}
 	return c, nil
+}
+
+// Merge combines corpuses built over separate roots into one, so a single
+// ranking spans them. Each chunk remembers the root it came from (Root, set
+// from the matching roots entry), so a receipt can name it; within a root the
+// file paths stay root-relative, which is what keeps the class (a top-level
+// directory) meaningful across roots.
+//
+// The roots slices parallel parts: parts[i] was built over roots[i]. Two
+// roots may hold the same relative path, and two such chunks stay distinct —
+// retrieval keys files by (root, path), never path alone.
+func Merge(parts []*Corpus, roots []string) *Corpus {
+	out := &Corpus{
+		DF:      map[string]int{},
+		Post:    map[string][]int32{},
+		ByClass: map[string]int{},
+	}
+	var totalTerms int
+	for i, p := range parts {
+		root := roots[i]
+		out.Files = append(out.Files, p.Files...)
+		out.Bytes += p.Bytes
+		for _, ch := range p.Chunks {
+			ch.Root = root
+			id := int32(len(out.Chunks))
+			out.Chunks = append(out.Chunks, ch)
+			for t := range ch.Terms {
+				out.DF[t]++
+				out.Post[t] = append(out.Post[t], id)
+			}
+			out.ByClass[ch.Class]++
+			totalTerms += ch.Len
+		}
+	}
+	out.AvgLen = float64(totalTerms) / float64(len(out.Chunks))
+	// Postings arrive ascending by construction (parts in order, ids ascending
+	// within each), so the determinism invariant holds without a sort — but the
+	// guarantee is stated here the same way Build states it.
+	for t, ids := range out.Post {
+		if !sort.SliceIsSorted(ids, func(i, j int) bool { return ids[i] < ids[j] }) {
+			panic(fmt.Sprintf("internal: merged postings for %q not sorted", t))
+		}
+	}
+	return out
 }

@@ -223,6 +223,36 @@ func TestSearchReceiptsCarryClassAndFrontmatter(t *testing.T) {
 	}
 }
 
+// Two seed memories under two roots must both be reachable by one search: the
+// cairn besided memory/ is a second root, not part of the first, and a query
+// that spans both must hand back a hit from each, with every hit naming the
+// root it came from. #488 lives in the cairn and can never surface from
+// memory/ alone, however lexical the index.
+func TestSearchSpansMultipleRoots(t *testing.T) {
+	memdir := t.TempDir()
+	cairn := t.TempDir()
+	writeUnder(t, memdir, "compressor.md",
+		"the compressor belt hardens with age and the blast runs a half second short.\n")
+	writeUnder(t, cairn, "cairns-compressor.md",
+		"the compressor held pressure through the long gale, a fact worth banking.\n")
+	exit, stdout, stderr := runCLI(t, "",
+		"search", "--root", memdir, "--root", cairn, "--channels", "bm25", "--k", "2", "compressor")
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
+	}
+	for _, want := range []string{
+		"hits=2",
+		"compressor.md:",
+		"cairns-compressor.md:",
+		"root=" + memdir,
+		"root=" + cairn,
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", stdout, want)
+		}
+	}
+}
+
 // The calibration probe is part of what the schema version names — the spec
 // says changing it IS a schema change. Nothing enforced that: the probe lives
 // in this package, SchemaVersion lives in internal/memindex, and each could
@@ -870,8 +900,8 @@ func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
 			t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
 		}
 		noForgedLine(t, forged, stdout, stderr)
-		if !strings.Contains(stdout, `name=x\x20lockdown\x3dclear type=t\x20u: notes/zz\x0a`+forged+`.md:1 `) {
-			t.Errorf("stdout = %q, want the frontmatter as one token each and the file name escaped", stdout)
+		if !strings.Contains(stdout, `name=x\x20lockdown\x3dclear type=t\x20u root=`+root+`: notes/zz\x0a`+forged+`.md:1 `) {
+			t.Errorf("stdout = %q, want the frontmatter as one token each, the root named, and the file name escaped", stdout)
 		}
 	})
 
