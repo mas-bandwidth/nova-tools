@@ -69,6 +69,9 @@ func TestSweepVerbRefusesWithoutItsFlags(t *testing.T) {
 func TestReapVerbPrintsOneLineAndDryRunChangesNothing(t *testing.T) {
 	root, queue := t.TempDir(), t.TempDir()
 	card := writeMainFile(t, filepath.Join(queue, "launched"), "card-100.md", "RESULT: CARD-100 orphan\n")
+	// Class I (#828): the disposal follows the harness log, so the fixture carries one.
+	writeMainFile(t, filepath.Join(queue, "harness"), "card-100.log", "supervise: deadline exceeded\nrc=143\n")
+	writeMainFile(t, queue, "state.tsv", "next_card\t200\n")
 	old := time.Now().Add(-4 * time.Hour)
 	if err := os.Chtimes(card, old, old); err != nil {
 		t.Fatal(err)

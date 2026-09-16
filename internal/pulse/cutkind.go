@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -33,18 +34,23 @@ var CutKinds = []string{"read", "fix", "replay", "spec"}
 
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {
-	Kind      string
-	Repo      string // owner/name; line 1 names the repo for every kind
-	PR        int    // read
-	Head      string // read
-	Issue     int    // fix
-	Title     string // fix, spec, and the parenthesised title of a read
-	BodyFile  string // fix, spec: the numbered steps this card carries
-	Prior     string // fix: what a prior attempt did, so the worker never repeats it
+	Kind     string
+	Repo     string // owner/name; line 1 names the repo for every kind
+	PR       int    // read
+	Head     string // read
+	Issue    int    // fix
+	Title    string // fix, spec, and the parenthesised title of a read
+	BodyFile string // fix, spec: the numbered steps this card carries
+	Prior    string // fix: what a prior attempt did, so the worker never repeats it
+	// PriorCard is the card this one supersedes. When it is set and Prior is not, the
+	// prior-attempts line is read from that card's own failure history (cause.go), which is
+	// how a refill cuts the next attempt WITHOUT a person retyping what the last one hit.
+	PriorCard string
 	Names     string // replay: the replay names, comma separated
 	SpecLines string // replay: the spec lines the replays are named at
 	Out       string // the directory the card is written into
 	Queue     string // the queue directory holding the state file and its lock
+	Version   string // this build's identity; it goes on the card's CUT stamp (stamp.go)
 	Stdout    io.Writer
 	Stderr    io.Writer
 }
@@ -65,12 +71,21 @@ func CutKind(in CutKindInput) int {
 		}
 		body = strings.TrimRight(string(raw), "\n")
 	}
+	// Class Q (#828): a step that says "whole" is a step that costs a 5,000-line spec every
+	// time it runs. A spec reaches a card as a line range or as a rule, never entire.
+	if problem := wholeProblem(body); problem != "" {
+		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", problem)
+		return 2
+	}
+	if strings.TrimSpace(in.Prior) == "" && strings.TrimSpace(in.PriorCard) != "" {
+		in.Prior = PriorLine(in.Queue, in.PriorCard)
+	}
 	n, err := NextCardNumber(in.Queue)
 	if err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s (the number comes only from the state file under %s)\n", oneline.Err(err), oneline.Field(in.Queue))
 		return 2
 	}
-	card := renderKindCard(in, n, body)
+	card := Stamp(renderKindCard(in, n, body), in.Version)
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
 		return 2
@@ -80,8 +95,32 @@ func CutKind(in CutKindInput) int {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s (pass a writable --out directory)\n", oneline.Field(name), oneline.Err(err))
 		return 2
 	}
-	fmt.Fprintf(in.Stdout, "CUT CARD card=%s kind=%s number=%d out=%s\n", oneline.Field(name), oneline.Field(in.Kind), n, oneline.Field(in.Out))
+	fmt.Fprintf(in.Stdout, "CUT CARD card=%s kind=%s number=%d out=%s stamp=%s\n",
+		oneline.Field(name), oneline.Field(in.Kind), n, oneline.Field(in.Out), CheckStamp(card).Version)
 	return 0
+}
+
+// wholeWords are the two ways a card asks for a whole file. Pit stop 3, class Q (#828):
+// SPEC-WORK is five thousand lines, and "read the spec" put every one of them in a worker's
+// window for a rule that lives on one row. `nova-review packet --rule spec:n` is how spec
+// text reaches a card, and `--spec-lines L1-L2` is how a range does; a card that names
+// neither is refused here, at the only place cards are made.
+var wholeWords = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\bwhole\b`),
+	regexp.MustCompile(`(?i)\bread\b.{0,80}?\bentirely\b`),
+}
+
+// wholeProblem is class Q's one refusal line, naming the step it read it on.
+func wholeProblem(body string) string {
+	for i, line := range strings.Split(body, "\n") {
+		for _, re := range wholeWords {
+			if m := re.FindString(line); m != "" {
+				return fmt.Sprintf("step line %d says %s: a spec reaches a card by line range or by rule, never entire (pass --spec-lines L1-L2, or name the rule with nova-review packet --rule spec:n)",
+					i+1, oneline.Field(m))
+			}
+		}
+	}
+	return ""
 }
 
 // cutKindProblem is every refusal this cutter has, each naming its remedy.

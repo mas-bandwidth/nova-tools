@@ -53,6 +53,9 @@ func wiredFixture(t *testing.T, now time.Time) (queue, root string, work *fakeWo
 	// requeues it once.
 	orphan := write("launched/card-3.md", "RESULT: CARD-3 nova-tools #778 fixed with its red test first: an orphan\n")
 	age(t, orphan, 2*time.Hour, now)
+	// The harness log that names the cause: killed at the deadline is `orphan`, so the
+	// reaper re-cuts it rather than reading it as an unknown and triaging it.
+	write("harness/card-3.log", "supervise: deadline exceeded, signalling\nrc=143\n")
 	// A runner busy with nothing running since twenty minutes ago: rule E2 restarts it.
 	writeBusySince(queue, map[string]time.Time{"space-nova-1": now.Add(-20 * time.Minute)})
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
@@ -42,6 +43,7 @@ func cmdReap(args []string, stdout, stderr io.Writer) int {
 		Procs:    pulse.OSProcs{Timeout: time.Duration(*timeout) * time.Second},
 		TempGlob: *tempGlob,
 		TempRoot: *tempRoot,
+		Version:  buildinfo.Version(version),
 		Now:      func() time.Time { return time.Now().UTC() },
 		Stdout:   stdout,
 		Stderr:   stderr,

@@ -10,8 +10,15 @@ package pulse
 //
 //   a process under a swarm root older than the deadline  -> killed
 //   a slot lock <root>/<slot>/BATCH whose pid is dead     -> removed
-//   a launched card whose job dir is gone, past deadline  -> requeued once, then failed
+//   a launched card whose job dir is gone, past deadline  -> disposed BY ITS CAUSE (cause.go)
 //   a temp dir matching the swarm test glob, past 30 min  -> removed
+//
+// The fourth line was `requeued once, then failed`, and that blind requeue is class I of the
+// same issue: 307 of 834 launches were a card rerun with the same text after a failure
+// nothing had read. It now reads the harness log first (cause.go) and the cause chooses:
+// a re-cut under a new number carrying the cause line, a bench probe when the bench and not
+// the card was wrong, or a failure with a triage packet when the cause has already had its
+// remedy. The text it replaces can never launch again (RECUT.tsv, admission.go).
 //
 // --dry-run changes nothing and prints the same counts, so the reaper can be read before it
 // is trusted.
@@ -77,6 +84,7 @@ type ReapInput struct {
 	Runners    RunnerTable
 	Restarter  RunnerRestarter
 	RunnerIdle time.Duration // default DefaultRunnerIdle (5 minutes)
+	Version    string        // this build's identity, for the CUT stamp a re-cut card carries
 	Now        func() time.Time
 	Stdout     io.Writer
 	Stderr     io.Writer
@@ -112,14 +120,19 @@ func Reap(in ReapInput) int {
 
 	killed := reapProcesses(in, roots)
 	locks := reapSlotLocks(in, roots)
-	requeued, failed := reapLaunchedCards(in, roots, now())
+	d := reapLaunchedCards(in, roots, now())
 	temp := reapTempDirs(in, tempGlob, tempAge, now())
 	restarted := reapStuckRunners(in, now())
 
-	fmt.Fprintf(in.Stdout, "REAP roots=%d killed=%d locks=%d requeued=%d failed=%d temp=%d restarted=%d dry-run=%t\n",
-		len(roots), killed, locks, requeued, failed, temp, restarted, in.DryRun)
+	fmt.Fprintf(in.Stdout, "REAP roots=%d killed=%d locks=%d requeued=%d recut=%d probe=%d failed=%d triaged=%d temp=%d restarted=%d dry-run=%t\n",
+		len(roots), killed, locks, d.requeued, d.recut, d.probe, d.failed, d.triaged, temp, restarted, in.DryRun)
 	return 0
 }
+
+// disposal is what the reaper did with the launched cards this tick. `requeued` is every
+// card that went back to pending, by any route, so the line still answers the question the
+// old one answered; `recut` and `probe` say by WHICH route, which is the whole of class I.
+type disposal struct{ requeued, recut, probe, failed, triaged int }
 
 // reapProcesses kills every process under a root that has outlived the deadline.
 func reapProcesses(in ReapInput, roots []string) int {
@@ -193,8 +206,9 @@ func lockPID(path string) int {
 }
 
 // reapLaunchedCards disposes every launched card whose job directory is gone and whose
-// launch is older than the deadline: requeued once under an attempt file, then failed.
-func reapLaunchedCards(in ReapInput, roots []string, now time.Time) (requeued, failed int) {
+// launch is older than the deadline -- BY ITS CAUSE, never blindly (class I, cause.go).
+func reapLaunchedCards(in ReapInput, roots []string, now time.Time) disposal {
+	var d disposal
 	launched := filepath.Join(in.Queue, "launched")
 	cards, _ := filepath.Glob(filepath.Join(launched, "card-*.md"))
 	for _, path := range cards {
@@ -206,30 +220,114 @@ func reapLaunchedCards(in ReapInput, roots []string, now time.Time) (requeued, f
 		if jobExists(roots, strings.TrimSuffix(name, ".md")) {
 			continue
 		}
-		attempt := filepath.Join(in.Queue, "attempts", name)
-		if _, err := os.Stat(attempt); err == nil {
-			failed++
-			if !in.DryRun {
-				moveCard(in, path, filepath.Join(in.Queue, "failed", name))
+		log, resultPresent := HarnessEvidence(in.Queue, name)
+		sig := Read(log, resultPresent)
+		action, why := Decide(sig, PriorKinds(in.Queue, name))
+		switch action {
+		case ActionProbe:
+			// The bench, not the card. The text is untouched and goes back to pending: a
+			// card re-cut because go was missing from a worker's PATH is a card changed for
+			// no reason, and that is how 174 of them failed a second time.
+			d.requeued++
+			d.probe++
+			if in.DryRun {
+				continue
 			}
-			continue
+			recordProbe(in, name, sig, now)
+			recordAttempt(in, name, sig, now)
+			moveCard(in, path, filepath.Join(in.Queue, "pending", name))
+		case ActionRecut:
+			d.requeued++
+			d.recut++
+			if in.DryRun {
+				continue
+			}
+			out, err := Recut(RecutInput{Queue: in.Queue, CardPath: path, Sig: sig, Version: in.Version, Now: func() time.Time { return now }})
+			if err != nil {
+				fmt.Fprintf(in.Stderr, "REAP NOTE %s could not be re-cut: %s\n", oneline.Field(name), oneline.Err(err))
+				continue
+			}
+			_ = out // the re-cut is recorded in RECUT.tsv and counted on the REAP line; the
+			// reaper prints ONE line whatever it collected, which is the whole point of it.
+			moveCard(in, path, filepath.Join(in.Queue, "recut", name))
+		default:
+			// ActionFail and ActionTriage: the cause has had its remedy, or no rule reads
+			// this signature. Either way the decision leaves the loop as a packet on the
+			// text route and never as another launch.
+			d.failed++
+			if in.DryRun {
+				d.triaged++
+				continue
+			}
+			recordAttempt(in, name, sig, now)
+			if cutTriagePacket(in, name, sig, log, why) {
+				d.triaged++
+			}
+			moveCard(in, path, filepath.Join(in.Queue, "failed", name))
 		}
-		requeued++
-		if in.DryRun {
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(attempt), 0o755); err != nil {
-			fmt.Fprintf(in.Stderr, "REAP NOTE the attempt file for %s could not be written: %s\n", oneline.Field(name), oneline.Err(err))
-			continue
-		}
-		body := fmt.Sprintf("reaped %s: the job directory was gone and the launch was past the deadline\n", now.UTC().Format(time.RFC3339))
-		if err := os.WriteFile(attempt, []byte(body), 0o644); err != nil {
-			fmt.Fprintf(in.Stderr, "REAP NOTE the attempt file for %s could not be written: %s\n", oneline.Field(name), oneline.Err(err))
-			continue
-		}
-		moveCard(in, path, filepath.Join(in.Queue, "pending", name))
 	}
-	return requeued, failed
+	return d
+}
+
+// recordAttempt writes one row of a card's own failure history, which is what makes the
+// SECOND failure of a cause visible to the next tick.
+func recordAttempt(in ReapInput, name string, sig Signature, now time.Time) {
+	row := AttemptRow{At: now.UTC().Format(time.RFC3339), Kind: sig.Kind, Line: sig.Line}
+	if err := AppendAttempt(in.Queue, name, row); err != nil {
+		fmt.Fprintf(in.Stderr, "REAP NOTE the attempt row for %s could not be written: %s\n", oneline.Field(name), oneline.Err(err))
+	}
+}
+
+// recordProbe appends one row to <queue>/PROBE.tsv: a bench or a route to probe, named by
+// the card that found it. It is a row and not a note, because a person reading a note about
+// a missing toolchain is a person doing a test's job.
+func recordProbe(in ReapInput, name string, sig Signature, now time.Time) {
+	if err := os.MkdirAll(in.Queue, 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(in.Queue, "PROBE.tsv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "REAP NOTE the probe row for %s could not be written: %s\n", oneline.Field(name), oneline.Err(err))
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s\t%s\t%s\n", oneline.Field(now.UTC().Format(time.RFC3339)), oneline.Field(name), oneline.Field(sig.Kind))
+}
+
+// evidenceTail is how much of a harness log a triage packet is given. The packet's own
+// ceiling is PacketMax; this is the ceiling on what is offered to it, so a ten-megabyte log
+// is never read into a card's memory to be thrown away a line later.
+const evidenceTail = 4000
+
+// cutTriagePacket writes the case's evidence and cuts the packet the text route decides on
+// (triage.go). It reports whether a packet was written.
+func cutTriagePacket(in ReapInput, name string, sig Signature, log []byte, why string) bool {
+	kind := TriageCase(sig.Kind)
+	dir := filepath.Join(in.Queue, "UNDECIDED")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(in.Stderr, "REAP NOTE the evidence for %s could not be written: %s\n", oneline.Field(name), oneline.Err(err))
+		return false
+	}
+	tail := string(log)
+	if len(tail) > evidenceTail {
+		tail = tail[len(tail)-evidenceTail:]
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "card %s reaped past the deadline with no job directory\n", name)
+	if why != "" {
+		fmt.Fprintf(&b, "REFUSED: %s\n", why)
+	}
+	b.WriteString(tail)
+	if err := os.WriteFile(filepath.Join(dir, kind+".txt"), []byte(b.String()), 0o644); err != nil {
+		fmt.Fprintf(in.Stderr, "REAP NOTE the evidence for %s could not be written: %s\n", oneline.Field(name), oneline.Err(err))
+		return false
+	}
+	out := filepath.Join(in.Queue, "triage", "triage-"+kind+"-"+strings.TrimSuffix(name, ".md")+".md")
+	var quiet strings.Builder
+	if code := Triage(TriageInput{Case: kind, Queue: in.Queue, Out: out, Ref: name, Stdout: &quiet, Stderr: in.Stderr}); code != 0 {
+		return false
+	}
+	return true
 }
 
 // jobExists says whether any bench still holds this card's job directory.
