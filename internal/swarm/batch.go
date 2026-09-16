@@ -179,8 +179,16 @@ func Batch(in BatchInput) int {
 		}
 		// A card's log is the runner's own stdout pinned to a regular file under the job, the
 		// way the spec records a job: harness.log. Idle means this file stopped growing.
+		//
+		// IT IS APPENDED TO, NEVER TRUNCATED (issue #608). Another process writes this same
+		// file for the same card -- the supervisor the runner starts pins the harness's own
+		// output to it -- and each holds its own offset. With O_TRUNC this file descriptor
+		// starts at offset 0 and the runner's first line lands on top of whatever the other
+		// writer has already put there, so the head of a card's evidence was overwritten by
+		// the line announcing the run. O_APPEND makes every write land at the end, whoever
+		// wrote last, and the file reads in the order it was written.
 		logPath := filepath.Join(job, "harness.log")
-		logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 		if err != nil {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 			return 2
@@ -727,12 +735,15 @@ func cardEndsInputLimit(logPath string) bool {
 }
 
 // cardHarnessSilent reports whether the runner's own `NATIVE OK` line said the harness left no
-// record of itself: `harness=silent`, the token `native` writes when the harness process wrote
-// neither `harness.log` nor `RESULT.md` in the job directory (issue #591). The line is read out
-// of the job's `harness.log`, which is the runner's stdout and the one place that line lands,
-// for a local card and for a remote one alike (the ssh child's stdout comes back into the same
-// file). A runner that prints no such line -- any runner but `native` -- is not silent here,
-// only unsaid, and the card keeps the score it has today.
+// record of itself: `harness=silent`, the token `native` writes when its capture holds no word
+// of the child's and no result was found anywhere this gather would look (issue #591). THE
+// TOKEN IS READ, NEVER RECOMPUTED: `native` looked at its own capture while the job directory
+// held exactly what the child put there, and this side would be guessing from files the batch
+// itself creates. The line is read out of the job's `harness.log` -- the file THIS process
+// pins the runner's stdout to, never one `native` writes -- and that is where the line lands
+// for a local card and a remote one alike (the ssh child's stdout comes back into it). A
+// runner that prints no such line -- any runner but `native` -- is not silent here, only
+// unsaid, and the card keeps the score it has today.
 func cardHarnessSilent(job string) bool {
 	raw, err := readRegular(filepath.Join(job, "harness.log"))
 	if err != nil {

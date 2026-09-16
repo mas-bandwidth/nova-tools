@@ -658,25 +658,34 @@ one line `ADMIT REFUSED benchmark window open until <stamp>` when the file named
 by `NOVA_BENCH_WINDOW` (or `~/.config/nova/bench-window`, a single RFC 3339
 stamp) is in the future, so a local job never runs beside a benchmark.
 
-**A native run captures the harness's output to `<job>/harness.log`, walled or
-not** — the same file, the same bytes, alongside `<slot>/native.log` — so an
-unwalled card's failure is as diagnosable as a walled one's and
-`harness=silent` means a silent harness and never a lost log. `--no-wall`
-removes the containment and nothing else: it never removes the evidence. The
-log is appended to, never truncated, because a `batch` pins its runner's stdout
-to that same file before the run starts (issue #608, every Space no-result of
-2026-09-16).
+**A native run captures the child's output to `<job>/harness-output.log`,
+walled or not** — the same file, the same bytes, alongside `<slot>/native.log`
+— so an unwalled card's failure is as diagnosable as a walled one's.
+`--no-wall` removes the containment and nothing else: it never removes the
+evidence (issue #608, every Space no-result of 2026-09-16). **The name
+`harness.log` belongs to the writers that already own it** — the legacy
+supervisor, which pins the harness's own output there, and a `batch`, which pins
+its runner's stdout there — and `native` never writes it: one file, one writer,
+and the evidence of a native run is `harness-output.log`. **Every writer of a
+job's logs appends and none truncates**, `batch`'s runner pipe and the
+supervisor's own open included: two processes write a card's `harness.log` at
+their own offsets, and a truncating open destroys the head of what the other
+already wrote.
 
-**A silent harness is never OK.** The `NATIVE OK` line always carries
-`harness=<ok|silent>`: `silent` when the harness process wrote NEITHER a byte into
-`<job>/harness.log` NOR a `RESULT.md` anywhere `gather` looks for one — the job root,
-`repo/`, one directory below it (issue #594) — and `ok` otherwise. With the capture
-above, a harness that said ANYTHING is not silent: `silent` is a run that produced no
-output and no result, which is a harness that did not run the card rather than a model
-with nothing to say. The fault that wrote the rule was a local model whose tool calls
-the harness never parsed (issue #591): no tool ran, nothing was written, the child
-exited 0 and the line said OK. `gather` scores such a card `ABSTAIN
-reason=harness-silent`, before `no-result` and before `rc=<n>`.
+**A silent harness is never OK, and this is the one definition of it.** The
+`NATIVE OK` line always carries `harness=<ok|silent>`, and a run is `silent`
+**iff** the capture above holds no line the child wrote **and** no `RESULT.md` is
+found anywhere `gather` looks for one — the job root, `repo/`, one directory
+below it (issue #594). Everything else is `ok`. Three consequences, each a fault
+someone had: a harness that **spoke** and published nothing is `ok` and its card
+scores `no-result`, because there is evidence to read; the wall's own `SANDBOX`
+lines in that capture are **not** the harness speaking and are skipped, exactly as
+the gather's `log=<n>` skips them, or a walled run could never be called silent;
+and a result published under `repo/` is a run that worked, so the lookup is the
+gather's own and never a shallower one. The fault that wrote the rule was a local
+model whose tool calls the harness never parsed (issue #591): no tool ran, nothing
+was written, the child exited 0 and the line said OK. `gather` scores such a card
+`ABSTAIN reason=harness-silent`, before `no-result` and before `rc=<n>`.
 
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
@@ -811,7 +820,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 |-------|----------|
 | `line1-mismatch` | published a result whose line 1 is not its contract line |
 | `no-result` | ended with rc 0 and published no `RESULT.md`, at the job root or below it |
-| `harness-silent` | its harness wrote nothing at all — no `harness.log` and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
+| `harness-silent` | its harness wrote nothing at all — no word in the run's capture and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
 | `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it |
 | `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
 | `deadline` | was killed at the batch's deadline |
