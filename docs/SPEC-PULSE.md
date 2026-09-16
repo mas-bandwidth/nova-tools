@@ -228,7 +228,10 @@ error. `--timeout <s>` (default 120) bounds every `gh`, `git`, `nova-bus`, `nova
 `nova-swarm` child, for SPEC-MERGE's reason (SPEC-MERGE.md:458); `pool` is the one verb that
 carries it today, and the rest take it when they land. `harvest` takes `--sources` and
 `--templates` because its last act is `pool` and `cut` again (rule 15). There is no
-`--model`, no `--priority`, no `--retry`.
+`--model`, no `--priority`, no `--retry`. `version` takes no flags and no arguments and
+prints the one build-identity line every binary prints (SPEC.md, **Every binary says
+which build it is**): `nova-pulse <build identity> <goos>/<goarch> <go version>`, four
+tokens, exit 0.
 
 ## Handoff
 
