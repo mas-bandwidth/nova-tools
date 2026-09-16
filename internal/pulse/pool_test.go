@@ -77,6 +77,48 @@ func TestPoolReadsIssueLabel(t *testing.T) {
 	}
 }
 
+func TestPoolReadsNonDraftPRs(t *testing.T) {
+	dir := t.TempDir()
+	jsonBody := writeTestFile(t, dir, "prs.json", `[
+  {"number": 10, "title": "ten", "isDraft": false},
+  {"number": 11, "title": "eleven", "isDraft": true},
+  {"number": 12, "title": "twelve", "isDraft": false}
+]`)
+	ghFixture(t, dir, jsonBody)
+
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sources := writeTestFile(t, dir, "sources.tsv", "prs\towner/repo\tread\n")
+
+	var out, errb bytes.Buffer
+	code := Pool(PoolInput{Sources: sources, Root: root, Stdout: &out, Stderr: &errb})
+	if code != 0 {
+		t.Fatalf("Pool exit = %d, stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "candidates=2") {
+		t.Fatalf("POOL OK line wrong: %q", out.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "pool.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 pool rows (draft PR skipped), got %d: %q", len(lines), string(raw))
+	}
+	for i, wantID := range []string{"10", "12"} {
+		f := strings.Split(lines[i], "\t")
+		if f[1] != wantID {
+			t.Fatalf("row %d id = %q, want %q", i, f[1], wantID)
+		}
+		if f[2] != "read" {
+			t.Fatalf("row %d kind = %q, want read", i, f[2])
+		}
+	}
+}
+
 func TestPoolRefusesUnreadableSource(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")

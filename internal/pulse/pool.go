@@ -34,6 +34,13 @@ type source struct {
 	template string
 }
 
+// ghPR is the subset of a GitHub pull request the pool verb reads.
+type ghPR struct {
+	Number  int    `json:"number"`
+	Title   string `json:"title"`
+	IsDraft bool   `json:"isDraft"`
+}
+
 // ghIssue is the subset of a GitHub issue the pool verb reads.
 type ghIssue struct {
 	Number int    `json:"number"`
@@ -165,8 +172,10 @@ func poolSource(s source, seen map[string]bool, in PoolInput) ([]PoolRow, int, i
 		return poolBus(s, seen)
 	case "roadmap":
 		return poolRoadmap(s, seen)
+	case "prs":
+		return poolPRs(s, seen, in)
 	default:
-		return nil, 0, 0, fmt.Errorf("unknown source kind %q (a source is issues, audits, bus or roadmap)", s.kind)
+		return nil, 0, 0, fmt.Errorf("unknown source kind %q (a source is issues, audits, bus, roadmap or prs)", s.kind)
 	}
 }
 
@@ -183,6 +192,43 @@ func listIssues(locator string, in PoolInput) ([]ghIssue, error) {
 		return nil, fmt.Errorf("gh issue list: bad JSON: %w", err)
 	}
 	return issues, nil
+}
+
+func listPRs(locator string, in PoolInput) ([]ghPR, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), in.Timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--repo", locator, "--state", "open", "--json", "number,title,isDraft")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("gh pr list: %w", err)
+	}
+	var prs []ghPR
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return nil, fmt.Errorf("gh pr list: bad JSON: %w", err)
+	}
+	return prs, nil
+}
+
+func poolPRs(s source, seen map[string]bool, in PoolInput) ([]PoolRow, int, int, error) {
+	prs, err := listPRs(s.locator, in)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	var rows []PoolRow
+	seenCount := 0
+	for _, pr := range prs {
+		if pr.IsDraft {
+			continue
+		}
+		id := strconv.Itoa(pr.Number)
+		key := s.kind + "\x00" + id
+		if seen[key] {
+			seenCount++
+			continue
+		}
+		rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: "read", Title: pr.Title, Template: s.template})
+	}
+	return rows, 0, seenCount, nil
 }
 
 func poolIssues(s source, seen map[string]bool, in PoolInput, kind string) ([]PoolRow, int, int, error) {
@@ -410,7 +456,7 @@ func refuseSource(w io.Writer, s source, err error) {
 
 func remedy(kind string) string {
 	switch kind {
-	case "issues", "audits":
+	case "issues", "audits", "prs":
 		return "check gh auth and the repo name"
 	case "bus":
 		return "point --sources at a nova-bus checkout"
