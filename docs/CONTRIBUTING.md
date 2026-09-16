@@ -149,9 +149,12 @@ standard-library rule as a rule. Nothing mechanical reads intent.
 
 `.github/workflows/revert-on-red.yml` runs with no person in the loop. When
 `ci` concludes failure on a push to `main` whose parent ci run on `main` was
-green, it reverts that push — `git revert -m 1` for a merge commit, a plain
-revert otherwise — with the message `revert <sha>: main red on <failing jobs>
-(mechanical revert-on-red; fix forward on a branch)`, and pushes it to `main`.
+green, it first re-runs the failed jobs once (flake guard) and waits for that
+rerun — the rerun's own `workflow_run` completion re-enters the workflow with
+`run_attempt` 2. Only if the rerun is red too does it revert that push —
+`git revert -m 1` for a merge commit, a plain revert otherwise — with the
+message `revert <sha>: main red on <failing jobs> (mechanical revert-on-red;
+fix forward on a branch)`, and pushes it to `main`.
 If the repository ruleset refuses the direct push, it opens a `revert/<sha>`
 pull request with auto-merge enabled instead. In both cases it posts one
 comment on the merged pull request, naming the revert. Three guards stop it

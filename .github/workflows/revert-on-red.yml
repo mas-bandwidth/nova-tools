@@ -1,15 +1,17 @@
 # revert-on-red.yml: the mechanical revert of the push that turned main red.
 #
 # No person in the loop. When `ci` concludes FAILURE on a push to main whose
-# parent ci run on main was green, this workflow reverts that push -- `git
-# revert -m 1` for a merge commit, a plain revert otherwise -- pushes the
-# revert to main, and posts ONE comment on the merged pull request naming the
-# revert. If the repository ruleset refuses the direct push by the
-# github-actions app, it opens a `revert/<sha>` pull request with auto-merge
-# enabled instead; the comment is posted either way.
+# parent ci run on main was green, this workflow re-runs the failed jobs once
+# (flake guard) and waits for that rerun. Only if the rerun is red too does it
+# revert that push -- `git revert -m 1` for a merge commit, a plain revert
+# otherwise -- push the revert to main, and post ONE comment on the merged
+# pull request naming the revert. If the repository ruleset refuses the direct
+# push by the github-actions app, it opens a `revert/<sha>` pull request with
+# auto-merge enabled instead; the comment is posted either way.
 #
 # The guards that keep it from ever fighting itself, all a skip with a notice
 # and exit 0 rather than a failure:
+#   * the first red is only a rerun trigger    -> the flake guard re-runs once
 #   * the head commit is itself a revert      -> no revert loops
 #   * the parent commit's ci run was not green -> the red predates this push
 #   * main has moved past this commit          -> the newer run decides
@@ -33,7 +35,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
-  actions: read
+  actions: write
 
 concurrency:
   # One revert at a time, and a queued run waits rather than cancels: two red
@@ -53,6 +55,19 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 50
+
+      - name: re-run the failed jobs once on the first red (flake guard)
+        shell: bash
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          if [ "$RUN_ATTEMPT" = "1" ]; then
+            gh run rerun "$RUN_ID" --failed
+            echo "::notice::run $RUN_ID failed on attempt 1; re-ran its failed jobs once (flake guard). The rerun's own workflow_run completion re-enters this workflow with run_attempt 2, and only a rerun that is red too is reverted."
+            exit 0
+          fi
+          echo "run $RUN_ID is red on attempt $RUN_ATTEMPT; the rerun is red too, proceeding to the revert."
 
       - name: revert the push that turned main red
         shell: bash
