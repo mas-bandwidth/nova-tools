@@ -497,6 +497,8 @@ func sourceCountKey(kind string) string {
 		return "slice"
 	case "roadmap":
 		return "roadmap"
+	case "prs":
+		return "read"
 	}
 	return kind
 }

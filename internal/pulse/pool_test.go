@@ -138,6 +138,9 @@ func TestPoolRoadmapKindIsCardKind(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("pool exit = %d, want 0; stdout=%q stderr=%q", code, out.String(), errb.String())
 	}
+	if !strings.Contains(out.String(), "candidates=2") || !strings.Contains(out.String(), "roadmap=2") {
+		t.Fatalf("POOL OK line wrong: %q", out.String())
+	}
 	raw, err := os.ReadFile(filepath.Join(root, "pool.tsv"))
 	if err != nil {
 		t.Fatal(err)
