@@ -681,7 +681,7 @@ runner name and the run id on the line.
 ```
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
@@ -697,8 +697,8 @@ nova-pulse help
 Those lines are the string `nova-pulse help` must print, byte for byte — the parity is a
 demand on `internal/pulse/cli.go`'s `pulseVerbs`, which carries the same claim in a comment,
 and a replay walks it (replay 36). The rules name verbs and flags the shipped block does not
-yet offer — `handoff`, `takeover`, `status`, rule 9's admission gates, `--work`, `--benches`
-and `--timeout` on every spawning verb — and each of those gaps is named in the open
+yet offer — `handoff`, `takeover`, `status`, rule 9's admission gates, `--work` and `--timeout`
+on every spawning verb — and each of those gaps is named in the open
 questions, not listed here, so a reader who types a line in this block never gets a flag
 error. `--timeout <s>` (default 120) bounds every `gh`, `git`, `nova-bus`, `nova-wake` and
 `nova-swarm` child, for SPEC-MERGE's reason (SPEC-MERGE.md:458); `pool` is the one verb that
@@ -1772,7 +1772,7 @@ handoff (rule **The manager tier**).
    `## Tests this spec demands` says so: the replays are demanded of the implementation, not
    read off it. Three deltas are open against `internal/pulse` at this draft's head, each one
    card's work: `pulseVerbs` lacks `--work` on `pool`, the `handoff`, `takeover` and `status`
-   lines, and this draft's `--benches` and `--timeout`; `cut.go` prints `flash=<n> pro=<n>` on
+   lines, and this draft's `--timeout`; `cut.go` prints `flash=<n> pro=<n>` on
    `CUT OK` where rule 7's cost table gives `zero=<n> flat=<n> metered=<n>`; and
    `TestCutModelByKind` pins the routing replay 8 replaces. A fourth is rule 9's: `internal/pulse/launch.go` still writes
    `zero=<n> flat=<n> metered=<n>` on `CUT OK` (rule 7's cost table) and `TestCutModelByKind`

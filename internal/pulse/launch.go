@@ -28,6 +28,8 @@ type LaunchInput struct {
 	Files    int    // the --files budget every card in the batch carries; 0 takes the default
 	Tokens   string // the --tokens budget; empty takes the default
 	QueueDir string // the queue directory STOP lives in; empty falls back to Root (admission.go)
+	Benches  string // passed through to nova-swarm batch: the benches table file
+	Bench    string // passed through to nova-swarm batch: the benches to fill, comma separated
 	Stdout   io.Writer
 	Stderr   io.Writer
 	Now      func() time.Time
@@ -184,6 +186,12 @@ func runBatch(in LaunchInput, id, cardsPath string) bool {
 		"--root", in.Root,
 		"--files", strconv.Itoa(files),
 		"--then", then)
+	if in.Benches != "" {
+		cmd.Args = append(cmd.Args, "--benches", in.Benches)
+	}
+	if in.Bench != "" {
+		cmd.Args = append(cmd.Args, "--bench", in.Bench)
+	}
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {

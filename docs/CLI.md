@@ -1742,6 +1742,22 @@ ceiling that is never reached is the point of a ceiling.
 Both flags refuse a value that is not a whole number of at least 1 — exit 2, naming the flag.
 A prune never runs on a guess.
 
+### launch
+
+```
+nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--max <n>]
+```
+
+`launch` reads a `cards.tsv` of `label<TAB>slot<TAB>model<TAB>card`, counts the
+free slots in `<root>/pool`, and hands the cards that fit one model at a time to
+`nova-swarm batch`, queueing the rest only with `--queue`. `--benches <file>` and
+`--bench <names>` are passed through to `nova-swarm batch` unchanged, so one pulse
+fills every bench the caller names — the Studio and the Space in one tick, as
+SPEC-SWARM's **Benches** section allows — instead of a pulse being one bench.
+`--slots` is the ceiling on the free slots it may use; `--deadline` is the whole
+pulse's one deadline in whole seconds. It makes no model call: `nova-swarm` must be
+on your PATH.
+
 ### status
 
 ```

@@ -252,6 +252,42 @@ func TestCutMaxBoundsCardsCut(t *testing.T) {
 	}
 }
 
+// launch-passes-benches-through (issue #637): a launch with --benches <file> and
+// --bench <names> hands both through to nova-swarm batch, so one pulse fills the Studio
+// and Space as SPEC-SWARM's Benches section allows. Today the second bench is only
+// reachable by calling nova-swarm batch yourself: launch does not know the flags.
+func TestLaunchPassesBenchesThrough(t *testing.T) {
+	dir := t.TempDir()
+	specs := fakePATH(t)
+	argvLog := filepath.Join(dir, "argv.log")
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Log: argvLog})
+
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	card := writeMainFile(t, dir, "card-a.md", "RESULT card-a sha=000000000000\nbody card-a\n")
+	cards := writeMainFile(t, dir, "cards.tsv", "card-a\t-\tpro\t"+card+"\n")
+	benches := writeMainFile(t, dir, "benches.tsv", "name\thost\troot\tcores\tharness\tauth\twall\n")
+
+	var out, errb bytes.Buffer
+	code := run([]string{"launch", "--cards", cards, "--root", root, "--slots", "6", "--deadline", "600", "--benches", benches, "--bench", "studio,space"}, &out, &errb, time.Now().UTC())
+	if code != 0 {
+		t.Fatalf("launch exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	raw, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(raw)
+	if !strings.Contains(log, "--benches "+benches) {
+		t.Fatalf("nova-swarm batch argv lacks --benches: %q", log)
+	}
+	if !strings.Contains(log, "--bench studio,space") {
+		t.Fatalf("nova-swarm batch argv lacks --bench: %q", log)
+	}
+}
+
 func TestPoolMaxFlagBoundsCandidates(t *testing.T) {
 	dir := t.TempDir()
 	jsonBody := writeMainFile(t, dir, "issues.json", `[
