@@ -1,0 +1,20 @@
+nova-update check #623 — AHEAD vs DIFFERENT for a pseudo-version on main after the release
+
+Red test: TestDevBuildAheadOfReleaseReportsAhead
+  manifest: installed v0.15.3-0.20260912135226-f7cdb9c, latest v0.15.2 (local: source printing v0.15.2).
+
+Failing output before the fix (verbatim):
+  --- FAIL: TestDevBuildAheadOfReleaseReportsAhead (0.01s)
+      ahead_test.go:18: missing "UPDATE AHEAD name=x kind=tool installed=0.15.3-0.20260912135226-f7cdb9c latest=0.15.2 ahead=f7cdb9c" in:
+          UPDATE DIFFERENT name=x kind=tool installed=0.15.3-0.20260912135226-f7cdb9c latest=0.15.2 path=... source=local:... owner=fixture-owner
+
+Fix: a Go pseudo-version vX.Y.Z-0.<stamp>-<sha> records that its nearest preceding
+  release tag is vX.Y.(Z-1). internal/update/read.go gains `pseudo` + `ahead` (returns
+  the commit when installed's base decrements one patch to the latest release tag) and
+  `decPatch`. internal/update/cli.go verdict() now returns (status, aheadCommit); an
+  AHEAD result prints `UPDATE AHEAD ... ahead=<sha>` and `ahead=` joins the count line.
+
+Green: go test ./internal/update/ -run TestDevBuildAheadOfReleaseReportsAhead  -> pass.
+
+Note: TestRule25SnapshotSurvivesAReporterKilledWhileWriting fails on pristine HEAD too
+  (environment kill flake), unrelated to this change.
