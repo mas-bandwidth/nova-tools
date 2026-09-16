@@ -116,8 +116,13 @@ nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only 
 nova-secrets names  --store <dir> --as <name> [--max <n>]
 nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+nova-secrets place  --machine <name> --secret <name> [--path <remote path>] [--host <ssh host>] [--replace]   # SPEC-AHEAD: #764
+nova-secrets placed --machine <name> [--host <ssh host>]                                                       # SPEC-AHEAD: #764
 nova-secrets help
 ```
+
+The `place` and `placed` lines are **SPEC-AHEAD: #764**: rules with no code yet, argued in
+*Secrets onto fleet machines* below.
 
 `version` (or `--version`) prints this binary's shared four-field build identity and takes
 no flags or arguments. It opens no store or key and starts no sops, age or network program,
@@ -422,6 +427,65 @@ command in this repo:
 SECRETS EXEC FAIL key=SPACE_KEY: value is multi-line; a file-shaped secret is not an environment variable.
   generate it where it is used: this store holds no file-shaped secrets.
 ```
+
+## Secrets onto fleet machines *(Rowan, 2026-09-16; #764)*
+
+Glenn, 2026-09-16: *"In the future, using nova-secrets we will need to be able to put secrets
+as needed onto remote fleet machines."* Two verbs are added ahead of their code: each new rule
+below carries **SPEC-AHEAD: #764** on its first line, and each new rule's replay is appended at
+the end of *Tests this spec demands*. **Nothing is renumbered and nothing is rewritten**: the
+four verbs of *The verbs*, their rules and the twenty-one tests are untouched. These two verbs are
+also the tool's first to open a network connection and start a remote command — one `ssh` to the
+named machine — so *The model*'s sentence that this tool opens no network socket is read, for
+these two verbs only, as naming that one ssh and no other socket.
+
+1. SPEC-AHEAD: #764
+   **`place` copies one secret to one machine over ssh, and the value never leaves the wire.**
+   Its synopsis is `nova-secrets place --machine <name> --secret <name> [--path <remote path>]
+   [--host <ssh host>] [--replace]`. The machine comes from the **fleet registry** — the
+   machines of nova-work CONFIG — or, until that registry exists, from `--host <ssh host>`,
+   which names the ssh host directly and is the one spelling admissible while the registry is
+   owed. The named secret is read out of the local store and written on the machine at mode
+   `0600`, owner the bench user, to `<bench root>/<secret>.env` by default and to
+   `--path <remote path>` when given. **The value is never printed, logged, or written to any
+   receipt**; what the line carries is the hash, over ssh, of the value that landed:
+
+   ```
+   PLACE OK machine=<m> secret=<name> path=<p> sha256=<hash of the value> at=<stamp>
+   ```
+
+   Refusals name the door and the remedy: an **unknown machine** (the registry and the
+   machines it holds are named), an **unknown secret** (the keys the file holds are named),
+   an **ssh that does not answer** (the host and the ssh command are named), a **remote path
+   that is not writable** (the directory and the mode it wants are named), and **a different
+   value already at the path**, which is `PLACE REFUSED reason=differs` and **never a silent
+   overwrite** — `--replace` is the flag that names the intent to overwrite it. A `place`
+   with no `--replace` onto a path already holding the same value is `PLACE OK` and writes
+   nothing.
+
+2. SPEC-AHEAD: #764
+   **`placed` reports what one machine holds, by name, path, mode and hash, and never a
+   value.** Its synopsis is `nova-secrets placed --machine <name> [--host <ssh host>]`. It
+   lists the secrets placed on that machine as
+
+   ```
+   PLACED OK machine=<m> n=<k>
+   PLACED secret=<name> path=<p> mode=<m> sha256=<hash>
+   ```
+
+   the first line and then one line each, reading the **remote files' hashes over ssh and
+   never their values**. A machine holding no placed secret is `n=0` at exit 0, an answer and
+   not a failure. It takes no `--key` and reads no local store: the question is what is on
+   the machine, and the machine is the only thing it reads.
+
+3. SPEC-AHEAD: #764
+   **A model route whose key is not placed on a machine is benched on that machine.** A bench
+   that runs a card with a route whose key `placed` does not show on that machine reports
+   `ABSTAIN reason=key-missing route=<r> machine=<m>` and **never `rc=1`**: a missing key is a
+   fact about the machine, not a failure of the card, and a bench that turned it into a red
+   could not tell a benched route from a broken one. The remedy is the `place` line that puts
+   that secret on that machine; until it runs, the route sits benched and the abstention
+   names both the route and the machine.
 
 ## The credential shape: per AI, per surface
 
@@ -784,6 +848,31 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
     a tracked sealed file, so the rule is about plaintext and not about being untracked.
     Mutation: honour a `.gitignore` covering it, which must **not** turn it green — the store
     has no `.gitignore` and a rule that passes vacuously is the failure this invariant names.
+22. SPEC-AHEAD: #764
+    **`place-then-placed-shows-name-and-hash`** — a secret is placed on a machine at an
+    explicit `--path`: `place` prints `PLACE OK machine=<m> secret=<name> path=<p>
+    sha256=<hash of the value> at=<stamp>`, and `placed` then prints `PLACED OK machine=<m>
+    n=1` and `PLACED secret=<name> path=<p> mode=0600 sha256=<hash>`, the hash equal to the
+    receipt's and the mode `0600`. A `placed` read from the local store instead of the
+    machine is the mutation that turns it red.
+23. SPEC-AHEAD: #764
+    **`value-never-in-stdout-or-receipt`** — a distinctive 40-byte fixture value is placed on
+    a fixture machine: the string appears in **no** byte of stdout, stderr or the receipt, on
+    the success and on every refusal, and what is printed is the hash alone — test 4's
+    assertion extended to the one verb that carries a value across a wire. A mutation printing
+    `len(value)` turns it red.
+24. SPEC-AHEAD: #764
+    **`differs-refuses-without-replace`** — a machine's path already holds a different value:
+    `place` with no `--replace` is `PLACE REFUSED reason=differs` naming the path, the remote
+    file's bytes are unchanged and `placed` still shows the old hash; the same `place` with
+    `--replace` is `PLACE OK` and the remote file's hash becomes the new one. The mutation
+    that overwrites in silence turns the first half red.
+25. SPEC-AHEAD: #764
+    **`key-missing-benches-the-route`** — a bench whose machine holds every route key but one
+    runs a card on the route with the missing key: it reports `ABSTAIN reason=key-missing
+    route=<r> machine=<m>` and does **not** exit 1, the route benched and the machine named,
+    while a card on a placed route runs. The mutation that turns the missing key into `rc=1`
+    turns it red.
 
 ## The first run: six lines a stranger pastes
 
