@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -1086,6 +1087,14 @@ func TestUndeclaredDirectoryUnderRecordsRejected(t *testing.T) {
 
 // TestPermissionsEnforcement: files must be 0644, directories 0755
 func TestPermissionsEnforcement(t *testing.T) {
+	// The rule is a POSIX one and so is its NEGATIVE case: a chmod on windows moves the
+	// read-only attribute and nothing else, so neither 0777 nor 0700 can be put on disk
+	// there to be refused. The validator skips the check where the bits are not carried
+	// (see modeBitsCarried), and this test says the same thing rather than asserting a
+	// refusal the platform cannot produce.
+	if runtime.GOOS == "windows" {
+		t.Skip("windows carries no unix mode bits: the mode rule is neither set nor checked there")
+	}
 	b := newTestBatch(t)
 	// Invalidate file mode
 	if err := os.Chmod(b.ShardFile, 0777); err != nil {

@@ -222,6 +222,7 @@ func TestNativeRunKillsAtDeadline(t *testing.T) {
 // TestNativeRunAuthCopyIs0600: the named provider's entry is copied from the auth file into
 // the data home, mode 0600, and no other provider's entry travels with it.
 func TestNativeRunAuthCopyIs0600(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
@@ -259,6 +260,7 @@ func TestNativeRunAuthCopyIs0600(t *testing.T) {
 // sees it at the path it resolves from its own XDG data home. Without --config the file is
 // absent, and with it the NATIVE OK line records its sha8.
 func TestNativeCarriesProviderConfig(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	const config = `{"provider":{"fake":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
 
@@ -351,6 +353,7 @@ func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
 // provider and never the key. That provider is the one the harness is about to call, so its
 // missing key is a run that dies rc=1 in under a second.
 func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
@@ -392,6 +395,7 @@ func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
 // them turned every adoption pass on this bench into `names provider inception, whose key is
 // absent` for a card that wanted a local model (issue #523 follow-up).
 func TestNativeConfigChecksOnlyTheModelsProvider(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
@@ -426,6 +430,7 @@ func TestNativeConfigChecksOnlyTheModelsProvider(t *testing.T) {
 // and no apiKey field -- ollama on localhost needs no key, so there is no key to be absent.
 // The config is still copied verbatim, mode 0600, and the run records its sha8.
 func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
@@ -463,6 +468,7 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 // and the card FAKE-PWD answers with the job directory. The run is walled, admitted without a
 // refusal, and the wall's own name and the card's known answer both land where a reader looks.
 func TestFriendSequenceLocalModelCard(t *testing.T) {
+	windowsIsNotABench(t)
 	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
@@ -1386,6 +1392,7 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 // wherever it points, written by a process that has no wall around it (security#30's class).
 // The open carries O_NOFOLLOW, so the run refuses by name and the target is untouched.
 func TestNativeCaptureRefusesSymlink(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	label := "planted-capture"

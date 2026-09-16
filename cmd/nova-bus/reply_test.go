@@ -795,8 +795,11 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 		// channels let the second run's output arrive before the first run's code, and the
 		// loser's words were then read off the winner.
 		type runOut struct {
-			code int
-			out  string
+			code    int
+			out     string
+			bus     string
+			started bool // the process ran and returned a code of its own
+			err     error
 		}
 		runs := make(chan runOut, 2)
 		for _, c := range []string{first, second} {
@@ -804,11 +807,28 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 				cmd := exec.Command(bin, "draft", "--bus", c, "--as", "Ada",
 					"--reply-to", "bo-abcdef012345", "--body-file", body, "--draft-dir", dir,
 					"--remote", "origin", "--branch", "main")
-				out, _ := cmd.CombinedOutput()
-				runs <- runOut{code: cmd.ProcessState.ExitCode(), out: string(out)}
+				out, err := cmd.CombinedOutput()
+				// cmd.ProcessState is nil when the process never started -- a bad
+				// executable name, a missing file -- and ExitCode() then answers -1 for a
+				// run that produced no exit code at all. Kept apart from a real 0 or 1, so
+				// that a failure here says WHICH it was.
+				r := runOut{out: string(out), bus: c, err: err, code: -1}
+				if cmd.ProcessState != nil {
+					r.started = true
+					r.code = cmd.ProcessState.ExitCode()
+				}
+				runs <- r
 			}(c)
 		}
 		runA, runB := <-runs, <-runs
+		// The output of both runs, on every round, pass or fail: a failure in two
+		// processes is only diagnosable from what they said, and a -1 says nothing.
+		for _, r := range []runOut{runA, runB} {
+			t.Logf("round %d: bus=%s started=%v code=%d err=%v output:\n%s", round, r.bus, r.started, r.code, r.err, r.out)
+			if !r.started {
+				t.Fatalf("round %d: the run against %s never started (%v); both racing processes must run and exit with a code of their own", round, r.bus, r.err)
+			}
+		}
 		a, b := runA.code, runB.code
 		if a+b != 1 {
 			t.Fatalf("round %d: exit codes %d and %d; exactly one run wins and the other is refused\n%s\n%s", round, a, b, runA.out, runB.out)
@@ -831,14 +851,32 @@ func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
 }
 
 // buildNovaBus builds the binary the race test runs as two processes.
+//
+// The output is a DIRECTORY, not a file name, and the name go wrote inside it is read
+// back. `go build -o <file>` writes exactly the name it is given, and this used to give it
+// `nova-bus` -- which on Windows is not an executable name. os/exec resolves even an
+// absolute path through PATHEXT before it starts anything (lookExtensions, called from
+// Cmd.Start), so `nova-bus` with no `.exe` was ErrNotFound, NEITHER racing process ever
+// started, cmd.ProcessState stayed nil, and ProcessState.ExitCode() answered -1 for both.
+// The race test then failed with "exit codes -1 and -1" and no word about why, because the
+// start error was discarded. `go build -o <dir>` writes the platform's own executable name
+// -- `nova-bus` here, `nova-bus.exe` there -- so there is no suffix spelled out in this
+// file and no platform named in it.
 func buildNovaBus(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "nova-bus")
-	out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput()
+	dir := t.TempDir()
+	out, err := exec.Command("go", "build", "-o", dir+string(os.PathSeparator), ".").CombinedOutput()
 	if err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
-	return bin
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("go build wrote %d files into %s, want the one binary", len(entries), dir)
+	}
+	return filepath.Join(dir, entries[0].Name())
 }
 
 // "No refusal writes a partial draft, and no publish replaces one." -- every row of the

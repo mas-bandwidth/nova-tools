@@ -17,10 +17,15 @@ import (
 )
 
 type bench struct {
-	queue, roots, bus, bindir, arglog string
+	queue, roots, bus, specs, arglog string
 }
 
-// setupManager builds a fake queue, two benches and a bin directory on PATH.
+// setupManager builds a fake queue, two benches and the fakes on PATH.
+//
+// The fakes were `#!/bin/sh` scripts. Windows runs neither them nor `$*`, so the PATH
+// lookup walked past them and the REAL gh answered -- "set the GH_TOKEN environment
+// variable" in the log, and a manager cycle that read a forge it was never meant to see.
+// Each is a Go fake now, taught per test in b.specs.
 func setupManager(t *testing.T) bench {
 	t.Helper()
 	base := t.TempDir()
@@ -28,53 +33,43 @@ func setupManager(t *testing.T) bench {
 		queue:  filepath.Join(base, "queue"),
 		roots:  filepath.Join(base, "swarm-root") + "," + filepath.Join(base, "swarm-root-space"),
 		bus:    filepath.Join(base, "bus"),
-		bindir: filepath.Join(base, "bin"),
+		specs:  fakePATH(t),
 		arglog: filepath.Join(base, "argv.log"),
 	}
-	for _, d := range []string{b.bindir, b.bus, filepath.Join(b.queue, "templates"),
+	for _, d := range []string{b.bus, filepath.Join(b.queue, "templates"),
 		filepath.Join(base, "swarm-root"), filepath.Join(base, "swarm-root-space")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("ARGLOG", b.arglog)
-	t.Setenv("PATH", b.bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	b.fakeBus(t, "WAIT TIMEOUT")
-	b.fake(t, "nova-swarm", "exit 0")
-	b.fake(t, "git", "exit 0")
-	b.fake(t, "gh", "exit 0")
+	b.fake(t, "nova-swarm", fakeSpec{})
+	b.fake(t, "git", fakeSpec{})
+	b.fake(t, "gh", fakeSpec{})
 	return b
 }
 
-func (b bench) fake(t *testing.T, name, body string) {
+// fake teaches one fake on PATH, always recording its argv into this bench's log.
+func (b bench) fake(t *testing.T, name string, s fakeSpec) {
 	t.Helper()
-	script := "#!/bin/sh\necho \"" + name + " $*\" >> \"$ARGLOG\"\n" + body + "\n"
-	if err := os.WriteFile(filepath.Join(b.bindir, name), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	s.Log = b.arglog
+	fakeTool(t, b.specs, name, s)
 }
 
 func (b bench) fakeBus(t *testing.T, out string) {
 	t.Helper()
-	b.fake(t, "nova-bus", "cat <<'EOT'\n"+out+"\nEOT\nexit 0")
+	b.fake(t, "nova-bus", fakeSpec{Default: fakeRule{Stdout: out}})
 }
 
 // fakeGH answers pr view and pr checks with the JSON a test wants and records every call.
 func (b bench) fakeGH(t *testing.T, view, checks string) {
 	t.Helper()
-	b.fake(t, "gh", `case "$2" in
-view) cat <<'EOT'
-`+view+`
-EOT
-;;
-checks) cat <<'EOT'
-`+checks+`
-EOT
-;;
-list) echo '[]' ;;
-create) echo 'https://github.com/mas-bandwidth/nova-tools/pull/7' ;;
-esac
-exit 0`)
+	b.fake(t, "gh", fakeSpec{Rules: []fakeRule{
+		{Arg: 2, Equals: "view", Stdout: view},
+		{Arg: 2, Equals: "checks", Stdout: checks},
+		{Arg: 2, Equals: "list", Stdout: "[]"},
+		{Arg: 2, Equals: "create", Stdout: "https://github.com/mas-bandwidth/nova-tools/pull/7"},
+	}})
 }
 
 func (b bench) policy(t *testing.T, body string) string {
@@ -349,11 +344,10 @@ func TestManagerRequeuesOnceThenEscalates(t *testing.T) {
 // refused at the harvest, before the push.
 func TestManagerRefusesFixPRWithoutTest(t *testing.T) {
 	b := setupManager(t)
-	b.fake(t, "git", `case "$1" in
-merge-base) echo aaaaaaaaaaaa ;;
-diff) echo internal/pulse/manager.go ;;
-esac
-exit 0`)
+	b.fake(t, "git", fakeSpec{Rules: []fakeRule{
+		{Arg: 1, Equals: "merge-base", Stdout: "aaaaaaaaaaaa"},
+		{Arg: 1, Equals: "diff", Stdout: "internal/pulse/manager.go"},
+	}})
 	rootA := strings.Split(b.roots, ",")[0]
 	result := "RESULT: CARD-1 fix the slot lock\nBRANCH: rowan/fix-slot-lock\nREPO: mas-bandwidth/nova-tools\n"
 	b.job(t, rootA, "1", "card-1", "RESULT: CARD-1 fix the slot lock\n", result)
@@ -368,11 +362,10 @@ exit 0`)
 
 	// The same card with a test file in its diff is admitted and gets its read card.
 	b2 := setupManager(t)
-	b2.fake(t, "git", `case "$1" in
-merge-base) echo aaaaaaaaaaaa ;;
-diff) echo internal/pulse/manager_test.go ;;
-esac
-exit 0`)
+	b2.fake(t, "git", fakeSpec{Rules: []fakeRule{
+		{Arg: 1, Equals: "merge-base", Stdout: "aaaaaaaaaaaa"},
+		{Arg: 1, Equals: "diff", Stdout: "internal/pulse/manager_test.go"},
+	}})
 	b2.fakeGH(t, "{}", "[]")
 	rootA2 := strings.Split(b2.roots, ",")[0]
 	b2.job(t, rootA2, "1", "card-1", "RESULT: CARD-1 fix the slot lock\n", result)

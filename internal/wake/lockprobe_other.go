@@ -4,6 +4,7 @@ package wake
 
 import (
 	"errors"
+	"fmt"
 	"os"
 )
 
@@ -23,6 +24,28 @@ import (
 // and it is this source's limit too: this tool never removes the sentinel, and
 // never decides that a held has gone stale.
 func probeLock(path string) (string, error) {
+	// WHAT IS AT <path> IS STILL A READING, even though the sentinel protocol
+	// never opens it: a lock path replaced by a link into somebody else's file,
+	// or by a directory, is not this lane's lock, and answering `free` about it
+	// is a guess dressed as a reading. The unix probe refuses both at open time
+	// -- O_NOFOLLOW and an fstat -- so the same two refusals are an lstat here
+	// and the sentence a person reads is the same on every platform.
+	//
+	// ABSENT IS NOT ONE OF THEM. The sentinel protocol never creates <path>, so
+	// nothing at all there is the ORDINARY case and the sentinel below is what
+	// answers it; only something that IS there and is not a regular file is
+	// unreadable. Nothing is created, replaced or removed to learn this.
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("symlink at the lock path")
+		}
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("%s at the lock path, not a regular file", kindOfMode(info.Mode()))
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
 	info, err := os.Lstat(path + ".held")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
