@@ -109,6 +109,29 @@ func TestSumSwarmAllUnknownModelIsDashNeverZero(t *testing.T) {
 	}
 }
 
+// TestSumSwarmRootCarriesToolInvocations pins that receipts carrying a `tool` column make
+// invocations per tool per day visible on a `TOOLS` line, so an unused tool is absent from
+// the day and a used one is counted. The fixture writes the 14-column receipt the swarm
+// would write once it carries the tool, and the reader folds counts, never a sum of tokens.
+func TestSumSwarmRootCarriesToolInvocations(t *testing.T) {
+	dir := t.TempDir()
+	root := mkdir(t, filepath.Join(dir, "root"))
+	ledger := filepath.Join(dir, "ledger.tsv")
+
+	toolCard := func(path, started, model, tool string) {
+		row := strings.Join([]string{"c", "1", started, started, "0", "deepseek", model,
+			"10", "5", "-", "-", "-", "0.0001", tool}, "\t")
+		write(t, path, cardUsageHeader+"\ttool\n"+row+"\n")
+	}
+	toolCard(filepath.Join(root, "batch-a", "jobs", "j1", "usage.tsv"), "2026-09-11T10:00:00Z", "deepseek-v4", "review")
+	toolCard(filepath.Join(root, "batch-b", "jobs", "j2", "usage.tsv"), "2026-09-11T11:00:00Z", "deepseek-v4", "pulse")
+	toolCard(filepath.Join(root, "batch-c", "jobs", "j3", "usage.tsv"), "2026-09-11T12:00:00Z", "other-model", "pulse")
+
+	r := invoke(t, "sum", "--swarm-root", root, "--day", "2026-09-11", "--out", ledger)
+	wantExit(t, r, 0)
+	wantContains(t, r.stdout, "TOOLS pulse:2,review:1")
+}
+
 func TestSumSwarmMixedKnownUnknownDailyAggregate(t *testing.T) {
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))

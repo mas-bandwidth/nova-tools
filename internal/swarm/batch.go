@@ -584,19 +584,26 @@ func findResultBelow(dir string, depth int) (string, bool) {
 
 // scoreCard decides one card's state and, when it abstains, its ONE reason token
 // (issue #461): line1-mismatch, no-result, harness-silent, rc=<n>, idle=<s>, deadline,
-// card-abstain, admission -- plus input-limit, the provider's own structured class
-// (issue #163). A result whose line 1 is the card's own line 1 is done WHATEVER the harness
-// exit code was (issue #577): the contract decides, never the child's timing and never its
-// rc, which is recorded on the card's own NATIVE OK line either way.
+// result-after-deadline, card-abstain, admission -- plus input-limit, the provider's own
+// structured class (issue #163). A result whose line 1 is the card's own line 1 is done
+// WHATEVER the harness exit code was (issue #577): the contract decides, never the child's
+// rc, which is recorded on the card's own NATIVE OK line either way. One exception to
+// "whatever the harness exit code": a result that only landed because the deadline fired is
+// `result-after-deadline`, not done -- the deadline is the one boundary the batch itself
+// holds, and a late result is named for its lateness so a coordinator reads the token
+// instead of the RESULT.
 //
 // THE ORDER, once there is no matching result anywhere the gather looks: the kill classes
-// the machinery watched itself first -- idle, deadline, input-limit, each pinned by its own
-// test and true whether or not a result exists -- then the card's own words (card-abstain)
-// and its admission, then harness-silent, and only then the pair rc=<n> (ended non-zero) and
-// no-result (ended clean), which are one slot split by the exit code. rc is never first: an
-// exit code from a harness that never ran the card is nothing to go and read (issue #591). The tail is one bounded field the
-// remedy needs -- the log the idle monitor watched, or the job directory that holds no
-// result -- printed after log=<n>, never in place of the token.
+// the machinery watched itself first -- idle, input-limit, each pinned by its own test and
+// true whether or not a result exists -- then the result is read, and a matching result is
+// done (or result-after-deadline at the deadline), the card's own words (card-abstain),
+// then harness-silent, and only then the pair rc=<n> (ended non-zero) and no-result (ended
+// clean), which are one slot split by the exit code. rc is never first: an exit code from a
+// harness that never ran the card is nothing to go and read (issue #591). deadline is
+// decided only once the result is known: no result means the card never finished, a matching
+// result means it finished late. The tail is one bounded field the remedy needs -- the log
+// the idle monitor watched, or the job directory that holds no result -- printed after
+// log=<n>, never in place of the token.
 func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSeconds int, logPath, idleLog string) (state, reason, tail, line2 string) {
 	switch {
 	case idleKilled:
@@ -605,8 +612,6 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 			watched = logPath
 		}
 		return "abstain", fmt.Sprintf("idle=%d", idleSeconds), "watched=" + watched, ""
-	case deadKilled:
-		return "abstain", "deadline", "", ""
 	case cardEndsInputLimit(logPath):
 		return "abstain", "input-limit", "", ""
 	}
@@ -630,6 +635,9 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		if p, ok := cardFenceRejected(job); ok {
 			return "abstain", "fence", "path=" + p, ""
 		}
+		if deadKilled {
+			return "abstain", "deadline", "", ""
+		}
 		if cardHarnessSilent(job) {
 			return "abstain", "harness-silent", "job=" + job, ""
 		}
@@ -651,6 +659,13 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	}
 	if strings.HasPrefix(strings.TrimSpace(two), "ABSTAIN") {
 		return "abstain", "card-abstain", "", ""
+	}
+	// A matching result is done whatever the harness exit code was -- but one that only
+	// arrived because the deadline fired is named for that timing, not scored done and not
+	// scored a plain deadline (issue #461): the result-after-deadline card DID publish, and
+	// the coordinator reads the token rather than opening the RESULT to learn it was late.
+	if deadKilled {
+		return "abstain", "result-after-deadline", "", ""
 	}
 	return "done", "", "", two
 }

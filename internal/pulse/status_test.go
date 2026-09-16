@@ -19,37 +19,32 @@ import (
 
 const statusStamp = "2026-09-15T12:00:00Z"
 
-func setupStatus(t *testing.T, roots ...string) (queue, rootsArg, bindir string, now time.Time) {
+func setupStatus(t *testing.T, roots ...string) (queue, rootsArg, specs string, now time.Time) {
 	t.Helper()
+	fakeBins(t)
 	base := t.TempDir()
 	queue = filepath.Join(base, "queue")
 	rootsArg = strings.Join(roots, ",")
-	bindir = filepath.Join(base, "bin")
+	specs = fakePATH(t)
 	now, _ = time.Parse(time.RFC3339, statusStamp)
-	for _, d := range []string{queue, bindir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return queue, rootsArg, bindir, now
-}
-
-func fakeGh(t *testing.T, bindir, body string) {
-	t.Helper()
-	script := "#!/bin/sh\ncat <<'EOT'\n" + body + "\nEOT\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(bindir, "gh"), []byte(script), 0o755); err != nil {
+	if err := os.MkdirAll(queue, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	return queue, rootsArg, specs, now
+}
+
+func fakeGh(t *testing.T, specs, body string) {
+	t.Helper()
+	fakeTool(t, specs, "gh", fakeSpec{Default: fakeRule{Stdout: body}})
 }
 
 // fakePrIssueGh answers gh pr list and gh issue list with one fixture keyed on the argv.
-func fakePrIssueGh(t *testing.T, bindir, prs, issues string) {
+func fakePrIssueGh(t *testing.T, specs, prs, issues string) {
 	t.Helper()
-	script := "#!/bin/sh\ncase \" $* \" in\n*\" issue \"*) cat <<'EOT'\n" + issues + "\nEOT\n;;\n*) cat <<'EOT'\n" + prs + "\nEOT\n;;\nesac\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(bindir, "gh"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	fakeTool(t, specs, "gh", fakeSpec{Rules: []fakeRule{
+		{Arg: 1, Equals: "issue", Stdout: issues},
+		{Arg: 1, Equals: "pr", Stdout: prs},
+	}})
 }
 
 func writeStatusFile(t *testing.T, base, rel, body string) {
@@ -109,9 +104,9 @@ func TestStatusIsBounded(t *testing.T) {
 	for i := range roots {
 		roots[i] = filepath.Join(base, "bench-"+strconv.Itoa(i))
 	}
-	queue, rootsArg, bindir, now := setupStatus(t, roots...)
+	queue, rootsArg, specs, now := setupStatus(t, roots...)
 	writeStatusFile(t, queue, "COORDINATOR", "glenn\n")
-	fakeGh(t, bindir, "[]")
+	fakeGh(t, specs, "[]")
 	for _, r := range roots {
 		states := make([]string, 30)
 		for i := range states {
@@ -147,14 +142,14 @@ func TestStatusIsBounded(t *testing.T) {
 func TestStatusContractionFromCounts(t *testing.T) {
 	base := t.TempDir()
 	rootA := filepath.Join(base, "a")
-	queue, roots, bindir, now := setupStatus(t, rootA)
+	queue, roots, specs, now := setupStatus(t, rootA)
 	writeStatusFile(t, queue, "COORDINATOR", "glenn\n")
 	writeStatusFile(t, queue, "REPO", "mas-bandwidth/nova-tools\n")
 	writeSlots(t, rootA, []string{"free"})
 	writeUsage(t, rootA, "j1", "2026-09-15T11:40:00Z", "2026-09-15T11:50:00Z", "0", "0.1")
 	writeUsage(t, rootA, "j2", "2026-09-15T11:42:00Z", "2026-09-15T11:45:00Z", "0", "0.2")
 	writeUsage(t, rootA, "j3", "2026-09-15T11:44:00Z", "2026-09-15T11:52:00Z", "1", "0.3")
-	fakePrIssueGh(t, bindir,
+	fakePrIssueGh(t, specs,
 		`[{"number":1,"title":"t1","createdAt":"2026-09-15T11:30:00Z","mergedAt":"2026-09-15T11:55:00Z"},{"number":2,"title":"t2","createdAt":"2026-09-15T11:31:00Z","mergedAt":null}]`,
 		`[{"number":1,"title":"i1","createdAt":"2026-09-15T11:20:00Z","closedAt":"2026-09-15T11:56:00Z"}]`)
 	out, _, code := runStatus(t, queue, roots, now, 20)
@@ -170,6 +165,13 @@ func TestStatusContractionFromCounts(t *testing.T) {
 	if !strings.Contains(out, "verdict=CONVERGING") {
 		t.Errorf("a balanced stream must read CONVERGING:\n%s", out)
 	}
+	bin := fakeBins(t)
+	for _, name := range fakeTools {
+		p := filepath.Join(bin, name+exeSuffix())
+		if !strings.HasSuffix(p, exeSuffix()) {
+			t.Errorf("fake path %q must end with exeSuffix %q", p, exeSuffix())
+		}
+	}
 }
 
 // status-adoption-includes-coordinator: the ADOPTION lines name every friend, the
@@ -177,8 +179,8 @@ func TestStatusContractionFromCounts(t *testing.T) {
 func TestStatusAdoptionIncludesCoordinator(t *testing.T) {
 	base := t.TempDir()
 	rootA := filepath.Join(base, "a")
-	queue, roots, bindir, now := setupStatus(t, rootA)
-	fakeGh(t, bindir, "[]")
+	queue, roots, specs, now := setupStatus(t, rootA)
+	fakeGh(t, specs, "[]")
 	writeStatusFile(t, queue, "COORDINATOR", "glenn\n")
 	writeSlots(t, rootA, []string{"free"})
 	writeStatusFile(t, rootA, filepath.Join("ADOPT", "stella"), "version=1.2.3 receipt=7 edges=4\n")
@@ -234,8 +236,8 @@ func TestStatusRateUnknownsStayVisible(t *testing.T) {
 func TestStatusRemainingCountsInScopeOnly(t *testing.T) {
 	base := t.TempDir()
 	rootA, rootB := filepath.Join(base, "a"), filepath.Join(base, "b")
-	queue, roots, bindir, now := setupStatus(t, rootA) // rootB exists but is out of scope
-	fakeGh(t, bindir, "[]")
+	queue, roots, specs, now := setupStatus(t, rootA) // rootB exists but is out of scope
+	fakeGh(t, specs, "[]")
 	writeStatusFile(t, queue, "COORDINATOR", "glenn\n")
 	writeStatusFile(t, queue, "UNREAD", "owner/repo#1\n")
 	writeStatusFile(t, queue, "DIRTY", "owner/repo#2\n")

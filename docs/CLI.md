@@ -875,7 +875,7 @@ nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sa
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
-nova-swarm template --name read-pr|probe-row|fix-card|result|worker                         # the conditions, baked in, so they are not retyped and not forgotten
+nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup                    # the conditions, baked in, so they are not retyped and not forgotten; setup is #184's agreement form, not a task template
 nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
@@ -998,6 +998,17 @@ failed samples end the job `RUN BUDGET-UNVERIFIABLE`.
 
 `nova-swarm template --name worker` prints this description with every field in it, so the
 one file a first run cannot start without is the one file you do not have to invent.
+
+`nova-swarm template --name setup` prints the per-friend safety-setup agreement form
+(issue #184): the proposal half and the friend's own agreement half — a friend may agree,
+propose an alternative, decline, or stay silent, and missing feedback is pending, never
+assent — a guarantee table whose rows say who enforces each guarantee (the OS wall, a
+cooperating harness, or the launcher outside the wall), and generic wall, fence, seat and
+launcher examples with placeholder values only. It is a form, not a task's conditions:
+`add --template setup` is refused the way `add --template result` is, no secret, key,
+token or private path is ever printed by it, and an agreed form supplies no account
+access — implementation, credential migration and deployment are separate staged work
+with their own authorization.
 
 ### The harness contract
 
@@ -1157,7 +1168,7 @@ which is the fastest way to see the wall a set of flags actually makes.
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
-Five verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
+Five verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line.
 
 ### First run
 
