@@ -227,6 +227,15 @@ jobs:
           # a PR that changes no Go package (docs, lisp, workflow) tests
           # ./internal/ci, the package that holds this file's own law, so the
           # fan-out is never empty and never green by default.
+          # THE MERGE GROUP RUNS THE TREE ON SPACE. Measured 17:09-18:00Z 2026-09-16: ten
+          # group runs queued fifty minutes behind 16 studio shards each on a Studio at
+          # load 96-104; two groups were cancelled on the 6-minute cap (380-391 s) and
+          # nothing merged for an hour. The queue gate is linux, the whole tree, on the
+          # eight space runners, plus the darwin-only packages on two studio shards; the
+          # push run after each merge keeps the full 8+16 matrix as macOS evidence.
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            STUDIO_SHARDS=2
+          fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
             git fetch -q --depth=1 origin "$base" 2>/dev/null || true
@@ -259,6 +268,9 @@ jobs:
           s=0
           st=0
           for pkg in "${all[@]}"; do
+            if [ "${{ github.event_name }}" = "merge_group" ] && ! is_darwin_only "$pkg"; then
+              space_grp[$((s % SPACE_SHARDS))]+=" $pkg"; s=$((s + 1)); continue
+            fi
             studio_grp[$((st % STUDIO_SHARDS))]+=" $pkg"
             st=$((st + 1))
             is_darwin_only "$pkg" && continue
