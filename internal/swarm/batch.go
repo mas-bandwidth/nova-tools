@@ -621,6 +621,15 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		// model's own doing; `rc=<n>` is a harness that ran and ended badly; a silent harness
 		// is neither, and its exit code -- 0 in the fault that wrote this rule -- says nothing
 		// worth going to read. The exit code is still on the card's own NATIVE OK line.
+		// THE FENCE BEFORE EVERYTHING ELSE THE HARNESS DID (issue #644). When the harness's
+		// own permission fence auto-rejected a path -- the card's `../scratch`, a read-only
+		// /sys path on a bench with no wall -- the model was stopped by the MACHINERY, not
+		// by its own judgement, and neither `no-result` (the model published nothing) nor
+		// `harness-silent` (the harness never ran) is true of it. The token is read off the
+		// card's own NATIVE OK line, never recomputed here.
+		if p, ok := cardFenceRejected(job); ok {
+			return "abstain", "fence", "path=" + p, ""
+		}
 		if cardHarnessSilent(job) {
 			return "abstain", "harness-silent", "job=" + job, ""
 		}
@@ -790,6 +799,36 @@ func cardHarnessSilent(job string) bool {
 		}
 	}
 	return false
+}
+
+// cardFenceRejected reports the path on the runner's own `NATIVE OK` line that the harness's
+// fence auto-rejected: `fence=rejected path=<p>`, the field `native` writes when its capture
+// holds the harness's own rejection (issue #644). THE TOKEN IS READ, NEVER RECOMPUTED, for
+// the same reason harness=silent is: `native` looked at its own capture, and this side would
+// be guessing. The line is read out of the job's `harness.log` -- the file THIS process pins
+// the runner's stdout to -- so a remote card's line, which comes back through the same pipe,
+// is read exactly as a local one is.
+func cardFenceRejected(job string) (string, bool) {
+	raw, err := readRegular(filepath.Join(job, "harness.log"))
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "NATIVE OK ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		for i, tok := range fields {
+			if tok != "fence=rejected" {
+				continue
+			}
+			if i+1 < len(fields) && strings.HasPrefix(fields[i+1], "path=") {
+				return strings.TrimPrefix(fields[i+1], "path="), true
+			}
+			return "-", true
+		}
+	}
+	return "", false
 }
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }
