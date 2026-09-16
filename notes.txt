@@ -1,0 +1,25 @@
+CARD-8165: nova-tools #523 — nova-swarm native --config refuses a keyless provider
+
+Issue: Dogfood 2026-09-15 (Rowan, after #479): nova-swarm native --config refuses a
+keyless provider (ollama, baseURL only), so local models still cannot run walled.
+
+Red test output (before fix):
+
+TestNativeConfigKeylessProviderAdmitted:
+    native_test.go:462: a keyless provider (baseURL, no apiKey) is admitted, got exit 2:
+    NATIVE REFUSED: the config file .../opencode.json names provider ollama, whose key is
+    absent from the auth file .../auth.json; add it to --auth or drop the provider from --config
+
+TestFriendSequenceLocalModelCard:
+    native_test.go:507: the keyless local provider runs walled, got exit 2:
+    NATIVE REFUSED: the config file .../opencode.json names provider ollama, whose key is
+    absent from the auth file .../auth.json; add it to --auth or drop the provider from --config
+
+Fix: In modelProviderMissingAuth (cmd/nova-swarm/native.go:766), skip providers whose
+options carry a baseURL and no apiKey field — ollama on localhost has no key to be absent.
+The check was: if !named || keylessProvider(entry) { return false }
+
+keylessProvider (cmd/nova-swarm/native.go:787) reports whether a provider entry needs no key:
+its options carry a baseURL and no apiKey field.
+
+Green: Both tests pass after adding the keylessProvider skip.
