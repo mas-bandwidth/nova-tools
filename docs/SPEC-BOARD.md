@@ -302,11 +302,13 @@ write access to a repo's branches.
 
 **`--dir <path>` — a directory of card files in a repository, tomorrow.** One
 file per card, `<dir>/<id>.board`, created by `add`. **The directory itself is made
-by `quickstart` and by no other verb** (`created=` on its `QUICKSTART OK` line says
-whether that run made it): a first run has nowhere to write yet, while every other
-verb refuses a directory that is not there and names the `mkdir -p` that fixes it,
-because a `list` or a `take` against a missing directory is a path typed wrong and
-making it would answer the typo with an empty board. One event per line, appended,
+by `quickstart` and by `add` on first use** (`created=` on the `QUICKSTART OK` line
+says whether that run made it): a first run and a first filing have nowhere to write
+yet, and the ledger is append-only, so an empty directory is a valid empty ledger,
+while every other verb refuses a directory that is not there and names the
+`mkdir -p` that fixes it, because a `list` or a `take` against a missing directory
+is a path typed wrong and making it would answer the typo with an empty board. One
+event per line, appended,
 read whole; the board is a fold over every file in the directory (rule 3). The
 first line of every card file is exactly `BOARD v1` and nothing else, for the
 reason `OPEN v2` has a version line: a later format read as this one would be
@@ -696,6 +698,10 @@ Each is proven able to fail by a mutation before it is trusted.
    the card id; the migration fixture folds to the same owners and
    conflict counts before and after; `list --list --owner Bo` prints only
    `Bo`'s open cards and `BOARD OK` still counts the whole board.
+   `TestAddCreatesTheBoardDirectoryOnFirstUse` (issue #625): add into a
+   nonexistent `--dir` succeeds, makes the directory, and `list` against it
+   prints the one card; the missing directory is still refused by `list`,
+   `check`, `take` and `close`, naming the `mkdir -p` that fixes it.
 4. `TestOwedCountsPerLegAndDoneIsZero`: rows on three legs, some probed; one
    `BOARD LEG` per leg with the right counts; `BOARD OK` carries `owed=<n>`;
    probing the last row prints `owed=0`; `closed` on a row is `CLOSE REFUSED`
@@ -849,7 +855,11 @@ shared packages used rather than re-spelled.
    (`MkdirAll`, `0755`, as `nova-swarm quickstart --pool` makes its pool) and report it
    as `created=true|false`. **A refused run makes nothing**: a first run that
    fat-fingers `--stale` is exactly the run with no board yet, and making it would
-   answer the typo with an empty board. Then read the board, print the counts, print
+   answer the typo with an empty board. `add` makes the directory the same way and
+   only when its own line is accepted whole (issue #625: a first filing has nowhere
+   to write yet, and an empty directory is a valid empty ledger); every other verb
+   still refuses a missing directory and names the `mkdir -p` that fixes it. Then
+   read the board, print the counts, print
    the `check … || { [ $? -eq 1 ] && exit 0; exit 2; }; add … --by … --default …`
    pair with this board's own values in it, quoted
    the way `nova-bus names` quotes — a value meant to be pasted rather than

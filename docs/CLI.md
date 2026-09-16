@@ -847,8 +847,10 @@ check-then-add pair with this board's own values in it, quoted so it can be past
 transcript the tests execute against it is in [TESTS.md](TESTS.md#nova-board).
 
 `quickstart` makes the directory if it is not there — `created=` on its first line says
-whether this run made it — and every other verb refuses one that is missing rather than
-making it, so a wrong path is a refusal and not an empty board:
+whether this run made it — and so does `add` on first use, because a first filing has
+nowhere to write yet and an empty directory is a valid empty ledger. Every other verb
+refuses one that is missing rather than making it, so a wrong path is a refusal and not
+an empty board:
 
 ```
 $ nova-board quickstart --dir ./board --stale 10m
@@ -868,9 +870,10 @@ QUICKSTART NOTE --stale 10m0s is this family's number and this run passed it in 
 ```
 
 **What a first run gets wrong.** `--dir` naming a directory that is not there: `quickstart`
-makes it, because a first run has nowhere to write yet, but every other verb refuses — a
-`list` or a `take` against a directory that is not there is a path typed wrong, and making
-it would answer the typo with an empty board. That refusal names the `mkdir -p` that fixes
+and `add` make it — a first run and a first filing have nowhere to write yet — but `list`,
+`check`, `take` and `close` refuse: a read or a take against a directory that is not there
+is a path typed wrong, and making it would answer the typo with an empty board. That
+refusal names the `mkdir -p` that fixes
 it, quoted so a `--dir` with a space in it pastes. `--stale` missing: it wants how long a card may go without
 an event before it lists as takeable again, and the family's number is 10m — the tool will
 not guess one. No backend, or both: name exactly one, because a board written to two places

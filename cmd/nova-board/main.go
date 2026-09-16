@@ -197,8 +197,14 @@ type flags struct {
 	problems   []string
 
 	// makeDir is quickstart's alone: the first run makes the board directory it is
-	// pointed at, and created says whether this run is the one that made it.
+	// pointed at, and created says whether that run is the one that made it.
 	makeDir, created bool
+
+	// deferDir is add's alone (issue #625): add makes the board directory on first
+	// use, and it does it only once every flag is judged, so a refused add leaves no
+	// directory behind -- the same "refused run makes nothing" lock quickstart has.
+	// cmdAdd reads it after the problems check and turns it into board.MakeDir.
+	deferDir string
 }
 
 func newFlags(verb string) *flags {
@@ -259,14 +265,18 @@ func (f *flags) backend() (board.Backend, string, string) {
 	case f.issue != "" && f.dir != "":
 		f.want(twoBackends)
 	case f.dir != "":
-		// QUICKSTART MAKES THE DIRECTORY; every other verb refuses one that is not
-		// there and names the mkdir -p that fixes it (internal/board/dir.go).
+		// QUICKSTART MAKES THE DIRECTORY, AND SO DOES ADD (issue #625): a first
+		// filing has nowhere to write yet, and the ledger is append-only, so an
+		// empty directory is a valid empty ledger. Every other verb refuses one
+		// that is not there and names the mkdir -p that fixes it
+		// (internal/board/dir.go).
 		if f.makeDir {
 			// A REFUSED RUN MAKES NOTHING. The caller judges every other flag
-			// BEFORE it asks for the backend, and this is the second lock on the
-			// same door: making the directory for a line that is about to be
-			// refused would answer a typo with an empty board, and a first run
-			// cannot tell that board from the one at the path they meant.
+			// BEFORE it asks for the backend (cmdQuickstart reads --stale first),
+			// and this is the second lock on the same door: making the directory
+			// for a line that is about to be refused would answer a typo with an
+			// empty board, and a first run cannot tell that board from the one at
+			// the path they meant.
 			if len(f.problems) > 0 {
 				return nil, "", ""
 			}
@@ -276,6 +286,27 @@ func (f *flags) backend() (board.Backend, string, string) {
 				return nil, "", ""
 			}
 			f.created = created
+			return b, "dir", b.Source()
+		}
+		if f.verb == "add" {
+			// ADD MAKES ITS DIRECTORY, AND ONLY A RUN THAT WILL BE OBEYED DOES:
+			// cmdAdd judges every flag BEFORE this run may touch the filesystem,
+			// so a missing directory here is deferred to that moment rather than
+			// made for a line that is about to be refused. A path that exists
+			// still goes through NewDir, so a --dir that is a FILE keeps its
+			// refusal.
+			if len(f.problems) > 0 {
+				return nil, "", ""
+			}
+			if _, err := os.Stat(f.dir); os.IsNotExist(err) {
+				f.deferDir = f.dir
+				return nil, "", ""
+			}
+			b, err := board.NewDir(f.dir)
+			if err != nil {
+				f.want(oneline.Err(err))
+				return nil, "", ""
+			}
 			return b, "dir", b.Source()
 		}
 		b, err := board.NewDir(f.dir)
@@ -440,6 +471,21 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 	}
 	if len(f.problems) > 0 {
 		return f.refused(stderr)
+	}
+
+	// THE DIRECTORY IS MADE HERE, NOT IN backend(): every flag above was judged first,
+	// so a refused run has already gone home and left nothing behind. This is issue
+	// #625 -- add creates the board directory on first use; an empty directory is a
+	// valid empty ledger. Created is not reported: add's ADD OK line does not carry it,
+	// and quickstart's QUICKSTART OK is the line that says which run made its board.
+	if f.deferDir != "" {
+		b, created, err := board.MakeDir(f.deferDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "ADD REFUSED: %s\n", oneline.Err(err))
+			return 2
+		}
+		_ = created
+		backend, kind, source = b, "dir", b.Source()
 	}
 
 	// The fold is read BEFORE the append: for the hash note, and for the --id retry.
@@ -659,13 +705,15 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Rea
 	return 0
 }
 
-// cmdQuickstart is the natural first run, and it is THE ONE VERB HERE THAT MAKES ITS
-// DIRECTORY. Glenn, on nova-tools #109 and Emma's report that it refused a --dir that was
-// not there: "It is best to do the right thing if a friend uses it a certain way, or to
-// correct docs to show only right way. Pick one." A first run has nowhere to write yet, and
-// `nova-swarm quickstart --pool ./pool` already makes its pool; created=true|false on the
-// OK line says which run made this one, so a reader can tell a new board from a wrong
-// path. A run that is REFUSED makes nothing: every flag is judged before f.backend().
+// cmdQuickstart is the natural first run, and it is the verb whose whole job IS a first
+// run, so it makes its directory (issue #625 extends the same making to add, whose first
+// use is a first filing). Glenn, on nova-tools #109 and Emma's report that it refused a
+// --dir that was not there: "It is best to do the right thing if a friend uses it a
+// certain way, or to correct docs to show only right way. Pick one." A first run has
+// nowhere to write yet, and `nova-swarm quickstart --pool ./pool` already makes its pool;
+// created=true|false on the OK line says which run made this one, so a reader can tell a
+// new board from a wrong path. A run that is REFUSED makes nothing: every flag is judged
+// before f.backend().
 func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("quickstart")
 	f.makeDir = true

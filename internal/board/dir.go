@@ -35,11 +35,12 @@ type Dir struct {
 }
 
 // NewDir returns the backend for a directory of card files. The directory must exist for
-// every verb but quickstart, which makes it (MakeDir below). For the rest: a
+// every verb but quickstart and add, which make it (MakeDir below): a first run and a
+// first filing have nowhere to write yet. For the rest: a
 // tool that made one would be guessing at where a caller meant to keep a board -- the
 // board lives in somebody's repository, and which directory is tracked, and by which
-// clone, is the caller's decision and not this tool's. SPEC-BOARD grants this backend one
-// creation and names it: "One file per card, <dir>/<id>.board, created by add."
+// clone, is the caller's decision and not this tool's. SPEC-BOARD grants this backend its
+// creations and names them: "One file per card, <dir>/<id>.board, created by add."
 //
 // So the refusal CARRIES THE REMEDY. Emma, dogfooding v0.12.0 (nova-tools #104): a
 // quickstart against a directory that did not exist exited 2 with a stat error and no way
@@ -71,12 +72,16 @@ func NewDir(path string) (*Dir, error) {
 // friend already reached for -- `nova-swarm quickstart --pool ./pool` makes its pool, with
 // MkdirAll and 0755, and this makes the board directory the same way.
 //
-// IT IS QUICKSTART'S ALONE. Every other verb goes through NewDir and still refuses, because
-// quickstart is the verb whose whole job is a first run and a first run has nowhere to write
-// yet, while a `list` or a `take` against a directory that is not there is a caller who named
-// the wrong path -- making it for them would answer a typo with an empty board. The created
-// bool goes back to the caller because a verb that makes a directory silently leaves a reader
-// unable to tell a new board from the wrong one.
+// IT IS QUICKSTART'S AND ADD'S. Every other verb goes through NewDir and still refuses,
+// because quickstart is the verb whose whole job is a first run and add is the verb whose
+// first use is a first filing -- a first run and a first filing have nowhere to write
+// yet, and the ledger is append-only, so an empty directory is a valid empty ledger
+// (issue #625) -- while a `list`, `check` or a `take` against a directory that is not
+// there is a caller who named the wrong path -- making it for them would answer a typo
+// with an empty board. The created bool goes back to the caller because a verb that makes
+// a directory silently leaves a reader unable to tell a new board from the wrong one;
+// add's cmdAdd does not report it, and quickstart's QUICKSTART OK reports it as
+// created=true|false.
 //
 // A path that exists and is a FILE is untouched and keeps NewDir's refusal: MkdirAll would
 // not fix that one, and a board is not a file this tool replaces.

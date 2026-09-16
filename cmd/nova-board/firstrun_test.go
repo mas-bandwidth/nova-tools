@@ -302,9 +302,11 @@ func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 // Glenn ruled on nova-tools #109: "It is best to do the right thing if a friend
 // uses it a certain way, or to correct docs to show only right way. Pick one."
 // The right thing: `quickstart` MAKES the directory (TestQuickstartMakesTheDirectory
-// below), as `nova-swarm quickstart --pool` makes its pool. Every other verb still
-// refuses a directory that is not there -- quickstart is the one verb whose whole
-// job is a first run, and a first run has nowhere to write yet, while a `list` or a
+// below), as `nova-swarm quickstart --pool` makes its pool, and so does `add` (issue
+// #625, TestAddCreatesTheBoardDirectoryOnFirstUse): a first filing has nowhere to write
+// yet, and the ledger is append-only, so an empty directory is a valid empty ledger.
+// Every other verb still refuses a directory that is not there -- quickstart and add are
+// the two whose whole job can be a first run, while a `list`, `check` or a
 // `take` against a directory that does not exist is a caller who named the wrong
 // path, and making it for them would hide the typo behind an empty board.
 //
@@ -313,14 +315,11 @@ func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 // not a numbered rule), and here what it wants is a directory that exists.
 func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "board")
-	for _, verb := range []string{"list", "check", "add"} {
+	for _, verb := range []string{"list", "check"} {
 		args := []string{verb, "--dir", missing, "--stale", "10m"}
 		switch verb {
 		case "check":
 			args = []string{verb, "--dir", missing, "--words", "anything"}
-		case "add":
-			args = []string{verb, "--dir", missing, "--as", "rowan", "--text", "a card",
-				"--by", "4h", "--default", "the filer files it as a known gap"}
 		}
 		var out, errb bytes.Buffer
 		exit := run(args, &out, &errb, time.Now().UTC(), &seq{})
@@ -453,6 +452,37 @@ func TestQuickstartMakesTheDirectory(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "is a file") {
 		t.Errorf("a --dir that is a file is not a directory this verb makes:\n%s", errb.String())
+	}
+}
+
+// The red test for issue #625: `nova-board add --dir <not-yet-created>` must not be
+// refused. The ledger is append-only, so an empty directory is a valid empty ledger, and
+// the board directory is made by add on first use -- a first filing has nowhere to write
+// yet, exactly as quickstart's first run does. The red test the issue names: "add into a
+// nonexistent dir succeeds and list prints the one card."
+func TestAddCreatesTheBoardDirectoryOnFirstUse(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "board")
+	var out, errb bytes.Buffer
+	exit := run([]string{"add", "--dir", missing, "--as", "rowan", "--text", "a first card",
+		"--by", "4h", "--default", "the filer files it as a known gap"}, &out, &errb, time.Now().UTC(), &seq{})
+	if exit != 0 {
+		t.Fatalf("add into a nonexistent dir exits %d, want 0; stderr: %s", exit, errb.String())
+	}
+	if !strings.Contains(out.String(), "ADD OK") {
+		t.Errorf("add into a nonexistent dir printed no ADD OK:\n%s", out.String())
+	}
+	info, err := os.Stat(missing)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("add returned 0 and %s is not a directory (%v); add must create the board directory on first use", missing, err)
+	}
+	// And list, pointed at the directory add made, prints the one card.
+	out.Reset()
+	errb.Reset()
+	if exit := run([]string{"list", "--dir", missing, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 0 {
+		t.Fatalf("list after the add exits %d, want 0; stderr: %s", exit, errb.String())
+	}
+	if !strings.Contains(out.String(), "cards=1") || !strings.Contains(out.String(), "open=1") {
+		t.Errorf("list does not print the one card add filed:\n%s", out.String())
 	}
 }
 
