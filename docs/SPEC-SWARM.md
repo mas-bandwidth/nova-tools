@@ -682,14 +682,19 @@ harness parses, the adoption probe tries the configured local models in order
 and records which answer (`probe-local-model-supports-tools`), and a batch
 gives the local route one slot at most.
 
-**A native run captures the harness's output to `<job>/harness.log`, walled or
-not** — the same file, the same bytes, alongside `<slot>/native.log` — so an
-unwalled card's failure is as diagnosable as a walled one's and
-`harness=silent` means a silent harness and never a lost log. `--no-wall`
-removes the containment and nothing else: it never removes the evidence. The
-log is appended to, never truncated, because a `batch` pins its runner's stdout
-to that same file before the run starts (issue #608, every Space no-result of
-2026-09-16).
+**A native run captures the child's output to `<job>/harness-output.log`,
+walled or not** — the same file, the same bytes, alongside `<slot>/native.log`
+— so an unwalled card's failure is as diagnosable as a walled one's.
+`--no-wall` removes the containment and nothing else: it never removes the
+evidence (issue #608, every Space no-result of 2026-09-16). **The two names are
+two writers and never one**: `harness.log` is THE HARNESS'S OWN, written by the
+process that runs the harness, and `harness=silent` reads it to ask whether the
+harness itself wrote anything; `harness-output.log` is what `native` captured
+around it, the wall's lines with the harness's. A capture written into
+`harness.log` would answer `ok` for a harness that said nothing at all. **Every
+writer of a job's logs appends and none truncates**, `batch`'s runner pipe
+included: two processes write a card's `harness.log` at their own offsets, and
+a truncating open destroys the head of what the other already wrote.
 
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
@@ -804,6 +809,12 @@ rules below still decide. The fold itself is:
   transcript, never a report body, never a finding's wording;
 - usage per card and the batch total;
 - bytes bounded: counts, not lists; the packet does not grow with the batch.
+- `--then <command>` (optional) names a follow-on that runs only when every
+  card is done and none stalled or idle-killed: the command runs once, with
+  `sh -c`, in the batch's root, with `BATCH_ID`, `BATCH_DONE` and `BATCH_N`
+  in its environment, and the packet prints `BATCH THEN rc=<n>`. A batch that
+  is not all done prints `BATCH THEN SKIPPED done=<d> n=<n> abstain=<a>
+  stalled=<s>` and exits 3, so the follow-on never runs on an abstain.
 
 **A card whose `RESULT.md` line 1 is not its contract line is refused.** Line
 1 is the card's contract line, the line by which it was admitted; a line 1
@@ -1173,6 +1184,8 @@ ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
+BATCH THEN rc=<n>
+BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>

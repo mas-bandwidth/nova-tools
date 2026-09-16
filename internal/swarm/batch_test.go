@@ -875,6 +875,56 @@ func TestBatchScoresInputLimit(t *testing.T) {
 	}
 }
 
+// TestBatchThenRunsOnlyWhenAllDone: the --then follow-on runs only when every card is done.
+// All done runs the command and records its rc; one abstain prints SKIPPED and exits 3.
+func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
+	// all done: the follow-on runs in the batch's root and its rc is recorded on the line.
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\ndone and clean"},
+	})
+	runner := fakeRunner(t, dir)
+	var out, errb bytes.Buffer
+	code := Batch(BatchInput{
+		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Then:   `[ "$BATCH_ID" = "B1" ] && [ "$BATCH_DONE" = "$BATCH_N" ] && exit 7`,
+		Stdout: &out, Stderr: &errb,
+	})
+	if code != 0 {
+		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "BATCH THEN rc=7") {
+		t.Fatalf("all done runs the follow-on and records its rc:\n%s", out.String())
+	}
+
+	// one abstain: the follow-on is skipped and the batch exits 3.
+	dir = t.TempDir()
+	root = filepath.Join(dir, "root")
+	tsv = writeCards(t, dir, [][2]string{
+		{"a", "RESULT: a\nall green"},
+		{"b", "RESULT: b\nMISSING"},
+	})
+	runner = fakeRunner(t, dir)
+	out.Reset()
+	var out2, errb2 bytes.Buffer
+	code = Batch(BatchInput{
+		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Then:   `exit 0`,
+		Stdout: &out2, Stderr: &errb2,
+	})
+	if code != 3 {
+		t.Fatalf("a batch with an abstain skips the follow-on and exits 3, got %d; stderr: %s", code, errb2.String())
+	}
+	if !strings.Contains(out2.String(), "BATCH THEN SKIPPED done=1 n=2 abstain=1 stalled=1") {
+		t.Fatalf("a skipped follow-on prints the counts:\n%s", out2.String())
+	}
+	if strings.Contains(out2.String(), "BATCH THEN rc=") {
+		t.Fatalf("the follow-on must not run on an abstain:\n%s", out2.String())
+	}
+}
+
 // ISSUE #593: IDLE MEANS NO CHILD ACTIVITY, NOT ONLY NO LOG GROWTH. On 2026-09-15 cards
 // 664-670 were killed "idle 300s" while their harness sat in a `go test` that prints nothing
 // for minutes: the work was alive, the log was not. A card is active while its process tree
@@ -961,5 +1011,62 @@ func TestGatherCopiesResultUpFromRepo(t *testing.T) {
 	}
 	if got := readTestFile(t, filepath.Join(job, "RESULT.md")); got != "RESULT: a\nall green from the clone\n" {
 		t.Fatalf("the result is copied to the job root byte for byte, got %q", got)
+	}
+}
+
+// TestBatchLogAppendsNeverTruncates: the batch pins its runner's stdout to <job>/harness.log
+// with O_APPEND, so bytes already in that file survive the run and the runner's own lines
+// land after them, in order. Two processes write a card's harness log -- the batch's runner
+// here, and the supervisor the runner starts, which pins the harness's own output to the
+// same path -- and each holds its own offset. Opened O_TRUNC, this descriptor starts at
+// offset 0 and the runner's first line overwrites the head of what the other writer already
+// put there: the start of a card's evidence was destroyed by the line announcing the run
+// (issue #608). The test writes a line, runs the batch, and demands BOTH, in that order.
+func TestBatchLogAppendsNeverTruncates(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	cards := writeCards(t, dir, [][2]string{{"c1", "the item\nDONE\n"}})
+
+	// The bytes another writer put there before the batch opened the file.
+	job := filepath.Join(root, "1", "jobs", "c1")
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const earlier = "the harness said this before the runner started"
+	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(earlier+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A runner that publishes the card and says one line of its own on stdout.
+	const later = "RUNNER SAID THIS"
+	runner := filepath.Join(dir, "runner-say.sh")
+	body := "#!/bin/sh\n" +
+		"label=\"$1\"; slot=\"$2\"; card=\"$4\"; root=\"$5\"\n" +
+		"job=\"$root/$slot/jobs/$label\"\n" +
+		"mkdir -p \"$job\"\n" +
+		"sed -n 1,2p \"$card\" > \"$job/RESULT.md\"\n" +
+		"echo " + strconv.Quote(later) + "\n"
+	if err := os.WriteFile(runner, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, out, errb := runBatch(t, cards, root, runner, 30*time.Second); code != 0 {
+		t.Fatalf("the batch exits 0, got %d:\n%s\n%s", code, out, errb)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(job, "harness.log"))
+	if err != nil {
+		t.Fatalf("the card's harness log could not be read: %v", err)
+	}
+	got := string(raw)
+	at, after := strings.Index(got, earlier), strings.Index(got, later)
+	if at < 0 {
+		t.Errorf("the batch truncated the card's harness log: the bytes written before the run are gone:\n%s", got)
+	}
+	if after < 0 {
+		t.Fatalf("the runner's own line is not in the card's harness log:\n%s", got)
+	}
+	if at >= 0 && after < at {
+		t.Errorf("the runner's line landed before the bytes that were there first; the log is out of order:\n%s", got)
 	}
 }

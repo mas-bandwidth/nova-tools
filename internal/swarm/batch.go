@@ -62,6 +62,7 @@ type BatchInput struct {
 	PullPoll time.Duration
 	Benches  string // path to the benches table; empty means no table is read
 	Bench    string // comma-separated bench names to allocate the cards across; empty means local only
+	Then     string // a follow-on command, run with sh -c only when every card is done; "" means none
 	Stdout   io.Writer
 	Stderr   io.Writer
 }
@@ -179,8 +180,16 @@ func Batch(in BatchInput) int {
 		}
 		// A card's log is the runner's own stdout pinned to a regular file under the job, the
 		// way the spec records a job: harness.log. Idle means this file stopped growing.
+		//
+		// IT IS APPENDED TO, NEVER TRUNCATED (issue #608). Another process writes this same
+		// file for the same card -- the supervisor the runner starts pins the harness's own
+		// output to it -- and each holds its own offset. With O_TRUNC this file descriptor
+		// starts at offset 0 and the runner's first line lands on top of whatever the other
+		// writer has already put there, so the head of a card's evidence was overwritten by
+		// the line announcing the run. O_APPEND makes every write land at the end, whoever
+		// wrote last, and the file reads in the order it was written.
 		logPath := filepath.Join(job, "harness.log")
-		logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 		if err != nil {
 			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
 			return 2
@@ -450,6 +459,34 @@ func Batch(in BatchInput) int {
 	}
 	for i := 0; i < len(holds) && i < maxHoldLines; i++ {
 		fmt.Fprintf(in.Stdout, "HOLD: %s\n", oneline.Escape(oneline.Cap(holds[i], oneline.TailBytes)))
+	}
+
+	// --then is the follow-on that runs only when every card is done. One abstain, one
+	// stalled card or one idle kill leaves the follow-on unrun: the batch prints one
+	// SKIPPED line naming its counts and exits 3, proof the follow-on did not run on a
+	// batch that was not all done (lesson 26).
+	if in.Then != "" {
+		if done == len(cards) && stalled == 0 && idle == 0 {
+			cmd := exec.Command("sh", "-c", in.Then)
+			cmd.Dir = in.Root
+			cmd.Env = append(os.Environ(),
+				"BATCH_ID="+in.ID,
+				"BATCH_DONE="+strconv.Itoa(done),
+				"BATCH_N="+strconv.Itoa(len(cards)))
+			rc := 0
+			if err := cmd.Run(); err != nil {
+				if ee, ok := err.(*exec.ExitError); ok {
+					rc = ee.ExitCode()
+				} else {
+					rc = -1
+				}
+			}
+			fmt.Fprintf(in.Stdout, "BATCH THEN rc=%d\n", rc)
+		} else {
+			fmt.Fprintf(in.Stdout, "BATCH THEN SKIPPED done=%d n=%d abstain=%d stalled=%d\n",
+				done, len(cards), abstain, stalled)
+			return 3
+		}
 	}
 
 	if abstain == 0 && len(holds) == 0 {

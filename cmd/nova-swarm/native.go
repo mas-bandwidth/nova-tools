@@ -236,27 +236,38 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		refuseNative(errOut, fmt.Sprintf("the run log %s could not be opened: %s", oneline.Field(filepath.Join(cfg.slotDir, "native.log")), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
-	// ONE CAPTURE PATH, WALLED OR NOT (issue #608). The child's output also lands in the
-	// job's own `harness.log`, the name every other part of this tool reads a run's evidence
-	// by: `finish` counts refusals there, the input-limit reader looks for the provider's
-	// words there, batch's idle watch measures it, and `harness=silent` (#604) asks whether
-	// it holds bytes. Before this the native path wrote only <slot>/native.log, so an
-	// UNWALLED card -- every Space card -- that produced no RESULT left no evidence at all
-	// and its failure could not be diagnosed; a silent harness and a lost log read the same.
-	// The file is opened O_APPEND and never truncated: a batch opens this same path and
-	// pins its runner's stdout to it before this process starts, and truncating it here
-	// would cut the runner's own lines out from under it.
-	harnessLog, err := os.OpenFile(filepath.Join(jobDir, "harness.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	// ONE CAPTURE PATH, WALLED OR NOT (issue #608). The child's output also lands under the
+	// JOB, in `harness-output.log`, so the evidence sits with the card's own work rather
+	// than one directory up with the slot's. Before this the native path wrote only
+	// <slot>/native.log, so an UNWALLED card -- every Space card -- that produced no RESULT
+	// left no evidence of what the harness said: the whole no-result class of 2026-09-16
+	// could not be diagnosed, and a silent harness and a lost log read the same.
+	//
+	// IT IS NOT `harness.log`, DELIBERATELY. `harness.log` is THE HARNESS'S OWN FILE: the
+	// legacy supervisor pins the harness's output to it, and `harness=silent` (#604) asks
+	// whether the harness itself wrote anything by asking whether that file holds bytes.
+	// A capture written there by this process would answer `ok` for a harness that said
+	// nothing -- the wall's own lines alone would do it -- and defeat the detection this
+	// evidence exists to feed. Two files, two writers, one sentence of spec apart.
+	//
+	// It is opened O_APPEND and never truncated, so a second writer at the same path (a
+	// retried run, a batch that opened it first) appends rather than cutting bytes out
+	// from under the first. It is opened O_NOFOLLOW as well: this is the first file this
+	// process opens inside the JOB, which is the card's own writable directory, and a
+	// symlink planted there by an earlier run of the same card would carry the child's
+	// output out of the wall, through a process that has no wall (security#30's class).
+	outLog := filepath.Join(jobDir, "harness-output.log")
+	harnessOut, err := os.OpenFile(outLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND|swarm.ONoFollow, 0o644)
 	if err != nil {
 		log.Close()
-		refuseNative(errOut, fmt.Sprintf("the harness log %s could not be opened: %s", oneline.Field(filepath.Join(jobDir, "harness.log")), oneline.Escape(err.Error())))
+		refuseNative(errOut, fmt.Sprintf("the harness output log %s could not be opened: %s", oneline.Field(outLog), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
 	// The wall's own stderr is split out of the log: the SANDBOX OK line the wall prints
 	// is where the tool learns the wall's name and the cwd it actually applied, and neither
 	// is guessed. The logs still carry every byte; the buffer holds stderr for the parse.
 	var wallOut bytes.Buffer
-	capture := io.MultiWriter(log, harnessLog)
+	capture := io.MultiWriter(log, harnessOut)
 	cmd.Stdout = capture
 	cmd.Stderr = io.MultiWriter(capture, &wallOut)
 
@@ -282,7 +293,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	res.wallSeconds = time.Since(start).Seconds()
 	log.Close()
-	harnessLog.Close()
+	harnessOut.Close()
 
 	if wall != "" {
 		backend, cwd, ok := wallNamed(wallOut.String())
