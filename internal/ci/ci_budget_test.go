@@ -138,6 +138,14 @@ var clTierCeilings = map[string]int{
 	// The aggregate reads results and checks nothing out.
 	"ci-ok": 1,
 
+	// The platform legs a PR runs only when it touches platform-specific paths
+	// (internal/sandbox on ubuntu-latest, the bus on windows-latest). A hosted
+	// runner starts cold (checkout, setup-go, cache restore) and cmd/nova-bus
+	// measured 439 s on windows-latest before its -short gate (#682); the leg
+	// runs -short, and 6 is the same cap the sharded matrix carries. A PR that
+	// does not touch those paths pays a checkout and skips. (2026-09-16)
+	"test-hosted-pr": 6,
+
 	// The sharded test matrix, and the one number the move to self-hosted
 	// runners actually changed. The two minutes are the CL FEEDBACK PATH: how
 	// long a change waits. On GitHub-hosted runners every leg starts at once,
@@ -273,4 +281,26 @@ func certificationOKNeeds(src string) map[string]bool {
 		}
 	}
 	return needs
+}
+
+// TestEveryTriggeringEventReachesACIOKVerdict is the guard the merge queue
+// depends on: ci-ok is the only required check, and a verdict step is gated by
+// event name. An event the workflow triggers on (pull_request, merge_group,
+// push, workflow_dispatch; schedule runs only the nightly tier and owes no
+// verdict) that no ci-ok step names would let ci-ok run zero steps and report
+// success over red needs (found on #766 before the queue was turned on).
+func TestEveryTriggeringEventReachesACIOKVerdict(t *testing.T) {
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	i := strings.Index(src, "\n  ci-ok:")
+	if i < 0 {
+		t.Fatal("no ci-ok job in ci.yml")
+	}
+	ciok := src[i:]
+	for _, ev := range []string{"pull_request", "merge_group", "push", "workflow_dispatch"} {
+		want := "github.event_name == '" + ev + "'"
+		if !strings.Contains(ciok, want) {
+			t.Errorf("ci-ok has no verdict step guarded for %s: the workflow triggers on it, so a run on that event would report success with no step run", ev)
+		}
+	}
 }
