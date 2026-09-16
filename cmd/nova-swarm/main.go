@@ -51,7 +51,7 @@ usage:
   nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>]
   nova-swarm result    --pool <dir> --id <job>
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup
   nova-swarm cost      --pool <dir> [--since <stamp>] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
   nova-swarm finalize  --pool <dir> --task <id>
@@ -1338,8 +1338,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
-	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s\n",
-		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), usageSuffix(res.usageReason, res.usageState))
+	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s\n",
+		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState))
 	if res.rc != 0 {
 		if res.rc > 0 {
 			return res.rc
@@ -1377,6 +1377,19 @@ func dash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// fenceSuffix renders what the harness's OWN fence did to this card (issue #644): the empty
+// string when it rejected nothing, and ` fence=rejected path=<p>` naming the first path it
+// auto-rejected otherwise. It is the FIELD the batch reads to score the card `fence` instead
+// of `no-result` -- the machinery fenced the card off a path its own card named, which is
+// nothing like a model that chose to publish nothing, and a coordinator reading `no-result`
+// went looking at the model for eight cards that never got to run (2026-09-16).
+func fenceSuffix(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	return " fence=rejected path=" + oneline.Field(path)
 }
 
 // usageSuffix renders the usage status the NATIVE OK line carries: the empty string when a

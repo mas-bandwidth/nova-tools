@@ -96,9 +96,16 @@ func NewIssue(spec string, timeout time.Duration) (*Issue, error) {
 // Source is what the listing's source= field carries.
 func (i *Issue) Source() string { return fmt.Sprintf("%s/%s#%d", i.owner, i.repo, i.number) }
 
-// comment is the one field of a comment this tool reads.
+// comment is the fields of a comment this tool reads.
+// The author (user.login) is carried alongside the body so the fold can use the
+// comment's actual author rather than the as= label, which anybody who may comment
+// could set to any name (security#30, finding 6).
 type comment struct {
-	Body string `json:"body"`
+	Body   string `json:"body"`
+	Author string `json:"-"` // populated from user.login after decode
+	User   struct {
+		Login string `json:"login"`
+	} `json:"user"`
 }
 
 // Events reads the whole thread, fully paginated, one event per comment.
@@ -128,9 +135,11 @@ func (i *Issue) Events() (Log, error) {
 			return Log{}, fmt.Errorf("reading the comments of %s: %w", i.Source(), err)
 		}
 		for _, c := range page {
+			c.Author = c.User.Login
 			for _, line := range strings.Split(strings.ReplaceAll(c.Body, "\r\n", "\n"), "\n") {
 				if strings.TrimSpace(line) != "" {
 					log.Lines = append(log.Lines, line)
+					log.Authors = append(log.Authors, c.Author)
 				}
 			}
 		}

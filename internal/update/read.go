@@ -38,6 +38,7 @@ var digit = regexp.MustCompile(`[0-9]`)
 var bareCommit = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 var release = regexp.MustCompile(`^[0-9]+(\.[0-9]+)+$`)
 var digest = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
+var pseudo = regexp.MustCompile(`^([0-9]+\.[0-9]+\.[0-9]+)-0\.[0-9]+-([0-9a-f]{7,40})(\+.*)?$`)
 
 type Read struct{ Raw, Version, Path, Reason, Remedy, Source string }
 
@@ -321,4 +322,36 @@ func Compare(a, b string) string {
 		}
 	}
 	return "DIFFERENT"
+}
+
+// ahead reports the pseudo-version's commit when installed names a build the Go toolchain
+// stamped as a commit on main after the release tag latest reports. A pseudo-version
+// vX.Y.Z-0.<stamp>-<sha> is Go's record that the build's nearest preceding release tag is
+// vX.Y.(Z-1): decrement the final component back to that tag and compare, and the string
+// alone says "this build descends from the release", with no git read to re-verify it.
+func ahead(installed, latest string) (string, bool) {
+	m := pseudo.FindStringSubmatch(installed)
+	if m == nil {
+		return "", false
+	}
+	if decPatch(m[1]) != latest {
+		return "", false
+	}
+	return m[2], true
+}
+
+// decPatch is vX.Y.Z minus one in its final component, the release tag a vX.Y.Z-0
+// pseudo-version leaves behind. A zero or absent final component has no such tag.
+func decPatch(v string) string {
+	parts := strings.Split(v, ".")
+	if len(parts) < 3 {
+		return ""
+	}
+	p, ok := new(big.Int).SetString(parts[len(parts)-1], 10)
+	if !ok || p.Sign() <= 0 {
+		return ""
+	}
+	p.Sub(p, big.NewInt(1))
+	parts[len(parts)-1] = p.String()
+	return strings.Join(parts, ".")
 }

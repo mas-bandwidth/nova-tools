@@ -133,6 +133,108 @@ const templateWorker = `{
 }
 `
 
+// templateSetup is the PER-FRIEND SAFETY-SETUP AGREEMENT (#184): one form per friend,
+// reviewed and agreed BEFORE any staged security implementation is built, because a
+// blanket restrictive setup prevents useful work and ignores each friend's chosen harness,
+// while a blanket permissive one hands every friend every other friend's secrets. It is
+// the issue's near-term endpoint and nothing beyond it: the generic configuration examples
+// and the agreement/evidence template, published with placeholder values only. No secret,
+// no private path and no live bench layout is in it -- the private configuration it stands
+// for stays on the friend's own bench -- and an agreed form supplies no account access.
+// It is a document and not a task's conditions, so WrapTemplate refuses it as it refuses
+// `result`.
+const templateSetup = `setup — one friend's safety setup, proposed, reviewed, agreed (#184)
+
+One form per friend, agreed before it is enforced, because a blanket restrictive
+setup prevents useful work and ignores each friend's chosen harness, while a
+blanket permissive one hands every friend every other friend's secrets. Print
+it, fill it with the friend who would run under it, and paste the FILLED form
+where the review happened; the private configuration it describes is never
+pasted anywhere. Names, models, harnesses and bench layouts are not constants
+of this form: every value below is a placeholder, and a friend's own choices
+fill their own copy. A friend may propose an alternative, decline, or stay
+silent, and missing feedback is pending, never assent. An agreed form is an
+agreement and nothing more: it supplies no account access, and implementation,
+credential migration and deployment are separate staged work with their own
+authorization.
+
+## The proposal (written with the friend)
+
+friend: <name>
+bench: <the machine or hosted runner this friend works on>
+harness: <the harness this friend chose, and its version>
+model: <the model this friend chose; never this form's business>
+proposal by: <who wrote this form, and where the review is recorded>
+reviewed with: <the friend's own read of this form, or pending>
+
+read scope: <the shared inputs this friend needs to read, named once>
+write scope: <this friend's own directories, and nothing above them>
+execution boundaries: <one task, one process tree, one deadline, or the
+  friend's own boundary and who holds it>
+secret use: <the ONE seat file that holds this friend's keys, and the ONE
+  variable name the harness reads; a value is never written here>
+destructive controls: <what a delete, a force-push or a repository
+  destruction must be unable to reach, and which ruleset forbids it>
+recoverability: <what is pushed where on every exit, so a delete is a
+  re-clone>
+unresolved concerns: <what this friend has not agreed to, in their own words>
+
+## The agreement (the friend's own half)
+
+status: agree | alternative | decline | pending
+alternative proposed: <the friend's own setup, in their own words, or ->
+declined because: <the reason, kept honestly, or ->
+pending since: <the date feedback was asked for>
+
+## The guarantee table (filled together, one row per guarantee)
+
+| guarantee | who enforces it | supported here | evidence |
+| --- | --- | --- | --- |
+| a read outside the named lists is denied | the OS wall | yes / no | nova-sandbox probe |
+| a write outside the write set is denied | the OS wall | yes / no | probe step write_outside |
+| no credential file is readable inside the wall | the OS wall and the caller's placement | yes / no | probe --secret <path> |
+| no agent socket or agent address reaches the child | the OS wall and the environment scrub | yes / no | SPEC-SANDBOX rules 7 and 9 |
+| a push from inside the job fails | the OS wall | yes / no | the four mechanisms of SPEC-SANDBOX test 27 |
+| the harness asks before an outside path | a cooperating harness | yes / no / unproven | the fence example below |
+| the friend's work survives a delete | the launcher, outside the wall | yes / no | the push on exit, a re-clone recovers |
+| the friend's secrets stay the friend's | the seat file's own recipients | yes / no | nova-secrets check |
+
+A row the OS wall enforces is a fact the kernel keeps on the machine this form
+names. A row a cooperating harness enforces is a row the wall must not be
+asked to prove: mark it unproven until the friend's harness build is shown to
+honour it, and call a row supported only on the machine and the build this
+form names.
+
+## The generic examples (placeholder values only, never a private one)
+
+the wall, one job, its lists written down in one place and never guessed:
+  HOME=<data home> nova-sandbox --read <the shared reference checkout>
+    --read <the worker home> --write <the job directory>
+    --write <the data home> -- <the friend's harness> <args...>
+
+the fence, the harness's own permission block, allow or deny, never ask:
+  {"permission": {"external_directory": "deny", "webfetch": "<the friend's choice>"}}
+
+the seat, one file per friend, sealed to that friend's bench key alone:
+  nova-secrets exec --store <the store's working copy> --as <this friend>
+    --key <the key path> --sops <the sops binary>
+    --only <ONE variable name> --require <ONE variable name> -- <launcher>
+
+the launcher, outside the wall, the friend's own lists:
+  sets HOME inside a --write, passes the credential by environment read as
+  data before the wrap, and pushes the friend's directories to their remote
+  on every exit, clean or not.
+
+## What is never in this form
+
+No secret, no key, no token and no private path is ever written into this
+form, a task card, a bus note, an issue or a token ledger: a name or a path
+is not a secret, but a value is, and this form carries values for nobody.
+Before any staged implementation is built on an agreed form, validate it on
+synthetic secrets and disposable repositories and record both runs:
+a denied destructive operation and successful permitted work.
+`
+
 // Template returns one template by name.
 func Template(name string) (string, error) {
 	switch name {
@@ -146,13 +248,15 @@ func Template(name string) (string, error) {
 		return templateResult, nil
 	case "worker":
 		return templateWorker, nil
+	case "setup":
+		return templateSetup, nil
 	}
 	return "", fmt.Errorf("--name wants one of %s, got %q", strings.Join(TemplateNames(), ", "), name)
 }
 
 // TemplateNames is every name Template answers to, in a fixed order.
 func TemplateNames() []string {
-	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker"}
+	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker", "setup"}
 	sort.Strings(names)
 	return names
 }
@@ -167,6 +271,9 @@ func WrapTemplate(name string, files int, text []byte) ([]byte, error) {
 	}
 	if name == "result" {
 		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `result` is the report's shape, printed by `template --name result`")
+	}
+	if name == "setup" {
+		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `setup` is the per-friend agreement form of issue #184, printed by `template --name setup`")
 	}
 	body = strings.ReplaceAll(body, "<n> files", fmt.Sprintf("%d files", files))
 	var b strings.Builder
