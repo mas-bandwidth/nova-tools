@@ -445,14 +445,20 @@ There is another that asks who is awake rather than watching who changes.
 friend's last beat, `awake` inside `--window` (default 300s), `asleep` past it,
 `unknown` where no cursor was ever written, one `FRIEND` line each capped by
 `--max` (default 50) and one `AWAKE OK` verdict (docs/SPEC-WORK.md, **Presence**,
-source `bus-cursor`):
+source `bus-cursor`). A `from-<name>/BEAT` file is also read, from its own
+content, and a beat whose stamp is newer than the cursor reads `source=bus-beat`.
+The beat carries a `until=<stamp>` lease written by `wait` on entry, every poll
+tick and exit (`--beat-lease`, default 10m); a beat whose lease is still in the
+future reads `awake` `source=bus-beat` even when its stamp and cursor are both
+past `--window` — a line whose manager process is alive between two `wait` calls:
 
 ```
 $ nova-wake awake --bus ./bus
 FRIEND alice awake age=10 source=bus-cursor
 FRIEND bob asleep age=600 source=bus-cursor
 FRIEND carol unknown age=- source=bus-cursor
-AWAKE OK friends=3 awake=1 asleep=1 unknown=1 window=300
+FRIEND rowan awake age=500 source=bus-beat
+AWAKE OK friends=4 awake=2 asleep=1 unknown=1 window=300
 ```
 
 ### First run
