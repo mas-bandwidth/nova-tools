@@ -385,6 +385,32 @@ func TestManagerRefusesFixPRWithoutTest(t *testing.T) {
 	}
 }
 
+// manager-hands-merge-to-lane: an approved, revalidated, green PR is handed to nova-merge's
+// lane with `nova-merge add`, never merged by `gh pr merge` -- the lane is the merge queue.
+func TestManagerHandsMergeToLane(t *testing.T) {
+	b := setupManager(t)
+	b.fake(t, "nova-merge", fakeSpec{})
+	b.fakeGH(t, `{"isDraft":false,"state":"OPEN","headRefOid":"aaaaaaaaaaaaaaaa"}`,
+		`[{"name":"build","state":"SUCCESS"}]`)
+	b.write(t, "APPROVED", "mas-bandwidth/nova-tools 577 aaaaaaaaaaaaaaaa\n")
+	lane := t.TempDir()
+	p := b.policy(t, "floor=0\nlane="+lane+"\n")
+	out, _, code := b.run(t, p, 0)
+	if code != 0 {
+		t.Fatalf("exit = %d (stdout=%q)", code, out)
+	}
+	argv := b.argv(t)
+	if !strings.Contains(argv, "nova-merge add --lane "+lane+" --pr 577") {
+		t.Errorf("the approved PR was not handed to the lane: %q", argv)
+	}
+	if strings.Contains(argv, "gh pr merge") {
+		t.Errorf("the lane, not gh, is the merge queue: %q", argv)
+	}
+	if !strings.Contains(out, "MANAGER LANE ref=mas-bandwidth/nova-tools#577") {
+		t.Errorf("the handoff must name the lane: %q", out)
+	}
+}
+
 // A policy with every key parses to the values it names; the defaults stand for what it omits.
 func TestManagerPolicyKeys(t *testing.T) {
 	b := setupManager(t)

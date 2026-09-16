@@ -414,17 +414,24 @@ func TestWithFetchedReportTipUsesOnlyThePrivateFetchRefspec(t *testing.T) {
 	}
 }
 
-type waitForFetchTimeoutRunner struct {
-	fetchCalls   int
+// timedOutFetchRunner is a fetch that never returns on its own. It blocks until the test
+// injects the timeout by closing release, then answers context.DeadlineExceeded, exactly
+// as a hung fetch would once its deadline passed. The timeout under test is injected
+// through the stub, never a wall-clock sleep (issue 694): the old test waited 150 ms of
+// real time for a machine under swarm load to fire a real deadline, and the assertion was
+// against elapsed seconds it could not control.
+type timedOutFetchRunner struct {
+	fetchBlocked chan struct{}
+	release      chan struct{}
 	cleanupCalls int
 	cleanupFresh bool
 }
 
-func (r *waitForFetchTimeoutRunner) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
+func (r *timedOutFetchRunner) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
 	if isReportFetch(args) {
-		r.fetchCalls++
-		<-ctx.Done()
-		return "fetch waited for its deadline", ctx.Err()
+		close(r.fetchBlocked)
+		<-r.release
+		return "fetch never returned; the timeout was injected", context.DeadlineExceeded
 	}
 	if isReportDelete(args) {
 		r.cleanupCalls++
@@ -436,18 +443,26 @@ func (r *waitForFetchTimeoutRunner) Run(ctx context.Context, dir, name string, a
 
 func TestWithFetchedReportTipTimesOutFetchAndCleansOwnedMarker(t *testing.T) {
 	lane, _, _, _ := reportTipLab(t)
-	runner := &waitForFetchTimeoutRunner{}
-	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, 150*time.Millisecond, runner), time.Second)
-	called := false
-	err := records.WithFetchedReportTip(func(string) error {
-		called = true
-		return nil
-	})
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "could not fetch report tip") {
-		t.Fatalf("fetch timeout must remain detectable, got %v", err)
+	runner := &timedOutFetchRunner{fetchBlocked: make(chan struct{}), release: make(chan struct{})}
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
+	type outcome struct {
+		err      error
+		cbCalled bool
 	}
-	if called || runner.fetchCalls != 1 {
-		t.Fatalf("timeout fetch reached callback or ran more than once: called=%t fetches=%d", called, runner.fetchCalls)
+	done := make(chan outcome, 1)
+	go func() {
+		cbCalled := false
+		err := records.WithFetchedReportTip(func(string) error {
+			cbCalled = true
+			return nil
+		})
+		done <- outcome{err: err, cbCalled: cbCalled}
+	}()
+	<-runner.fetchBlocked
+	close(runner.release)
+	got := <-done
+	if got.cbCalled || got.err == nil || !strings.Contains(got.err.Error(), "could not fetch report tip") {
+		t.Fatalf("timed-out fetch must never reach the callback and must print its refusal line, called=%t err=%v", got.cbCalled, got.err)
 	}
 	if runner.cleanupCalls != 1 || !runner.cleanupFresh {
 		t.Fatalf("owned marker cleanup needs one fresh bounded call, calls=%d fresh=%t", runner.cleanupCalls, runner.cleanupFresh)

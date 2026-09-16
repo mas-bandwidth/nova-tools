@@ -2423,6 +2423,7 @@ nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open 
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
+      [--quiet-beats]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
 nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
@@ -3330,7 +3331,10 @@ writing this bus's form exists to allow.
 1. **Refuse before writing anything.** The bus must be a git work tree, on the
    branch `--branch` names, and hold no changes but the one this run is about to
    make. The retry rebases, and a rebase over a dirty tree either refuses or
-   sweeps somebody's unrelated work into a note's commit.
+   sweeps somebody's unrelated work into a note's commit. The `.nova-bus/`
+   directory at the bus root, and the caller's own `BEAT`, are the tool's own
+   per-clone state, never a note and never somebody else's work, so the guard
+   does not refuse over them.
 2. **Fetch, and refuse a branch that is ahead of it with somebody ELSE's work.**
    `git push` publishes the BRANCH, not the commit just made. A checkout carrying
    commits this tool did not make would put all of them on the bus under a
@@ -4117,6 +4121,7 @@ catalogue is what would make the other choice available later.
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
+      [--quiet-beats]
 ```
 
 **The failure it closes is not a failure of the bus.** A line reading this bus
@@ -4216,8 +4221,20 @@ whole timeout beside a bus that was answering it, which is exactly the shape of
 failure this verb exists to end. So when the line in force is drawn after every
 moment the call could see, `wait` prints one `WAIT NOTE` line saying so — with
 the instant it would take instead — and **returns at once** rather than waiting
-on a line that can hide nothing else. A line in the future that covers only part
+ on a line that can hide nothing else. A line in the future that covers only part
 of the wait gets the same sentence and the wait goes on.
+
+**`--quiet-beats` turns a beat into a cheap presence wake.** A change that moves
+only a lane's state files — a `BEAT` or `CURSOR` advancing, nothing a reader has
+to answer — is not a note, so a default wait sleeps through it. But a poller
+beside a bus whose only way to prove it is still running is to wake the session
+spends a whole `INBOX` frame per wake, ~200 tokens, most of them a frame that
+tells the session nothing. Under `--quiet-beats`, a wait wakes the moment a
+change that is only beats and cursors lands and prints one `WAIT OK new=0 …`
+line and nothing else — no `INBOX SCOPE`, no `INBOX OPEN`, no `INBOX OK` — so a
+presence beat costs one line rather than the frame. A change that carries a note
+is reported exactly as before, frame and all: `--quiet-beats` only widens what
+counts as a wake, it never hides a note.
 
 Exit codes are `inbox`'s: **0** with notes and **0** on a timeout, **1** for the
 refusals `inbox` already has — a cursor that is no longer on this history, a
@@ -4421,7 +4438,10 @@ keeps working.
   `send` needs the bus's working tree clean but for the note it is about to
   write. A draft saved inside the bus directory is exactly the unrelated
   change that refusal names — put drafts in a scratch directory and pass
-  `--file`, or pipe them in with `--stdin`.
+  `--file`, or pipe them in with `--stdin`. The `.nova-bus/` directory is the
+  tool's own per-clone state and is not such a change, so a clone that wrote
+  `<bus>/.nova-bus/defaults` for `inbox` can `send` over it with no hand step
+  in between.
 - **It does not enforce the covenant.** Stated at the top of this section, and
   nowhere in the code.
 

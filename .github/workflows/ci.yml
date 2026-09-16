@@ -22,7 +22,11 @@
 # fan-out over the 4+4 machines and never a serial queue, and never
 # GitHub-hosted compute. The GitHub-hosted runners (ubuntu-latest, macos-latest,
 # windows-latest) run only on push to main and on the nightly schedule, with the
-# full suite. Every self-hosted job is guarded by the head-repo check, so a
+# full suite. The ONE exception is test-hosted-pr: a PR that touches a
+# platform-specific path — internal/sandbox or *_linux.go, cmd/nova-bus or
+# internal/bus or *_windows.go — runs that one hosted leg on the PR, so a
+# platform the self-hosted runners cannot see gets its feedback before main.
+# Every self-hosted job is guarded by the head-repo check, so a
 # pull_request from a fork skips CI rather than running untrusted code on our
 # machines.
 #
@@ -45,9 +49,11 @@ permissions:
   contents: read
 
 concurrency:
-  # Per PR, not per ref: a push to a PR branch reuses the PR number, so the new
-  # run cancels the in-progress one. On push to main the ref is the group.
-  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  # A pending run is evicted by a newly queued run in the same group before it
+  # ever starts. So a push to main keys on the commit sha (no two main runs
+  # share a group, none can evict another); a PR still keys on its number so its
+  # newest head supersedes older runs; a non-main branch with no PR keys on ref.
+  group: ci-${{ github.event.pull_request.number || (github.ref == 'refs/heads/main' && github.sha) || github.ref }}-${{ github.event_name }}
   # A push to main never cancels main's running verdict: with a steady merge
   # stream every main run was cancelled by the next merge (2026-09-16 04:41Z and
   # 04:53Z), so main had no completed run for the mechanical red gate to read.
@@ -390,12 +396,88 @@ jobs:
         run: |
           pkgs=$(go list ./... | awk -v n=4 -v i=${{ matrix.shard }} 'NR % n == i - 1')
           echo "$pkgs"
-          # -timeout 20m is the hosted windows leg's reality, not a target: cmd/nova-bus
-          # took 439 s there on the branch and hit Go's 10 m default on main (run
-          # 35052889521, panic: test timed out after 10m0s). The two-minute rule is met
-          # by gating the multi-process bus tests behind -short on hosted legs (issue
-          # filed); until that lands, a slow package must not panic the leg.
-          go test -count=1 -timeout 20m $pkgs
+          # The hosted legs run -short: the multi-process and thousand-note fixture tests
+          # in cmd/nova-bus, cmd/nova-wake, cmd/nova-merge and internal/bus are gated
+          # behind testing.Short() and skip here, so a Windows leg answers inside the
+          # two-minute budget instead of hitting Go's 10 m default on main (run
+          # 35052889521, panic: test timed out after 10m0s). The self-hosted shards keep
+          # running everything; the nightly certification runs the hosted legs full.
+          # -timeout 20m stays as the ceiling, not the target.
+          go test -short -count=1 -timeout 20m $pkgs
+
+  test-hosted-pr:
+    # THE ONE EXCEPTION to "a pull request never touches GitHub-hosted
+    # compute": a PR that touches a platform-specific path runs THAT leg here,
+    # on the hosted runner that platform belongs to, so the platform's feedback
+    # comes back on the PR and not on main. Two legs, each gated by a path
+    # filter over the PR diff: ubuntu-latest when the sandbox changed
+    # (internal/sandbox/**, any *_linux.go or *_linux_test.go), windows-latest
+    # when the bus changed (cmd/nova-bus/**, internal/bus/**, any *_windows.go).
+    # There is no Windows self-hosted runner, and the sandbox is darwin-only in
+    # the self-hosted matrix, so without this a platform break the self-hosted
+    # runners cannot see would only surface on main. A leg runs ONLY the packages
+    # its filter names, under the two-minute rule; when the diff matches nothing
+    # the test step is skipped, and ci-ok counts a skip as ok. Same head-repo
+    # guard as every other PR job: a fork PR skips the leg rather than running
+    # untrusted code on hosted compute. The concurrency group is the workflow's.
+    name: test-hosted-pr (${{ matrix.leg.name }})
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        leg:
+          - name: linux
+            os: ubuntu-latest
+            packages: ./internal/sandbox
+            filters: |
+              changed:
+                - 'internal/sandbox/**'
+                - '**/*_linux.go'
+                - '**/*_linux_test.go'
+          - name: windows
+            os: windows-latest
+            packages: ./cmd/nova-bus ./internal/bus
+            filters: |
+              changed:
+                - 'cmd/nova-bus/**'
+                - 'internal/bus/**'
+                - '**/*_windows.go'
+    runs-on: ${{ matrix.leg.os }}
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
+
+      - name: cache go build and module cache
+        # A GitHub-hosted runner is a fresh machine, so the cache pays for itself
+        # here exactly as it does in test-hosted.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: filter the PR diff for this platform's paths
+        # No path filter exists elsewhere in this file to reuse, so
+        # dorny/paths-filter is pinned by sha. On a pull_request it reads the
+        # diff via the REST API and reports whether any changed file matches
+        # this leg's patterns.
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: ${{ matrix.leg.filters }}
+
+      - name: test the packages this leg filters
+        if: steps.filter.outputs.changed == 'true'
+        run: go test -count=1 ${{ matrix.leg.packages }}
 
   e2e:
     # THE SEQUENCES A FRIEND RUNS, end to end, one job. The sharded `test` job above runs
@@ -476,8 +558,10 @@ jobs:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
     # in a branch ruleset. It aggregates EXACTLY the jobs of this file and nothing else —
     # the CL tier: what a change is required to pass. On a pull_request that is the
-    # self-hosted matrix (lint, test, lisp); on push to main the hosted full suite joins
-    # it, so ci-ok on main needs the hosted matrix too. `needs` on a matrix job is success
+    # self-hosted matrix (lint, test, e2e, lisp) plus test-hosted-pr on the
+    # platform leg whose paths the PR touches; on push to main the hosted full
+    # suite joins it, so ci-ok on main needs the hosted matrix too. `needs` on a
+    # matrix job is success
     # only when EVERY leg succeeded, so a leg renamed out of existence shows up here as a
     # missing success and not as silence. The certification tier has its own aggregate,
     # certification-ok; a red certification is a blocker for the next release, never for a
@@ -489,7 +573,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, e2e, lisp, test-hosted]
+    needs: [lint, test, e2e, lisp, test-hosted, test-hosted-pr]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -505,11 +589,15 @@ jobs:
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
             "lisp:${{ needs.lisp.result }}" \
-            "e2e:${{ needs.e2e.result }}"
+            "e2e:${{ needs.e2e.result }}" \
+            "test-hosted-pr:${{ needs.test-hosted-pr.result }}"
           do
             job="${pair%:*}"; result="${pair##*:}"
             echo "$result	$job"
-            [ "$result" = "success" ] || bad=$((bad + 1))
+            # test-hosted-pr is skipped on a fork PR (the head-repo guard) and
+            # on a manual run; its test step is skipped when the diff matches no
+            # platform path. A skip is ok — the check is that it is not red.
+            [ "$result" = "success" ] || { [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ]; } || bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
       - name: every CL-tier job succeeded (push to main)

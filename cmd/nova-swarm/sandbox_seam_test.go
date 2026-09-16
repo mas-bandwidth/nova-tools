@@ -39,6 +39,9 @@ func wallOnly(t *testing.T) {
 // same write outside the wall is the control: --no-sandbox on the same task text lands the
 // file, so no line of this test can pass by the write being impossible.
 func TestAJobCannotWriteOutsideItsJobDir(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	wallOnly(t)
 	b := newBench(t)
 	outside := filepath.Join(b.dir, "outside-every-list")
@@ -74,6 +77,9 @@ func TestAJobCannotWriteOutsideItsJobDir(t *testing.T) {
 // file and never got the key cannot work, and a job that got the key and can read the file
 // is the failure #69 is about.
 func TestAJobCannotReadTheKeyFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	wallOnly(t)
 	b := newBench(t)
 	id := b.add("FAKE-CAT " + b.keyFile + "\nFAKE-FINDINGS 1\nFAKE-USAGE 100 50 - - -\n")
@@ -151,6 +157,9 @@ func TestRunRefusesWhenTheWallIsNotThere(t *testing.T) {
 // (DeepSeek's read of #88 at d0c1841, HIGH 1). This is the wall test that says NO: the same
 // task, the same worker, the pool named relative to the caller's own directory.
 func TestARelativePoolStillProvesTheWall(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	wallOnly(t)
 	b := newBench(t)
 	id := b.add("FAKE-FINDINGS 1\nFAKE-USAGE 100 50 - - -\n")
@@ -186,6 +195,9 @@ func mustNotHaveProbeDir(t *testing.T, b *bench) {
 // with no wall and says so ONCE PER JOB, on stderr, before the job starts. It is never a
 // default and no environment variable turns it on.
 func TestNoSandboxSaysSoOncePerJob(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	b.extraEnv = append(b.extraEnv, "NOVA_SWARM_NO_SANDBOX=1", "NOVA_NO_SANDBOX=1")
 	first := b.add("FAKE-FINDINGS 1\nFAKE-USAGE 100 50 - - -\n")
@@ -226,6 +238,9 @@ func TestNoSandboxSaysSoOncePerJob(t *testing.T) {
 // NOT CHANGE IT: the argv is built by the dispatcher from the job it created, and this test
 // plants the directory in the task text and compares.
 func TestTheWorkerArgvIsTheDispatchersAndNotTheTasks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	planted := filepath.Join(b.dir, "a-directory-the-task-named")
 	if err := os.MkdirAll(planted, 0o755); err != nil {

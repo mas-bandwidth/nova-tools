@@ -16,6 +16,9 @@ import (
 // The git here is a script that sleeps, so the assertion is about the budget and not about
 // a network nobody has.
 func TestAGitThatHangsIsKilledAndNamed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: kills a hanging git behind a real budget; runs on the self-hosted legs and nightly")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake git is a shell script")
 	}

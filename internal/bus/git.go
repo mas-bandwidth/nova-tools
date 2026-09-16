@@ -615,6 +615,11 @@ func CurrentBranch(dir string) (string, error) {
 // does not exist -- or, when the path is under four characters, drops the whole rename on
 // the floor and calls a dirty checkout clean. So renames are consumed as the pair they
 // are, and BOTH halves must be permitted for the pair to be allowed.
+// BusStateDir is the directory, at the bus root, that holds this tool's own per-clone
+// state -- defaults and the like -- rather than notes. It is never part of a
+// contribution and the clean guard never refuses over it.
+const BusStateDir = ".nova-bus"
+
 func EnsureClean(dir string, allow []string) error {
 	// --untracked-files=all is load-bearing: without it git COLLAPSES an untracked
 	// directory to one entry, so a new note in a lane that does not exist yet is reported
@@ -635,6 +640,10 @@ func EnsureClean(dir string, allow []string) error {
 			continue
 		}
 		status, path := rec[:2], rec[3:]
+		if path == BusStateDir || strings.HasPrefix(path, BusStateDir+"/") {
+			// The tool's own per-clone state, never a note and never somebody else's work.
+			continue
+		}
 		if strings.ContainsAny(status, "RC") {
 			// The next record is the path it came from, and is not a change of its own.
 			from := ""

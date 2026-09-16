@@ -40,6 +40,9 @@ const testAttest = "test-supervisor-secret"
 // dead with no exit.json is finalized end=unknown into failed/, its published report copied,
 // and never counted ok or clean.
 func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 
 	// A second run while the first is alive is still exit 2 naming the holder.
@@ -310,6 +313,9 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 // between the harness exit and exit.json — the next run on the pool decides every slot with
 // no guess.
 func TestTheLaunchIsATransaction(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	// (1) after reserve: slot orphaned, task pending again only after aborted.json or removal
 	t.Run("after-reserve", func(t *testing.T) {
 		b := newBench(t)
