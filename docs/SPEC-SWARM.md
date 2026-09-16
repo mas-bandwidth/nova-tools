@@ -2344,6 +2344,14 @@ files the first fast failure without launching a descendant. A native run applie
 rule to its launch and appends one usage row per launch, so a retried card's `usage.tsv`
 carries its attempts for the one job.
 
+**The structured signal is a field, not a sentence (issue #163).** A harness adapter records
+the provider's refusal as one line in the harness log —
+`INPUT LIMIT class=<token|bytes|files> value=<n> limit=<n>` — and the supervisor, `finish` and
+rule 17's recovery pass all read that field and name the class from it: no mark, bare-word
+bound, list marker or event-prefix rule is asked to decide it. The prose heuristic above is
+the fallback for a harness with no adapter, and the class is decided from the field before a
+word of it is read.
+
 ## `requeue` — the same task, changed
 
 ```
