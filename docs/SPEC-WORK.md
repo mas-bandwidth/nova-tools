@@ -2278,6 +2278,7 @@ nova-work goal show      (--session <path> | --snapshot <path> --max-bytes <n> -
 nova-work goal update    --session <path> <write flags> --expect <rev> [--scope <scope>] (--progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text>)   (writes on the current goal node of the scope and on no other node)
 nova-work machine        --session <path> <write flags> (--register <id> --name <text> --owner <name> --connect <ref> --role <build|test|profile> ... | --retire <id> | --permit <id>=<kind> | --exclude <id>=<kind> | --limit <id> <key>=<n|n,n,...> | --fact <id> <key>=<value> --declared-by <name>) --reason <text>
 nova-work offer          --session <path> <write flags> --node <id> --offer <offer-id> --to <name> --profile <capability-id>@<config-revision> --attempt <attempt-id> --generation <n> --request-ref <opaque-id> --payload <pointer> --payload-sha256 <hex> --reserve <slots> --until <stamp> [--requested-model <model-id>] [--predecessor-offer <offer-id> --predecessor-attempt <attempt-id>] [--reason <text>]
+nova-work profile        --session <path> <write flags> (--write <name> --model <id> --harness <id> --work-type <label> --pointer <path> --policy <revision> [--evidence <pointer>] [--expiry <stamp>] [--owner <name>] | --edit <name> (--pointer <path> | --policy <revision> | --evidence <pointer> | --expiry <stamp> | --owner <name>)) --reason <text>   (an edit re-pins the digest when it changes --pointer; a manager session selects one by name at start and never swaps it mid-session)
 nova-work acknowledge    --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --stage <received|accepted> --provenance <pointer> --provenance-sha256 <hex> [--by <duration|stamp> --default <release|extend-once|escalate:<name>>] [--observed-model <model-id>] [--bench <name>] [--execution <handle>] [--reason <text>]   (--stage accepted: --by and --default, required, create-if-needed; --stage received: both exit 2)
 nova-work decline        --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --provenance <pointer> --provenance-sha256 <hex> [--reason <text>]
 nova-work execution pause     --session <path> <write flags> (--node <id> | --repo <owner/name> | --all) --reason <text>
@@ -3308,6 +3309,39 @@ status, the timestamps, the tokens and the costs. **ACTIVE is variable operation
 never called configuration**; it references CONFIG's stable identity and revision rather than
 copying a definition into every activity record; and its updates and observations are journaled and
 retained under the event and accounting contracts this document already has.
+
+**A manager's prompt is CONFIG data, tracked as a `prompt profile`, and never as memory.**
+(Paraphrasing Glenn, 2026-09-16: prompt engineering is a major part of getting the right results,
+so the prompt per model is tracked as data, not memory.) SPEC-AHEAD: #500. A **prompt profile** is a CONFIG
+member **keyed by its name, carrying its manager model, harness and work type as identity
+attributes** — for example `sonnet`, `opus`, `sol` and `deepseek-v4-pro`, each
+name a team's own configuration and none of them the tool's, by the rule that names no model in
+nova-work, and **no two profiles hold one model, harness and work-type triple**, so several
+variants of one model (two `sol` profiles, one per harness or per work type) coexist without
+collision — and each profile holds five things: a **pointer to the prompt text**, a file path in the
+repository (the example shape `prompts/<model>.md`) and **never inline**, **pinned by the SHA-256
+digest of the prompt content that path resolved to when the profile was last written**, so a replay
+can prove which bytes the manager was actually given, not only which path; the **policy version** it
+was written against, a pinned revision of the approved policy record of *The duty tier* it
+executes; the **evidence**, a **dated measurement** of that model as a manager — **cost per accepted
+decision, wrong or missed decisions and recovery latency**, the three gates the coordination measure
+already names, each stamped with the date it was measured — **preserved as unknown where none has
+been taken**, never a measurement campaign forced before the profile can be used; an **expiry
+date** after which the profile is stale, **the expiry and refresh intervals themselves CONFIG, set
+per profile**, a refresh itself one edit under the edit grammar below; and an **owner**, a friend
+of `friends`. **A manager session names its profile**, **selecting one by name at start and never
+swapping it mid-session**, and **before it is invoked the prompt content at the pointer is hashed
+and compared with the pinned digest: a mismatch refuses the invocation at exit 1, `SESSION FAIL
+session=<path> profile=<name>: digest mismatch`, rather than running on unknown bytes or silently
+re-pinning**, and **a stale, absent or mismatched profile is printed on the status line as such**
+— `profile-state=stale` with the expired date, `profile-state=absent`, `profile-state=mismatch`,
+or `profile-state=unknown` where the evidence was never measured, never guessed and never silently
+swapped for another model's prompt. **Profiles are edited by the coordinator only**, under the one writer and the one
+journal like every CONFIG change — **the edit grammar is one new versioned record with `:by`,
+naming the profile and stating the fields it changes (pointer and digest, policy version,
+evidence, expiry or owner), never an in-place rewrite** — so the journal answers who last edited a
+prompt and when, as it answers whose word every event is. Replay:
+`prompt-profile-expired-shows-on-the-status-line`.
 
 **The coordinator is a friend in `friends` and is tracked by the same indexes as everyone else** —
 her or his own tasks, executions, model, bench, usage and availability, through the same queries.
@@ -5955,6 +5989,17 @@ being the amendment's additions to *Output grammar*:**
   --generation <n>` is refused `ALLOC FAIL machine=m-a1 slots=1 holder=<name>: capacity` at exit 1
   even though fourteen cores sit idle, because slots are bounded by declared concurrency and cores
   are a separate constraint validated independently.
+
+**The prompt profile replay (#500).**
+
+- **`prompt-profile-expired-shows-on-the-status-line`** — a manager whose profile expired yesterday:
+  `session status` prints `SESSION OK … profile=sonnet profile-state=stale profile-expired=2026-09-15
+  profile-owner=<name> …`, the stale profile printed on the status line as such, never silently
+  re-measured and never swapped for another model's prompt; a manager with no profile prints
+  `profile=sonnet profile-state=absent`; a current one prints `profile=sonnet profile-state=current
+  profile-expires=<stamp>`; a manager session names its profile on that same line; and only the
+  coordinator's `profile` verb writes a profile, every edit a versioned record carrying `:by` and
+  its own revision, so the journal answers who last edited the prompt and when.
 
 ## Preservation and recovery acceptance *(Stella, `docs/SPEC-WORK-VALIDATION.md` at `81c2885`)*
 
