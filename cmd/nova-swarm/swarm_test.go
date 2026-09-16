@@ -344,6 +344,9 @@ func mustContain(t *testing.T, what, body, want string) {
 // A whole pass: one task in, one worker out, and every number on the RUN DONE line the truth
 // about the pool rather than about the output.
 func TestADispatcherRunsAJobEndToEnd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	id := b.add("read this pull request against the rules\nFAKE-FINDINGS 2\nFAKE-USAGE 100 50 - - -\n")
 
@@ -446,6 +449,9 @@ func TestADispatcherRunsAJobEndToEnd(t *testing.T) {
 // test 3's; what decides these counts is the SHAPE that kill leaves -- a headless report
 // carrying the finding line the worker had appended by then.)
 func TestCompletionIsEvidenceNotCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	found1 := b.add("a review that found two things\nFAKE-FINDINGS 2\n")
@@ -516,6 +522,9 @@ func TestCompletionIsEvidenceNotCount(t *testing.T) {
 // Rule 15: a malformed report is QUARANTINED -- never folded, no finding of it counted,
 // whatever its head says -- and `result --id` is the one path to a person.
 func TestResultShapeIsMechanical(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	id := b.add("a report with a fourth state word\nFAKE-FINDINGS 2\nFAKE-MALFORMED\n")
 	exit, stdout, stderr := b.run()
@@ -612,6 +621,9 @@ func TestNoAutoRetryKeepsAKilledAttemptWithoutADescendant(t *testing.T) {
 // The name no-auto-retry includes the dispatcher's true-429 child, not only the
 // deadline child. It must skip the backoff as well as the descendant.
 func TestNoAutoRetryKeepsA429AttemptWithoutADescendant(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	id := b.add("a one-attempt provider that is rate limited\nFAKE-429\nFAKE-USAGE 10 5 - - -\n")
 	exit, stdout, stderr := b.run("--no-auto-retry", "--backoff", "1")
@@ -656,6 +668,9 @@ func mustReadDirNames(t *testing.T, dir string) []string {
 
 // Rule 10: the note file, appended by the tool, counted in the report.
 func TestANoteReachesARunningWorker(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	// 20s, UNDER THIS BENCH'S 30s DEADLINE, and the cap is this fixture's to set. A wait
 	// bounded BY the deadline is not bounded at all: the wait and the reaper come due in the
@@ -723,6 +738,9 @@ func TestANoteReachesARunningWorker(t *testing.T) {
 // names itself in one line the harness log carries, so a person reading the log after a
 // green run still learns that no note arrived.
 func TestAWorkerThatWaitedForANoteThatNeverCameSaysSo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	id := b.add("a worker that waits for a note nobody sends\nFAKE-AWAIT-NOTE 1\nFAKE-FINDINGS 1\n")
 
@@ -754,6 +772,9 @@ func runningJobDir(pool, id string) bool {
 // holds the slot, waits the backoff, and retries the SAME task once; a second 429 fails it
 // with rc=429 in its sidecar and its cost row.
 func TestA429IsRetriedOnceAndThenFailed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	id := b.add("a provider that is rate limited\nFAKE-429\nFAKE-LAUNCHES\nFAKE-USAGE 10 5 - - -\n")
 
@@ -809,6 +830,9 @@ func TestA429IsRetriedOnceAndThenFailed(t *testing.T) {
 // A retry is a second attempt with its own usage row, and `cost` sums each attempt once:
 // two rows of 10 in and 5 out are 20 and 10, never 40 and 20.
 func TestTwoAttemptsSumOnceEach(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	b := newBench(t)
 	b.add("a provider that is rate limited\nFAKE-429\nFAKE-USAGE 10 5 - - -\n")
 
@@ -850,6 +874,9 @@ func grepTree(t *testing.T, dir, needle string) string {
 // where the prompt file goes; the fake harness refuses an invocation a real one would not
 // understand, so the contract the tests run is the contract a first run meets.
 func TestTheHarnessIsToldWhichModelToRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a task that proves the invocation reached the child\n")
@@ -873,6 +900,9 @@ func TestTheHarnessIsToldWhichModelToRun(t *testing.T) {
 // A worker description that never places the model is refused BEFORE any worker starts,
 // naming the field and showing the shape. This is D1 caught at the door.
 func TestAWorkerDescriptionWithoutTheModelIsRefused(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	b.add("a task nothing will run\n")
@@ -929,6 +959,9 @@ func (b *bench) rewriteWorker(edit func(map[string]any)) {
 // prints exactly one of `RUN DONE` or `RUN VIOLATION`. And SPEC-SWARM.md:541: a run that
 // ended with a quarantined slot exits 1.
 func TestABackgroundedChildIsAViolationAndIsNotTriaged(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows has no process groups; background process detection is Unix-only")
 	}
@@ -993,6 +1026,9 @@ func TestABackgroundedChildIsAViolationAndIsNotTriaged(t *testing.T) {
 // The other half of rule 11: a worker that forks and WAITS for its child is not a
 // violation. Nothing survives it, so nothing is quarantined and the run exits 0.
 func TestAWorkerThatWaitsForItsChildIsNotAViolation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a worker that forks and waits\nFAKE-FINDINGS 1\nFAKE-FOREGROUND-CHILD\n")
@@ -1047,6 +1083,9 @@ type swarmSidecar struct {
 // where the job LANDED and not by how the harness exited: a worker that exits 0 and
 // publishes no report is a failed task.
 func TestAFailedDestinationIsCountedFailed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a worker that exits 0 and publishes nothing\nFAKE-NORESULT\n")
@@ -1069,6 +1108,9 @@ func TestAFailedDestinationIsCountedFailed(t *testing.T) {
 // were counted for the RUN line -- so a worker obeying rule 8 with `findings: 0` that
 // writes `- none` ended `result=clean findings=1`. One number, and it is the head's.
 func TestOneReportHasOneFindingCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	b.add("a complete review that found nothing and said so\nFAKE-NONE-BULLET\n")
@@ -1093,6 +1135,9 @@ func TestOneReportHasOneFindingCount(t *testing.T) {
 // could go NEGATIVE. SPEC-SWARM.md:621 -- "`new` is findings not marked `dup:`". Every
 // finding is counted exactly once: marked, owed, folded, or new.
 func TestEveryFindingIsCountedOnce(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	b.add("one worker\nFAKE-FINDINGS 1\nFAKE-DUP\n")
@@ -1118,6 +1163,9 @@ func TestEveryFindingIsCountedOnce(t *testing.T) {
 // that matches an owed item and is not marked `dup:` as `duplicate`". `--owed <file>` is
 // how the owed list reaches it.
 func TestAFindingThatMatchesAnOwedItemIsADuplicate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	b.add("a worker that finds what the pull request already owes\nFAKE-FINDINGS 1\n")
@@ -1147,6 +1195,9 @@ func TestAFindingThatMatchesAnOwedItemIsADuplicate(t *testing.T) {
 // mutations -- claiming the job before settle, deleting the REV comparison, deleting the
 // launch transaction's compare-and-swap -- all stayed green; the first two go red here.
 func TestUsageAndTheCopyAreWrittenBeforeTheMove(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a job whose evidence outlives it\nFAKE-FINDINGS 1\nFAKE-USAGE 100 50 - - -\n")
@@ -1213,6 +1264,9 @@ func TestUsageAndTheCopyAreWrittenBeforeTheMove(t *testing.T) {
 // name a worker description may carry: the file is what the FAKE harness writes, never a
 // source a caller may name.
 func TestTheUsageSourceIsTheDatabaseTheHarnessWrites(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a job whose numbers come from the database\nFAKE-FINDINGS 1\nFAKE-USAGE 100 50 - 20 -\n")
@@ -1257,6 +1311,9 @@ func TestTheUsageSourceIsTheDatabaseTheHarnessWrites(t *testing.T) {
 // harness records every path it opens for writing so the test can prove it rather than
 // trust it.
 func TestNWorkersAreNProcessesAndShareNoPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	var ids []string
@@ -1403,6 +1460,9 @@ const swarmSlotsInTests = 8
 // the reclaimable subtree, BEFORE anything moves, and reclaim -- the one thing this tool
 // deletes -- refuses without both the usage file and the verified report copy.
 func TestUsageOutlivesTheJob(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a job whose evidence outlives it\nFAKE-FINDINGS 1\nFAKE-USAGE 100 50 - - -\n")
@@ -1508,6 +1568,9 @@ func TestUsageOutlivesTheJob(t *testing.T) {
 // marker is the record of WHY there is no foldable report, and a reclaim that removed the
 // job directory without it would leave a pool that cannot say what happened.
 func TestAMarkerIsTheRecordWhereThereIsNoReport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	malformed := b.add("a report with a fourth state word\nFAKE-FINDINGS 1\nFAKE-MALFORMED\n")
@@ -1584,6 +1647,9 @@ func (b *bench) usageRow(id string) map[string]string {
 // the true final sum. What must never happen is the thing the prototype did -- end the job
 // and lose what it had already found.
 func TestBudgetEndsTheJobAndKeepsFindings(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	over := b.add("a worker that publishes a finding and then spends past its budget\nFAKE-PUBLISH-FIRST\nFAKE-FINDINGS 1\nFAKE-USAGE 30000 0 - - -\nFAKE-SLEEP 30\n",
@@ -1632,6 +1698,9 @@ func TestBudgetEndsTheJobAndKeepsFindings(t *testing.T) {
 // deadline. A caller who says the budget is not this tool's business says it ONCE, in a
 // word, and a number is never guessed from it.
 func TestAnUnmeteredJobRunsToItsDeadline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a worker with no token budget at all\nFAKE-FINDINGS 1\nFAKE-USAGE 999999 999999 - - -\n",
@@ -1654,6 +1723,9 @@ func TestAnUnmeteredJobRunsToItsDeadline(t *testing.T) {
 // budget is exit 2 BEFORE any worker starts, naming the task -- a budget nothing can
 // observe is a promise this tool cannot keep -- and beside `unmetered` tasks it runs.
 func TestANumericBudgetWithNoUsageSourceIsRefused(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	metered := b.add("a task carrying a number nothing can watch\nFAKE-FINDINGS 1\n", "--tokens", "5000")
@@ -1691,6 +1763,9 @@ func TestANumericBudgetWithNoUsageSourceIsRefused(t *testing.T) {
 // samples=3` with the findings kept, because a numeric budget the tool has stopped being
 // able to see is a budget the caller believes is enforced and is not.
 func TestAnUnreadableUsageSourceEndsTheJobUnverifiable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("a file mode that refuses its owner is a unix fact")
@@ -1725,6 +1800,9 @@ func TestAnUnreadableUsageSourceEndsTheJobUnverifiable(t *testing.T) {
 // The fake harness has understood FAKE-RC since the day it was written and no test had ever
 // used it: the machinery to catch this was built and never fired.
 func TestAWorkerThatExitsNonZeroIsAFailedJobEverywhere(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a worker whose provider refuses its key\nFAKE-FINDINGS 1\nFAKE-USAGE 40 20 - - -\nFAKE-RC 7\n")
@@ -1767,6 +1845,9 @@ func TestAWorkerThatExitsNonZeroIsAFailedJobEverywhere(t *testing.T) {
 // the other side, so it gets the same test: write a line, run the job, demand BOTH sets of
 // bytes in the order they were written. Red with O_TRUNC in supervise.go.
 func TestSupervisorLogAppendsNeverTruncates(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
 	t.Parallel()
 	b := newBench(t)
 	const said = "the-harness-said-this"

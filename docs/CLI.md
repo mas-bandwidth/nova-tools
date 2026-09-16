@@ -125,6 +125,7 @@ nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--fro
                                                                        coverage, backlinks, wikilinks, frontmatter — it finds, you decide
 nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--fail-max <n>] <gold.tsv>
                                                                        known-answer harness: recall@k and MRR, fails below the floor
+nova-memory boot   --root <dir> --pin <file>                            the session loads exactly the pinned memories, never walks the directory
 ```
 
 ### First run
@@ -183,6 +184,8 @@ MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=note
 **What the flags want.** `--channels` is a retrieval method, `bm25` or `trigram`, never a directory. `--k` is the number of hits, your reading budget; there is no default. `--root` is your corpus, written out every run. A run short two flags prints two sentences and stops once.
 
 **`verify` and `eval` are bounded**, per kind: at most `--fail-max` findings per kind, one `MORE` line per kind that elided anything, then the count line. On a 5,000-entry corpus `verify` used to print 10,000 lines and no total. `eval` lists misses only; a passing row is a number, not a line.
+
+**`boot` loads a pin, not a directory.** The pin file names the few memories a session loads — one slash path per line relative to `--root`, `#` comments and blank lines ignored, order = boot order — and boot reads exactly those files, reporting `BOOT OK files=<n> bytes=<n>`. It never walks the directory: search answers the rest from the index. A boot that cannot name a memory (missing file, empty file, non-canonical path) is a refusal, because a self that loaded less than it thinks is the failure this verb exists to remove.
 
 **Why it exists.** A mind that keeps its memory as markdown answers "do I already know this?" by re-reading everything it is: n new learnings against m existing ones is O(n·m), m grows every day, and the failure is silent. This makes membership a lookup: a BM25 index, optionally with character trigrams, rebuilt in memory from your tree on every run, so the judgment budget per new learning is k receipts, a constant. No database, no cache, nothing to sync; the tree is the store and the index stops existing when the process exits. It never writes your corpus and never replaces the linear read: query for work, traverse for self. `eval` is the point of shipping it: the tool is run-proven on one line and value-unproven in general, so build a gold set from your own record (`cmd/nova-memory/testdata/example-gold.tsv` is the form), run it before and after any change, and measure instead of believing.
 
@@ -445,14 +448,20 @@ There is another that asks who is awake rather than watching who changes.
 friend's last beat, `awake` inside `--window` (default 300s), `asleep` past it,
 `unknown` where no cursor was ever written, one `FRIEND` line each capped by
 `--max` (default 50) and one `AWAKE OK` verdict (docs/SPEC-WORK.md, **Presence**,
-source `bus-cursor`):
+source `bus-cursor`). A `from-<name>/BEAT` file is also read, from its own
+content, and a beat whose stamp is newer than the cursor reads `source=bus-beat`.
+The beat carries a `until=<stamp>` lease written by `wait` on entry, every poll
+tick and exit (`--beat-lease`, default 10m); a beat whose lease is still in the
+future reads `awake` `source=bus-beat` even when its stamp and cursor are both
+past `--window` — a line whose manager process is alive between two `wait` calls:
 
 ```
 $ nova-wake awake --bus ./bus
 FRIEND alice awake age=10 source=bus-cursor
 FRIEND bob asleep age=600 source=bus-cursor
 FRIEND carol unknown age=- source=bus-cursor
-AWAKE OK friends=3 awake=1 asleep=1 unknown=1 window=300
+FRIEND rowan awake age=500 source=bus-beat
+AWAKE OK friends=4 awake=2 asleep=1 unknown=1 window=300
 ```
 
 ### First run
@@ -825,7 +834,10 @@ line that then goes silent is `stale=true` past `--stale` and is takeable again 
 `--anyway`; a take or a close over somebody's *live* take is refused at exit 1 and names
 the holder. Two backends, one format: a directory of card files (`--dir`, which this tool
 appends to and never commits — landing it is yours) and issue comments (`--issue` with
-`--gh-timeout <seconds>`, durable when the command returns).
+`--gh-timeout <seconds>`, durable when the command returns). On the issue backend, the
+comment's actual author (from GitHub's `user.login`) is used for card ownership and
+closing; the `--as` value remains as a display label on the event. The file backend has
+no author, so it uses `--as` as before.
 
 ### First run
 

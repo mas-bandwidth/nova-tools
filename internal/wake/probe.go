@@ -554,9 +554,16 @@ func (l probeLine) render() string {
 	if reconciled == "" {
 		reconciled = "false"
 	}
+	// silent= agrees with last=: a lane that carries no sign at all has no last
+	// stamp to measure silence from, so it is "-" and never "0s", which would
+	// read as "the line just signed" for a name no commit carries (rule 17).
+	silent := DurShort(l.silent)
+	if l.last == "" {
+		silent = "-"
+	}
 	return fmt.Sprintf("WAKE PROBE name=%s state=%s contact=%s last=%s silent=%s commit=%s pinged=%s pinged-id=%s rest=%s reconciled=%s correlation=%s remaining=%s gaps=%s silent-after=%s answer-within=%s head-at=%s",
 		oneline.Field(l.name), oneline.Field(l.state), oneline.Field(l.contact),
-		oneline.Field(dashOr(l.last)), oneline.Field(DurShort(l.silent)), oneline.Field(dashOr(l.commit)),
+		oneline.Field(dashOr(l.last)), oneline.Field(silent), oneline.Field(dashOr(l.commit)),
 		oneline.Field(dashOr(l.pinged)), oneline.Field(dashOr(l.pingedID)), oneline.Field(dashOr(l.rest)),
 		oneline.Field(reconciled), oneline.Field(dashOr(l.correlation)),
 		oneline.Field(dashOr(l.remaining)), oneline.Field(dashOr(l.gaps)),
