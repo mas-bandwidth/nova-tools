@@ -635,6 +635,14 @@ func EnsureClean(dir string, allow []string) error {
 			continue
 		}
 		status, path := rec[:2], rec[3:]
+		// .nova-bus/ is the tool's own per-clone state -- the inbox's defaults file and
+		// nothing else -- and is never a note. inbox tells a caller to write it there, so
+		// send refusing over it broke a fresh clone: inbox then send demanded a hand step
+		// in between. It is skipped here, on every verb, because it is never staged into a
+		// commit and a rebase never touches it.
+		if isNovaBusState(path) {
+			continue
+		}
 		if strings.ContainsAny(status, "RC") {
 			// The next record is the path it came from, and is not a change of its own.
 			from := ""
@@ -661,6 +669,13 @@ func EnsureClean(dir string, allow []string) error {
 		return fmt.Errorf("the bus's checkout holds changes that are not this note: %s", strings.Join(dirty, ", "))
 	}
 	return nil
+}
+
+// isNovaBusState reports whether a git-status path is the tool's own per-clone state
+// directory (or a file inside it). That directory is never a note and never tracked, so
+// every clean guard skips it.
+func isNovaBusState(path string) bool {
+	return path == ".nova-bus" || strings.HasPrefix(path, ".nova-bus/")
 }
 
 // PathDirty reports whether one path holds a change git has not recorded -- modified,

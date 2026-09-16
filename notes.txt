@@ -1,0 +1,9 @@
+CARD-8008 nova-tools #629
+
+Red test: TestSendIgnoresTheNovaBusDefaultsFile (cmd/nova-bus/main_test.go)
+
+Failing output before the fix:
+    main_test.go:533: exit 1, want 0
+        stdout:
+        stderr: SEND FAIL (stdin): the bus's checkout holds changes that are not this note: .nova-bus/defaults
+--- FAIL: TestSendIgnoresTheNovaBusDefaultsFile (3.62s)

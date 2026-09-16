@@ -520,6 +520,19 @@ func TestSendRefusesAWrongBranchOrADirtyCheckout(t *testing.T) {
 		mustCode(t, 1).mustContain(t, "stderr", "stray.txt")
 }
 
+// A fresh clone that wrote its .nova-bus/defaults can still send: .nova-bus/ is the
+// tool's own per-clone state, never a note, so send must not refuse over it. inbox told
+// the caller to put the file there (the refusal names it as the default source), so the
+// two verbs must agree: inbox then send with no hand step in between.
+func TestSendIgnoresTheNovaBusDefaultsFile(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	writeFile(t, checkout, ".nova-bus/defaults", "receipt-max-words=40\n")
+	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
+		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=ada-")
+}
+
 func TestSendRefusesABusThatIsNotARepository(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

@@ -3240,7 +3240,10 @@ make a guess look like a measurement. It is a heuristic and it is wrong sometime
 in both directions — which is why `Kind:` exists, costs one line, and wins.
 When the flag is absent, the threshold is read from a `receipt-max-words=<n>`
 line in `<bus>/.nova-bus/defaults`, then from `NOVA_BUS_RECEIPT_MAX_WORDS`, and
-the run refuses only when neither supplies one.
+the run refuses only when neither supplies one. `.nova-bus/` is this tool's own
+per-clone state — never a note, never tracked, never staged into a commit — and
+every verb's clean guard ignores it, so a caller who follows the refusal's
+remedy and writes that file has not made its checkout dirty to `send`.
 
 `inbox` lists in three groups, newest first within each: the notes that carry
 something, then what has been **heard and not answered**, then the bare
@@ -3302,7 +3305,12 @@ writing this bus's form exists to allow.
 1. **Refuse before writing anything.** The bus must be a git work tree, on the
    branch `--branch` names, and hold no changes but the one this run is about to
    make. The retry rebases, and a rebase over a dirty tree either refuses or
-   sweeps somebody's unrelated work into a note's commit.
+   sweeps somebody's unrelated work into a note's commit. Two things are not
+   "changes": the caller's own BEAT (below), and the whole `.nova-bus/`
+   directory, this tool's per-clone state — `inbox` names
+   `<bus>/.nova-bus/defaults` as a place to put the receipt word count, so a
+   `send` that refused over the file its own remedy named would demand a hand
+   step between the two verbs.
 2. **Fetch, and refuse a branch that is ahead of it with somebody ELSE's work.**
    `git push` publishes the BRANCH, not the commit just made. A checkout carrying
    commits this tool did not make would put all of them on the bus under a
