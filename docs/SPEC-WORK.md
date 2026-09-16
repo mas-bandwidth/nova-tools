@@ -3443,6 +3443,118 @@ holds on a machine — is not a fleet slot and is never counted as one** (Johnny
 `observe` and a probe change no member), `no-machine-name-in-the-tool`, `one-profile-one-unit`,
 `no-credential-in-a-member`, `unknown-owner-is-refused`, `fleet-for-is-a-recommendation-not-a-lease` (the ask writes no lease
 and leaves `who` unchanged), `an-excluded-choice-is-refused-not-empty`.
+
+## Fleet allocation *(Rowan and Stella, on the machine record of *The fleet* and the ACTIVE data of *Friends, CONFIG and ACTIVE*; #500)*
+
+**This amendment is the later revision Stella's dynamic design (stella-42885d237271) was recorded
+for, and it is a draft with no code yet.** Every rule here carries **SPEC-AHEAD: #500** on its
+first line; nothing already numbered is renumbered or rewritten — the validator's rules 1 to 18,
+the efficiency rules 1 to 10 and the duty-tier rules 1 to 6 stand — and each rule's replay is
+appended at the end of the list in *Acceptance replays* below. *The fleet* stays the desired half —
+configuration, never work — and this section adds the ACTIVE half: **who holds a machine's slots
+now**. Allocation is execution data, and execution needs a lease: `query --ask fleet` stays a
+recommendation from declared facts and never a lease, an allocation is what makes it one, and the
+allocation lives in ACTIVE, never in CONFIG. The line shapes the rules name are this amendment's
+additions to *Output grammar* — `ALLOC` and `PROBE` join the first-token list — and are proposals
+under #500 like every rule here.
+
+1. SPEC-AHEAD: #500
+   **A machine is a CONFIG member with declared facts, and equipment never completes.** A machine
+   is the `:kind :machine` member record of the `fleet` section of CONFIG that *The fleet* defines,
+   changed only on a meaningful configuration change and never by a heartbeat, a probe or a load
+   sample: its `:name` is display only; its **ssh host** is the `:connect` `profile:<name>`
+   reference, which **never carries a credential** and whose **auth path is never read** — the tool
+   sees the profile name and resolves nothing, by the one-profile-one-unit and
+   no-credential-in-a-member rules; its **usable cores** are the declared `:limits` (`:cores <n>`,
+   `:concurrent <n>`), **declared by the owner and never derived** from a probe, a load sample or a
+   child ceiling; its **core-pin rule** is a declared limit of its own (`:isolated-cores (2 3)`);
+   its **harness path** and its **root** are declared `:facts` with `:declared-by` and
+   `:declared-at`, so a stale declaration is never read as a current probe. **A machine is equipment
+   and never a work-tree node**: it is no child of O and under no repository work set, so no count,
+   roadmap or required set moves when one is written; it has no `:acceptance`, no derived state, no
+   `:to :done` and no settle, and every `:machine` event writes `:node (:absent)` by the kind's
+   own subject rule; **equipment does not complete, so nothing a machine does is completion
+   evidence**. Replay: `machine-is-config-and-never-a-work-tree-node`.
+
+2. SPEC-AHEAD: #500
+   **An ACTIVE allocation binds machine, slot and generation to a batch, a node and an (offer,
+   attempt).** An allocation is **ACTIVE data per machine** — variable operational data, never
+   called configuration — that references the machine's CONFIG identity and revision rather than
+   copying a definition into every record, exactly as ACTIVE references CONFIG's stable identity
+   and revision above. One allocation binds **machine** (`<machine-id>`), **slot** (one unit of
+   the machine's declared `:concurrent` or `:cores`) and an **allocation generation** (the token
+   and stamp the take drew) to a **batch** (the `--request` id of the envelope), a **node** (the
+   task node the work belongs to) and an **(offer, attempt)** — the assignment pair the offer
+   section pins and the reservation key the offer already writes, so the allocation and the
+   reservation are one fact. **Core affinity is a separate resource constraint**: the core-pin rule
+   is a declared CONFIG `:limits` constraint on which slot may serve which workload, never part of
+   the allocation's identity and never changed by a take. Replay:
+   `allocation-binds-machine-slot-generation`.
+
+3. SPEC-AHEAD: #500
+   **`take` is atomic and idempotent under a stable request identity, and returns all requested
+   capacity or a bounded refusal.** `nova-work take --session <path> <write flags> --machine <id>
+   --node <id> --slots <n> --offer <offer-id> --attempt <attempt-id> --generation <n> --request-ref
+   <opaque-id> --batch <id>` writes one ACTIVE allocation in one envelope under the one writer:
+   all-or-none, one journal record, one `OK` line, one request id — a retry of that id is answered
+   with the original line and applies nothing, by the two-part dedup test, and a changed payload
+   under the id is refused `reused with a different payload`. **It grants every requested slot or
+   none**: any slot it cannot grant — a held slot, a declared `:limits` or `:concurrent` passed,
+   an `:excludes` kind, a stale machine generation — is a bounded refusal, exit 1,
+   `ALLOC FAIL machine=<id> slots=<n|-> holder=<name|->: <reason>`, naming the machine and the
+   holder, **never a partial grant**. **`heartbeat` and `release` validate the allocation
+   generation** exactly as a lease `release` validates its holder: a heartbeat or a release
+   carrying a stale allocation generation is refused, exit 1,
+   `ALLOC FAIL machine=<id> generation=<n>: stale token`, naming the current holder and age;
+   `release` is the holder's act, or a `--handed` act from that holder, and never a third name
+   reaching in. **`list --machine <id>` shows the holders and the ages**: one `ALLOC ROW` per live
+   slot with its holder, node, batch, (offer, attempt) and `age=<duration>`. Replay:
+   `allocation-take-is-atomic-and-idempotent`.
+
+4. SPEC-AHEAD: #500
+   **Expiry marks an allocation suspect and blocks renewal or start with the stale token; reuse
+   requires confirmed termination or machine-side fencing, never expiry alone.** An allocation's
+   expiry is derived, as a lease's is, and it **marks the allocation suspect** — retained, counted,
+   never cleared by the expiry that prompted the question, by the W4 rule that an expiry is not
+   proof the remote work stopped. A renewal and a fresh `take` using the stale token are **refused
+   while the allocation is suspect**: `ALLOC FAIL machine=<id>: suspect since=<stamp>`, so the
+   stale token renews nothing and starts nothing. **Capacity returns only on confirmed process
+   termination — a verified stop observation, a `not-started` bound to the exact launch authority's
+   durable rejection, or machine-side fencing — and never on expiry alone**, exactly as the
+   reconcile section admits stop evidence and as silence, an expired lease and an elapsed estimate
+   are not stop evidence; until then the refusal is `ALLOC FAIL machine=<id>: not fenced`. Replay:
+   `expiry-marks-suspect-reuse-needs-fencing`.
+
+5. SPEC-AHEAD: #500
+   **Probes produce dated observed ACTIVE evidence and never silently overwrite declared CONFIG
+   facts; no credentials and no guessed capacity.** A probe is an observation and writes **ACTIVE
+   evidence with its date, its source and its last-contact stamp** —
+   `PROBE OK machine=<id> slot=<n|-> fact=<observed|absent> at=<stamp> source=<pointer>` — and it
+   **never writes CONFIG**: a heartbeat, a probe or a load sample changes no machine member, no
+   `:limits`, no `:facts`, no `:connect` and no `:roles`, and *declared support, verified runtime
+   and current free capacity stay three fields*; a stale declaration is never read as a current
+   probe. **A probe carries no credential**: the profile is never resolved, and no key, token,
+   password or secret is in a record, a manifest or a clip. **It never guesses capacity**: what a
+   probe observes is observed — `fact=absent` for what it could not establish — and declared
+   capacity is the owner's declared number, never a probe's reading offered as one, by *capacity is
+   declared and never guessed from a catalog or an old heartbeat*. Replay:
+   `probe-records-observed-active-and-touches-no-config`.
+
+6. SPEC-AHEAD: #500
+   **One authoritative allocator per physical machine, shared by every session and controller;
+   aliases share identity; nested quotas conserve capacity.** Allocations are admitted by **one
+   authoritative allocator per physical machine**, under the one writer and the fencing rules like
+   every other mutation, so **every session and every controller on the bench shares that allocator
+   and reads one allocation set**; a second allocator for one machine is refused like a second live
+   writer, exit 1, `ALLOC FAIL machine=<id>: allocator held`. **Machine aliases share identity**:
+   one physical host reached through two aliases is one record and one unit, by the fleet section's
+   own rule, so an allocation taken through one alias reads as the same allocation under the other
+   and is never double-counted. **Nested quotas conserve capacity**: an allocation nested under
+   another allocation's scope draws from the same declared capacity and is never an additional
+   grant — nested delegated executions keep their parent lineage without counting one slot twice,
+   by the nested-execution rule of *Friends, CONFIG and ACTIVE*, and a nested allocation lists once
+   per slot. Replay: `one-allocator-per-machine-aliases-share-nested-conserve`.
+
 ## Assignment and execution control *(Stella's draft, nova-tools #294 at `4fddfcb2`, folded; Root and Terra's corrections taken as she took them; the spellings are this file's)*
 
 **The six verbs the missing-verb register named, and two beside them, have their contracts here
@@ -4797,7 +4909,7 @@ chain, high fan-out, and on one multi-command session.
 
 Every line's first token is the verb's (`SESSION`, `EXPORT`, `REPLAY`, `HANDOFF`, `CLIP`,
 `OPERATION`, `SAVEPOINT`, `UNDO`, `REDO`, `FRIEND`, `CONFIG`, `MODEL`, `OBSERVE`, `GOAL`, `MACHINE`,
-`OFFER`, `ACKNOWLEDGE`, `DECLINE`, `EXECUTION`, `WORK`, `VERIFY`, `QUERY`, `RENDER`, `LOAD`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
+`OFFER`, `ACKNOWLEDGE`, `DECLINE`, `EXECUTION`, `ALLOC`, `PROBE`, `WORK`, `VERIFY`, `QUERY`, `RENDER`, `LOAD`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
 `ROADMAP`, `PRIORITY`, `RESPONSIBLE`, `ACCEPT`, `SOURCE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`,
 `ATTESTED`, `STATE`, `CORRECT`, `EVENT`), the second is `OK` or `FAIL`, `RACED` for a push the base predicate
 refused (SPEC-MERGE rule 21's shape, exit 1, nothing pushed), or one of the informational
@@ -5638,6 +5750,54 @@ the wait table, quiet time, the coordination measure and the single-writer kerne
 - **`single-writer-kernel-total-order`** — two concurrent clients' commands to the one kernel land
   in one total order; the journal shows the sequence numbers in that order; a mutation outside the
   command loop is a defect (the validator rule).
+
+**The replays of the fleet allocation rules (#500), for the machine as CONFIG, the ACTIVE
+allocation, the atomic take, the suspect expiry, the dated probe and the one allocator per machine.
+Each replay is a command line and the exact printed line, the line shapes of *Fleet allocation*
+being the amendment's additions to *Output grammar*:**
+
+- **`machine-is-config-and-never-a-work-tree-node`** — `nova-work machine --session <path>
+  --register m-a1 --name studio --owner glenn --connect profile:studio --role build --role test
+  --permit go-test --limit cores=16 --fact os=macos --declared-by glenn --reason "studio online"`
+  prints `MACHINE OK id=<event-id> request=<id> machine=m-a1 rev=<n> pushed=<rev|-> changed=<n>
+  emitted=<bytes>`; `|O|`, `rows=`, every roadmap and every count is unchanged, the event's `:node`
+  is `(:absent)`, the record is a `:kind :machine` member of the `fleet` section of CONFIG, and no
+  verb can settle it, `:to :done` it or make it completion evidence.
+- **`allocation-binds-machine-slot-generation`** — `nova-work take --session <path> --machine m-a1
+  --node schema/cpp/refuse-newer --slots 1 --offer <offer-id> --attempt <attempt-id> --generation
+  <n> --request-ref <opaque-id> --batch <request-id>` prints `ALLOC OK id=<event-id> request=<id>
+  machine=m-a1 slot=<n> node=schema/cpp/refuse-newer batch=<request-id> offer=<offer-id>
+  attempt=<attempt-id> generation=<n> rev=<n> pushed=<rev|-> changed=<n> emitted=<bytes>`; the
+  allocation is ACTIVE data referencing the machine's CONFIG identity and revision, the (offer,
+  attempt) is the offer section's reservation key, and the core-pin rule stays a declared `:limits`
+  constraint and is not in the allocation.
+- **`allocation-take-is-atomic-and-idempotent`** — `nova-work take --session <path> --machine m-a1
+  --node schema/cpp/refuse-newer --slots 2 --offer <offer-id> --attempt <attempt-id> --generation
+  <n> --request-ref <opaque-id> --batch <request-id>` prints `ALLOC OK … machine=m-a1 slots=2 …`;
+  the retry under the same request id prints the original `ALLOC OK` line and applies nothing, a
+  changed payload under the id is refused `reused with a different payload`, a take for more than
+  the declared `:concurrent` admits is refused whole `ALLOC FAIL machine=m-a1 slots=2
+  holder=<name>: capacity` at exit 1 with **no partial grant**, a `heartbeat` with a stale
+  allocation generation prints `ALLOC FAIL machine=m-a1 generation=<n>: stale token`, and
+  `list --machine m-a1` prints one `ALLOC ROW machine=m-a1 slot=<n> holder=<name> node=<id>
+  batch=<id> offer=<offer-id> attempt=<attempt-id> age=<duration>` per live slot.
+- **`expiry-marks-suspect-reuse-needs-fencing`** — an allocation past its deadline reads suspect: a
+  renewal and a `take` with the stale token are refused `ALLOC FAIL machine=m-a1: suspect
+  since=<stamp>` at exit 1, the uncertain ACTIVE capacity retained and never cleared by the expiry;
+  only a verified stop observation, a bound `not-started` or machine-side fencing releases the slot,
+  and until one of those, the refusal is `ALLOC FAIL machine=m-a1: not fenced` at exit 1.
+- **`probe-records-observed-active-and-touches-no-config`** — `nova-work probe --session <path>
+  --machine m-a1 --slot 1 --source <pointer>` prints `PROBE OK machine=m-a1 slot=1
+  fact=observed at=<stamp> source=<pointer>`, and an unestablished fact prints `PROBE OK
+  machine=m-a1 slot=1 fact=absent at=<stamp> source=<pointer>`; `query --ask fleet` prints the same
+  declared `:facts` with their `declared-by` and `declared-at` before and after, no `:limits`, no
+  `:facts`, no `:connect` and no `:roles` change, the profile is never resolved, and no credential
+  is in any record or clip.
+- **`one-allocator-per-machine-aliases-share-nested-conserve`** — a second allocator for one
+  machine is refused `ALLOC FAIL machine=m-a1: allocator held` at exit 1; an allocation taken
+  through one alias of a host reads as the same allocation under the other alias and counts once;
+  and an allocation nested under another allocation's scope draws from the same declared capacity,
+  never an additional slot, `ALLOC ROW` listing each live slot once.
 
 ## Preservation and recovery acceptance *(Stella, `docs/SPEC-WORK-VALIDATION.md` at `81c2885`)*
 
