@@ -200,9 +200,20 @@ func packet(args []string, out, errOut io.Writer) int {
 	// that is already a full sha names one commit and cannot go stale, so it needs no fetch.
 	baseSHA := base
 	if !merge.IsSHA(base) {
-		baseSHA, err = fetchBase(ctx, repo, *pr, base, st.Repo)
-		if err != nil {
-			return refuse(errOut, err.Error())
+		if *pr > 0 {
+			baseSHA, err = fetchBase(ctx, repo, *pr, base, st.Repo)
+			if err != nil {
+				return refuse(errOut, err.Error())
+			}
+		} else {
+			if _, err := gitOut(ctx, repo, "fetch", "origin", base); err != nil {
+				return refuse(errOut, fmt.Sprintf("could not fetch the base %q: %v", base, err))
+			}
+			fetched, err := gitOut(ctx, repo, "rev-parse", "refs/remotes/origin/"+base+"^{commit}")
+			if err != nil {
+				return refuse(errOut, fmt.Sprintf("the lane does not hold the fetched base %q: %v", base, err))
+			}
+			baseSHA = strings.TrimSpace(fetched)
 		}
 	}
 	rangeText := ""

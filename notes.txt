@@ -1,0 +1,28 @@
+CARD-8075 / issue #418 — nova-review packet: fetch the base before the range
+
+Pre-fix state (origin/main had at the time the card was written) builds the
+range's left side from the lane clone's idle local base ref. origin/main
+advanced past that ref, so a range like main...<head> dragged in every file
+that moved on main since the lane last fetched. The dogfood packet for a
+12-line PR carried 11 unrelated files.
+
+Red test (TestPacketFetchesBaseBeforeRange), run against the pre-fix code:
+
+  --- FAIL: TestPacketFetchesBaseBeforeRange (0.64s)
+      main_test.go:699: a one-file PR with a stale base must yield files=1; got "PACKET OK entry=feature id=e0f2bad00e17 head=1b83bded874f base=main range=main...1b83bded874f files=3 hunks=3 rules=0 prior=0 open=0 bytes=979 cut=0 reused=false out=/home/ubuntu/nova-bench/swarm-root/146/tmp/card-8075/opencode/TestPacketFetchesBaseBeforeRange425440907/001/lane/packet.md\n"
+  FAIL
+  FAIL	github.com/mas-bandwidth/nova-tools/cmd/nova-review	0.661s
+
+Fix: fetch the recorded base (git fetch origin <base>) before computing the
+range, so the left side is the remote's current tip rather than the idle local
+one; a base already given as a full sha names one commit and is left alone.
+Print base=<name>@<sha8> on the PACKET OK line when the base was fetched to a
+sha, so a stale base is visible.
+
+Green:
+
+  ok  	github.com/mas-bandwidth/nova-tools/cmd/nova-review
+
+Files: cmd/nova-review/main.go, cmd/nova-review/main_test.go,
+docs/SPEC-REVIEW.md (CLI.md's receipt line already used base=… and needed no
+byte change).
