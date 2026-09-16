@@ -300,12 +300,12 @@ binary's own grammar and exit table, and governs where it says more than this.
 
 ## nova-check
 
-Six record-layer checks in one binary, each a wall: a record passes or it
+Seven record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
 what makes it say NO, and what it deliberately does not check.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, plus `version` and `help`. `nova-check version` is the Conventions'
+`corpus`, `edges`, plus `version` and `help`. `nova-check version` is the Conventions'
 build line, exit 0; before it existed the same words were
 `nova-check: unknown subcommand "version"`, exit 2, and a green from this tool
 named no build.
@@ -1353,6 +1353,55 @@ has gone missing.
 **Three: an indented example is illustration** — which is the point — so a
 four-column table indented after a blank line is not checked. Indented rows
 *abutting* the table above them are named instead, per the list above.
+
+### edges — the tools' own dogfood record, filed
+
+```
+nova-check edges --queue <dir> --repo <owner>/<name> [--dry-run] [--timeout <s>]
+```
+
+**Why it exists.** Pit stop 3, class J (issue #828). A dogfood edge — a refusal
+that named no remedy, a flag that was not there, output past its own bound — was
+filed by a *person*, in prose, hours after the stumble and from memory. That
+asks the person to notice it, to remember it, and to be willing to stop what they
+were doing; three chances to lose it, and most were lost. The tool that hit the
+edge has none of those problems: it is there, it knows its own verb, and it has
+the line verbatim.
+
+So every verb of every tool in this estate, **at a refusal, on a timeout, and
+when its own output goes over its bound**, appends one row to
+`<queue>/EDGES.tsv` — `tool`, `verb`, `line`, `expected`, `state` —
+**deduplicated by (tool, verb, line)**. The row is the *edge*, not the
+occurrence: a refusal a bench hits four hundred times a day is one row, because
+four hundred rows would be four hundred issues about one bug. Recording is best
+effort and never changes what the verb does or prints — the refusal is the
+answer, and the row is a note made beside it.
+
+This verb is the other half: it reads the ledger and **opens one issue per
+distinct open row**, in the dogfood shape SPEC-PULSE names (the tool and verb,
+the line verbatim, what was expected, the smallest fix), then marks each filed
+row `filed`, so a second run over the same ledger opens nothing.
+
+**Asserts.** Every open row becomes exactly one issue; every issue that was
+opened leaves its row marked `filed`; a row that could not be filed stays `open`.
+
+**Says NO when** the ledger cannot be read (exit 2, naming the path and the
+remedy), or when at least one issue could not be opened (exit 1, one `EDGES NOTE`
+line per failure and the row left open for the next run).
+
+**Output.** One `EDGE FILED` line per issue and one count line:
+`EDGES queue=<dir> rows=<n> open=<n> filed=<n> failed=<n> dry-run=<bool>` —
+counts, never a list, so a bench with four hundred edges does not need four
+hundred lines to learn it has them.
+
+**`--dry-run` opens nothing and marks nothing** and prints the same counts, so
+the filing can be read before it is trusted.
+
+**What it deliberately does not do.** It does not judge an edge, rank it, or
+write the fix: the smallest-fix line is the caller's own `expected` stated as a
+change, and a guess at the patch would be this tool writing the card instead of
+reading the edge. It does not close issues, and it does not read a repository —
+only the ledger the tools wrote.
 
 ---
 

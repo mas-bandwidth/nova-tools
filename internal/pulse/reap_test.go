@@ -80,6 +80,11 @@ func reapFixture(t *testing.T, now time.Time) (root, queue string, procs *fakePr
 		}
 	}
 	age(t, writeCard(t, launched, "card-100.md", "RESULT: CARD-100 orphan\n"), 4*time.Hour, now)
+	// Class I (#828): the reaper reads the harness log before it disposes of a card. This
+	// one was killed at the deadline, which is the `orphan` cause: re-cut once, with a
+	// shorter step list, and never the same text again.
+	writeCard(t, filepath.Join(queue, "harness"), "card-100.log", "supervise: deadline exceeded, signalling\nrc=143\n")
+	writeCard(t, queue, "state.tsv", "next_card\t200\n")
 	age(t, writeCard(t, launched, "card-101.md", "RESULT: CARD-101 running\n"), 4*time.Hour, now)
 	age(t, writeCard(t, launched, "card-102.md", "RESULT: CARD-102 just launched\n"), time.Minute, now)
 	if err := os.MkdirAll(filepath.Join(root, "5", "jobs", "card-101"), 0o755); err != nil {
@@ -128,21 +133,26 @@ func TestReapKillsOverdueProcessesAndClearsDeadLocks(t *testing.T) {
 }
 
 // a launched card whose job dir is gone and whose launch is older than the deadline is
-// requeued once, under an attempt file, and failed on the second reap. A card whose job is
-// on the bench, and one launched a minute ago, are left alone.
+// re-cut ONCE, under a new number and carrying its cause, and failed with a triage packet
+// when the same cause comes back (class I, #828). A card whose job is on the bench, and one
+// launched a minute ago, are left alone.
 func TestReapRequeuesOnceThenFails(t *testing.T) {
 	now := time.Date(2026, 9, 16, 18, 0, 0, 0, time.UTC)
 	root, queue, procs := reapFixture(t, now)
 	tempGlob := filepath.Join(t.TempDir(), "*swarmtest*")
 
-	if _, out, errs := runReap(t, root, queue, procs, false, now, tempGlob); !strings.Contains(out, "requeued=1") {
-		t.Fatalf("first reap = %q (stderr %q), want requeued=1", out, errs)
+	_, out, errs := runReap(t, root, queue, procs, false, now, tempGlob)
+	if !strings.Contains(out, "requeued=1") || !strings.Contains(out, "recut=1") {
+		t.Fatalf("first reap = %q (stderr %q), want requeued=1 recut=1", out, errs)
 	}
-	if _, err := os.Stat(filepath.Join(queue, "pending", "card-100.md")); err != nil {
-		t.Errorf("the orphan was not requeued into pending: %v", err)
+	if _, err := os.Stat(filepath.Join(queue, "pending", "card-200.md")); err != nil {
+		t.Errorf("the orphan was not re-cut into pending under a new number: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(queue, "attempts", "card-100.md")); err != nil {
-		t.Errorf("the requeue wrote no attempt file: %v", err)
+	if _, err := os.Stat(filepath.Join(queue, "attempts", "card-100.tsv")); err != nil {
+		t.Errorf("the re-cut wrote no attempt row: %v", err)
+	}
+	if rows := ReadRecuts(queue); len(rows) != 1 || rows[0].Kind != CauseOrphan {
+		t.Errorf("RECUT.tsv = %+v, want one orphan row so the old text can never launch again", rows)
 	}
 	for _, name := range []string{"card-101.md", "card-102.md"} {
 		if _, err := os.Stat(filepath.Join(queue, "launched", name)); err != nil {
@@ -150,17 +160,28 @@ func TestReapRequeuesOnceThenFails(t *testing.T) {
 		}
 	}
 
-	// the card goes out again and is orphaned again: the second reap fails it, never a third try.
-	age(t, writeCard(t, filepath.Join(queue, "launched"), "card-100.md", "RESULT: CARD-100 orphan\n"), 4*time.Hour, now)
-	if err := os.Remove(filepath.Join(queue, "pending", "card-100.md")); err != nil {
+	// the re-cut goes out and is orphaned again: the second reap fails it and cuts a packet,
+	// never a third try.
+	recut := filepath.Join(queue, "pending", "card-200.md")
+	body, err := os.ReadFile(recut)
+	if err != nil {
 		t.Fatal(err)
 	}
-	_, out, _ := runReap(t, root, queue, procs, false, now, tempGlob)
-	if !strings.Contains(out, "failed=1") {
-		t.Errorf("second reap = %q, want failed=1", out)
+	if err := os.Remove(recut); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(queue, "failed", "card-100.md")); err != nil {
+	age(t, writeCard(t, filepath.Join(queue, "launched"), "card-200.md", string(body)), 4*time.Hour, now)
+	writeCard(t, filepath.Join(queue, "harness"), "card-200.log", "supervise: deadline exceeded, signalling\nrc=143\n")
+
+	_, out, _ = runReap(t, root, queue, procs, false, now, tempGlob)
+	if !strings.Contains(out, "failed=1") || !strings.Contains(out, "triaged=1") {
+		t.Errorf("second reap = %q, want failed=1 triaged=1", out)
+	}
+	if _, err := os.Stat(filepath.Join(queue, "failed", "card-200.md")); err != nil {
 		t.Errorf("the twice-orphaned card is not in failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(queue, "triage", "triage-orphan-card-200.md")); err != nil {
+		t.Errorf("the second failure cut no triage packet: %v", err)
 	}
 }
 

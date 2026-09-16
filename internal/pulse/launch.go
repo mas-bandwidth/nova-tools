@@ -25,9 +25,12 @@ type LaunchInput struct {
 	Deadline string // the whole pulse's deadline, whole seconds
 	Queue    bool   // true keeps the overflow in queue.tsv instead of refusing
 	QueueDir string // the queue directory STOP lives in; empty falls back to Root (admission.go)
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Now      func() time.Time
+	// UnstampedOK admits a card carrying no cut stamp, for the migration week only, and
+	// says so on its own line. It never admits a card whose stamp does not match its body.
+	UnstampedOK bool
+	Stdout      io.Writer
+	Stderr      io.Writer
+	Now         func() time.Time
 }
 
 // sliceTimeout is rule 8's quiet window: a slot whose native.log was written within this
@@ -46,6 +49,16 @@ func Launch(in LaunchInput) int {
 	if len(cards) == 0 {
 		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s holds no card; a pulse of no cards is a typo\n", oneline.Field(in.Cards))
 		return 2
+	}
+	// The card's own gates (classes P and I): a card nobody cut, a cut card somebody edited,
+	// and a card text already re-cut under a new number are each refused here, before any
+	// slot is counted. An admission refusal is not a failed run (rule 9).
+	if admitted, refused := gateCards(cards, ReadRecuts(queueDirOf(in)), in.UnstampedOK, in.Stderr); refused > 0 {
+		if len(admitted) == 0 {
+			fmt.Fprintf(in.Stdout, "PULSE ADMIT admitted=0 refused=%d (every card was refused by its own gate; cut them again with nova-pulse cut --kind ...)\n", refused)
+			return 0
+		}
+		cards = admitted
 	}
 	// STOP admission (SPEC-PULSE class C): while the bench is red, only the cards whose
 	// line 1 names the red launch. No STOP is no filtering and no line -- the launch path

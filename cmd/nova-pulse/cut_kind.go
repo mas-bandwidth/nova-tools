@@ -10,6 +10,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
@@ -38,6 +39,7 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	title := f.fs.String("title", "", "")
 	bodyFile := f.fs.String("body-file", "", "")
 	prior := f.fs.String("prior", "", "")
+	priorCard := f.fs.String("prior-card", "", "")
 	names := f.fs.String("names", "", "")
 	specLines := f.fs.String("spec-lines", "", "")
 	out := f.fs.String("out", "", "")
@@ -47,7 +49,8 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	}
 	return pulse.CutKind(pulse.CutKindInput{
 		Kind: *kind, Repo: *repo, PR: *pr, Head: *head, Issue: *issue, Title: *title,
-		BodyFile: *bodyFile, Prior: *prior, Names: *names, SpecLines: *specLines,
-		Out: *out, Queue: *queue, Stdout: stdout, Stderr: stderr,
+		BodyFile: *bodyFile, Prior: *prior, PriorCard: *priorCard, Names: *names, SpecLines: *specLines,
+		Out: *out, Queue: *queue, Version: buildinfo.Version(version),
+		Stdout: stdout, Stderr: stderr,
 	})
 }
