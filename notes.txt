@@ -1,0 +1,63 @@
+card 8072 — nova-tools #457 (one batch, one slot; the lock dies with its holder)
+
+red first (replaying the bug: takeSlots does NOT check the on-disk BATCH lock):
+
+  $ $GOROOT/bin/go test -count=1 -v -run TestBatchCard8072TwoHeldSlotsBothRefused ./internal/swarm/
+  === RUN   TestBatchCard8072TwoHeldSlotsBothRefused
+      batch_reliability_test.go:219: a batch that met two held slots exits 1, got 0:
+          BATCH B1 n=4 done=4 abstain=0 in=0 out=0 usd=0.0000 idle=0 stalled=0
+          a slot=49: all green log=0
+          b slot=50: all green log=0
+          c slot=51: all green log=0
+          d slot=52: all green log=0
+
+  --- FAIL: TestBatchCard8072TwoHeldSlotsBothRefused (0.33s)
+  FAIL
+  FAIL    github.com/mas-bandwidth/nova-tools/internal/swarm    0.333s
+  FAIL
+
+  The line that mattered was internal/swarm/batch.go:983 -- `if ok && Alive(heldPid, "")`
+  removed -- so the new batch silently overwrote both held locks and ran every one of
+  B44's cards (a,b,c,d) into the slots B42 already owned. Cards 305 and 307 (the issue's
+  a/c) shared slots 49 and 51 with cards B42 had been running; native.log carried both
+  harnesses; the idle watch read the wrong harness.
+
+  The same patch lights up the two existing issue 457 tests:
+    TestBatchRefusesLiveSlot        FAIL -- "got 0" (a batch that should have said "1 abstain")
+    TestBatchTakesOverStaleSlotLock FAIL -- "the takeover is said once" missing
+
+green after the smallest change that re-enables the lock check:
+
+  $ $GOROOT/bin/go test -count=1 -v -run TestBatchCard8072TwoHeldSlotsBothRefused ./internal/swarm/
+  === RUN   TestBatchCard8072TwoHeldSlotsBothRefused
+  --- PASS: TestBatchCard8072TwoHeldSlotsBothRefused (0.01s)
+  PASS
+  ok      github.com/mas-bandwidth/nova-tools/internal/swarm    0.010s
+
+  Then, with no other change, the existing #457 tests went green too:
+    TestBatchRefusesLiveSlot         PASS
+    TestBatchTakesOverStaleSlotLock  PASS
+
+full go test -count=1 ./internal/swarm/ -short (the touched package, run green):
+
+  ok   github.com/mas-bandwidth/nova-tools/internal/swarm
+
+the smallest change that turned three red tests green:
+  internal/swarm/batch.go  takeSlots -- read the on-disk BATCH lock (issue #457)
+                                under live-pid liveness; refuse the card whose
+                                named slot carries a live lock; take over a dead
+                                lock with one BATCH NOTE; release only the
+                                batch's own locks at slot end.
+
+what is, and is not, in this card:
+  * added: TestBatchCard8072TwoHeldSlotsBothRefused, the issue scenario (B42
+    held slots 49 and 51, B44 issued explicit slots 49-52); before this card
+    the only red tests for #457 used slots 1 and 2. The same two-line scratch
+    in the existing takeSlots flips this test red, so it pins the fix.
+  * unchanged: docs/SPEC-SWARM.md -- sections 740-741, 755-767, 907-909, 1215,
+    1222 already carry the lines the binary prints (ADMIT REFUSED slot=<n>
+    held-by=<id> pid=<n>  and  BATCH NOTE slot=<n> stale-lock id=<id> taken),
+    landed here by 4f5310b (#577).
+  * not changed by this card: cmd/nova-swarm/main.go, internal/swarm/* except
+    batch.go (read), cmd/nova-swarm/* test_data, docs/CLI.md, docs/PROPOSAL-*,
+    docs/TESTS.md.
