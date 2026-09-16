@@ -281,3 +281,53 @@ func TestPublishPrintsPRURL(t *testing.T) {
 		t.Errorf("gh was not asked for a draft PR (argv %q)", string(raw))
 	}
 }
+
+// TestPublishMainAdvanceManyFilesIsNotATopicEdit is issue #692's own shape: the topic's one
+// admitted edit is a modification of a tracked file, and main gains several unrelated files
+// after the fork (a docs file and two source files, as the report saw). Touched admission
+// must read the topic's diff from its merge base with the base, not tip to tip, so none of
+// main's files count against --touched and the publish proceeds.
+func TestPublishMainAdvanceManyFilesIsNotATopicEdit(t *testing.T) {
+	windowsIsNotABench(t)
+	job, bare, _ := makeGitRepo(t)
+	runGit(t, job, "checkout", "-b", "topic")
+	if err := os.WriteFile(filepath.Join(job, "base.txt"), []byte("base\ntopic edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, job, "add", ".")
+	runGit(t, job, "commit", "-m", "the topic's one admitted edit")
+	// main advances past the fork with files the topic never touches.
+	runGit(t, job, "checkout", "main")
+	for _, name := range []string{"docs/SPEC.md", "internal/pulse/cut.go", "cmd/nova-pulse/main_test.go"} {
+		full := filepath.Join(job, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, job, "add", ".")
+	runGit(t, job, "commit", "-m", "main advances without the topic")
+	runGit(t, job, "push", "origin", "main")
+	advancedMain := strings.TrimSpace(runGit(t, job, "rev-parse", "origin/main"))
+	runGit(t, job, "checkout", "topic")
+	stubGh(t, "https://example.com/pr/9")
+	body := filepath.Join(t.TempDir(), "body.md")
+	if err := os.WriteFile(body, []byte("body\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := publishRun(t, "--job", job, "--branch", "topic", "--base", "main",
+		"--title", "a title", "--body-file", body, "--touched", "base.txt")
+	if exit != 0 {
+		t.Fatalf("main-only files are not topic edits, so publish proceeds; got exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "PUBLISH OK") {
+		t.Fatalf("stdout wants one PUBLISH OK line:\n%s", stdout)
+	}
+	// the push moved only the topic refspec; main stayed where main's own commit put it.
+	remoteMain := strings.TrimSpace(runGit(t, "", "--git-dir", bare, "rev-parse", "--verify", "refs/heads/main"))
+	if remoteMain != advancedMain {
+		t.Errorf("main moved from %s to %s; the push is by refspec and must not move it", advancedMain, remoteMain)
+	}
+}

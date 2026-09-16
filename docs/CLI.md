@@ -891,6 +891,7 @@ nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup       
 nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
+nova-swarm publish  --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]   # push one topic clone by refspec and open a draft PR; --touched admits only the topic's own diff from the base's merge base
 ```
 
 ### native and batch

@@ -551,6 +551,14 @@ nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-
 nova-swarm help
 ```
 
+`publish` pushes one topic clone by explicit refspec and opens a draft pull request. Before
+anything moves it refuses a clone on `main` or on `--base`, a clone with nothing committed
+ahead of `origin/<base>`, and, when `--touched` names a list, any path in the topic's diff
+that the list does not name. That diff is read from the topic's **merge base** with
+`origin/<base>` to `HEAD`, so a file `origin/<base>` gained after the fork — a change made
+only on main — is not counted as a topic edit; an unadmitted path the topic itself changed
+still refuses before the push.
+
 `batch --root` and `native --slot`/`--root` are made **absolute and
 symlink-resolved** at admission, and that one spelling is what reaches the
 runner, `NOVA_SWARM_ROOT`, the wall's argv and every later compare. Absolute
