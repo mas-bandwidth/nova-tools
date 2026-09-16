@@ -180,7 +180,7 @@ jobs:
           # measured at over eleven minutes in run 35018437149 for a tier whose
           # budget is two.
           SPACE_SHARDS=8
-          STUDIO_SHARDS=4
+          STUDIO_SHARDS=8 # eight studio runners since 05:0xZ 2026-09-16; four shards of double size hit the 6-minute job timeout on a loaded Studio (main runs 35055138586, 35057357169: test (2/4 studio) and (4/4 studio) cancelled at 6 min, twice each)
           darwin_only=("./cmd/nova-sandbox" "./internal/sandbox")
 
           is_darwin_only() {
