@@ -1,0 +1,20 @@
+# CARD-8063 nova-tools #494: nova-tokens help missing swarm-root sum form
+
+## Red (before fix)
+TestHelpListsSwarmRootForm -- failing line verbatim:
+    help_test.go:13: output does not contain "--swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>":
+
+Full failing output (go test -count=1 ./cmd/nova-tokens/ -run TestHelpListsSwarmRootForm):
+--- FAIL: TestHelpListsSwarmRootForm (0.00s)
+    help_test.go:13: output does not contain "--swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>":
+        nova-tokens: token spend, folded per day ...
+        ...
+          nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+          nova-tokens check   --out <dir> [--max <n>]
+        ...
+FAIL
+FAIL	github.com/mas-bandwidth/nova-tools/cmd/nova-tokens	0.003s
+
+## Fix
+Added one banner line under the `nova-tokens sum` usage in cmd/nova-tokens/main.go:
+                      --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
