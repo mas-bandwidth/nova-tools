@@ -1367,6 +1367,14 @@ check never seen failing is not a check).
 1. Thirty concurrent writers (`add`, `read`, `gate`, in any mix) on one lane:
    every write lands in the final state, and a reader polling the file in a
    tight loop parses it at every read, never 0 bytes, never a partial file.
+   A sustained replace refusal exhausts the writer's bounded retry and surfaces
+   a single honest rename error (`Access is denied`, `ERROR_SHARING_VIOLATION`,
+   or `os.ErrNotExist` on the temp): the loop ran the bound, returned the error
+   once, and did not spin or smooth it over with success; the old parseable
+   `state.json` is on disk byte-identical; `state.json.tmp` is gone; the
+   reader's own bounded retry runs on the same window for the read side, and a
+   hook (`replaceRefusal` in `replace_*.go`, a `var` rather than a `func`) makes
+   the exhaust deterministic on every platform without a Windows-only build tag.
 2. A holder killed with SIGKILL mid-write leaves the old state entire and
    the next writer takes the lock at once, with no age and no break; a second
    holder against a live one waits the bounded, jittered time and exits 2
@@ -1604,11 +1612,20 @@ verb, and tests that pin all three by executing them.
    list with `base` and `merge` required, reads with `head` required, the
    fold of the record files into both lists (rule 22), the write under
    the lock through `state.json.tmp` (a fixed name, rule 1) and rename, both
-   states parsed before the rename; `Init` writes the empty versioned lane
-   and refuses an existing one. Tests: an unknown field refuses; a string
-   where a number belongs refuses; a gate without `base` refuses; a version
-   this binary does not know refuses by number; a round trip preserves order;
-   thirty concurrent writers all land and the file parses at every instant
+   states parsed before the rename; the writer's bounded retry waits a
+   `replaceWriteWindow` (2 seconds, growing poll 1ms→20ms) for the rename that
+   a reader's open refuses, and returns the rename error once past it; the
+   reader's bounded retry waits a `replaceWindow` (200ms, fixed 2ms poll) for
+   the open that a replace in flight refuses, and returns the error once past
+   it; `replaceRefusal` is a `var` so a deterministic exhaust test on any
+   platform can stand in for the windows `Access is denied` without a build
+   tag; `Init` writes the empty versioned lane and refuses an existing one.
+   Tests: an unknown field refuses; a string where a number belongs refuses; a
+   gate without `base` refuses; a version this binary does not know refuses by
+   number; a round trip preserves order; thirty concurrent writers all land
+   and the file parses at every instant; a sustained rename refusal exhausts
+   the writer's bounded retry, the rename error surfaces, the old parseable
+   `state.json` is byte-identical, and `state.json.tmp` is gone
    (demanded tests 1 and 20).
 2. **`internal/merge/lock.go`** — the lane lock as `flock` on a lock file
    in the lane directory (LockFileEx on Windows), held for one
