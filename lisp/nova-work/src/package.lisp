@@ -69,6 +69,16 @@
    #:state-canonical-form
    #:reconstruct-state
    #:apply-event
+   ;; execution lease and working set view
+   #:wnode-holder
+   #:wnode-lease-id
+   #:wnode-deadline
+   #:wnode-default-action
+   #:wnode-last-heartbeat
+   #:wnode-heartbeat-evidence
+   #:is-working-p
+   #:state-working-count
+   #:working-ids
    ;; instrumentation
    #:*visits* #:*parses* #:*replays*
    #:with-instrumentation
@@ -108,7 +118,35 @@
    #:submit
    #:ask-size
    #:open-issue-count
-   #:open-leaf-count))
+   #:open-leaf-count
+   ;; ownership record and session lifecycle
+   #:ownership-record
+   #:make-ownership-record
+   #:owner-owner
+   #:owner-generation
+   #:owner-token
+   #:owner-stamp
+   #:owner-until
+   #:owner-successor
+   #:evaluate-ownership-claim
+   #:parse-ownership-record
+   #:format-ownership-record
+   #:session
+   #:make-session
+   #:session-owner
+   #:session-generation
+   #:session-token
+   #:session-until
+   #:session-state
+   #:session-kernel
+   #:session-start
+   #:session-status
+   #:session-submit
+   #:session-check-admission
+   #:session-reconfirm
+   #:parse-rfc3339
+   #:format-rfc3339
+   #:parse-duration))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

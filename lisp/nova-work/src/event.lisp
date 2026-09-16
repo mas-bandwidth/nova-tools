@@ -23,8 +23,11 @@
   '((:transition :to :reason :blocked-by :evidence)   ; SPEC-WORK.md:823
     (:reopen     :reason)                             ; SPEC-WORK.md:887
     (:settle     :disposition :reason :already-closed) ; SPEC-WORK.md:889-892
-    (:revive     :reason))                            ; SPEC-WORK.md:892
-  "The ordered field list per kind, for the four kinds slice 1 supports. Any
+    (:revive     :reason)                             ; SPEC-WORK.md:892
+    (:lease      :id :deadline :default)              ; SPEC-WORK.md:1354-1358
+    (:heartbeat  :lease :evidence)                    ; SPEC-WORK.md:1359-1362
+    (:release    :lease :handed :reason))             ; SPEC-WORK.md:1379-1382
+  "The ordered field list per kind, for the kinds supported in this slice. Any
 other kind is refused rather than serialized on a guessed order.")
 
 (defun kind-fields (kind)

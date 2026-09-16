@@ -55,9 +55,16 @@ below the state's revision is refused rather than silently reissued."
     (:state-to-doing :verb :node :by :reason :evidence
      :request :stamp :clock :generation-owner)
     (:event-reopen :verb :node :by :reason
+     :request :stamp :clock :generation-owner)
+    (:take :verb :node :by :deadline :default :id :lease-id
+     :request :stamp :clock :generation-owner)
+    (:heartbeat :verb :node :by :evidence
+     :request :stamp :clock :generation-owner)
+    (:release :verb :node :by :handed :reason
      :request :stamp :clock :generation-owner)))
 
-(defparameter *kind-owned-fields* '(:to :blocked-by :evidence :disposition :already-closed)
+(defparameter *kind-owned-fields*
+  '(:to :blocked-by :evidence :disposition :already-closed :deadline :default :handed)
   "Fields that belong to some event kind of SPEC-WORK.md:823-892. One of these
 on a verb that does not own it is refused as forbidden rather than as unknown,
 because it names a real field in the wrong place -- a caller-given :blocked-by
@@ -68,12 +75,12 @@ on a :to :done is the case, and it must never be quietly overwritten with
   (let ((allowed (rest (assoc verb *request-keys*))))
     (loop for key in request by #'cddr
           do (unless (member key allowed)
-               (error 'unsupported-input
-                      :what (format nil "~A: ~A"
-                                    (if (member key *kind-owned-fields*)
-                                        "the transition forbids field"
-                                        "unknown field")
-                                    (string-downcase (symbol-name key))))))))
+                (error 'unsupported-input
+                       :what (format nil "~A: ~A"
+                                     (if (member key *kind-owned-fields*)
+                                         "the transition forbids field"
+                                         "unknown field")
+                                     (string-downcase (symbol-name key))))))))
 
 ;;; The transition table, for the supported subset only (SPEC-WORK.md:994-1005).
 
@@ -88,7 +95,10 @@ reason or evidence; done/deferred leave only via reopen, never state.")
 (defun %word (verb)
   (ecase verb
     ((:state-to-done :state-to-doing) "STATE")
-    (:event-reopen "EVENT")))
+    (:event-reopen "EVENT")
+    (:take "LEASE")
+    (:heartbeat "HEARTBEAT")
+    (:release "RELEASE")))
 
 (defun %require (request key)
   (let ((value (getf request key)))
@@ -107,7 +117,12 @@ reason or evidence; done/deferred leave only via reopen, never state.")
         (clock (%require request :clock))
         (owner (%require request :generation-owner)))
     (make-work-event
-     :kind (ecase verb ((:state-to-done :state-to-doing) :transition) (:event-reopen :reopen))
+     :kind (ecase verb
+             ((:state-to-done :state-to-doing) :transition)
+             (:event-reopen :reopen)
+             (:take :lease)
+             (:heartbeat :heartbeat)
+             (:release :release))
      :node node :by by
      :fields (ecase verb
                ((:state-to-done :state-to-doing)
@@ -116,7 +131,25 @@ reason or evidence; done/deferred leave only via reopen, never state.")
                       :blocked-by +absent+
                       :evidence (getf request :evidence +absent+)))
                (:event-reopen
-                (list :reason (getf request :reason +absent+))))
+                (list :reason (getf request :reason +absent+)))
+               (:take
+                (let ((lid (or (getf request :id)
+                               (getf request :lease-id)
+                               (format nil "l-~A" (subseq (sha256-hex (format nil "~A-~A" rid stamp)) 0 12)))))
+                  (list :id lid
+                        :deadline (%require request :deadline)
+                        :default (getf request :default :release))))
+               (:heartbeat
+                (let* ((n (%node-quiet (kernel-state kernel) node))
+                       (lid (and n (wnode-lease-id n))))
+                  (list :lease (or lid +absent+)
+                        :evidence (%require request :evidence))))
+               (:release
+                (let* ((n (%node-quiet (kernel-state kernel) node))
+                       (lid (and n (wnode-lease-id n))))
+                  (list :lease (or lid +absent+)
+                        :handed (getf request :handed +absent+)
+                        :reason (getf request :reason +absent+)))))
      :stamp stamp :clock clock :request rid :generation-owner owner
      :rev (kernel-next-rev kernel)
      :session-written-p nil)))
@@ -127,11 +160,42 @@ reason or evidence; done/deferred leave only via reopen, never state.")
          (node (%node-quiet state id)))
     (unless node
       (return-from %validate (values 2 (format nil "no such node ~A" id))))
-    (unless (eq :task (wnode-type node))
+    (unless (or (member verb '(:take :heartbeat :release))
+                (eq :task (wnode-type node)))
       (error 'unsupported-input
              :what (format nil "unsupported: ~A is a ~A; slice 1 containers change branch with their members, not through direct task-state requests"
                            id (string-downcase (symbol-name (wnode-type node))))))
     (ecase verb
+      (:take
+       (unless (eq :o (wnode-branch node))
+         (return-from %validate (values 18 (format nil "~A is in C" id))))
+       (let ((deadline (getf (work-event-fields event) :deadline)))
+         (when (or (null deadline) (absentp deadline))
+           (return-from %validate (values 10 "take requires deadline"))))
+       (when (wnode-holder node)
+         (let ((cur-dl (wnode-deadline node))
+               (cur-holder (wnode-holder node))
+               (stamp (work-event-stamp event)))
+           (when (or (null cur-dl) (not (string< cur-dl stamp)))
+             (return-from %validate
+               (values :held (format nil "node=~A holder=~A deadline=~A: held"
+                                     id cur-holder cur-dl)))))))
+      (:heartbeat
+       (unless (eq :o (wnode-branch node))
+         (return-from %validate (values 18 (format nil "~A is in C" id))))
+       (unless (wnode-holder node)
+         (return-from %validate (values :not-held (format nil "node=~A: not held" id))))
+       (unless (string= (work-event-by event) (wnode-holder node))
+         (return-from %validate
+           (values :not-holder (format nil "node=~A holder=~A: not held by ~A"
+                                       id (wnode-holder node) (work-event-by event))))))
+      (:release
+       (unless (wnode-holder node)
+         (return-from %validate (values :not-held (format nil "node=~A: not held" id))))
+       (unless (string= (work-event-by event) (wnode-holder node))
+         (return-from %validate
+           (values :not-holder (format nil "node=~A holder=~A deadline=~A: held"
+                                       id (wnode-holder node) (wnode-deadline node))))))
       (:state-to-doing
        (unless (and (eq :o (wnode-branch node))
                     (member (wnode-state node) *doing-edges*))
@@ -223,12 +287,38 @@ beside a reopen. Outside the payload digest (SPEC-WORK.md:894)."
   "Build and validate the branch cascade on a private candidate. Each decision
 reads a direct required-member counter, then walks at most one ancestor edge."
   (let ((candidate (copy-state state))
-        (events (list requester session))
+        (events (list requester))
         (cascade '())
         (child-id (work-event-node requester))
-        (next-rev (1+ (work-event-rev session))))
+        (next-rev (1+ (work-event-rev requester))))
     (apply-event candidate requester)
+    ;; SPEC-WORK.md:1674-1680 settle-releases-the-lease:
+    ;; If the settled item holds an active lease, the settle envelope carries
+    ;; a :release for that live lease, written by the settling author.
+    (when (and (eq verb :state-to-done)
+               (wnode-holder (%node-quiet state child-id)))
+      (let ((rel-event (make-work-event
+                        :kind :release
+                        :node child-id
+                        :by (work-event-by requester)
+                        :fields (list :lease (or (wnode-lease-id (%node-quiet state child-id)) +absent+)
+                                      :handed +absent+
+                                      :reason (format nil "settle: ended holder ~A"
+                                                      (wnode-holder (%node-quiet state child-id))))
+                        :stamp (work-event-stamp requester)
+                        :clock (work-event-clock requester)
+                        :request (work-event-request requester)
+                        :generation-owner (work-event-generation-owner requester)
+                        :rev next-rev
+                        :session-written-p t)))
+        (push rel-event events)
+        (apply-event candidate rel-event)
+        (incf next-rev)))
+    (setf (work-event-rev session) next-rev)
+    (push session events)
     (apply-event candidate session)
+    (incf next-rev)
+    (setf events (nreverse events))
     (loop
       (let* ((child (%node-quiet candidate child-id))
              (parent-id (and child (wnode-parent child)))
@@ -250,12 +340,35 @@ reads a direct required-member counter, then walks at most one ancestor edge."
           (setf child-id parent-id))))
     (nconc events (nreverse cascade))))
 
-(defun %ok-line (word requester session)
+(defun %ok-line (word requester last-event &key candidate)
   "Derived from the envelope's own events, so the line exists before anything is
 applied and the journal can be appended first."
-  (format nil "~A OK id=~A request=~A node=~A rev=~D pushed=-"
-          word (event-id requester) (work-event-request requester)
-          (work-event-node requester) (work-event-rev session)))
+  (case (work-event-kind requester)
+    (:lease
+     (let* ((fields (work-event-fields requester))
+            (holder (work-event-by requester))
+            (deadline (getf fields :deadline))
+            (def-act (getf fields :default :release))
+            (live (if candidate (state-working-count candidate) 1)))
+       (format nil "~A OK id=~A request=~A node=~A holder=~A deadline=~A default=~A live=~D rev=~D pushed=-"
+               word (event-id requester) (work-event-request requester)
+               (work-event-node requester) holder deadline
+               (if (and (listp def-act) (eq (first def-act) :escalate))
+                   (format nil "escalate:~A" (second def-act))
+                   (string-downcase (symbol-name def-act)))
+               live (work-event-rev last-event))))
+    (:heartbeat
+     (format nil "HEARTBEAT OK id=~A request=~A node=~A rev=~D pushed=-"
+             (event-id requester) (work-event-request requester)
+             (work-event-node requester) (work-event-rev last-event)))
+    (:release
+     (format nil "RELEASE OK id=~A request=~A node=~A rev=~D pushed=-"
+             (event-id requester) (work-event-request requester)
+             (work-event-node requester) (work-event-rev last-event)))
+    (t
+     (format nil "~A OK id=~A request=~A node=~A rev=~D pushed=-"
+             word (event-id requester) (work-event-request requester)
+             (work-event-node requester) (work-event-rev last-event)))))
 
 (defun submit (kernel request)
   "Answer (values OK-P LINE EXIT-CODE ENVELOPE). Nothing is applied unless the
@@ -271,7 +384,7 @@ whole envelope is applied."
 
 (defun %submit (kernel request)
   (let ((verb (getf request :verb)))
-    (unless (member verb '(:state-to-done :state-to-doing :event-reopen))
+    (unless (member verb '(:state-to-done :state-to-doing :event-reopen :take :heartbeat :release))
       (error 'unsupported-input
              :what (format nil "unsupported: verb ~A is not in slice 1"
                            (if verb (string-downcase (princ-to-string verb)) "-"))))
@@ -302,12 +415,19 @@ whole envelope is applied."
       (multiple-value-bind (rule reason) (%validate (kernel-state kernel) verb requester)
         (when rule
           (return-from %submit
-            (values nil (format nil "~A FAIL node=~A: rule ~D: ~A"
-                                word (work-event-node requester) rule reason)
+            (values nil
+                    (cond
+                      ((member rule '(:held :not-held :not-holder))
+                       (format nil "~A FAIL ~A"
+                               (if (eq verb :release) "LEASE" word)
+                               reason))
+                      (t
+                       (format nil "~A FAIL node=~A: rule ~D: ~A"
+                               word (work-event-node requester) rule reason)))
                     1 nil))))
-      (let* ((session (unless (eq verb :state-to-doing)
+      (let* ((session (unless (member verb '(:state-to-doing :take :heartbeat :release))
                         (%session-event kernel verb requester)))
-             ;; Doing stays inside O: one event, no branch change or cascade.
+             ;; Doing and lease events stay inside O: one event, no branch change or cascade.
              (events (if session
                          (%cascade-events (kernel-state kernel) verb requester session)
                          (list requester)))
@@ -328,15 +448,15 @@ whole envelope is applied."
         ;; two leaves the record written and nothing applied, which is the order
         ;; the two-part retry of :315 rests on; the reverse order would let a
         ;; stop apply an envelope the journal never heard of.
-        (let ((line (%ok-line word requester last-event)))
+        (let* ((candidate (apply-envelope (kernel-state kernel) envelope))
+               (line (%ok-line word requester last-event :candidate candidate)))
           (journal-record (kernel-journal kernel) rid digest line
                           (work-event-rev last-event))
           (when *before-apply-hook* (funcall *before-apply-hook* envelope))
           ;; All-or-none: the candidate is built whole, then installed.
-          (let ((candidate (apply-envelope (kernel-state kernel) envelope)))
-            (setf (kernel-state kernel) candidate)
-            (setf (kernel-next-rev kernel) (1+ (work-event-rev last-event)))
-            (values t line 0 envelope)))))))
+          (setf (kernel-state kernel) candidate)
+          (setf (kernel-next-rev kernel) (1+ (work-event-rev last-event)))
+          (values t line 0 envelope))))))
 
 ;;; The counters, read.
 
