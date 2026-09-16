@@ -320,9 +320,7 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 	// may go there. It is built with the real git, before the fake goes on PATH.
 	bare := filepath.Join(dir, "remote.git")
 	gitRun(t, realGit, dir, "init", "--bare", "-q", bare)
-	gitRun(t, realGit, bare, "config", "receive.autogc", "false")
-	gitRun(t, realGit, bare, "config", "gc.auto", "0")
-	gitRun(t, realGit, bare, "config", "maintenance.auto", "false")
+	disableAutoMaintenance(t, realGit, bare)
 	gitRun(t, realGit, bus, "init", "-q")
 	gitRun(t, realGit, bus, "add", "-A")
 	gitRun(t, realGit, bus, "commit", "-q", "-m", "the lane")
@@ -378,9 +376,7 @@ func TestConcurrentWritersDoNotMutateTheBareRemote(t *testing.T) {
 	dir := t.TempDir()
 	bare := filepath.Join(dir, "remote.git")
 	gitRun(t, realGit, dir, "init", "--bare", "-q", bare)
-	gitRun(t, realGit, bare, "config", "receive.autogc", "false")
-	gitRun(t, realGit, bare, "config", "gc.auto", "0")
-	gitRun(t, realGit, bare, "config", "maintenance.auto", "false")
+	disableAutoMaintenance(t, realGit, bare)
 
 	const writers = 8
 	buses := make([]string, writers)
@@ -452,6 +448,38 @@ func gitRun(t *testing.T, git, dir string, args ...string) {
 	t.Helper()
 	if err := gitRunErr(git, dir, args...); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// gitConfigValue reads one key of a repository's config the way git sees it, empty when the
+// key is absent. It is how the boundary fixture asserts its own repair rather than trusting
+// the -c flags on a push, which never reach receive-pack on the receiving side.
+func gitConfigValue(t *testing.T, git, dir, key string) string {
+	t.Helper()
+	cmd := exec.Command(git, "-C", dir, "config", "--get", key)
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out))
+}
+
+// disableAutoMaintenance turns off every background housekeeping git can start in a bare
+// repository, writing it to the BARE repository's own config rather than as -c flags on a
+// push -- the flags never reach receive-pack, which is the process that runs them. The four
+// keys are the whole of it: receive.autogc stops the post-push gc, gc.auto=0 stops packing
+// loose objects, maintenance.auto stops scheduled maintenance, and gc.autoDetach=false is
+// the one that stops a git new enough to fork the gc child BEFORE it decides there is work,
+// so nothing is left running in the bare directory after the push has returned (the
+// intermittent mutation #205 saw in CI).
+func disableAutoMaintenance(t *testing.T, git, repo string) {
+	t.Helper()
+	for _, kv := range [][2]string{
+		{"receive.autogc", "false"},
+		{"gc.auto", "0"},
+		{"gc.autoDetach", "false"},
+		{"maintenance.auto", "false"},
+	} {
+		gitRun(t, git, repo, "config", kv[0], kv[1])
 	}
 }
 
@@ -555,6 +583,35 @@ func TestDiffTreesReportsDifferences(t *testing.T) {
 	want := "added added, modified mod (was 11111111..now 22222222), removed del"
 	if diff != want {
 		t.Errorf("diffTrees = %q; want %q", diff, want)
+	}
+}
+
+// The detached auto-gc half of rule 16's repair. receive.autogc=false and gc.auto=0 stop
+// git asking to pack, but a git new enough to detach the auto-maintenance child BEFORE it
+// decides whether there is any work leaves a process alive in the bare repository after the
+// push has returned; that is the intermittent "the remote changed" mutation #205 saw in CI.
+// Only gc.autoDetach=false makes that process run in the foreground where the push waits for
+// it, so nothing outlives the test and moves the digest the boundary test compares. The -c
+// flags on the local push never reach receive-pack, so the BARE repository's own config must
+// carry every one of these; the shared config internal/bus's TestMain writes says as much.
+func TestBareRemoteDisablesDetachedAutoGc(t *testing.T) {
+	realGit, _ := exec.LookPath("git")
+	if realGit == "" || runtime.GOOS == "windows" {
+		t.Skip("the fixture wants a real git to build the bare remote")
+	}
+	dir := t.TempDir()
+	bare := filepath.Join(dir, "remote.git")
+	gitRun(t, realGit, dir, "init", "--bare", "-q", bare)
+	disableAutoMaintenance(t, realGit, bare)
+	for _, kv := range [][2]string{
+		{"receive.autogc", "false"},
+		{"gc.auto", "0"},
+		{"gc.autoDetach", "false"},
+		{"maintenance.auto", "false"},
+	} {
+		if got := gitConfigValue(t, realGit, bare, kv[0]); got != kv[1] {
+			t.Errorf("the bare remote's %s is %q, not %q; a detached auto-maintenance child outlives the push and mutates the remote (rule 16)", kv[0], got, kv[1])
+		}
 	}
 }
 
