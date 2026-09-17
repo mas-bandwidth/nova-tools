@@ -454,6 +454,7 @@ func runSealCLI(args []string) {
 		UseStdin:        *stdinFlag,
 		Stdin:           os.Stdin,
 		StdinIsTerminal: stdinIsTerminal,
+		Progress:        os.Stderr,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS SEAL FAIL %s\n", oneline.Err(err))

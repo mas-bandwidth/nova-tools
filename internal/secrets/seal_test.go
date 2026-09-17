@@ -248,6 +248,42 @@ func TestSealFullPathOpensPRAndMerges(t *testing.T) {
 	}
 }
 
+// TestSealSaysWhatItIsDoing: a person at a terminal must be able to tell waiting from
+// hung (Glenn 2026-09-17: the verb polled for approval in silence and read as a hang).
+// Every step that can take time has a progress line; none of them carries the value;
+// and after the merge the store goes back to the branch it was on before pulling.
+func TestSealSaysWhatItIsDoing(t *testing.T) {
+	skipPOSIXFakesOnWindows(t)
+	f := newSealFixture(t, "TARGET: old\n")
+	opts := f.options(t, "TARGET", "quietsecretvalue\n", false)
+	var progress strings.Builder
+	opts.Progress = &progress
+	if _, err := RunSeal(opts); err != nil {
+		t.Fatalf("RunSeal: %v", err)
+	}
+	got := progress.String()
+	for _, want := range []string{"reading rowan.yaml", "encrypting", "committing on branch seal/rowan-TARGET-",
+		"pushing", "opening the pull request", "pull request #42 is open; waiting", "approved; merging #42",
+		"returning the store to its branch", "checking the seat decrypts"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("progress missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "quietsecretvalue") {
+		t.Errorf("value leaked into progress:\n%s", got)
+	}
+	for _, l := range strings.Split(strings.TrimSpace(got), "\n") {
+		if !strings.HasPrefix(l, "seal: ") {
+			t.Errorf("progress line without the seal: prefix: %q", l)
+		}
+	}
+	git := strings.ReplaceAll(readMaybe(t, f.gitArgs), "\n", " ")
+	back, pull := strings.Index(git, "checkout - "), strings.LastIndex(git, "pull")
+	if back < 0 || pull < 0 || back > pull {
+		t.Errorf("after the merge git must checkout - and then pull; got: %s", git)
+	}
+}
+
 // TestSealEncryptTakesValueOnStdin asserts the core seal promise on every
 // platform: the plaintext reaches the encrypt child on stdin and never in its
 // argv. The child is a pure-Go fake supplied through the exec seam, so no
