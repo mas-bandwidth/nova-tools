@@ -162,6 +162,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdProfiles(rest, stdout, stderr, now)
 	case "session":
 		return cmdSession(rest, stdout, stderr, now)
+	case "fold-pool":
+		return cmdFoldPool(rest, stdout, stderr, now)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
