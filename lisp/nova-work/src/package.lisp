@@ -890,6 +890,13 @@
     #:savepoint-id
     #:savepoint-schema
     #:savepoint-local-revision
+    #:savepoint-journal-id
+    #:savepoint-replay-cut
+    #:savepoint-boundary
+    #:savepoint-manifest
+    #:savepoint-manifest-sha
+    #:savepoint-image
+    #:savepoint-local-replies
     #:savepoint-age
     #:checkpoint
     #:make-checkpoint
@@ -1283,6 +1290,8 @@
     #:savepoint-store-verified
     #:savepoint-store-published
     #:savepoint-store-attempts
+    #:savepoint-image-events
+    #:savepoint-retained-replies
     #:savepoint-write
     #:savepoint-list
     ;; replays-8650 (nova-tools #362)

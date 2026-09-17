@@ -87,6 +87,19 @@
       (check-equal 800 (getf report :shared-revision) "the shared revision is readable")
       (check-equal '("acme/work/f1/t1") (getf report :unshared) "the unshared work is readable")
       (check-equal 1 (getf report :failed-backups) "the failed backups are readable"))
+    ;; the same fields are what `savepoint list` exposes: the age, the local and
+    ;; the shared revisions side by side, the unshared work and the failed
+    ;; backup attempts.
+    (let ((listed (savepoint-list (make-savepoint-store :verified sp)
+                                  :shared-revision 800
+                                  :unshared '("acme/work/f1/t1")
+                                  :failed-backups 1)))
+      (ok (search "age=3600" listed) "savepoint list shows the age: ~A" listed)
+      (ok (search "local-revision=812" listed) "savepoint list shows the local revision")
+      (ok (search "shared-revision=800" listed)
+          "savepoint list shows the shared revision beside it")
+      (ok (search "unshared" listed) "savepoint list shows the unshared work")
+      (ok (search "failed-backups=1" listed) "savepoint list shows the failed backups"))
     ;; a savepoint is never printed where a checkpoint was asked for.
     (handler-case
         (progn (checkpoint-line sp)

@@ -123,21 +123,83 @@
 ;;; ------------------------------------------------------------------
 
 (deftest "savepoint-cut-never-splits-an-envelope" "docs/SPEC-WORK.md:5989"
-    "expected=two-events-once-in-the-image;retry-byte-identical;cut-inside-an-envelope-refused;no-image-published"
-  (let* ((records (list (list :request "r1" :reply '("OK r1") :events '(1 2))))
+    "expected=two-events-once-in-the-image;retry-byte-identical;cut-inside-an-envelope-refused;no-image-published;manifest-names-schema-journal-revision-cut-boundary-content"
+  (let* ((rec0 (list :seq 1 :request "r0" :reply '("OK r0") :payload-sha256 "p0" :events '(1)))
+         (rec1 (list :seq 2 :request "r1" :reply '("OK r1") :payload-sha256 "p1" :events '(2 3)))
+         (records (list rec0 rec1))
+         (journal (make-journal-chain
+                   :id "journal-abc"
+                   :segments (list (make-journal-segment
+                                    :path "journal.1"
+                                    :header (list :copied-boundary
+                                                  (list :seq 1
+                                                        :sha256 (journal-record-hash
+                                                                 (make-journal-record :seq 1 :events '(1)))))
+                                    :records '()))))
          (store (make-savepoint-store)))
-    ;; a savepoint after a two-event request: both events once in the image.
-    (multiple-value-bind (s line) (savepoint-write store "sp-1" 2 2 records)
+    ;; a savepoint after the two-event request: both events once in the image.
+    (multiple-value-bind (s line) (savepoint-write store "sp-1" 2 3 records :journal journal)
       (check-equal nil line "a cut at a record boundary publishes")
-      (let* ((image (first (savepoint-store-published s)))
-             (events (getf image :events)))
-        (check-equal '(1 2) events "both events are represented once")
-        (check-equal 2 (length events) "no event is duplicated")
+      (let* ((sp (savepoint-store-verified s))
+             (events (getf (savepoint-image-events 3 records) :events))
+             (replies (savepoint-retained-replies records)))
+        (check-equal '(1 2 3) events "both events are represented once")
+        (check-equal 3 (length events) "no event is duplicated")
+        ;; the retained disposition of the two-event request answers its retry
+        ;; byte-identically, and a disposition before the cut is retained too.
         (check-string= "OK r1"
-                       (first (cdr (assoc "r1" (getf image :replies) :test #'equal)))
-                       "a retry is answered the byte-identical original line")))
+                       (first (getf (find "r1" replies :key (lambda (d) (getf d :request))
+                                          :test #'equal)
+                                    :reply))
+                       "a retry is answered the byte-identical original line")
+        (check-equal "r0" (getf (first replies) :request)
+                     "a disposition whose events lie before the cut is retained")
+        (check-equal "p0" (getf (first replies) :payload-sha256)
+                     "the retained disposition carries its payload digest")
+        (check-equal 1 (getf (first replies) :sequence)
+                     "the retained disposition carries its record sequence")
+        (check-string= (journal-record-hash (make-journal-record :seq 1 :events '(1)))
+                       (getf (first replies) :record-sha256)
+                       "the retained disposition carries its record hash")
+        ;; the manifest names the schema, the journal, the local revision, the
+        ;; replay cut, the boundary and the two content references, in order,
+        ;; and holds no digest of itself.
+        (check-string= "work-savepoint-v1" (savepoint-schema sp) "the schema is named")
+        (check-string= "journal-abc" (savepoint-journal-id sp) "the journal id is named")
+        (check-equal 2 (savepoint-local-revision sp) "the image's local revision is named")
+        (check-equal (list :sequence 2
+                           :sha256 (journal-record-hash (make-journal-record :seq 2 :events '(2 3))))
+                     (savepoint-replay-cut sp)
+                     "the replay cut is a sequence and a record hash")
+        (check-equal (list :sequence 1
+                           :sha256 (journal-record-hash (make-journal-record :seq 1 :events '(1))))
+                     (savepoint-boundary sp)
+                     "the newest boundary record is named the same way")
+        (check-equal '(:schema :journal :local-revision :replay-cut :boundary :state :local-replies)
+                     (loop for (k nil) on (savepoint-manifest sp) by #'cddr collect k)
+                     "the manifest's fields are in the spec's order and none is its own digest")
+        ;; the image and the retained replies are hash-checked content
+        ;; references inside the savepoint's own root.
+        (check-string= (sha256-hex (canonical-string (list :events '(1 2 3))))
+                       (getf (savepoint-image sp) :sha256)
+                       "the image reference hashes the image bytes")
+        (check-string= (sha256-hex (canonical-string replies))
+                       (getf (savepoint-local-replies sp) :sha256)
+                       "the local-replies reference hashes the retained replies")
+        ;; `manifest=<sha>` is the manifest's complete canonical bytes hashed
+        ;; outside it.
+        (check-string= (sha256-hex (canonical-string (savepoint-manifest sp)))
+                       (savepoint-manifest-sha sp)
+                       "manifest=<sha> is the canonical manifest bytes hashed outside")
+        (ok (search (format nil "manifest=~A" (savepoint-manifest-sha sp)) (savepoint-list s))
+            "savepoint list prints manifest=<sha>")))
+    ;; an initial image has no cut: the manifest spells it (:absent).
+    (multiple-value-bind (s line) (savepoint-write store "sp-0" 0 0 '())
+      (check-equal nil line "an initial image writes")
+      (check-equal '(:absent) (savepoint-replay-cut (savepoint-store-verified s))
+                   "a cut an initial image has none of is (:absent)"))
     ;; a cut between the two events is refused and no image is published.
-    (multiple-value-bind (s line) (savepoint-write store "sp-2" 2 1 records)
+    (multiple-value-bind (s line) (savepoint-write store "sp-2" 2 2 records :journal journal)
       (ok (search "cut inside an envelope" line) "the refusal is named: ~A" line)
       (check-equal nil (savepoint-store-published s) "no image is published"))))
 
@@ -146,21 +208,36 @@
 ;;; ------------------------------------------------------------------
 
 (deftest "savepoint-write-failure-keeps-the-previous" "docs/SPEC-WORK.md:6014"
-    "expected=previous-verified-restores;attempt-verdict-failed"
-  (let* ((records (list (list :request "r1" :reply '("OK r1") :events '(1))))
-         (base (make-savepoint-store :verified '(:id "sp-prev" :rev 1))))
-    ;; a clean write publishes a new verified savepoint.
-    (multiple-value-bind (s line) (savepoint-write base "sp-new" 2 1 records)
-      (check-equal nil line "a clean savepoint writes")
-      (check-equal "sp-new" (getf (savepoint-store-verified s) :id)
-                   "the new savepoint is verified"))
-    ;; the image write, the manifest publication and the sync each failed in
-    ;; turn: the previous verified savepoint restores and the attempt is listed.
-    (dolist (stage '(:image :manifest :sync))
-      (multiple-value-bind (s line) (savepoint-write base "sp-new" 2 1 records :fail-stage stage)
-        (ok (search "SAVEPOINT FAIL" line) "a failed write reports: ~A" line)
-        (check-equal "sp-prev" (getf (savepoint-store-verified s) :id)
-                     "the previous verified savepoint restores after a failed write")
-        (check-equal nil (savepoint-store-published s) "no new image is published")
-        (ok (search "verdict=failed" (savepoint-list s))
-            "savepoint list prints the attempt verdict=failed")))))
+    "expected=previous-verified-restores;attempt-verdict-failed;published-kept;manifest-identity-preserved"
+  (let* ((records (list (list :seq 1 :request "r1" :reply '("OK r1")
+                              :payload-sha256 "p1" :events '(1))))
+         (journal (make-journal-chain
+                   :id "journal-abc"
+                   :segments (list (make-journal-segment :path "journal.1"
+                                                         :header '() :records '()))))
+         (base (make-savepoint-store)))
+    ;; a clean write publishes a new verified savepoint and keeps it as the last
+    ;; known-good while a replacement is written.
+    (let* ((clean (savepoint-write base "sp-new" 1 1 records :journal journal))
+           (clean-sp (savepoint-store-verified clean)))
+      (check-equal "sp-new" (savepoint-id clean-sp) "the new savepoint is verified")
+      (check-equal (list clean-sp) (savepoint-store-published clean)
+                   "the new savepoint is the published last known-good")
+      ;; the image write, the manifest publication and the sync each failed in
+      ;; turn: the previous verified savepoint restores, its image stays
+      ;; published and the attempt is listed verdict=failed.
+      (dolist (stage '(:image :manifest :sync))
+        (multiple-value-bind (s line)
+            (savepoint-write clean "sp-repl" 2 1 records :journal journal :fail-stage stage)
+          (ok (search "SAVEPOINT FAIL" line) "a failed write reports: ~A" line)
+          (check-equal "sp-new" (savepoint-id (savepoint-store-verified s))
+                       "the previous verified savepoint restores after a failed write")
+          (check-equal (list clean-sp) (savepoint-store-published s)
+                       "the last known-good image stays published through the failure")
+          (check-string= (savepoint-manifest-sha clean-sp)
+                         (savepoint-manifest-sha (savepoint-store-verified s))
+                         "the previous verified identity is preserved")
+          (ok (search "verdict=failed" (savepoint-list s))
+              "savepoint list prints the attempt verdict=failed")
+          (ok (search (format nil "stage=~(~A~)" stage) (savepoint-list s))
+              "savepoint list names the failed stage"))))))
