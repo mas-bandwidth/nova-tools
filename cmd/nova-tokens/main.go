@@ -49,6 +49,7 @@ usage:
   nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
+  nova-tokens report  --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
                       --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
   nova-tokens check   --out <dir> [--max <n>]
@@ -959,6 +960,9 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	var supersedes stringList
 	fs.Var(&supersedes, "supersedes", "")
 	max := fs.Int("max", bounded.Default, "")
+	ledger := fs.String("ledger", "", "")
+	monthFlag := fs.String("month", "", "")
+	byFlag := fs.String("by", "model", "")
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := fs.Parse(args); err != nil {
@@ -966,6 +970,9 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if code, refused := noPositional(fs, stderr, "report"); refused {
 		return code
+	}
+	if *ledger != "" || *monthFlag != "" {
+		return cmdReportLedger(*ledger, *monthFlag, *byFlag, *max, stdout, stderr)
 	}
 	r := &refusals{token: "REPORT"}
 	r.required("who", *who, wantsWho)
