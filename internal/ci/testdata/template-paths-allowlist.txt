@@ -1,0 +1,14 @@
+# template-paths-allowlist.txt -- existing offenders of the `templates` class
+# test in docs/SPEC-CI.md. One row: file:line kind date reason.
+#
+# The file only shrinks. An entry that names no offender on the tree is refused
+# (`quote the path; the allowlist only shrinks`), so fixing a path means
+# deleting its row in the same change, and a new row parks nothing.
+#
+# These four predate the checker: filepath.ToSlash(filepath.Join(...)) into a
+# JSON worker description kept the Windows reds (#904, #920) from firing, but
+# the allowed shape is strconv.Quote.
+internal/swarm/inputlimit_test.go:433 join 2026-09-17 ToSlash of a joined path concatenated into a JSON worker description; predates the checker
+internal/swarm/inputlimit_test.go:434 join 2026-09-17 ToSlash of a joined path concatenated into a JSON worker description; predates the checker
+internal/swarm/inputlimit_test.go:477 join 2026-09-17 ToSlash of a joined path concatenated into a JSON worker description; predates the checker
+internal/swarm/inputlimit_test.go:479 join 2026-09-17 ToSlash of a joined path concatenated into a JSON worker description; predates the checker
