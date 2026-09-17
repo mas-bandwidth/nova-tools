@@ -61,9 +61,20 @@ func Harvest(in HarvestInput) int {
 		return refusal(in.Stderr, "HARVEST", fmt.Errorf("missing --root; refusing to guess (supply the root directory)"))
 	}
 
-	cards, err := readCards(filepath.Join(in.Root, "cards.tsv"))
+	// A root `nova-pulse cut` wrote has a cards.tsv and is folded from it. A bare
+	// swarm root a caller handed straight to `nova-swarm batch` has none, and harvest
+	// folds every job dir under it instead: the RESULT.md files are the record, and
+	// their own line 1 is the contract (rule 11). The refusal stands only when
+	// neither the file nor a job dir is there.
+	cardsPath := filepath.Join(in.Root, "cards.tsv")
+	cards, err := readCards(cardsPath)
 	if err != nil {
-		return refusal(in.Stderr, "HARVEST", err)
+		if _, statErr := os.Stat(cardsPath); os.IsNotExist(statErr) {
+			cards = discoverRootCards(in.Root)
+		}
+		if len(cards) == 0 {
+			return refusal(in.Stderr, "HARVEST", err)
+		}
 	}
 
 	var done, pushed, prs, abstain, mismatch, refused, retried int
@@ -192,6 +203,40 @@ func readCards(path string) ([]CardRow, error) {
 		out = append(out, CardRow{Label: p[0], Slot: p[1], Model: p[2], Card: p[3]})
 	}
 	return out, nil
+}
+
+// discoverRootCards folds a bare swarm root that no cards.tsv was cut into: one
+// card per <root>/<slot>/jobs/<label>/RESULT.md, whoever put it there. With no
+// cards.tsv to name a contract, the RESULT.md's own line 1 is the contract
+// (rule 11), so the card path points at the result; the model is unknown, and no
+// pro-only red: gate can be applied. The slot name is the directory above jobs/.
+func discoverRootCards(root string) []CardRow {
+	slots, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var out []CardRow
+	for _, s := range slots {
+		if !s.IsDir() {
+			continue
+		}
+		jobsDir := filepath.Join(root, s.Name(), "jobs")
+		jobs, err := os.ReadDir(jobsDir)
+		if err != nil {
+			continue
+		}
+		for _, j := range jobs {
+			if !j.IsDir() {
+				continue
+			}
+			result := filepath.Join(jobsDir, j.Name(), "RESULT.md")
+			if _, err := os.Stat(result); err != nil {
+				continue
+			}
+			out = append(out, CardRow{Label: j.Name(), Slot: s.Name(), Model: "", Card: result})
+		}
+	}
+	return out
 }
 
 // jobDir is a card's job directory under the root: <root>/<slot>/jobs/<label>.

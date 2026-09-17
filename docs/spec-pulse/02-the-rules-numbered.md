@@ -120,7 +120,12 @@
     the task file's own label line (line 1, the card's `RESULT` contract line) or the sidecar's
     label, `done/` before `failed/`, latest task first — and a task in `failed/` whose
     `RESULT.md` exists with a first line equal to the card's `RESULT` line is harvested as a
-    result, not a failure, because the contract decides, never the directory it sits in.
+    result, not a failure, because the contract decides, never the directory it sits in. When
+    `--root` names a bare swarm root with no `cards.tsv` — the caller handed cards straight to
+    `nova-swarm batch` — `harvest` folds every `<root>/<slot>/jobs/<label>/RESULT.md` under it,
+    whoever put it there, with no push or PR withheld for want of a cards.tsv: with none to
+    name the contract, the `RESULT.md`'s own line 1 is the contract, and the refusal stands
+    only when neither the file nor a job dir is there.
 13. **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
     appends (`pr`, `<repo>#<n>`, `read`, `<title>`, `read`) to `<root>/next.tsv` — template
     `read`, or `tone` for a seed page — which the next `pool` reads after `queue.tsv` and
