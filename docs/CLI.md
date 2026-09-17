@@ -995,7 +995,7 @@ nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sa
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
-nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup                    # the conditions, baked in, so they are not retyped and not forgotten; setup is #184's agreement form, not a task template
+nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup|capacity            # the conditions, baked in, so they are not retyped and not forgotten; setup is #184's agreement form and capacity is #176's offer-and-routing form, neither is a task template
 nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
@@ -1142,6 +1142,24 @@ launcher examples with placeholder values only. It is a form, not a task's condi
 token or private path is ever printed by it, and an agreed form supplies no account
 access — implementation, credential migration and deployment are separate staged work
 with their own authorization.
+
+`nova-swarm template --name capacity` prints the per-friend offered-capacity and routing-log
+form (issue #176): the offer half with every field the issue names (expiry, friend, instance,
+bench, model identity and basis, harness, supported task types, demonstrated strengths and
+limits, permitted scope, current availability, concurrency, expected queue/latency and
+shared-limit pools) and the coordinator's routing-log half (ready work, compatible offers,
+incompatible offers, shared pool share, stale offers excluded, the pool-specific utilisation
+denominator) plus the four rows acceptance evidence demands (an idle compatible pool receiving
+ready work, an incompatible offer being skipped, shared capacity counted once, and a stale
+offer excluded). Capacity kinds are kept apart — coordinator, direct worker, one-shot,
+swarm and local — because model slots are not interchangeable throughput units and two
+offers sharing a quota must be counted once. missing contact is unknown; stale capacity is
+not proof of failure and not proof of consent, so an offer nobody answered since the
+silent-ping window is excluded. It is a form, not a task's conditions: `add --template
+capacity` is refused the way `add --template result` and `add --template setup` are, no
+key, no token, and no private host detail is ever printed by it, and a filled form
+supplies no account access — an automatic scheduler is separate staged work with its own
+authorization.
 
 ### The harness contract
 
