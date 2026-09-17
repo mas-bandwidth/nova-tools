@@ -535,33 +535,10 @@
 ;;   A partial config is never admitted as a complete replacement; no secret in
 ;;   a manifest.
 
-;;; 67. fleet-is-static-config   docs/SPEC-WORK.md:3375
-;;;
-;; NEEDS-KERNEL: a static `fleet` section and the :machine event verb.
-;;   A :machine event moves no count and no roadmap; a heartbeat, an `observe`
-;;   and a probe change no member.
-
-;;; 68. no-machine-name-in-the-tool   docs/SPEC-WORK.md:3376
-;;;
-;; NEEDS-KERNEL: shipped defaults/fixtures carrying no machine or host name.
-;;   Machine identities arrive as configuration, never hardcoded in the tool.
-
-;;; 69. one-profile-one-unit   docs/SPEC-WORK.md:3376
-;;;
-;; NEEDS-KERNEL: --register refusing a --connect already held by a member.
-;;   One connection profile is one unit; a profile held by a member is refused.
-
-;;; 70. no-credential-in-a-member   docs/SPEC-WORK.md:3377
-;;;
-;; NEEDS-KERNEL: machine-record credential refusal.
-;;   A --connect that is not a profile: reference, or a key/token/password/secret
-;;   field, is refused whole and the value never echoed.
-
-;;; 71. unknown-owner-is-refused   docs/SPEC-WORK.md:3377
-;;;
-;; NEEDS-KERNEL: the owner-must-be-a-friend check on machine register.
-;;   A --register whose :owner is not a friend of `friends` is refused, nothing
-;;   written.
+;;; 67-71. The five fleet replays (fleet-is-static-config,
+;;; no-machine-name-in-the-tool, one-profile-one-unit, no-credential-in-a-member,
+;;; unknown-owner-is-refused) now run against src/fleet.lisp and live in
+;;; slice-10-fleet.lisp beside their fixtures (card #8628).
 ;;; Assignment & execution control replays (SPEC-WORK.md:2400-3600).
 ;;;
 ;;; The slice-1 kernel implements only the three C/O transition verbs

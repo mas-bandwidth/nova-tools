@@ -21,14 +21,14 @@
 (in-package #:nova-work)
 
 (defstruct (kernel (:constructor %make-kernel))
-  state journal next-rev)
+  state journal next-rev fleet)
 
 (defvar *before-apply-hook* nil
   "A test seam. When bound, it is called with the envelope after the journal has
 recorded it and before any of it is applied, so a stop can be injected exactly
 at the ordering boundary SPEC-WORK.md:307 names.")
 
-(defun make-kernel (&key state journal rev-base)
+(defun make-kernel (&key state journal rev-base (friends '()))
   "REV-BASE defaults to one past the state's own revision, so a kernel opened
 over a reconstructed state issues no id the history already holds
 (SPEC-WORK.md:1216-1218 keys a closed row <event-rev>:<id>; :1578 allows
@@ -41,7 +41,10 @@ below the state's revision is refused rather than silently reissued."
                            rev-base (state-revision state))))
     (%make-kernel :state state
                   :journal (or journal (make-ordering-journal))
-                  :next-rev (or rev-base (1+ (state-revision state))))))
+                  :next-rev (or rev-base (1+ (state-revision state)))
+                  ;; The fleet is CONFIG supplied to the session, never a
+                  ;; constant in the tool; see src/fleet.lisp.
+                  :fleet (make-fleet :friends friends))))
 
 ;;; What a request may carry, per verb. SPEC-WORK.md:3227
 ;;; `every-field-has-an-owning-verb` wants every field mapped to its owning
@@ -271,6 +274,11 @@ whole envelope is applied."
 
 (defun %submit (kernel request)
   (let ((verb (getf request :verb)))
+    ;; The one verb that configures the fleet (SPEC-WORK.md:3541) is CONFIG,
+    ;; not a work-tree transition: it shares `submit`'s answer shape but never
+    ;; touches the root, its counters or its history.
+    (when (eq verb :machine)
+      (return-from %submit (machine-submit kernel request)))
     (unless (member verb '(:state-to-done :state-to-doing :event-reopen))
       (error 'unsupported-input
              :what (format nil "unsupported: verb ~A is not in slice 1"

@@ -19,6 +19,7 @@
                (:file "src/journal")
                (:file "src/kernel")
                (:file "src/state-export")
+               (:file "src/fleet")
                (:file "src/replays-applicable-delegation")
                (:file "src/replays-config-and-availability")))
 
