@@ -533,7 +533,52 @@
     #:r8621-roadmap-render #:r8621-roadmap-add-member
     #:+r8621-marker-start+ #:+r8621-marker-end+
     #:r8621-render-body #:r8621-render-chat #:r8621-marker-region
-    #:r8621-render-file))
+    #:r8621-render-file
+    ;; render replays (nova-tools #362)
+    #:make-render-session
+    #:render-session-p
+    #:render-session-permissions
+    #:render-session-mappings
+    #:make-render-projection
+    #:render-projection-p
+    #:render-projection-repo
+    #:render-projection-root
+    #:render-projection-target
+    #:render-result-p
+    #:render-result-ok
+    #:render-result-reason
+    #:render-result-line
+    #:render-result-artifact
+    #:render-result-wrote
+    #:path-within-p
+    #:render-symlink-escape-p
+    #:marker-refusal
+    #:render-file
+    #:render-chat
+    #:*render-frame-bound*
+    #:artifact-bytes-ok-p
+    #:artifact-hash-ok-p
+    #:artifact-valid-p
+    #:render-correlated-batch
+    #:acquire-render-lock
+    #:*render-lock-guards-external-editor*
+    ;; priority replays (nova-tools #362)
+    #:priority-field
+    #:priority-slot
+    #:priority-no-effect-p
+    #:priority-set
+    #:priority-clear
+    #:effective-priority
+    #:priority-settle
+    #:priority-reopen
+    #:priority-event
+    #:priority-only-moves-its-field-p
+    #:priority-lessp
+    #:ready-order
+    #:priority-order-refusal
+    #:priority-eligible-p
+    #:priority-starts-nothing-p
+    #:*priority-event-keys*))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

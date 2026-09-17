@@ -35,15 +35,97 @@
     "expected=who-unchanged;no-lease;no-bypass"
   (slice1-refuses-verb :priority))
 
-;; NEEDS-KERNEL: subtree/self priority inheritance and clear.
+;;; priority: the two slots, the nearest-context rank and the ready order
+;;; (SPEC-WORK.md:3156-3193; replays at :5857 and :5861).
+
 (deftest "priority-inherits-and-clears" "docs/SPEC-WORK.md:5410"
     "expected=order-only;no-lease-attempt-state-counter-moved"
-  (slice1-refuses-verb :priority))
+  (let* ((leaf (priority-field))
+         (root (priority-field :subtree 2))
+         (mid (priority-field :subtree 5))
+         (ancestors (list (cons "mid" mid) (cons "root" root))))
+    ;; effective rank is the nearest :subtree on the containment path.
+    (multiple-value-bind (rank context source) (effective-priority leaf ancestors)
+      (check-equal 5 rank "the deepest subtree rank is the effective one")
+      (check-equal :subtree context "the effective context is subtree")
+      (check-equal "mid" source "the source is the nearest ancestor"))
+    ;; a child's :self overrides the inherited rank.
+    (multiple-value-bind (rank context source)
+        (effective-priority (priority-field :self 1) ancestors)
+      (check-equal 1 rank "a child's :self rank wins")
+      (check-equal :self context "the overriding context is self"))
+    ;; a clear reveals the parent.
+    (multiple-value-bind (new changed) (priority-clear (priority-field :self 1) :self)
+      (ok changed "clearing a set slot changes the field")
+      (multiple-value-bind (rank context source) (effective-priority new ancestors)
+        (declare (ignore context))
+        (check-equal 5 rank "after a clear the parent's subtree rank is revealed")
+        (check-equal "mid" source "the revealed source is the parent")))
+    ;; a clear of an absent slot is the no-effect receipt.
+    (multiple-value-bind (new changed) (priority-clear leaf :self)
+      (declare (ignore new))
+      (check-equal nil changed "a clear of an absent slot is a no-effect receipt"))
+    ;; settle and reopen keep the slots.
+    (let ((f (priority-field :self 3 :subtree 7)))
+      (check-equal f (priority-settle f) "a settle keeps the slots")
+      (check-equal f (priority-reopen f) "a reopen restores the slots"))
+    ;; a move re-reads inheritance and clones no event.
+    (multiple-value-bind (rank context source) (effective-priority leaf (list (cons "root" root)))
+      (declare (ignore context))
+      (check-equal 2 rank "a move re-reads the new path")
+      (check-equal "root" source "the re-read source is the new ancestor"))
+    ;; a root :subtree rank changes ready order with nothing else moved.
+    (let* ((a (list :id "a" :priority (effective-priority leaf (list (cons "root" root)))))
+           (b (list :id "b" :priority (effective-priority (priority-field :self 9))))
+           (order (ready-order (list b a) nil :order :priority)))
+      (check-equal '("a" "b") (mapcar (lambda (r) (getf r :id)) order)
+                   "the inherited rank orders the ready rows")
+      (ok (priority-only-moves-its-field-p
+           (priority-event :node "mid" :change :set :context :subtree :rank 2 :reason "r"))
+          "a priority event moves only its own field"))))
 
-;; NEEDS-KERNEL: priority ordering over only the eligible set.
 (deftest "priority-orders-only-the-eligible" "docs/SPEC-WORK.md:5406"
     "expected=blocked-rank-0-stays;rank-9-ready-first"
-  (slice1-refuses-verb :priority))
+  (let* ((blocked (list :id "task-a" :priority 0 :state :blocked
+                        :reason "awaits schema" :resolver "owner/b"))
+         (ready-9 (list :id "task-b" :priority 9))
+         (ready-default (list :id "task-c" :priority +absent+)))
+    ;; discovery order leaves the eligible rows as given, blocked last.
+    (check-equal '("task-c" "task-b" "task-a")
+                 (mapcar (lambda (r) (getf r :id))
+                         (ready-order (list ready-default ready-9) (list blocked)))
+                 "discovery order leaves eligible arrival order, blocked last")
+    ;; priority order: the rank-9 eligible row first, default next, blocked last.
+    (let ((order (ready-order (list ready-default ready-9) (list blocked) :order :priority)))
+      (check-equal '("task-b" "task-c" "task-a")
+                   (mapcar (lambda (r) (getf r :id)) order)
+                   "rank 9 eligible first, blocked rank-0 not dropped")
+      (let ((b (find "task-a" order :key (lambda (r) (getf r :id)) :test #'equal)))
+        (check-equal "awaits schema" (getf b :reason) "the blocked row keeps its reason")
+        (check-equal "owner/b" (getf b :resolver) "the blocked row keeps its resolver"))))
+  ;; --order priority is refused under every ask but ready, at exit 2.
+  (multiple-value-bind (ok line code) (priority-order-refusal :done :priority)
+    (check-equal nil ok "--order priority under done is refused")
+    (check-equal 2 code "the refusal is exit 2")
+    (ok (search "priority" line) "the refusal names the order: ~A" line))
+  (multiple-value-bind (ok line code) (priority-order-refusal :ready :priority)
+    (declare (ignore line))
+    (ok ok "the ready ask admits --order priority")
+    (check-equal 0 code "the ready ask exits 0"))
+  ;; capacity loss, approval withdrawal, a dependency change or a hold is
+  ;; rechecked before ranking and starts or interrupts nothing.
+  (check-equal nil (priority-eligible-p (list :id "task-b" :priority 9)
+                                        :capacity-p nil)
+               "a row that lost capacity is not eligible")
+  (check-equal nil (priority-eligible-p (list :id "task-b" :priority 9)
+                                        :approval-p nil)
+               "a row whose approval was withdrawn is not eligible")
+  (check-equal nil (priority-eligible-p (list :id "task-b" :priority 9)
+                                        :dependency-ok-p nil)
+               "a row whose dependency moved is not eligible")
+  (check-equal nil (priority-eligible-p (list :id "task-b" :priority 9) :held-p t)
+               "a held row is not eligible")
+  (ok (priority-starts-nothing-p) "priority selects no worker and starts nothing"))
 
 ;; NEEDS-KERNEL: priority undo treated as history, not value.
 (deftest "priority-undo-is-history-not-value" "docs/SPEC-WORK.md:5418"

@@ -48,15 +48,114 @@
   (ok t "pending; needs regression detection"))
 
 
+;;; render: the stored target, its permitted roots and the one bounded artifact
+;;; (SPEC-WORK.md:3129-3154; replays at :5755, :5849 and :5853).
+
 (deftest "render-artifact-is-bounded" "docs/SPEC-WORK.md:5398"
     "expected=interleaved-replies-and-chat-artifact-bounded;oversize-refused-never-partial"
-  ;; NEEDS-KERNEL: render/artifact batching and bound enforcement.
-  (ok t "pending; needs render"))
+  ;; ordinary replies and a --chat artifact interleaved in one correlated batch,
+  ;; request ids, byte length and hash verified.
+  (let* ((body "# Title")
+         (batch (render-correlated-batch
+                 (list (list :request "req-1" :reply "NODE OK")
+                       (list :request "req-2" :chat body)
+                       (list :request "req-3" :reply "QUERY OK")))))
+    (check-equal '("req-1" "req-2" "req-3") (mapcar #'car batch)
+                 "every request id is correlated in order")
+    (let ((artifact (getf (cdr (assoc "req-2" batch :test #'equal)) :artifact)))
+      (ok (artifact-valid-p artifact) "the artifact hash and byte count verify")))
+  ;; an oversized artifact is a bounded refusal and never partial Markdown.
+  (let* ((big (make-string 100 :initial-element #\x))
+         (r (render-chat big :bound 10)))
+    (ok (not (render-result-ok r)) "an oversized artifact is refused")
+    (check-equal nil (render-result-artifact r)
+                 "an oversized refusal carries no partial artifact")
+    (ok (search "bound" (render-result-reason r)) "the refusal names the bound"))
+  ;; a corrupt artifact (a hash that does not match its body) fails verification.
+  (let ((corrupt (list :encoding "utf8" :body "abc" :sha256 "deadbeef" :bytes 3)))
+    (ok (not (artifact-hash-ok-p corrupt)) "a corrupt artifact hash fails verification")
+    (ok (not (artifact-valid-p corrupt)) "a corrupt artifact is not valid"))
+  ;; --check creates no target, no receipt claiming a write, no commit, no push.
+  (let* ((session (make-render-session
+                   :permissions '((:root-a :file :chat))
+                   :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))))
+         (projection (make-render-projection :repo "acme/work" :root :root-a
+                                             :target "/bench/acme/x.md"))
+         (r (render-file session projection :path "/bench/acme/x.md" :mode :check
+                         :markers '(0 4) :current-hash "h1" :new-hash "h1")))
+    (ok (render-result-ok r) "a --check render succeeds")
+    (check-equal nil (render-result-wrote r) "--check writes nothing")
+    (check-equal nil (render-result-artifact r) "--check carries no artifact")))
 
 (deftest "render-refuses-a-target-outside-its-roots" "docs/SPEC-WORK.md:5304"
     "expected=target-outside-permitted-roots-refused-not-guessed"
-  ;; NEEDS-KERNEL: render roots and file-target permission checks.
-  (ok t "pending; needs render roots"))
+  (let* ((session (make-render-session
+                   :permissions '((:root-a :file :chat))
+                   :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))))
+         (projection (make-render-projection :repo "acme/work" :root :root-a
+                                             :target "/bench/acme/docs/SPEC.md")))
+    ;; a target inside the mapping's root resolves and writes.
+    (let ((r (render-file session projection :path "/bench/acme/docs/SPEC.md"
+                          :mode :file :markers '(0 10)
+                          :current-hash "h1" :new-hash "h1")))
+      (ok (render-result-ok r) "an in-root target resolves: ~A" (render-result-line r))
+      (check-equal t (render-result-wrote r) "a --file render writes"))
+    ;; a target outside every configured root is refused, never guessed.
+    (let ((r (render-file session projection :path "/bench/elsewhere/secret.md"
+                          :mode :file :markers '(0 10))))
+      (ok (not (render-result-ok r)) "an out-of-root target is refused")
+      (ok (search "outside its root" (render-result-reason r))
+          "the refusal names the root boundary: ~A" (render-result-reason r)))))
+
+(deftest "a-root-id-grants-nothing" "docs/SPEC-WORK.md:5853"
+    "expected=no-mapping-file-refuses;chat-renders;escape-refused"
+  ;; a stored permitted root with no --render-root mapping refuses file mode
+  ;; while --chat renders.
+  (let ((session (make-render-session :permissions '((:root-a :file :chat))
+                                      :mappings '())))
+    (let ((r (render-file session
+                          (make-render-projection :repo "acme/work" :root :root-a
+                                                  :target "/bench/acme/x.md")
+                          :path "/bench/acme/x.md" :mode :file :markers '(0 4))))
+      (ok (not (render-result-ok r)) "no mapping: file mode refuses")
+      (ok (search "no mapping" (render-result-reason r))
+          "the refusal names the missing mapping"))
+    (let ((r (render-chat "# Title")))
+      (ok (render-result-ok r) "no mapping: --chat still renders")
+      (ok (artifact-valid-p (render-result-artifact r)) "the chat artifact verifies")))
+  (let* ((session (make-render-session
+                   :permissions '((:root-a :file :chat))
+                   :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))))
+         (projection (make-render-projection :repo "acme/work" :root :root-a
+                                             :target "/bench/acme/x.md")))
+    ;; an escaping path refuses.
+    (let ((r (render-file session projection :path "/bench/acme/../other/x.md"
+                          :mode :file :markers '(0 4))))
+      (ok (not (render-result-ok r)) "an escaping path refuses"))
+    ;; a symlink escape refuses.
+    (let ((r (render-file session projection :path "/bench/acme/link/x.md" :mode :file
+                          :markers '(0 4)
+                          :symlinks '(("/bench/acme/link" . "/bench/other")))))
+      (ok (not (render-result-ok r)) "a symlink escape refuses")
+      (ok (search "symlink" (render-result-reason r))
+          "the refusal names the symlink escape"))
+    ;; a target identity other than the mapping's refuses.
+    (let ((r (render-file session
+                          (make-render-projection :repo "other/repo" :root :root-a
+                                                  :target "/bench/acme/x.md")
+                          :path "/bench/acme/x.md" :mode :file :markers '(0 4))))
+      (ok (not (render-result-ok r)) "a mismatched target identity refuses")
+      (ok (search "target identity" (render-result-reason r))
+          "the refusal names the target identity")))
+  ;; the cooperative lock is exercised and its external-editor limit retained.
+  (let ((locks '()))
+    (multiple-value-bind (got new) (acquire-render-lock locks "/bench/acme/x.md")
+      (ok got "the first cooperator takes the lock")
+      (multiple-value-bind (again ignored) (acquire-render-lock new "/bench/acme/x.md")
+        (declare (ignore ignored))
+        (ok (not again) "a second cooperator is refused the lock")))
+    (check-equal nil *render-lock-guards-external-editor*
+                 "the lock remains advisory and does not guard an external editor")))
 
 (deftest "reply-retired-only-under-verified-coverage" "docs/SPEC-WORK.md:5538"
     "expected=retired-only-once-snapshot-events-root-verified;else-recovery-gap"
