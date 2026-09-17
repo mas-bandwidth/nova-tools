@@ -38,7 +38,8 @@
                (:file "src/replays-priority-and-export")
                (:file "src/replays-attempts-capabilities")
                (:file "src/replays-fleet-assignment")
-               (:file "src/assignment")))
+               (:file "src/assignment")
+               (:file "src/control")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."

@@ -3,9 +3,7 @@
 
 (in-package #:nova-work/tests)
 
-(deftest "one-stop-note-cannot-cancel-two-attempts" "docs/SPEC-WORK.md:5250"
-    "expected=one-note-cannot-cancel-two-live-attempts"
-  (slice1-refuses-verb :event))
+;; one-stop-note-cannot-cancel-two-attempts now lives in slice-09-replays-holds.lisp.
 
 ;; operation-survives-the-client is now the executable replay in
 ;; ../acceptance.lisp (card 8608).

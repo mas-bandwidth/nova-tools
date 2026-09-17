@@ -761,7 +761,61 @@
     #:leasebook-decline
     #:lease-until
     #:leasebook-expire
-    #:leasebook-receipt))
+    #:leasebook-receipt
+    ;; execution control: the durable hold, the capture, the dispatch barrier and
+    ;; the cancellation edge (SPEC-WORK.md:3921-3980)
+    #:kernel-controls
+    #:kernel-holds
+    #:kernel-offers
+    #:record-attempt
+    #:live-attempt-ids
+    #:live-attempt-p
+    #:attempt-generation
+    #:attempt-live-p
+    #:execution-stop
+    #:execution-pause
+    #:hold-p
+    #:hold-id
+    #:hold-action
+    #:hold-scope
+    #:hold-targets
+    #:hold-directives
+    #:hold-anchor
+    #:hold-revision
+    #:hold-span
+    #:hold-manifest
+    #:hold-released-p
+    #:hold-durable-p
+    #:hold-pin
+    #:hold-covers-node-p
+    #:held-p
+    #:capture-manifest
+    #:manifest-hold-id
+    #:manifest-revision
+    #:manifest-span
+    #:manifest-target-ids
+    #:manifest-content-hash
+    #:recover-controls
+    #:prepare-offer
+    #:send-offer
+    #:reconcile-offer
+    #:offer-effect
+    #:offer-lease-p
+    #:offer-launched-p
+    #:lease-count
+    #:launch-count
+    #:launch-attempt
+    #:correct-attempt
+    #:move-node
+    #:request-cancel
+    #:cancel-confirm
+    #:cancel-requested-p
+    #:goal-stop
+    ;; control-plane verbs renamed to keep them distinct from the replay
+    ;; kernel's clip / accept-offer / release-hold.
+    #:ctl-clip
+    #:ctl-accept-offer
+    #:ctl-release-hold))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
