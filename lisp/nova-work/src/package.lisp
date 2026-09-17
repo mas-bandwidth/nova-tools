@@ -28,6 +28,8 @@
    #:journal-uncertain-write
    #:journal-uncertain-write-path
    #:journal-uncertain-write-reason
+   #:journal-held
+   #:journal-held-path
    ;; restricted data and canonical serialization
    #:+absent+
    #:absentp
@@ -124,12 +126,46 @@
    #:journal-uncertain-p
    #:sync-stream
    #:sync-directory
+   #:journal-bench
+   #:journal-lock
+   #:bench-identity
+   #:take-journal-lock
+   #:release-journal-lock
     ;; kernel
     #:make-kernel
     #:kernel-state
     #:kernel-journal
     #:kernel-next-rev
     #:submit
+    ;; ownership record and session lifecycle
+    #:ownership-record
+    #:make-ownership-record
+    #:owner-owner
+    #:owner-generation
+    #:owner-token
+    #:owner-stamp
+    #:owner-until
+    #:owner-bench
+    #:owner-successor
+    #:evaluate-ownership-claim
+    #:parse-ownership-record
+    #:format-ownership-record
+    #:session
+    #:make-session
+    #:session-owner
+    #:session-generation
+    #:session-token
+    #:session-until
+    #:session-state
+    #:session-kernel
+    #:session-start
+    #:session-status
+    #:session-submit
+    #:session-check-admission
+    #:session-reconfirm
+    #:parse-rfc3339
+    #:format-rfc3339
+    #:parse-duration
     ;; the six new verbs (SPEC-WORK.md:1014-1058)
     #:submit-new-verb
     #:new-verb-p
