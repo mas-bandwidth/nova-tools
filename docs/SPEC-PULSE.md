@@ -218,6 +218,18 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     summed on its `BATCH` line; `harvest` copies `usd=<sum>` onto `HARVEST OK` and adds
     nothing. The coordinator's cost per cycle is one `PULSE` line read and one `HARVEST`
     line read, so fewer turns in the window (Glenn 2026-09-14: input tokens are the win).
+    **Glenn's token obligation, and its one hand.** `run` folds, once per tick after
+    harvest and before sweep, every root's `<root>/pool/usage/*.tsv` into the queue's
+    monthly ledger `<queue>/ledger-<YYYY-MM>.tsv` through `internal/tokens`'s fold-pool
+    library (`FoldPool` and `WritePoolLedger`, SPEC-TOKENS **`fold-pool`**) -- a library
+    call, never a child process. It prints one
+    `FOLD rows=<n> tasks=<t> ledger=<path>` line for each root whose fold moved the ledger,
+    and nothing when a root's fold changed nothing, because fold-pool upserts by
+    `(day, provider, model, repo)`; the step is idempotent by construction, so a second tick
+    over the same usage leaves the ledger byte-identical and the console quiet. The
+    coordinator reads no ledger: the monthly report per model and per repo is folded with no
+    hand on it, and a bench with no pool folds nothing and says nothing.
+    Replay: `run-folds-pool-usage-into-the-monthly-ledger` holds it (#8361).
 18. **Bounded output, per SPEC.md.** Every verb prints at most `--max` (default 20) event
     lines per kind — `HARVEST PR`, `HARVEST RETRY`, `CUT SKIPPED`, `ADMIT REFUSED` — then
     one `<TOKEN> MORE
