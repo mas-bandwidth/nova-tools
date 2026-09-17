@@ -144,6 +144,25 @@
     #:fenced-operation-list
     #:fenced-write
     #:fenced-claim
+    ;; the fleet: static machine records in CONFIG (SPEC-WORK.md:3459-3588)
+    #:make-fleet
+    #:kernel-fleet
+    #:fleet-friends
+    #:fleet-machines
+    #:fleet-order
+    #:fleet-member
+    #:fleet-members
+    #:fleet-member-count
+    #:machine
+    #:machine-id
+    #:machine-name
+    #:machine-owner
+    #:machine-connect
+    #:machine-roles
+    #:machine-permits
+    #:machine-excludes
+    #:machine-limits
+    #:machine-facts
     ;; applicable/delegation replays (Go card 8132)
     #:note-id
     #:make-note
