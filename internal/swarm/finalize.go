@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // FINALIZE IS THE RUNNER'S STEP AFTER EVERY END -- exit, reap, budget, violation -- once the
@@ -207,10 +209,34 @@ func (p *Pool) Reclaim(id, jobDir string) (freed int64, usagePath string, err er
 		return 0, usagePath, fmt.Errorf("report copy does not match REV at %s", filepath.Join(p.ReportsDir(id), MarkerRev))
 	}
 	freed = treeBytes(jobDir)
-	if err := os.RemoveAll(jobDir); err != nil {
+	// The job directory is a COMPUTED path, so it is removed through the one route that
+	// refuses a path outside a root this tool named. The root is the pool when the job
+	// sits inside it, and otherwise the job's own parent -- the dispatcher keeps every
+	// job at <slot>/jobs/<id>, and the slot root is not a directory this command knows.
+	// Either way the removal refuses a job dir that is empty, the root itself, outside
+	// the root, or a symlink.
+	root := filepath.Dir(jobDir)
+	if pathWithin(p.Dir, jobDir) {
+		root = p.Dir
+	}
+	if err := safepath.RemoveUnder(root, jobDir); err != nil {
 		return 0, usagePath, err
 	}
 	return freed, usagePath, nil
+}
+
+// pathWithin reports whether path is strictly below root.
+func pathWithin(root, path string) bool {
+	r, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	pp, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	r, pp = filepath.Clean(r), filepath.Clean(pp)
+	return pp != r && strings.HasPrefix(pp, r+string(os.PathSeparator))
 }
 
 func treeBytes(dir string) int64 {

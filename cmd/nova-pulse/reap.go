@@ -18,6 +18,8 @@ func cmdReap(args []string, stdout, stderr io.Writer) int {
 	deadline := f.fs.Int("deadline", 0, "")
 	dryRun := f.fs.Bool("dry-run", false, "")
 	timeout := f.fs.Int("timeout", 30, "")
+	tempGlob := f.fs.String("temp-glob", "", "")
+	tempRoot := f.fs.String("temp-root", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -38,6 +40,8 @@ func cmdReap(args []string, stdout, stderr io.Writer) int {
 		Deadline: time.Duration(*deadline) * time.Second,
 		DryRun:   *dryRun,
 		Procs:    pulse.OSProcs{Timeout: time.Duration(*timeout) * time.Second},
+		TempGlob: *tempGlob,
+		TempRoot: *tempRoot,
 		Now:      func() time.Time { return time.Now().UTC() },
 		Stdout:   stdout,
 		Stderr:   stderr,
