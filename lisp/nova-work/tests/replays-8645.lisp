@@ -7,6 +7,7 @@
 ;;;;   goal-stale-update-refuses               docs/SPEC-WORK.md:5948
 ;;;;   goal-stop-is-a-request-not-evidence     docs/SPEC-WORK.md:5957
 ;;;;   goal-world-update-writes-only-existing-kinds  docs/SPEC-WORK.md:5966
+;;;;   goal-update-writes-only-existing-kinds  docs/SPEC-WORK.md:5966
 ;;;;   historic-tick-survives-a-source-change  docs/SPEC-WORK.md:5782
 ;;;;   hostile-data                            docs/SPEC-WORK.md:6248
 ;;;;
@@ -46,6 +47,11 @@ a closed node D, under the coordinator scope \"coord\"."
     ;; A writes update --progress with the evidence triple on G, r+1.
     (multiple-value-bind (ok line code)
         (goal-world-update w :scope "coord" :expect 5 :form :progress
+    (check-equal 5 (getf (goal-show w :scope "coord") :rev)
+                 "A and B both show at r")
+    ;; A writes update --progress with the evidence triple on G, r+1.
+    (multiple-value-bind (ok line code)
+        (goal-update w :scope "coord" :expect 5 :form :progress
                      :progress "step" :pointer "test:run" :criterion "c1"
                      :against "sha-1" :request "reqA1")
       (ok ok "A's evidence update: ~A" line)
@@ -56,6 +62,7 @@ a closed node D, under the coordinator scope \"coord\"."
           (rev (goal-world-rev w)))
       (multiple-value-bind (ok line code)
           (goal-world-update w :scope "coord" :expect 5 :form :progress
+          (goal-update w :scope "coord" :expect 5 :form :progress
                        :progress "p" :pointer "test:run2" :criterion "c1"
                        :against "sha-2" :request "reqB1")
         (ok (null ok) "B's stale update is refused")
@@ -72,6 +79,11 @@ a closed node D, under the coordinator scope \"coord\"."
     ;; A then update --stop --reason --expect r+1, r+2.
     (multiple-value-bind (ok line code)
         (goal-world-update w :scope "coord" :expect 6 :form :stop :reason "halted"
+    (ok (>= (getf (goal-show w :scope "coord") :rev) 6)
+        "the show is at or after A's write")
+    ;; A then update --stop --reason --expect r+1, r+2.
+    (multiple-value-bind (ok line code)
+        (goal-update w :scope "coord" :expect 6 :form :stop :reason "halted"
                      :request "reqA2")
       (ok ok "A's stop: ~A" line)
       (check-equal 0 code "A's stop exit code")
@@ -83,6 +95,11 @@ a closed node D, under the coordinator scope \"coord\"."
       (check-equal 1 code "the refusal is exit 1")
       (ok (search "stale" line) "the refusal names stale: ~A" line))
     (check-equal "requested" (getf (goal-world-show w :scope "coord") :stop)
+        (goal-update w :scope "coord" :expect 6 :form :progress :progress "p2")
+      (ok (null ok) "B's update at r+1 is refused")
+      (check-equal 1 code "the refusal is exit 1")
+      (ok (search "stale" line) "the refusal names stale: ~A" line))
+    (check-equal "requested" (getf (goal-show w :scope "coord") :stop)
                  "B's next show prints stop=requested")
     ;; B's update --progress --expect r+2 is refused `stop requested`
     ;; and stop=requested stands until a :cancel with evidence or state --to doing.
@@ -92,11 +109,17 @@ a closed node D, under the coordinator scope \"coord\"."
       (check-equal 1 code "the stop-requested refusal is exit 1")
       (ok (search "stop requested" line) "the refusal names stop requested: ~A" line))
     (check-equal "requested" (getf (goal-world-show w :scope "coord") :stop)
+        (goal-update w :scope "coord" :expect 7 :form :progress :progress "p3")
+      (ok (null ok) "B's update after the stop is refused")
+      (check-equal 1 code "the stop-requested refusal is exit 1")
+      (ok (search "stop requested" line) "the refusal names stop requested: ~A" line))
+    (check-equal "requested" (getf (goal-show w :scope "coord") :stop)
                  "stop=requested stands")
     ;; A goal set to a node on the closed branch is refused disposition=done
     ;; whatever --expect says, and the node stays closed.
     (multiple-value-bind (ok line code)
         (goal-world-set w :scope "coord" :goal "D" :expect 7 :request "reqset")
+        (goal-set w :scope "coord" :goal "D" :expect 7 :request "reqset")
       (ok (null ok) "a goal set to a closed node is refused")
       (ok (search "disposition=done" line)
           "the refusal names the disposition: ~A" line))
@@ -112,6 +135,7 @@ a closed node D, under the coordinator scope \"coord\"."
     ;; goal update --stop writes GOAL OK change=stop kind=transition rev=r+1.
     (multiple-value-bind (ok line code)
         (goal-world-update w :scope "coord" :expect 5 :form :stop :reason "stop now"
+        (goal-update w :scope "coord" :expect 5 :form :stop :reason "stop now"
                      :request "r1")
       (ok ok "the stop prints GOAL OK: ~A" line)
       (check-equal 0 code "the stop exit code")
@@ -151,6 +175,19 @@ a closed node D, under the coordinator scope \"coord\"."
     ;; goal set --goal G is then refused disposition=cancelled.
     (multiple-value-bind (ok line code)
         (goal-world-set w :scope "coord" :goal "G" :expect (goal-world-rev w)
+    (check-equal "none" (getf (goal-show w :scope "coord") :stop)
+                 "the withdrawal clears stop=requested")
+    ;; Stopped again, then event --kind cancel --evidence: show prints stop=cancelled.
+    (goal-update w :scope "coord" :expect (goal-world-rev w) :form :stop
+                 :reason "again" :request "r2")
+    (check-equal "requested" (getf (goal-show w :scope "coord") :stop)
+                 "the second stop is requested")
+    (gw-cancel w "G" :evidence '("ev-1"))
+    (check-equal "cancelled" (getf (goal-show w :scope "coord") :stop)
+                 "cancel with evidence is terminal: stop=cancelled")
+    ;; goal set --goal G is then refused disposition=cancelled.
+    (multiple-value-bind (ok line code)
+        (goal-set w :scope "coord" :goal "G" :expect (goal-world-rev w)
                   :request "s-cancel")
       (ok (null ok) "a goal set to a cancelled goal is refused")
       (ok (search "disposition=cancelled" line) "the refusal names cancelled: ~A" line))
@@ -158,6 +195,9 @@ a closed node D, under the coordinator scope \"coord\"."
     (goal-world-set w :scope "coord" :goal "R" :expect (goal-world-rev w) :request "s-r")
     (multiple-value-bind (ok line code)
         (goal-world-update w :scope "coord" :expect (goal-world-rev w) :form :stop
+    (goal-set w :scope "coord" :goal "R" :expect (goal-world-rev w) :request "s-r")
+    (multiple-value-bind (ok line code)
+        (goal-update w :scope "coord" :expect (goal-world-rev w) :form :stop
                      :reason "x" :request "r-r")
       (ok (null ok) "a stop on :review is refused")
       (ok (search "no edge" line) "the :review refusal is no edge: ~A" line))
@@ -168,12 +208,14 @@ a closed node D, under the coordinator scope \"coord\"."
               :goals '(("coord" . "D")))))
       (multiple-value-bind (ok line code)
           (goal-world-update d :scope "coord" :expect 3 :form :stop :reason "x"
+          (goal-update d :scope "coord" :expect 3 :form :stop :reason "x"
                        :request "r-d")
         (ok (null ok) "a stop on :done is refused")
         (ok (search "no edge" line) "the :done refusal is no edge: ~A" line)))))
 
 ;;; ------------------------------------------------------------------
 ;;; goal-world-update-writes-only-existing-kinds           docs/SPEC-WORK.md:5966
+;;; goal-update-writes-only-existing-kinds           docs/SPEC-WORK.md:5966
 ;;; ------------------------------------------------------------------
 
 (deftest "goal-update-writes-only-existing-kinds" "docs/SPEC-WORK.md:5966"
@@ -182,6 +224,8 @@ a closed node D, under the coordinator scope \"coord\"."
     ;; --progress <text> alone on a :todo node writes :to :doing with the text as :reason.
     (goal-world-set w :scope "coord" :goal "T" :expect 5 :request "setT")
     (goal-world-update w :scope "coord" :expect (goal-world-rev w) :form :progress
+    (goal-set w :scope "coord" :goal "T" :expect 5 :request "setT")
+    (goal-update w :scope "coord" :expect (goal-world-rev w) :form :progress
                  :progress "starting")
     (let ((e (last-event w)))
       (check-equal :transition (getf e :kind) "a progress-only update is a :transition")
@@ -200,12 +244,14 @@ a closed node D, under the coordinator scope \"coord\"."
     (let ((before (goal-world-events w)))
       (multiple-value-bind (ok line code)
           (goal-world-update w :scope "coord" :expect (goal-world-rev w) :form :progress
+          (goal-update w :scope "coord" :expect (goal-world-rev w) :form :progress
                        :progress "again")
         (ok (null ok) "progress alone on :doing is refused")
         (ok (search "no edge" line) "the refusal is no edge: ~A" line))
       (check-equal before (goal-world-events w) "nothing was written"))
     ;; --progress with the evidence triple on a :doing node writes the :evidence event.
     (goal-world-update w :scope "coord" :expect (goal-world-rev w) :form :progress
+    (goal-update w :scope "coord" :expect (goal-world-rev w) :form :progress
                  :progress "e" :pointer "test:x" :criterion "c1" :against "sha")
     (let ((e (last-event w)))
       (check-equal :evidence (getf e :kind) "the triple writes an :evidence event")
@@ -213,11 +259,13 @@ a closed node D, under the coordinator scope \"coord\"."
       (check-equal "T" (getf e :node) "the evidence event is on the goal node"))
     ;; goal set and goal set --clear each write one :goal event with :node (:absent).
     (goal-world-set w :scope "coord" :goal "T" :expect (goal-world-rev w) :request "setT2")
+    (goal-set w :scope "coord" :goal "T" :expect (goal-world-rev w) :request "setT2")
     (let ((e (last-event w)))
       (check-equal :goal (getf e :kind) "goal set writes a :goal event")
       (ok (absentp (getf e :node)) "a :goal event's :node is (:absent)")
       (ok (own-fields-ok-p e) "exactly the goal field list"))
     (goal-world-set w :scope "coord" :clear t :expect (goal-world-rev w) :request "clearT")
+    (goal-set w :scope "coord" :clear t :expect (goal-world-rev w) :request "clearT")
     (let ((e (last-event w)))
       (check-equal :goal (getf e :kind) "goal set --clear writes a :goal event")
       (ok (absentp (getf e :node)) "a clear's :node is (:absent)")
@@ -226,6 +274,7 @@ a closed node D, under the coordinator scope \"coord\"."
     (let ((w3 (goal-world-fixture)))
       (let ((s0 (goal-world-scope-rev w3)))
         (goal-world-update w3 :scope "coord" :expect 5 :form :stop :reason "s")
+        (goal-update w3 :scope "coord" :expect 5 :form :stop :reason "s")
         (check-equal s0 (goal-world-scope-rev w3)
                      "goal update never moves the scope revision")
         (gw-accept-add w3 "G")
@@ -237,6 +286,10 @@ a closed node D, under the coordinator scope \"coord\"."
       (let ((n1 (length (goal-world-events w4)))
             (rev1 (goal-world-rev w4)))
         (goal-world-set w4 :scope "coord" :goal "G" :expect 5 :request "same")
+      (goal-set w4 :scope "coord" :goal "G" :expect 5 :request "same")
+      (let ((n1 (length (goal-world-events w4)))
+            (rev1 (goal-world-rev w4)))
+        (goal-set w4 :scope "coord" :goal "G" :expect 5 :request "same")
         (check-equal n1 (length (goal-world-events w4))
                      "the retried set writes no second event")
         (check-equal rev1 (goal-world-rev w4) "the retried set moves no revision")))))
