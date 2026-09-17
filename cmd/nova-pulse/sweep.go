@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
@@ -23,6 +24,10 @@ func cmdSweep(args []string, stdout, stderr io.Writer) int {
 	queue := f.fs.String("queue", "", "")
 	source := f.fs.String("source", "", "")
 	timeout := f.fs.Int("timeout", 120, "")
+	decideOrder := f.fs.Bool("decide", false, "")
+	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
+	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
+	floor := f.fs.Float64("floor", pulse.DefaultOrderFloor, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -31,26 +36,39 @@ func cmdSweep(args []string, stdout, stderr io.Writer) int {
 	if *timeout < 1 {
 		f.add(fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
 	}
+	if *floor < 0 || *floor > 1 {
+		f.add(fmt.Sprintf("--floor is the ordering score's floor in [0,1], got %v", *floor))
+	}
 	if f.refused(stderr) {
 		return 2
 	}
 
+	in := pulse.SweepInput{
+		Repo: *repo, Queue: *queue,
+		Now: func() time.Time { return time.Now().UTC() }, Stdout: stdout, Stderr: stderr,
+	}
 	bound := time.Duration(*timeout) * time.Second
-	var src pulse.PRSource = pulse.GHSource{Timeout: bound}
-	var enq pulse.Enqueuer = pulse.GHEnqueuer{Timeout: bound}
+	in.Source = pulse.GHSource{Timeout: bound}
+	in.Enqueuer = pulse.GHEnqueuer{Timeout: bound}
+	if *decideOrder {
+		client, err := decide.New(*baseURL, *keyEnv)
+		if err != nil {
+			fmt.Fprintf(stderr, "SWEEP REFUSED: %s\n", oneline.Err(err))
+			return 2
+		}
+		in.Scorer = pulse.DecideScorer{Ask: client}
+		in.Floor = *floor
+	}
 	if *source != "" {
 		rows, err := readPRSourceFile(*source)
 		if err != nil {
 			fmt.Fprintf(stderr, "SWEEP REFUSED: --source %s: %s (one PR per line: pr, state, draft, head, labels, title, checks, automerge)\n", oneline.Field(*source), oneline.Err(err))
 			return 2
 		}
-		src = rows
-		enq = &fileEnqueuer{path: filepath.Join(*queue, "enqueued.tsv")}
+		in.Source = rows
+		in.Enqueuer = &fileEnqueuer{path: filepath.Join(*queue, "enqueued.tsv")}
 	}
-	return pulse.Sweep(pulse.SweepInput{
-		Repo: *repo, Queue: *queue, Source: src, Enqueuer: enq,
-		Now: func() time.Time { return time.Now().UTC() }, Stdout: stdout, Stderr: stderr,
-	})
+	return pulse.Sweep(in)
 }
 
 // fileSource is a PRSource read off a file: the shape a bench writes when it wants the

@@ -143,6 +143,17 @@ the floor the note stays unclassified and today's reader handles it.
 Gate a failing pulse as flaky or real before paging. Below the floor the gate
 answers real: a flaky test re-run is cheap, a missed page is not.
 
+### nova-pulse sweep enqueue order
+
+Order the sweep's enqueue by a PR's likelihood to land clean. One typed score
+per candidate, from the changed-files count, the additions and deletions, the
+packages touched, the red head runs in the last day, the PR age in hours and
+whether a group it joined failed before; the sweep prints `ORDER pr=<n>
+score=<s> conf=<c>` per PR and enqueues in descending score. The floor is 0.9;
+below it the PR scores 0.5 and keeps the existing (oldest-first) order, so
+poison candidates go last and small green PRs go first. The decision advises;
+the sweep still holds every hold, the ledger and the merge itself.
+
 ### nova-pulse harvest class
 
 Classify each finished job's `RESULT.md` before any push: one choice named
@@ -328,3 +339,6 @@ throughput 22 calls/s at concurrency 10 measured in that trial; and the note
     mutation pages.
 17. Game adoption: the game path uses the decision above the floor and falls
     back to the local rule below it.
+18. Sweep adoption: the sweep asks one typed land score per candidate PR and
+    enqueues in descending score; below the floor the PR scores 0.5 and the
+    existing order stands, with `below=land` on the ORDER line.
