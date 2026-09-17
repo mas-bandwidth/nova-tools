@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
@@ -53,21 +54,26 @@ func wakeRunAt(t *testing.T, start time.Time, args ...string) result {
 }
 
 // The fakes are Go programs rather than shell scripts because this repo's CI
-// runs on Windows too -- and they are built ONCE for the package and copied
-// into each test's own directory, because a `go build` per test was most of
-// this package's wall clock and the two-minute rule is a rule. Nothing here
-// leaves t.TempDir(): the build lands in the first caller's, and what survives
-// it is the bytes.
+// runs on Windows too -- and they are built ONCE for the package and placed
+// into each test's own directory by link (a copy only where a link is
+// impossible), because a `go build` per test was most of this package's wall
+// clock and the two-minute rule is a rule. Nothing here leaves t.TempDir(): the
+// build lands under TestMain's directory, and what each test gets is a link to
+// the one inode.
 var (
 	fakeOnce  sync.Once
-	fakeBins  map[string][]byte
+	fakePaths map[string]string
 	fakeBuilt error
 )
 
 func buildFakes(t *testing.T) {
 	t.Helper()
 	fakeOnce.Do(func() {
-		dir := t.TempDir()
+		dir := filepath.Join(fakeRoot, "build")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fakeBuilt = err
+			return
+		}
 		cmd := exec.Command("go", "build", "-o", dir,
 			"./testdata/fakebus", "./testdata/fakegh", "./testdata/fakenote", "./testdata/fakegit")
 		cmd.Env = goenv.Clean(os.Environ())
@@ -75,7 +81,7 @@ func buildFakes(t *testing.T) {
 			fakeBuilt = fmt.Errorf("building the fakes: %v\n%s", err, raw)
 			return
 		}
-		fakeBins = map[string][]byte{}
+		fakePaths = map[string]string{}
 		for _, f := range []struct{ name, built string }{
 			{"nova-bus", "fakebus"}, {"gh", "fakegh"}, {"on-note", "fakenote"}, {"git", "fakegit"},
 		} {
@@ -83,12 +89,7 @@ func buildFakes(t *testing.T) {
 			if runtime.GOOS == "windows" {
 				built += ".exe"
 			}
-			raw, err := os.ReadFile(built)
-			if err != nil {
-				fakeBuilt = err
-				return
-			}
-			fakeBins[f.name] = raw
+			fakePaths[f.name] = built
 		}
 	})
 	if fakeBuilt != nil {
@@ -96,7 +97,7 @@ func buildFakes(t *testing.T) {
 	}
 }
 
-// install writes one of the built fakes into dir under the name the tool will
+// install places one of the built fakes into dir under the name the tool will
 // start it by, and returns the path.
 func install(t *testing.T, dir, name string) string {
 	t.Helper()
@@ -105,7 +106,7 @@ func install(t *testing.T, dir, name string) string {
 	if runtime.GOOS == "windows" {
 		out += ".exe"
 	}
-	if err := os.WriteFile(out, fakeBins[name], 0o755); err != nil {
+	if err := testbin.Place(fakePaths[name], out); err != nil {
 		t.Fatal(err)
 	}
 	return out
@@ -156,7 +157,7 @@ func fakeBinDir(t *testing.T) string {
 			if runtime.GOOS == "windows" {
 				out += ".exe"
 			}
-			if err := os.WriteFile(out, fakeBins[name], 0o755); err != nil {
+			if err := testbin.Place(fakePaths[name], out); err != nil {
 				sharedBinErr = err
 				return
 			}

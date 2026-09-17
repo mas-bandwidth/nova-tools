@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // Every test here runs the REAL thing on this Mac: a real sandbox-exec, a real profile
@@ -768,16 +769,12 @@ func copyOfThisBinary(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
 	name := "nova-sandbox-copy"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
 	copied := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(copied, b, 0o700); err != nil {
+	if err := testbin.Place(self, copied); err != nil {
 		t.Fatal(err)
 	}
 	return copied

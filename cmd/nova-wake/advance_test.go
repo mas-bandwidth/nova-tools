@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
@@ -29,16 +30,16 @@ import (
 
 var (
 	busOnce    sync.Once
-	busBinary  []byte
+	busBinary  string
 	busVersion string
 	busBuild   error
 
-	// The recording wrapper is built ONCE for the package and copied into each
-	// test's own directory, for the reason main_test.go gives about the fakes:
-	// a `go build` per test was six of them in this file alone, and the
-	// two-minute rule is a rule.
+	// The recording wrapper is built ONCE for the package and placed into each
+	// test's own directory by link (a copy only where a link is impossible), for
+	// the reason main_test.go gives about the fakes: a `go build` per test was
+	// six of them in this file alone, and the two-minute rule is a rule.
 	recordOnce  sync.Once
-	recordBin   []byte
+	recordBin   string
 	recordBuild error
 )
 
@@ -47,7 +48,11 @@ var (
 func realBus(t *testing.T) {
 	t.Helper()
 	busOnce.Do(func() {
-		dir := t.TempDir()
+		dir := filepath.Join(fakeRoot, "advance")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			busBuild = err
+			return
+		}
 		out := filepath.Join(dir, "nova-bus")
 		if runtime.GOOS == "windows" {
 			out += ".exe"
@@ -69,12 +74,7 @@ func realBus(t *testing.T) {
 			busBuild = fmt.Errorf("building nova-bus from this tree: %v\n%s", err, raw)
 			return
 		}
-		raw, err := os.ReadFile(out)
-		if err != nil {
-			busBuild = err
-			return
-		}
-		busBinary = raw
+		busBinary = out
 		// The version is READ OUT OF THE BINARY, because the pin is a fact
 		// about the program this test ran and not about a constant either
 		// side of it could drift from.
@@ -104,7 +104,7 @@ func realBus(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		real += ".exe"
 	}
-	if err := os.WriteFile(real, busBinary, 0o755); err != nil {
+	if err := testbin.Place(busBinary, real); err != nil {
 		t.Fatal(err)
 	}
 	// A recording wrapper stands in front of it, because one of test 11's
@@ -117,7 +117,7 @@ func realBus(t *testing.T) {
 		shim += ".exe"
 	}
 	recordOnce.Do(func() {
-		out := filepath.Join(t.TempDir(), "recordbus")
+		out := filepath.Join(fakeRoot, "recordbus")
 		if runtime.GOOS == "windows" {
 			out += ".exe"
 		}
@@ -127,17 +127,12 @@ func realBus(t *testing.T) {
 			recordBuild = fmt.Errorf("building the recording nova-bus: %v\n%s", err, raw)
 			return
 		}
-		raw, err := os.ReadFile(out)
-		if err != nil {
-			recordBuild = err
-			return
-		}
-		recordBin = raw
+		recordBin = out
 	})
 	if recordBuild != nil {
 		t.Fatal(recordBuild)
 	}
-	if err := os.WriteFile(shim, recordBin, 0o755); err != nil {
+	if err := testbin.Place(recordBin, shim); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("NOVA_WAKE_REAL_BUS", real)

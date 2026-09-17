@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // The fakes every test in this package puts in front of PATH.
@@ -72,7 +73,7 @@ func TestMain(m *testing.M) {
 	}())
 }
 
-// fakeBins builds testdata/fakebin ONCE for the test binary and copies it under every name
+// fakeBins builds testdata/fakebin ONCE for the test binary and places it under every name
 // in fakeTools. One build, not one per test: the two-minute rule is a rule.
 func fakeBins(t *testing.T) string {
 	t.Helper()
@@ -89,18 +90,13 @@ func fakeBins(t *testing.T) string {
 			return
 		}
 		built := filepath.Join(build, "fakebin"+exeSuffix())
-		raw, err := os.ReadFile(built)
-		if err != nil {
-			fakeBinErr = err
-			return
-		}
 		bin := filepath.Join(fakeRoot, "bin")
 		if err := os.MkdirAll(bin, 0o755); err != nil {
 			fakeBinErr = err
 			return
 		}
 		for _, name := range fakeTools {
-			if err := os.WriteFile(filepath.Join(bin, name+exeSuffix()), raw, 0o755); err != nil {
+			if err := testbin.Place(built, filepath.Join(bin, name+exeSuffix())); err != nil {
 				fakeBinErr = err
 				return
 			}

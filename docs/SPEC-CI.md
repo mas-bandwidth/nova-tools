@@ -73,6 +73,72 @@ innocent PRs from the queue in one hour — the same class hit twice in one nigh
 6. Adding an entry to `testdata/fixed-waits-allowlist.txt` is refused, and
    removing one is allowed.
 
+## The CI class test against copied built binaries
+
+**The help line.** The class test is entered in the CI check roster and in help
+as the verb `testbins`:
+
+```
+testbins   read every _test.go on the CI path; refuse copying a built executable into a fixture
+```
+
+It runs as `go test ./internal/ci -run TestNoCopiedTestBinariesOnTheCIPath`, and
+it is the fixture-copy audit made an official verb (#1142): the shared helper a
+fixture places a built program with is now the check a PR runs.
+
+**What it reads and what it writes.** It reads, as text, every `_test.go` under
+`internal/` and `cmd/` that the two-minute CI path runs, and refuses one shape
+with the file and the line: an `os.WriteFile` whose mode literal carries an
+execute bit and whose data argument is an identifier the file fills from
+`os.ReadFile` (an `io.Copy` into an `os.Create`/`os.OpenFile` of the same mode is
+the same shape). That shape copies a compiled executable into a fixture, and on
+macOS every fresh copy of an executable is a never-seen binary the system policy
+scanner assesses on its first exec; one is quick, but a package run places
+dozens at once and they queue behind the scanner for longer than a test waits.
+The allowed shape is `internal/testbin.Place`, which hard-links first and copies
+only where a link is impossible; a shell script written `0o755` is not the
+shape, because the interpreter is the executable and its bytes are never
+assessed. It writes nothing. Its only input besides the tree is
+`testdata/fixed-testbins-allowlist.txt`: the existing offenders, and that file
+may only shrink — a new entry is a refusal, not a place to park a copy.
+
+**Its one-line output.** On a clean tree it prints one line,
+`CI-TESTBIN OK tests=<n> allowlisted=<n> refused=0`, where `tests=` is the
+`_test.go` files read, `allowlisted=` the entries still on the allowlist, and
+`refused=` the copied built binaries found (always `0` on `OK`). On a refusal it
+prints one line per offender, `CI-TESTBIN file=<path> line=<n> kind=copy
+remedy="place built binaries with testbin.Place: link, never copy"`, then closes
+with `CI-TESTBIN FAIL tests=<n> allowlisted=<n> refused=<k>`; the count is the
+truth about the CI path whether or not the lines printed.
+
+**Its refusals (exit 2, one remedy line each).** A built executable copied into
+a fixture — `remedy="place built binaries with testbin.Place: link, never
+copy"`. A new line in the allowlist — `remedy="fix the copy; the allowlist only
+shrinks"`. A refusal names the file and the line, so the queue’s PR comment is
+the whole diagnosis.
+
+**The mistake it removes.** On 2026-09-17 internal/swarm’s
+`TestBatchAbstainNamesReason/result-after-deadline` failed on the merge gate’s
+darwin leg and on an idle iMac Pro: the package copied one built fake runner
+into dozens of fixtures and the copies queued behind the macOS policy scanner
+past the thirty seconds a test waits, and hard-linking the one fixture took the
+package from FAIL at 74 s to ok at 30 s. Every fixture now places a built
+program through `internal/testbin.Place`, and the class test refuses a new copy.
+
+**Red tests.**
+
+1. A fixture `_test.go` that reads a built binary with `os.ReadFile` and writes
+   the bytes `0o755` into a fixture is refused with its file and line, the
+   fixture read from a tree given on the command line and not by walking the
+   repository.
+2. The bytes may be handed to the `os.WriteFile` through a package-level map,
+   the way nova-wake’s `fakeBins` did; the taint follows the bytes and the copy
+   is refused.
+3. A shell script written `0o755` is allowed: the interpreter is the executable.
+4. A test that places the built program through `testbin.Place` is allowed.
+5. Adding an entry to `testdata/fixed-testbins-allowlist.txt` is refused, and
+   removing one is allowed.
+
 ## The CI class test against unquoted paths in JSON and template literals
 
 **The help line.** The class test is entered in the CI check roster and in help
