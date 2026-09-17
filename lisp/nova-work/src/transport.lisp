@@ -301,3 +301,271 @@ the reader's bound refuses whole, before any payload is answered (:2663-2665)."
                                     :end2 (fill-pointer buffer))
             (setf (fill-pointer buffer) remaining))))
       (nreverse out))))
+
+;;; ------------------------------------------------------------------
+;;; The response object's own request field.
+;;; ------------------------------------------------------------------
+
+(defun %wire-object-body (frame)
+  "The inside of one JSON object FRAME, or an error when it is not an object."
+  (let ((trimmed (wire-trim frame)))
+    (unless (and (>= (length trimmed) 2)
+                 (char= (char trimmed 0) #\{)
+                 (char= (char trimmed (1- (length trimmed))) #\}))
+      (error 'unsupported-input
+             :what (format nil "wire frame is not a JSON object: ~A" frame)))
+    (subseq trimmed 1 (1- (length trimmed)))))
+
+(defun %wire-key (pair)
+  "The key of one `"key": value` top-level pair, or NIL when it has no colon or
+its key is not a quoted string."
+  (let* ((colon (position #\: pair))
+         (key (and colon (wire-trim (subseq pair 0 colon)))))
+    (when (and key (>= (length key) 2)
+               (char= (char key 0) #\")
+               (char= (char key (1- (length key))) #\"))
+      (subseq key 1 (1- (length key))))))
+
+(defun wire-object-field (frame key)
+  "Read KEY from the flat JSON object FRAME. Answer the string value, (:absent)
+for a JSON null, or (:missing) when the object does not carry the key. A JSON
+number in the field refuses, because the protocol carries no numbers."
+  (loop with body = (%wire-object-body frame)
+        for pair in (wire-split-top-level body #\,)
+        for field-key = (%wire-key pair)
+        when (and field-key (string= field-key key))
+          do (let* ((colon (position #\: pair))
+                    (value (wire-trim (subseq pair (1+ colon)))))
+               (return
+                 (cond
+                   ((string= value "null") +absent+)
+                   ((and (>= (length value) 2)
+                         (char= (char value 0) #\")
+                         (char= (char value (1- (length value))) #\"))
+                    (subseq value 1 (1- (length value))))
+                   ((wire-number-token-p value)
+                    (error 'unsupported-input
+                           :what (format nil "wire frame carries a JSON number ~A"
+                                         value)))
+                   (t
+                    (error 'unsupported-input
+                           :what (format nil "wire ~A field is not a string: ~A"
+                                         key value))))))
+        finally (return :missing)))
+
+(defun wire-request-id (frame)
+  "The request id a frame echoes, read from the object's own `request` field,
+or (:absent) for a JSON null and (:missing) when the key is not there."
+  (wire-object-field frame "request"))
+
+(defun wire-request-op (frame)
+  "The typed operation name a request frame carries, or (:missing)."
+  (wire-object-field frame "op"))
+
+;;; ------------------------------------------------------------------
+;;; Building a frame: no JSON number is ever written.
+;;; ------------------------------------------------------------------
+
+(defun wire-json-string (text)
+  "TEXT as one JSON string token, escaped and quoted."
+  (with-output-to-string (out)
+    (write-char #\" out)
+    (loop for ch across text
+          do (case ch
+               (#\" (write-string "\\\"" out))
+               (#\\ (write-string "\\\\" out))
+               (#\Newline (write-string "\\n" out))
+               (t (write-char ch out))))
+    (write-char #\" out)))
+
+(defun wire-json-lines (lines)
+  "LINES as a JSON array of string tokens -- the wire's `lines` field, exactly
+the one-line answers of the output grammar, never reformatted."
+  (format nil "[~{~A~^,~}]" (mapcar #'wire-json-string lines)))
+
+(defun wire-frame-request (op request &key (as "client") (fields '()))
+  "One request frame. FIELDS is an alist of (key . pre-encoded-json-value)."
+  (format nil "{\"op\": ~A, \"request\": ~A, \"as\": ~A~{, ~A: ~A~}}"
+          (wire-json-string (string op))
+          (wire-json-string request)
+          (wire-json-string as)
+          (loop for (key . value) in fields
+                append (list (wire-json-string key) value))))
+
+(defun wire-frame-response (request &key (ok "true") (exit "0") lines
+                                          (rev "0") (pushed "-") operation)
+  "One response frame. The request id is echoed first; `ok` and `exit` are the
+only JSON booleans/number-free spellings, `rev` is the local durable revision
+and `pushed` the last shared Git revision, and a long operation's durable id is
+carried beside -- never in place of -- the request id that asked for it."
+  (format nil "{\"request\": ~A, \"ok\": ~A, \"exit\": ~A, \"lines\": ~A, \"rev\": ~A, \"pushed\": ~A~@[, \"operation\": ~A~]}"
+          (wire-json-string request)
+          ok
+          (wire-json-string exit)
+          (wire-json-lines lines)
+          (wire-json-string rev)
+          (wire-json-string pushed)
+          (and operation (wire-json-string operation))))
+
+;;; ------------------------------------------------------------------
+;;; The pipelined connection: request ids in flight, replies correlated.
+;;; (SPEC-WORK.md:2689-2708, :2763-2766).
+;;; ------------------------------------------------------------------
+
+(defstruct (wire-connection (:constructor %make-wire-connection))
+  protocol outstanding settled buffer)
+
+(defun make-wire-connection (&key (supported '("1")) (max-frame-bytes 65536))
+  (%make-wire-connection
+   :protocol (make-protocol-session :supported supported
+                                    :max-frame-bytes max-frame-bytes)
+   :outstanding '() :settled '() :buffer ""))
+
+(defun wire-connection-closed-p (connection)
+  (protocol-session-closed-p (wire-connection-protocol connection)))
+
+(defun wire-close (connection)
+  (setf (protocol-session-closed-p (wire-connection-protocol connection)) t)
+  connection)
+
+(defun wire-pipeline-request (connection request-frame)
+  "Put a request frame in flight without waiting for an earlier reply. The id
+is the frame's own `request` field. The client does not put the same request id
+in flight twice on one connection: a second is a protocol error that closes the
+connection and admits nothing. Answer the id, or NIL when it is not admitted."
+  (when (wire-connection-closed-p connection)
+    (return-from wire-pipeline-request nil))
+  (handler-case
+      (let ((id (wire-request-id request-frame)))
+        (cond
+          ((eq id +absent+)
+           (wire-close connection)
+           nil)
+          ((eq id :missing)
+           (wire-close connection)
+           nil)
+          (t
+           (multiple-value-bind (admitted why)
+               (protocol-admit (wire-connection-protocol connection) id)
+             (declare (ignore why))
+             (unless admitted (return-from wire-pipeline-request nil)))
+           (when (assoc id (wire-connection-outstanding connection) :test #'string=)
+             (wire-close connection)
+             (return-from wire-pipeline-request nil))
+           (setf (wire-connection-outstanding connection)
+                 (append (wire-connection-outstanding connection)
+                         (list (cons id (wire-request-op request-frame)))))
+           id)))
+    (unsupported-input ()
+      (wire-close connection)
+      nil)))
+
+(defun wire-feed (connection text)
+  "Append TEXT to the connection's receive buffer and answer the complete
+frames a newline terminates. The bytes of an unfinished frame stay buffered, so
+a response delivered in fragments dispatches nothing until its last fragment
+arrives."
+  (let ((buffer (concatenate 'string (wire-connection-buffer connection) text)))
+    (loop with start = 0
+          for newline = (position #\Newline buffer :start start)
+          while newline
+          collect (subseq buffer start newline)
+          do (setf start (1+ newline))
+          finally (setf (wire-connection-buffer connection)
+                        (subseq buffer start)))))
+
+(defun wire-dispatch (connection frame)
+  "Deliver one complete response frame. Answer (values REQUEST-ID FRAME) only
+when the frame's own request field names exactly one outstanding request. A
+null, missing, unknown or duplicate id is a protocol error: close the
+connection, settle no outstanding request, and answer (values NIL REASON)."
+  (when (wire-connection-closed-p connection)
+    (return-from wire-dispatch (values nil "connection closed")))
+  (let ((id (handler-case (wire-request-id frame)
+              (unsupported-input (c)
+                (wire-close connection)
+                (return-from wire-dispatch
+                  (values nil (format nil "FAIL request=null: ~A" c)))))))
+    (cond
+      ((eq id +absent+)
+       (wire-close connection)
+       (values nil "FAIL request=null: response frame carries a null request id"))
+      ((eq id :missing)
+       (wire-close connection)
+       (values nil "FAIL request=null: response frame is missing its request id"))
+      ((assoc id (wire-connection-settled connection) :test #'string=)
+       (wire-close connection)
+       (values nil (format nil "FAIL request=~A: duplicate response id" id)))
+      ((not (assoc id (wire-connection-outstanding connection) :test #'string=))
+       (wire-close connection)
+       (values nil (format nil "FAIL request=~A: unknown response id" id)))
+      (t
+       (setf (wire-connection-outstanding connection)
+             (remove id (wire-connection-outstanding connection)
+                     :key #'car :test #'string=))
+       (setf (wire-connection-settled connection)
+             (append (wire-connection-settled connection) (list (cons id frame))))
+       (values id frame)))))
+
+(defun wire-reconcile-outstanding (connection)
+  "The request ids still outstanding on a connection whose protocol error just
+closed it: the client reconciles these mutation ids rather than guessing which
+request succeeded (SPEC-WORK.md:2702-2706)."
+  (mapcar #'car (wire-connection-outstanding connection)))
+
+;;; ------------------------------------------------------------------
+;;; The read bundle's three batch spells stay over the same envelope.
+;;; (SPEC-WORK.md:2762-2779).
+;;; ------------------------------------------------------------------
+
+(defun independent-batch-results (entries)
+  "An independent batch is ordered entries with their own request ids. The
+default is to stop at the first refusal and mark every remaining entry
+`:not-attempted` (SPEC-WORK.md:2777-2779)."
+  (let ((stopped nil) (out '()))
+    (dolist (entry entries)
+      (cond
+        (stopped (push (list (car entry) :not-attempted) out))
+        ((cdr entry) (push (list (car entry) (cdr entry)) out))
+        (t (push (list (car entry) :refused) out)
+           (setf stopped t))))
+    (nreverse out)))
+
+(defun atomic-batch-validate (entries)
+  "An atomic batch validates whole. A NIL disposition is a validation failure:
+answer (values NIL FAILING-REQUEST-ID) and write nothing. Otherwise answer
+(values T NIL)."
+  (let ((failed (find-if (lambda (entry) (null (cdr entry))) entries)))
+    (if failed
+        (values nil (car failed))
+        (values t nil))))
+
+;;; ------------------------------------------------------------------
+;;; A mutation connection: disconnect is not a rollback
+;;; (SPEC-WORK.md:2708-2717).
+;;; ------------------------------------------------------------------
+
+(defstruct (wire-session (:constructor %make-wire-session))
+  kernel pushed client-alive-p operations)
+
+(defun make-wire-session (&key kernel (pushed "-") (client-alive-p t)
+                               (operations nil))
+  (%make-wire-session :kernel kernel :pushed pushed
+                      :client-alive-p client-alive-p
+                      :operations (or operations (make-operation-registry))))
+
+(defun wire-session-mutate (session request)
+  "Enter the mutation through the kernel's single writer and answer
+(values OK LINE EXIT RESPONSE). The response carries rev= (the local durable
+revision) and pushed= (the last shared Git revision) as two fields. The same
+request id and body on a reconnected client returns the journal's recorded
+disposition and applies no second event; the same id with different arguments
+is refused by the kernel's dedup predicate."
+  (multiple-value-bind (ok line code envelope)
+      (submit (wire-session-kernel session) request)
+    (declare (ignore envelope))
+    (values ok line code
+            (list :request (getf request :request)
+                  :ok ok
+                  :rev (state-revision (kernel-state (wire-session-kernel session)))
+                  :pushed (wire-session-pushed session)))))
