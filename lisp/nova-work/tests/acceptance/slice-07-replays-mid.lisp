@@ -41,8 +41,26 @@
 
 (deftest "requested-model-is-not-observed-model" "docs/SPEC-WORK.md:5222"
     "expected=unknown-stays-unknown;attempts-separate-model-attribution"
-  ;; NEEDS-KERNEL: observed-vs-requested model attribution across attempts.
-  (ok t "pending; needs model observation"))
+  ;; an unobserved executor stays unknown: a friend's usual model is not proof.
+  (let ((unobserved (make-attempt :id "att-1" :node "root/f/t1"
+                                  :requested-model "astra" :observed nil :usage 10)))
+    (check-equal :unknown (attempt-observed-model unobserved)
+                 "an unobserved model is unknown")
+    (check-equal nil (equal (attempt-observed-model unobserved) "beta")
+                 "a friend's usual model never stands as proof of the executor"))
+  ;; concurrent attempts keep separate model and usage attribution.
+  (let* ((a (make-attempt :id "att-1" :node "root/f/t1" :requested-model "astra"
+                          :observed "astra" :usage 10))
+         (b (make-attempt :id "att-2" :node "root/f/t1" :requested-model "astra"
+                          :observed "beta" :usage 7))
+         (records (list a b)))
+    (check-equal '(("astra" . 10) ("beta" . 7))
+                 (mapcar (lambda (x) (cons (attempt-observed-model x)
+                                           (attempt-usage x)))
+                         records)
+                 "concurrent attempts keep separate attribution")
+    (check-equal nil (attempts-collapsed-p records)
+                 "one attempt's usage does not stand for another's")))
 
 (deftest "reserved-role-is-not-spent-on-routine-work" "docs/SPEC-WORK.md:5214"
     "expected=reserved-role-read-from-config-never-spent-on-routine"

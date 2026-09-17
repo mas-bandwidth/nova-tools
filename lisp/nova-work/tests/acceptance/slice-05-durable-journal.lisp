@@ -893,10 +893,32 @@ asserts does not exist in slice 1."
 ;; and accepted ownership distinguished; a pending offer reserves only
 ;; declared capacity; a timeout launches no duplicate while the old worker
 ;; may run; a return reconciles before new dispatch.
-;; NEEDS-KERNEL: dispatch/offer/ack ownership verbs and a pending-offer index.
-(deftest-pending "dispatch-ack-and-ownership-are-three" "docs/SPEC-WORK.md:5219"
+(deftest "dispatch-ack-and-ownership-are-three" "docs/SPEC-WORK.md:5219"
     "expected=dispatch!=delivery!=ack!=ownership;reservation=declared-only;duplicate=0"
-  "dispatch verbs are absent from slice 1")
+  (let* ((offer (dispatch-offer "req-1" "root/f/t1" "bob" 2))
+         (delivery (delivery-receipt offer))
+         (ack (acknowledgement offer :stage :accepted))
+         (ownership (accepted-ownership offer "bob")))
+    ;; the four facts are four records and never one.
+    (check-equal :offer (dispatch-fact-kind offer) "dispatch records intent")
+    (check-equal :delivery (dispatch-fact-kind delivery) "delivery is its own fact")
+    (check-equal :acknowledge (dispatch-fact-kind ack) "acknowledgement is its own fact")
+    (check-equal :ownership (dispatch-fact-kind ownership) "accepted ownership is its own fact")
+    (check-equal nil (facts-collapsed-p offer delivery ack ownership)
+                 "the four facts never collapse into one")
+    ;; a pending offer reserves only the explicitly declared capacity.
+    (check-equal 2 (pending-offer-reserved offer) "reserves the declared capacity")
+    (check-equal 2 (pending-offer-declared offer) "declared capacity is kept apart")
+    (check-equal t (pending-offer-p offer) "the offer is pending until reconciled")
+    ;; a timeout alone launches no duplicate while the old worker may run.
+    (let ((after (offer-after-timeout offer)))
+      (check-equal nil (dispatch-launched-p after) "a timeout launches no duplicate")
+      (check-equal :overdue (dispatch-fact-state after) "the offer is overdue, unreconciled")
+      (check-equal 2 (pending-offer-reserved after) "the reservation stands"))
+    ;; one holder has one lease: a second offer to another name is refused.
+    (check-equal nil (second-offer-admitted-p offer
+                                              (dispatch-offer "req-2" "root/f/t1" "carol" 2))
+                 "no shadow lease: a cross-holder offer is refused")))
 
 ;; dry-run-writes-nothing: a dry run validates and projects without mutating;
 ;; after a green preview at revision R the --request id is still new to the
@@ -985,10 +1007,64 @@ asserts does not exist in slice 1."
 ;; and one-shots each expressible as a capability group with stable id, source,
 ;; last-verified stamp, availability and constraints; declared support,
 ;; verified runtime and current free capacity kept as three fields.
-;; NEEDS-KERNEL: capability-group records and the three support fields.
-(deftest-pending "four-capability-groups-and-three-fields" "docs/SPEC-WORK.md:5280"
+(deftest "four-capability-groups-and-three-fields" "docs/SPEC-WORK.md:5280"
     "expected=groups=4;fields=support,runtime,free-capacity;never-collapse"
-  "capability records are not in slice 1")
+  (let ((groups
+          (mapcar (lambda (kind)
+                    (make-capability-group
+                     :id (format nil "cap-~(~A~)" kind)
+                     :kind kind
+                     :source "CONFIG"
+                     :last-verified "2026-09-15T00:00:00Z"
+                     :availability :available
+                     :constraints '(:budget "metered")))
+                  '(:child-agents :swarms :local-models :one-shots))))
+    ;; the four execution capability groups are each expressible.
+    (check-equal '(:child-agents :swarms :local-models :one-shots)
+                 (mapcar #'capability-group-kind groups)
+                 "four capability groups")
+    ;; every entry carries a stable id, source, verified stamp, availability
+    ;; and its budget or permission constraints.
+    (dolist (g groups)
+      (ok (stringp (capability-group-id g)) "~A has a stable id"
+          (capability-group-kind g))
+      (check-string= "CONFIG" (capability-group-source g) "the source is carried")
+      (check-string= "2026-09-15T00:00:00Z" (capability-group-last-verified g)
+                     "the last-verified stamp is carried")
+      (check-equal :available (capability-group-availability g) "availability is carried")
+      (check-string= "metered" (getf (capability-group-constraints g) :budget)
+                     "the constraints are carried"))
+    ;; declared support, runtime verification and free capacity stay three
+    ;; fields; a catalog entry is not evidence of a live child or free credits.
+    (let ((g (make-capability-group :id "cap-1" :kind :child-agents
+                                    :source "CONFIG"
+                                    :last-verified "2026-09-15T00:00:00Z"
+                                    :availability :available :constraints '()
+                                    :declared-support t :runtime-verified nil
+                                    :free-capacity nil)))
+      (check-equal t (capability-declared-support-p g) "declared support is true")
+      (check-equal nil (capability-runtime-verified-p g) "runtime is not verified")
+      (check-equal :unknown (capability-free-capacity g) "free capacity is unknown")
+      (check-equal nil (capability-fields-collapse-p g)
+                   "the three fields never collapse into one"))))
+
+;; a-retry-does-not-overwrite-its-attempt: a retry never overwrites the attempt
+;; before it; concurrent attempts keep separate model and usage attribution.
+(deftest "a-retry-does-not-overwrite-its-attempt" "docs/SPEC-WORK.md:5222"
+    "expected=unknown-stays-unknown;attempts-separate-attribution;never-overwrite"
+  (let* ((first (make-attempt :id "att-1" :node "root/f/t1"
+                              :requested-model "astra" :observed nil :usage 10))
+         (retry (make-attempt :id "att-2" :node "root/f/t1"
+                              :requested-model "astra" :observed "beta" :usage 7))
+         (attempts (append-attempt (list first) retry)))
+    (check-equal 2 (length attempts) "the retry is a second attempt")
+    (check-equal t (equal first (first attempts))
+                 "the attempt before the retry is not overwritten")
+    (check-equal :unknown (attempt-observed-model (first attempts))
+                 "the first attempt's unknown observation survives the retry")
+    (check-equal 10 (attempt-usage (first attempts)) "the first attempt's usage is intact")
+    (check-equal "att-2" (attempt-id (second attempts))
+                 "the retry keeps its own identity")))
 
 ;; four-facts-four-verbs: an admitted offer with declared free slots writing
 ;; :effect :dispatched, a pending-offer index entry, refused by name while an

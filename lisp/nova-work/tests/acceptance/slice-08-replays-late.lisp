@@ -36,8 +36,29 @@
 
 (deftest "silence-is-a-ping-not-a-verdict" "docs/SPEC-WORK.md:5225"
     "expected=one-bounded-ping-at-the-threshold;nonresponse-marked-unavailable-unconfirmed-not-exhausted"
-  ;; NEEDS-KERNEL: silence threshold and probe dispatch.
-  (ok t "slice 1 carries no dispatch: NEEDS-KERNEL ping + probe"))
+  ;; below the configured threshold there is no ping.
+  (check-equal :quiet (silence-action 5 30 :resting nil :reserved nil :pinged-p nil)
+               "no ping below the threshold")
+  ;; at the threshold the ping is one and bounded.
+  (check-equal :ping (silence-action 30 30 :resting nil :reserved nil :pinged-p nil)
+               "one bounded ping at the threshold")
+  (check-equal :already-pinged (silence-action 45 30 :resting nil :reserved nil :pinged-p t)
+               "the ping is bounded to one")
+  ;; explicit rest is respected; a friend reserved from routine wakeups is not pinged.
+  (check-equal :rest (silence-action 45 30 :resting t :reserved nil :pinged-p nil)
+               "an explicitly resting friend is not pinged")
+  (check-equal :reserved (silence-action 45 30 :resting nil :reserved t :pinged-p nil)
+               "a reserved friend is not pinged")
+  ;; a nonresponse inside the answer window marks capacity unavailable and
+  ;; unconfirmed, asserting neither sleep nor exhausted credit.
+  (let ((v (silence-verdict (availability-after-window :answered-p nil))))
+    (check-equal :unavailable (getf v :state) "nonresponse is unavailable")
+    (check-equal :unconfirmed (getf v :reason) "the reason is unconfirmed")
+    (check-equal nil (getf v :sleep) "no sleep is claimed")
+    (check-equal nil (getf v :exhausted) "no exhausted credit is claimed"))
+  ;; a failed probe is unresolved delivery, not a failed friend.
+  (check-equal :unresolved-delivery (probe-outcome :failed)
+               "a failed probe is unresolved delivery"))
 
 (deftest "single-writer" "docs/SPEC-WORK.md:5595"
     "expected=fencing-prevents-stale-mutation-authority-not-only-a-stale-push"
