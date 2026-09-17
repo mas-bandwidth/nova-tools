@@ -786,7 +786,16 @@
     #:staged-input-valid-p
     #:staged-input-rev
     #:staged-input-reason
+    #:staged-input-digest
     #:stage-provenance
+    #:stage-payload
+    #:receipt-verifier
+    #:make-receipt-verifier
+    #:receipt-verifier-p
+    #:receipt-verifier-recipient
+    #:receipt-verifier-verify
+    #:verifier-result
+    #:verifier-result-valid-p
     #:session-written-field
     #:assignment-offer
     #:assignment-acknowledge

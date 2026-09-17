@@ -161,8 +161,10 @@
   ;; the session's directory created 0700 and its socket 0600, both owned
   ;; by the running account; a pre-existing directory or socket with wider
   ;; modes refused rather than reused; no listener on any network address.
-  (let* ((base (concatenate 'string (namestring (uiop:temporary-directory))
-                            (format nil "nw-~D" (random 1000000))))
+  (let* ((tmp (namestring (uiop:temporary-directory)))
+         (base (if (< (length tmp) 80)
+                   (concatenate 'string tmp (format nil "nw-~D" (random 1000000)))
+                   (format nil "nw-~D" (random 1000000))))
          (dir (concatenate 'string base "/s"))
          (sock (concatenate 'string dir "/w")))
     (unwind-protect

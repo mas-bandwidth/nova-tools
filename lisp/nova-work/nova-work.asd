@@ -23,6 +23,7 @@
                (:file "src/command-thread")
                (:file "src/session")
                (:file "src/state-export")
+               (:file "src/verifier")
                (:file "src/fleet")
                (:file "src/closed-history")
                (:file "src/node-verbs")
