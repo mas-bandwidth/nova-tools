@@ -19,10 +19,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
-// fakeDecider is the fake decide provider: it records every (state, questions)
+// orderFakeDecider is the fake decide provider: it records every (state, questions)
 // it is asked and answers one scripted land score per PR, keyed off the pr= the
 // state carries. It is the socket-free twin of the httptest fake below.
-type fakeDecider struct {
+type orderFakeDecider struct {
 	calls []fakeAsk
 	reply map[int]decide.Answer
 	err   error
@@ -33,7 +33,7 @@ type fakeAsk struct {
 	qs    map[string]decide.Question
 }
 
-func (f *fakeDecider) Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+func (f *orderFakeDecider) Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
 	f.calls = append(f.calls, fakeAsk{state: state, qs: qs})
 	if f.err != nil {
 		return nil, decide.Usage{}, f.err
@@ -75,7 +75,7 @@ func orderFixture(t *testing.T) (string, *fakeSource, *fakeEnqueuer) {
 // poison candidate last.
 func TestSweepOrdersByTypedScore(t *testing.T) {
 	queue, src, enq := orderFixture(t)
-	fake := &fakeDecider{reply: map[int]decide.Answer{
+	fake := &orderFakeDecider{reply: map[int]decide.Answer{
 		7: {Type: "score", Score: 0.50, Confidence: 0.95}, // above floor, mid
 		8: {Type: "score", Score: 0.95, Confidence: 0.95}, // above floor, first
 		9: {Type: "score", Score: 0.05, Confidence: 0.95}, // above floor, last
@@ -131,7 +131,7 @@ func TestSweepOrdersByTypedScore(t *testing.T) {
 // the enqueue keeps exactly the existing order -- oldest PR first.
 func TestSweepBelowFloorKeepsExistingOrder(t *testing.T) {
 	queue, src, enq := orderFixture(t)
-	fake := &fakeDecider{reply: map[int]decide.Answer{
+	fake := &orderFakeDecider{reply: map[int]decide.Answer{
 		7: {Type: "score", Score: 0.90, Confidence: 0.10},
 		8: {Type: "score", Score: 0.10, Confidence: 0.10},
 		9: {Type: "score", Score: 0.99, Confidence: 0.10},
@@ -159,7 +159,7 @@ func TestSweepBelowFloorKeepsExistingOrder(t *testing.T) {
 // (oldest first), and the whole run is still one SWEEP line plus the ORDER lines.
 func TestSweepTieKeepsExistingOrder(t *testing.T) {
 	queue, src, enq := orderFixture(t)
-	fake := &fakeDecider{reply: map[int]decide.Answer{
+	fake := &orderFakeDecider{reply: map[int]decide.Answer{
 		7: {Type: "score", Score: 0.80, Confidence: 0.95},
 		8: {Type: "score", Score: 0.80, Confidence: 0.95},
 		9: {Type: "score", Score: 0.80, Confidence: 0.95},
