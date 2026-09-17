@@ -943,7 +943,57 @@
     #:compact-copies
     #:restore-copy
     #:start-over-copy
-    #:join-experiment-cost))
+    #:join-experiment-cost
+    ;; efficiency, adoption and goal replays (card 8644)
+    #:prime
+    #:make-checklist-item
+    #:checklist-item-text
+    #:checklist-item-independent-verification
+    #:checklist-item-independent-worker
+    #:checklist-item-explicit-dependency
+    #:checklist-item-isolated-recovery
+    #:materializes-node-p
+    #:checklist-open-delta
+    #:*default-max-attempts*
+    #:attempts-tripped-p
+    #:lease-admission
+    #:*delegate-refused-actions*
+    #:delegate-admission
+    #:make-trial-result
+    #:trial-result-prospective
+    #:trial-result-baseline
+    #:trial-result-coverage
+    #:trial-result-quality
+    #:trial-result-tolerances-matched
+    #:adoption-verdict
+    #:make-root-step-record
+    #:root-step-record
+    #:root-step-record-node
+    #:root-step-record-steps
+    #:step-record-count
+    #:step-record-node-explosion
+    #:make-next-trigger
+    #:next-trigger-kind
+    #:next-trigger-due
+    #:make-waiting-item
+    #:waiting-item-id
+    #:waiting-item-trigger
+    #:pulse-reexecutions
+    #:make-goal-store
+    #:snapshot-goal-store
+    #:goal-store-scope
+    #:goal-store-goal
+    #:goal-store-node-state
+    #:goal-store-rev
+    #:goal-store-notes
+    #:goal-store-history
+    #:goal-store-dedup
+    #:goal-stop-state
+    #:goal-add-note
+    #:goal-set
+    #:goal-update
+    #:goal-cancel
+    #:goal-show))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

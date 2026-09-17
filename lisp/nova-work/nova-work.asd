@@ -42,7 +42,8 @@
                (:file "src/control")
                (:file "src/replays-8641")
                (:file "src/replays-8642")
-               (:file "src/replays-8643")))
+               (:file "src/replays-8643")
+               (:file "src/replays-efficiency-goal")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -57,4 +58,5 @@
                (:file "tests/replays-8640")
                (:file "tests/replays-8641")
                (:file "tests/replays-8642")
-               (:file "tests/replays-8643")))
+               (:file "tests/replays-8643")
+               (:file "tests/replays-8644")))
