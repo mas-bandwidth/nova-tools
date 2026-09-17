@@ -162,7 +162,13 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     by explicit refspec — `git push <https url> <branch>:<branch>` from the job's clone,
     never `git push` bare, never to `main` (a `BRANCH main` line is `mismatch`) — and a
     draft PR is opened with `gh pr create --draft` whose body is the `RESULT.md` lines, capped
-    at `--max-body-bytes` (default 4096). One `HARVEST PR` line per PR.
+    at `--max-body-bytes` (default 4096). One `HARVEST PR` line per PR. `harvest` reads the
+    pool layout beside the slot layout: a card `launch` admitted into `<root>/pool` is folded
+    from `pool/reports/<id>/RESULT.md`, with the task id mapped back to its card label through
+    the task file's own label line (line 1, the card's `RESULT` contract line) or the sidecar's
+    label, `done/` before `failed/`, latest task first — and a task in `failed/` whose
+    `RESULT.md` exists with a first line equal to the card's `RESULT` line is harvested as a
+    result, not a failure, because the contract decides, never the directory it sits in.
 13. **Every PR gets a read card in the next pool, routed local-first.** On open, `harvest`
     appends (`pr`, `<repo>#<n>`, `read`, `<title>`, `read`) to `<root>/next.tsv` — template
     `read`, or `tone` for a seed page — which the next `pool` reads after `queue.tsv` and
