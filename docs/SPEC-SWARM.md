@@ -1485,6 +1485,42 @@ races**.
 worker that could write back into the home copy could change the next worker's
 self, and the next worker would load it without anybody reading the change.
 
+## Bench slot leases
+
+(Glenn and Stella, 2026-09-17.) A bench is bigger than its owners: one bench,
+many owners, and the slots on it are one shared pool, not one pool per owner.
+A bench carries ONE slot store shared by every owner, at <bench store>/slots,
+and every launcher — `nova-swarm run`, `nova-pulse launch`, a hand launch —
+takes a lease per card before it runs and releases it after. The seven rules:
+
+1. A bench carries ONE slot store shared by every owner, at <bench store>/slots,
+   a directory of atomic mkdir leases each holding owner, pid, card label, until=.
+2. Every launcher (`nova-swarm run`, `nova-pulse launch`, a hand launch)
+   takes a lease per card before it runs and releases it after; a launch
+   without a lease is refused by the launcher.
+3. The broker verbs are the only way to hold a slot:
+
+   ```
+   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration>
+   nova-swarm slots list --store <dir>
+   ```
+
+   `take` grants by the owner's share from the registry file `<store>/shares.tsv`
+   (columns bench, owner, share). It refuses with the holder list when the share is spent,
+   and never grants past capacity minus reserve (rows `capacity` and `reserve` in shares.tsv).
+4. `nova-swarm slots list --store <dir>` prints who holds what, one line per lease.
+5. Reaping: a lease past until= whose pid is gone is reaped by the next take;
+   drift: a pid alive past until= is DRIFT, printed by name, never reaped and never regranted.
+6. In the survey, a card found running under a root with no matching lease is DRIFT in the survey.
+7. Registry: shares change only by a PR to the registry, never by a note.
+
+**Red tests** (each seen red before it is trusted):
+
+- two owners at their shares cannot exceed capacity;
+- an expired lease with a dead pid frees its slot;
+- an expired lease with a live pid is DRIFT and stays;
+- a launch without a lease is refused by the launcher.
+
 ## The deadline, held by the machinery
 
 Every task carries a deadline. The default is the worker description's, and
