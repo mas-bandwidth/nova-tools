@@ -58,6 +58,7 @@ usage:
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
+  nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
    nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
@@ -187,6 +188,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdSlots(rest, stdout, stderr)
 	case "publish":
 		return cmdPublish(rest, stdout, stderr)
+	case "profile":
+		return cmdProfile(rest, stdout, stderr)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
 }
@@ -1172,6 +1175,21 @@ func cmdCost(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return swarm.Cost(p, *since, *max, stdout, stderr)
+}
+
+// cmdProfile folds the per-turn timelines a glob names into a card's minutes per phase. It
+// reads only the files the native run already wrote; it launches nothing and calls no model.
+func cmdProfile(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("profile")
+	jobs := f.fs.String("jobs", "", "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*jobs, "jobs", "a glob of job directories (or timeline.tsv files), each holding a native run's per-turn timeline")
+	if f.refused(stderr) {
+		return 2
+	}
+	return swarm.ProfileJobs(*jobs, stdout, stderr)
 }
 
 func cmdNote(args []string, stdout, stderr io.Writer, now time.Time) int {
