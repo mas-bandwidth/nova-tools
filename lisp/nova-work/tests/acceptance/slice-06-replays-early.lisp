@@ -13,6 +13,10 @@
 
 ;; page-budget-is-not-max now lives in ../acceptance.lisp over the
 ;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; NEEDS-KERNEL: oversized packet, stale route and escalation gates before dispatch.
+(deftest "packet-and-route-gates" "docs/SPEC-WORK.md:4371"
+    "expected=oversized/stale/unexplained-escalation-refuse-before-dispatch"
+  (slice1-refuses-verb :route))
 
 ;; pipeline-replies-are-correlated is now the executable replay in
 ;; ../acceptance.lisp (card 8608).

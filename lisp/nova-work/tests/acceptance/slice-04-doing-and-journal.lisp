@@ -174,6 +174,41 @@
 
 ;; new-verbs-retry-to-one-event now runs in
 ;; tests/acceptance/slice-05-durable-journal.lisp against src/new-verbs.lisp.
+;; NEEDS-KERNEL: default-window-opens-two-days (docs/SPEC-WORK.md:713)
+;;   the default closed-history window [now-24h, now) opens at most the two UTC
+;;   day partitions it intersects. Waits on the closed-history window.
+
+;; NEEDS-KERNEL: busy-day-many-segments (docs/SPEC-WORK.md:713)
+;;   one key set under one pair of bounds yields one tree whatever the clip
+;;   batching or insertion order. Waits on clip segmentation.
+
+;; one-revision-publishes-together, index-replayed-after-crash,
+;; overlay-is-bounded-and-rebuilt, absent-day-is-not-a-gap and
+;; missing-segment-is-a-gap now assert their sentences in
+;; slice-09-replays-publication.lisp.
+
+;; NEEDS-KERNEL: as-of-refuses-unavailable-partition (docs/SPEC-WORK.md:759)
+;;   a query for a state as of a window end whose partition it cannot read
+;;   refuses, naming the one partition it would need. Waits on partitions.
+
+;; NEEDS-KERNEL: indivisible-record-refused-before-ack (docs/SPEC-WORK.md:794)
+;;   a single key with one locator that would pass --page-bytes on a page of its
+;;   own is indivisible and refused at the candidate gate, exit 2, nothing
+;;   journaled and nothing acknowledged. Waits on the indivisible-record gate.
+
+;; NEEDS-KERNEL: clip-names-the-index-that-overflowed (docs/SPEC-WORK.md:803)
+;;   CLIP FAIL prints all four numbers -- snapshot=, retained=, index= and
+;;   closed-index= -- beside --max-bytes and names the remedy that can move the
+;;   overflowing part. Waits on the clip.
+
+;; NEEDS-KERNEL: new-verbs-have-a-kind-and-a-field-order (docs/SPEC-WORK.md:1052)
+;;   each new verb (friend, model, observe, config, machine, goal, offer, ...)
+;;   has a kind, an ordered field list and a named subject. Waits on the new
+;;   verbs.
+
+;; NEEDS-KERNEL: new-verbs-retry-to-one-event (docs/SPEC-WORK.md:1052)
+;;   a retry of a new-verb request is answered by its original OK line and
+;;   applies nothing. Waits on the new verbs' journal/dedup path.
 ;;;; ------------------------------------------------------------------
 ;;;; COW and closed-history replays (SPEC-WORK.md:1200-2400), named and
 ;;;; added for CARD-273 / #362. Green where slice-1 kernel behaviour can

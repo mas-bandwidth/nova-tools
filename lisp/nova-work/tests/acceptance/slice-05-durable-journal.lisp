@@ -561,6 +561,10 @@
 ;; add-field-order-is-complete (SPEC-WORK.md:5337) --- the real replay now lives
 ;; in tests/replays-8641.lisp over src/replays-8641.lisp and src/node-verbs.lisp
 ;; (nova-tools #362).
+;; NEEDS-KERNEL: lease creation/binding and W entry; no lease or W index exists yet.
+;; accepted-creates-one-lease-or-binds (SPEC-WORK.md:5238) --- an accepted receipt after
+;; received creating exactly one :lease and one W entry, or binding a second attempt to the same
+;; holder's lease unchanged; converting and never doubling capacity.
 
 ;; as-of-reconstructs-settle-revive-settle now lives in
 ;; tests/acceptance/slice-04-doing-and-journal.lisp over the settle/revive
@@ -864,6 +868,26 @@
 
 ;; hold-survives-a-crash (SPEC-WORK.md:5254) now runs as the real deftest in
 ;; tests/acceptance/slice-09-replays-holds.lisp.
+;; ------------------------------------------------------------------
+;; hold-survives-a-crash   docs/SPEC-WORK.md:5254
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: crash durability of holds (crash after the hold recovers the
+;; same hold and target identities with no duplicate launch).
+;;(deftest "hold-survives-a-crash" "docs/SPEC-WORK.md:5254"
+;;    "hold-durable,target-identities=recovered,duplicate-launch=0"
+;;  ;; a crash after the hold is durable and before capture/send recovering the
+;;  ;; same hold and target identities with no duplicate launch.)
+
+;; ------------------------------------------------------------------
+;; hostile-data   docs/SPEC-WORK.md:5602
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: hostile-data intake adapter (reader evaluation disabled;
+;; depth/byte/node limits; no command execution or authority change; quadratic
+;; copying avoided).
+;;(deftest "hostile-data" "docs/SPEC-WORK.md:5602"
+;;    "eval-disabled,limits=enforced,command-execution=0,authority=unchanged"
+;;  ;; reader evaluation disabled; pre-parse depth, byte and node limits
+;;  ;; enforced; imported prose cannot execute a command or alter authority.)
 
 ;; ------------------------------------------------------------------
 ;; indivisible-record-refused-before-ack   docs/SPEC-WORK.md:5543
@@ -918,6 +942,15 @@
                                         (request "mv-1")
                                         (stamp "2026-09-17T00:00:00Z"))
   (list :id id :from from :under under :reason reason :request request :stamp stamp))
+;; move-keeps-every-count   docs/SPEC-WORK.md:5360
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: node move verb (a required subtree moved keeps all counts
+;; consistent; no whole-set scan).
+;;(deftest "move-keeps-every-count" "docs/SPEC-WORK.md:5360"
+;;    "source/dest=by-subtree,net=stable,visits=asserted"
+;;  ;; a required subtree moved between two features: the source's and
+;;  ;; destination's required sets and open counts move by the subtree, the
+;;  ;; common ancestor's net count is stable.)
 
 (deftest "move-keeps-the-lease" "docs/SPEC-WORK.md:5370"
     "lease=same,attempt=same,usage=same,active-change=refused,privacy-reduction=refused"
