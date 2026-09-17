@@ -68,7 +68,7 @@ type Input struct {
 	Name          string // windows container name; accepted and ignored elsewhere
 	NetDeny       bool
 	NetListen     bool
-	NoSystemReads bool // --no-system-reads: omit the linux system read roots (issue #893)
+	NoSystemReads bool     // --no-system-reads: omit the linux system read roots (issue #893)
 	Argv          []string // the command and its arguments, everything after --
 	Home          string   // the caller's HOME as the child will see it (rule 9)
 	LookAt        string   // PATH to resolve the command on; empty means the process's own

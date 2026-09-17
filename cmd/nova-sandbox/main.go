@@ -389,7 +389,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	p, policyBad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, NetDeny: f.netDeny, NetListen: f.netListen,
 		NoSystemReads: f.noSystemReads,
-		Argv: []string{self, probeStepVerbName}, Home: homeOf(env),
+		Argv:          []string{self, probeStepVerbName}, Home: homeOf(env),
 	})
 	bad = append(bad, policyBad...)
 	if len(bad) > 0 {
