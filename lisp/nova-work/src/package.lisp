@@ -262,7 +262,45 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+   ;; replays-8646 (nova-tools card 8646)
+   #:inventory-accounting
+   #:make-inventory-accounting
+   #:inventory-accounting-baseline
+   #:inventory-denominator
+   #:inventory-observe
+   #:inventory-interval-deltas
+   #:inventory-sustained-divergence-p
+   #:inventory-report
+   #:make-cost
+   #:cost-record-measured-cash
+   #:cost-record-marginal-cash
+   #:cost-record-reference-token-cost
+   #:cost-known-p
+   #:local-inference-cost
+   #:make-working-set
+   #:working-set-reconciled-p
+   #:w-take
+   #:w-renew
+   #:w-release
+   #:w-member-p
+   #:w-count
+   #:w-reconstruction-equal-p
+   #:w-advance-clock
+   #:w-uncertain-retained-p
+   #:w-live-lease-p
+   #:w-ask
+   #:make-source-capture
+   #:capture-observe
+   #:capture-note-mutation
+   #:capture-versions
+   #:capture-reconcile
+   #:capture-consistent-claim
+   #:source-version-value
+   #:source-capture-reconciled-p
+   #:make-dispatch-packet
+   #:make-dispatch-route
+   #:dispatch-gates))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

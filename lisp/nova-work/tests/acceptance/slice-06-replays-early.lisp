@@ -17,11 +17,6 @@
     "expected=thousand-settles-into-pages;no-query-replays-journal"
   (slice1-refuses-verb :recover))
 
-;; NEEDS-KERNEL: oversized packet, stale route and escalation gates before dispatch.
-(deftest "packet-and-route-gates" "docs/SPEC-WORK.md:4371"
-    "expected=oversized/stale/unexplained-escalation-refuse-before-dispatch"
-  (slice1-refuses-verb :route))
-
 ;; NEEDS-KERNEL: a filtered historical ask whose filter rejects every row read.
 (deftest "page-budget-is-not-max" "docs/SPEC-WORK.md:5550"
     "expected=shown=0;pages=<n>;whole-history-never-scanned"
