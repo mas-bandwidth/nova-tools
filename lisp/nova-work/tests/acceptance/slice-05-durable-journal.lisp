@@ -786,10 +786,11 @@
 ;; --render-root mapping refusing file mode while --chat renders; escaping/symlink/target-identity
 ;; refusals; the cooperative lock and external-editor limit retained.
 
-;; NEEDS-KERNEL: savepoint/checkpoint distinction; no savepoint exists yet.
-;; a-savepoint-is-not-a-shared-backup (SPEC-WORK.md:5308) --- restore takes no ownership,
-;; reanimates no assignment, replays no message; savepoint age, local and shared revisions,
-;; unshared work and failed backups readable; a savepoint never printed where a checkpoint asked.
+;; a-savepoint-is-not-a-shared-backup moved to tests/replays-8641.lisp when its
+;; kernel landed (card 8641): restore takes no ownership, reanimates no
+;; assignment, replays no message; savepoint age, local and shared revisions,
+;; unshared work and failed backups readable; a savepoint never printed where a
+;; checkpoint asked. The parked stub is gone with it.
 
 ;; NEEDS-KERNEL: distributed execution reachability; no distributed worker exists yet.
 ;; a-stop-reaches-distributed-work (SPEC-WORK.md:5728) --- a priority change, correction, pause
@@ -905,10 +906,9 @@
 ;;   ;; NEEDS-KERNEL: retention archive file and coverage-gap ask
 ;;   )
 
-;; (deftest "compaction-keeps-the-last-copy" "docs/SPEC-WORK.md:5309"
-;;     "expected=compaction-never-removes-the-only-recoverable-copy"
-;;   ;; NEEDS-KERNEL: compaction over savepoints preserves the last copy
-;;   )
+;; compaction-keeps-the-last-copy moved to tests/replays-8643.lisp when its
+;; kernel landed (card 8643): compaction never removes the only recoverable
+;; copy. The parked stub is gone with it.
 
 ;; (deftest "complete-cost-lineage" "docs/SPEC-WORK.md:4375"
 ;;     "expected=parent-child-retry-join-once;failed-count;cache-subsets-no-double-count;impl-cost-separate;gaps-unknown"
@@ -925,10 +925,10 @@
 ;;   ;; NEEDS-KERNEL: configure + undo retry/guard machinery
 ;;   )
 
-;; (deftest "copied-journal-grants-nothing" "docs/SPEC-WORK.md:5535"
-;;     "expected=restore-inspects-in-isolation-takes-no-ownership-dispatches-nothing;session-start-over-copy-refused-by-fencing"
-;;   ;; NEEDS-KERNEL: savepoint restore fencing and bench identity rules
-;;   )
+;; copied-journal-grants-nothing moved to tests/replays-8643.lisp when its kernel
+;; landed (card 8643): a copied restore inspects in isolation, takes no ownership
+;; and dispatches nothing, and a session start over the copy is refused by
+;; fencing. The parked stub is gone with it.
 
 ;; (deftest "cost-joins-include-the-coordinator" "docs/SPEC-WORK.md:5733"
 ;;     "expected=complete-cost-joins-include-coordinator-overhead-rework;elapsed-attributed;hypothesis-run-after-adoption"

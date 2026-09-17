@@ -155,10 +155,11 @@
     (check-equal nil *render-lock-guards-external-editor*
                  "the lock remains advisory and does not guard an external editor")))
 
-(deftest "reply-retired-only-under-verified-coverage" "docs/SPEC-WORK.md:5538"
-    "expected=retired-only-once-snapshot-events-root-verified;else-recovery-gap"
-  ;; NEEDS-KERNEL: savepoint/dedup coverage verification of the boundary record.
-  (ok t "pending; needs savepoint dedup"))
+;; reply-retired-only-under-verified-coverage moved to tests/replays-8648.lisp
+;; when its kernel landed (card 8648): a reply retires to `already applied` only
+;; once the committed snapshot, its retained events and the dedup root are
+;; verified reachable, else the original OK answers or `recovery-gap
+;; kind=coverage-unverified` prints. The parked stub is gone with it.
 
 (deftest "requested-model-is-not-observed-model" "docs/SPEC-WORK.md:5222"
     "expected=unknown-stays-unknown;attempts-separate-model-attribution"
@@ -215,10 +216,11 @@
     (ok (not (role-inferred-from-model-p :security))
         "a model capability cancelled the agreed limit by conferring the role")))
 
-(deftest "restore-is-isolated-and-dispatches-nothing" "docs/SPEC-WORK.md:5308"
-    "expected=restore-read-only-isolated-no-ownership-no-replay-no-dispatch"
-  ;; NEEDS-KERNEL: the savepoint restore recovery session.
-  (ok t "pending; needs savepoint restore"))
+;; restore-is-isolated-and-dispatches-nothing moved to tests/replays-8648.lisp
+;; when its kernel landed (card 8648): a restore is read-only, isolated and
+;; non-dispatching, takes no ownership, reanimates no assignment and replays no
+;; message, and a repair is promoted only through a fenced validated
+;; reconciliation. The parked stub is gone with it.
 
 (deftest "resume-is-two-actions" "docs/SPEC-WORK.md:5268"
     "expected=release-hold-only-lifts-its-control;resume-workers-refuses-unsupported-capability"
