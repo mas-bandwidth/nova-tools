@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -559,6 +560,9 @@ func TestNativeRunRefusalsNameTheirReason(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "auth_not_0600" && runtime.GOOS == "windows" {
+				t.Skip("windows cannot make a file 0600 in the POSIX sense: NTFS reports 0666 for every readable file, so writing the auth file 0644 cannot produce the looser-than-0600 condition the refusal names")
+			}
 			var errOut bytes.Buffer
 			_, code := nativeRun(tc.cfg, &errOut)
 			if code != 2 {

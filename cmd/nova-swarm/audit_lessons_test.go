@@ -157,14 +157,12 @@ func TestPreparationRefusalStillMonitorsAdoptedJob(t *testing.T) {
 	if err := p.Claim(liveID, swarm.Pending, swarm.Running); err != nil {
 		t.Fatal(err)
 	}
-	// The adopted job has to be ALIVE for the whole run, because the run adopting
-	// it is the thing under test. `sleep 1` made that a race against however long
-	// the setup below plus b.run() takes -- fine on a quiet machine, and on a
-	// loaded studio runner the process was gone before the dispatcher looked, so
-	// there was nothing to adopt and no RUN ADOPT line (run 35023183602, test
-	// (4/8 studio)). Its siblings in recovery_test.go already use 15 and 20
-	// seconds for exactly this; the test does not wait on it, so a long sleep
-	// costs nothing and is killed on the way out.
+	// The adopted job has to be ALIVE when the run's start-up scan decides to adopt it,
+	// and a fixed sleep is a race against however long the setup plus b.run() takes. It is
+	// killed the moment its adoption is on the run's own stdout, so the test waits on the
+	// event rather than on the clock: `sleep 30` was 30 s of this package's budget and
+	// none of it was a measurement. The long sleep only keeps the process from exiting
+	// before the adoption can be observed.
 	liveCmd := exec.Command("sleep", "30")
 	if err := liveCmd.Start(); err != nil {
 		t.Fatal(err)
@@ -182,7 +180,18 @@ func TestPreparationRefusalStillMonitorsAdoptedJob(t *testing.T) {
 	missing := filepath.Join(b.dir, "worker-home-missing")
 	b.rewriteWorker(func(d map[string]any) { d["worker_dir"] = missing })
 
-	exit, stdout, stderr := b.run()
+	runArgs := withSandbox([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.25", "--worker", b.worker})
+	adopted := false
+	exit, stdout, stderr := b.runWatching(runArgs, func(line string) {
+		if adopted || !strings.Contains(line, "RUN ADOPT id="+liveID) {
+			return
+		}
+		adopted = true
+		_ = liveCmd.Process.Kill()
+	})
+	if !adopted {
+		t.Fatalf("the run never adopted %s, so this test proved nothing:\n%s", liveID, stdout)
+	}
 	if exit == 0 {
 		t.Fatalf("a preparation refusal with an adopted job must be nonzero:\n%s%s", stdout, stderr)
 	}

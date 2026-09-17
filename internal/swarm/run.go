@@ -595,7 +595,7 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		supervisorArgs = append(supervisorArgs, "--sandbox", in.Sandbox)
 	}
 	if in.UsageInterval > 0 {
-		supervisorArgs = append(supervisorArgs, "--usage-interval", strconv.Itoa(int(in.UsageInterval.Seconds())))
+		supervisorArgs = append(supervisorArgs, "--usage-interval", in.UsageInterval.String())
 	}
 	cmd := exec.Command(in.Supervisor, supervisorArgs...)
 	cmd.Stdout, cmd.Stderr = nil, nil

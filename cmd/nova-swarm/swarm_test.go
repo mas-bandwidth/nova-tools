@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -255,6 +256,45 @@ func (b *bench) swarmTry(args ...string) (exit int, stdout, stderr string, err e
 		err = runErr
 	}
 	return exit, out.String(), errb.String(), err
+}
+
+// runWatching runs the dispatcher and hands each line of its stdout to watch as it is
+// printed, so a test can act on a RUN line (an adoption) before the run ends. It returns
+// the run's exit code and its full stdout and stderr. It carries the same environment
+// swarmTry builds, so it is compiled and usable on every platform.
+func (b *bench) runWatching(args []string, watch func(string)) (int, string, string) {
+	b.t.Helper()
+	cmd := exec.Command(b.binary, args...)
+	cmd.Dir = b.dir
+	cmd.Env = append([]string{"PATH=" + b.path, "Path=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
+	if runtime.GOOS == "windows" {
+		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC"} {
+			if v := os.Getenv(k); v != "" {
+				cmd.Env = append(cmd.Env, k+"="+v)
+			}
+		}
+	}
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		b.t.Fatalf("opening the run's stdout: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		b.t.Fatalf("starting the run: %v", err)
+	}
+	var out bytes.Buffer
+	scanner := bufio.NewScanner(pipe)
+	for scanner.Scan() {
+		line := scanner.Text()
+		out.WriteString(line)
+		out.WriteString("\n")
+		if watch != nil {
+			watch(line)
+		}
+	}
+	_ = cmd.Wait()
+	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
 }
 
 func (b *bench) add(task string, extra ...string) string {
@@ -588,7 +628,7 @@ func TestNoAutoRetryKeepsAKilledAttemptWithoutADescendant(t *testing.T) {
 		t.Skip("this one waits for the worker deadline")
 	}
 	b := newBench(t)
-	id := b.add("a one-attempt worker that publishes before its deadline\nFAKE-PUBLISH-FIRST\nFAKE-FINDINGS 1\nFAKE-SLEEP 30\n", "--deadline", "3s")
+	id := b.add("a one-attempt worker that publishes before its deadline\nFAKE-PUBLISH-FIRST\nFAKE-FINDINGS 1\nFAKE-SLEEP 30\n", "--deadline", "800ms")
 	exit, stdout, stderr := b.run("--no-auto-retry")
 	if exit != 0 {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
@@ -1873,7 +1913,7 @@ func TestAnUnreadableUsageSourceEndsTheJobUnverifiable(t *testing.T) {
 	b := newBench(t)
 	id := b.add("a worker whose usage source cannot be read\nFAKE-PUBLISH-FIRST\nFAKE-FINDINGS 2\nFAKE-BADUSAGE\nFAKE-SLEEP 30\n",
 		"--tokens", "5000")
-	exit, stdout, stderr := b.run("--usage-interval", "1")
+	exit, stdout, stderr := b.run("--usage-interval", "250ms")
 	if exit != 0 {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
 	}
