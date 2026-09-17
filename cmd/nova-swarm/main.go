@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,7 +49,7 @@ usage:
   nova-swarm stop      --pool <dir>
   nova-swarm requeue   --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--max-input <bytes>]
   nova-swarm verdict   --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
-  nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>]
+   nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
   nova-swarm result    --pool <dir> --id <job>
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--max <n>]
@@ -968,12 +969,19 @@ func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
 	all := f.fs.Bool("all", false, "")
 	noState := f.fs.Bool("no-state", false, "")
 	owed := f.fs.String("owed", "", "")
+	decide := f.fs.Bool("decide", false, "")
+	floor := f.fs.Float64("floor", swarm.DefaultDecideFloor, "")
+	keyEnv := f.fs.String("key-env", "", "")
+	baseURL := f.fs.String("base-url", "", "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.wantMax(*max)
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
+	if *decide && (*floor < 0 || *floor > 1) {
+		f.add(fmt.Sprintf("--floor is a confidence between 0 and 1, got %s; 0.9 is how a caller says a suggestion must be sure before it is printed as a decision", oneline.Field(strconv.FormatFloat(*floor, 'g', -1, 64))))
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -996,6 +1004,7 @@ func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return swarm.Triage(swarm.TriageInput{
 		Pool: p, Batch: *batch, Since: *since, All: *all, NoState: *noState, Max: *max,
 		Owed:   owedList,
+		Decide: *decide, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
 	})
 }

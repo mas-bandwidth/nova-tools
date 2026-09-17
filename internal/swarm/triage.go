@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -46,6 +47,24 @@ type TriageInput struct {
 	Owed           []string
 	Stdout, Stderr io.Writer
 	Now            func() time.Time
+
+	// Decide asks TypeSafe Jev for one typed abstain reason per finished
+	// task (reason choice + needs_human noul) behind Floor, and appends it
+	// to each TRIAGE REPORT line. Below the floor the line says decide=?
+	// and the pool's own class stands; a provider error keeps today's bare
+	// line. KeyEnv names the environment variable holding the key
+	// (JEV_API_KEY when empty); BaseURL overrides the endpoint, for the
+	// httptest fake in tests.
+	Decide  bool
+	Floor   float64
+	KeyEnv  string
+	BaseURL string
+
+	// decideDo is the test seam: the httptest fake behind it in tests, the
+	// Jev client in production. Unexported and set by nothing but this
+	// package's own tests -- no flag, no environment variable -- because a
+	// decision path a caller could reroute is not a decision path.
+	decideDo decideFunc
 
 	// pauseAfterFirstHash is demanded test 16's INJECTED PAUSE, and the only seam in this
 	// tool: it runs between the first hash of a report and the parse of that buffer, which
@@ -106,6 +125,34 @@ func Triage(in TriageInput) int {
 	reports := bounded.Capped(out, in.Max, "TRIAGE", "report", "nova-swarm triage --pool "+p.Dir+" --max 0")
 	var kept []folded
 	counts := map[string]int{}
+	// --decide is one typed suggestion per finished task, never an
+	// authorization: below the floor, or when the provider errors, the
+	// pool's own class stands.
+	var dd *taskDecider
+	finished := map[string]bool{}
+	if in.Decide {
+		floor := in.Floor
+		if floor == 0 {
+			floor = DefaultDecideFloor
+		}
+		do := in.decideDo
+		if do == nil {
+			client, err := decide.New(in.BaseURL, in.KeyEnv)
+			if err != nil {
+				fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: %s\n", oneline.Escape(err.Error()))
+				return 2
+			}
+			do = client.Decide
+		}
+		dd = newTaskDecider(p, do, floor, in.Now)
+		for _, state := range []string{Done, Failed} {
+			if list, err := p.List(state); err == nil {
+				for _, sc := range list {
+					finished[sc.ID] = true
+				}
+			}
+		}
+	}
 	// `reports=` is the number of jobs that HAVE a report to read, not the number of jobs:
 	// demanded test 8's eight jobs, one of them with no RESULT.md, print `reports=7
 	// … no_result=1` (SPEC-SWARM.md:1253).
@@ -153,10 +200,16 @@ func Triage(in TriageInput) int {
 			continue
 		}
 		kept = append(kept, folded{sc: sc, report: report, from: from})
-		reports.Line(fmt.Sprintf("TRIAGE REPORT id=%s rev=%s job=%s result=%s items=%d red=%d green=%d notdone=%d: %s",
+		line := fmt.Sprintf("TRIAGE REPORT id=%s rev=%s job=%s result=%s items=%d red=%d green=%d notdone=%d: %s",
 			oneline.Field(sc.ID), oneline.Field(Short(first)), oneline.Field(dashOr(sc.Label)), oneline.Field(report.Class),
 			len(report.Items), report.Red(), report.Green(), report.NotDone(),
-			oneline.Escape(oneline.Cap(dashOr(report.Heading), oneline.TailBytes))))
+			oneline.Escape(oneline.Cap(dashOr(report.Heading), oneline.TailBytes)))
+		if dd != nil && finished[sc.ID] {
+			if suffix, ok := dd.decideOne(sc, report.Class); ok {
+				line += suffix
+			}
+		}
+		reports.Line(line)
 	}
 	reports.More()
 
