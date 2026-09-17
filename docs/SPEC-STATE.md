@@ -107,34 +107,94 @@ slot is free. A live worker past `until=` is still DRIFT and is still printed by
 regranted (SPEC-SWARM rule 5); Redis removes only what stopped breathing. `slots list` is
 `SCAN swarm:lease:<store>:*` with the values, one line per lease.
 
-**One mode per bench, recorded at start.** A bench takes leases from Redis or from the file
-fallback, never both at once: it chooses a mode when it starts, records that mode, and every lease
-verb follows it until the bench restarts in the other mode. The file fallback is never active at
-the same time as the Redis lease, because a slot granted twice — once by each store — is a fence
-no token can see across.
+**Every write a lease guards is fenced, not only the slot key.** The token is not only what proves
+the holder holds the slot; it is what proves a write is still the holder's to make. Each guarded
+write carries the caller's fencing token and runs as a **Lua check-then-write** that compares the
+stored token to the caller's and **refuses the write when they differ** — so a paused old worker
+whose lease lapsed is refused, its renew, its release and its work all. The section names each
+guarded write:
 
-### In-flight caps — one atomic admission script per provider/model/key
+- **the clip** — `nova-work clip` accepting the node, gated by the lease the worker took;
+- **the `XACK`** — acknowledging the card on the queue stream;
+- **the `RESULT` publish** — the `RESULT.md` landing and its `nova:events:job` `PUBLISH`;
+- **the harvest push** — `nova-pulse harvest` appending the card's timeline row and pushing the
+  gathered result.
 
-The per-key in-flight counter is a sorted set scored by each call's own deadline,
-`swarm:cap:<provider>:<model>`, but admission is **one atomic Lua script — a Lua INCR-with-limit
-that returns admitted or refused — never a `ZCARD` read followed by a separate `ZADD` write**:
+The guarded Lua is one shape. Where the target is Redis the check and the write are the same atomic
+script; where the target is a file or Postgres the fence gates the write, and the write is
+idempotent so a fence that passed is safe to repeat:
 
 ```text
--- admit: KEYS[1] the cap set, ARGV = cap, deadline, call-id, now
-ZREMRANGEBYSCORE KEYS[1] -inf (now)                 -- a lapsed call frees its seat
-if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[1]) then
-  return 0                                          -- refused
+-- fenced write: KEYS[1] the lease key, ARGV[1] the token, ARGV[2..] the write
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return 0                          -- not the current holder: the write is refused
 end
-redis.call('ZADD', KEYS[1], tonumber(ARGV[2]), ARGV[3])
-return 1                                            -- admitted
+-- ... perform the guarded write: clip / XACK / RESULT publish / harvest push
+return 1
 ```
 
-The script runs single-threaded inside Redis, so no two admissions interleave between the count and
-the add: the 41st in-flight Muse call is refused **inside** the script, and a check-then-add split
-across two round trips cannot admit it. **The score is the expiry**, so a call whose worker dies
-drops out on the next admission with no reap pass; the same script serves the per provider cap and
-the per key cap by naming them. `nova-swarm caps` prints the counts; admission is the script, not a
-spreadsheet.
+A worker that lost its lease to `XAUTOCLAIM` cannot clip, cannot `XACK`, cannot publish a
+`RESULT.md` and cannot push a harvest, because every one of those writes reads the same token
+first. The fence covers the work, not only the slot.
+
+**One mode per bench, recorded at start, and drained before a restart.** A bench takes leases from
+Redis or from the file fallback, never both at once: it chooses a mode when it starts, records that
+mode, and every lease verb follows it until the bench restarts in the other mode. The file fallback
+is never active at the same time as the Redis lease, because a slot granted twice — once by each
+store — is a fence no token can see across. **A restart in the other mode drains survivors first**:
+a bench switching mode refuses to start the new mode while any card from the old mode is live — in
+the old store's queue, pending list or slot files — and the old mode's cards are reclaimed or
+completed before the switch. Only when the old mode holds no live card does the new mode start, and
+the drain is written to the bench's log as `mode restart: <old> drained (<n> reclaimed, <m>
+completed) -> <new>`, so a mode switch is never a silent drop of the work the old mode still held.
+
+### In-flight caps — one atomic reservation over provider, model and key
+
+Every in-flight call is counted in three sorted sets at once — `swarm:cap:provider:<provider>`,
+`swarm:cap:model:<model>` and `swarm:cap:key:<key>` — and a call is admitted only when **all three**
+scopes have room. Admission is **one atomic Lua script over the three sets together**, never a
+`ZCARD` read followed by separate `ZADD` writes, and never three independent admissions that could
+reserve two scopes and then refuse the third:
+
+```text
+-- reserve: KEYS = provider set, model set, key set
+--          ARGV = cap-provider, cap-model, cap-key, bound, call-id, now
+for i = 1, 3 do
+  redis.call('ZREMRANGEBYSCORE', KEYS[i], '-inf', '(' .. ARGV[6])  -- reap past the bound only
+  if redis.call('ZCARD', KEYS[i]) >= tonumber(ARGV[i]) then
+    return 0                                       -- refused: one scope full, none reserved
+  end
+end
+for i = 1, 3 do
+  redis.call('ZADD', KEYS[i], tonumber(ARGV[4]), ARGV[5])   -- bound is the score
+end
+return 1                                           -- admitted: all three reserved together
+-- release: KEYS = the same three sets, ARGV[1] the call-id
+for i = 1, 3 do
+  redis.call('ZREM', KEYS[i], ARGV[1])             -- all three released together
+end
+return 1
+```
+
+The script runs single-threaded inside Redis, so no two reservations interleave between the counts
+and the adds, and the three sets are reserved **all or nothing in one script**: the 41st Muse call
+is refused inside the script because provider, model or key has no room, and a partial reservation
+is impossible. The three scopes are released together by the mirror script, so a seat never lingers
+in one set after it left the others. **The score is a hard bound, not the deadline** (below), so a
+call is not reaped the moment its deadline lapses. `nova-swarm caps` prints the counts; reservation
+is the script, not a spreadsheet.
+
+### An expired remote call is `outcome=unknown`, never failed or succeeded
+
+A model call can outlive its own lease or deadline while the provider has not answered. That call
+is **not** a failure and **not** a success: it is recorded with `outcome=unknown` in the durable
+timeline, and it stays unknown until the provider answers or a bound passes. The cap seat it holds
+is released **only** on one of those two events — when the provider's answer lands (the call is
+resolved to `succeeded` or `failed` and its reservation is released) or when the hard bound passes
+(the seat is reaped and the call remains `unknown`). A lapsed deadline alone frees nothing: the
+deadline is when we stop waiting, not when the provider stops owing us an answer. The unknown count
+is visible in `nova-pulse status`, which prints the live unknown calls beside the cap counts, so
+neither the seat nor the uncertainty is silently dropped.
 
 ### Presence — keys with TTL
 
@@ -211,10 +271,11 @@ writer and never opens a connection of its own.
 - **`nova-pulse watch`** subscribes to `nova:events:*` instead of polling the queue, the bus and
   the job dirs; one return per change, one re-read.
 - **`nova-pulse status --fleet`** reads the `nodes`/`receipts` projection and the counters, not
-  every job file, so the answer is a query.
+  every job file, so the answer is a query, and prints the live unknown-call count beside them.
 - **`nova-merge queue`** writes CI and PR verdicts into `ci_pr_outcomes` as it decides them.
 - **`nova-tokens report`** is a query over `token_ledger`; the fold still writes the day TSVs.
-- **`nova-swarm caps`** reads the in-flight sorted sets; admission is the counter, not a note.
+- **`nova-swarm caps`** reads the in-flight sorted sets across provider, model and key;
+  reservation is the one atomic script, not a note.
 - **the pull worker** reads `nova:queue:*` with `XREADGROUP` and `XACK`s on clip, replacing the
   directory scan and the `taken/` rename.
 
@@ -222,12 +283,14 @@ writer and never opens a connection of its own.
 
 Each slice shadows the last and is measured, so the old path is restorable until the number moves.
 
-1. **Postgres beside the files, on one bench.** Write the projection, the ledger, the inventory
+1. **The smallest exclusive-mode slice: one bench in Redis mode only.** Run one bench in Redis mode
+   only — the streams, leases, counters, presence and channels — with the **directory queue disabled
+   on that bench**, so the bench has exactly one mode and no slot can be granted twice. Drain the
+   bench's directory-mode cards before the switch (Part 2, *One mode per bench*), then measure
+   **polling turns per hour**, which should fall toward zero on a quiet bench.
+2. **Postgres beside the files, on one bench.** Write the projection, the ledger, the inventory
    and the outcomes to Postgres while the files in git stay the record. Measure **hand steps
    removed**: the inventory spreadsheet and the per-question `gh` calls stop being a bench's job.
-2. **Redis beside the directory queue, on space.** Run the streams, leases, counters, presence and
-   channels beside `queue/` and the slot files; the fallback is the proof. Measure **polling turns
-   per hour**, which should fall toward zero on a quiet bench.
 3. **Cut the verbs over.** `watch` subscribes, `status --fleet` queries, the puller reads the
    stream, caps read the counters, `report` queries. Measure **seconds to answer "how wide are
    we"**, from a `gh`-and-files sweep to one `status` line.
@@ -237,7 +300,8 @@ Each slice shadows the last and is measured, so the old path is restorable until
 - `a-stream-consumer-that-dies-mid-card-has-its-card-reclaimed` — kill a puller mid-card;
   `XAUTOCLAIM` hands the card to the next puller, its partial `RESULT.md` kept as evidence.
 - `a-cap-counter-refuses-the-41st-in-flight-muse-call` — the 40th Muse call admits, the 41st is
-  refused, and a lapsed call frees its seat with no reap pass.
+  refused, and a call past its **hard bound** frees its seat with no reap pass (a lapsed deadline
+  alone does not; see the unknown-outcome test).
 - `a-watch-subscriber-wakes-on-a-job-done-event-within-a-second` — publish `nova:events:job` after
   a `RESULT.md` lands; the subscriber returns once, inside a second, and re-reads the file.
 - `the-monthly-token-report-from-postgres-equals-the-folded-tsv-to-the-token` — `report` over
@@ -249,7 +313,22 @@ Each slice shadows the last and is measured, so the old path is restorable until
   releases as a no-op through the Lua script, no bare `EXPIRE` moves the key, and a bench that chose
   the file mode never touches the Redis key (nor the reverse), so one slot never has two modes.
 - `a-cap-admission-is-one-atomic-script-that-refuses-the-41st` — concurrent admissions run through
-  the single script and exactly 40 hold the key; no `ZCARD`-then-`ZADD` interleaving lets a 41st in.
+  the single three-set script; exactly 40 hold provider, model and key together, no partial
+  reservation is ever visible, and no `ZCARD`-then-`ZADD` interleaving lets a 41st in.
+- `a-paused-old-worker-cannot-write-after-its-lease-lapsed` — take a lease, let it lapse, give the
+  slot to a new token, then run the old worker's clip, `XACK`, `RESULT` publish and harvest push
+  through their fenced Lua; every one returns 0 and no clip, ack, event or timeline row lands,
+  while the current holder's identical writes all return 1.
+- `a-mode-restart-refuses-to-start-until-the-old-modes-cards-are-drained` — a bench with a live
+  directory-mode card refuses to start Redis mode; the card is reclaimed or completed, the drain is
+  written to the bench's log, and only then does the new mode start.
+- `a-cap-reservation-over-provider-model-and-key-is-one-atomic-script` — with the key or the model
+  scope full, a call that would fit the provider scope alone is refused with none of the three sets
+  written; an admitted call reserves all three together and releases all three together.
+- `an-expired-remote-call-is-unknown-and-keeps-its-seat-until-an-answer-or-a-bound` — let a model
+  call pass its deadline with no provider answer; it is recorded `outcome=unknown`, never failed or
+  succeeded, its provider/model/key seats stay held, `nova-pulse status` shows the unknown count,
+  and the seats release only when the provider answers or the hard bound passes.
 
 **Invent nothing.** If Redis or Postgres already does it — streams, consumer groups,
 `XAUTOCLAIM`, `SET NX`, TTL, `ZREMRANGEBYSCORE`, pub/sub, a `GROUP BY`, a unique key, WAL — the
