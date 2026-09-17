@@ -343,6 +343,28 @@ STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stal
 STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
 ```
 
+## nova-decide
+
+Fixture: a questions file and a state file of your own; the example below names
+`./questions.json` and `./state.md`. The key is read only from the environment
+(`JEV_API_KEY`, or `TYPESAFE_API_KEY`) and is never printed; a bare invocation,
+a missing key and an unreadable questions file are each one line on stderr at
+exit 2. Below the floor the answer is still one line, and the exit is 3 — a
+suggestion, never an authorization.
+
+### First run
+
+```
+$ nova-decide
+DECIDE REFUSED reason=no-arguments --questions is required, refusing to guess; run: nova-decide help
+
+$ nova-decide version
+nova-decide devel linux/amd64 go1.26.5
+
+$ nova-decide --questions ./questions.json --state ./state.md --floor 0.9
+DECIDE gate=go conf=0.94 floor=0.90 below=-
+```
+
 ## nova-pulse
 
 Fixture: `cmd/nova-pulse/testdata/example-pulse`, a pulse root the size of a first run: three cards (gate, hash, fold), all on one `pro` model, and the `cards.tsv` that names them. `launch` counts the free slots under `<root>/pool` (here empty, so every slot is free), then hands the cards that fit to `nova-swarm batch` one model at a time. The fixture ships a stub `bin/nova-swarm` that records the batch argv and exits 0, so the two `PULSE OK` lines below were produced by RUNNING launch on this fixture with that stub on PATH — no model call happens here, and no line reaches a network.

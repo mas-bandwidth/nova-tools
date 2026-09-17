@@ -57,6 +57,10 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "DECIDE REFUSED reason=no-arguments --questions is required, refusing to guess; run: nova-decide help")
+		return 2
+	}
 	if len(args) > 0 {
 		switch args[0] {
 		case "version", "--version":
