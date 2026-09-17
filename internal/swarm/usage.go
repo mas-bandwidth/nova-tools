@@ -37,6 +37,10 @@ const (
 	EndUnknown      = "unknown"
 	EndLaunchFailed = "launch-failed"
 	EndInputLimit   = "input-limit"
+	// EndProvider is a launch that did not take: the harness died inside the launch
+	// grace with a provider server error in its tail. It is retried with backoff and,
+	// after the third fast failure, is filed with the provider's own ref (issue #900).
+	EndProvider = "provider"
 )
 
 // Dash is the absence this file writes, and never a zero.
@@ -104,6 +108,13 @@ func readUsageFile(path string) (UsageRow, error) {
 		return nil, fmt.Errorf("%s holds no row", path)
 	}
 	head := strings.Split(lines[0], "\t")
+	// ONE FILE, ONE ROW is the pool's shape; ONE FILE, MANY ROWS is a retried native card
+	// (issue #900), where each launch appended its own row. The last row names the card; the
+	// numeric columns are summed across every row, and a column any attempt left a dash
+	// stays a dash rather than becoming a zero. A single-row file reads exactly as before.
+	if len(lines) > 2 {
+		return foldUsageRows(head, lines[1:]), nil
+	}
 	values := strings.Split(lines[1], "\t")
 	row := UsageRow{}
 	for i, name := range head {
@@ -112,6 +123,45 @@ func readUsageFile(path string) (UsageRow, error) {
 		}
 	}
 	return row, nil
+}
+
+// foldUsageRows sums the numeric columns of a multi-row usage file and keeps the last row's
+// naming columns. A dash in any attempt for a column keeps that column a dash: a sum that
+// counted a missing attempt as zero would be a measurement the provider never made.
+func foldUsageRows(head []string, lines []string) UsageRow {
+	split := func(line string) map[string]string {
+		out := map[string]string{}
+		values := strings.Split(line, "\t")
+		for i, name := range head {
+			if i < len(values) {
+				out[name] = values[i]
+			}
+		}
+		return out
+	}
+	row := split(lines[len(lines)-1])
+	numeric := append(append([]string{}, TokenColumns...), "usd")
+	for _, name := range numeric {
+		sum := 0.0
+		complete := true
+		for _, line := range lines {
+			f, err := strconv.ParseFloat(strings.TrimSpace(split(line)[name]), 64)
+			if err != nil {
+				complete = false
+				break
+			}
+			sum += f
+		}
+		switch {
+		case !complete:
+			row[name] = Dash
+		case name == "usd":
+			row[name] = strconv.FormatFloat(sum, 'f', 4, 64)
+		default:
+			row[name] = strconv.FormatInt(int64(sum), 10)
+		}
+	}
+	return row
 }
 
 // Int reads a numeric column, reporting whether it is a number at all -- a dash is not.

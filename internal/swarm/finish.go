@@ -82,6 +82,17 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		rec.RC, end = 429, EndFailed
 	}
 
+	// A PROVIDER LAUNCH FAILURE CARRIES ITS REF ONTO THE RECORD (issue #900). The
+	// supervisor named `end=provider`; the ref the provider printed is in the tail, and it
+	// is the one token a person carries to the provider. It travels on the sidecar and on
+	// the RUN line, so the failed task names what failed after its retries are spent.
+	providerRef := ""
+	if end == EndProvider {
+		if ref, ok := ProviderLaunchFailure([]byte(HarnessTail(r.jobDir))); ok {
+			providerRef = ref
+		}
+	}
+
 	// THE REPORT IS A DURABLE RECORD, PUBLISHED BY A RENAME, and a read of it that
 	// COLLIDED is not evidence the worker published nothing. The harness writes RESULT.md
 	// the way everything here is written -- a .tmp beside it, then a rename -- so on
@@ -111,6 +122,7 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	if fresh, err := p.ReadSidecar(Running, sc.ID); err == nil {
 		sc = fresh
 	}
+	sc.ProviderRef = providerRef
 	if survivors > 0 && end == EndDone {
 		end = EndViolation
 	}
@@ -143,6 +155,14 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	switch {
 	case end == EndKilled && !in.NoAutoRetry:
 		requeued = in.requeue(sc, now)
+	case end == EndProvider && !in.NoAutoRetry && sc.Requeued < MaxProviderAttempts-1:
+		// A LAUNCH THAT DIED FAST ON A PROVIDER 5XX IS RETRIED, NOT FILED (issue #900):
+		// after 5-20s jittered, then after 30-60s. The retry is a new attempt of the
+		// SAME task -- its own id, `from=` the attempt before -- and the usage rows carry
+		// attempt=1,2,3. After the third fast failure the task is filed with
+		// `end=provider` and the provider's ref, and no fourth launch is spent on it.
+		in.waitProviderBackoff(sc.Requeued)
+		requeued = in.retryProvider(sc, now)
 	case limited && sc.Requeued < 1 && !in.NoAutoRetry:
 		in.waitBackoff(r.jobDir)
 		requeued = in.retry429(sc, now)
@@ -202,6 +222,13 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		return fmt.Sprintf("RUN INPUT-LIMIT id=%s slot=%d after=%s input=%s max=%s dest=failed: %s",
 			oneline.Field(sc.ID), r.slot, after, oneline.Field(promptSizeWord(r.jobDir)), oneline.Field(maxInputWord(sc)),
 			oneline.Escape(oneline.Cap(limit, oneline.TailBytes))), EndInputLimit, dest
+	case end == EndProvider:
+		// THE PROVIDER'S OWN REF, on the line, after the retries are spent (issue #900).
+		// `attempts=` is the number of launches this task has had, which is the count the
+		// usage rows carry too.
+		return fmt.Sprintf("RUN PROVIDER id=%s slot=%d after=%s attempts=%d dest=failed provider=%s requeued=%t: %s",
+			oneline.Field(sc.ID), r.slot, after, sc.Requeued+1, oneline.Field(dashOr(providerRef)), requeued,
+			oneline.Escape(oneline.Cap(HarnessTail(r.jobDir), oneline.TailBytes))), EndProvider, dest
 	case report.Class == ClassMalformed:
 		return fmt.Sprintf("RUN MALFORMED id=%s slot=%d line=%d dest=failed",
 			oneline.Field(sc.ID), r.slot, report.MalformedLine), EndFailed, dest
@@ -298,7 +325,7 @@ func survivorsSeen(aliveBefore, survivedTheReap bool) int {
 func destinationFor(end, class string, rc int) string {
 	switch {
 	case end == EndViolation, end == EndKilled, end == EndUnverifiable, end == EndUnknown, end == EndFailed,
-		end == EndInputLimit:
+		end == EndInputLimit, end == EndProvider:
 		return Failed
 	case class == ClassMalformed, class == ClassPlanOnly, class == ClassNoResult:
 		return Failed
@@ -361,6 +388,33 @@ func (in RunInput) waitBackoff(jobDir string) {
 		delay = MaxBackoff
 	}
 	time.Sleep(delay)
+}
+
+// waitProviderBackoff holds the slot for the jittered interval a provider launch failure
+// asks for: 5-20s after the first fast failure, 30-60s after the second (issue #900). The
+// failed attempt's index is what selects the band.
+func (in RunInput) waitProviderBackoff(failed int) {
+	time.Sleep(ProviderRetryDelay(failed + 1))
+}
+
+// retryProvider is the provider launch retry: the SAME task text as a new attempt, carrying
+// the attempt count and the id it came from, so its usage row reads attempt=2 and then
+// attempt=3 and the whole lineage is one task (issue #900). Unlike the 429 retry it is
+// driven by the dispatcher's attempt count, not a single Requeued flag.
+func (in RunInput) retryProvider(sc Sidecar, now time.Time) bool {
+	if sc.Requeued >= MaxProviderAttempts-1 {
+		return false
+	}
+	text, err := in.Pool.Text(Running, sc.ID)
+	if err != nil {
+		return false
+	}
+	next := freshAttempt(sc, now)
+	next.From, next.Requeued = sc.ID, sc.Requeued+1
+	if err := in.Pool.Add(text, next); err != nil {
+		return false
+	}
+	return true
 }
 
 // retry429 is the rate-limit retry: the same task text as a new attempt, marked so a second

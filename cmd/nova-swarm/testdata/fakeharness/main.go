@@ -178,6 +178,29 @@ func main() {
 		fmt.Println("fake harness: error: the provider answered HTTP 429 Too Many Requests (rate limit)")
 		os.Exit(1)
 	}
+	// A PROVIDER SERVER ERROR AT REQUEST START (issue #900): the provider answered before
+	// the work began, and the run dies in under two seconds with the ref on stderr.
+	// FAKE-5XX-FIRST fails the first launch and succeeds on the retry, so a test can prove
+	// the retry kept the task and harvested the second attempt's result. FAKE-5XX always
+	// fails, so a test can prove the third fast failure is filed `end=provider`. Both are
+	// checked before FAKE-5XX by their longer names, since `directive` matches a prefix.
+	if _, ok := directive(prompt, "FAKE-5XX-FIRST"); ok {
+		if launchCount(job) <= 1 {
+			fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 503; ref=err_fake_first")
+			os.Exit(1)
+		}
+	} else if arg, ok := directive(prompt, "FAKE-5XX-SLOW"); ok {
+		// A 5XX PAST THE LAUNCH GRACE: the run fails slowly and is NOT retried. The seconds
+		// come after the directive name. Checked before FAKE-5XX, whose name is its prefix.
+		if n, err := strconv.Atoi(strings.Fields(arg + " 0")[0]); err == nil {
+			time.Sleep(time.Duration(n) * time.Second)
+		}
+		fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 502; ref=err_fake_slow")
+		os.Exit(1)
+	} else if _, ok := directive(prompt, "FAKE-5XX"); ok {
+		fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 503; ref=err_fake_5xx")
+		os.Exit(1)
+	}
 	if _, ok := directive(prompt, "FAKE-BADUSAGE"); ok {
 		// A source that FAILS to read, which rule 13 keeps apart from one that has reported
 		// nothing yet: bytes that are not a database, in a file that refuses its own owner.
@@ -420,6 +443,19 @@ func record(path string) {
 func writeRecorded(path string, body []byte, perm os.FileMode) {
 	record(path)
 	_ = os.WriteFile(path, body, perm)
+}
+
+// launchCount is how many launches this job has recorded, read from the FAKE-LAUNCHES
+// record so a fake directive can branch on the attempt number (issue #900).
+func launchCount(job string) int {
+	if job == "" {
+		return 0
+	}
+	raw, err := os.ReadFile(filepath.Join(job, "launches"))
+	if err != nil {
+		return 0
+	}
+	return len(strings.Split(strings.TrimRight(string(raw), "\n"), "\n"))
 }
 
 func directive(prompt, name string) (string, bool) {
