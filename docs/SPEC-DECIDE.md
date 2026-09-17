@@ -60,9 +60,10 @@ Every rule here is normative. Each has one line in **red tests** near the end.
    (The hurt: a 0.51 routed where a 0.99 was needed, because the number lived
    in a log nobody gated on.)
 6. **Confidence never authorizes.** confidence never authorizes: permissions,
-   STOPs, HOLDs, secrets and slot limits stay deterministic machinery (Stella
-   2026-09-17). A decision may propose which queue a card joins; it may not
-   lift a hold, spend a secret, or widen a slot.
+   STOPs, HOLDs, secrets, slot limits, ownership, budgets and leases stay
+   deterministic machinery (Stella 2026-09-17). A decision may propose which
+   queue a card joins; it may not lift a hold, spend a secret, widen a slot,
+   transfer ownership, spend a budget or clear a lease.
    (The hurt: a confident "safe to land" beside a STOP the machinery had set —
    two authorities, one merge.)
 7. **Decisions never write.** decisions never write: no card, no fix, no merge,
@@ -84,6 +85,25 @@ Every rule here is normative. Each has one line in **red tests** near the end.
    dials the provider, and no test needs a key on disk to run.
    (The hurt: a suite that passed on a fast network and failed on a train —
    and once, a suite that billed a key per run.)
+10. **Every decision output carries an evidence pointer.** every decision output
+    carries an evidence pointer — the task id, note id, run id or file:line the
+    state came from — so a human can retrieve the original that fed the
+    judgment. The pointer sits beside the answer, never folded into the model's
+    state text.
+    (The hurt: an answer nobody could reproduce, because the evidence that
+    produced it had been dropped at the call site.)
+11. **Unknowns are recorded as unknown.** unknowns are recorded as unknown: a
+    below-floor answer is logged as `?` with its confidence, never dropped, and
+    the original message or log is never replaced by the decision. The decision
+    sits beside the original; abstention is evidence, not silence.
+    (The hurt: a low-confidence guess that overwrote the only copy of the
+    message it judged, so the original was gone and the guess looked certain.)
+12. **Ask only on delivered work.** a decision is asked only on
+    a delivered batch or a finished task, never on an empty wait or a pending
+    one: no speculative provider calls against work that has not arrived. An
+    empty wait is answered by waiting, not by a model.
+    (The hurt: a triage loop that called the provider on an empty inbox each
+    tick, spending a key and inventing work that had not been delivered.)
 
 ## Adoption
 
@@ -139,22 +159,29 @@ of rule 9, with no network, and each must be seen red before it is trusted.
    note as state is refused before any call; public and synthetic states pass.
 5. A decision line prints `confidence=` and `floor=`; below the floor the
    caller runs the fallback path and marks the answer a suggestion.
-6. A decision proposing to lift a permission, STOP, HOLD, secret or slot limit
-   is refused; the machinery's word stands (Stella 2026-09-17).
+6. A decision proposing to lift a permission, STOP, HOLD, secret, slot limit,
+   ownership, budget or lease is refused; the machinery's word stands (Stella
+   2026-09-17).
 7. A decision alone writes nothing: no card, no fix, no merge, no push exists
    after a decision-only run.
 8. Each decision appends one row joining answers, confidences, floor and
    outcome; a floor with no rows behind it is refused as untuned.
 9. The suite runs with the network refused and no key on disk, green on the
    fake alone.
-10. Route adoption: 19/20 kinds correct, ~937 input tokens, ~436 ms per call;
+10. Every decision prints its evidence pointer — a task id, note id, run id or
+    `file:line` — beside the answer, so the original state is retrievable.
+11. A below-floor answer is logged as `?` with its confidence and is never
+    dropped; the original message or log still exists after the decision.
+12. A delivered batch or a finished task is decided; an empty wait or a pending
+    task is not, and no provider call is made for it.
+13. Route adoption: 19/20 kinds correct, ~937 input tokens, ~436 ms per call;
     the 20th falls back to today's routing.
-11. Abstain adoption: 9 above the 0.9 floor all consistent, 21 below all
+14. Abstain adoption: 9 above the 0.9 floor all consistent, 21 below all
     flagged `needs_human`; none guessed.
-12. Inbox adoption: opt-in only, public buses only; a private bus is refused;
+15. Inbox adoption: opt-in only, public buses only; a private bus is refused;
     below-floor notes stay unclassified.
-13. Pulse adoption: below the floor the gate answers real; a forced-flaky
+16. Pulse adoption: below the floor the gate answers real; a forced-flaky
     mutation pages.
-14. Game adoption: ships danger MAE 0.18, collision 60/60, maneuver 51/60 low
+17. Game adoption: ships danger MAE 0.18, collision 60/60, maneuver 51/60 low
     confidence stays on the table; 22 calls/s at concurrency 10 against the
     fake.
