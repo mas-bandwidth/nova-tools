@@ -322,12 +322,15 @@ the view carries `:members`, `:permitted-roots` and `:projections`."
         (refuse "members start empty"))
       (let* ((rev (kernel-next-rev kernel))
              (view (list :members '()
+                         :retired '()
+                         :revive-events '()
                          :axes (copy-list axes)
                          :row-kind row-kind
                          :aggregation aggregation
                          :completion-policy completion-policy
                          :permitted-roots (copy-list permitted-roots)
                          :projections '()
+                         :cells '()
                          :revision 0
                          :log '()))
              (node (make-wnode :id id :type :roadmap :parent parent :children '()

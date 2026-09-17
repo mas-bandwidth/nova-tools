@@ -608,6 +608,20 @@
     #:roadmap-view-aggregation
     #:roadmap-view-axes
     #:roadmap-view-members
+    ;; the roadmap verbs (E04 slice 2: row / projection, src/roadmap.lisp)
+    #:roadmap-row
+    #:roadmap-projection
+    #:roadmap-view-projections
+    #:roadmap-view-retired
+    #:roadmap-view-log
+    #:roadmap-view-revive-events
+    #:roadmap-settled-p
+    #:roadmap-open-member-count
+    #:roadmap-member-evidence
+    #:roadmap-view-render
+    #:roadmap-view-open
+    #:export-roadmap-view
+    #:load-roadmap-view
     ;; render replays (nova-tools #362)
     #:make-render-session
     #:render-session-p
