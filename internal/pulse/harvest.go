@@ -79,6 +79,7 @@ func Harvest(in HarvestInput) int {
 
 	var done, pushed, prs, abstain, mismatch, refused, retried int
 	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
+	var indexDirs []string     // finished jobs to append to the root's status index (#1088)
 
 	for _, c := range cards {
 		jobDir := jobDir(in.Root, c.Slot, c.Label)
@@ -95,6 +96,9 @@ func Harvest(in HarvestInput) int {
 				state, branch, repo, resultLines, jobDir = ps, pb, pr, pl, pd
 			}
 		}
+		// Every folded job joins its root's status index whether it landed or not: a
+		// failed or abstained run's usage is part of the day's spend too (#1088).
+		indexDirs = append(indexDirs, jobDir)
 
 		switch state {
 		case "mismatch":
@@ -131,6 +135,11 @@ func Harvest(in HarvestInput) int {
 			appendNext(in.Root, repo, pr, c.Label)
 		}
 	}
+
+	// The folded jobs are appended to the root's status index once, so the next status tick
+	// reads the index and never re-opens a job's usage.tsv (#1088). run drives this same
+	// Harvest through the seam, so this is the run path's append too.
+	appendStatusIndex(in.Root, indexDirs)
 
 	usd := readUSD(filepath.Join(in.Root, "pulses", in.ID+".packet"))
 

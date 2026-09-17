@@ -160,38 +160,26 @@ func countDay(queue, name, day, word string) int {
 
 // spendOfDay sums the usd column of EVERY usage.tsv row under the benches that started on
 // the day. A row whose usd cell is a dash is not a zero and is not summed: a cost nobody
-// measured is unknown (SPEC-PULSE, the RATE line's law). It walks the rows itself rather
-// than through status.go's collectUsage, which takes the first row of each file because
-// its arithmetic is per card; a day's spend is per row.
+// measured is unknown (SPEC-PULSE, the RATE line's law). It folds every row of the
+// per-root status index rather than opening the files, and status refreshes the index only
+// for the jobs whose directory mtime moved (#1088); a day's spend is per row, where
+// status.go's collectUsage takes the first row of each file because its arithmetic is per
+// card.
 func spendOfDay(roots []string, day string) float64 {
 	total := 0.0
-	for _, root := range roots {
-		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || d.Name() != "usage.tsv" {
-				return nil
+	for _, f := range loadUsageFiles(roots) {
+		for _, r := range f.rows {
+			started, err := time.Parse(time.RFC3339, r.started)
+			if err != nil || started.UTC().Format("2006-01-02") != day {
+				continue
 			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				return nil
+			if r.usd == "-" {
+				continue
 			}
-			for _, l := range strings.Split(string(raw), "\n") {
-				if l == "" || strings.HasPrefix(l, "job") {
-					continue
-				}
-				f := strings.Split(l, "\t")
-				if len(f) < 13 || f[12] == "-" {
-					continue
-				}
-				started, err := time.Parse(time.RFC3339, f[2])
-				if err != nil || started.UTC().Format("2006-01-02") != day {
-					continue
-				}
-				if v, err := strconv.ParseFloat(f[12], 64); err == nil {
-					total += v
-				}
+			if v, err := strconv.ParseFloat(r.usd, 64); err == nil {
+				total += v
 			}
-			return nil
-		})
+		}
 	}
 	return total
 }
