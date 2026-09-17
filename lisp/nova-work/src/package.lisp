@@ -68,6 +68,7 @@
    #:node-required-count
    #:node-required-open
    #:node-deps
+   #:node-dependents
    #:node-needs-broken
    #:ready-p
    #:ready-nodes

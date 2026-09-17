@@ -171,7 +171,14 @@ reason or evidence; done/deferred leave only via reopen, never state.")
          (when (and (eq :unknown (wnode-state node))
                     (not (and (stringp reason) (plusp (length reason))))
                     (or (absentp evidence) (null evidence)))
-           (return-from %validate (values 10 "unknown to doing requires evidence or a reason")))))
+           (return-from %validate (values 10 "unknown to doing requires evidence or a reason"))))
+       ;; SPEC-WORK.md:1885,2110 -- an unmet dependency gate blocks the
+       ;; dependent: a node with a need that is not terminal accepted cannot be
+       ;; taken into doing, and the refusal names the blocking node.
+       (let ((blocker (%dependency-blocker state id)))
+         (when blocker
+           (return-from %validate
+             (values 10 (format nil "~A needs ~A, which is not settled" id blocker))))))
       (:state-to-done
        (unless (eq :o (wnode-branch node))
          (return-from %validate (values 10 (format nil "~A is in C" id))))
@@ -258,7 +265,11 @@ reads a direct required-member counter, then walks at most one ancestor edge."
                   (:state-to-done
                    (and (eq :o (wnode-branch parent))
                         (plusp (wnode-required-count parent))
-                        (zerop (wnode-required-open parent))))
+                        (zerop (wnode-required-open parent))
+                        ;; SPEC-WORK.md:1951 -- a parent is green only when
+                        ;; every required child and every dependency gate is
+                        ;; satisfied. An unmet need holds the container open.
+                        (%needs-settled-p candidate parent-id)))
                   (:event-reopen
                    (and (eq :c (wnode-branch parent))
                         (plusp (wnode-required-open parent)))))
