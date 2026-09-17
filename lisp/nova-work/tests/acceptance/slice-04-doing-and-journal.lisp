@@ -100,41 +100,28 @@
 ;;; new friend/model/fleet verbs). Each is kept here with the sentence it
 ;;; asserts and the kernel it is waiting on, counted as needs-kernel.
 
-;; NEEDS-KERNEL: history-grows-startup-does-not (docs/SPEC-WORK.md:646)
-;;   a session start loads no whole C and no whole dedup index; startup cost is
-;;   bounded by retention and --index-cache, not by total finished work. Waits
-;;   on the closed-index and startup instrumentation.
-
-;; NEEDS-KERNEL: days-merge-by-revision-never-concatenate (docs/SPEC-WORK.md:647)
-;;   day-partition segments merge by revision, never concatenate, so a busy
-;;   day's segments read the same however it was clipped. Waits on the day tree.
-
-;; NEEDS-KERNEL: page-budget-is-not-max (docs/SPEC-WORK.md:648)
-;;   a page that would pass --page-bytes or --page-records is split, never
-;;   written past the bound; the budget caps a page, not the growth it must
-;;   admit. Waits on paged index roots.
-
-;; NEEDS-KERNEL: default-window-opens-two-days (docs/SPEC-WORK.md:713)
-;;   the default closed-history window [now-24h, now) opens at most the two UTC
-;;   day partitions it intersects. Waits on the closed-history window.
-
-;; NEEDS-KERNEL: busy-day-many-segments (docs/SPEC-WORK.md:713)
-;;   one key set under one pair of bounds yields one tree whatever the clip
-;;   batching or insertion order. Waits on clip segmentation.
-
+;; history-grows-startup-does-not now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; days-merge-by-revision-never-concatenate now lives in tests/acceptance.lisp
+;; over the closed-history model of src/replays-closed-history.lisp (#362).
+;; page-budget-is-not-max now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; default-window-opens-two-days now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; busy-day-many-segments now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;;
 ;; one-revision-publishes-together, index-replayed-after-crash,
 ;; overlay-is-bounded-and-rebuilt, absent-day-is-not-a-gap and
 ;; missing-segment-is-a-gap now assert their sentences in
 ;; slice-09-replays-publication.lisp.
-
-;; NEEDS-KERNEL: as-of-refuses-unavailable-partition (docs/SPEC-WORK.md:759)
-;;   a query for a state as of a window end whose partition it cannot read
-;;   refuses, naming the one partition it would need. Waits on partitions.
-
-;; NEEDS-KERNEL: indivisible-record-refused-before-ack (docs/SPEC-WORK.md:794)
-;;   a single key with one locator that would pass --page-bytes on a page of its
-;;   own is indivisible and refused at the candidate gate, exit 2, nothing
-;;   journaled and nothing acknowledged. Waits on the indivisible-record gate.
+;;
+;; as-of-refuses-unavailable-partition now lives in
+;; tests/acceptance/slice-09-replays-8603.lisp over the as-of ask of
+;; src/closed-history.lisp (nova-tools #362).
+;; indivisible-record-refused-before-ack now lives in
+;; tests/acceptance/slice-09-replays-8603.lisp over the admission gate of
+;; src/closed-history.lisp (nova-tools #362).
 
 ;; NEEDS-KERNEL: clip-names-the-index-that-overflowed (docs/SPEC-WORK.md:803)
 ;;   CLIP FAIL prints all four numbers -- snapshot=, retained=, index= and
@@ -274,12 +261,7 @@
         (check-equal key-before (getf (first rows-a-after) :key)
                      "a settle of another item did not move a's row or cursor")))))
 
-(deftest "closed-row-with-archive-absent" "docs/SPEC-WORK.md:1758-1770,5090"
-    "expected=same-rows-with-archive-absent-gap-part"
-  ;; NEEDS-KERNEL: retention archive file, gap=<n>, QUERY NOTE coverage-gap.
-  (ok t "archive-absent answering is outside slice 1"))
-
-(deftest "closed-paged-without-full-load" "docs/SPEC-WORK.md:1784-1803,5087"
-    "expected=pages-bounded-never-whole-history"
-  ;; NEEDS-KERNEL: closed-index paging (--max/--after/MORE), page-bytes/records bounds.
-  (ok t "closed-index paging is outside slice 1"))
+;; closed-row-with-archive-absent now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; closed-paged-without-full-load now lives in tests/acceptance.lisp over the
+;; closed-index paging of src/replays-closed-history.lisp (nova-tools #362).
