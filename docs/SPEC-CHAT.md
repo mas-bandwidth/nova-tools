@@ -373,14 +373,61 @@ costs:
 
 **`--transport page`: a private page served from the Studio, reachable over
 Tailscale** (on the record as `tailscale-for-glenn-access`, an idea and not
-scheduled). Its constraints are the opposite of Discord's where it matters: no
-message size limit and so no truncation; no rate limit but the line's own; no
-member list, because **the mesh is the membership**; and identity is the
-Tailscale node and user rather than a snowflake. It is named so that rule 5's
-adapter contract is written against two transports rather than one, and so that
-if Discord is the wrong shape — *"so maybe discord is not the right way, but you
-get the intent"* — the session survives the transport. `--transport page` is
-`CHAT REFUSED: not in this build` at exit 2, naming issue #94.
+scheduled). It is named so that rule 5's adapter contract is written against two
+transports rather than one, and so that if Discord is the wrong shape — *"so
+maybe discord is not the right way, but you get the intent"* — the session
+survives the transport. `--transport page` is `CHAT REFUSED: not in this build`
+at exit 2, naming issue #94, and never the unknown-transport refusal of a name
+nobody designed.
+
+**Its constraints are the opposite of Discord's where it matters**, and each is
+one of this spec's own rules read the other way:
+
+- **No message size limit**, and so no truncation forced by the transport.
+  Discord's 2000-character cap and rule 21's visible mark answer a limit a page
+  does not have. `reply-max` is still the line's own proportionality ceiling and
+  a too-long reply is still posted truncated with its mark, but the cap is the
+  line's discipline and never the page's, and `truncated=true` never means *the
+  transport could not carry it*.
+- **No transport rate limit.** There is no rate limit but the line's own:
+  `min-gap`, `replies-per-hour` and the backoff ladder (rule 19) are the whole
+  cadence. The `429`/`Retry-After` path exists for Discord and is never reached
+  here, so `rate_limited=` stays zero.
+- **No member list, because the mesh is the membership.** A request arrives over
+  the tailnet, so the set of nodes that can reach the Studio **is** the
+  membership. There is no guild, no pinned `own-server` and no rule 11 call: a
+  page conversation is `public` or `dm` in class and never `own`, and the honest
+  membership answer of rule 5 is `none`.
+- **Identity is the Tailscale node and user rather than a snowflake.** The author
+  id is the requesting node's stable identity — its node name or node id, not a
+  display name — and the person pin compares tailnet identity. Because a page
+  conversation is never `own`, rule 9 withholds person-standing here exactly as
+  it does in a DM, and rule 10's floor is over every page turn.
+
+**The six capabilities of rule 5, written against both transports**, so the
+contract is extracted from two and not asserted from one:
+
+| capability | Discord | page |
+|---|---|---|
+| conversation id | a channel id, or the DM channel's id | the page conversation's own name |
+| author id, and the person check | a Discord user id against the pinned `person` | the tailnet node and user identity |
+| the whole body, by id | `GET /channels/{id}/messages/{id}` | the page's own store, that message whole |
+| transport stamp and order | a snowflake | the Studio's clock, written when the request was received |
+| post, confirmed by id | `POST /channels/{id}/messages`, success only on an id in the response | **the response carries the page's own message id**, or it did not post |
+| membership answer | the guild member list, or rule 6's intent failure | the honest `none`: **the tailnet is the boundary** |
+
+**Every rule attaches to the session and not to the transport** (rule 5). A page
+conversation gets the same session and the same pinned store, the same lossy
+queue and declared drops, the same `uncertain` on a post whose id did not return,
+the same floor, and the same refusal to read anything out of a message (rule 22).
+What changes is the six capabilities and the four constraints above, and nothing
+else.
+
+**It lands after the interface is proven by two.** This transport is built
+**after** `internal/chat/transport.go` has carried two implementations in tests
+(test 5) — the Discord adapter and this one driven against the same fixture — so
+that the interface is extracted from two working adapters rather than guessed
+from one. Until then this section is the whole of it, and the refusal stands.
 
 ---
 
