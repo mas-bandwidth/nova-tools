@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -217,6 +218,33 @@ func (s stringListValue) String() string { return strings.Join(*s.dst, ",") }
 
 func (s stringListValue) Set(v string) error {
 	*s.dst = append(*s.dst, v)
+	return nil
+}
+
+// secondsFlag is a duration flag a caller may write either as a whole number of seconds
+// ("3", the historical spelling) or as a Go duration ("250ms"), so a caller that bounds a
+// wait under a second can say so and every existing caller is unchanged.
+type secondsFlag struct{ d time.Duration }
+
+func newSecondsFlag(fs *flag.FlagSet, name string, def time.Duration) *secondsFlag {
+	v := &secondsFlag{d: def}
+	fs.Var(v, name, "")
+	return v
+}
+
+func (s *secondsFlag) String() string { return s.d.String() }
+
+func (s *secondsFlag) Set(v string) error {
+	v = strings.TrimSpace(v)
+	if n, err := strconv.Atoi(v); err == nil {
+		s.d = time.Duration(n) * time.Second
+		return nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return err
+	}
+	s.d = d
 	return nil
 }
 
@@ -531,7 +559,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	worker := f.fs.String("worker", "", "")
 	max := maxFlag(f.fs)
 	launchTimeout := f.fs.Int("launch-timeout", 10, "")
-	usageInterval := f.fs.Int("usage-interval", 5, "")
+	usageInterval := newSecondsFlag(f.fs, "usage-interval", 5*time.Second)
 	backoff := f.fs.Int("backoff", int(swarm.DefaultBackoff/time.Second), "")
 	noAutoRetry := f.fs.Bool("no-auto-retry", false, "")
 	// THE WALL (docs/SPEC-SANDBOX.md). Every job runs inside nova-sandbox: --sandbox names
@@ -643,7 +671,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return swarm.Run(swarm.RunInput{
 		Pool: p, Worker: w, Key: key, Workers: *workers, Hours: *hours, Max: *max,
 		LaunchTimeout: time.Duration(*launchTimeout) * time.Second,
-		UsageInterval: time.Duration(*usageInterval) * time.Second,
+		UsageInterval: usageInterval.d,
 		Backoff:       time.Duration(*backoff) * time.Second,
 		NoAutoRetry:   *noAutoRetry,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
@@ -658,7 +686,7 @@ func cmdSupervise(args []string, stdout, stderr io.Writer, now time.Time) int {
 	slot := f.fs.Int("slot", 0, "")
 	nonce := f.fs.String("nonce", "", "")
 	worker := f.fs.String("worker", "", "")
-	usageInterval := f.fs.Int("usage-interval", 5, "")
+	usageInterval := newSecondsFlag(f.fs, "usage-interval", 5*time.Second)
 	// The wall this job runs inside, handed down by the dispatcher that resolved it. A
 	// supervisor is run's child and nobody's verb, so neither flag is one a person types.
 	sandboxPath := f.fs.String("sandbox", "", "")
@@ -715,7 +743,7 @@ func cmdSupervise(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return swarm.Supervise(swarm.SuperviseInput{
 		Pool: p, Task: *task, Slot: *slot, Nonce: *nonce, Worker: w, Sidecar: sc, Key: key,
 		Sandbox:       *sandboxPath,
-		UsageInterval: time.Duration(*usageInterval) * time.Second,
+		UsageInterval: usageInterval.d,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
 	})
 }

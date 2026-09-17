@@ -3,8 +3,6 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -360,13 +358,16 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	t.Run("after-spawn", func(t *testing.T) {
 		b := newBench(t)
 		b.inject()
-		taskID := b.add("task after spawn\nFAKE-FINDINGS 0\nFAKE-SLEEP 1\n")
+		taskID := b.add("task after spawn\nFAKE-FINDINGS 0\nFAKE-AWAIT-NOTE 5\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-spawn"}
 		b.run() // runner killed after spawn
 		b.extraEnv = nil
 
-		time.Sleep(300 * time.Millisecond) // supervisor identifies itself
-		exit, stdout, stderr := b.run()
+		// The supervisor identifies itself after the runner is gone; wait for that
+		// observable, then let the adopting run deliver the note that finishes the job.
+		// A 1 s FAKE-SLEEP and a 300 ms sleep made both halves a race against the runner.
+		waitIdentified(t, filepath.Join(b.dir, "worker-home-1", "jobs", taskID))
+		exit, stdout, stderr := adoptAndNote(t, b, taskID)
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 		}
@@ -378,12 +379,13 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	t.Run("after-identify", func(t *testing.T) {
 		b := newBench(t)
 		b.inject()
-		taskID := b.add("task after identify\nFAKE-FINDINGS 0\nFAKE-SLEEP 1\n")
+		taskID := b.add("task after identify\nFAKE-FINDINGS 0\nFAKE-AWAIT-NOTE 5\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-identify"}
 		b.run() // runner killed right after identify
 		b.extraEnv = nil
 
-		exit, stdout, stderr := b.run()
+		waitIdentified(t, filepath.Join(b.dir, "worker-home-1", "jobs", taskID))
+		exit, stdout, stderr := adoptAndNote(t, b, taskID)
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 		}
@@ -730,38 +732,9 @@ func mustOpenPool(t *testing.T, dir string) *swarm.Pool {
 	return p
 }
 
-// runWatching runs the dispatcher and hands each line of its stdout to watch as it is
-// printed, so a test can act on a RUN line (the adoption) before the run ends. It returns
-// the run's exit code and its full stdout and stderr. It is the unix half of the bench: the
-// recovery tests build only with `//go:build unix`, so the windows environment variables
-// swarmTry adds are not needed here.
-func (b *bench) runWatching(args []string, watch func(string)) (int, string, string) {
-	b.t.Helper()
-	cmd := exec.Command(b.binary, args...)
-	cmd.Dir = b.dir
-	cmd.Env = append([]string{"PATH=" + b.path, "Path=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
-	var errb bytes.Buffer
-	cmd.Stderr = &errb
-	pipe, err := cmd.StdoutPipe()
-	if err != nil {
-		b.t.Fatalf("opening the run's stdout: %v", err)
-	}
-	if err := cmd.Start(); err != nil {
-		b.t.Fatalf("starting the run: %v", err)
-	}
-	var out bytes.Buffer
-	scanner := bufio.NewScanner(pipe)
-	for scanner.Scan() {
-		line := scanner.Text()
-		out.WriteString(line)
-		out.WriteString("\n")
-		if watch != nil {
-			watch(line)
-		}
-	}
-	_ = cmd.Wait()
-	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
-}
+// runWatching now lives in swarm_test.go, because the audit-lessons test that kills an
+// adopted job on its RUN ADOPT line is compiled on every platform and the recovery tests
+// are not; the helper carries the windows environment swarmTry adds.
 
 func assertTripwire(t *testing.T) {
 	t.Helper()
@@ -826,4 +799,49 @@ func waitStopped(t *testing.T, pid int) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("supervisor %d never reached its pause point; ps says %q", pid, last)
+}
+
+// waitIdentified waits for a supervisor to have identified itself -- its supervisor.pid on
+// disk -- so a test starts the adopting run on an observable instead of a fixed sleep. The
+// bound is generous; only a failure to identify at all costs the test its time.
+func waitIdentified(t *testing.T, jobDir string) {
+	t.Helper()
+	for waited := time.Duration(0); waited < 30*time.Second; waited += 5 * time.Millisecond {
+		if _, err := os.Stat(filepath.Join(jobDir, "supervisor.pid")); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("the supervisor never identified itself (no supervisor.pid under %s)", jobDir)
+}
+
+// adoptAndNote runs the dispatcher once and, the moment it names the adopted job, delivers
+// the note that lets the worker finish. Both sides wait on an observable -- the dispatcher on
+// the live supervisor, the worker on the note -- so an adopted job that must stay alive is
+// not kept alive by a clock, and the test does not sleep on one either.
+func adoptAndNote(t *testing.T, b *bench, taskID string) (int, string, string) {
+	t.Helper()
+	var noteErr error
+	noted := false
+	runArgs := withSandbox([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.25", "--worker", b.worker})
+	exit, stdout, stderr := b.runWatching(runArgs, func(line string) {
+		if noted || !strings.Contains(line, "RUN ADOPT id="+taskID) {
+			return
+		}
+		noted = true
+		nExit, _, nErr, err := b.swarmTry("note", "--pool", b.pool, "--task", taskID, "--text", "the test says finish now")
+		switch {
+		case err != nil:
+			noteErr = err
+		case nExit != 0:
+			noteErr = fmt.Errorf("the note was refused (exit %d): %s", nExit, nErr)
+		}
+	})
+	if !noted {
+		t.Fatalf("the dispatcher never adopted %s (no RUN ADOPT), so this test proved nothing:\n%s", taskID, stdout)
+	}
+	if noteErr != nil {
+		t.Fatalf("the note that lets the adopted job finish: %v", noteErr)
+	}
+	return exit, stdout, stderr
 }

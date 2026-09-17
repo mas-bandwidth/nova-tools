@@ -237,8 +237,8 @@ func main() {
 	if os.Getenv("FAKE_FOREGROUND_CHILD") == "1" {
 		return
 	}
-	if n, ok := number(prompt, "FAKE-SLEEP"); ok {
-		time.Sleep(time.Duration(n) * time.Second)
+	if d, ok := duration(prompt, "FAKE-SLEEP"); ok {
+		time.Sleep(d)
 	}
 	// A WORKER THAT IS WAITED ON WAITS FOR THE THING ITSELF, NEVER FOR A CLOCK (#122).
 	// `FAKE-SLEEP 2` made the note test a race in the other direction: the sender waits for
@@ -478,6 +478,26 @@ func number(prompt, name string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// duration reads a directive whose argument is a wait: a Go duration ("300ms", "2s") or
+// a bare number of seconds ("0.5", "3"). A test that holds a worker under a second
+// spells it in milliseconds, and every older fixture spells whole seconds, so both
+// spellings parse.
+func duration(prompt, name string) (time.Duration, bool) {
+	arg, ok := directive(prompt, name)
+	if !ok {
+		return 0, false
+	}
+	field := strings.Fields(arg + " 0")[0]
+	if d, err := time.ParseDuration(field); err == nil {
+		return d, true
+	}
+	f, err := strconv.ParseFloat(field, 64)
+	if err != nil {
+		return 0, false
+	}
+	return time.Duration(f * float64(time.Second)), true
 }
 
 // checkInvocation is what a real harness requires of its argv: its own subcommand, the
