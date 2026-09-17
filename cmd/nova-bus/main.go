@@ -2267,7 +2267,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) are not carried on your open list, and are counted rather than listed")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
-	quietBeats := f.fs.Bool("quiet-beats", false, "return on a change that is only beats and cursors, printing one WAIT line and no INBOX frame instead of sleeping through it")
+	quietBeats := f.fs.Bool("quiet-beats", false, "accepted for callers that pass it; since #328 (2026-09-17) a change that is only beats and cursors never wakes a wait, with or without this flag; it is not news")
 	// --remote and --branch are required here and conditional on inbox, because a wait
 	// FETCHES: that is the difference between waiting and sleeping. A wait that read only
 	// what its checkout already held would wait out its whole timeout beside a bus full of
@@ -2521,7 +2521,10 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		quietOnly := func(r inboxReading) bool {
 			return o.quietBeats && r.New == 0 && r.Changed > 0 && r.NoteChanges == 0 && !hiddenWholeWait(r.Legacy, horizon)
 		}
-		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) || quietOnly(r) }
+		// #328 (2026-09-17): a beat or a cursor is never news. A wait that woke on every
+		// line's presence beat (one a minute, six lines) was a poll with extra steps and cost the
+		// window a turn per beat; --quiet-beats is accepted and changes nothing (Johnny's read).
+		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) }
 		// THE BEAT, written before the poll. A waiting line's cursor does not move --
 		// there was nothing to read, so nothing was recorded -- and a line whose cursor
 		// does not move reads asleep to `nova-wake awake`. The BEAT is the file that moves
