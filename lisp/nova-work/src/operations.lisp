@@ -1597,6 +1597,8 @@ handed to OUT or ERR by their second token, and count the bytes printed. Answer
       (finish-output err)
       (incf (cli-client-emitted client) emitted)
       (values exit emitted stdout stderr))))
+
+;;; ------------------------------------------------------------------
 ;;; Reconciliation over observation manifests (SPEC-WORK.md:3994-4013)
 ;;; ------------------------------------------------------------------
 ;;;
