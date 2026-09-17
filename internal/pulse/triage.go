@@ -20,6 +20,7 @@ package pulse
 // hour") and the next case of the same kind is decided by the rule and never by a model.
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -71,6 +73,7 @@ type Packet struct {
 	Result  []string // the RESULT lines of the card the case is about
 	Refusal string   // the harness's refusal line, one line
 	Rules   []RuleRow
+	Link    string // the LINKS line when a typed decision matched an open issue, else ""
 }
 
 // KnownTriageKind reports whether kind is one of the seven.
@@ -209,6 +212,9 @@ func (p Packet) body(result []string, dropped int) string {
 	b.WriteString("You are a triage reader on the text route. Read only what is below this line: no repo, no spec, no log, no transcript. Do not run go build, go test or any toolchain; read and write only. Answer with one line and stop.\n")
 	fmt.Fprintf(&b, "MODEL: %s\n", TriageRoute)
 	fmt.Fprintf(&b, "CASE %s ref=%s\n", oneline.Field(p.Case), field(p.Ref))
+	if p.Link != "" {
+		fmt.Fprintf(&b, "%s\n", p.Link)
+	}
 	fmt.Fprintf(&b, "RESULT LINES %d\n", len(result))
 	for _, l := range result {
 		b.WriteString("  " + l + "\n")
@@ -307,6 +313,22 @@ func nonEmpty(s, fallback string) string {
 	return s
 }
 
+// DefaultDedupeFloor is the confidence floor triage --dedupe starts at.
+const DefaultDedupeFloor = 0.9
+
+// TriageDecider is the typed decision triage --dedupe asks: one call, a same_class choice.
+// The shipped one is *decide.Client; a test passes a fake, so no test reaches the network.
+type TriageDecider interface {
+	Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error)
+}
+
+// IssueRow is one open issue from --issues: its number and its title, one per line, tab
+// separated. The loop writes the file from the API; this verb only reads it.
+type IssueRow struct {
+	Number string
+	Title  string
+}
+
 // TriageInput is the triage verb, apart from flag parsing.
 type TriageInput struct {
 	Case     string
@@ -316,6 +338,111 @@ type TriageInput struct {
 	Evidence string // a file of the RESULT lines and the refusal line; default <queue>/UNDECIDED/<case>.txt
 	Stdout   io.Writer
 	Stderr   io.Writer
+
+	// Dedupe turns on the typed decision: before the card is cut, a same_class
+	// choice over the open issues in Issues asks whether this new case is the same
+	// class as one of them. At or above Floor the card gains the LINKS line and the
+	// TRIAGE line reads dedupe=#<n>; on `none`, on a provider error, or below the
+	// floor the card is cut unchanged and the line reads dedupe=?. A decision below
+	// the floor is a suggestion, never an authorization.
+	Dedupe  bool
+	Issues  string
+	Floor   float64
+	Decider TriageDecider
+}
+
+// ReadIssues reads the --issues file, one `number<TAB>title` per line. A blank line is
+// skipped. An unreadable file is an error, never an empty list: a decision over no issues
+// would link nothing and read as "no duplicate", which is the guess this refuses.
+func ReadIssues(path string) ([]IssueRow, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []IssueRow
+	for _, l := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		f := strings.SplitN(l, "\t", 2)
+		number := strings.TrimSpace(f[0])
+		if number == "" {
+			continue
+		}
+		title := ""
+		if len(f) == 2 {
+			title = strings.TrimSpace(f[1])
+		}
+		out = append(out, IssueRow{Number: number, Title: title})
+	}
+	return out, nil
+}
+
+// sameClassQuestions is the one typed decision --dedupe asks: a choice whose options are
+// the open issue numbers and `none`.
+func sameClassQuestions(issues []IssueRow) map[string]decide.Question {
+	options := map[string]string{"none": "a new class of finding, not the same as any open issue"}
+	for _, iss := range issues {
+		options[iss.Number] = "the open issue #" + iss.Number + ": " + nonEmpty(iss.Title, "untitled")
+	}
+	return map[string]decide.Question{
+		"same_class": {
+			Instructions: "Is this new case the same class of finding as one of the open issues below? Answer with exactly the number of the issue whose class matches, or none.",
+			Choice:       options,
+		},
+	}
+}
+
+// dedupeState is what the typed decision is given and nothing else: the new case's title
+// (its case and ref) and its evidence, each line escaped and capped as the packet escapes
+// evidence, so the state is a bounded packet and never a transcript.
+func dedupeState(caseName, ref string, result []string, refusal string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "CASE %s ref=%s\n", oneline.Field(caseName), field(ref))
+	b.WriteString("EVIDENCE\n")
+	for _, l := range result {
+		if t := strings.TrimSpace(l); t != "" {
+			b.WriteString(oneline.Cap(oneline.Escape(t), evidenceMax))
+			b.WriteByte('\n')
+		}
+	}
+	if r := strings.TrimSpace(refusal); r != "" {
+		b.WriteString(oneline.Escape(oneline.Cap(r, evidenceMax)))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// link is the one typed decision, asked before the card is cut. It returns the card's
+// LINKS line (empty when there is none) and the dedupe field for the TRIAGE line. On
+// `none`, on an answer that names no open issue, on a provider error and below the floor
+// the field is `?` and the card is cut unchanged.
+func (in TriageInput) link(caseName, ref string, result []string, refusal string) (string, string, error) {
+	if in.Decider == nil {
+		return "", "", fmt.Errorf("--dedupe needs a decider; refusing to guess (set --key-env, or drop --dedupe)")
+	}
+	issues, err := ReadIssues(in.Issues)
+	if err != nil {
+		return "", "", fmt.Errorf("--issues %s could not be read: %s (name a file of number<TAB>title, one open issue per line)", oneline.Field(in.Issues), oneline.Err(err))
+	}
+	floor := in.Floor
+	if floor <= 0 {
+		floor = DefaultDedupeFloor
+	}
+	answers, _, derr := in.Decider.Decide(context.Background(), dedupeState(caseName, ref, result, refusal), sameClassQuestions(issues))
+	if derr != nil {
+		return "", "dedupe=?", nil
+	}
+	a, ok := answers["same_class"]
+	if !ok || a.Choice == "" || a.Choice == "none" || a.Confidence < floor {
+		return "", "dedupe=?", nil
+	}
+	for _, iss := range issues {
+		if iss.Number == a.Choice {
+			return fmt.Sprintf("LINKS #%s (same class, conf=%.2f)", iss.Number, a.Confidence), "dedupe=#" + iss.Number, nil
+		}
+	}
+	return "", "dedupe=?", nil
 }
 
 // Triage cuts one packet to a card file and prints one line.
@@ -332,6 +459,14 @@ func Triage(in TriageInput) int {
 	lines := readLines(path)
 	result, refuse := splitEvidence(lines)
 	p := BuildPacket(in.Queue, in.Case, in.Ref, result, refuse)
+	dedupeField := ""
+	if in.Dedupe {
+		link, f, err := in.link(in.Case, in.Ref, result, refuse)
+		if err != nil {
+			return refusal(stderr, "TRIAGE", err)
+		}
+		p.Link, dedupeField = link, f
+	}
 	card := p.Card()
 	if err := os.MkdirAll(filepath.Dir(in.Out), 0o755); err != nil {
 		return refusal(stderr, "TRIAGE", fmt.Errorf("cannot make the card's directory: %s (name a writable --out)", oneline.Err(err)))
@@ -339,8 +474,11 @@ func Triage(in TriageInput) int {
 	if err := os.WriteFile(in.Out, []byte(card), 0o644); err != nil {
 		return refusal(stderr, "TRIAGE", fmt.Errorf("cannot write the card: %s (name a writable --out)", oneline.Err(err)))
 	}
-	fmt.Fprintf(stdout, "TRIAGE OK case=%s ref=%s route=%s rules=%d result=%d bytes=%d out=%s\n",
-		oneline.Field(in.Case), field(in.Ref), TriageRoute, len(p.Rules), len(result), len(card), field(in.Out))
+	if dedupeField != "" {
+		dedupeField = " " + dedupeField
+	}
+	fmt.Fprintf(stdout, "TRIAGE OK case=%s ref=%s route=%s rules=%d result=%d bytes=%d out=%s%s\n",
+		oneline.Field(in.Case), field(in.Ref), TriageRoute, len(p.Rules), len(result), len(card), field(in.Out), dedupeField)
 	return 0
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
@@ -88,6 +89,11 @@ func cmdTriage(args []string, stdout, stderr io.Writer) int {
 	out := f.fs.String("out", "", "")
 	ref := f.fs.String("ref", "", "")
 	evidence := f.fs.String("evidence", "", "")
+	dedupe := f.fs.Bool("dedupe", false, "")
+	issues := f.fs.String("issues", "", "")
+	floor := f.fs.Float64("floor", pulse.DefaultDedupeFloor, "")
+	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
+	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -95,13 +101,27 @@ func cmdTriage(args []string, stdout, stderr io.Writer) int {
 	f.want(*kind, "case", "one of "+joinKinds())
 	f.want(*queue, "queue", "the queue directory holding RULES.tsv and the undecided evidence")
 	f.want(*out, "out", "the card file this packet is written to")
+	if *dedupe {
+		f.want(*issues, "issues", "the open issues file, one number<TAB>title per line")
+		if *floor < 0 || *floor > 1 {
+			f.add(fmt.Sprintf("--floor is a confidence between 0 and 1, got %g", *floor))
+		}
+	}
 	if f.refused(stderr) {
 		return 2
 	}
-	return pulse.Triage(pulse.TriageInput{
+	in := pulse.TriageInput{
 		Case: *kind, Queue: *queue, Out: *out, Ref: *ref, Evidence: *evidence,
 		Stdout: stdout, Stderr: stderr,
-	})
+	}
+	if *dedupe {
+		client, err := decide.New(*baseURL, *keyEnv)
+		if err != nil {
+			return refuse(stderr, " triage", err.Error())
+		}
+		in.Dedupe, in.Issues, in.Floor, in.Decider = true, *issues, *floor, client
+	}
+	return pulse.Triage(in)
 }
 
 func joinKinds() string {
