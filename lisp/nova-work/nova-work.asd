@@ -30,6 +30,7 @@
                (:file "src/undo")
                (:file "src/pricing")
                (:file "src/operations")
+               (:file "src/transport")
                (:file "src/scheduler")
                (:file "src/assignment")
                (:file "src/control")

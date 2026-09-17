@@ -588,7 +588,20 @@
     (check-string= "\"\"" empty-string "the empty-string spelling")
     (ok (and (string/= absent empty) (string/= absent empty-string)
              (string/= empty empty-string))
-        "absent, empty list and empty string are three spellings, not two")))
+        "absent, empty list and empty string are three spellings, not two"))
+  ;; The wire agrees with the payload's three spellings (:2669-2672): a
+  ;; missing key and an explicit JSON null both read as absent, while an empty
+  ;; string and an empty array are values that cannot digest to one thing.
+  (let* ((json (wire-json-encode (list (cons "null" +absent+)
+                                       (cons "empty" '())
+                                       (cons "string" ""))))
+         (obj (wire-parse-json json)))
+    (ok (absentp (wire-field obj "null")) "a JSON null reads as absent")
+    (ok (absentp (wire-field obj "missing")) "a missing key reads as absent")
+    (check-equal '() (wire-field obj "empty") "an empty array is a value")
+    (check-string= "" (wire-field obj "string") "an empty string is a value")
+    (ok (not (equal (wire-field obj "empty") (wire-field obj "string")))
+        "an empty array and an empty string are distinct values")))
 
 (deftest "crash-after-append-recovers-the-reply-once" "docs/SPEC-WORK.md:485,492"
     "expected=record-durable-before-apply;retry-recovers-reply-once"
