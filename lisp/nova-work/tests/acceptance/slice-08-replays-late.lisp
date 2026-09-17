@@ -77,9 +77,37 @@
      (ok (null (find-symbol ,what :nova-work))
          ,(format nil "~A entry point is not yet shipped" what))))
 
-(needs-kernel "status-answers-while-io-runs" "docs/SPEC-WORK.md:5186"
-  "status and cancel answered within their bound while a busy capture, export and clip are in flight"
-  "OPERATION-STATUS")
+(deftest "status-answers-while-io-runs" "docs/SPEC-WORK.md:5637-5639"
+    "expected=status-and-cancel-within-bound;queues-staged-retained-bounded;restart-reconciles-pending"
+  (let* ((events '((:id "ev-1" :kind :state-to-done :request "req-1")
+                   (:id "ev-2" :kind :state-to-done :request "req-2")))
+         (session (make-work-session :events events :receipts '(:r1)))
+         ;; a busy capture, export and clip in flight.
+         (session (session-add-operation
+                   session (make-operation :id "op-clip" :op :clip :request "req-clip"
+                                           :state :running :staged-bytes 512)))
+         (session (session-add-operation
+                   session (make-operation :id "op-export" :op :export :request "req-export"
+                                           :state :running :staged-bytes 512))))
+    ;; status answers while the loop is busy, and replays no journal history.
+    (let ((*replays* 0))
+      (let ((answer (operation-status session "op-export")))
+        (check-equal :running (getf answer :state) "status reads the running export")
+        (check-equal :export (getf answer :op) "status names the operation kind"))
+      (check-equal 0 *replays* "status replays no journal"))
+    ;; a cancel of a pending operation answers with its own final disposition.
+    (multiple-value-bind (after disposition)
+        (operation-cancel session "op-export" :request "req-cancel")
+      (declare (ignore after))
+      (check-equal :cancelled (getf disposition :state)
+                   "cancel answers with its own final disposition"))
+    ;; queues, staged bytes and retained results stay bounded.
+    (ok (session-bounded-p session) "the queues, staged bytes and results are bounded")
+    ;; a restart reconciles the ids that were pending, erasing no event.
+    (multiple-value-bind (after reconciled) (reconcile-operations session)
+      (declare (ignore after))
+      (ok (member "op-clip" reconciled :test #'equal) "the pending clip is reconciled")
+      (check-equal events (work-session-events session) "reconciliation erases no event"))))
 
 (needs-kernel "stop-is-a-hold-not-a-cancel" "docs/SPEC-WORK.md:5250"
   "execution stop writing a hold and directives and no transition, goal show still printing stop=none"
@@ -180,9 +208,90 @@
         (ok (search "secret" (string-downcase refusal))
             "the refusal names the secret")))))
 
-(needs-kernel "undo-appends-and-preserves" "docs/SPEC-WORK.md:5192"
-  "an undo appending a typed compensating envelope with its lineage while the original event and every receipt stay where they are"
-  "UNDO")
+(deftest "undo-appends-and-preserves" "docs/SPEC-WORK.md:5643-5644"
+    "expected=compensating-envelope-with-lineage;original-event-and-receipts-untouched"
+  (let* ((original (list :id "ev-add-1" :kind :node-add :request "req-add-1"
+                         :node "acme/work/f1/t1"))
+         (ledger (list :history (list original)
+                       :receipts (list (list :id "rcpt-1" :event "ev-add-1")))))
+    (multiple-value-bind (after envelope refusal)
+        (undo-request ledger "req-add-1")
+      (check-equal nil refusal "the undo of a reversible request is accepted")
+      ;; the compensating envelope is typed by the table and carries its lineage.
+      (check-equal :node-remove (getf envelope :kind)
+                   "the compensating envelope is typed by the table")
+      (check-equal (list "ev-add-1" "req-add-1") (getf envelope :lineage)
+                   "the compensating envelope carries its lineage")
+      ;; the original event stays exactly where it is; the undo is appended.
+      (ok (eq original (first (getf after :history))) "the original event stays in place")
+      (check-equal 2 (length (getf after :history)) "the undo appends exactly one envelope")
+      ;; every receipt stays exactly where it is.
+      (check-equal (getf ledger :receipts) (getf after :receipts)
+                   "every receipt stays where it is"))))
+
+(deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5640-5642"
+    "expected=cancel-ack-own-disposition;accepted-mutation-not-erased;uncertain-external-reported-uncertain"
+  (let* ((events '((:id "ev-accepted" :kind :state-to-done :request "req-accepted")))
+         (session (make-work-session
+                   :events events :receipts '(:receipt-1)
+                   :operations (list (make-operation :id "op-cap" :op :capture
+                                                      :request "req-cap" :state :running))))
+         (before-events (work-session-events session)))
+    ;; the cancellation is acknowledged with its own final disposition ...
+    (multiple-value-bind (after disposition)
+        (operation-cancel session "op-cap" :request "req-cancel-1")
+      (check-equal :cancelled (getf disposition :state)
+                   "the cancel ack carries its own final disposition")
+      (check-equal "req-cancel-1" (getf disposition :request)
+                   "the ack echoes the cancel's own request id")
+      ;; ... erasing no accepted mutation.
+      (check-equal before-events (work-session-events after)
+                   "the accepted mutation is not erased")
+      ;; a cancel replayed twice cancels once.
+      (multiple-value-bind (again disposition-2)
+          (operation-cancel after "op-cap" :request "req-cancel-1")
+        (check-equal :cancelled (getf disposition-2 :state) "the replay answers cancelled")
+        (check-equal t (getf disposition-2 :replayed) "the replay applies nothing")
+        (check-equal before-events (work-session-events again)
+                     "the replay erases nothing")))
+    ;; an uncertain external effect is reported uncertain, not cancelled.
+    (let ((session-2 (make-work-session
+                      :events events
+                      :operations (list (make-operation :id "op-pay" :op :pay
+                                                         :request "req-pay" :state :running)))))
+      (multiple-value-bind (after disposition)
+          (operation-cancel session-2 "op-pay" :request "req-cancel-2"
+                            :external-effect :uncertain)
+        (declare (ignore after))
+        (check-equal :uncertain (getf disposition :state)
+                     "an uncertain external effect reads uncertain, never cancelled")))))
+
+(deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5778-5782"
+    "expected=clip-returns-OPERATION-OK;wait-prints-CLIP-OK;raced-CLIP-RACED;session-stop-CLIP-then-SESSION"
+  (let ((session (make-work-session :events '((:id "ev-1")))))
+    (multiple-value-bind (after op line) (clip-request session :id "op-clip-1")
+      (check-equal :clip (operation-op op) "clip draws one clip operation")
+      (check-equal :queued (operation-state op) "clip acknowledges while queued")
+      (ok (search "OPERATION OK id=op-clip-1 op=clip" line)
+          "clip prints OPERATION OK id= op=clip: ~A" line)
+      ;; the transport continues and operation wait prints the CLIP OK line.
+      (multiple-value-bind (settled wait-line) (operation-wait after "op-clip-1")
+        (declare (ignore settled))
+        (ok (search "CLIP OK" wait-line) "wait prints CLIP OK: ~A" wait-line)
+        (ok (search "operation=op-clip-1" wait-line) "the CLIP OK names operation=: ~A" wait-line)
+        (ok (search "pushed=" wait-line) "the CLIP OK carries pushed=: ~A" wait-line))
+      ;; a raced transport prints CLIP RACED through the same wait.
+      (multiple-value-bind (raced race-line) (operation-wait after "op-clip-1" :race t)
+        (declare (ignore raced))
+        (ok (search "CLIP RACED" race-line) "a raced wait prints CLIP RACED: ~A" race-line)))
+    ;; session stop waits on its own clip and prints CLIP OK then SESSION OK.
+    (multiple-value-bind (stopped op line) (clip-request session :id "op-clip-stop")
+      (declare (ignore op line))
+      (let ((lines (session-stop stopped)))
+        (ok (search "CLIP OK" (first lines)) "stop prints its own CLIP OK first: ~A" (first lines))
+        (ok (search "operation=op-clip-stop" (first lines))
+            "stop's CLIP OK names its own operation")
+        (ok (search "SESSION OK" (second lines)) "stop prints SESSION OK second: ~A" (second lines))))))
 
 (needs-kernel "undo-names-its-reversible-set" "docs/SPEC-WORK.md:5332"
   "every row of the reversible-verb table: each reversible verb undone by the envelope the table names, each refused verb refused not-reversible naming itself"

@@ -3,10 +3,39 @@
 
 (in-package #:nova-work/tests)
 
-(deftest "redo-refuses-a-stale-plan" "docs/SPEC-WORK.md:5194"
-    "expected=redo-with-moved-preconditions-refused-atomically-naming-ids"
-  ;; NEEDS-KERNEL: undo/redo precondition tracking.
-  (ok t "pending; needs undo/redo"))
+(deftest "redo-refuses-a-stale-plan" "docs/SPEC-WORK.md:5645-5646"
+    "expected=stale-precondition-refused-atomically;names-what-changed;writes-nothing;undo-not-deleted"
+  (let* ((original (list :id "ev-add-1" :kind :node-add :request "req-add-1"))
+         (ledger (list :history (list original) :receipts '(:rcpt-1))))
+    (multiple-value-bind (after-undo undo-envelope refusal)
+        (undo-request ledger "req-add-1")
+      (check-equal nil refusal "the undo is appended")
+      (let ((history-after-undo (getf after-undo :history)))
+        ;; a redo whose preconditions moved refuses atomically, naming what changed.
+        (multiple-value-bind (after-redo redo-envelope refusal-2)
+            (redo-request after-undo "req-undo-req-add-1"
+                          (list :at-rev 1 :preconditions '(:open 3))
+                          (list :rev 2 :preconditions '(:open 4)))
+          (check-equal nil redo-envelope "a stale redo writes nothing")
+          (ok (search "stale plan" refusal-2) "the refusal names the stale plan: ~A" refusal-2)
+          (ok (search "rev moved 1->2" refusal-2) "the refusal names what changed: ~A" refusal-2)
+          (check-equal history-after-undo (getf after-redo :history)
+                       "a refused redo writes nothing")
+          ;; the undo is not deleted, so a redo is never reached by deleting it.
+          (ok (find (getf undo-envelope :request) (getf after-redo :history)
+                    :key (lambda (e) (getf e :request)) :test #'equal)
+              "the undo envelope is still there"))
+        ;; a fresh plan at the current revision reapplies the intent; the undo stands.
+        (multiple-value-bind (after-redo redo-envelope refusal-3)
+            (redo-request after-undo "req-undo-req-add-1"
+                          (list :at-rev 2 :preconditions '(:open 4))
+                          (list :rev 2 :preconditions '(:open 4)))
+          (check-equal nil refusal-3 "a fresh plan is accepted")
+          (check-equal 3 (length (getf after-redo :history))
+                       "redo appends rather than deletes")
+          (ok (find (getf undo-envelope :request) (getf after-redo :history)
+                    :key (lambda (e) (getf e :request)) :test #'equal)
+              "the undo still stands after a fresh redo"))))))
 
 (deftest "regression-and-recovery" "docs/SPEC-WORK.md:4379"
     "expected=breached-trial-stops-automatic-assignment;fallback-preserves-limits-history-handles"

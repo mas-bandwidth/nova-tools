@@ -304,7 +304,7 @@ never leave a caller holding an id the restart never heard of."
           (append (operation-registry-journal registry) (list record)))
     id))
 
-(defun operation-state (registry id)
+(defun registry-operation-state (registry id)
   "Answer (values STATE NIL 0) for an operation the journal holds, or
 (values NIL LINE 2) for one no journal holds -- never an invented `queued`."
   (let ((cell (assoc id (operation-registry-operations registry) :test #'string=)))
@@ -321,16 +321,16 @@ never leave a caller holding an id the restart never heard of."
             (getf (cdr cell) :result) result))
     cell))
 
-(defun operation-result (registry id)
+(defun registry-operation-result (registry id)
   (let ((cell (assoc id (operation-registry-operations registry) :test #'string=)))
     (and cell (getf (cdr cell) :result))))
 
-(defun operation-wait (registry id &key timeout)
+(defun registry-operation-wait (registry id &key timeout)
   "A bounded wait. A timeout leaves the operation running; a completed result
 is answered (values RESULT :done)."
   (declare (ignore timeout))
-  (if (eq :done (operation-state registry id))
-      (values (operation-result registry id) :done)
+  (if (eq :done (registry-operation-state registry id))
+      (values (registry-operation-result registry id) :done)
       (values nil :timeout)))
 
 (defun operation-client-exit (registry)

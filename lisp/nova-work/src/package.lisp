@@ -460,7 +460,42 @@
    #:operation-result
    #:operation-wait
    #:operation-client-exit
-   #:operation-journal-length))
+   #:operation-journal-length
+   ;; the registry API renamed to keep it distinct from the operation struct
+   ;; accessors added by card 8609 (operation-state/-result) and the session
+   ;; operation-wait.
+   #:registry-operation-state
+   #:registry-operation-result
+   #:registry-operation-wait
+    ;; long operation, cancel, clip and undo/redo replays (card 8609)
+    #:*operation-limits*
+    #:make-operation
+    #:operation-p
+    #:operation-id
+    #:operation-op
+    #:operation-request
+    #:operation-staged-bytes
+    #:operation-retained-results
+    #:make-work-session
+    #:work-session-p
+    #:work-session-operations
+    #:work-session-events
+    #:work-session-receipts
+    #:work-session-limits
+    #:work-session-git-timeout
+    #:session-operation
+    #:session-add-operation
+    #:operation-status
+    #:operation-pending-p
+    #:session-bounded-p
+    #:operation-cancel
+    #:clip-request
+    #:session-stop
+    #:reconcile-operations
+    #:*reversible-verbs*
+    #:undo-request
+    #:moved-preconditions
+    #:redo-request))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
