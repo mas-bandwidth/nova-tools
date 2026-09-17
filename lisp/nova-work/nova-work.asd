@@ -28,7 +28,8 @@
                (:file "src/replays-8640")
                (:file "src/replays-closed-history")
                (:file "src/replays-publication")
-               (:file "src/replays-8603")))
+               (:file "src/replays-8603")
+               (:file "src/replays-wire-and-operations")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
