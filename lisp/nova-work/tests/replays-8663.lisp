@@ -152,6 +152,21 @@
                  "alloc-b holds slot 2")
     ;; release alloc-a prints its exact ALLOC RELEASE line with freed=true.
     (multiple-value-bind (ok line code f3) (assign-fleet-release f2 :allocation "alloc-a" :generation 7)
+  (let* ((m (make-machine :id "m-a1" :concurrent 2 :generation 7))
+         (f0 (make-fleet :machine m))
+         (f1 (nth-value 3 (fleet-take f0 :node "N1" :slots 1 :machine-generation 7
+                                      :holder "n1" :allocation-id "alloc-a")))
+         (f2 (nth-value 3 (fleet-take f1 :node "N2" :slots 1 :machine-generation 7
+                                      :holder "n2" :allocation-id "alloc-b"))))
+    ;; machine m-a1 holds alloc-a (slot 1, N1) and alloc-b (slot 2, N2).
+    (check-equal 1 (allocation-slot (find "alloc-a" (fleet-allocations f2)
+                                          :key #'allocation-id :test #'equal))
+                 "alloc-a holds slot 1")
+    (check-equal 2 (allocation-slot (find "alloc-b" (fleet-allocations f2)
+                                          :key #'allocation-id :test #'equal))
+                 "alloc-b holds slot 2")
+    ;; release alloc-a prints its exact ALLOC RELEASE line with freed=true.
+    (multiple-value-bind (ok line code f3) (fleet-release f2 :allocation "alloc-a" :generation 7)
       (ok ok "the release is accepted: ~A" line)
       (check-equal 0 code "the release is exit 0")
       (ok (search "ALLOC RELEASE OK" line) "the release prints its OK line: ~A" line)
@@ -161,6 +176,7 @@
       (ok (search "freed=true" line) "the line prints freed=true: ~A" line)
       ;; list --machine m-a1 shows exactly one ALLOC ROW, for alloc-b slot 2.
       (let ((rows (assign-fleet-list f3)))
+      (let ((rows (fleet-list f3)))
         (check-equal 1 (length rows) "exactly one allocation row remains")
         (ok (search "allocation=alloc-b" (first rows))
             "the surviving row is alloc-b: ~A" (first rows))
@@ -179,6 +195,17 @@
                                        :key #'allocation-id :test #'equal))
             "alloc-b continues untouched")
         (check-equal 2 (length (assign-fleet-list f4))
+          (fleet-take f3 :node "N3" :slots 1 :machine-generation 7
+                         :holder "n3" :allocation-id "alloc-d")
+        (check-equal 0 code2 "the new take is exit 0")
+        (ok ok2 "the freed slot admits a new take: ~A" line2)
+        (check-equal 1 (allocation-slot (find "alloc-d" (fleet-allocations f4)
+                                              :key #'allocation-id :test #'equal))
+                     "the new take gets the freed slot 1")
+        (ok (allocation-active-p (find "alloc-b" (fleet-allocations f4)
+                                       :key #'allocation-id :test #'equal))
+            "alloc-b continues untouched")
+        (check-equal 2 (length (fleet-list f4))
                      "the list shows both live allocations")))))
 
 ;;; ------------------------------------------------------------------
@@ -194,12 +221,21 @@
          (f2 (nth-value 3 (assign-fleet-release f1 :allocation "alloc-a" :generation 7))))
     ;; a heartbeat using the released allocation id is refused by name at exit 1.
     (multiple-value-bind (ok line code) (assign-fleet-heartbeat f2 :allocation "alloc-a" :generation 7)
+    "expected=heartbeat-of-released-refused-by-name;release-of-released-refused-by-name;stale-machine-generation-take-refused-capacity"
+  (let* ((m (make-machine :id "m-a1" :concurrent 2 :generation 7))
+         (f0 (make-fleet :machine m))
+         (f1 (nth-value 3 (fleet-take f0 :node "N1" :slots 1 :machine-generation 7
+                                      :holder "n1" :allocation-id "alloc-a")))
+         (f2 (nth-value 3 (fleet-release f1 :allocation "alloc-a" :generation 7))))
+    ;; a heartbeat using the released allocation id is refused by name at exit 1.
+    (multiple-value-bind (ok line code) (fleet-heartbeat f2 :allocation "alloc-a" :generation 7)
       (check-equal nil ok "a heartbeat for the released allocation is refused")
       (check-equal 1 code "the refusal is exit 1")
       (ok (search "ALLOC FAIL machine=m-a1 allocation=alloc-a: stale token" line)
           "the refusal names the stale allocation: ~A" line))
     ;; a release using the released allocation id is refused by name at exit 1.
     (multiple-value-bind (ok line code) (assign-fleet-release f2 :allocation "alloc-a" :generation 7)
+    (multiple-value-bind (ok line code) (fleet-release f2 :allocation "alloc-a" :generation 7)
       (check-equal nil ok "a second release is refused")
       (check-equal 1 code "the refusal is exit 1")
       (ok (search "allocation=alloc-a" line) "the refusal names alloc-a: ~A" line)
@@ -210,6 +246,10 @@
                :machine (make-assign-machine :id "m-a1" :concurrent 2 :generation 8))))
       (multiple-value-bind (ok line code)
           (assign-fleet-take f3 :node "N3" :slots 1 :assign-machine-generation 7
+    (let ((f3 (make-fleet
+               :machine (make-machine :id "m-a1" :concurrent 2 :generation 8))))
+      (multiple-value-bind (ok line code)
+          (fleet-take f3 :node "N3" :slots 1 :machine-generation 7
                          :holder "n3" :allocation-id "alloc-e")
         (check-equal nil ok "a take with a stale machine generation is refused")
         (check-equal 1 code "the refusal is exit 1")
