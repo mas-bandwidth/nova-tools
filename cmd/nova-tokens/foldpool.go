@@ -39,9 +39,15 @@ func cmdFoldPool(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--ledger is a directory: " + *ledger + "; it wants the ledger file")
 		return r.print(stderr)
 	}
+	if strings.TrimSpace(*since) != "" {
+		if _, err := time.Parse(time.RFC3339, strings.TrimSpace(*since)); err != nil {
+			r.add("--since is not a stamp: " + *since + "; it wants an RFC 3339 stamp")
+			return r.print(stderr)
+		}
+	}
 	groups, tasks, err := tokens.FoldPool(*pool, *since)
 	if err != nil {
-		r.add("--since is not a stamp: " + *since + "; it wants an RFC 3339 stamp")
+		r.add("--pool " + *pool + ": " + err.Error())
 		return r.print(stderr)
 	}
 	if err := tokens.WritePoolLedger(*ledger, groups); err != nil {
