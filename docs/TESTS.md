@@ -590,6 +590,16 @@ endpoints — an `httptest` server per channel, a fake mailer, an injected clock
 environment `nova-secrets exec` delivers, is never printed, and is never
 measured.
 
+The outward gate of [docs/SPEC-OUTBOUND.md](SPEC-OUTBOUND.md). Slice 1 carries
+only the in-process `fake` channel: every line below is local, and no socket, no
+credential and no provider is touched. `draft` writes the payload under
+`./drafts`; `show` prints the exact payload bytes to stdout and its OK line to
+stderr; `send` releases only on a bus receipt from Glenn that names the hash and
+is under 24 hours old, and a second send of a sent hash prints the recorded
+result. The refresh stamps come from the injected clock in tests; a real run
+reads the wall clock and there is no `--now` flag, because a caller who can name
+the time can forge freshness.
+
 ### First run
 
 ```text
@@ -615,6 +625,19 @@ POST SHOW OK hash=8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327a
 
 $ nova-post send --draft 8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4 --approval glenn-0123456789ab --drafts ./drafts --bus ./bus --allowlist ./allowlist
 POST REFUSED reason=no-approval no receipt glenn-0123456789ab in ./bus; have Glenn send `APPROVE nova-post sha256=8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4` and pass its id
+
+$ nova-post draft --channel fake --target friends --file body.md --drafts ./drafts --allowlist ./allowlist
+POST DRAFT OK hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf channel=fake target=friends bytes=38 drafts=./drafts
+
+$ nova-post show --draft 46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf --drafts ./drafts
+A first post for the friends channel.
+POST SHOW OK hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf channel=fake bytes=38 drafts=./drafts
+
+$ nova-post send --draft 46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf --approval rec-1 --drafts ./drafts --bus ./bus --allowlist ./allowlist
+POST OK channel=fake id=- url=- hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf approval=rec-1 bytes=38
+
+$ nova-post send --draft 46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf --approval rec-1 --drafts ./drafts --bus ./bus --allowlist ./allowlist
+POST OK channel=fake id=- url=- hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf approval=rec-1 bytes=38
 ```
 
 ## nova-work
