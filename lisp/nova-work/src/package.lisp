@@ -578,7 +578,59 @@
     #:priority-order-refusal
     #:priority-eligible-p
     #:priority-starts-nothing-p
-    #:*priority-event-keys*))
+    #:*priority-event-keys*
+    ;; priority and captured-state export replays (nova-tools #362)
+    #:+rank-ceiling+
+    #:rank-atom-p
+    #:make-priority-table
+    #:priority-table
+    #:priority-table-p
+    #:priority-change-id
+    #:effective-rank
+    #:priority-undo
+    #:priority-order
+    #:priority-rows
+    #:priority-page
+    #:make-work-view
+    #:work-view
+    #:work-view-p
+    #:work-view-who
+    #:work-view-lease
+    #:work-view-worker
+    #:work-view-approval
+    #:priority-grants-nothing-p
+    #:make-export-capture
+    #:export-capture
+    #:export-capture-p
+    #:export-capture-revision
+    #:export-capture-base
+    #:export-capture-end
+    #:export-capture-records
+    #:export-capture-bytes
+    #:state-record
+    #:capture-export
+    #:validate-export
+    #:operation-registry
+    #:begin-operation
+    #:operation
+    #:operation-start
+    #:operation-finish
+    #:unrelated-mutation
+    ;; the priority-and-export operation model renamed to keep it distinct
+    ;; from the operation struct and the registry operations.
+    #:priority-operation
+    #:priority-operation-p
+    #:priority-operation-registry
+    #:priority-operation-registry-p
+    #:make-priority-operation-registry
+    #:priority-operation-record
+    #:priority-operation-state
+    #:priority-operation-start
+    #:priority-operation-finish
+    #:priority-operation-cancel
+    #:priority-operation-wait
+    #:priority-table-set
+    #:priority-table-clear))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
