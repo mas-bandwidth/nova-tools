@@ -4571,6 +4571,18 @@ reverse: a hold, a question or an exception the child cannot decide rises as a p
 reason, the stale pass shows `escalated-age=` and `reread=` as information and reassigns nothing
 (lessons rule 5), and recovery is a coordinator's recorded act (*Presence*).
 
+### The coordination tree is one edge
+
+The coordination tree is a **distinct structure** from the work containment tree (#321 *Three distinct
+structures*): every node but the root has **exactly one direct coordinating parent**, written
+`:coordinator`, independent of its containment `:parent`, and a `:links` reference, a sibling
+collaboration or a roadmap edge **creates no second coordinating parent, duplicates no work and
+duplicates no spend**. A node names at most one coordinator; a `:coordinator` that names no node is
+refused rule 2 before publication, a cycle through `:coordinator` is refused rule 3 (a node that
+coordinates itself is the same finding), and the coordinating parent survives a reconstruction from
+the canonical seed. The replays `coordination-tree-is-one-edge` and
+`coordination-tree-integrity-refuses` state and hold this edge.
+
 ### What this section does not do
 
 No new bus, scheduler, writer or repository: notes and the goal are records of the resident set

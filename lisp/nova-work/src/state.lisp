@@ -14,7 +14,8 @@
 (in-package #:nova-work)
 
 (defstruct (wnode (:conc-name wnode-))
-  id type parent children required required-count required-open state branch open-count links
+  id type parent coordinator children required required-count required-open state branch
+  open-count links
   ;; SPEC-WORK.md:850-886 -- `:deps` is a reference edge to another node:
   ;; needed, not owned, not counted. DEPENDENTS is the reverse edge, kept so a
   ;; revert reaches the dependents it breaks in one bounded walk.
@@ -71,6 +72,11 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
               (make-wnode :id id
                           :type (getf spec :type)
                           :parent (getf spec :parent)
+                          ;; SPEC-WORK.md:4256 -- the coordination tree is a
+                          ;; distinct structure from the work containment tree:
+                          ;; a node's :coordinator is its one direct coordinating
+                          ;; parent, independent of its containment :parent.
+                          :coordinator (getf spec :coordinator)
                           :children '()
                           ;; The approved data model defaults :required to true.
                           ;; NIL is the restricted-data spelling used by this
@@ -112,7 +118,7 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                 do (when (> (incf steps) limit)
                      (error 'unsupported-input
                             :what (format nil "rule 3: :children edges are not a forest; a cycle of :parent through ~A"
-                                          id)))
+                                           id)))
                    (let ((node (gethash cur table)))
                      (unless node (return))
                      (setf cur (wnode-parent node)))))))
@@ -147,6 +153,27 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                                 (dolist (dep (wnode-deps node)) (visit dep))))
                             (setf (gethash id color) :black))))))
         (dolist (id order) (visit id))))
+    ;; SPEC-WORK.md:4256 the coordination tree -- a node has at most one direct
+    ;; coordinating parent (the single :coordinator slot), that parent must
+    ;; exist, and the :coordinator edges must be a forest. A reference or
+    ;; sibling edge (:links) is not a coordinating edge and is not consulted
+    ;; here. Rule 2 refuses a dangling parent; the bounded walk refuses a cycle.
+    (dolist (id order)
+      (let ((coord (wnode-coordinator (gethash id table))))
+        (when (and coord (null (gethash coord table)))
+          (error 'unsupported-input
+                 :what (format nil "rule 2: ~A names a coordinating parent that does not exist" id)))))
+    (let ((limit (hash-table-count table)))
+      (dolist (id order)
+        (let ((cur id) (steps 0))
+          (loop while cur
+                do (when (> (incf steps) limit)
+                     (error 'unsupported-input
+                            :what (format nil "rule 3: :coordinator edges are not a forest; a cycle of :coordinator through ~A"
+                                          id)))
+                   (let ((node (gethash cur table)))
+                     (unless node (return))
+                     (setf cur (wnode-coordinator node)))))))
     (let ((state (make-wstate :seed (copy-tree nodes) :nodes table :order order
                               :root-open 0 :closed 0 :leaf-open 0 :issue-open 0
                               :history '() :rows '() :revision 0)))
@@ -215,6 +242,14 @@ own id would not be the same counting rule one level down. Decision for review."
   (let ((n (%node state id)))
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (wnode-state n)))
+
+(defun node-coordinator (state id)
+  "The node's one direct coordinating parent, or NIL for the root. This is the
+coordination tree's edge (SPEC-WORK.md:4256), independent of the containment
+:parent and never created by a :links reference."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (wnode-coordinator n)))
 
 (defun node-required-count (state id)
   (let ((n (%node state id)))
