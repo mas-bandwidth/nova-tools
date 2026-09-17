@@ -63,6 +63,7 @@
    #:node-open-count
    #:node-branch
    #:node-state
+   #:node-coordinator
    #:node-required-count
    #:node-required-open
    #:node-deps
