@@ -1511,6 +1511,15 @@ listing can open the findings; a lane with no `reviews/` prints `review=-`.
 note"). A reader who wants
 to discuss a HOLD writes a note themselves. This tool adds no verb to the bus.
 
+**E. nova-pulse cut and SPEC-REVIEW, a read RESULT states its scope.** A read
+RESULT carries a `not checked: <list>` line naming every axis the read did not
+examine, so a reader never takes a pass over one axis for a pass over all — the
+PR 300 point, 2026-09-16: "review passed" lost the kind and scope of the
+evidence it stood on, and a line with no scope is not a verdict. The template
+change lands in `nova-pulse cut`'s read template and in this spec's read record
+shape; the list is what the read did not check, and an empty list says so
+explicitly (`not checked: none`) rather than being omitted.
+
 ## What it deliberately does not do
 
 - **The six other verbs this draft specifies — `verdict`, `answer`, `policy`,

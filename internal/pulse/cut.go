@@ -30,6 +30,9 @@ type CutInput struct {
 	Root      string // the state root; skipped.tsv and retry.tsv are read and written here
 	Local     string // an optional ollama tag that overrides the flash model for read and text cards
 	Max       int    // cap on the cards cut, and on the skipped lines printed; 0 means no cap
+	Probe     bool   // run the learned admission checklist before writing each card (#585)
+	History   string // the abstain history the checklist is cut from, when Probe is set
+	Budget    int    // the card's byte budget, when Probe is set; 0 means unbounded
 	Stdout    io.Writer
 	Stderr    io.Writer
 }
@@ -61,7 +64,7 @@ func Cut(in CutInput) int {
 	}
 	retries := readRetries(in.Root)
 
-	zero, flat, metered, flash, pro, skipped := 0, 0, 0, 0, 0, 0
+	zero, flat, metered, flash, pro, skipped, probed := 0, 0, 0, 0, 0, 0, 0
 	skipList := bounded.Capped(in.Stderr, in.Max, "CUT", "skipped", "use --max 0 to show all")
 	var cards []CardRow
 
@@ -80,6 +83,12 @@ func Cut(in CutInput) int {
 		if reason != "" {
 			fmt.Fprintf(in.Stderr, "CUT REFUSED template=%s: %s\n", oneline.Field(name), oneline.Escape(reason))
 			return 2
+		}
+		if in.Probe {
+			if code := Probe(ProbeInput{Label: row.ID, Card: card, History: in.History, Budget: in.Budget, Stdout: in.Stdout, Stderr: in.Stderr}); code != 0 {
+				probed++
+				continue
+			}
 		}
 		cardName := row.ID + ".md"
 		if err := os.WriteFile(filepath.Join(in.Out, cardName), []byte(card), 0o644); err != nil {
@@ -125,12 +134,16 @@ func Cut(in CutInput) int {
 			return 2
 		}
 	}
-	if tableErr == nil {
-		fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d zero=%d flat=%d metered=%d out=%s\n", len(cards), skipped, zero, flat, metered, oneline.Field(in.Out))
-	} else {
-		fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d flash=%d pro=%d out=%s\n", len(cards), skipped, flash, pro, oneline.Field(in.Out))
+	probeField := ""
+	if in.Probe {
+		probeField = fmt.Sprintf(" probe=%d", probed)
 	}
-	if skipped > 0 {
+	if tableErr == nil {
+		fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d zero=%d flat=%d metered=%d out=%s%s\n", len(cards), skipped, zero, flat, metered, oneline.Field(in.Out), probeField)
+	} else {
+		fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d flash=%d pro=%d out=%s%s\n", len(cards), skipped, flash, pro, oneline.Field(in.Out), probeField)
+	}
+	if skipped > 0 || probed > 0 {
 		return 1
 	}
 	return 0
