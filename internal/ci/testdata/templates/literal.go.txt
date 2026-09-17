@@ -1,0 +1,11 @@
+package fixture
+
+import "os"
+
+// fakeWorkerDescription stands in for the worker description pulled off a
+// remote; the checker reads the file, never the disk the path names.
+const fakeWorkerDescription = `{"name":"w","key_file":` + `C:\Users\RUNN\keys\key` + `}`
+
+func writesWorker(dir string) {
+	_ = os.WriteFile(dir, []byte(fakeWorkerDescription), 0o644)
+}
