@@ -105,11 +105,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v go >/dev/null 2>&1; then
-            for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
-            done
-          fi
+          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
+          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
+          for d in "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
 
@@ -174,11 +174,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v go >/dev/null 2>&1; then
-            for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
-            done
-          fi
+          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
+          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
+          for d in "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
 
@@ -363,11 +363,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v go >/dev/null 2>&1; then
-            for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
-            done
-          fi
+          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
+          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
+          for d in "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
 
@@ -585,11 +585,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v go >/dev/null 2>&1; then
-            for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
-            done
-          fi
+          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
+          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
+          for d in "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
           command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
           go version
 
@@ -657,11 +657,11 @@ jobs:
       - name: toolchains the way ci.yml finds them
         if: steps.want.outputs.run == 'yes'
         run: |
-          if ! command -v go >/dev/null 2>&1; then
-            for d in /usr/local/go/bin /opt/homebrew/bin "$HOME/go/bin"; do
-              [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }
-            done
-          fi
+          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
+          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
+          for d in "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
           for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
           echo "PROBE runner=$RUNNER_NAME slot=${{ matrix.slot }} go=$(command -v go || echo -) sbcl=$(command -v sbcl || echo -) home=$HOME"
           command -v go >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no Go on PATH"; exit 1; }
