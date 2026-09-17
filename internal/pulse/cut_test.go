@@ -10,13 +10,18 @@ import (
 	"testing"
 )
 
-// writeTemplates lays down a fake templates directory with models.tsv and one .md per kind.
-func writeTemplates(t *testing.T, dir string, kind map[string]string) {
+// defaultBenches is the cost table writeTemplates lays down unless a test names its own:
+// a flat flash route that can hold read, text and replay, and a flat pro route for code.
+const defaultBenches = "model\topencode/deepseek-v4-flash\topencode/deepseek-v4-pro\ncost\tflat 1.0\tflat 1.5\ncapability\tread|text|replay\tcode\n"
+
+// writeTemplates lays down a fake templates directory with the cost table and one .md per
+// kind.
+func writeTemplates(t *testing.T, dir string, kind map[string]string, benches string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "models.tsv"), []byte("flash opencode/deepseek-v4-flash\npro opencode/deepseek-v4-pro\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "benches.tsv"), []byte(benches), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for name, body := range kind {
@@ -41,23 +46,43 @@ STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && gi
 STEP 2. Make the fix; report the red line and then the green line, one row per item.
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
 
-func runCut(t *testing.T, templates map[string]string, pool string) (int, string, string, string) {
+func runCut(t *testing.T, templates map[string]string, pool string) (int, string, string, string, string) {
 	t.Helper()
-	td := t.TempDir()
+	return runCutTable(t, defaultBenches, templates, pool)
+}
+
+// runCutTable is runCut against a cost table of a test's own choosing.
+func runCutTable(t *testing.T, benches string, templates map[string]string, pool string) (int, string, string, string, string) {
+	t.Helper()
+	return runCutAt(t, t.TempDir(), benches, templates, pool, "")
+}
+
+// runCutAt runs cut once inside a caller-owned directory, so a test can write retry.tsv
+// into the same root between two runs and watch the route move.
+func runCutAt(t *testing.T, td, benches string, templates map[string]string, pool, retry string) (int, string, string, string, string) {
+	t.Helper()
 	tmpl := filepath.Join(td, "templates")
 	out := filepath.Join(td, "out")
 	root := filepath.Join(td, "root")
-	writeTemplates(t, tmpl, templates)
+	writeTemplates(t, tmpl, templates, benches)
 	poolPath := filepath.Join(td, "pool.tsv")
 	if err := os.WriteFile(poolPath, []byte(pool), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if retry != "" {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "retry.tsv"), []byte(retry), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var stdout, stderr strings.Builder
 	code := Cut(CutInput{
 		Pool: poolPath, Templates: tmpl, Out: out, Root: root, Max: 20,
 		Stdout: &stdout, Stderr: &stderr,
 	})
-	return code, stdout.String(), stderr.String(), out
+	return code, stdout.String(), stderr.String(), out, root
 }
 
 func cutLine1(t *testing.T, cards string) string {
@@ -72,7 +97,7 @@ func cutLine1(t *testing.T, cards string) string {
 // whose STEP 1 clones git@, is CUT REFUSED and writes no card.
 func TestCutLine1IsContract(t *testing.T) {
 	for kind, tmpl := range map[string]string{"read": readTemplate, "fix": fixTemplate} {
-		code, stdout, _, out := runCut(t, map[string]string{kind: tmpl}, "mas-bandwidth/nova-tools\t1\t"+kind+"\tTitle\t"+kind+"\n")
+		code, stdout, _, out, _ := runCut(t, map[string]string{kind: tmpl}, "mas-bandwidth/nova-tools\t1\t"+kind+"\tTitle\t"+kind+"\n")
 		if code != 0 {
 			t.Fatalf("cut(%s) = %d, want 0; stdout=%s", kind, code, stdout)
 		}
@@ -110,7 +135,7 @@ func TestCutLine1IsContract(t *testing.T) {
 
 	// A template whose rendered line 1 is prose is refused, no card written.
 	prose := "Read this document carefully.\n" + readTemplate[strings.Index(readTemplate, "\n")+1:]
-	code, _, stderr, out := runCut(t, map[string]string{"read": prose}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
+	code, _, stderr, out, _ := runCut(t, map[string]string{"read": prose}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
 	if code != 2 || !strings.Contains(stderr, "CUT REFUSED") {
 		t.Fatalf("prose line 1: code=%d stderr=%q, want CUT REFUSED", code, stderr)
 	}
@@ -123,7 +148,7 @@ func TestCutLine1IsContract(t *testing.T) {
 
 	// A STEP 1 that clones git@ is refused.
 	gitAt := strings.Replace(readTemplate, "https://github.com/<source>.git", "git@github.com:<source>.git", 1)
-	code, _, stderr, out = runCut(t, map[string]string{"read": gitAt}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
+	code, _, stderr, out, _ = runCut(t, map[string]string{"read": gitAt}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
 	if code != 2 || !strings.Contains(stderr, "does not clone over https") {
 		t.Fatalf("git@ clone: code=%d stderr=%q, want CUT REFUSED naming https", code, stderr)
 	}
@@ -144,7 +169,7 @@ func TestCutStepOneSetsNoTmpDir(t *testing.T) {
 	// The STEP 1 every template now carries: no export, because the runner's own is
 	// already in the child's environment.
 	bare := strings.Replace(readTemplate, " && export TMPDIR=$PWD/scratch", "", 1)
-	code, _, stderr, out := runCut(t, map[string]string{"read": bare}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
+	code, _, stderr, out, _ := runCut(t, map[string]string{"read": bare}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
 	if code != 0 {
 		t.Fatalf("a STEP 1 with no TMPDIR export is cut, got %d, stderr=%q", code, stderr)
 	}
@@ -166,7 +191,7 @@ func TestCutStepOneSetsNoTmpDir(t *testing.T) {
 	// The hurt itself: export TMPDIR=$PWD/scratch put the card's temp dir inside the
 	// job's git repo. A template that still sets one is refused, no card written.
 	exporting := strings.Replace(bare, "mkdir -p scratch &&", "mkdir -p scratch && export TMPDIR=$PWD/scratch &&", 1)
-	code, _, stderr, out = runCut(t, map[string]string{"read": exporting}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
+	code, _, stderr, out, _ = runCut(t, map[string]string{"read": exporting}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
 	if code != 2 || !strings.Contains(stderr, "CUT REFUSED template=read") {
 		t.Fatalf("a STEP 1 that sets TMPDIR is CUT REFUSED template=read, got %d, stderr=%q", code, stderr)
 	}
@@ -183,7 +208,7 @@ func TestCutStepOneSetsNoTmpDir(t *testing.T) {
 // red-then-green row rule; no template mentions ../scratch.
 func TestCutTextTemplateForbidsBuild(t *testing.T) {
 	tmpls := map[string]string{"read": readTemplate, "fix": fixTemplate}
-	code, stdout, _, out := runCut(t, tmpls,
+	code, stdout, _, out, _ := runCut(t, tmpls,
 		"mas-bandwidth/nova-tools\t1\tread\tTitle\tread\nmas-bandwidth/nova-tools\t2\tfix\tTitle\tfix\n")
 	if code != 0 {
 		t.Fatalf("cut = %d, want 0; stdout=%s", code, stdout)
@@ -205,7 +230,7 @@ func TestCutTextTemplateForbidsBuild(t *testing.T) {
 
 	// A text.md fixture lacking the no-build line is refused, naming the template.
 	noBuild := strings.Replace(readTemplate, "Do not run go build, go test or any toolchain; read and write only.\n", "", 1)
-	code, _, stderr, out := runCut(t, map[string]string{"text": noBuild}, "mas-bandwidth/nova-tools\t1\ttext\tTitle\ttext\n")
+	code, _, stderr, out, _ := runCut(t, map[string]string{"text": noBuild}, "mas-bandwidth/nova-tools\t1\ttext\tTitle\ttext\n")
 	if code != 2 || !strings.Contains(stderr, "CUT REFUSED") {
 		t.Fatalf("text no-build: code=%d stderr=%q, want CUT REFUSED template=text", code, stderr)
 	}
@@ -218,30 +243,30 @@ func TestCutTextTemplateForbidsBuild(t *testing.T) {
 
 	// A writing card lacking the red/green rule is refused.
 	noRed := strings.Replace(fixTemplate, "red line", "line", 1)
-	code, _, stderr, _ = runCut(t, map[string]string{"drift": noRed}, "mas-bandwidth/nova-tools\t1\tdrift\tTitle\tdrift\n")
+	code, _, stderr, _, _ = runCut(t, map[string]string{"drift": noRed}, "mas-bandwidth/nova-tools\t1\tdrift\tTitle\tdrift\n")
 	if code != 2 || !strings.Contains(stderr, "red-then-green") {
 		t.Fatalf("drift no red/green: code=%d stderr=%q, want CUT REFUSED naming the red/green rule", code, stderr)
 	}
 
 	// A template that mentions ../scratch is refused.
 	scratch := strings.Replace(readTemplate, "notes.txt in the repo directory", "notes.txt in ../scratch", 1)
-	code, _, stderr, _ = runCut(t, map[string]string{"read": scratch}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
+	code, _, stderr, _, _ = runCut(t, map[string]string{"read": scratch}, "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
 	if code != 2 || !strings.Contains(stderr, "../scratch") {
 		t.Fatalf("scratch path: code=%d stderr=%q, want CUT REFUSED naming ../scratch", code, stderr)
 	}
 }
 
-// cutModelByKind: model is decided by kind only -- flash on read, pro on fix -- and the
-// ids come from models.tsv; --local names an ollama/<tag> for read and text.
+// cutModelByKind: model is decided by the cost table -- flash (read|text|replay) on
+// read/text/tone/replay, pro (code) on fix/drift -- never by kind alone.
 func TestCutModelByKind(t *testing.T) {
 	tmpls := map[string]string{"read": readTemplate, "fix": fixTemplate, "text": readTemplate, "tone": readTemplate, "replay": fixTemplate, "drift": fixTemplate}
 	pool := "s\t1\tread\tt\tread\ns\t2\tfix\tt\tfix\ns\t3\ttext\tt\ttext\ns\t4\ttone\tt\ttone\ns\t5\treplay\tt\treplay\ns\t6\tdrift\tt\tdrift\n"
-	code, stdout, _, out := runCut(t, tmpls, pool)
+	code, stdout, _, out, _ := runCut(t, tmpls, pool)
 	if code != 0 {
 		t.Fatalf("cut = %d, want 0; stdout=%s", code, stdout)
 	}
-	if !strings.Contains(stdout, "flash=3 pro=3") {
-		t.Fatalf("stdout=%q, want flash=3 pro=3", stdout)
+	if !strings.Contains(stdout, "zero=0 flat=6 metered=0") {
+		t.Fatalf("stdout=%q, want zero=0 flat=6 metered=0", stdout)
 	}
 	raw, err := os.ReadFile(filepath.Join(out, "cards.tsv"))
 	if err != nil {
@@ -252,12 +277,12 @@ func TestCutModelByKind(t *testing.T) {
 		parts := strings.Split(line, "\t")
 		rows[parts[0]] = parts[2]
 	}
-	if rows["1"] != "opencode/deepseek-v4-flash" || rows["2"] != "opencode/deepseek-v4-pro" {
-		t.Fatalf("model by kind wrong: %v", rows)
+	if rows["1"] != "opencode/deepseek-v4-flash" || rows["2"] != "opencode/deepseek-v4-pro" || rows["5"] != "opencode/deepseek-v4-flash" {
+		t.Fatalf("model by cost table wrong: %v", rows)
 	}
 
 	// A candidate whose template does not exist is skipped, one CUT SKIPPED line, exit 1.
-	code, stdout, stderr, out := runCut(t, map[string]string{"read": readTemplate}, "s\t1\tread\tt\tread\ns\t2\tread\tt\tprobe\n")
+	code, stdout, stderr, out, _ := runCut(t, map[string]string{"read": readTemplate}, "s\t1\tread\tt\tread\ns\t2\tread\tt\tprobe\n")
 	if code != 1 {
 		t.Fatalf("skip = %d, want 1; stdout=%s stderr=%s", code, stdout, stderr)
 	}
@@ -291,14 +316,14 @@ func TestCutStepsAreTheTurnBudget(t *testing.T) {
 	}
 
 	// A read card of exactly eight turns is cut.
-	if code, _, stderr, out := runCut(t, map[string]string{"read": card("read", 8)}, "s\t1\tread\tt\tread\n"); code != 0 {
+	if code, _, stderr, out, _ := runCut(t, map[string]string{"read": card("read", 8)}, "s\t1\tread\tt\tread\n"); code != 0 {
 		t.Fatalf("8-step read card: cut = %d, want 0; stderr=%q", code, stderr)
 	} else if _, err := os.Stat(filepath.Join(out, "1.md")); err != nil {
 		t.Fatal(err)
 	}
 
 	// A read card of nine turns is refused, naming the 8-turn budget, no card written.
-	code, _, stderr, out := runCut(t, map[string]string{"read": card("read", 9)}, "s\t1\tread\tt\tread\n")
+	code, _, stderr, out, _ := runCut(t, map[string]string{"read": card("read", 9)}, "s\t1\tread\tt\tread\n")
 	if code != 2 || !strings.Contains(stderr, "over the 8-turn budget") {
 		t.Fatalf("9-step read card: code=%d stderr=%q, want CUT REFUSED naming the 8-turn budget", code, stderr)
 	}
@@ -310,10 +335,10 @@ func TestCutStepsAreTheTurnBudget(t *testing.T) {
 	}
 
 	// A fix card gets twenty turns; twenty-one is refused.
-	if code, _, stderr, _ := runCut(t, map[string]string{"fix": card("fix", 20)}, "s\t1\tfix\tt\tfix\n"); code != 0 {
+	if code, _, stderr, _, _ := runCut(t, map[string]string{"fix": card("fix", 20)}, "s\t1\tfix\tt\tfix\n"); code != 0 {
 		t.Fatalf("20-step fix card: cut = %d, want 0; stderr=%q", code, stderr)
 	}
-	code, _, stderr, out = runCut(t, map[string]string{"fix": card("fix", 21)}, "s\t1\tfix\tt\tfix\n")
+	code, _, stderr, out, _ = runCut(t, map[string]string{"fix": card("fix", 21)}, "s\t1\tfix\tt\tfix\n")
 	if code != 2 || !strings.Contains(stderr, "over the 20-turn budget") {
 		t.Fatalf("21-step fix card: code=%d stderr=%q, want CUT REFUSED naming the 20-turn budget", code, stderr)
 	}
@@ -364,5 +389,77 @@ func TestCutHoldsToOneModel(t *testing.T) {
 		if len(parts) < 3 || parts[2] != "opencode/deepseek-v4-flash" {
 			t.Fatalf("cards.tsv row %q, want model opencode/deepseek-v4-flash", line)
 		}
+	}
+}
+
+// cut-picks-cheapest-capable-route (SPEC-PULSE replay 24): a benches table with a
+// zero-cost local, a flat Go and a metered Zen, and one card per capability class, yields
+// route=<model> reason=<class> on CUT ROUTE for the cheapest capable model -- the mutation
+// that matters: a pick that ignores cost and takes a route by kind.
+func TestCutPicksCheapestCapableRoute(t *testing.T) {
+	table := "model\tollama/local\topencode/go\topencode/zen\ncost\tzero 0\tflat 1.5\tmetered 8\ncapability\tread|text\tcode\treplay\n"
+	tmpls := map[string]string{"read": readTemplate, "fix": fixTemplate, "text": readTemplate, "tone": readTemplate, "replay": fixTemplate, "drift": fixTemplate}
+	pool := "s\t1\tread\tt\tread\ns\t2\tfix\tt\tfix\ns\t3\ttext\tt\ttext\ns\t4\ttone\tt\ttone\ns\t5\treplay\tt\treplay\ns\t6\tdrift\tt\tdrift\n"
+	code, stdout, _, out, _ := runCutTable(t, table, tmpls, pool)
+	if code != 0 {
+		t.Fatalf("cut = %d, want 0; stdout=%s", code, stdout)
+	}
+	for _, want := range []string{
+		"CUT ROUTE route=ollama/local reason=zero",
+		"CUT ROUTE route=opencode/go reason=flat",
+		"CUT ROUTE route=opencode/zen reason=metered",
+		"CUT OK cards=6 skipped=0 zero=3 flat=2 metered=1",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout=%q, want %q", stdout, want)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "cards.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		parts := strings.Split(line, "\t")
+		rows[parts[0]] = parts[2]
+	}
+	want := map[string]string{
+		"1": "ollama/local", "2": "opencode/go", "3": "ollama/local",
+		"4": "ollama/local", "5": "opencode/zen", "6": "opencode/go",
+	}
+	for id, m := range want {
+		if rows[id] != m {
+			t.Fatalf("cards.tsv model for %s = %q, want %q (rows=%v)", id, rows[id], m, rows)
+		}
+	}
+}
+
+// retry-moves-one-class-up (SPEC-PULSE replay 25): a card rewritten from retry.tsv after
+// an abstain routes one capability class above the first attempt's, so CUT ROUTE names a
+// stronger class and a reason that reflects it.
+func TestRetryMovesOneClassUp(t *testing.T) {
+	table := "model\tollama/local\topencode/go\topencode/zen\ncost\tzero 0\tflat 1.5\tmetered 8\ncapability\tread\tcode\tcode|replay\n"
+	tmpls := map[string]string{"fix": fixTemplate}
+	pool := "s\t1\tfix\tt\tfix\n"
+	td := t.TempDir()
+
+	// First attempt: the cheapest code-capable route is Go (flat).
+	code, stdout, _, _, _ := runCutAt(t, td, table, tmpls, pool, "")
+	if code != 0 {
+		t.Fatalf("first cut = %d, want 0; stdout=%s", code, stdout)
+	}
+	if !strings.Contains(stdout, "CUT ROUTE route=opencode/go reason=flat") {
+		t.Fatalf("first attempt stdout=%q, want CUT ROUTE route=opencode/go reason=flat", stdout)
+	}
+
+	// The rewritten card (its label is in retry.tsv) routes one capability class above the
+	// first attempt's: Zen, the cheapest code-capable route above Go, reason reflecting the
+	// metered class.
+	code, stdout, _, _, _ = runCutAt(t, td, table, tmpls, pool, "1\t/path/to/card\tpermission denied\n")
+	if code != 0 {
+		t.Fatalf("retry cut = %d, want 0; stdout=%s", code, stdout)
+	}
+	if !strings.Contains(stdout, "CUT ROUTE route=opencode/zen reason=metered") {
+		t.Fatalf("retry stdout=%q, want CUT ROUTE route=opencode/zen reason=metered", stdout)
 	}
 }

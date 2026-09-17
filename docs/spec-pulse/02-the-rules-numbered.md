@@ -55,8 +55,9 @@
    line then green line, one row per item.
 7. **The route is the cheapest capable, from a cost table, never a hand.** `cut` reads the
    cost table `--benches <file>` (default `benches.tsv` beside `--templates`; a `routes.tsv`
-   beside it is read the same way): one column per model, two rows — `cost`, a class
-   `zero|flat|metered` with a `usd per Mtok`, and `capability`, `read|text|code|replay`. Per
+   beside it is read the same way): one column per model, three rows — a `model` row naming
+   each model, then `cost`, a class `zero|flat|metered` with a `usd per Mtok`, and
+   `capability`, `read|text|code|replay`. Per
    card class a model is capable when its capability covers the kind's (`read`, `text` and
    `tone` need `read|text|replay`; `fix` and `drift` need `code`; `replay` needs `replay`),
    and `cut` picks the capable model with the lowest average cost per token — `zero` beats

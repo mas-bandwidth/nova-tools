@@ -154,9 +154,9 @@ func TestCutWithoutKindIsUnchanged(t *testing.T) {
 	}
 	var out, errb bytes.Buffer
 	if code := run([]string{"cut", "--pool", pool, "--templates", templates, "--out", filepath.Join(dir, "out"), "--root", filepath.Join(dir, "root")}, &out, &errb, time.Now().UTC()); code != 2 {
-		t.Fatalf("exit = %d, want 2 (the models.tsv refusal is the old cutter's, unchanged)", code)
+		t.Fatalf("exit = %d, want 2 (the cost-table refusal is the old cutter's, unchanged)", code)
 	}
-	if !strings.Contains(errb.String(), "models.tsv") {
+	if !strings.Contains(errb.String(), "benches.tsv") {
 		t.Errorf("the old cutter's refusal has changed: %q", errb.String())
 	}
 }

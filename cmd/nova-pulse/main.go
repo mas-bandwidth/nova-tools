@@ -19,7 +19,7 @@ import (
 const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
@@ -497,13 +497,12 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	templates := f.fs.String("templates", "", "")
 	out := f.fs.String("out", "", "")
 	root := f.fs.String("root", "", "")
-	local := f.fs.String("local", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.want(*pool, "pool", "the pool.tsv of candidates to cut")
-	f.want(*templates, "templates", "the directory holding the typed templates and models.tsv")
+	f.want(*templates, "templates", "the directory holding the typed templates and benches.tsv (or routes.tsv)")
 	f.want(*out, "out", "the directory the cut cards go into")
 	f.want(*root, "root", "the state root; skipped.tsv is written here")
 	if *max < 0 {
@@ -517,7 +516,6 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 		Templates: *templates,
 		Out:       *out,
 		Root:      *root,
-		Local:     *local,
 		Max:       *max,
 		Stdout:    stdout,
 		Stderr:    stderr,

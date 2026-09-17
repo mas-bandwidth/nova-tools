@@ -7,14 +7,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// textKinds are the three text-only templates: read, text and tone. Their cards go to the
-// flash route and must carry the no-build line (SPEC-PULSE rule 6).
+// textKinds are the three text-only templates: read, text and tone. Their cards carry the
+// no-build line and are routed to any model that can hold them (SPEC-PULSE rule 6 and 7).
 var textKinds = map[string]bool{"read": true, "text": true, "tone": true}
 
 // SlotDash is the cards.tsv slot every cut card carries until launch allocates one.
@@ -24,9 +25,9 @@ const SlotDash = "-"
 // drive it with a fake templates directory and a fake pool.tsv.
 type CutInput struct {
 	Pool      string // path to pool.tsv: source, id, kind, title, template per line
-	Templates string // the directory holding read.md fix.md text.md replay.md drift.md tone.md and models.tsv
+	Templates string // the directory holding read.md fix.md text.md replay.md drift.md tone.md and benches.tsv (or routes.tsv, or a models.tsv fallback)
 	Out       string // the directory the card files go into
-	Root      string // the state root; skipped.tsv is written here
+	Root      string // the state root; skipped.tsv and retry.tsv are read and written here
 	Local     string // an optional ollama tag that overrides the flash model for read and text cards
 	Max       int    // cap on the cards cut, and on the skipped lines printed; 0 means no cap
 	Stdout    io.Writer
@@ -35,24 +36,32 @@ type CutInput struct {
 
 // Cut writes one card per pool.tsv candidate from its typed template and returns the exit
 // code: 0 when every candidate was cut, 1 when any candidate was skipped, 2 when the pool,
-// the templates or the models could not be read.
+// the templates or the routing table could not be read. Routing is the cost table
+// (benches.tsv, or routes.tsv beside it) when it is there; a templates directory with only
+// a models.tsv falls back to the two-line flash/pro table cut wrote before the cost table
+// landed (issue #635), so a spend rule that holds every card to one model still works.
 func Cut(in CutInput) int {
 	pool, err := readPool(in.Pool)
 	if err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	models, err := readModels(filepath.Join(in.Templates, "models.tsv"))
-	if err != nil {
-		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(err))
-		return 2
+	table, tableErr := readCostTable(in.Templates)
+	var models map[string]string
+	if tableErr != nil {
+		models, err = readModels(filepath.Join(in.Templates, "models.tsv"))
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(tableErr))
+			return 2
+		}
 	}
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
 		return 2
 	}
+	retries := readRetries(in.Root)
 
-	flash, pro, skipped := 0, 0, 0
+	zero, flat, metered, flash, pro, skipped := 0, 0, 0, 0, 0, 0
 	skipList := bounded.Capped(in.Stderr, in.Max, "CUT", "skipped", "use --max 0 to show all")
 	var cards []CardRow
 
@@ -77,11 +86,26 @@ func Cut(in CutInput) int {
 			fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s\n", oneline.Field(cardName), oneline.Err(err))
 			return 2
 		}
-		model := modelFor(row.Kind, in.Local, models)
-		if isProRoute(row.Kind, in.Local, models) {
-			pro++
+		var model string
+		if tableErr == nil {
+			route := routeFor(row.Kind, retries[row.ID], table)
+			switch route.Class {
+			case "zero":
+				zero++
+			case "flat":
+				flat++
+			case "metered":
+				metered++
+			}
+			fmt.Fprintf(in.Stdout, "CUT ROUTE route=%s reason=%s\n", oneline.Field(route.Name), oneline.Field(route.Class))
+			model = route.Name
 		} else {
-			flash++
+			model = modelFor(row.Kind, in.Local, models)
+			if isProRoute(row.Kind, in.Local, models) {
+				pro++
+			} else {
+				flash++
+			}
 		}
 		cards = append(cards, CardRow{Label: row.ID, Slot: SlotDash, Model: model, Card: filepath.Join(in.Out, cardName)})
 	}
@@ -101,7 +125,11 @@ func Cut(in CutInput) int {
 			return 2
 		}
 	}
-	fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d flash=%d pro=%d out=%s\n", len(cards), skipped, flash, pro, oneline.Field(in.Out))
+	if tableErr == nil {
+		fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d zero=%d flat=%d metered=%d out=%s\n", len(cards), skipped, zero, flat, metered, oneline.Field(in.Out))
+	} else {
+		fmt.Fprintf(in.Stdout, "CUT OK cards=%d skipped=%d flash=%d pro=%d out=%s\n", len(cards), skipped, flash, pro, oneline.Field(in.Out))
+	}
 	if skipped > 0 {
 		return 1
 	}
@@ -163,7 +191,8 @@ func readPool(path string) ([]PoolRow, error) {
 }
 
 // readModels reads models.tsv: one line `flash <model>` and/or one line `pro <model>`. A
-// table that names only one is legal and holds every card to that model (issue #635).
+// table that names only one is legal and holds every card to that model (issue #635). It is
+// the fallback when no cost table sits beside the templates.
 func readModels(path string) (map[string]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -184,6 +213,193 @@ func readModels(path string) (map[string]string, error) {
 		return nil, fmt.Errorf("models.tsv wants a flash or a pro model id (name one to hold every card to that model, or both to route read to flash and fix to pro)")
 	}
 	return models, nil
+}
+
+// costModel is one model column of the cost table: the model id, its cost class and its
+// usd per Mtok, and the capability classes it can hold.
+type costModel struct {
+	Name  string
+	Class string // zero|flat|metered
+	USD   float64
+	Caps  []string
+}
+
+// costOrder ranks the three cost classes: zero beats flat beats metered, ties on the class
+// broken by the usd per Mtok (SPEC-PULSE rule 7).
+var costOrder = map[string]int{"zero": 0, "flat": 1, "metered": 2}
+
+// capOrder ranks the four capability classes; a retry moves the pick one class up this
+// ladder (read -> text -> code -> replay).
+var capOrder = map[string]int{"read": 0, "text": 1, "code": 2, "replay": 3}
+
+// requiredCaps is what each card kind needs a route to cover: read, text and tone any
+// reading-capable model, fix and drift a code model, replay a replay model.
+var requiredCaps = map[string][]string{
+	"read":   {"read", "text", "replay"},
+	"text":   {"read", "text", "replay"},
+	"tone":   {"read", "text", "replay"},
+	"fix":    {"code"},
+	"drift":  {"code"},
+	"replay": {"replay"},
+}
+
+// fallbackRoutes is the two-tier routing a relaunch uses when the cost table is absent:
+// the same flash/pro split cut wrote before the table landed (rule 7, the table is the
+// whole policy and the relaunch uses it when it is there).
+var fallbackRoutes = []costModel{
+	{Name: "flash", Class: "flat", Caps: []string{"read", "text", "replay"}},
+	{Name: "pro", Class: "flat", Caps: []string{"code"}},
+}
+
+// readCostTable reads the cost table -- benches.tsv beside the templates, or a routes.tsv
+// beside it -- one column per model: a `model` row of names, a `cost` row of a class
+// `zero|flat|metered` with a `usd per Mtok`, and a `capability` row of `read|text|code|replay`.
+func readCostTable(dir string) ([]costModel, error) {
+	path := filepath.Join(dir, "benches.tsv")
+	if _, err := os.Stat(path); err != nil {
+		path = filepath.Join(dir, "routes.tsv")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("--templates wants a benches.tsv (or a routes.tsv beside it): one column per model -- a `model` row of names, a `cost` row of a class `zero|flat|metered` with a `usd per Mtok`, and a `capability` row of `read|text|code|replay`: %s", oneline.Err(err))
+	}
+	var names []string
+	var costs []string
+	var caps []string
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		switch parts[0] {
+		case "model":
+			names = parts[1:]
+		case "cost":
+			costs = parts[1:]
+		case "capability":
+			caps = parts[1:]
+		default:
+			return nil, fmt.Errorf("cost table line %d names a row %q, want `model`, `cost` or `capability`", i+1, parts[0])
+		}
+	}
+	if len(names) == 0 || len(names) != len(costs) || len(costs) != len(caps) {
+		return nil, fmt.Errorf("cost table wants one column per model: the `model`, `cost` and `capability` rows must carry the same number of columns")
+	}
+	table := make([]costModel, 0, len(names))
+	for i, name := range names {
+		cf := strings.Fields(strings.TrimSpace(costs[i]))
+		if len(cf) != 2 {
+			return nil, fmt.Errorf("cost table model %s wants a cost of `<zero|flat|metered> <usd per Mtok>`, got %q", name, costs[i])
+		}
+		if _, ok := costOrder[cf[0]]; !ok {
+			return nil, fmt.Errorf("cost table model %s has a cost class %q, want zero, flat or metered", name, cf[0])
+		}
+		usd, err := strconv.ParseFloat(cf[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("cost table model %s has a non-numeric usd per Mtok %q", name, cf[1])
+		}
+		var modelCaps []string
+		for _, c := range strings.Split(strings.TrimSpace(caps[i]), "|") {
+			c = strings.TrimSpace(c)
+			if _, ok := capOrder[c]; !ok {
+				return nil, fmt.Errorf("cost table model %s has a capability %q, want read, text, code or replay", name, c)
+			}
+			modelCaps = append(modelCaps, c)
+		}
+		table = append(table, costModel{Name: strings.TrimSpace(name), Class: cf[0], USD: usd, Caps: modelCaps})
+	}
+	return table, nil
+}
+
+// readRetries returns the set of labels retry.tsv names: cards rewritten after a second
+// abstain (rule 14), which route one capability class up.
+func readRetries(root string) map[string]bool {
+	retries := map[string]bool{}
+	raw, err := os.ReadFile(filepath.Join(root, "retry.tsv"))
+	if err != nil {
+		return retries
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if parts := strings.Split(line, "\t"); parts[0] != "" {
+			retries[parts[0]] = true
+		}
+	}
+	return retries
+}
+
+// routeFor picks the cheapest capable route for a card kind from the cost table: the
+// capable model with the lowest average cost per token -- zero beats flat beats metered,
+// ties broken by the usd per Mtok (rule 7). A retry after an abstain moves the pick one
+// capability class up, so a rewritten card routes to a stronger model.
+func routeFor(kind string, retry bool, table []costModel) costModel {
+	capable := func(m costModel) bool {
+		for _, c := range m.Caps {
+			for _, need := range requiredCaps[kind] {
+				if c == need {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	better := func(a, b costModel) bool {
+		if costOrder[a.Class] != costOrder[b.Class] {
+			return costOrder[a.Class] < costOrder[b.Class]
+		}
+		return a.USD < b.USD
+	}
+	maxCap := func(m costModel) int {
+		best := -1
+		for _, c := range m.Caps {
+			if capOrder[c] > best {
+				best = capOrder[c]
+			}
+		}
+		return best
+	}
+
+	var pick costModel
+	found := false
+	for _, m := range table {
+		if !capable(m) {
+			continue
+		}
+		if !found || better(m, pick) {
+			pick, found = m, true
+		}
+	}
+	if !found {
+		// No model is capable of this kind: the table does not cover it. Pick the cheapest
+		// model rather than refusing, so a table that is simply missing a class never
+		// stalls the pulse (the capability rule is the table's, and the table is editable
+		// in git).
+		for _, m := range table {
+			if !found || better(m, pick) {
+				pick, found = m, true
+			}
+		}
+	}
+	if retry && found {
+		var r costModel
+		rf := false
+		for _, m := range table {
+			if !capable(m) || maxCap(m) <= maxCap(pick) {
+				continue
+			}
+			if !rf || better(m, r) {
+				r, rf = m, true
+			}
+		}
+		if rf {
+			return r
+		}
+	}
+	return pick
 }
 
 // renderCard renders one candidate's card from its template and returns the card text, or a
