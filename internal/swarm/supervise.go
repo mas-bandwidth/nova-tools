@@ -236,11 +236,35 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			}
 			failures = 0
 			if !usage.Observed {
+				// No usage yet: the token budget cannot fire, but the card's
+				// turn budget reads the harness log and still can.
+				if in.Worker.HasCardBudget() {
+					if over, cacheRead, max := in.Worker.OverCardBudget(usage, CountCardTurns(jobDir, usage)); over {
+						_ = AppendPromptDefect(jobDir, in.Sidecar.ID, cacheRead, max, CountCardTurns(jobDir, usage))
+						survived := Reap(jobPgid, jobStarted, TerminateGrace)
+						<-done
+						return ExitRecord{RC: -1, End: EndBudget, Survivors: boolCount(survived), Spent: spent, Observed: observed, Partial: partial,
+							Reason: "card budget: " + PromptDefectLine(in.Sidecar.ID, cacheRead, max, CountCardTurns(jobDir, usage))}
+					}
+				}
 				continue
 			}
 			seen = usage
 			sum, seenCols, part := seen.Budget()
 			spent, partial, observed = sum, part, seenCols > 0
+			// THE CARD BUDGET, beside the token budget: a runaway card is a
+			// prompt defect, and the pool stops it on the deadline's stop
+			// path with end=budget and a PROMPT-DEFECT line in its report.
+			if in.Worker.HasCardBudget() {
+				turns := CountCardTurns(jobDir, seen)
+				if over, cacheRead, max := in.Worker.OverCardBudget(seen, turns); over {
+					_ = AppendPromptDefect(jobDir, in.Sidecar.ID, cacheRead, max, turns)
+					survived := Reap(jobPgid, jobStarted, TerminateGrace)
+					<-done
+					return ExitRecord{RC: -1, End: EndBudget, Survivors: boolCount(survived), Spent: spent, Observed: true, Partial: partial,
+						Reason: "card budget: " + PromptDefectLine(in.Sidecar.ID, cacheRead, max, turns)}
+				}
+			}
 			if in.Sidecar.Unmetered || in.Sidecar.Tokens <= 0 || !observed {
 				continue
 			}

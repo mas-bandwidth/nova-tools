@@ -57,6 +57,14 @@ type Worker struct {
 	// needs nothing beyond the system roots names nothing here.
 	ReadRoots []string `json:"read_roots,omitempty"`
 
+	// CARD BUDGET (CARD-8317): the optional per-card stop. A runaway card is a
+	// prompt defect, not a model one: max_turns caps the harness output log's
+	// assistant turns and max_cache_read caps the observed cache_read, and run
+	// stops the card at either with end=budget and a PROMPT-DEFECT line. Zero
+	// is unset; negative is refused at load.
+	MaxTurns     int `json:"max_turns,omitempty"`
+	MaxCacheRead int `json:"max_cache_read,omitempty"`
+
 	// PROVIDER PHRASES: the second optional field, and it is the TRIAGE LINE'S (#103). A
 	// job that dies because the request did not fit is its own failure class, and the only
 	// evidence of it is a sentence the provider printed -- in the provider's own words.
@@ -101,7 +109,7 @@ func LoadWorker(path string) (Worker, []error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&w); err != nil {
-		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, read_roots, input_limit_phrases, launch_grace", path, err)}
+		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, input_limit_phrases, launch_grace", path, err)}
 	}
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
@@ -271,6 +279,12 @@ func LoadWorker(path string) (Worker, []error) {
 		if _, err := time.ParseDuration(w.Deadline); err != nil {
 			problems = append(problems, fmt.Errorf("%s: deadline wants a duration such as 20m, got %q", path, w.Deadline))
 		}
+	}
+	if w.MaxTurns < 0 {
+		problems = append(problems, fmt.Errorf("%s: max_turns wants a non-negative turn count, got %d", path, w.MaxTurns))
+	}
+	if w.MaxCacheRead < 0 {
+		problems = append(problems, fmt.Errorf("%s: max_cache_read wants a non-negative token count, got %d", path, w.MaxCacheRead))
 	}
 	if w.LaunchGrace != "" {
 		if d, err := time.ParseDuration(w.LaunchGrace); err != nil || d <= 0 {

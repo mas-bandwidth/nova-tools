@@ -267,6 +267,17 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     the refusal rule 1 already names. (2026-09-11: 21 children spent 2.4M
     tokens on this bench, most of it re-reading what the task could have
     handed them.)
+13b. **A card carries its own budget, and a runaway card is a prompt defect.**
+    The worker description optionally carries `max_turns` and `max_cache_read`;
+    the supervisor samples usage every `--usage-interval` beside the token
+    budget, and when the observed `cache_read` exceeds `max_cache_read` or the
+    harness log's assistant turns (counted the way usage counts assistant rows,
+    or the usage row count where the log has fewer) exceed `max_turns`, it stops
+    the task on the deadline's stop path: the job moves to `failed/` with
+    `end=budget` in `usage.tsv`, findings kept, and the task's report carries
+    `PROMPT-DEFECT task=<id> reason=budget cache_read=<n> max=<m> turns=<t>`.
+    (2026-09-17: one Flash card ran 16 minutes and 3.2M cache-read tokens for
+    one fix; the average card is 1.6M cache-read for 40-60k of prompt.)
 14. **The coordinator spends one command to spin a swarm up and one line to
     read it down.** Spinning up is `add --task <file>` per job from a
     template, or `batch --tasks <dir>` for many; the coordinator writes no

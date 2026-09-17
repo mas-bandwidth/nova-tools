@@ -172,7 +172,7 @@ func foldOpenCodeRows(rows [][]string) (ProviderUsage, error) {
 	// The message table holds no repository, and this reader never invents one: the usage
 	// row's `repo` is what the caller knew, or a dash.
 	values["repo"] = Dash
-	return ProviderUsage{Values: values, Observed: true}, nil
+	return ProviderUsage{Values: values, Observed: true, Turns: len(rows)}, nil
 }
 
 // oneLine keeps a subprocess's complaint on the one line a RUN BUDGET-UNVERIFIABLE carries.
