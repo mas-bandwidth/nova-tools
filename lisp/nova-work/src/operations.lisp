@@ -1108,12 +1108,26 @@ wire carries no JSON numbers, so such a token is refused."
                                (find (char text i) ".eE+")))))))
 
 (defun wire-decode-value (text)
-  "Decode one wire scalar. A `null` is the absent spelling (:absent) and an
-absent key is the same value; an empty string and an empty array are values.
-A JSON number is refused, reported as an unsupported input."
+  "Decode one wire value. A `null` is the absent spelling (:absent) and an
+absent key is the same value; an empty string and an empty array are values,
+and `true`/`false` decode to T/NIL. An array decodes each element, so a
+response's `lines` array is read back whole. A JSON number is refused, reported
+as an unsupported input."
   (cond
     ((string= text "null") +absent+)
-    ((string= text "[]") '())
+    ((string= text "true") t)
+    ((string= text "false") nil)
+    ((and (>= (length text) 2)
+          (char= (char text 0) #\[)
+          (char= (char text (1- (length text))) #\]))
+     (let ((inner (string-trim '(#\Space #\Tab #\Newline #\Return)
+                               (subseq text 1 (1- (length text))))))
+       (if (string= inner "")
+           '()
+           (mapcar (lambda (element)
+                     (wire-decode-value
+                      (string-trim '(#\Space #\Tab #\Newline #\Return) element)))
+                   (wire-split-top-level inner #\,)))))
     ((and (>= (length text) 2)
           (char= (char text 0) #\")
           (char= (char text (1- (length text))) #\"))
@@ -1429,3 +1443,166 @@ it reached; a completed result is answered (values RESULT :done CURSOR)
 
 (defun operation-journal-length (registry)
   (accept-journal-count (operation-registry-journal registry)))
+
+;;; ------------------------------------------------------------------
+;;; The CLI thin client (SPEC-WORK.md:288-290, :2642-2646, :2679-2683,
+;;; :2691-2694).
+;;;
+;;; The engine owns the canonical state, the journal, the indexes and the
+;;; mutation ordering; the CLI is a thin client of it: it holds no kernel, so a
+;;; fresh CLI process reloads nothing, and it prints exactly the lines it was
+;;; handed. It matches every reply by its request id -- never arrival order --
+;;; does not put the same id in flight twice on one connection, splits the
+;;; handed lines by the second token and by nothing else, and counts the bytes
+;;; it printed. The live socket is the transport row's and the framing it
+;;; carries is the wire row's; the client drives decoded frames.
+;;; ------------------------------------------------------------------
+
+(defstruct (client-request
+             (:constructor make-client-request
+                 (&key op request as expect now max deadline args)))
+  op request as expect now max deadline args)
+
+(defun client-json-value (value)
+  "One restricted wire value: an integer is a JSON string of decimal digits, a
+string is quoted, T/NIL are the JSON booleans, an alist is an ordered object
+and any other list is an array. A JSON number is never emitted."
+  (cond
+    ((null value) "null")
+    ((eq value t) "true")
+    ((integerp value) (wire-encode-integer value))
+    ((stringp value) (format nil "\"~A\"" value))
+    ((and (listp value) (every #'consp value)) (client-json-object value))
+    ((listp value) (format nil "[~{~A~^,~}]" (mapcar #'client-json-value value)))
+    (t (error 'unsupported-input
+              :what (format nil "client frame value ~S" value)))))
+
+(defun client-json-object (fields)
+  "FIELDS is an ordered alist of (name . value)."
+  (format nil "{~{~A~^,~}}"
+          (mapcar (lambda (field)
+                    (format nil "\"~A\":~A"
+                            (car field) (client-json-value (cdr field))))
+                  fields)))
+
+(defun client-request-frame (request)
+  "The pinned request frame: `op`, `request`, `as`, `expect`, `now`, `max`,
+`deadline` and `args`, in that order, every integer a JSON string and an absent
+field `null` (SPEC-WORK.md:2675-2676). No identity is a default of this build:
+an absent `as` stays null and no friend, bench or house name is written."
+  (client-json-object
+   (list (cons "op" (client-request-op request))
+         (cons "request" (client-request-request request))
+         (cons "as" (client-request-as request))
+         (cons "expect" (client-request-expect request))
+         (cons "now" (client-request-now request))
+         (cons "max" (client-request-max request))
+         (cons "deadline" (client-request-deadline request))
+         (cons "args" (client-request-args request)))))
+
+(defun client-decode-response (frame)
+  "Decode one response frame into (values of a plist) :request, :ok, :exit,
+:lines, :rev and :pushed. The wire row owns the framing; this reads the object
+the framed protocol carries."
+  (let ((object (wire-object-decode frame)))
+    (list :request (wire-field object "request")
+          :ok (wire-field object "ok")
+          :exit (wire-field object "exit")
+          :lines (let ((lines (wire-field object "lines")))
+                   (if (eq lines +absent+) '() lines))
+          :rev (wire-field object "rev")
+          :pushed (wire-field object "pushed"))))
+
+(defun client-second-token (line)
+  "The second space-delimited token of LINE, which is the disposition
+(OK/ROW/NOTE/MORE/FAIL/RACED); NIL when the line has no second token."
+  (let* ((first (position #\Space line))
+         (start (and first (1+ first)))
+         (end (and start (or (position #\Space line :start start) (length line)))))
+    (and start (subseq line start end))))
+
+(defun client-route-lines (lines)
+  "Split LINES by the second token and by nothing else: OK, ROW, NOTE and MORE
+are stdout; every other disposition (FAIL, RACED and refusals) is stderr
+(SPEC-WORK.md:2679-2683). Answer (values STDOUT STDERR), each in wire order."
+  (let ((stdout '()) (stderr '()))
+    (dolist (line lines)
+      (if (member (client-second-token line) '("OK" "ROW" "NOTE" "MORE")
+                  :test #'string=)
+          (push line stdout)
+          (push line stderr)))
+    (values (nreverse stdout) (nreverse stderr))))
+
+(defun client-string-bytes (text)
+  "The UTF-8 bytes of TEXT, so emitted counts bytes and never characters."
+  #+sbcl (length (sb-ext:string-to-octets text :external-format :utf-8))
+  #-sbcl (length text))
+
+(defun client-lines-bytes (lines)
+  "The bytes the client prints for LINES: each line and its newline."
+  (let ((total 0))
+    (dolist (line lines) (incf total (1+ (client-string-bytes line))))
+    total))
+
+(defstruct (cli-client (:constructor %make-cli-client))
+  (in-flight '())
+  (settled '())
+  (emitted 0))
+
+(defun make-cli-client ()
+  "A fresh thin client: no kernel, no resident state, nothing in flight and
+nothing printed, so starting it reloads nothing (SPEC-WORK.md:2646)."
+  (%make-cli-client))
+
+(defun cli-client-send (client request)
+  "Put one request in flight and answer its frame. The client does not put the
+same request id in flight twice on one connection (SPEC-WORK.md:2701)."
+  (let ((id (client-request-request request)))
+    (when (or (null id) (and (stringp id) (string= id "")))
+      (error 'unsupported-input :what "a request needs its own id"))
+    (when (or (assoc id (cli-client-in-flight client) :test #'string=)
+              (member id (cli-client-settled client) :test #'string=))
+      (error 'unsupported-input
+             :what (format nil "request ~A is already in flight on this connection" id)))
+    (setf (cli-client-in-flight client)
+          (append (cli-client-in-flight client) (list (cons id request))))
+    (client-request-frame request)))
+
+(defun cli-client-receive (client response)
+  "Deliver one decoded response. Match it by its request id alone, so an
+out-of-order reply reaches only its own request. An unknown, duplicate or
+absent id is a protocol error: signal without falsely settling anything
+(SPEC-WORK.md:2691-2706). Answer RESPONSE."
+  (let ((id (getf response :request)))
+    (cond
+      ((or (eq id +absent+) (null id) (and (stringp id) (string= id "")))
+       (error 'unsupported-input
+              :what "response request=null: no decodable id"))
+      ((member id (cli-client-settled client) :test #'string=)
+       (error 'unsupported-input
+              :what (format nil "duplicate response id ~A" id)))
+      ((not (assoc id (cli-client-in-flight client) :test #'string=))
+       (error 'unsupported-input
+              :what (format nil "unknown response id ~A" id)))
+      (t
+       (setf (cli-client-in-flight client)
+             (remove id (cli-client-in-flight client) :key #'car :test #'string=))
+       (setf (cli-client-settled client)
+             (append (cli-client-settled client) (list id)))
+       response))))
+
+(defun cli-client-run (client frame &key (out *standard-output*) (err *error-output*))
+  "Deliver one response FRAME: settle its request by id, print the lines it was
+handed to OUT or ERR by their second token, and count the bytes printed. Answer
+(values EXIT EMITTED STDOUT STDERR) (SPEC-WORK.md:2642-2646, :2679-2683)."
+  (let* ((response (cli-client-receive client (client-decode-response frame)))
+         (lines (getf response :lines))
+         (exit (let ((code (getf response :exit))) (if (integerp code) code 0)))
+         (emitted (client-lines-bytes lines)))
+    (multiple-value-bind (stdout stderr) (client-route-lines lines)
+      (dolist (line stdout) (write-line line out))
+      (dolist (line stderr) (write-line line err))
+      (finish-output out)
+      (finish-output err)
+      (incf (cli-client-emitted client) emitted)
+      (values exit emitted stdout stderr))))
