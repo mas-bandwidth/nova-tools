@@ -369,13 +369,14 @@ func TestASecretNamedWorkerDescriptionIsAcceptedByTheLoader(t *testing.T) {
 	if _, problems := LoadWorker(write(neither)); len(problems) == 0 {
 		t.Error("a description with neither key_file nor secret is a refusal")
 	}
+	keyPath := filepath.Join(dir, "key")
 	// Both key_file and secret: refused, because the two mechanisms contradict.
-	both := `{"name":"w","provider":"p","model":"m","env_var":"FAKE_KEY","key_file":"` + filepath.Join(dir, "key") + `","secret":"FAKE_SECRET","usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` + strconv.Quote(home) + `,"deadline":"5m"}`
+	both := `{"name":"w","provider":"p","model":"m","env_var":"FAKE_KEY","key_file":` + strconv.Quote(keyPath) + `,"secret":"FAKE_SECRET","usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` + strconv.Quote(home) + `,"deadline":"5m"}`
 	if _, problems := LoadWorker(write(both)); len(problems) == 0 {
 		t.Error("a description carrying both key_file and secret is a refusal")
 	}
 	// The old shape: key_file alone stays accepted.
-	old := strings.Replace(withSecret, `,"secret":"FAKE_SECRET"`, `,"key_file":"`+filepath.Join(dir, "key")+`"`, 1)
+	old := strings.Replace(withSecret, `,"secret":"FAKE_SECRET"`, `,"key_file":`+strconv.Quote(keyPath), 1)
 	if _, problems := LoadWorker(write(old)); len(problems) != 0 {
 		t.Errorf("the key_file shape stays accepted, got %d problems: %v", len(problems), problems)
 	}
