@@ -476,6 +476,76 @@ jobs:
           # -timeout 20m stays as the ceiling, not the target.
           go test -short -count=1 -timeout 20m $pkgs
 
+  test-hosted-merge:
+    # RULE T (pit stop 4, 2026-09-16): the gate that lands a PR must run what
+    # the dev push runs. The -short hosted-pr leg passed #858 while the full
+    # Windows leg on the dev push failed three of its new tests (dev runs
+    # 35142587149, 35143418489), and a package with hosted-only tests cannot
+    # land on the -short result alone. So the merge queue's group commit runs
+    # the hosted legs FULL — no -short — for the packages the group changes,
+    # package-selected to stay inside the two-minute budget. test-hosted still
+    # runs the whole tree on push and nightly; this is the one hosted leg the
+    # merge group runs, and it runs only on the group's own commit.
+    if: github.event_name == 'merge_group'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # TWO, the two-minute law for a job on the CL path. The full suite does not
+    # fit over the whole tree; scoping to the group's changed packages is what
+    # fits it, and the CI budget test (internal/ci) holds this cap.
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
+
+      - name: cache go build and module cache
+        # A GitHub-hosted runner is a fresh machine, so the cache pays for itself
+        # exactly as it does in test-hosted.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: select the packages this group changes
+        id: pkgs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # base_sha is the target branch the queue built the group on and HEAD
+          # is the group commit, so their diff is the group's whole change. A
+          # go.mod or go.sum change puts every package in scope.
+          base="${{ github.event.merge_group.base_sha }}"
+          git fetch -q --depth=1 origin "$base" 2>/dev/null || true
+          if git diff --name-only "$base" HEAD | grep -q -E '^(go\.mod|go\.sum)$'; then
+            pkgs=$(go list ./...)
+          else
+            pkgs=""
+            for d in $(git diff --name-only "$base" HEAD -- '*.go' | xargs -r -n1 dirname | sort -u); do
+              p=$(go list "./${d#./}" 2>/dev/null) || continue
+              pkgs="$pkgs $p"
+            done
+          fi
+          # A group that changes no Go package still runs the package that holds
+          # this file's own law, so the leg is never green by doing nothing.
+          [ -n "$pkgs" ] || pkgs="./internal/ci"
+          echo "merge_group: full hosted on:${pkgs}"
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+
+      - name: test (full, the packages this group changes)
+        # NOT -short: the group commit must answer the hosted-only tests the
+        # -short PR leg skips. -timeout 20m is the ceiling, not the target.
+        run: go test -count=1 -timeout 20m ${{ steps.pkgs.outputs.pkgs }}
+
   test-hosted-pr:
     # THE ONE EXCEPTION to "a pull request never touches GitHub-hosted
     # compute": a PR that touches a platform-specific path runs THAT leg here,
@@ -749,7 +819,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, e2e, lisp, test-hosted, test-hosted-pr]
+    needs: [lint, test, e2e, lisp, test-hosted, test-hosted-pr, test-hosted-merge]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -769,18 +839,26 @@ jobs:
             "test:${{ needs.test.result }}" \
             "lisp:${{ needs.lisp.result }}" \
             "e2e:${{ needs.e2e.result }}" \
-            "test-hosted-pr:${{ needs.test-hosted-pr.result }}"
+            "test-hosted-pr:${{ needs.test-hosted-pr.result }}" \
+            "test-hosted-merge:${{ needs.test-hosted-merge.result }}"
           do
             job="${pair%:*}"; result="${pair##*:}"
             echo "$result	$job"
+            # A skip is ok for the legs that do not run on this event:
             # test-hosted-pr is skipped on a fork PR (the head-repo guard) and
             # on a manual run; its test step is skipped when the diff matches no
             # platform path. A skip is ok — the check is that it is not red.
             # lisp is gated on the path filter and is skipped when lisp/ and
             # docs/SPEC-WORK.md did not move; a skipped lisp is a pass. A red
             # lisp still blocks the merge.
-            if [ "$job" = "lisp" ] && [ "$result" = "skipped" ]; then continue; fi
-            [ "$result" = "success" ] || { [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ]; } || bad=$((bad + 1))
+            # test-hosted-merge runs only on the merge group's own commit, so a
+            # skip is ok elsewhere — but on a merge_group it is NOT skipped: it
+            # is the full hosted evidence the queue's gate must see (Rule T).
+            [ "$result" = "success" ] && continue
+            [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
+            [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
+            [ "$job" = "test-hosted-merge" ] && [ "$result" = "skipped" ] && [ "${{ github.event_name }}" != "merge_group" ] && continue
+            bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
       - name: every CL-tier job succeeded (push to main)
