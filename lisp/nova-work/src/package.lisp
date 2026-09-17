@@ -80,6 +80,7 @@
    #:ordering-journal
    #:make-ordering-journal
    #:journal-order
+   #:dedup-page-available-p
    #:rejecting-journal
    #:make-rejecting-journal
    #:journal-reject-on

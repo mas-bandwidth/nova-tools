@@ -34,7 +34,8 @@ and the OK line it was answered with."))
   ((records :initform (make-hash-table :test #'equal) :reader journal-records)
    (order :initform '() :accessor journal-order-slot)
    (capacity :initarg :capacity :initform 64 :reader journal-capacity)
-   (evicted :initform nil :accessor journal-evicted-p)))
+   (evicted :initform nil :accessor journal-evicted-p)
+   (dedup-page-available-p :initform t :accessor dedup-page-available-p)))
 
 (defun make-ordering-journal (&key (capacity 64))
   "A bounded fake. Past CAPACITY the oldest record is evicted and EVERY id the
@@ -68,6 +69,11 @@ only property this fake carries."
   request)
 
 (defmethod journal-lookup ((journal ordering-journal) request)
+  ;; A dedup page the retry needs that cannot be read answers `dedup unavailable`
+  ;; -- never "this is new" (SPEC-WORK.md:517, :5598). The record itself is kept,
+  ;; so the page becoming readable again admits the original reply.
+  (unless (dedup-page-available-p journal)
+    (return-from journal-lookup (values :unavailable "journal-page-0" nil)))
   (multiple-value-bind (record found) (gethash request (journal-records journal))
     (cond (found (values t (first record) (second record)))
           ;; Past the bound the answer is a refusal and never "this is new"
