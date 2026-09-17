@@ -116,7 +116,6 @@ nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only 
 nova-secrets names  --store <dir> --as <name> [--max <n>]
 nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
-nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
 nova-secrets help
 ```
 
@@ -124,10 +123,9 @@ nova-secrets help
 no flags or arguments. It opens no store or key and starts no sops, age or network program,
 so an installed-tool inventory can ask it on a bench with no credential setup.
 
-No verb writes into the store **except `seal`**, which folds one pasted value into one seat
-file and carries that change through a branch and a review; every other store edit is `sops`
-and `git` in a person's hands. `keygen` writes exactly one file, outside it; and no verb but
-`seal` reads the store and writes into it in one call.
+No verb writes into the store — the store is edited by `sops` and committed by `git`, both a
+person's hands; `keygen` writes exactly one file, outside it; and no verb reads the store and
+writes into it in one call.
 
 **`--store <dir>` is the store's git working copy**, not a URL and not a repository name:
 this tool does no network. A working copy in the strong sense — invariant 8 reads `.git` as
@@ -400,34 +398,6 @@ one that grants a key access to a file**, is an AI — the ruleset's design, not
 a third collaborator is the repair on the day there is one to add (*default: accepted*). If
 Glenn keeps `admin` on both accounts, the review is a courtesy between two administrators and
 this page must stop calling it a control.
-
-### `seal`
-
-```
-nova-secrets seal --store ~/secrets --as rowan --key ~/.config/nova-secrets/rowan.key \
-  --sops /opt/homebrew/bin/sops --name GH_TOKEN
-SECRETS SEAL OK name=GH_TOKEN seat=rowan pr=#123 merged
-```
-
-**What it asserts.** That the value the caller pasted is now the `NAME` entry of
-`<store>/<seat>.yaml` and reached the store by no other road: the plaintext was handed to the
-encrypt child **on stdin** and existed in no argument list, no file in the clear and no output
-line, and every event line carries a name, a seat and a PR number and never a byte of the
-value. The value comes from stdin when `--stdin` is given **or stdin is not a terminal**, and
-otherwise from the controlling terminal with echo off, opened **twice** — one handle to write
-the prompt, one to read — because a single read-write open of `/dev/tty` did not work. An
-**empty value is refused, exit 2**, before any helper runs.
-
-**How it seals.** It decrypts the seat file through a `sops` pipe (never a file), drops any
-existing `NAME:` line, appends `NAME: value`, and re-encrypts **from stdin** with
-`--filename-override <seat>.yaml` so the store's own rule picks the recipients, writing the
-ciphertext into place atomically. The value never touches argv, a plaintext file, or output.
-
-**What it does after.** It makes a branch `seal/<seat>-<NAME>-<stamp>`, commits, pushes, opens
-a `gh` pull request, waits up to two minutes for the seat-rule gate's `reviewDecision=APPROVED`,
-merges with `--squash`, pulls, and runs `check` on the seat. `--no-pr` stops after the commit
-and makes no `gh` call. The OK line is `merged`, or `open (gate not yet approved)` when the
-wait expired with the request still open.
 
 ### Refused, by name, with where it lives
 
