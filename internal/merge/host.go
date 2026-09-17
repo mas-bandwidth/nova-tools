@@ -17,9 +17,16 @@ import (
 
 // CheckDetail is one check run's name and its conclusion, as the host reported it.
 // The wait verb prints both on its RED line, so the bucket count alone is not enough.
+//
+// SHA is the commit the run's head_sha named. A check reader that answers a whole
+// pull request rather than one commit returns entries for MORE THAN ONE commit --
+// an old merge-queue run's failed ci-ok on a previous sha sits beside the head's
+// in-progress run (nova-tools #1014) -- so a detail carries the commit it judged
+// and the wait verb asks only for the head.
 type CheckDetail struct {
 	Name       string
 	Conclusion string
+	SHA        string
 }
 
 // Checks is a head commit's evidence, in three buckets counted SEPARATELY. Zero fail is
@@ -65,6 +72,35 @@ func (c *Checks) Add(name, state string) {
 		c.Pending++
 		c.PendingNames = append(c.PendingNames, name)
 	}
+}
+
+// AddRun counts one check run and records the commit its head_sha named. A
+// blank sha is kept blank: the detail was read without one.
+func (c *Checks) AddRun(name, state, sha string) {
+	at := len(c.Details)
+	c.Add(name, state)
+	if at < len(c.Details) {
+		c.Details[at].SHA = strings.TrimSpace(sha)
+	}
+}
+
+// ForSHA narrows the evidence to the check runs whose head_sha is oid. A
+// detail with no sha is one the host did not attribute, and the per-commit
+// reader that answers one commit is taken at its word, so it is kept. A detail
+// attributed to a DIFFERENT commit is a stale rollup entry -- an old
+// merge-queue run's ci-ok on a sha the pull request has since moved past -- and
+// is dropped: the merge condition judges the head, never a conclusion that
+// belongs to another commit. The buckets are recomputed, so a failure on a
+// stale sha cannot make a head with a run in progress red (nova-tools #1014).
+func (c Checks) ForSHA(oid string) Checks {
+	oid = strings.TrimSpace(oid)
+	var out Checks
+	for _, d := range c.Details {
+		if d.SHA == "" || oid == "" || d.SHA == oid {
+			out.AddRun(d.Name, d.Conclusion, d.SHA)
+		}
+	}
+	return out
 }
 
 // ConclusionFor returns the conclusion the host reported for the named check,
@@ -267,7 +303,7 @@ func (h *GH) BranchOID(branch string) (string, error) {
 // Checks reads a commit's check runs and buckets them.
 func (h *GH) Checks(oid string) (Checks, error) {
 	out, err := h.gh("api", fmt.Sprintf("repos/%s/commits/%s/check-runs", h.Repo, oid),
-		"--jq", ".check_runs[] | [.name, (.conclusion // .status)] | @tsv")
+		"--jq", ".check_runs[] | [.name, (.conclusion // .status), .head_sha] | @tsv")
 	if err != nil {
 		return Checks{}, err
 	}
@@ -276,8 +312,9 @@ func (h *GH) Checks(oid string) (Checks, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		name, state, _ := strings.Cut(line, "\t")
-		c.Add(name, state)
+		name, rest, _ := strings.Cut(line, "\t")
+		state, sha, _ := strings.Cut(rest, "\t")
+		c.AddRun(name, state, sha)
 	}
 	return c, nil
 }
