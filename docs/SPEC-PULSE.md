@@ -295,6 +295,18 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     gate keeps today's behaviour as the fallback. Replays:
     `gate-reruns-a-flaky-job-once-per-head`, `gate-real-verdict-keeps-stop`,
     `gate-below-floor-changes-nothing`.
+21. **Triage links a same-class open issue by a typed decision behind a floor.** With
+    `--dedupe --issues <file> [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]` the
+    triage verb reads the open issues (one `number<TAB>title` per line) and sends
+    `internal/decide` one call: the state is the new case's title and evidence, escaped and
+    capped as the packet escapes evidence, and the one question is `same_class`, a choice
+    over the issue numbers plus `none`. A choice naming an open issue at or above the floor
+    puts `LINKS #<n> (same class, conf=<c>)` on the card and `dedupe=#<n>` on the `TRIAGE OK`
+    line; on `none`, on a provider error, or below the floor the card is cut unchanged and
+    the line reads `dedupe=?`. A decision below the floor is a suggestion, never an
+    authorization: the card that files work is cut exactly as it is today. Replays:
+    `triage-dedupe-links-a-same-class-open-issue`, `triage-dedupe-none-files-normally`,
+    `triage-dedupe-below-floor-changes-nothing`.
 
 ## Fleet
 
