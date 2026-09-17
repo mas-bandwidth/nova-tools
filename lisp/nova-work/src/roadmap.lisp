@@ -1184,6 +1184,7 @@ at exit 2; zero applicable rows print `green=0 applicable=0` with no percentage.
                             rows baseline cell-rows))
                 0)))))
 
+
 ;;; ------------------------------------------------------------------
 ;;; `cell` -- a roadmap coordinate's reference and scope mark
 ;;; (docs/SPEC-WORK.md:2329, :991, :1146, :1183-1186, :5599-5600)
@@ -1552,3 +1553,128 @@ absent member refuses at exit 2 and writes nothing (docs/SPEC-WORK.md:3103-3113,
 ;;; The `:axis` verb is reversible: `axis --remove` of an added member, and
 ;;; `axis --add` of a removed one restoring its position and its cells
 ;;; (docs/SPEC-WORK.md:2863).
+
+;;; ------------------------------------------------------------------
+;;; `render --view` over a stored selection (docs/SPEC-WORK.md:3079-3085,
+;;; :3131-3136, :5834-5845)
+;;; ------------------------------------------------------------------
+;;;
+;;; A roadmap view is a node plus a view record; its `:projections` each carry
+;;; the display selection `:row-axis`, `:column-axis` and `:fixed`. `render
+;;; --view <id> --chat --projection <id>` reads that projection's stored
+;;; selection and not its file; without a projection a matrix names its
+;;; selection on the command line and a zero- or one-axis view needs none. The
+;;; two forms are exclusive. A matrix selection naming an unknown, missing or
+;;; duplicate axis or member refuses `bad selection`; it never reads the
+;;; projection's target.
+
+(defun roadmap-view-projection (view id)
+  "The projection ID in VIEW's `:projections`, or NIL."
+  (find id (getf view :projections)
+        :key (lambda (p) (getf p :id)) :test #'string=))
+
+(defun roadmap-view-axis-members (view axis)
+  "The declared members of AXIS in VIEW, in order. The `axis` verb owns the
+listing; an axis the view has not got answers NIL."
+  (cdr (assoc axis (getf view :axis-members) :test #'string=)))
+
+(defun %render-view-absent-p (axis)
+  "The stored spelling of an axis a zero- or one-axis projection does not name."
+  (or (null axis) (eq axis :absent)))
+
+(defun %render-view-refuse (what)
+  (values nil (format nil "RENDER FAIL: ~A" what) 2))
+
+(defun render-view-selection (view &key projection row-axis column-axis fixed)
+  "Resolve the stored display selection a `render --view --chat` reads
+(docs/SPEC-WORK.md:3133-3136). Answers (values SELECTION LINE CODE); SELECTION is
+`(:kind :rows :rows (...))` for a zero- or one-axis view or `(:kind :matrix
+:row-axis A :column-axis B :fixed ((X . M) ...) :row-members (...) :column-members
+(...))` for a matrix. A projection is read and never its file."
+  (let ((axes (getf view :axes)))
+    (when (and projection (or row-axis column-axis fixed))
+      (return-from render-view-selection
+        (%render-view-refuse "a projection and an explicit selection are exclusive")))
+    (when projection
+      (let ((p (roadmap-view-projection view projection)))
+        (unless p
+          (return-from render-view-selection
+            (%render-view-refuse "no such projection")))
+        (setf row-axis (getf p :row-axis)
+              column-axis (getf p :column-axis)
+              fixed (getf p :fixed))))
+    (when (%render-view-absent-p row-axis) (setf row-axis nil))
+    (when (%render-view-absent-p column-axis) (setf column-axis nil))
+    (cond
+      ;; Zero or one axis is rows with no cells: no selection is needed or
+      ;; admitted.
+      ((<= (length axes) 1)
+       (when (or row-axis column-axis fixed)
+         (return-from render-view-selection (%render-view-refuse "bad selection")))
+       (values (list :kind :rows :rows (copy-list (getf view :members))) nil 0))
+      (t
+       ;; Two or more axes are a matrix: it names its row and column axes.
+       (unless (and row-axis column-axis)
+         (return-from render-view-selection (%render-view-refuse "bad selection")))
+       (unless (and (member row-axis axes :test #'string=)
+                    (member column-axis axes :test #'string=)
+                    (not (string= row-axis column-axis)))
+         (return-from render-view-selection (%render-view-refuse "bad selection")))
+       (let* ((others (remove-if (lambda (a)
+                                   (or (string= a row-axis) (string= a column-axis)))
+                                 axes))
+              (seen '())
+              (pinned '()))
+         ;; `:fixed` names exactly one member of every axis but row and column.
+         (dolist (pair fixed)
+           (let ((axis (car pair))
+                 (member (if (consp (cdr pair)) (cadr pair) (cdr pair))))
+             (unless (and (member axis others :test #'string=)
+                          (not (member axis seen :test #'string=))
+                          (member member (roadmap-view-axis-members view axis)
+                                  :test #'string=))
+               (return-from render-view-selection (%render-view-refuse "bad selection")))
+             (push axis seen)
+             (push (cons axis member) pinned)))
+         (unless (= (length pinned) (length others))
+           (return-from render-view-selection (%render-view-refuse "bad selection")))
+         (values (list :kind :matrix
+                       :row-axis row-axis :column-axis column-axis
+                       :fixed (nreverse pinned)
+                       :row-members (copy-list (roadmap-view-axis-members view row-axis))
+                       :column-members (copy-list (roadmap-view-axis-members view column-axis)))
+                 nil 0))))))
+
+(defun render-view-body (view selection)
+  "The canonical bytes one stored selection renders. The `--chat` artifact's
+frame and byte bound are the render-target slice's (:3143)."
+  (let ((private (getf view :private)))
+    (with-output-to-string (s)
+      (format s "revision: ~A~%" (getf view :revision))
+      (ecase (getf selection :kind)
+        (:rows
+         (dolist (row (getf selection :rows))
+           (unless (member row private :test #'string=)
+             (format s "row=~A~%" row))))
+        (:matrix
+         (dolist (r (getf selection :row-members))
+           (unless (member r private :test #'string=)
+             (dolist (c (getf selection :column-members))
+               (unless (member c private :test #'string=)
+                 (format s "row=~A col=~A" r c)
+                 (dolist (pin (getf selection :fixed))
+                   (format s " ~A=~A" (car pin) (cdr pin)))
+                 (terpri s))))))))))
+
+(defun render-view (view &key projection row-axis column-axis fixed)
+  "The `render --view <id> --chat` read of a stored selection
+(docs/SPEC-WORK.md:3131-3136). Answers (values BODY LINE CODE): BODY is the
+rendered selection on success, LINE the refusal otherwise, and CODE 0 or 2."
+  (multiple-value-bind (selection line code)
+      (render-view-selection view :projection projection
+                                  :row-axis row-axis
+                                  :column-axis column-axis
+                                  :fixed fixed)
+    (if line
+        (values nil line code)
+        (values (render-view-body view selection) nil 0))))

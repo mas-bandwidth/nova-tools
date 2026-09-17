@@ -803,6 +803,12 @@
     #:roadmap-rows-count
     #:roadmap-applicable-rows
     #:roadmap-applicable-count
+    ;; `render --view` over a stored selection (src/roadmap.lisp)
+    #:roadmap-view-projection
+    #:roadmap-view-axis-members
+    #:render-view-selection
+    #:render-view-body
+    #:render-view
     ;; render replays (nova-tools #362)
     #:make-render-session
     #:render-session-p
