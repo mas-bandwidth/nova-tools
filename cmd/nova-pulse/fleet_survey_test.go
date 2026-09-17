@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +58,9 @@ func fleetTestHome(t *testing.T, want, driftBin string) string {
 // the way ssh refuses a host it cannot reach.
 func writeFakeSSH(t *testing.T, bin, homes string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fleet is a linux bench; the fake ssh runs the remote script through bash -s")
+	}
 	path := filepath.Join(bin, "ssh")
 	body := `#!/usr/bin/env bash
 target="$1"

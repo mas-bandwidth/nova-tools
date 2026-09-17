@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -60,6 +61,9 @@ func benchStandardHome(t *testing.T, want, goVer string) (home, bin string) {
 
 func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("bench-standard.sh is a bash script for linux benches; skipping on windows")
+	}
 	script := filepath.Join("..", "..", "tools", "bench-standard.sh")
 	cmd := exec.Command("bash", script)
 	// Minimal PATH: the fakes first, then the system dirs. The test never
