@@ -349,11 +349,12 @@ and between two `wait` calls, not asleep.
 
 **A config file for the repeated flags.** Before the flags, this tool reads
 `<cwd>/.nova-wake/config`, or the file named by `NOVA_WAKE_CONFIG`, as `key=value`
-lines: `bus=` for every verb, `window=` and `max=` for `awake`, and `state=` and
-`as=` for `watch` and `quickstart` — the keys the coordinator retypes every
-turn. A flag given on the command line wins,
-nothing is printed for the read, and a required value named by neither the file
-nor a flag is the same refusal, now naming the config file as a second remedy.
+lines: `bus=` for every verb, `window=` and `max=` for `awake`, and `state=`,
+`as=`, `on-deadline=` and `receipt-max-words=` for `watch` and `quickstart` —
+the keys the coordinator retypes every turn. A flag given on the command line
+wins, nothing is printed for the read, and a required value named by neither
+the file nor a flag is the same refusal, now naming the config file as a second
+remedy.
 
 **At least one source, named.** A `watch` with no `--bus`, no `--entry`, no
 `--reports`, no `--pr`, no `--owned-prs`, no `--run`, no `--ref` and no

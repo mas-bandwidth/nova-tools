@@ -213,10 +213,10 @@ func Version() string { return buildVersion() }
 
 // wakeConfig is the key=value file read BEFORE flags: <cwd>/.nova-wake/config
 // or the path in NOVA_WAKE_CONFIG. It holds the flags the coordinator retypes
-// every turn -- bus, window, max for awake; bus, state, as for watch -- so a
-// call that gives none of them still has an answer. A flag given on the
-// command line wins, and nothing here is printed: reading the file is not a
-// change to report.
+// every turn -- bus, window, max for awake; bus, state, as, on-deadline,
+// receipt-max-words for watch -- so a call that gives none of them still has
+// an answer. A flag given on the command line wins, and nothing here is
+// printed: reading the file is not a change to report.
 type wakeConfig struct {
 	path   string
 	values map[string]string
@@ -571,13 +571,13 @@ func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 	var (
 		state        = fs.String("state", cfg.get("state"), "")
 		maxDur       = fs.String("max", "", "")
-		onDeadline   = fs.String("on-deadline", "", "")
+		onDeadline   = fs.String("on-deadline", cfg.get("on-deadline"), "")
 		interval     = fs.String("interval", "", "")
 		maxLines     = fs.Int("max-lines", DefaultMaxLines, "")
 		baseline     = fs.Bool("baseline", false, "")
 		busDir       = fs.String("bus", cfg.get("bus"), "")
 		as           = fs.String("as", cfg.get("as"), "")
-		words        = fs.Int("receipt-max-words", 0, "")
+		words        = fs.Int("receipt-max-words", cfg.cfgInt("receipt-max-words", 0), "")
 		refresh      = fs.Bool("refresh", false, "")
 		remote       = fs.String("remote", "", "")
 		branch       = fs.String("branch", "", "")
@@ -628,7 +628,7 @@ func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 		p.missing("max")
 	}
 	if *onDeadline == "" {
-		p.missing("on-deadline")
+		p.missingCfg("on-deadline", cfg)
 	}
 	if *interval == "" {
 		p.missing("interval")
@@ -730,7 +730,7 @@ func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 			p.missingCfg("as", cfg)
 		}
 		if *words <= 0 {
-			p.missing("receipt-max-words")
+			p.missingCfg("receipt-max-words", cfg)
 		}
 	}
 	if *busDir == "" {
