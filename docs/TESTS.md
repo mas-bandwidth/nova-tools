@@ -646,6 +646,11 @@ No fixture: the graph file is created by the run itself under `--graph`, and eve
 line below is local — plain JSON nodes and `:deps` edges, no Redis, no remote, no
 network. A `:deps` cycle is refused at exit 2 before anything is written.
 
+The bounded reader for a `.work` plan. No fixture and no network: the plan is a
+file the run writes, and every line below is read from local bytes alone.
+`cmd/nova-work/firstrun_test.go` writes the plan and runs each `$` line against
+it, so the `./work.work` below is a fresh file per run.
+
 ### First run
 
 ```text
@@ -661,6 +666,16 @@ READY node=a ready=false blocker=b state=open resolver="nova-merge queue"
 $ nova-work ready --node b --graph ./deps.json
 READY node=b ready=true
 
+$ nova-work plan check --file ./work.work
+PLAN OK file=./work.work bytes=47 version=1 nodes=1
+```
+
+The two verbs read one plan and one graph as data; a `:deps` cycle is refused at
+exit 2 before anything is written.
+
+### Refusals
+
+```text
 $ nova-work dependencies --graph ./deps.json --node b --needs a
 nova-work dependencies: rule 3: :deps edges contain a cycle: b -> a -> b; run: nova-work help
 ```

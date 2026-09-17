@@ -34,6 +34,9 @@ var workAudit = audit.Config{
 		// resets the worktree with git, printing nothing; every path it is handed
 		// comes from a flag and the one CLIP line goes through oneline fields.
 		`"github.com/mas-bandwidth/nova-tools/internal/swarm"`,
+		// worklang is the bounded plan reader; it parses bytes into values and every
+		// field it yields is printed through oneline.
+		`"github.com/mas-bandwidth/nova-tools/internal/worklang"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,
