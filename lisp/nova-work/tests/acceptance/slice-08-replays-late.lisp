@@ -140,12 +140,35 @@
         (check-equal :running (getf answer :state) "status reads the running export")
         (check-equal :export (getf answer :op) "status names the operation kind"))
       (check-equal 0 *replays* "status replays no journal"))
+    ;; operation list is a bounded listing, capped like every other listing.
+    (let ((rows (session-operation-list session :max 2)))
+      (check-equal 2 (length rows) "the operation listing is capped by --max")
+      (ok (find "op-export" rows :key (lambda (r) (getf r :id)) :test #'string=)
+          "the listing names the export operation")
+      (ok (find "op-clip" rows :key (lambda (r) (getf r :id)) :test #'string=)
+          "the listing names the clip operation"))
     ;; a cancel of a pending operation answers with its own final disposition.
     (multiple-value-bind (after disposition)
         (operation-cancel session "op-export" :request "req-cancel")
       (declare (ignore after))
       (check-equal :cancelled (getf disposition :state)
-                   "cancel answers with its own final disposition"))
+                   "cancel answers with its own final disposition")
+      (check-equal nil (getf disposition :replayed)
+                   "the first cancel request is not a replay"))
+    ;; the same cancel request id replayed cancels once; a different request id
+    ;; is a fresh acknowledgement of the same final disposition.
+    (multiple-value-bind (after disposition)
+        (operation-cancel session "op-export" :request "req-cancel")
+      (declare (ignore after))
+      (check-equal :cancelled (getf disposition :state) "the replay answers cancelled")
+      (check-equal t (getf disposition :replayed) "the same cancel request replayed"))
+    (multiple-value-bind (after disposition)
+        (operation-cancel session "op-export" :request "req-cancel-2")
+      (declare (ignore after))
+      (check-equal :cancelled (getf disposition :state)
+                   "a different cancel request is answered by the final disposition")
+      (check-equal nil (getf disposition :replayed)
+                   "a different cancel request is not the earlier one's replay"))
     ;; queues, staged bytes and retained results stay bounded.
     (ok (session-bounded-p session) "the queues, staged bytes and results are bounded")
     ;; a restart reconciles the ids that were pending, erasing no event.
@@ -296,7 +319,15 @@
         (check-equal :cancelled (getf disposition-2 :state) "the replay answers cancelled")
         (check-equal t (getf disposition-2 :replayed) "the replay applies nothing")
         (check-equal before-events (work-session-events again)
-                     "the replay erases nothing")))
+                     "the replay erases nothing"))
+      ;; a different cancel request id is not the earlier one's replay, but the
+      ;; final disposition is still the one recorded for the operation.
+      (multiple-value-bind (other disposition-3)
+          (operation-cancel after "op-cap" :request "req-cancel-other")
+        (check-equal :cancelled (getf disposition-3 :state)
+                     "a later cancel request reads the final disposition")
+        (check-equal nil (getf disposition-3 :replayed)
+                     "a different request id is a fresh acknowledgement")))
     ;; an uncertain external effect is reported uncertain, not cancelled.
     (let ((session-2 (make-work-session
                       :events events
@@ -562,34 +593,78 @@
           (ok (search "different payload" line3) "naming the payload reuse"))))))
 
 (deftest "operation-survives-the-client" "docs/SPEC-WORK.md:5183"
-    "expected=import-returns-op-id;cli-exit-leaves-work;result-by-id;wait-timeout-leaves-running"
+    "expected=import-returns-op-id;accept-record-durable;cli-exit-leaves-work;result-by-id;wait-timeout-leaves-running"
   ;; A long import returns a durable operation id at once, recorded before it
   ;; is printed (SPEC-WORK.md:2719-2727).
-  (let* ((registry (make-operation-registry))
-         (op-id (operation-accept registry :id "op-1" :kind :import
-                                   :request "req-import" :author "rowan"
-                                   :stamp "2026-09-14T12:00:00Z")))
-    (check-string= "op-1" op-id "a long import returns an operation id at once")
-    (check-equal 1 (operation-journal-length registry)
-                 "the id is durable before it is printed")
-    (check-equal :running (registry-operation-state registry op-id) "the work is running")
-    ;; The CLI exits while the work continues.
-    (operation-client-exit registry)
-    (check-equal :running (registry-operation-state registry op-id)
-                 "the work continues after the client exits")
-    ;; operation wait times out and leaves the operation running (:2733).
-    (multiple-value-bind (result state) (registry-operation-wait registry op-id :timeout 5)
-      (ok (null result) "a wait timeout returns no result")
-      (check-equal :timeout state "the wait reports the timeout")
-      (check-equal :running (registry-operation-state registry op-id)
-                   "the operation is left running"))
-    ;; A completed result is retrievable by its id afterwards.
-    (operation-complete registry op-id "imported 42 items")
-    (check-equal :done (registry-operation-state registry op-id) "the operation completes")
-    (check-string= "imported 42 items" (registry-operation-result registry op-id)
-                   "the result is retrievable by id afterwards")
-    ;; An id no journal holds has a line of its own (:2727-2729).
-    (multiple-value-bind (state line code) (registry-operation-state registry "op-missing")
-      (ok (null state) "an unknown operation has no state")
-      (check-equal 2 code "exit 2")
-      (ok (search "no such operation" line) "and its own line"))))
+  (let ((path (test-journal-path "operation-survives")))
+    (unwind-protect
+         (let* ((journal (open-file-journal path))
+                (registry (make-operation-registry :journal journal))
+                (op-id (operation-accept registry :id "op-1" :kind :import
+                                         :request "req-import" :author "rowan"
+                                         :stamp "2026-09-14T12:00:00Z")))
+           (check-string= "op-1" op-id "a long import returns an operation id at once")
+           ;; The accept record -- id, operation kind, request id, author, stamp --
+           ;; is on the durable recovery journal before the id is answered.
+           (check-equal 1 (operation-journal-length registry)
+                        "the id is durable before it is printed")
+           (let ((record (accept-record-of journal "op-1")))
+             (check-equal "op-1" (getf record :id) "the accept record names the id")
+             (check-equal :import (getf record :kind) "the accept record names the op kind")
+             (check-equal "req-import" (getf record :request)
+                          "the accept record names the request id")
+             (check-equal "rowan" (getf record :author) "the accept record names the author")
+             (check-string= "2026-09-14T12:00:00Z" (getf record :stamp)
+                            "the accept record names the stamp"))
+           (check-equal :running (registry-operation-state registry op-id) "the work is running")
+           ;; The CLI exits while the work continues.
+           (operation-client-exit registry)
+           (check-equal :running (registry-operation-state registry op-id)
+                        "the work continues after the client exits")
+           ;; operation wait is a bounded block over an event cursor and leaves a
+           ;; timed-out operation running (:2733).
+           (multiple-value-bind (result state cursor)
+               (registry-operation-wait registry op-id :timeout 5 :after 0)
+             (ok (null result) "a wait timeout returns no result")
+             (check-equal :timeout state "the wait reports the timeout")
+             (check-equal 0 cursor "a timed-out wait is still at cursor 0")
+             (check-equal :running (registry-operation-state registry op-id)
+                          "the operation is left running"))
+           ;; A completed result is retrievable by its id afterwards, and
+           ;; resuming from the advanced cursor answers the recorded disposition
+           ;; at once, never by re-reading from the start.
+           (operation-complete registry op-id "imported 42 items")
+           (check-equal :done (registry-operation-state registry op-id) "the operation completes")
+           (check-string= "imported 42 items" (registry-operation-result registry op-id)
+                          "the result is retrievable by id afterwards")
+           (multiple-value-bind (result state cursor)
+               (registry-operation-wait registry op-id :timeout 5 :after 1)
+             (check-string= "imported 42 items" result
+                            "the resumed wait returns the result")
+             (check-equal :done state "the resumed wait reports done")
+             (check-equal 1 cursor "the completed wait advances the event cursor"))
+           ;; An id no journal holds has a line of its own (:2727-2729).
+           (multiple-value-bind (state line code) (registry-operation-state registry "op-missing")
+             (ok (null state) "an unknown operation has no state")
+             (check-equal 2 code "exit 2")
+             (ok (search "no such operation" line) "and its own line"))
+           ;; The recovery reconciliation has an id for every operation a caller
+           ;; was told about: a restart over the same journal still holds it.
+           (close-file-journal journal)
+           (let ((reopened (open-file-journal path)))
+             (unwind-protect
+                  (let ((restarted (make-operation-registry :journal reopened)))
+                    (check-equal 1 (operation-journal-length restarted)
+                                 "the durable accept record survives the restart")
+                    (multiple-value-bind (state line code)
+                        (registry-operation-state restarted "op-1")
+                      (declare (ignore line))
+                      (ok (null state) "a restart does not invent a state for the id")
+                      (check-equal 2 code "an id the restarted process has not recovered answers exit 2"))
+                    (let ((record (recover-operation restarted "op-1")))
+                      (check-equal "op-1" (getf record :id)
+                                   "recovery reads the accepted id from the journal")
+                      (check-equal :queued (registry-operation-state restarted "op-1")
+                                   "a recovered operation is reconciled before anything is retried")))
+               (close-file-journal reopened))))
+      (ignore-errors (delete-file path)))))

@@ -535,6 +535,16 @@
    #:registry-operation-state
    #:registry-operation-result
    #:registry-operation-wait
+   ;; the operation scheduler (SPEC-WORK.md:2721-2760): the durable accept
+   ;; record, the bounded listing and the recovery reconciliation.
+   #:make-accept-journal
+   #:durable-accept-record
+   #:accept-record-of
+   #:accept-journal-count
+   #:recover-operation
+   #:session-operation-list
+   #:registry-operation-list
+   #:work-session-cancellations
     ;; long operation, cancel, clip and undo/redo replays (card 8609)
     #:*operation-limits*
     #:make-operation
