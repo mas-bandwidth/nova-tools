@@ -154,6 +154,103 @@ jev-latest, 62 rows)` — the maneuver band stays on the hand-written table
 until its confidence earns the floor. Throughput measured: 22 calls/s at
 concurrency 10, measured in the 2026-09-17 ships trial of 60 calls.
 
+## Jev across the stack
+
+Every layer below asks the same three-line shape: the question, the floor, the invariant. The
+invariant is one sentence across all of them: **a decision advises, the machinery decides, the
+inputs are public or synthetic, and a decision never carries a secret and never carries a private
+bus body.** Each subsection ends with one red test, run against the httptest fake of rule 9, with
+no network and no key on disk.
+
+### Go tools — the `--decide` flags
+
+The question: the small judgment each verb already makes in code, asked behind a flag — `route`,
+`triage`, `gate`, `review packet`, `inbox`, `merge classify`, `queue order`, `harvest class`,
+`card lint`. The floor: per flag, stated beside the call site; below it the tool runs the branch
+it ran before the flag existed and prints the answer as a suggestion (rule 5). The invariant: the
+flag returns a typed answer and the verb acts through the same verbs it already had (rules 6 and
+7); the state text is the card's public summary, never a private bus body and never a secret (rule
+4). Red test: `a-decide-flag-below-its-floor-runs-the-pre-flag-branch` — the fixture answers under
+the floor, the verb prints its evidence pointer (rule 10), and no card, fix or push is written
+(rule 7).
+
+### The Lisp kernel — one protocol, one in-process fake
+
+The question: only the choices the kernel cannot resolve itself — the order of a ready set whose
+priorities tie, an abstain reason, a conflict between two nodes' claims. The floor: below it the
+kernel keeps its own order, its own abstain or its own tie-break, and records the answer as a
+suggestion. The invariant: the kernel asks through one `decide` protocol function with one
+in-process fake (rule 9); every decision is journaled as an event carrying the question hash, so a
+replay reproduces the answer without calling the provider, and the kernel's authority — a decisive
+ready order, leases, holds, ownership — is untouched (rule 6). Red test:
+`a-journaled-decision-replays-without-the-provider` — with the fake absent on replay, the event's
+question hash yields the same answer and the kernel's decisive order is identical.
+
+### Redis — the decision cache
+
+The question: the pull worker asks once on an ambiguous card class, where the answer is a function
+of a state the queue already holds. The floor: below it the worker takes the default lane and
+source order; the cache stores the `?` (rule 11) so the miss is not re-bought. The invariant: the
+cache is keyed by the question hash with a mandatory TTL and nothing in it is the only copy of
+anything (SPEC-REDIS); the same question is never paid twice while the key lives, and the state was
+public or synthetic before it was hashed (rule 4). Red test:
+`the-second-identical-question-is-served-from-redis-with-no-provider-call` — the first call hits
+the fake, the second is a cache hit before the TTL and a fresh call after it.
+
+### Postgres — the decisions table
+
+The question: what did we decide, at what confidence, above what floor, and what followed. The
+answer, the provider confidence and the floor live in the row; the outcome is filled when known.
+The invariant: a decisions table `(question_hash, kind, answer, provider_confidence, floor,
+outcome)`, written by one writer, is the calibration record rule 8 owes; `nova-decide tune` reads
+it and refuses a floor with no rows behind it (rule 8); the table is a projection of the log and
+never an authority over the machinery. Red test:
+`nova-decide-tune-refuses-a-floor-with-no-rows` — an untuned floor is refused, and a row joins its
+confidence to the outcome that followed.
+
+### Terraform and Kubernetes — the key, sealed
+
+The question: a Job's admission may take one typed score, and nothing else in the cluster asks.
+The floor: below it the Job keeps the admission the manifest already carried. The invariant: the
+Jev key is a sealed secret injected as env only, never a file, never argv, never a log (rule 3);
+a decision never changes resource limits, replica counts, quotas or a rollout — that is the
+machinery's word (rule 6). Red test: `a-decision-cannot-change-a-resource-limit` — a typed score
+admits a Job, and an answer proposing a limit, quota or replica change is refused and the manifest
+stands.
+
+### Git and GitHub — classify, order, risk; never a merge
+
+The question: merge classify, queue order, and a review packet's risk and scope. The floor: below
+it the queue keeps source order, the packet keeps its hand-written risk, and the merge gate runs
+as before. The invariant: a decision never merges, never pushes, never approves a review and never
+clears a branch protection (rule 7); it labels a PR the machinery already gated. Red test:
+`a-merge-classification-never-merges` — the classifier's answer lands on the packet, and no merge
+commit, push or approval exists after the run.
+
+### The work language — one `:decide` field
+
+The question: where a plan leaves a choice to a typed decision, one `:decide (:type :choice
+:question Q :options (...))` on the node, with the fallback the field's floor names. The floor:
+below it the node takes the plan's default and records the choice as `?` beside the answer. The
+invariant: the field is data the bounded reader accepts beside `:inputs`, `:output` and `:budget`,
+and the card blocks on `choice=` until the decision answers (SPEC-WORKLANG Part 3); a `:sweep`
+never needs one, because the fact that selects the sweep is a rule and not a judgment. Red test:
+`worklang-a-decide-field-blocks-its-card-until-an-answer-and-a-sweep-needs-none` — a node carrying
+`:decide` is not pullable until the fake answers above the floor, and a `:derive` sweep expands
+with no decision call.
+
+### Outbound — never
+
+The question: none. The floor, the invariant and the red test are one sentence: **no decision
+approves a post, a mail or a message.** `nova-post` carries the outward channels, and an outward
+receipt is Glenn's alone; a typed answer may rank a draft's risk, but the send is a person's
+receipt, never a model's (rules 6 and 7). Red test:
+`no-decision-approves-a-post-a-mail-or-a-message` — a decision-only run over an outbound draft
+produces no post, no mail and no message.
+
+**The cost line.** Measured in the retained trials: about 400 ms and under a thousand input tokens
+per call (rule 2; the 2026-09-17 trials). **The one thing Jev must never be: an authority.**
+
 ## Red tests
 
 One line per rule, then one per adoption. Each runs against the httptest fake
