@@ -31,6 +31,14 @@ var (
 	busBinary  []byte
 	busVersion string
 	busBuild   error
+
+	// The recording wrapper is built ONCE for the package and copied into each
+	// test's own directory, for the reason main_test.go gives about the fakes:
+	// a `go build` per test was six of them in this file alone, and the
+	// two-minute rule is a rule.
+	recordOnce  sync.Once
+	recordBin   []byte
+	recordBuild error
 )
 
 // realBus builds nova-bus from this tree once for the package, installs it into
@@ -105,8 +113,27 @@ func realBus(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		shim += ".exe"
 	}
-	if raw, err := exec.Command("go", "build", "-o", shim, "./testdata/recordbus").CombinedOutput(); err != nil {
-		t.Fatalf("building the recording nova-bus: %v\n%s", err, raw)
+	recordOnce.Do(func() {
+		out := filepath.Join(t.TempDir(), "recordbus")
+		if runtime.GOOS == "windows" {
+			out += ".exe"
+		}
+		if raw, err := exec.Command("go", "build", "-o", out, "./testdata/recordbus").CombinedOutput(); err != nil {
+			recordBuild = fmt.Errorf("building the recording nova-bus: %v\n%s", err, raw)
+			return
+		}
+		raw, err := os.ReadFile(out)
+		if err != nil {
+			recordBuild = err
+			return
+		}
+		recordBin = raw
+	})
+	if recordBuild != nil {
+		t.Fatal(recordBuild)
+	}
+	if err := os.WriteFile(shim, recordBin, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv("NOVA_WAKE_REAL_BUS", real)
 	t.Setenv("NOVA_WAKE_BUS_CALLS", filepath.Join(t.TempDir(), "bus-calls"))
@@ -230,6 +257,9 @@ func advanceArgs(state, bus string, rest ...string) []string {
 // under it -- once --advance has moved the cursor past a note, a plain inbox
 // prints INBOX OPEN carrying=<n> and no NOTE line for it.
 func TestTheRealBusRelaysNewMailWithinTwoAdvancingPolls(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: spawns repeated watcher and bus processes; runs on the self-hosted legs and nightly")
+	}
 	rowan, stella := synthBus(t)
 	push(t, stella, "stella-aaaaaaaaaaaa", "the first note")
 	gitAt(t, rowan, "pull", "-q", "--ff-only")
@@ -341,6 +371,9 @@ func TestTheRealBusCursorWaitsBehindThePrint(t *testing.T) {
 // are on the reader's OPEN list and on no listing a plain inbox makes. Only the
 // recovery reaches them.
 func TestTheRealBusAdvanceRecoversAnInterruptedRead(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: pushes twenty-five notes in a loop and replays a recovery; runs on the self-hosted legs and nightly")
+	}
 	rowan, stella := synthBus(t)
 	// A backlog above nova-bus's default OPEN display cap of 20.
 	for i := 0; i < 25; i++ {
@@ -443,6 +476,9 @@ func assertOpenMax(t *testing.T, calls []string, want int) {
 // The other half of "never a constant": a second recovery, carrying a different
 // number. A hardcoded --open-max of ANY value fails one of the two.
 func TestTheRecoveryReadsTheCountAndNeverAConstant(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: pushes carried notes in a loop over two recoveries; runs on the self-hosted legs and nightly")
+	}
 	for _, carried := range []int{7, 23} {
 		t.Run(fmt.Sprintf("carrying %d", carried), func(t *testing.T) {
 			rowan, stella := synthBus(t)

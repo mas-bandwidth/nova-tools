@@ -222,6 +222,7 @@ func TestNativeRunKillsAtDeadline(t *testing.T) {
 // TestNativeRunAuthCopyIs0600: the named provider's entry is copied from the auth file into
 // the data home, mode 0600, and no other provider's entry travels with it.
 func TestNativeRunAuthCopyIs0600(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
@@ -254,11 +255,17 @@ func TestNativeRunAuthCopyIs0600(t *testing.T) {
 	}
 }
 
-// TestNativeCarriesProviderConfig: a `--config` opencode.json is copied beside the carried
-// auth file into the job's own data home, mode 0600, byte for byte, and the fake harness
-// sees it at the path it resolves from its own XDG data home. Without --config the file is
-// absent, and with it the NATIVE OK line records its sha8.
+// TestNativeCarriesProviderConfig: a `--config` opencode.json is carried beside the auth
+// file into the job's own data home, mode 0600, and the fake harness sees it at the path it
+// resolves from its own XDG data home. The provider's own bytes reach the child unchanged.
+//
+// ISSUE #644 CHANGED THE OTHER HALF OF THIS: the file is written WHETHER OR NOT --config
+// named one, because the job's fence rules live in it, and the sha8 on the NATIVE OK line is
+// the sha8 of the bytes the child saw -- the only config a later reader can check the run
+// against. Before it, a run with no --config wrote no config and ran on the harness's default
+// fence, which auto-rejected the card's own `../scratch`.
 func TestNativeCarriesProviderConfig(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	const config = `{"provider":{"fake":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
 
@@ -277,7 +284,8 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
 		}
-		assertConfigRecord(t, slot, "absent", "")
+		// The config exists even with no --config: it is where the job's fence rules are.
+		assertConfigRecord(t, slot, "0600", `"external_directory"`)
 	})
 
 	t.Run("with_config", func(t *testing.T) {
@@ -299,12 +307,7 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
 		}
-		wantSum := sha256.Sum256([]byte(config))
-		wantSHA := hex.EncodeToString(wantSum[:])[:8]
-		if res.configSHA != wantSHA {
-			t.Errorf("the run records config sha8 %q, want %q", res.configSHA, wantSHA)
-		}
-		assertConfigRecord(t, slot, "0600", config)
+		assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
 		copied := filepath.Join(slot, "data", ".config", "opencode", "opencode.json")
 		st, err := os.Stat(copied)
 		if err != nil {
@@ -317,14 +320,22 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(body) != config {
-			t.Errorf("the config copy bytes differ:\n%s", body)
+		wantSum := sha256.Sum256(body)
+		wantSHA := hex.EncodeToString(wantSum[:])[:8]
+		if res.configSHA != wantSHA {
+			t.Errorf("the run records the sha8 of the bytes the child saw: %q, want %q", res.configSHA, wantSHA)
+		}
+		if !strings.Contains(string(body), `"baseURL": "http://localhost:11434/v1"`) {
+			t.Errorf("the carried provider reaches the child:\n%s", body)
+		}
+		if !strings.Contains(string(body), `"external_directory"`) {
+			t.Errorf("the job's fence rules are in the config the child reads:\n%s", body)
 		}
 	})
 }
 
-// assertConfigRecord reads what the fake harness recorded about the provider config and
-// proves it saw the file (or its absence) at its own XDG data home path.
+// assertConfigRecord reads what the fake harness recorded about the config at its own XDG
+// data home path: the mode it found, and one thing that must be in the bytes it read.
 func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(slot, "jobs", "lbl", "config-record"))
@@ -341,8 +352,8 @@ func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
 	if !strings.HasPrefix(rec, "mode="+wantMode+"\n") {
 		t.Errorf("the harness saw %q, want mode %s", rec, wantMode)
 	}
-	if wantBody != "" && !strings.HasSuffix(rec, "\n"+wantBody) {
-		t.Errorf("the harness saw different bytes:\n%s", rec)
+	if wantBody != "" && !strings.Contains(rec, wantBody) {
+		t.Errorf("the harness saw no %s in the config it read:\n%s", wantBody, rec)
 	}
 }
 
@@ -351,6 +362,7 @@ func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
 // provider and never the key. That provider is the one the harness is about to call, so its
 // missing key is a run that dies rc=1 in under a second.
 func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
@@ -392,6 +404,7 @@ func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
 // them turned every adoption pass on this bench into `names provider inception, whose key is
 // absent` for a card that wanted a local model (issue #523 follow-up).
 func TestNativeConfigChecksOnlyTheModelsProvider(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
@@ -424,8 +437,9 @@ func TestNativeConfigChecksOnlyTheModelsProvider(t *testing.T) {
 // TestNativeConfigKeylessProviderAdmitted: a --config that names a provider whose entry is
 // absent from --auth is admitted, not refused, when that provider's options carry a baseURL
 // and no apiKey field -- ollama on localhost needs no key, so there is no key to be absent.
-// The config is still copied verbatim, mode 0600, and the run records its sha8.
+// The config is still carried, mode 0600, and the run records the sha8 of what the child saw.
 func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
@@ -450,12 +464,16 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
 		t.Fatalf("the keyless provider is not refused, got:\n%s", errOut.String())
 	}
-	wantSum := sha256.Sum256([]byte(config))
+	written, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSum := sha256.Sum256(written)
 	wantSHA := hex.EncodeToString(wantSum[:])[:8]
 	if res.configSHA != wantSHA {
 		t.Errorf("the run records config sha8 %q, want %q", res.configSHA, wantSHA)
 	}
-	assertConfigRecord(t, slot, "0600", config)
+	assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
 }
 
 // TestFriendSequenceLocalModelCard runs one known-answer card on a fake local provider: the
@@ -463,6 +481,7 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 // and the card FAKE-PWD answers with the job directory. The run is walled, admitted without a
 // refusal, and the wall's own name and the card's known answer both land where a reader looks.
 func TestFriendSequenceLocalModelCard(t *testing.T) {
+	windowsIsNotABench(t)
 	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
 	bin := nativeHarness(t)
 	sandbox := nativeSandbox(t)
@@ -1386,6 +1405,7 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 // wherever it points, written by a process that has no wall around it (security#30's class).
 // The open carries O_NOFOLLOW, so the run refuses by name and the target is untouched.
 func TestNativeCaptureRefusesSymlink(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	label := "planted-capture"

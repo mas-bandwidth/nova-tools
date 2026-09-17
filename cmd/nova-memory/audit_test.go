@@ -60,6 +60,10 @@ var memoryAudit = audit.Config{
 		// quickstart line has to paste into is a property of the machine printing it.
 		// It writes to no stream.
 		`"bufio"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path"`, `"runtime"`, `"sort"`, `"strings"`, `"time"`,
+		// boot resolves pinned memory paths under --root through the platform
+		// path separator (filepath.Join/FromSlash) after validating them with
+		// path's slash rules; it writes to no stream.
+		`"path/filepath"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
 		// package, which the classifier walks like any other print site, and bounded puts

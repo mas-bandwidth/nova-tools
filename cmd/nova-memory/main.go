@@ -27,6 +27,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -50,6 +51,7 @@ usage:
                      [--fail-max <n>]
   nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--exclude <glob>]...
                      [--fail-max <n>] <gold.tsv>
+  nova-memory boot   --root <dir> --pin <file>
 
 quickstart is the first run and nothing else: it runs stats, then one search,
 then one check, PRINTING each command line above that command's output, so
@@ -100,6 +102,10 @@ flags:
                         reads. Default: this corpus's own first paragraph, fed
                         on stdin, which shows you what "you already know this"
                         looks like when it is certainly true.
+  --pin <file>          boot only: the pin file naming the memories a session
+                        loads, one slash path per line relative to --root
+                        (# comments and blank lines ignored). Required — boot
+                        names the load, never walks the directory.
 
 A refusal reports every flag it can see at once — two missing flags are two
 sentences and one run, not two runs.
@@ -190,6 +196,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdVerify(args[1:], stdout, stderr)
 	case "eval":
 		return cmdEval(args[1:], stdout, stderr)
+	case "boot":
+		return cmdBoot(args[1:], stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
@@ -698,6 +706,114 @@ func cmdStats(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "STATS OK class=%s chunks=%d\n", oneline.Field(cl), c.ByClass[cl])
 	}
 	return 0
+}
+
+// ---------------------------------------------------------------------------
+// boot — the session loads a pin, never walks the directory
+
+func cmdBoot(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("boot", flag.ContinueOnError)
+	root := fs.String("root", "", "memory root directory (required)")
+	pin := fs.String("pin", "", "pin file naming the memories to load (required)")
+	given, ok := parse(fs, args, stderr, "root", "pin")
+	if given == nil {
+		return 2
+	}
+	bad := !ok
+	if fs.NArg() > 0 {
+		refuse(stderr, " boot", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+		bad = true
+	}
+	if given["pin"] && strings.TrimSpace(*pin) == "" {
+		fmt.Fprintln(stderr, "nova-memory boot: --pin names the file listing the memories to load; name it")
+		bad = true
+	}
+	if bad {
+		return 2
+	}
+	n, bytes, ok := loadPin(*root, *pin, stderr)
+	if !ok {
+		return 2
+	}
+	fmt.Fprintf(stdout, "BOOT OK files=%d bytes=%d\n", n, bytes)
+	return 0
+}
+
+// loadPin reads the pin file and loads exactly the files it names, relative to
+// root and never by walking the directory. It returns the count and the byte
+// total of the loaded memories. Every misshapen entry is a refusal, because a
+// boot that silently skipped a named memory is a self that loaded less than it
+// thinks it did.
+func loadPin(root, pin string, stderr io.Writer) (int, int64, bool) {
+	entries, err := readPin(pin)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-memory boot: %s\n", oneline.Err(err))
+		return 0, 0, false
+	}
+	if len(entries) == 0 {
+		fmt.Fprintf(stderr, "nova-memory boot: --pin %s names no memories; a boot of nothing is not a boot\n", oneline.Escape(pin))
+		return 0, 0, false
+	}
+	var total int64
+	seen := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if strings.HasPrefix(e, "/") || filepath.IsAbs(e) {
+			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q is absolute; every entry is relative to --root\n", oneline.Escape(e))
+			return 0, 0, false
+		}
+		if e != path.Clean(e) {
+			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q is not canonical (no \"./\", \"//\", \"..\" or trailing \"/\")\n", oneline.Escape(e))
+			return 0, 0, false
+		}
+		if e == ".." || strings.HasPrefix(e, "../") {
+			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q escapes --root\n", oneline.Escape(e))
+			return 0, 0, false
+		}
+		if seen[e] {
+			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q appears twice; double-counted bytes are a lie\n", oneline.Escape(e))
+			return 0, 0, false
+		}
+		seen[e] = true
+		full := filepath.Join(root, filepath.FromSlash(e))
+		fi, err := os.Lstat(full)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q does not exist under --root\n", oneline.Escape(e))
+			return 0, 0, false
+		}
+		if !fi.Mode().IsRegular() {
+			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q is not a regular file\n", oneline.Escape(e))
+			return 0, 0, false
+		}
+		if fi.Size() == 0 {
+			fmt.Fprintf(stderr, "nova-memory boot: pin entry %q is empty; a memory of zero bytes cannot be loaded\n", oneline.Escape(e))
+			return 0, 0, false
+		}
+		total += fi.Size()
+	}
+	return len(entries), total, true
+}
+
+// readPin reads one memory path per line; blank lines and lines starting with
+// # are ignored. Order is preserved — it is the boot order.
+func readPin(name string) ([]string, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var out []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------

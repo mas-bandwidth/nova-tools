@@ -119,14 +119,14 @@ func dashesCell(in, out, usd int) string {
 // readCardFile reads one card's usage.tsv, mapping its columns by the header so the reader
 // never depends on a fixed index. It returns the started stamp, the model, and the three
 // numbers the ledger keeps, and reports whether the file held a row at all.
-func readCardFile(path string) (started, model string, in, out int64, usd float64, inKnown, outKnown, usdKnown, ok bool) {
+func readCardFile(path string) (started, model, tool string, in, out int64, usd float64, inKnown, outKnown, usdKnown, ok bool) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", 0, 0, 0, false, false, false, false
+		return "", "", "", 0, 0, 0, false, false, false, false
 	}
 	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
 	if len(lines) < 2 {
-		return "", "", 0, 0, 0, false, false, false, false
+		return "", "", "", 0, 0, 0, false, false, false, false
 	}
 	head := strings.Split(lines[0], "\t")
 	idx := map[string]int{}
@@ -154,9 +154,9 @@ func readCardFile(path string) (started, model string, in, out int64, usd float6
 		in, inKnown = parseCardCount(get(row, "tokens_in"))
 		out, outKnown = parseCardCount(get(row, "tokens_out"))
 		usd, usdKnown = parseCardUsd(get(row, "usd"))
-		return s, m, in, out, usd, inKnown, outKnown, usdKnown, true
+		return s, m, get(row, "tool"), in, out, usd, inKnown, outKnown, usdKnown, true
 	}
-	return "", "", 0, 0, 0, false, false, false, false
+	return "", "", "", 0, 0, 0, false, false, false, false
 }
 
 // sumSwarmRoot is the --swarm-root mode of `sum`: it walks the card usage files, folds the
@@ -184,9 +184,10 @@ func sumSwarmRoot(root, day, out string, stdout, stderr io.Writer, r *refusals) 
 	sort.Strings(paths)
 
 	models := map[string]*cardSum{}
+	tools := map[string]int{}
 	totalCards := 0
 	for _, p := range paths {
-		started, model, in, out, usd, inKnown, outKnown, usdKnown, ok := readCardFile(p)
+		started, model, tool, in, out, usd, inKnown, outKnown, usdKnown, ok := readCardFile(p)
 		if !ok {
 			continue
 		}
@@ -199,6 +200,9 @@ func sumSwarmRoot(root, day, out string, stdout, stderr io.Writer, r *refusals) 
 			models[model] = m
 		}
 		m.add(in, out, usd, inKnown, outKnown, usdKnown)
+		if tool != "" && tool != tokens.Dash {
+			tools[tool]++
+		}
 		totalCards++
 	}
 
@@ -223,6 +227,18 @@ func sumSwarmRoot(root, day, out string, stdout, stderr io.Writer, r *refusals) 
 
 	fmt.Fprintf(stdout, "SUM OK day=%s models=%d cards=%d in=%d out=%d usd=%.4f\n",
 		oneline.Field(day), len(names), totalCards, totalIn, totalOut, totalUsd)
+	if len(tools) > 0 {
+		toolNames := make([]string, 0, len(tools))
+		for name := range tools {
+			toolNames = append(toolNames, name)
+		}
+		sort.Strings(toolNames)
+		parts := make([]string, 0, len(toolNames))
+		for _, name := range toolNames {
+			parts = append(parts, oneline.Field(name)+":"+strconv.Itoa(tools[name]))
+		}
+		fmt.Fprintf(stdout, "TOOLS %s\n", oneline.Field(strings.Join(parts, ",")))
+	}
 	return 0
 }
 

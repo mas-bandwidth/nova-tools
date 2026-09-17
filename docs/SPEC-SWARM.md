@@ -538,7 +538,7 @@ nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files 
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles>
+nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
@@ -666,6 +666,45 @@ test that asserts "not a repo" goes red on every card for a cause the card did
 not make. `native` exports `TMPDIR=<slot>/tmp/<label>` into the harness
 environment — the slot directory is never a repository — and prints
 `tmp=<path>` on `NATIVE OK`; a card sets no `TMPDIR` of its own.
+
+**The harness's own fence is configured by the run, never left to its
+defaults** (issue #644). OpenCode asks before a tool touches a path it calls
+external, and a `run` with no terminal answers every such question by rejecting
+it — `permission requested: external_directory (<dir>/*); auto-rejecting` — after
+which the model stops and publishes nothing. So `native` writes the harness
+config for every run, whether or not `--config` named a provider config (the
+provider's bytes and its own rules are carried beside the fence block, never
+replaced), and its `permission.external_directory` allows:
+
+- **the job directory and everything under it**, in both the `/*` and `/**`
+  spellings — the harness's own matcher turns `*` into `.*`, which crosses `/`,
+  so `<job>/*` already admits `<job>/scratch/*`; `/**` is written beside it
+  because that is the spelling a person reads as "everything under here"; and
+- **on a `--no-wall` run only**, every absolute path the card named on a
+  `READ:` line, and that path's parent with a `/*` on it, which is what the
+  fence asks about for a file. A walled run takes none of them: the WALL owns
+  what the child may read (SPEC-SANDBOX rule 1), and the fence is not a wall.
+
+**Nothing ABOVE the job is ever named** — not the `jobs` parent. The harness
+resolves a card's `../scratch` after the card's own `cd repo`, so a parent rule
+buys nothing, and on a bench with no wall it would hand one card every sibling
+job in the slot.
+
+**What is proven and what is not.** The reporting half is proven: a harness that
+prints its rejection line and exits 0 is reported and scored `fence`. The
+config half is **defence, not a demonstrated cure**: a real run of this harness
+build (OpenCode 1.18.20) against a card that writes `../scratch` from `repo/`,
+and against one that reads a path outside the job, was rejected NEITHER with the
+block NOR without it, so this build was not shown to honour
+`permission.external_directory` at all. The block pins what was otherwise left
+entirely to the harness's defaults, and the rejections on the record
+(`git worktree add ../wt-<n>` on the Studio, `/sys/kernel/security/lsm` on
+Space) were not reproduced here.
+
+Everything else is still `ask`, which in a `run` is a rejection — and a
+rejection is now REPORTED: `native` reads its own capture and carries
+`fence=rejected path=<p>` on its `NATIVE OK` line, which the batch reads and
+scores `ABSTAIN reason=fence`, never `no-result`.
 
 **A local model is one slot, and it stays off the critical path.** The fault
 behind the silent-harness rule below (issue #591, landed in #604) was a local
@@ -844,10 +883,12 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 |-------|----------|
 | `line1-mismatch` | published a result whose line 1 is not its contract line |
 | `no-result` | ended with rc 0 and published no `RESULT.md`, at the job root or below it |
+| `fence` | was stopped by the HARNESS'S OWN permission fence: it auto-rejected a path and the model stopped there, so the card never got to publish (issue #644). The path follows as `path=<p>` |
 | `harness-silent` | its harness wrote nothing at all — no word in the run's capture and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
 | `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it |
 | `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
-| `deadline` | was killed at the batch's deadline |
+| `deadline` | was killed at the batch's deadline and published no `RESULT.md` |
+| `result-after-deadline` | published a matching `RESULT.md` that only landed because the deadline fired, so it is late, not done |
 | `card-abstain` | abstained in its own words: line 1 or line 2 begins `ABSTAIN` |
 | `admission` | was refused at admission; the reason follows the token |
 | `input-limit` | was refused for size, by the provider's own structured signal (issue #163) |
@@ -856,19 +897,28 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 **The RESULT is the contract, and `harness-silent` is for a card that has none.**
 A `RESULT.md` whose line 1 matches the card is **`done` whatever the harness exit
 code was** (issue #577); the exit code is recorded on the card's own `NATIVE OK`
-line and decides nothing here. So `harness=silent` and `reason=harness-silent`
+line and decides nothing here. The one timing that overrides it is the deadline: a
+matching result that only landed because the deadline fired is
+`result-after-deadline`, not done. So `harness=silent` and `reason=harness-silent`
 apply **only when there is no matching result anywhere `gather` looks** — the job
 root, `repo/`, and one directory below it (issue #594): `native` asks that same
 question with that same lookup before it prints its line, and `gather` reads the
 token off the line rather than guessing from files a batch creates itself.
 
-**The order, once no matching result is found:** `card-abstain`, `admission`,
-`harness-silent`, then the pair `no-result` (ended clean) and `rc=<n>` (ended
-non-zero), which are one slot split by the exit code. **`rc=<n>` is never first**:
+**The order:** the result is read first, and a matching result decides — `done`,
+or `result-after-deadline` at the deadline — before `card-abstain` (line 1 or
+line 2 beginning `ABSTAIN`) and `line1-mismatch`. With no matching result: the
+kill classes the machinery watched itself — `idle=<s>`, `input-limit` — and
+`admission`, then `fence`, then `harness-silent`, then `deadline`, then the pair `no-result`
+(ended clean) and `rc=<n>` (ended non-zero), which are one slot split by the exit
+code. **`fence` comes before `harness-silent`, `deadline`, `no-result` and `rc=<n>`**:
+a card the machinery's own fence stopped is neither a model that published nothing
+nor a harness that never ran, and reading it as either sends a coordinator to the
+model for a wall this tool built (issue #644). **`rc=<n>` is never first**:
 an exit code from a harness that never ran the card is nothing to go and read.
-`idle=<s>`, `deadline` and `input-limit` are decided before the result is read at
-all — they are what the machinery watched happen, true whether a result exists or
-not.
+`idle=<s>` and `input-limit` are decided before the result is read at all — they
+are what the machinery watched happen, true whether a result exists or not;
+`deadline` is not, because a matching result at the deadline is late, not lost.
 
 The card's line carries the token and its own log count —
 `<label> slot=<n>: ABSTAIN reason=<token> log=<n>` — and at most one bounded
@@ -901,7 +951,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|harness-silent|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1047,8 +1097,8 @@ counted in `idle=<n>`. If `ssh` itself is unreachable then, the slot is
 network drop after `RESULT.md` was written is recovered by a second pull at
 gather: one retry, 30 s, none after. The reason in `ABSTAIN reason=<token>` is
 one token, the set issue #461 gives every card: `line1-mismatch | no-result |
-harness-silent | rc=<n> | idle=<s> | deadline | card-abstain | admission <why> |
-input-limit | bench-unreachable`, and the card's line carries its own `log=<n>` after it. The idle watch on a
+fence | harness-silent | rc=<n> | idle=<s> | deadline | result-after-deadline | card-abstain |
+admission <why> | input-limit | bench-unreachable`, and the card's line carries its own `log=<n>` after it. The idle watch on a
 remote card asks `ssh <host> stat -c %s <root>/<n>/jobs/<label>/native.log` —
 bytes, the growth a local log is measured by, never an mtime (rule 16) — no
 more than once per `--idle/3` seconds. A bench unreachable at a poll is not a
@@ -1216,7 +1266,7 @@ BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|harness-silent|rc=<n>|idle=<s>|deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1247,7 +1297,7 @@ RUN REFUSED: <reason>
 RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
 ADMIT REFUSED benchmark window open until <stamp>
-NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> [usage=none reason=<r> path=<p>]
+NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> [fence=rejected path=<p>] [usage=none reason=<r> path=<p>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
@@ -1718,6 +1768,117 @@ file is one command away — `result --id <job>` — for a person; it is not the
 tool's to salvage, because a tool that quoted half a malformed report into a
 page would be choosing which half, and a report with no head at all is
 `plan-only` (rule 8), never `malformed`.
+
+## The `setup` agreement form (issue #184)
+
+Printed by `nova-swarm template --name setup` and refused by `add --template`,
+as `result` is: it is a form a person and a friend fill together, not a task's
+conditions. It is the near-term endpoint of the per-friend safety-setup
+coordination issue #184 asks for — review and agreement only, with
+implementation, credential migration and deployment as separate staged work —
+and it publishes the generic configuration examples and the agreement/evidence
+template rather than any private security detail: every value in it is a
+placeholder, no secret, key, token or private path is ever printed, and an
+agreed form supplies no account access. A friend may agree, propose an
+alternative, decline, or stay silent, and missing feedback is pending, never
+assent. The guarantee table is the point of the form: each row says **who
+enforces it** — the OS wall, a cooperating harness, or the launcher outside
+the wall — so a guarantee the kernel keeps is never mistaken for one that
+depends on a harness honouring its fence, and a harness row stays `unproven`
+until the friend's build is shown to honour it.
+
+```
+setup — one friend's safety setup, proposed, reviewed, agreed (#184)
+
+One form per friend, agreed before it is enforced, because a blanket restrictive
+setup prevents useful work and ignores each friend's chosen harness, while a
+blanket permissive one hands every friend every other friend's secrets. Print
+it, fill it with the friend who would run under it, and paste the FILLED form
+where the review happened; the private configuration it describes is never
+pasted anywhere. Names, models, harnesses and bench layouts are not constants
+of this form: every value below is a placeholder, and a friend's own choices
+fill their own copy. A friend may propose an alternative, decline, or stay
+silent, and missing feedback is pending, never assent. An agreed form is an
+agreement and nothing more: it supplies no account access, and implementation,
+credential migration and deployment are separate staged work with their own
+authorization.
+
+## The proposal (written with the friend)
+
+friend: <name>
+bench: <the machine or hosted runner this friend works on>
+harness: <the harness this friend chose, and its version>
+model: <the model this friend chose; never this form's business>
+proposal by: <who wrote this form, and where the review is recorded>
+reviewed with: <the friend's own read of this form, or pending>
+
+read scope: <the shared inputs this friend needs to read, named once>
+write scope: <this friend's own directories, and nothing above them>
+execution boundaries: <one task, one process tree, one deadline, or the
+  friend's own boundary and who holds it>
+secret use: <the ONE seat file that holds this friend's keys, and the ONE
+  variable name the harness reads; a value is never written here>
+destructive controls: <what a delete, a force-push or a repository
+  destruction must be unable to reach, and which ruleset forbids it>
+recoverability: <what is pushed where on every exit, so a delete is a
+  re-clone>
+unresolved concerns: <what this friend has not agreed to, in their own words>
+
+## The agreement (the friend's own half)
+
+status: agree | alternative | decline | pending
+alternative proposed: <the friend's own setup, in their own words, or ->
+declined because: <the reason, kept honestly, or ->
+pending since: <the date feedback was asked for>
+
+## The guarantee table (filled together, one row per guarantee)
+
+| guarantee | who enforces it | supported here | evidence |
+| --- | --- | --- | --- |
+| a read outside the named lists is denied | the OS wall | yes / no | nova-sandbox probe |
+| a write outside the write set is denied | the OS wall | yes / no | probe step write_outside |
+| no credential file is readable inside the wall | the OS wall and the caller's placement | yes / no | probe --secret <path> |
+| no agent socket or agent address reaches the child | the OS wall and the environment scrub | yes / no | SPEC-SANDBOX rules 7 and 9 |
+| a push from inside the job fails | the OS wall | yes / no | the four mechanisms of SPEC-SANDBOX test 27 |
+| the harness asks before an outside path | a cooperating harness | yes / no / unproven | the fence example below |
+| the friend's work survives a delete | the launcher, outside the wall | yes / no | the push on exit, a re-clone recovers |
+| the friend's secrets stay the friend's | the seat file's own recipients | yes / no | nova-secrets check |
+
+A row the OS wall enforces is a fact the kernel keeps on the machine this form
+names. A row a cooperating harness enforces is a row the wall must not be
+asked to prove: mark it unproven until the friend's harness build is shown to
+honour it, and call a row supported only on the machine and the build this
+form names.
+
+## The generic examples (placeholder values only, never a private one)
+
+the wall, one job, its lists written down in one place and never guessed:
+  HOME=<data home> nova-sandbox --read <the shared reference checkout>
+    --read <the worker home> --write <the job directory>
+    --write <the data home> -- <the friend's harness> <args...>
+
+the fence, the harness's own permission block, allow or deny, never ask:
+  {"permission": {"external_directory": "deny", "webfetch": "<the friend's choice>"}}
+
+the seat, one file per friend, sealed to that friend's bench key alone:
+  nova-secrets exec --store <the store's working copy> --as <this friend>
+    --key <the key path> --sops <the sops binary>
+    --only <ONE variable name> --require <ONE variable name> -- <launcher>
+
+the launcher, outside the wall, the friend's own lists:
+  sets HOME inside a --write, passes the credential by environment read as
+  data before the wrap, and pushes the friend's directories to their remote
+  on every exit, clean or not.
+
+## What is never in this form
+
+No secret, no key, no token and no private path is ever written into this
+form, a task card, a bus note, an issue or a token ledger: a name or a path
+is not a secret, but a value is, and this form carries values for nobody.
+Before any staged implementation is built on an agreed form, validate it on
+synthetic secrets and disposable repositories and record both runs:
+a denied destructive operation and successful permitted work.
+```
 
 ## `triage` — one page
 
@@ -2420,10 +2581,12 @@ verb, and tests that pin all three by executing them.
    wait, kill, report `survived`. Tests: a child that ignores terminate is
    killed; the report says so; the watcher never matches a process by its command
    line.
-6. **`internal/swarm/templates.go`** — the three task templates and the
-   `RESULT.md` template, as embedded text, each with its conditions and the
-   number that produced it. Tests: `template --name` prints each; `add
-   --template` wraps a task and the result contains every condition.
+6. **`internal/swarm/templates.go`** — the three task templates, the
+   `RESULT.md` template and the `setup` agreement form (#184), as embedded
+   text, each with its conditions and the number that produced it. Tests:
+   `template --name` prints each; `add --template` wraps a task and the
+   result contains every condition; `add --template setup` is refused and
+   the setup form carries no private name, path or value.
 7. **`internal/swarm/result.go`** — the `RESULT.md` parser: the three states,
    the Per item and Gates tables, `Left owed`, `One line`, the finding lines
    with their `dup:` marks and their verbatim quotes, the owed-list match, the

@@ -86,6 +86,7 @@ func assertTokenShape(t *testing.T, token string) {
 // TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither: one commit adds two notes and a page
 // cut inside it loses neither of them, and never advances past the commit it cut.
 func TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither(t *testing.T) {
+	t.Parallel()
 	checkout := settledBus(t)
 	commitFiles(t, checkout, "two notes in one commit",
 		busFile{"from-bo/a-note.md", noteFrom("nA", "a", fill(140))},
@@ -211,6 +212,7 @@ func mustDecode(t *testing.T, token string) []byte {
 // TestContinuationSurvivesOrdinaryCursorAdvance (CE1): a cursor advanced by page 1 does not
 // invalidate page 2's token; a cursor changed by somebody else does, and rewinds nothing.
 func TestContinuationSurvivesOrdinaryCursorAdvance(t *testing.T) {
+	t.Parallel()
 	checkout := settledBus(t)
 	commitFiles(t, checkout, "c1", busFile{"from-bo/a.md", noteFrom("nA", "a", fill(140))})
 	c1 := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
@@ -257,6 +259,10 @@ func TestContinuationSurvivesOrdinaryCursorAdvance(t *testing.T) {
 // appears once in it, a tip that grows waits for a fresh chain, and a token that names no
 // item in the range refuses and writes nothing.
 func TestRetryAfterAPartialResumesAtNext(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: retries a send over repeated attempts; runs on the self-hosted legs and nightly")
+	}
+	t.Parallel()
 	for _, advance := range []bool{false, true} {
 		name := "ReadOnly"
 		if advance {
@@ -360,6 +366,7 @@ func bodyNext2(t *testing.T, stdout string) string {
 // TestBodiesWithoutAdvanceMovesNoCursor: complete, partial, empty and gapped returns write
 // nothing at all, and the partial one still carries a usable continuation.
 func TestBodiesWithoutAdvanceMovesNoCursor(t *testing.T) {
+	t.Parallel()
 	checkout := settledBus(t)
 	commitFiles(t, checkout, "n1", busFile{"from-bo/n1.md", noteFrom("nN1", "n1", fill(100))})
 	commitFiles(t, checkout, "n2", busFile{"from-bo/n2.md", noteFrom("nN2", "n2", fill(100))})
@@ -434,6 +441,7 @@ func TestBodiesWithoutAdvanceMovesNoCursor(t *testing.T) {
 // TestASingleOversizeBodyIsANamedGapAndNeverALoop: the only item's body is over the hard
 // ceiling, so no --max-bytes carries it; it is named once and the return is terminal.
 func TestASingleOversizeBodyIsANamedGapAndNeverALoop(t *testing.T) {
+	t.Parallel()
 	checkout := settledBus(t)
 	commitFiles(t, checkout, "one very large note",
 		busFile{"from-x/2026-09-13-big.md", noteFrom("nBig", "big", fill(2097152))})
@@ -476,6 +484,7 @@ func TestASingleOversizeBodyIsANamedGapAndNeverALoop(t *testing.T) {
 // TestEarlierGapSurvivesLaterPages (CE2): a gap on page 1 is still named on the terminal
 // page, and the cursor never crosses the commit it is in.
 func TestEarlierGapSurvivesLaterPages(t *testing.T) {
+	t.Parallel()
 	checkout := settledBus(t)
 	commitFiles(t, checkout, "c1", busFile{"from-bo/g-a.md", noteFrom("nA", "a", fill(2048))})
 	c1 := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
@@ -592,6 +601,7 @@ func makeNonAncestorToken(t *testing.T, checkout string) string {
 // TestSnapshotTokenValidationAndBound: every way a token can be wrong refuses at exit 2 in
 // one shape, and none of them confers any authority.
 func TestSnapshotTokenValidationAndBound(t *testing.T) {
+	t.Parallel()
 	checkout := settledBus(t)
 	commitFiles(t, checkout, "v1", busFile{"from-bo/v1.md", noteFrom("nV1", "v1", fill(100))})
 	commitFiles(t, checkout, "v2", busFile{"from-bo/v2.md", noteFrom("nV2", "v2", fill(100))})
@@ -667,6 +677,7 @@ func TestSnapshotTokenValidationAndBound(t *testing.T) {
 // TestBrokenOutputCannotAcknowledgeUnprintedBodies: a cursor never crosses data that did
 // not reach stdout, whether the writer fails before a frame or inside one.
 func TestBrokenOutputCannotAcknowledgeUnprintedBodies(t *testing.T) {
+	t.Parallel()
 	for _, after := range []int{0, 1, 200} {
 		t.Run(fmt.Sprintf("BreaksAfter%dBytes", after), func(t *testing.T) {
 			checkout := settledBus(t)

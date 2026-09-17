@@ -720,6 +720,9 @@ func TestServeRefusesADeadlineItWouldPollNothingInside(t *testing.T) {
 // printed WAKE POLL for it: the fetch covered the first 45s of each interval
 // and the rest of the minute was blind.
 func TestServesPollBudgetCoversTheIntervalItFetchesFor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: serves a poll over a real interval; runs on the self-hosted legs and nightly")
+	}
 	busDir, _ := fakes(t)
 	write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
 	// A nova-bus that takes longer than --git-timeout and less than the

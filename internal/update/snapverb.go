@@ -7,10 +7,23 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 )
+
+// exeSuffix is the extension an executable FILE carries on this platform: ".exe" on
+// windows, nothing anywhere else. The same tool is `nova-bus` in --bin on unix and
+// `nova-bus.exe` there, and THE MANIFEST NAMES THE TOOL: `nova-version report` matches
+// its lines by the tool's name, so the extension the filesystem needs is not part of it
+// and a windows snapshot must not write one.
+func exeSuffix() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}
 
 // snapshotTimeout bounds one tool's `version` read. The snapshot verb asks each
 // nova-* executable in --bin for its version, so a hung tool cannot stall the
@@ -81,7 +94,7 @@ func snapshotVerb(name string, args []string, out, errs io.Writer) int {
 			unreadable++
 			continue
 		}
-		lines = append(lines, strings.Join([]string{n, "tool", v, "-", "-", owner}, "\t"))
+		lines = append(lines, strings.Join([]string{strings.TrimSuffix(n, exeSuffix()), "tool", v, "-", "-", owner}, "\t"))
 		tools++
 	}
 	content := Header + "\n" + strings.Join(lines, "\n")

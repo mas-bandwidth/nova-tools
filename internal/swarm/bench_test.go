@@ -22,6 +22,7 @@ func writeBenchTSV(t *testing.T, body string) string {
 // The seven columns parse, a "-" cores row is no pinning, and every table refusal
 // above names the row that failed.
 func TestBenchTableParsed(t *testing.T) {
+	windowsIsNotABench(t)
 	p := writeBenchTSV(t, "name\thost\troot\tcores\tharness\tauth\twall\n"+
 		"b2\tb2\t/home/me/swarm\t1-15\t/home/me/.local/bin/opencode\t/home/me/.config/nova/auth\tnone\n"+
 		"mac\tmac\t/Users/me/swarm\t-\t/Users/me/bin/opencode\t/Users/me/.config/nova/auth\tsandbox\n")
@@ -206,6 +207,7 @@ func readLines(t *testing.T, path string) []string {
 // as card a's line made this test red 5 runs in 8 on this bench; the assertion is over the
 // SET of run lines, each matched by its own label, which is what pinning actually claims.
 func TestBatchPinsSlotToCore(t *testing.T) {
+	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	benchRoot := filepath.Join(dir, "benchroot")
@@ -308,6 +310,7 @@ func TestBatchRefusesMoreSlotsThanCores(t *testing.T) {
 
 // TestBatchCopiesCardOnly: exactly one file crosses before the run, and it is the card.
 func TestBatchCopiesCardOnly(t *testing.T) {
+	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	benchRoot := filepath.Join(dir, "benchroot")

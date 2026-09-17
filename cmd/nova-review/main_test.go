@@ -52,6 +52,93 @@ func packetLab(t *testing.T) (lane, head string) {
 	return lane, head
 }
 
+func packetLabTwoFiles(t *testing.T) (lane, head string) {
+	t.Helper()
+	lane = t.TempDir()
+	repo := filepath.Join(lane, merge.RepoDir)
+	git := func(args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	if e := os.MkdirAll(repo, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	git("init", "-q", "-b", "main")
+	git("config", "user.email", "test@example.invalid")
+	git("config", "user.name", "test")
+	git("remote", "add", "origin", repo)
+	if e := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("alpha\nbeta\ngamma\ndelta\nepsilon\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("one\ntwo\nthree\nfour\nfive\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	git("add", "a.txt", "b.txt")
+	git("commit", "-qm", "base")
+	base := git("rev-parse", "HEAD")
+	git("checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("alpha\nbeta\nGAMMA\ndelta\nepsilon\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(repo, "b.txt"), []byte("one\ntwo\nTHREE\nfour\nfive\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	git("add", "a.txt", "b.txt")
+	git("commit", "-qm", "change two files")
+	head = git("rev-parse", "HEAD")
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: base, LaneBranch: "lane", Branches: []*merge.Entry{{Branch: "feature", OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+	return lane, head
+}
+
+func TestPacketDiffOnlyStripsUnchangedContext(t *testing.T) {
+	lane, _ := packetLabTwoFiles(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", "packet.md", "--diff-only"}, &out, &errb); code != 0 {
+		t.Fatalf("packet exit=%d stderr=%s", code, errb.String())
+	}
+	body, e := os.ReadFile("packet.md")
+	if e != nil {
+		t.Fatal(e)
+	}
+	got := string(body)
+	start := strings.Index(got, "```diff\n")
+	if start == -1 {
+		t.Fatalf("no diff fence in packet:\n%s", got)
+	}
+	end := strings.Index(got[start:], "\n```")
+	diff := got[start:]
+	if end != -1 {
+		diff = got[start : start+end+1]
+	}
+	for _, unchanged := range []string{"alpha", "beta", "delta", "epsilon", "one", "two", "four", "five"} {
+		if strings.Contains(diff, unchanged) {
+			t.Errorf("--diff-only packet diff contains unchanged line %q:\n%s", unchanged, diff)
+		}
+	}
+	for _, changed := range []string{"-gamma", "+GAMMA", "-three", "+THREE"} {
+		if !strings.Contains(diff, changed) {
+			t.Errorf("--diff-only packet diff dropped changed line %q:\n%s", changed, diff)
+		}
+	}
+}
+
+func TestPacketOutUsageStatesRelativeToCwd(t *testing.T) {
+	if !strings.Contains(usage, "relative to the cwd") {
+		t.Fatalf("--out usage does not state it is relative to the cwd:\n%s", usage)
+	}
+}
+
 func TestPacketWritesTheSelectedDiffAndHonestBound(t *testing.T) {
 	lane, head := packetLab(t)
 	old, _ := os.Getwd()
@@ -561,6 +648,34 @@ func TestPacketAcceptsAbsoluteOutUnderCwd(t *testing.T) {
 	}
 }
 
+func TestPacketAcceptsAbsoluteOutUnderSymlinkedCwd(t *testing.T) {
+	lane, _ := packetLab(t)
+	// Two spellings of one directory, built rather than inherited: the cwd is
+	// entered through the alias, so os.Getwd() reports the resolved spelling
+	// while --out keeps the alias spelling — the darwin /var -> /private/var
+	// shape (#562), without depending on the machine's temp tree being a
+	// symlink the way t.TempDir() is on darwin.
+	physical := t.TempDir()
+	holder := t.TempDir()
+	alias := filepath.Join(holder, "alias")
+	if e := os.Symlink(physical, alias); e != nil {
+		t.Skipf("could not build the aliased cwd: %v", e)
+	}
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	if e := os.Chdir(alias); e != nil {
+		t.Fatal(e)
+	}
+	absOut := filepath.Join(alias, "packet.md")
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", absOut}, &out, &errb); code != 0 {
+		t.Fatalf("absolute --out under a symlinked cwd refused: code=%d stderr=%s", code, errb.String())
+	}
+	if _, err := os.Stat(absOut); err != nil {
+		t.Fatalf("packet not written at %s: %v", absOut, err)
+	}
+}
+
 func TestPacketRefetchesMovedHead(t *testing.T) {
 	dir := t.TempDir()
 	remote := filepath.Join(dir, "remote.git")
@@ -921,6 +1036,117 @@ func TestPacketRefusalNamesAddRemedy(t *testing.T) {
 	os.Chdir(lane)
 	var out, errb bytes.Buffer
 	if code := run([]string{"packet", "--lane", lane, "--branch", "nosuch", "--who", "emma", "--out", "p.md"}, &out, &errb); code != 2 {
+		t.Fatalf("unknown entry code=%d, want 2", code)
+	}
+	want := "the lane does not hold this entry; add it with nova-merge add --lane <dir> --pr <n> --needs-read (or add-branch --branch <name>)"
+	if !strings.Contains(errb.String(), want) {
+		t.Fatalf("refusal does not name the add remedy; got %q want %q", errb.String(), want)
+	}
+}
+
+func TestPacketBaseIsSHAWhenLaneBaseIsBranchName(t *testing.T) {
+	dir := t.TempDir()
+	rehearsal := filepath.Join(dir, "rehearsal.git")
+	ghremote := filepath.Join(dir, "ghremote.git")
+	seed := filepath.Join(dir, "seed")
+	if e := os.MkdirAll(seed, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	gitAt := func(d string, args ...string) string {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		b, e := c.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v %s", args, e, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	gitAt(dir, "init", "-q", "--bare", rehearsal)
+	gitAt(dir, "init", "-q", "--bare", ghremote)
+	gitAt(seed, "init", "-q", "-b", "main")
+	gitAt(seed, "config", "user.email", "t@example.invalid")
+	gitAt(seed, "config", "user.name", "t")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "base")
+	baseSHA := gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-q", ghremote, "main:refs/heads/main")
+	gitAt(ghremote, "symbolic-ref", "HEAD", "refs/heads/main")
+	gitAt(rehearsal, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	gitAt(seed, "checkout", "-qb", "feature")
+	if e := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("base\nchanged\n"), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	gitAt(seed, "add", "a.txt")
+	gitAt(seed, "commit", "-qm", "change")
+	head := gitAt(seed, "rev-parse", "HEAD")
+	gitAt(seed, "push", "-q", ghremote, "feature:refs/pull/614/head")
+
+	lane := filepath.Join(dir, "lane")
+	if e := os.MkdirAll(lane, 0o755); e != nil {
+		t.Fatal(e)
+	}
+	repo := filepath.Join(lane, merge.RepoDir)
+	gitAt(dir, "clone", "-q", rehearsal, repo)
+	gitAt(repo, "config", "url."+ghremote+".insteadOf", "https://github.com/test/repo.git")
+
+	// The lane state has Base: "main" (branch name), not a SHA — the real-world case from #614.
+	st := &merge.State{Version: merge.Version, Repo: "test/repo", Base: "main", LaneBranch: "lane", PRs: []*merge.Entry{{PR: 614, OID: head, NeedsRead: "yes"}}}
+	if e := st.SaveTo(lane); e != nil {
+		t.Fatal(e)
+	}
+
+	// 1. Build the first packet.
+	var out, errb bytes.Buffer
+	pktPath := filepath.Join(lane, "first.md")
+	if code := run([]string{"packet", "--lane", lane, "--pr", "614", "--who", "Stella", "--out", pktPath}, &out, &errb); code != 0 {
+		t.Fatalf("first packet code=%d stderr=%s", code, errb.String())
+	}
+
+	// 2. The packet header must have a 40-char SHA in the base field, not "main".
+	hdr, err := readPacketFirstLine(pktPath)
+	if err != nil {
+		t.Fatalf("cannot parse first packet header: %v", err)
+	}
+	if !merge.IsSHA(hdr.Base) {
+		t.Fatalf("packet base field is not a 40-char sha: got %q, need SHA (issue #614)", hdr.Base)
+	}
+	if hdr.Base != baseSHA {
+		t.Fatalf("packet base sha %q != resolved base sha %q", hdr.Base, baseSHA)
+	}
+
+	// 3. The reuse of the first packet must succeed — the friend-sequence round-trip.
+	out.Reset()
+	errb.Reset()
+	reusePath := filepath.Join(lane, "reuse.md")
+	if code := run([]string{"packet", "--lane", lane, "--pr", "614", "--who", "Johnny", "--out", reusePath, "--reuse", pktPath}, &out, &errb); code != 0 {
+		t.Fatalf("reuse of first packet code=%d stderr=%s: generated packet must round-trip through --reuse", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "reused=true") {
+		t.Fatalf("reuse receipt lacks reused=true: %s", out.String())
+	}
+	hdrReuse, err := readPacketFirstLine(reusePath)
+	if err != nil {
+		t.Fatalf("cannot parse reused packet header: %v", err)
+	}
+	if hdrReuse.ID != hdr.ID {
+		t.Errorf("reuse changed id: first=%s reuse=%s", hdr.ID, hdrReuse.ID)
+	}
+	if !merge.IsSHA(hdrReuse.Base) {
+		t.Fatalf("reused packet base field is not a 40-char sha: got %q", hdrReuse.Base)
+	}
+}
+
+func TestPacketMissingEntryRefusalNamesRemedy(t *testing.T) {
+	lane, _ := packetLab(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--pr", "415", "--who", "Rowan", "--out", "p.md"}, &out, &errb); code != 2 {
 		t.Fatalf("unknown entry code=%d, want 2", code)
 	}
 	want := "the lane does not hold this entry; add it with nova-merge add --lane <dir> --pr <n> --needs-read (or add-branch --branch <name>)"

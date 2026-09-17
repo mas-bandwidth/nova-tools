@@ -95,6 +95,9 @@ func TestTheRetryBudgetHasAMeasuredDefault(t *testing.T) {
 // own `git pull --rebase` then landed in a half-done rebase with `UU from-<lane>/INDEX`.
 // Twenty sends, ten rounds of two, and every one of them lands.
 func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: spawns twenty racing sends in a loop; runs on the self-hosted legs and nightly")
+	}
 	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
@@ -366,6 +369,7 @@ func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 // It is the same class as the NoteParses and checkoutLockWait tests: process-global state,
 // so it runs alone.
 func TestGitTimeoutIsAFlagAndIsChecked(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", "check", "--bus", checkout, "--full", "--git-timeout", "0").
