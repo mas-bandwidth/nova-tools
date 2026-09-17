@@ -52,6 +52,9 @@
 ;;; priority: the two slots, the nearest-context rank and the ready order
 ;;; (SPEC-WORK.md:3156-3193; replays at :5857 and :5861).
 
+;;; priority: the two slots, the nearest-context rank and the ready order
+;;; (SPEC-WORK.md:3156-3193; replays at :5857 and :5861).
+
 (deftest "priority-inherits-and-clears" "docs/SPEC-WORK.md:5410"
     "expected=order-only;no-lease-attempt-state-counter-moved"
   (let* ((leaf (priority-field))
