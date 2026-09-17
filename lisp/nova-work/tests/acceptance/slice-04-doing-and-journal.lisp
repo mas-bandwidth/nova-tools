@@ -141,14 +141,11 @@
 ;;   closed-index= -- beside --max-bytes and names the remedy that can move the
 ;;   overflowing part. Waits on the clip.
 
-;; NEEDS-KERNEL: new-verbs-have-a-kind-and-a-field-order (docs/SPEC-WORK.md:1052)
-;;   each new verb (friend, model, observe, config, machine, goal, offer, ...)
-;;   has a kind, an ordered field list and a named subject. Waits on the new
-;;   verbs.
+;; new-verbs-have-a-kind-and-a-field-order now runs in
+;; tests/acceptance/slice-05-durable-journal.lisp against src/new-verbs.lisp.
 
-;; NEEDS-KERNEL: new-verbs-retry-to-one-event (docs/SPEC-WORK.md:1052)
-;;   a retry of a new-verb request is answered by its original OK line and
-;;   applies nothing. Waits on the new verbs' journal/dedup path.
+;; new-verbs-retry-to-one-event now runs in
+;; tests/acceptance/slice-05-durable-journal.lisp against src/new-verbs.lisp.
 ;;;; ------------------------------------------------------------------
 ;;;; COW and closed-history replays (SPEC-WORK.md:1200-2400), named and
 ;;;; added for CARD-273 / #362. Green where slice-1 kernel behaviour can

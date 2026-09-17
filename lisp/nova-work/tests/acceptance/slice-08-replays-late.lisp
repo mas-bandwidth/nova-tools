@@ -8,17 +8,9 @@
 ;;;; `savepoint-write-failure-keeps-the-previous` moved to
 ;;;; tests/replays-8649.lisp when their kernel landed (card 8649). The
 ;;;; NEEDS-KERNEL stubs are gone with them.
-
-(deftest "schema-evolution" "docs/SPEC-WORK.md:5601"
-    "expected=old-schemas-migrate-losslessly;unsupported-refuses-preserving-originals;migration-never-rewrites-the-only-copy"
-  ;; NEEDS-KERNEL: schema versions and migration without rewriting the source.
-  (ok t "slice 1 carries one schema only: NEEDS-KERNEL schema migration"))
-
-
-(deftest "shared-prerequisite-owned-once" "docs/SPEC-WORK.md:5719"
-    "expected=a-shared-prerequisite-owned-once-and-referenced-by-every-affected-cell"
-  ;; NEEDS-KERNEL: prerequisite ownership and per-cell references.
-  (ok t "slice 1 carries no prerequisites: NEEDS-KERNEL prerequisite ownership"))
+;;;;
+;;;; `schema-evolution`, `shared-prerequisite-owned-once` and
+;;;; `source-inventory` now run in tests/replays-8650.lisp (nova-tools #362).
 
 (deftest "silence-is-a-ping-not-a-verdict" "docs/SPEC-WORK.md:5225"
     "expected=one-bounded-ping-at-the-threshold;nonresponse-marked-unavailable-unconfirmed-not-exhausted"
@@ -51,10 +43,8 @@
   ;; NEEDS-KERNEL: process fencing, socket and lease expiry.
   (ok t "slice 1 carries no fencing: NEEDS-KERNEL single-writer fencing"))
 
-(deftest "source-inventory" "docs/SPEC-WORK.md:5582"
-    "expected=every-source-record-maps-to-a-preserved-original-or-an-explicit-unresolved-entry"
-  ;; NEEDS-KERNEL: source capture and reconciliation.
-  (ok t "slice 1 carries no import: NEEDS-KERNEL source inventory capture"))
+;; source-inventory now runs in lisp/nova-work/tests/replays-8650.lisp
+;; (nova-tools #362).
 
 (deftest "staged-admission-refuses" "docs/SPEC-WORK.md:5234"
     "expected=copied-note-and--as-with-no-verifier-refused-with-no-canonical-write"

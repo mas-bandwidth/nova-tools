@@ -494,6 +494,14 @@ rather than zero. A view: it never writes, and a closed node is not in it."
     ;; grammar: it advances the revision and changes nothing else.
     (when (eq kind :external)
       (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
+      (return-from apply-event state))
+    ;; The six new verbs draft 26 added write the `friends`, `models` and
+    ;; `undo`/`redo` indexes, which are CONFIG and not work: their events name
+    ;; no containment node, so they advance the revision and move no node, no
+    ;; count, no roadmap and no required set (SPEC-WORK.md:1054-1058, replay
+    ;; new-verbs-have-a-kind-and-a-field-order).
+    (when (member kind '(:undo :redo :friend :model :observe :config))
+      (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
       (return-from apply-event state)))
   (let* ((id (work-event-node event))
          (node (%node-quiet state id)))

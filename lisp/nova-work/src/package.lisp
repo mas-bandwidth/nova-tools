@@ -129,6 +129,13 @@
     #:kernel-journal
     #:kernel-next-rev
     #:submit
+    ;; the six new verbs (SPEC-WORK.md:1014-1058)
+    #:submit-new-verb
+    #:new-verb-p
+    #:new-verb-kind
+    #:new-verb-fields
+    #:new-verb-subject
+    #:new-verb-word
     #:ask-size
      #:open-issue-count
      #:open-leaf-count
