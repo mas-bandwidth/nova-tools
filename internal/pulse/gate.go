@@ -16,9 +16,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -71,6 +73,20 @@ type RunSource interface {
 	FailedJob(repo string, runID int64) (CIJob, error)
 }
 
+// Rerunner is the optional half of a RunSource that can ask the provider to rerun a run's
+// failed jobs. The shipped ghRunSource implements it; a source that cannot rerun leaves the
+// gate's STOP as it is today.
+type Rerunner interface {
+	RerunFailed(repo string, runID int64) error
+}
+
+// Decider is the typed decision the gate asks about a failing job: one call, a verdict
+// choice and a noul. The shipped one is *decide.Client; a test passes a fake, so no test
+// reaches the network.
+type Decider interface {
+	Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error)
+}
+
 // GateInput is the verb's input, held apart from flag parsing.
 type GateInput struct {
 	Repo   string
@@ -79,6 +95,13 @@ type GateInput struct {
 	Source RunSource
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// Decide turns on the gate's typed decision: a failing job is classified behind Floor,
+	// and a flaky verdict reruns the failed jobs once for the head. A decision below the
+	// floor is a suggestion, never an authorization, and today's STOP stands.
+	Decide  bool
+	Floor   float64
+	Decider Decider
 }
 
 // ciWallMax is the CI wall that earns a pit stop (issue #888, Glenn 2026-09-17:
@@ -190,6 +213,10 @@ func Gate(in GateInput) int {
 		fmt.Fprintf(in.Stderr, "GATE REFUSED: no run source; refusing to guess (pass --source <file>, or build one with NewGHRunSource)\n")
 		return 2
 	}
+	if in.Decide && in.Decider == nil {
+		fmt.Fprintf(in.Stderr, "GATE REFUSED: --decide needs a decider; refusing to guess (set --key-env, or drop --decide)\n")
+		return 2
+	}
 
 	stop := filepath.Join(in.Queue, StopFile)
 	runs, err := in.Source.LatestRun(in.Repo, in.Branch)
@@ -221,6 +248,29 @@ func Gate(in GateInput) int {
 				test = m[1]
 			}
 		}
+		// The typed decision, when asked for: a flaky verdict at or above the floor reruns
+		// the failed jobs once for this head; anything else keeps today's STOP.
+		decideField := ""
+		if in.Decide {
+			verdict, conf := in.classify(job)
+			value := "?"
+			if verdict != "" && conf >= in.Floor {
+				value = verdict
+			}
+			decideField = fmt.Sprintf(" decide=%s conf=%.2f", oneline.Field(value), conf)
+			if verdict == "flaky" && conf >= in.Floor {
+				if r, ok := in.Source.(Rerunner); ok && !hasRerun(in.Queue, run.HeadSHA) {
+					if err := r.RerunFailed(in.Repo, run.ID); err == nil {
+						if err := writeRerunMarker(in.Queue, run.HeadSHA, name); err != nil {
+							fmt.Fprintf(in.Stderr, "GATE REFUSED queue=%s: %s (the gate could not write the rerun marker; fix the directory)\n", oneline.Field(in.Queue), oneline.Err(err))
+							return 2
+						}
+						fmt.Fprintf(in.Stdout, "GATE RERUN sha=%s job=%s conf=%.2f\n", sha12(run.HeadSHA), oneline.Field(name), conf)
+						return 0
+					}
+				}
+			}
+		}
 		admit := admissionName(job.Log, test)
 		body := fmt.Sprintf("%s %s run=%d job=%s test=%s\n", StopMark, sha12(run.HeadSHA), run.ID, oneline.Field(name), oneline.Field(test))
 		if admit != "" {
@@ -236,7 +286,7 @@ func Gate(in GateInput) int {
 		}
 		fmt.Fprintf(in.Stdout, "GATE RED repo=%s branch=%s sha=%s run=%d job=%s test=%s admit=%s stop=written%s\n",
 			oneline.Field(in.Repo), oneline.Field(in.Branch), sha12(run.HeadSHA), run.ID,
-			oneline.Field(name), oneline.Field(test), oneline.Field(dash(admit)), wallStop)
+			oneline.Field(name), oneline.Field(test), oneline.Field(dash(admit)), wallStop+decideField)
 		return 1
 
 	case "green":
@@ -334,6 +384,99 @@ func dash(s string) string {
 	return s
 }
 
+// classify asks the decider one typed decision about the failing job: a verdict choice
+// among flaky, real and unknown, and a noul naming whether the failure matches an open
+// known-flaky pattern. An error or a missing answer is no verdict at all.
+func (in GateInput) classify(job CIJob) (string, float64) {
+	answers, _, err := in.Decider.Decide(context.Background(), in.gateState(job), gateQuestions())
+	if err != nil {
+		return "", 0
+	}
+	a, ok := answers["verdict"]
+	if !ok {
+		return "", 0
+	}
+	return a.Choice, a.Confidence
+}
+
+// gateQuestions is the typed decision the gate asks: the verdict the rerun turns on, and
+// the noul that says whether the failure is one of the known flakes.
+func gateQuestions() map[string]decide.Question {
+	return map[string]decide.Question{
+		"verdict": {
+			Instructions: "Classify the failing CI job from its log tail. flaky: a timing, network, runner or rate-limit failure unrelated to the change. real: a test or build failure caused by the code. unknown: cannot tell from the tail.",
+			Choice: map[string]string{
+				"flaky":   "a timing, network, runner or rate-limit failure unrelated to the change",
+				"real":    "a test or build failure caused by the code",
+				"unknown": "cannot tell from the tail",
+			},
+		},
+		"same_class_as_known": {
+			Instructions: "Is this failure the same class as one of the known-flaky patterns in the state? Answer noul (null) when it is not.",
+			Noul:         true,
+		},
+	}
+}
+
+// gateState is what the decision is given and nothing else: the failing job's name, the
+// last 60 lines of its log escaped as triage escapes evidence, and the open known-flaky
+// patterns of <queue>/FLAKY.txt, one regex per line.
+func (in GateInput) gateState(job CIJob) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "CI JOB %s FAILED\n", oneline.Field(job.Name))
+	b.WriteString("LOG TAIL\n")
+	b.WriteString(logTail(job.Log, 60))
+	b.WriteString("KNOWN-FLAKY PATTERNS\n")
+	patterns := readLines(filepath.Join(in.Queue, "FLAKY.txt"))
+	if len(patterns) == 0 {
+		b.WriteString("none\n")
+	}
+	for _, p := range patterns {
+		fmt.Fprintf(&b, "%s\n", oneline.Cap(oneline.Escape(p), evidenceMax))
+	}
+	return b.String()
+}
+
+// logTail is the last n lines of a log, each escaped and capped as triage escapes evidence
+// so the state is a bounded packet and never a transcript.
+func logTail(log string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(log, "\r\n", "\n"), "\n")
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString(oneline.Cap(oneline.Escape(l), evidenceMax))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// rerunMarker is the file that records one rerun for a head. The gate reads it before it
+// reruns and never reruns the same head twice.
+func rerunMarker(queue, sha string) string {
+	return filepath.Join(queue, "RERUN-"+sha12(sha))
+}
+
+func hasRerun(queue, sha string) bool {
+	_, err := os.Stat(rerunMarker(queue, sha))
+	return err == nil
+}
+
+func writeRerunMarker(queue, sha, job string) error {
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		return err
+	}
+	body := fmt.Sprintf("GATE RERUN sha=%s job=%s\n", sha12(sha), oneline.Field(job))
+	return os.WriteFile(rerunMarker(queue, sha), []byte(body), 0o644)
+}
+
 // ghRunSource is the shipped source: `gh run list` for the verdict, `gh run view` for the
 // failing job and its log. Every child is bounded by a timeout (SPEC-MERGE's reason).
 type ghRunSource struct{ timeout time.Duration }
@@ -400,6 +543,13 @@ func (g ghRunSource) FailedJob(repo string, runID int64) (CIJob, error) {
 	}
 	job.Log = capLog(log)
 	return job, nil
+}
+
+// RerunFailed asks gh to rerun one run's failed jobs. It is the gate's one side effect on a
+// flaky verdict, and it is bounded like every other child.
+func (g ghRunSource) RerunFailed(repo string, runID int64) error {
+	_, err := g.sh("gh", "run", "rerun", strconv.FormatInt(runID, 10), "--repo", repo, "--failed")
+	return err
 }
 
 // logCap is how much of a failing log the gate reads: the first FAIL line and the issue
