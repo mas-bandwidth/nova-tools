@@ -59,20 +59,10 @@
   ;; NEEDS-KERNEL: state export snapshot and rotation boundary.
   (ok t "slice 1 carries no export: NEEDS-KERNEL state export snapshot"))
 
-(deftest "state-export-disconnect-and-cancel" "docs/SPEC-WORK.md:5441"
-    "expected=lost-client-restart-and-cancel-keep-one-operation-and-one-output-identity"
-  ;; NEEDS-KERNEL: transport around no-replace publication.
-  (ok t "slice 1 carries no export: NEEDS-KERNEL export publication identity"))
-
 (deftest "state-export-is-one-long-operation" "docs/SPEC-WORK.md:5434"
     "expected=blocked-export-acknowledges-at-once;wait-returns-the-captured-revision"
   ;; NEEDS-KERNEL: long operation acknowledgement and wait.
   (ok t "slice 1 carries no operation wait: NEEDS-KERNEL long operation"))
-
-(deftest "state-export-pin-survives-clip" "docs/SPEC-WORK.md:5438"
-    "expected=capture-R-then-clip-and-retention-at-R+1-then-exactly-R-or-a-named-gap"
-  ;; NEEDS-KERNEL: export pin and retention pass.
-  (ok t "slice 1 carries no export pin: NEEDS-KERNEL pinned export across clip"))
 
 ;;;; ------------------------------------------------------------------
 ;;;; Replays promised by docs/SPEC-WORK.md lines 3600-end, part 8 of 8.
@@ -86,14 +76,6 @@
      ;; NEEDS-KERNEL: ,need
      (ok (null (find-symbol ,what :nova-work))
          ,(format nil "~A entry point is not yet shipped" what))))
-
-(needs-kernel "state-export-refuses-a-gap" "docs/SPEC-WORK.md:5428"
-  "state export: a missing mandatory member, a changed digest, a dangling internal reference, a path escape, a symlink, an output overrun and a corrupt S-expression each refused with no valid load"
-  "EXPORT-STATE")
-
-(needs-kernel "state-load-is-isolated" "docs/SPEC-WORK.md:5445"
-  "an instrumented load with no ownership change, no dispatch, no replay, no merge, no resolver run, no network and no repository write"
-  "LOAD-STATE")
 
 (needs-kernel "status-answers-while-io-runs" "docs/SPEC-WORK.md:5186"
   "status and cancel answered within their bound while a busy capture, export and clip are in flight"

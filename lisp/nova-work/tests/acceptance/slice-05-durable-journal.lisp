@@ -371,23 +371,8 @@
 
 ;;; 50. state-load-is-isolated   docs/SPEC-WORK.md:5445
 ;;; ------------------------------------------------------------------
-
-(deftest "state-load-is-isolated" "docs/SPEC-WORK.md:5445"
-    "expected=loaded-snapshot-re-exports-equal;load-writes-nothing-to-source"
-  (let ((k (fresh)))
-    (ok (submit k (close-request :request "req-1")) "close refused")
-    (let* ((source (kernel-state k))
-           (exported (state-canonical-form source))
-           (rev-before (state-revision source))
-           (history-before (state-history source))
-           (rebuilt (reconstruct-state (canonical-string exported))))
-      ;; A load writes nothing back into the live source: no ownership change,
-      ;; no dispatch, no merge. Source revision and history are untouched.
-      (check-equal rev-before (state-revision source) "the load changed the source revision")
-      (check-equal history-before (state-history source) "the load changed the source history")
-      ;; And a re-export of the loaded snapshot compares equal in every field.
-      (check-equal exported (state-canonical-form rebuilt)
-                   "the loaded snapshot re-exports differently"))))
+;;; Moved to slice-09-state-export-replays.lisp, which owns the five
+;;; state-export/load replays of SPEC-WORK.md:5879-5905.
 
 ;;; 51. full-round-trip   docs/SPEC-WORK.md:5587
 ;;; ------------------------------------------------------------------
