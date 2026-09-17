@@ -92,7 +92,61 @@
       (check-equal m bad "a flatten refusal wrote something"))
     (multiple-value-bind (flat line code) (r8621-matrix-flatten m '((:col "r1")))
       (check-equal 0 code "an explicit flatten refused")
-      (ok (getf flat :flattened) "an explicit flatten recorded no selection"))))
+      (ok (getf flat :flattened) "an explicit flatten recorded no selection")))
+  ;; The same retirement contract over the real kernel view record
+  ;; (docs/SPEC-WORK.md:3072-3129, :5438): `axis --add|--remove` mutates a
+  ;; roadmap's stored axes and cells, moves the first axis's required set,
+  ;; leaves the member's node and state standing, and refuses an absent member.
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f2" :type :feature :parent "root" :state :unknown)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (roadmap-create k :id "root/rm" :parent "root" :title "M"
+                    :axes '("col" "row") :members '() :reason "new"
+                    :request "rm-axis" :stamp "2026-09-17T00:00:00Z")
+    (flet ((view () (node-view (kernel-state k) "root/rm")))
+      (multiple-value-bind (okp line code)
+          (axis k :roadmap "root/rm" :axis "col" :member "root/f1" :add t
+                :request "ax-add-1")
+        (ok okp "axis add of a first-axis member refused: ~A" line)
+        (check-equal 0 code "axis add exits 0"))
+      (axis k :roadmap "root/rm" :axis "col" :member "root/f2" :add t :request "ax-add-2")
+      (axis k :roadmap "root/rm" :axis "row" :member "root/f1" :add t :request "ax-add-3")
+      ;; Only the first axis holds the ordered rows; a second-axis member moves
+      ;; the revision and neither the set nor rows= (docs/SPEC-WORK.md:5597-5598).
+      (check-equal '("root/f1" "root/f2") (getf (view) :members)
+                   "the first axis did not hold the ordered rows")
+      (let ((rev (getf (view) :scope-revision)))
+        (axis k :roadmap "root/rm" :axis "row" :member "root/f2" :add t :request "ax-add-4")
+        (check-equal '("root/f1" "root/f2") (getf (view) :members)
+                     "a second-axis add moved the row set")
+        (ok (> (getf (view) :scope-revision) rev)
+            "a second-axis add moved no revision"))
+      ;; A cell coordinate holding the member retires with it, and the member's
+      ;; node and state stand (docs/SPEC-WORK.md:3103-3109).
+      (let ((stored (view)))
+        (setf (getf stored :cells) (list (list (list "col" "root/f1") "ref-1")
+                                         (list (list "row" "root/f1") "ref-2"))))
+      (multiple-value-bind (okp line code)
+          (axis k :roadmap "root/rm" :axis "col" :member "root/f1" :remove t
+                :request "ax-rm-1")
+        (ok okp "axis remove refused: ~A" line)
+        (check-equal 0 code "axis remove exits 0")
+        (ok (search "cells=1" line) "the retired cell count was not reported: ~A" line))
+      (check-equal '("root/f2") (getf (view) :members)
+                   "the first-axis removal did not retire the row from the set")
+      (check-equal 1 (length (getf (view) :cells))
+                   "the removal did not retire exactly its coordinate")
+      (check-equal :o (node-branch (kernel-state k) "root/f1")
+                   "the removal cancelled the member's node")
+      ;; An absent member refuses and writes nothing.
+      (let ((before (copy-tree (view))))
+        (multiple-value-bind (okp line code)
+            (axis k :roadmap "root/rm" :axis "col" :member "root/zz" :remove t
+                  :request "ax-rm-2")
+          (ok (not okp) "an absent member was not refused")
+          (check-equal 2 code "an absent-member removal exit code")
+          (check-equal before (view) "an absent-member refusal wrote something"))))))
 
 ;;; ------------------------------------------------------------------
 ;;; configure-no-effect-and-undo-conflict   docs/SPEC-WORK.md:5842

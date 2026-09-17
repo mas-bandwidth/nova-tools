@@ -603,6 +603,10 @@
     #:+r8621-marker-start+ #:+r8621-marker-end+
     #:r8621-render-body #:r8621-render-chat #:r8621-marker-region
     #:r8621-render-file
+    ;; `axis --add|--remove` on a roadmap's stored view (src/roadmap.lisp)
+    #:axis
+    #:axis-add
+    #:axis-remove
     ;; roadmap scope revisions advanced by `node move` (src/roadmap.lisp)
     #:make-scope-roadmap
     #:scope-roadmap-id

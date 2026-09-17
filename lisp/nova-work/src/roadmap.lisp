@@ -525,3 +525,157 @@ finding, exit 0 with `WORK OK` only when every rule was green
 
 ;;; The savepoint's create and list verbs live in savepoint.lisp; the journal's
 ;;; record identities and its cut-reachability helper stay here.
+
+;;; ------------------------------------------------------------------
+;;; `axis --add|--remove` (docs/SPEC-WORK.md:2323, :3072-3129, :5438)
+;;; ------------------------------------------------------------------
+;;; A roadmap's stored view is the real input. `axis --add` appends a member to
+;;; one declared axis in order; `axis --remove` takes it off that axis and off
+;;; every current cell coordinate holding it, records the position and removed
+;;; cells as its `:before`, and on the first axis retires the row from the
+;;; view's required set while the row is live (done included: only removed,
+;;; cancelled and superseded are not live). It never calls `node remove`,
+;;; `cancel` or any terminal verb; the node, its evidence and its state stand.
+;;; An absent member refuses. The roadmap's scope revision advances, never a
+;;; containment parent's.
+;;;
+;;; The view record the one creator writes is
+;;; `(:members ... :axes ... :permitted-roots ... :projections ...)`; this file
+;;; adds the `:axis-members`, `:cells`, `:scope-revision` and `:axis-log` fields
+;;; it owns to that same record, without touching the node's containment.
+
+(defparameter +axis-non-live-states+ '(:removed :cancelled :superseded)
+  "A row is live unless its node is removed, cancelled or superseded; done is
+live (docs/SPEC-WORK.md:3103-3109).")
+
+(defun %roadmap-view (wnode)
+  "WNODE's view record with the axis fields this verb owns present, written back
+onto the node so a later in-place update is visible. The node itself is never
+touched."
+  (let ((view (wnode-view wnode)))
+    (unless (member :axis-members view) (setf view (list* :axis-members '() view)))
+    (unless (member :cells view) (setf view (list* :cells '() view)))
+    (unless (member :scope-revision view) (setf view (list* :scope-revision 0 view)))
+    (unless (member :axis-log view) (setf view (list* :axis-log '() view)))
+    (setf (wnode-view wnode) view)
+    view))
+
+(defun %view-axis-ids (view)
+  "The declared axis ids, in order. An axis is written as a bare id or as the
+record `(:id <id> ...)`."
+  (mapcar (lambda (a) (if (consp a) (getf a :id) a)) (getf view :axes)))
+
+(defun %view-axis-members (view axis-id)
+  (cdr (assoc axis-id (getf view :axis-members) :test #'string=)))
+
+(defun %view-set-axis-members (view axis-id members)
+  "Replace AXIS-ID's ordered members, mutating the stored record in place."
+  (let ((entry (assoc axis-id (getf view :axis-members) :test #'string=)))
+    (if entry
+        (setf (cdr entry) members)
+        (setf (getf view :axis-members)
+              (append (getf view :axis-members) (list (cons axis-id members))))))
+  members)
+
+(defun %row-live-p (state id)
+  "True when ID names a node that is not removed, cancelled or superseded."
+  (let ((node (%node-quiet state id)))
+    (and node
+         (not (member (wnode-state node) +axis-non-live-states+))
+         t)))
+
+(defun %axis-coordinate-p (cell axis-id member)
+  (let ((coord (car cell)))
+    (and (consp coord)
+         (string= axis-id (first coord))
+         (string= member (second coord)))))
+
+(defun axis (kernel &key roadmap axis member add remove reason request
+                       (by "rowan") (stamp "2026-09-14T12:00:00Z")
+                       (generation-owner "gen-4"))
+  "The `axis --add|--remove` structure verb on a roadmap's stored view. Answers
+(values OK-P LINE EXIT-CODE). `--add` appends MEMBER to AXIS in order; `--remove`
+takes it off the axis and off every current cell coordinate holding it, retires
+it from the view's required set when it is on the first axis and live, and
+leaves the node, its evidence and its state standing. An unknown axis or an
+absent member refuses at exit 2 and writes nothing (docs/SPEC-WORK.md:3103-3113,
+:5438)."
+  (declare (ignore reason))
+  (let* ((state (kernel-state kernel))
+         (wnode (%node-quiet state roadmap)))
+    (unless wnode
+      (return-from axis
+        (values nil (format nil "AXIS FAIL node=~A: no such node" roadmap) 2)))
+    (unless (eq :roadmap (wnode-type wnode))
+      (return-from axis
+        (values nil (format nil "AXIS FAIL node=~A: not a roadmap" roadmap) 2)))
+    (unless (wnode-view wnode)
+      (return-from axis
+        (values nil (format nil "AXIS FAIL node=~A: no view" roadmap) 2)))
+    (unless (and (stringp axis) (plusp (length axis)))
+      (return-from axis
+        (values nil (format nil "AXIS FAIL node=~A: no axis" roadmap) 2)))
+    (unless (and (stringp member) (plusp (length member)))
+      (return-from axis
+        (values nil (format nil "AXIS FAIL node=~A: no member" roadmap) 2)))
+    (let* ((view (%roadmap-view wnode))
+           (ids (%view-axis-ids view)))
+      (unless (member axis ids :test #'string=)
+        (return-from axis
+          (values nil (format nil "AXIS FAIL node=~A: unknown axis ~A" roadmap axis) 2)))
+      (let ((index (position axis ids :test #'string=))
+            (members (%view-axis-members view axis)))
+        (cond
+          (add
+           (multiple-value-bind (okp line)
+               (if (member member members :test #'string=)
+                   (values t (format nil "AXIS OK id=- request=~A node=~A rev=~D pushed=- change=add member=~A changed=0 cells=0 emitted=0"
+                                     request roadmap (state-revision state) member))
+                   (progn
+                     (%view-set-axis-members view axis (append members (list member)))
+                     (when (zerop index)
+                       (setf (getf view :members)
+                             (append (getf view :members) (list member))))
+                     (incf (getf view :scope-revision))
+                     (values t (format nil "AXIS OK id=- request=~A node=~A rev=~D pushed=- change=add member=~A changed=1 cells=0 emitted=0"
+                                       request roadmap (state-revision state) member))))
+             (values okp line 0)))
+          (remove
+           (if (not (member member members :test #'string=))
+               (values nil (format nil "AXIS FAIL node=~A: unknown member ~A on ~A"
+                                   roadmap member axis)
+                       2)
+               (let* ((cells (getf view :cells))
+                      (retired (remove-if-not (lambda (c) (%axis-coordinate-p c axis member))
+                                              cells))
+                      (n (length retired)))
+                 (setf (getf view :cells)
+                       (remove-if (lambda (c) (%axis-coordinate-p c axis member)) cells))
+                 (%view-set-axis-members view axis (remove member members :test #'string=))
+                 (when (and (zerop index) (%row-live-p state member))
+                   (setf (getf view :members)
+                         (remove member (getf view :members) :test #'string=)))
+                 (push (list :request request :verb :axis :axis axis :member member
+                             :before (list :position (position member members :test #'string=)
+                                           :cells retired))
+                       (getf view :axis-log))
+                 (incf (getf view :scope-revision))
+                 (values t (format nil "AXIS OK id=- request=~A node=~A rev=~D pushed=- change=remove member=~A changed=1 cells=~D emitted=0"
+                                   request roadmap (state-revision state) member n)
+                         0))))
+          (t
+           (values nil (format nil "AXIS FAIL node=~A: --add or --remove is required"
+                               roadmap)
+                   2)))))))
+
+(defun axis-add (kernel roadmap axis member &rest args)
+  "`axis --add`: the spelling-side helper over AXIS (docs/SPEC-WORK.md:2323)."
+  (apply #'axis kernel :roadmap roadmap :axis axis :member member :add t args))
+
+(defun axis-remove (kernel roadmap axis member &rest args)
+  "`axis --remove`: the spelling-side helper over AXIS (docs/SPEC-WORK.md:2323)."
+  (apply #'axis kernel :roadmap roadmap :axis axis :member member :remove t args))
+
+;;; The `:axis` verb is reversible: `axis --remove` of an added member, and
+;;; `axis --add` of a removed one restoring its position and its cells
+;;; (docs/SPEC-WORK.md:2863).
