@@ -44,6 +44,10 @@ wake: a parent wakes on a note without ingesting the open list. Background deliv
 is deferred to a later section, which must pin a real notification adapter and an
 acknowledgement-token protocol before it makes any claim.
 
+The verb also runs as a systemd or launchd unit outside a TUI, so the unit restarts
+it after a harness cap; the exit is the wake, and a parent wakes on a note without
+ingesting the open list.
+
 **The body and batch bounds, the continuation, and the cursor.** One note's body is
 bounded to `--max-bytes` bytes, default 65536 and hard ceiling 1048576; one wake
 returns at most `--max-notes` notes, default 20 and hard ceiling 1000, and at most
@@ -71,7 +75,8 @@ RECEIPT OK verdict=<APPROVE|HOLD|ADOPTED> re=<id> recorded=<n> already=<m> commi
 ```
 
 **The mistakes it removes.** `wait --on-note` removes the one-minute heartbeat loop
-that woke a 500k-context parent on every note — 53 tool calls per empty tick;
+that woke a 500k-context parent on every note — 53 tool calls per empty tick — and
+its service restart removes the silent poller death at the harness's ten-hour cap;
 `receipt --verdict` removes the hand-shaped receipt note; and `send`'s fold removes
 `SEND FAIL` on a BEAT rebase conflict (#488).
 
@@ -92,12 +97,13 @@ distinct from the wait's, so `pkill -f` on the wait never kills a send.
 **Red tests, written first.** Each uses a fake where the real thing is the network, a bench or a clock.
 1. `TestWaitOnNotePrintsOnlyTheNote`: a fake remote lands one To: note; stdout is the `WAIT OK` line and its `INBOX NOTE`/body and no `INBOX OPEN` or carrying count.
 2. `TestWaitOnNoteNeverWakesOnAnEmptyTick`: a fake clock and empty fake remote; the process prints one `WAIT TIMEOUT` and no frame, and no parent is woken.
-3. `TestReceiptVerdictWritesTheExactNoteShape`: a fake remote plus `--no-push`; the committed note is byte-for-byte the `Verdict`/`Re`/body shape and the `RECEIPT OK` line names every field.
-4. `TestReceiptVerdictRefusesAnUnknownVerdict`: exit 2 and one remedy line, with no write to a fake checkout.
-5. `TestSendFoldsOwnUncommittedBeat`: a fake checkout holding a dirty `from-<me>/BEAT` sends and commits it without a `SEND FAIL`.
-6. `TestSendFoldsOwnBeatOnlyCommit`: a fake remote behind a local beat-only commit sends without a rebase abort.
-7. `TestSendProcessNameIsDistinctFromWait`: a fake process-title probe asserts the send name and the wait name differ.
-8. `TestPkillOnWaitLeavesASendAlive`: a fake `pkill -f` matching only the wait name leaves a running fake send alive.
-9. `TestWaitOnNoteBoundsBodyAndBatch`: a body over `--max-bytes` prints the `INBOX BODY OVERSIZE` gap and no partial frame, and 21 notes under the default `--max-notes` print 20 with `complete=false`.
-10. `TestWaitOnNoteContinuationReturnsTheRest`: the `next=<token>` passed back as `--after` returns exactly the remainder once and ends with `next=-`.
-11. `TestWaitOnNoteCursorAdvancesOnlyPastAcknowledged`: a crash mid-batch leaves the cursor at the last fully delivered and acknowledged batch, the next run redelivers from there, and a run without `--advance` moves no cursor.
+3. `TestWaitOnNoteRearmsAfterAHarnessCap`: a fake service manager kills the unit at the cap and restarts it; the restarted wait resumes with the note's arrival not lost.
+4. `TestReceiptVerdictWritesTheExactNoteShape`: a fake remote plus `--no-push`; the committed note is byte-for-byte the `Verdict`/`Re`/body shape and the `RECEIPT OK` line names every field.
+5. `TestReceiptVerdictRefusesAnUnknownVerdict`: exit 2 and one remedy line, with no write to a fake checkout.
+6. `TestSendFoldsOwnUncommittedBeat`: a fake checkout holding a dirty `from-<me>/BEAT` sends and commits it without a `SEND FAIL`.
+7. `TestSendFoldsOwnBeatOnlyCommit`: a fake remote behind a local beat-only commit sends without a rebase abort.
+8. `TestSendProcessNameIsDistinctFromWait`: a fake process-title probe asserts the send name and the wait name differ.
+9. `TestPkillOnWaitLeavesASendAlive`: a fake `pkill -f` matching only the wait name leaves a running fake send alive.
+10. `TestWaitOnNoteBoundsBodyAndBatch`: a body over `--max-bytes` prints the `INBOX BODY OVERSIZE` gap and no partial frame, and 21 notes under the default `--max-notes` print 20 with `complete=false`.
+11. `TestWaitOnNoteContinuationReturnsTheRest`: the `next=<token>` passed back as `--after` returns exactly the remainder once and ends with `next=-`.
+12. `TestWaitOnNoteCursorAdvancesOnlyPastAcknowledged`: a crash mid-batch leaves the cursor at the last fully delivered and acknowledged batch, the next run redelivers from there, and a run without `--advance` moves no cursor.
