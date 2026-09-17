@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -27,9 +28,15 @@ import (
 const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REVIEW.md)
 
 usage:
-  nova-review packet --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>]
+  nova-review packet --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>] [--decide] [--floor 0.9] [--card <file>] [--key-env JEV_API_KEY] [--base-url <url>]
   nova-review version    print this build identity (--version also accepted)
   nova-review help
+
+  --decide sends the packet's public state (the title, the diff --stat and the first
+  3000 characters of the diff) to the typed-decision route and appends one advisory
+  REVIEW DECIDE line. A decision below --floor is a suggestion, never clearance: it
+  changes no verdict. The packet's repo must be public (the package's public list or
+  a .public marker) or --decide refuses by name.
 
 example:
   nova-review --version
@@ -87,6 +94,11 @@ func packet(args []string, out, errOut io.Writer) int {
 	timeout := fs.Int("timeout", 120, "")
 	diffOnly := fs.Bool("diff-only", false, "")
 	filesGlob := fs.String("files", "", "")
+	decideOn := fs.Bool("decide", false, "")
+	floor := fs.Float64("floor", 0.9, "")
+	cardFile := fs.String("card", "", "")
+	keyEnv := fs.String("key-env", decide.DefaultKeyEnv, "")
+	baseURL := fs.String("base-url", decide.DefaultBaseURL, "")
 	var specs, rules stringsFlag
 	fs.Var(&specs, "spec", "")
 	fs.Var(&rules, "rule", "")
@@ -105,6 +117,9 @@ func packet(args []string, out, errOut io.Writer) int {
 	if *timeout <= 0 {
 		return refuse(errOut, "--timeout must be positive")
 	}
+	if *decideOn && (*floor < 0 || *floor > 1) {
+		return refuse(errOut, fmt.Sprintf("--floor is between 0 and 1, got %g", *floor))
+	}
 	if (*pr > 0) == (*branch != "") {
 		return refuse(errOut, "give exactly one of --pr or --branch")
 	}
@@ -116,6 +131,12 @@ func packet(args []string, out, errOut io.Writer) int {
 	}
 	if *reuse != "" && (len(specs) != 0 || len(rules) != 0 || *maxBytes != 131072 || *diffOnly || *filesGlob != "") {
 		return refuse(errOut, "--reuse cannot be combined with --spec, --rule, --max-bytes, --diff-only or --files")
+	}
+	if *reuse != "" && *decideOn {
+		return refuse(errOut, "--decide cannot be combined with --reuse; a reused packet reads no tree")
+	}
+	if len(rules) > 0 && *decideOn {
+		return refuse(errOut, "--decide cannot be combined with --rule; a scoped rule packet reads no diff")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeout)*time.Second)
@@ -299,6 +320,14 @@ func packet(args []string, out, errOut io.Writer) int {
 		return refuse(errOut, err.Error())
 	}
 	intentTitle, intentBody, _ := getAuthorIntent(ctx, repo, st.Repo, *pr, *branch, current)
+	decideLine := ""
+	if *decideOn {
+		line, code := decidePacket(ctx, repo, *lane, st.Repo, *pr, *branch, *cardFile, *keyEnv, *baseURL, intentTitle, diff, fullRange, errOut)
+		if code != 0 {
+			return code
+		}
+		decideLine = line
+	}
 	thisHeadSec := formatThisHead(intentTitle, intentBody)
 	yourPriorSec := formatYourPriorVerdicts(*who, entry.Reads, base, current, rangeText)
 	allVerdictsSec, priorCount := formatAllVerdicts(entry.Reads, *maxFlag, *lane, *pr, *branch)
@@ -331,6 +360,9 @@ func packet(args []string, out, errOut io.Writer) int {
 			rulesTouchedSec + "\n" +
 			diffSec + "\n" +
 			notIncSec
+		if decideLine != "" {
+			bodyRest += "\n" + decideLine + "\n"
+		}
 		return formatPacket(hdr, bodyRest)
 	}
 
@@ -1210,6 +1242,120 @@ func formatThisHead(title, body string) string {
 		sb.WriteString("(no description provided)\n")
 	}
 	return sb.String()
+}
+
+// publicRepos is the package's list of repositories whose source may be sent to the
+// typed-decision route. A packet's repo must be named here or carry a .public marker,
+// or --decide refuses by name.
+var publicRepos = []string{"mas-bandwidth/nova-tools"}
+
+// repoIsPublic reports whether the packet's repository may be sent to a provider: its
+// owner/name is in the package's public list, or the lane (or the lane's clone) carries
+// a .public marker.
+func repoIsPublic(lane, clone, hostRepo string) bool {
+	hostRepo = strings.TrimSpace(hostRepo)
+	for _, known := range publicRepos {
+		if strings.EqualFold(known, hostRepo) {
+			return true
+		}
+	}
+	for _, marker := range []string{filepath.Join(lane, ".public"), filepath.Join(clone, ".public")} {
+		if fi, err := os.Stat(marker); err == nil && fi.Mode().IsRegular() {
+			return true
+		}
+	}
+	return false
+}
+
+// decideState is the bounded public state one typed decision is asked about: the PR
+// title, the diff --stat, and the first 3000 characters of the diff. Nothing private
+// and nothing larger is sent.
+func decideState(title, card, stat, diff string) string {
+	const diffBudget = 3000
+	if len(diff) > diffBudget {
+		diff = diff[:diffBudget]
+	}
+	var b strings.Builder
+	b.WriteString("PR title: " + title + "\n\n")
+	if strings.TrimSpace(card) != "" {
+		b.WriteString("Card text:\n" + card + "\n\n")
+	}
+	b.WriteString("diff --stat:\n" + stat + "\n\n")
+	b.WriteString("diff (first 3000 characters):\n" + diff)
+	return b.String()
+}
+
+// decideQuestions are the three review candidates: a risk score, whether the diff does
+// what the card's RESULT line promises and nothing else (only when a card is given), and
+// whether a second reader is needed. They advise; they never authorize.
+func decideQuestions(withCard bool) map[string]decide.Question {
+	qs := map[string]decide.Question{}
+	qs["risk"] = decide.Question{Instructions: "Score the review risk of this change from 0 to 3: 0 docs or tests only; 1 a small local change; 2 touches a shared package or a contract; 3 touches CI, secrets, sandbox or permissions.", Score: []string{"docs or tests only", "small local change", "touches a shared package or a contract", "touches CI, secrets, sandbox or permissions"}}
+	qs["needs_second_reader"] = decide.Question{Instructions: "Does this change need a second reader before it merges?", Noul: true}
+	if withCard {
+		qs["scope_matches_card"] = decide.Question{Instructions: "Does the diff do what the card's RESULT line promises and nothing else?", Noul: true}
+	}
+	return qs
+}
+
+// formatReviewDecide renders the one advisory line appended to the packet. The confidence
+// is the weakest answer's, so one low-confidence question is never hidden by two strong
+// ones. A decision below the floor is a suggestion and this line never changes a verdict.
+func formatReviewDecide(answers map[string]decide.Answer, pr int, branch string) string {
+	value := func(name string, pick func(decide.Answer) float64) string {
+		a, ok := answers[name]
+		if !ok {
+			return "-"
+		}
+		return fmt.Sprintf("%.2f", pick(a))
+	}
+	risk := value("risk", func(a decide.Answer) float64 { return a.Score })
+	scope := value("scope_matches_card", func(a decide.Answer) float64 { return a.Noul })
+	second := value("needs_second_reader", func(a decide.Answer) float64 { return a.Noul })
+	conf := 0.0
+	if len(answers) > 0 {
+		conf = 1.0
+		for _, a := range answers {
+			if a.Confidence < conf {
+				conf = a.Confidence
+			}
+		}
+	}
+	evidence := "branch#" + branch
+	if pr > 0 {
+		evidence = fmt.Sprintf("pr#%d", pr)
+	}
+	return fmt.Sprintf("REVIEW DECIDE risk=%s scope=%s second_reader=%s conf=%.2f evidence=%s", risk, scope, second, conf, evidence)
+}
+
+// decidePacket asks the typed-decision route one advisory judgment about the packet's
+// public state and returns the one REVIEW DECIDE line. It refuses, naming the repo, when
+// the packet's repository is not public, and refuses when the provider cannot be asked.
+func decidePacket(ctx context.Context, repo, lane, hostRepo string, pr int, branch, cardFile, keyEnv, baseURL, title, diff, fullRange string, errOut io.Writer) (string, int) {
+	if !repoIsPublic(lane, repo, hostRepo) {
+		return "", refuse(errOut, fmt.Sprintf("--decide sends the diff to a provider; %s is not public (no public-list entry and no .public marker)", oneline.Field(hostRepo)))
+	}
+	card := ""
+	if cardFile != "" {
+		b, err := os.ReadFile(cardFile)
+		if err != nil {
+			return "", refuse(errOut, fmt.Sprintf("--card: %v", err))
+		}
+		card = string(b)
+	}
+	stat, err := gitOut(ctx, repo, "diff", "--stat", fullRange)
+	if err != nil {
+		return "", refuse(errOut, fmt.Sprintf("could not read diff --stat: %v", err))
+	}
+	client, err := decide.New(baseURL, keyEnv)
+	if err != nil {
+		return "", refuse(errOut, err.Error())
+	}
+	answers, _, err := client.Decide(ctx, decideState(title, card, stat, diff), decideQuestions(cardFile != ""))
+	if err != nil {
+		return "", refuse(errOut, err.Error())
+	}
+	return formatReviewDecide(answers, pr, branch), 0
 }
 
 func formatYourPriorVerdicts(who string, reads []merge.Read, base, current, rng string) string {
