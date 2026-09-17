@@ -70,6 +70,8 @@
    #:node-needs-broken
    #:ready-p
    #:ready-nodes
+   #:node-estimate
+   #:forecast
    #:root-digest
    #:state-canonical-form
    #:reconstruct-state
