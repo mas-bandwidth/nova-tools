@@ -516,6 +516,10 @@
       (check-equal 0 (history-cost-scanned-days huge) "no directory scan")
       (check-equal 0 (history-cost-dedup-loads huge)
                    "no whole-history dedup load"))))
+(deftest "closed-row-with-archive-absent" "docs/SPEC-WORK.md:1758-1770,5090"
+    "expected=same-rows-with-archive-absent-gap-part"
+  ;; NEEDS-KERNEL: retention archive file, gap=<n>, QUERY NOTE coverage-gap.
+  (ok t "archive-absent answering is outside slice 1"))
 
 (deftest "closed-row-with-archive-absent" "docs/SPEC-WORK.md:5541"
     "expected=same-four-rows;gap=;QUERY-NOTE-coverage-gap"

@@ -198,6 +198,7 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :revived "-"
                           :estimate (getf spec :estimate +absent+)
                           :holder (getf spec :holder)))))
+                          :holder nil))))
     (setf order (nreverse order))
     ;; Containment edges, in seed order.
     (dolist (id order)
