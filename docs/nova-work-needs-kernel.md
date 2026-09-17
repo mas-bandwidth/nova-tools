@@ -90,3 +90,61 @@ Every replay in the nova-work acceptance suite that is parked as `NEEDS-KERNEL` 
 | undo-redo | lisp/nova-work/tests/acceptance/slice-08-replays-late.lisp:347 | docs/SPEC-WORK.md:5599 |
 
 replays=42 features=9
+
+---
+
+Every replay in the nova-work acceptance suite that is parked as `NEEDS-KERNEL` on `dev`, read from commit `882f6396` (`origin/dev`), listed by the kernel feature each mark names; the spec reference is the `docs/SPEC-WORK.md` line(s) the replay names.
+
+## other (10)
+
+| name | file:line | spec lines |
+| --- | --- | --- |
+| render-refuses-a-target-outside-its-roots | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:380 | docs/SPEC-WORK.md:2950 |
+| render-artifact-is-bounded | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:385 | docs/SPEC-WORK.md:2977 |
+| priority-orders-only-the-eligible | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:391 | docs/SPEC-WORK.md:3015 |
+| priority-inherits-and-clears | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:397 | docs/SPEC-WORK.md:3015 |
+| rank-2-precedes-10 | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:403 | docs/SPEC-WORK.md:3015 |
+| priority-undo-is-history-not-value | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:409 | docs/SPEC-WORK.md:3016 |
+| priority-grants-nothing | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:414 | docs/SPEC-WORK.md:3016 |
+| branch-and-window-required | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:729 | docs/SPEC-WORK.md:5095 |
+| merged-is-not-distributed | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:1058 | docs/SPEC-WORK.md:5093 |
+| moving-source | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:1268 | docs/SPEC-WORK.md:5585 |
+
+## roadmap (7)
+
+| name | file:line | spec lines |
+| --- | --- | --- |
+| move-updates-every-roadmap-scope | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:345 | docs/SPEC-WORK.md:2891 |
+| axisless-history | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:352 | docs/SPEC-WORK.md:2948 |
+| matrix-retirement | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:359 | docs/SPEC-WORK.md:2948 |
+| configure-no-effect-and-undo-conflict | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:366 | docs/SPEC-WORK.md:2949 |
+| completed-view-mutation | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:371 | docs/SPEC-WORK.md:2949 |
+| matrix-retirement | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:1047 | docs/SPEC-WORK.md:5387 |
+| move-updates-every-roadmap-scope | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:1257 | docs/SPEC-WORK.md:5375 |
+
+## dispatch-barrier (6)
+
+| name | file:line | spec lines |
+| --- | --- | --- |
+| dispatch-ack-and-ownership-are-three | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:523 | docs/SPEC-WORK.md:5219 |
+| return-reconciles-before-dispatch | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:544 | docs/SPEC-WORK.md:5226 |
+| four-facts-four-verbs | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:573 | docs/SPEC-WORK.md:3398 |
+| offer-writes-intent-and-a-reservation | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:582 | docs/SPEC-WORK.md:3439 |
+| bare-correct-refuses-under-execution | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:693 | docs/SPEC-WORK.md:5272 |
+| efficiency-lessons-gate | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:860 | docs/SPEC-WORK.md:4439 |
+
+## node-move (3)
+
+| name | file:line | spec lines |
+| --- | --- | --- |
+| move-refuses-by-name | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:326 | docs/SPEC-WORK.md:2890 |
+| move-keeps-the-lease | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:332 | docs/SPEC-WORK.md:2890 |
+| move-undo-refuses-a-reorder | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:339 | docs/SPEC-WORK.md:2891 |
+
+## receipts-index (1)
+
+| name | file:line | spec lines |
+| --- | --- | --- |
+| busy-day-many-segments | lisp/nova-work/tests/acceptance/slice-05-durable-journal.lisp:724 | docs/SPEC-WORK.md:5115 |
+
+replays=27 features=5
