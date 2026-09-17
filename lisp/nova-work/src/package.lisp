@@ -262,7 +262,16 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+    ;; replays card 8643: dry run, cost lineage, compaction and copied journals
+    #:make-replay-session
+    #:preview-mutation
+    #:apply-mutation
+    #:join-cost-lineage
+    #:compact-copies
+    #:restore-copy
+    #:start-over-copy
+    #:join-experiment-cost))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
