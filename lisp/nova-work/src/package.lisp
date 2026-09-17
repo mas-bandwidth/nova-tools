@@ -1827,7 +1827,22 @@
     #:fake-decider-calls
     #:decide-consult
     #:kernel-default-answer
-    #:decide))
+    #:decide
+    ;; verdicts are state, not events (nova-tools#854)
+    #:make-verdict-row
+    #:verdict-row-p
+    #:verdict-row-node
+    #:verdict-row-reader
+    #:verdict-row-head
+    #:verdict-row-decision
+    #:verdict-row-merged
+    #:verdict-row-closed
+    #:verdict-row-state
+    #:verdict-approved-p
+    #:verdict-hold-p
+    #:verdict-terminal-p
+    #:tick-verdict-row
+    #:read-owed-p))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
