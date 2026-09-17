@@ -66,6 +66,11 @@ var messageBusAudit = audit.Config{
 			"spelling, To, Cc and every Re resolved against the roster and the bus, and --subject passed bus.OneLine, which refuses a " +
 			"line break or a control character. Nothing unresolved reaches here: an unresolved anything is a DRAFT REFUSED on stderr and " +
 			"this line never runs. TestDraftPrintsASkeletonTheParserReadsBack is the behavioural test for this site.",
+		"main.go|printSendDraft|note": "the shaped note itself, printed to stdout VERBATIM because it is the thing `send --dry-run` " +
+			"frames and a caller pipes to a file: escaping it would fold the very bytes the verb promises to carry. Every value in it " +
+			"has been checked before this line runs -- the header is the same Render the commit writes, from a note that passed the " +
+			"send preflight -- and the count on the SEND DRAFT line above is what frames it. TestSendDryRunPrintsTheShapedNoteAndWritesNothing " +
+			"is the behavioural test for this site.",
 		"main.go|cmdPrepare|artifactJSON": "the prepared artifact itself, printed to stdout VERBATIM because it is a machine-readable JSON " +
 			"object and not an event line: a self-contained artifact that a caller saves, and an escape would fold it or escape its quotes. " +
 			"Every value in it has been checked before this line runs. TestPrepareDecidingTests is the behavioural test for this site.",
