@@ -96,7 +96,6 @@
       (let ((pin (hold-pin hold)))
         ;; a clip completes between the anchor and the manifest
         (ctl-clip k)
-        (clip k)
         (check-equal pin (hold-pin hold) "the clip moved the pin")
         ;; a later assignment is not part of the anchored capture
         (record-attempt k "acme/work/f1/t1" "att-3")
@@ -148,7 +147,6 @@
       (ok (not (move-node k "acme/work/f1/t1" "acme/work/f2")) "a move slipped past the hold")
       ;; a conversion under the hold retains :accepted-held
       (multiple-value-bind (aok effect acode) (ctl-accept-offer k "off-1")
-      (multiple-value-bind (aok effect acode) (accept-offer k "off-1")
         (ok aok "held acceptance refused instead of retained: ~A" effect)
         (check-equal 0 acode "accept exit code")
         (check-equal :accepted-held effect "held acceptance effect")
@@ -159,7 +157,6 @@
         (check-equal 0 (launch-count k "acme/work/f1/t1") "held acceptance launched"))
       ;; lifting the hold converts nothing; only reconcile rechecks
       (ctl-release-hold k "ctrl-send-1")
-      (release-hold k "ctrl-send-1")
       (check-equal :accepted-held (offer-effect k "off-1") "lift converted the held acceptance")
       (check-equal 0 (lease-count k "acme/work/f1/t1") "lift created a lease")
       (multiple-value-bind (rok rline rcode) (reconcile-offer k "off-1")

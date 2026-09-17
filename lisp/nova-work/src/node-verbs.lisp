@@ -50,7 +50,6 @@ node's refusal prints `private=1` and never the value (:3017, :5357)."
         (values nil (format nil "NODE FAIL node=~A: no such node" id) 1)))
     (let ((private (and (wnode-private node) (not (absentp (wnode-private node)))
                         (not (eq (wnode-private node) :false))))
-    (let ((private (wnode-private node))
           (before (list :title (wnode-title node)
                         :category (wnode-category node)
                         :links (copy-list (wnode-links node))
@@ -165,7 +164,6 @@ prints only `private=1` (:3016-3017). No link is resolved."
       (error 'unsupported-input :what (format nil "no such node ~A" id)))
     (if (and (wnode-private node) (not (absentp (wnode-private node)))
              (not (eq (wnode-private node) :false)))
-    (if (wnode-private node)
         "private=1"
         (with-output-to-string (s)
           (when (wnode-title node) (format s "~A " (wnode-title node)))
@@ -364,7 +362,6 @@ the view carries `:members`, `:permitted-roots` and `:projections`."
 
 ;;; ------------------------------------------------------------------
 ;;; `node move` (:3025-3068, :5360, :5364, :5367, :5370, :5379).
-;;; `node move` (:3025-3068, :5360).
 ;;; ------------------------------------------------------------------
 
 (defun node-parent (state id) (wnode-parent (%node-or-nil state id)))
@@ -877,60 +874,3 @@ socket and never a network listener."
   "This scope binds no network address; the endpoint is local only."
   (declare (ignore endpoint))
   nil)
-(defun node-move (kernel &key id from under reason request stamp)
-  "Reparent ID from FROM to UNDER. `--from` is checked, not inferred; the
-subtree's open count moves along the two ancestor chains only, so a common
-ancestor takes the net zero and no whole-set scan happens (:3030-3040)."
-  (declare (ignore reason stamp))
-  (let* ((state (kernel-state kernel))
-         (node (%node-or-nil state id)))
-    (unless node
-      (return-from node-move
-        (values nil (format nil "NODE FAIL node=~A: no such node" id) 1)))
-    (let ((old (wnode-parent node)))
-      (unless (equal old from)
-        (return-from node-move
-          (values nil (format nil "NODE FAIL node=~A: parent conflict" id) 1)))
-      (unless (and under (%node-quiet state under))
-        (return-from node-move
-          (values nil (format nil "NODE FAIL node=~A: no such parent ~A" id under) 1)))
-      ;; A destination at or below the node is a cycle.
-      (let ((cur under))
-        (loop while cur
-              do (when (equal cur id)
-                   (return-from node-move
-                     (values nil (format nil "NODE FAIL node=~A: cycle" id) 1)))
-                 (let ((n (%node-quiet state cur)))
-                   (setf cur (and n (wnode-parent n))))))
-      (when (equal from under)
-        (return-from node-move
-          (values t
-                  (format nil "NODE OK id=~A request=~A change=move changed=0 from=~A under=~A"
-                          id request from under)
-                  0)))
-      (let ((old-p (%node-quiet state old))
-            (new-p (%node-quiet state under))
-            (open (eq :o (wnode-branch node)))
-            (delta (wnode-open-count node)))
-        (setf (wnode-children old-p)
-              (remove id (wnode-children old-p) :test #'equal))
-        (setf (wnode-children new-p)
-              (append (wnode-children new-p) (list id)))
-        (setf (wnode-parent node) under)
-        (when (wnode-required node)
-          (decf (wnode-required-count old-p))
-          (when open (decf (wnode-required-open old-p)))
-          (incf (wnode-required-count new-p))
-          (when open (incf (wnode-required-open new-p))))
-        (loop for p = old then (let ((n (%node-quiet state p)))
-                                 (and n (wnode-parent n)))
-              while p
-              do (decf (wnode-open-count (%node-quiet state p)) delta))
-        (loop for p = under then (let ((n (%node-quiet state p)))
-                                   (and n (wnode-parent n)))
-              while p
-              do (incf (wnode-open-count (%node-quiet state p)) delta)))
-      (values t
-              (format nil "NODE OK id=~A request=~A change=move changed=1 from=~A under=~A"
-                      id request from under)
-              0))))

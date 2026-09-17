@@ -13,21 +13,7 @@
 
 ;; page-budget-is-not-max now lives in ../acceptance.lisp over the
 ;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
-;; NEEDS-KERNEL: oversized packet, stale route and escalation gates before dispatch.
-(deftest "packet-and-route-gates" "docs/SPEC-WORK.md:4371"
-    "expected=oversized/stale/unexplained-escalation-refuse-before-dispatch"
-  (slice1-refuses-verb :route))
 
-;; pipeline-replies-are-correlated is now the executable replay in
-;; ../acceptance.lisp (card 8608).
-;; page-budget-is-not-max is implemented in ../acceptance.lisp (card 8601).
-;; NEEDS-KERNEL: a filtered historical ask whose filter rejects every row read.
-(deftest "page-budget-is-not-max" "docs/SPEC-WORK.md:5550"
-    "expected=shown=0;pages=<n>;whole-history-never-scanned"
-  (slice1-refuses-verb :query))
-
-;; policy-round-trip-and-replay and pricing-is-pinned-by-revision now run in
-;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 ;; pipeline-replies-are-correlated is now the executable replay in
 ;; ../acceptance.lisp (card 8608).
 
@@ -42,7 +28,6 @@
     (dolist (id ids)
       (multiple-value-bind (receipt line code)
           (priority-table-set table id :self 7 "ordering only" (format nil "ev-~A" id))
-          (priority-set table id :self 7 "ordering only" (format nil "ev-~A" id))
         (declare (ignore line))
         (check-equal 0 code "priority set exit code")
         (check-equal 1 (getf receipt :changed) "priority set did not move the slot")))
@@ -56,9 +41,6 @@
     (check-equal nil (work-view-lease view) "no lease written")
     (check-equal nil (work-view-worker view) "no worker selected")
     (check-equal :pending (work-view-approval view) "no approval bypassed")))
-
-;;; priority: the two slots, the nearest-context rank and the ready order
-;;; (SPEC-WORK.md:3156-3193; replays at :5857 and :5861).
 
 ;;; priority: the two slots, the nearest-context rank and the ready order
 ;;; (SPEC-WORK.md:3156-3193; replays at :5857 and :5861).
@@ -163,26 +145,17 @@
       (check-equal 0 code "the first set")
       (check-equal 1 (getf receipt :changed) "the first set did not move the slot"))
     (multiple-value-bind (receipt line code) (priority-table-set table "n" :self 2 "same" "ev-2")
-  (let ((table (make-priority-table)))
-    (multiple-value-bind (receipt line code) (priority-set table "n" :self 2 "first" "ev-1")
-      (declare (ignore line))
-      (check-equal 0 code "the first set")
-      (check-equal 1 (getf receipt :changed) "the first set did not move the slot"))
-    (multiple-value-bind (receipt line code) (priority-set table "n" :self 2 "same" "ev-2")
       (declare (ignore line))
       (check-equal 0 code "the same-value set")
       (check-equal 0 (getf receipt :changed) "a same-value set is not the no-effect receipt")
       (ok (getf receipt :no-effect) "a same-value set is marked no-effect"))
     (multiple-value-bind (receipt line code) (priority-table-clear table "other" :self "absent" "ev-3")
-    (multiple-value-bind (receipt line code) (priority-clear table "other" :self "absent" "ev-3")
       (declare (ignore line))
       (check-equal 0 code "the clear of an absent slot")
       (check-equal 0 (getf receipt :changed)
                    "a clear of an absent slot is not the no-effect receipt"))
     (priority-table-set table "n" :self 9 "second" "ev-4")
     (priority-table-set table "n" :self 2 "third" "ev-5")
-    (priority-set table "n" :self 9 "second" "ev-4")
-    (priority-set table "n" :self 2 "third" "ev-5")
     (multiple-value-bind (okp line code) (priority-undo table "n" :self "ev-1")
       (declare (ignore line))
       (ok (not okp) "undo of the first set was admitted although the value matches")
@@ -191,7 +164,6 @@
       (declare (ignore line))
       (ok okp "the latest change does not undo")
       (check-equal 0 code "undo-of-latest exit code"))))
-  (slice1-refuses-verb :redo))
 
 ;; protocol-version-negotiated-or-refused is now the executable replay in
 ;; ../acceptance.lisp (card 8608).
@@ -209,7 +181,6 @@
 ;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 
 (deftest "rank-2-precedes-10" "docs/SPEC-WORK.md:5865"
-(deftest "rank-2-precedes-10" "docs/SPEC-WORK.md:5414"
     "expected=integer-rank-order;equal-and-default-by-id;restart-stable;unknown-only-first-unseen"
   (let* ((table (make-priority-table))
          (rows (list (list :id "two" :ready t)
@@ -224,10 +195,6 @@
     (priority-table-set table "ten" :self 10 "r" "e10")
     (priority-table-set table "a" :self 5 "r" "ea")
     (priority-table-set table "b" :self 5 "r" "eb")
-    (priority-set table "two" :self 2 "r" "e2")
-    (priority-set table "ten" :self 10 "r" "e10")
-    (priority-set table "a" :self 5 "r" "ea")
-    (priority-set table "b" :self 5 "r" "eb")
     (let ((ordered (priority-rows table rows)))
       (check-equal expected (mapcar (lambda (r) (getf r :id)) ordered)
                    "rank 2 precedes 10; ties then defaults by id; blocked last"))

@@ -16,7 +16,6 @@
 (defstruct (wnode (:conc-name wnode-))
   id type parent coordinator children required required-count required-open state branch
   open-count
-  id type parent children required required-count required-open state branch open-count
   ;; The five permitted metadata fields of `node edit` (SPEC-WORK.md:5798). An
   ;; absent field is +ABSENT+ and an empty or false value is kept as itself, so
   ;; keep, clear, set-empty and set-false are four distinguishable states.
@@ -35,7 +34,6 @@
   ;; is the engine's append-only edit history, newest first, the :before/after
   ;; pair `node edit` keeps outside the payload digest for its undo.
   repo view meta-log
-  title category private version repo view meta-log
   ;; SPEC-WORK.md:1222 -- the newest row of an id carries revived=<rev|-> and
   ;; settles=<n>. Both are kept on the node and moved on write, like every
   ;; other counter here, so a row is written and never computed by a scan.
@@ -193,10 +191,6 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :category (getf spec :category +absent+)
                           :private (getf spec :private +absent+)
                           :version (getf spec :version +absent+)
-                          :title (getf spec :title)
-                          :category (getf spec :category)
-                          :private (getf spec :private)
-                          :version (getf spec :version)
                           :repo (getf spec :repo)
                           :view nil
                           :meta-log '()
@@ -204,7 +198,6 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :revived "-"
                           :estimate (getf spec :estimate +absent+)
                           :holder (getf spec :holder)))))
-                          :holder nil))))
     (setf order (nreverse order))
     ;; Containment edges, in seed order.
     (dolist (id order)

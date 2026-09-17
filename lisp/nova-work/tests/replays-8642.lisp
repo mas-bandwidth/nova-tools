@@ -133,11 +133,6 @@
     ;; Cancelling a finished op is never a false success: it reports already
     ;; complete and never claims a cancellation happened.
     (let ((done-cancel (async-operation-cancel '(:id "op-2" :kind :export :state :done :attempts 1))))
-                 (getf (operation-cancel '(:id "o1" :kind :import :state :pending :attempts 0)) :state)
-                 "cancel did not cancel a pending op")
-    ;; Cancelling a finished op is never a false success: it reports already
-    ;; complete and never claims a cancellation happened.
-    (let ((done-cancel (operation-cancel '(:id "op-2" :kind :export :state :done :attempts 1))))
       (check-equal :already-complete (getf done-cancel :disposition)
                    "cancelling a finished op claimed a cancellation success")
       (check-equal :done (getf done-cancel :state)

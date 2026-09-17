@@ -5,7 +5,6 @@
 ;;;;   one-stop-note-cannot-cancel-two-attempts
 ;;;;   hold-survives-a-crash
 ;;;;   capture-survives-ctl-clip
-;;;;   capture-survives-clip
 ;;;;   no-dispatch-slips-past-a-hold
 ;;;;
 ;;;; The full session, provider, transport, lease and reconcile surfaces stay
@@ -18,8 +17,6 @@
 ;;;; record and before a capture or a send recovers the same hold and the same
 ;;;; target identities (replay hold-survives-a-crash). A ctl-clip publishes without
 ;;;; moving a live hold's pin (replay capture-survives-ctl-clip), and every send
-;;;; target identities (replay hold-survives-a-crash). A clip publishes without
-;;;; moving a live hold's pin (replay capture-survives-clip), and every send
 ;;;; revalidates the effective holds (replay no-dispatch-slips-past-a-hold).
 
 (in-package #:nova-work)
@@ -29,7 +26,6 @@
 ;;; ------------------------------------------------------------------
 
 (defstruct (ctl-attempt (:conc-name ctl-attempt-))
-(defstruct (attempt (:conc-name attempt-))
   id node generation live-p)
 
 (defstruct (offer (:conc-name of-))
@@ -39,10 +35,6 @@
   id action scope targets directives anchor revision span manifest released-p durable-p)
 
 (defstruct (ctl-manifest (:conc-name manifest-))
-(defstruct (hold (:conc-name hold-))
-  id action scope targets directives anchor revision span manifest released-p durable-p)
-
-(defstruct (manifest (:conc-name manifest-))
   hold-id revision span target-ids content-hash)
 
 (defstruct (control-state (:conc-name ctl-) (:constructor make-ctl))
@@ -69,7 +61,6 @@
 
 (defun record-attempt (kernel node id &key (generation 1) (live t))
   (let ((attempt (make-ctl-attempt :id id :node node :generation generation :live-p live)))
-  (let ((attempt (make-attempt :id id :node node :generation generation :live-p live)))
     (push attempt (ctl-attempts (kernel-controls kernel)))
     attempt))
 
@@ -78,16 +69,12 @@
   (sort (loop for a in (ctl-attempts (kernel-controls kernel))
               when (and (ctl-attempt-live-p a) (equal node (ctl-attempt-node a)))
                 collect (ctl-attempt-id a))
-              when (and (attempt-live-p a) (equal node (attempt-node a)))
-                collect (attempt-id a))
         #'string<))
 
 (defun live-attempt-p (kernel node id)
   (let ((a (find id (ctl-attempts (kernel-controls kernel))
                  :key #'ctl-attempt-id :test #'equal)))
     (and a (ctl-attempt-live-p a) (equal node (ctl-attempt-node a)))))
-                 :key #'attempt-id :test #'equal)))
-    (and a (attempt-live-p a) (equal node (attempt-node a)))))
 
 ;;; ------------------------------------------------------------------
 ;;; Scope selectors (SPEC-WORK.md:3923).
@@ -152,7 +139,6 @@
 (defun %hold-from-record (record)
   (let ((id (getf record :id)))
     (make-ctl-hold :id id
-    (make-hold :id id
                :action (getf record :action)
                :scope (getf record :scope)
                :targets (getf record :targets)
@@ -193,11 +179,6 @@ the same id, anchor, span and target identities."
                          (copy-list (ctl-attempts ctl)))
                         #'string< :key #'ctl-attempt-id))
          (target-ids (mapcar #'ctl-attempt-id targets))
-                           (and (attempt-live-p a)
-                                (%scope-covers-p scope (attempt-node a))))
-                         (copy-list (ctl-attempts ctl)))
-                        #'string< :key #'attempt-id))
-         (target-ids (mapcar #'attempt-id targets))
          (span (length target-ids))
          (id (or request (format nil "control-~D" (incf (ctl-control-seq ctl)))))
          (rev (ctl-revision ctl))
@@ -214,7 +195,6 @@ the same id, anchor, span and target identities."
     (let ((line (%control-record-line id action scope anchor span target-ids rev)))
       (journal-record (kernel-journal kernel) id (sha256-hex line) line rev))
     (let ((hold (make-ctl-hold :id id :action action :scope scope :targets target-ids
-    (let ((hold (make-hold :id id :action action :scope scope :targets target-ids
                            :directives (loop for target in target-ids
                                              collect (format nil "~A/~A" id target))
                            :anchor anchor :revision rev :span span
@@ -243,9 +223,6 @@ assignment. It writes no transition and is not a cancellation."
 never reads a newer scope, so a ctl-clip or a later assignment cannot change it."
   (declare (ignore kernel))
   (make-ctl-manifest :hold-id (hold-id hold)
-never reads a newer scope, so a clip or a later assignment cannot change it."
-  (declare (ignore kernel))
-  (make-manifest :hold-id (hold-id hold)
                  :revision (hold-revision hold)
                  :span (hold-span hold)
                  :target-ids (copy-list (hold-targets hold))
@@ -256,8 +233,6 @@ never reads a newer scope, so a clip or a later assignment cannot change it."
 
 (defun ctl-clip (kernel)
   "Publish a ctl-clip. A live hold's anchor and span are carried forward, never
-(defun clip (kernel)
-  "Publish a clip. A live hold's anchor and span are carried forward, never
 reconstructed from the newer scope."
   (incf (ctl-clip-revision (kernel-controls kernel)))
   (values t "CLIP OK" 0))
@@ -279,14 +254,12 @@ even after one is released."
   (find id (ctl-offers (kernel-controls kernel)) :key #'of-id :test #'equal))
 
 (defun prepare-offer (kernel id node ctl-attempt-id &key (generation 1))
-(defun prepare-offer (kernel id node attempt-id &key (generation 1))
   "Offer admission: the first of the three barrier points. A hold effective at
 admission refuses the offer."
   (when (held-p kernel node)
     (return-from prepare-offer
       (values nil (format nil "OFFER FAIL offer=~A node=~A: hold effective" id node) 1 nil)))
   (let ((offer (make-offer :id id :node node :attempt ctl-attempt-id
-  (let ((offer (make-offer :id id :node node :attempt attempt-id
                            :generation generation :effect :prepared
                            :lease-p nil :launched-p nil)))
     (push offer (ctl-offers (kernel-controls kernel)))
@@ -305,13 +278,11 @@ admission refuses the offer."
     (values t (format nil "DISPATCH OK offer=~A" id) 0)))
 
 (defun ctl-accept-offer (kernel id)
-(defun accept-offer (kernel id)
   "Conversion: an acceptance arriving under a hold is retained :accepted-held
 with the reservation intact -- no lease, no launch, no release."
   (let ((offer (%offer kernel id)))
     (unless offer
       (return-from ctl-accept-offer (values nil (format nil "CONVERT FAIL: no such offer ~A" id) 1)))
-      (return-from accept-offer (values nil (format nil "CONVERT FAIL: no such offer ~A" id) 1)))
     (if (held-p kernel (of-node offer))
         (progn (setf (of-effect offer) :accepted-held)
                (values t :accepted-held 0))
@@ -334,14 +305,12 @@ and the other holds."
                (values t (format nil "RECONCILE OK offer=~A effect=accepted" id) 0)))))
 
 (defun ctl-release-hold (kernel id)
-(defun release-hold (kernel id)
   "Lift only this control's hold. Overlapping holds stay effective and lifting
 converts no held acceptance."
   (let ((hold (find id (ctl-holds (kernel-controls kernel))
                     :key #'hold-id :test #'equal)))
     (unless hold
       (return-from ctl-release-hold (values nil (format nil "RESUME FAIL: no such control ~A" id) 1)))
-      (return-from release-hold (values nil (format nil "RESUME FAIL: no such control ~A" id) 1)))
     (setf (hold-released-p hold) t)
     (values t (format nil "RESUME OK control=~A" id) 0)))
 
@@ -364,16 +333,12 @@ converts no held acceptance."
 
 (defun launch-attempt (kernel node ctl-attempt-id)
   (declare (ignore ctl-attempt-id))
-(defun launch-attempt (kernel node attempt-id)
-  (declare (ignore attempt-id))
   (if (held-p kernel node)
       (values nil (format nil "DISPATCH FAIL node=~A: held" node) 1)
       (values t "DISPATCH OK" 0)))
 
 (defun correct-attempt (kernel node ctl-attempt-id)
   (declare (ignore ctl-attempt-id))
-(defun correct-attempt (kernel node attempt-id)
-  (declare (ignore attempt-id))
   (if (held-p kernel node)
       (values nil (format nil "CORRECT FAIL node=~A: held" node) 1)
       (values t "CORRECT OK" 0)))
