@@ -47,6 +47,8 @@ func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 		return harvestVerb(args, out, errs)
 	case "beat":
 		return beatVerb(args, out, errs)
+	case "watch":
+		return watchVerb(args, out, errs)
 	case "status":
 		return statusVerb(args, out, errs)
 	case "progress":
@@ -179,6 +181,38 @@ func beatVerb(args []string, out, errs io.Writer) int {
 	}
 	return Beat(BeatInput{
 		Queue: o.queue, Cairn: o.cairn, Title: o.title, Resume: o.resume,
+		Stdout: out, Stderr: errs,
+	})
+}
+
+func watchVerb(args []string, out, errs io.Writer) int {
+	o := struct {
+		queue, bus, jobs, until, cap string
+	}{}
+	f := flag.NewFlagSet("watch", flag.ContinueOnError)
+	f.SetOutput(io.Discard)
+	f.StringVar(&o.queue, "queue", "", "the merge queue directory")
+	f.StringVar(&o.bus, "bus", "", "the nova-bus checkout")
+	f.StringVar(&o.jobs, "jobs", "", "the job roots")
+	f.StringVar(&o.until, "until", "", "the event that ends the watch")
+	f.StringVar(&o.cap, "cap", "", "the wall the watch never runs past")
+	if err := f.Parse(args); err != nil {
+		return refusal(errs, "WATCH", fmt.Errorf("%s (run nova-pulse help)", err))
+	}
+	if len(f.Args()) != 0 {
+		return refusal(errs, "WATCH", fmt.Errorf("watch takes no positional arguments (run nova-pulse help)"))
+	}
+	var capDur time.Duration
+	if o.cap != "" {
+		d, err := time.ParseDuration(o.cap)
+		if err != nil {
+			fmt.Fprintf(errs, "WATCH REFUSED cap=%s (a duration like 90s or 5m)\n", o.cap)
+			return 2
+		}
+		capDur = d
+	}
+	return Watch(WatchInput{
+		Queue: o.queue, Bus: o.bus, Jobs: o.jobs, Until: o.until, Cap: capDur,
 		Stdout: out, Stderr: errs,
 	})
 }

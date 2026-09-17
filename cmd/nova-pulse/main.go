@@ -24,6 +24,7 @@ nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue 
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
+nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
@@ -179,6 +180,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdHarvest(rest, stdout, stderr)
 	case "beat":
 		return cmdBeat(rest, stdout, stderr, now)
+	case "watch":
+		return cmdWatch(rest, stdout, stderr, now)
 	case "manager":
 		return cmdManager(rest, stdout, stderr)
 	case "status":
@@ -363,6 +366,32 @@ func cmdBeat(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	return pulse.Beat(pulse.BeatInput{
 		Queue: *queue, Cairn: *cairn, Title: *title, Resume: *resume,
+		Now: func() time.Time { return now }, Stdout: stdout, Stderr: stderr,
+	})
+}
+
+func cmdWatch(args []string, stdout, stderr io.Writer, now time.Time) int {
+	f := newFlags("watch")
+	queue := f.fs.String("queue", "", "")
+	busDir := f.fs.String("bus", "", "")
+	jobs := f.fs.String("jobs", "", "")
+	until := f.fs.String("until", "", "")
+	capFlag := f.fs.String("cap", "", "")
+
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	var capDur time.Duration
+	if strings.TrimSpace(*capFlag) != "" {
+		d, err := time.ParseDuration(*capFlag)
+		if err != nil {
+			fmt.Fprintf(stderr, "WATCH REFUSED cap=%s (a duration like 90s or 5m)\n", oneline.Field(*capFlag))
+			return 2
+		}
+		capDur = d
+	}
+	return pulse.Watch(pulse.WatchInput{
+		Queue: *queue, Bus: *busDir, Jobs: *jobs, Until: *until, Cap: capDur,
 		Now: func() time.Time { return now }, Stdout: stdout, Stderr: stderr,
 	})
 }
