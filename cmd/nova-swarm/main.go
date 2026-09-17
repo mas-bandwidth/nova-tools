@@ -41,7 +41,7 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
-  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
+  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
   nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
   nova-swarm status    --pool <dir> [--max <n>]
@@ -406,11 +406,12 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	benches := f.fs.String("benches", "", "")
 	bench := f.fs.String("bench", "", "")
 	then := f.fs.String("then", "", "")
+	slots := f.fs.String("slots", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	if *cards != "" {
-		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, stdout, stderr)
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, *slots, stdout, stderr)
 	}
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	f.want(*tasks, "tasks", "a directory holding one task file per job")
@@ -481,7 +482,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 // TSV. It has no pool and no admission queue: it starts one runner process per card, waits
 // until they all end or the batch's deadline, and folds every card's RESULT.md into one
 // bounded packet.
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench string, then string, stdout, stderr io.Writer) int {
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench string, then string, slots string, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
 	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
 	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
@@ -511,6 +512,7 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int
 		ID: id, Deadline: time.Duration(seconds) * time.Second,
 		Idle:  time.Duration(idle) * time.Second,
 		Cards: cards, Root: root, Runner: runner,
+		Slots:   slots,
 		Benches: benches, Bench: bench, Then: then,
 		Stdout: stdout, Stderr: stderr,
 	})

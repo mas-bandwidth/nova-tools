@@ -55,6 +55,11 @@ type BatchInput struct {
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
 	Runner   string        // the command, one process per card
+	// Slots is the slot range this batch allocates from: "<lo>-<hi>", or "<n>" for 1-<n>.
+	// Empty keeps the old behaviour -- allocation from 1 with no ceiling. The cards.tsv
+	// slot column is optional in either case; a hand slot outside the range is that card's
+	// own admission refusal (issue #618).
+	Slots string
 	// PullWait and PullPoll bound the pull that brings a remote card's files back: how
 	// long to wait for RESULT.md to exist on the bench, and how often to ask. Zero takes
 	// the spec's own numbers (30 s, one second), and the tests take short ones.
@@ -129,9 +134,16 @@ func Batch(in BatchInput) int {
 			fmt.Fprintln(in.Stderr, err)
 			return 2
 		}
-	} else if err := assignSlots(cards, in.Root); err != nil {
-		fmt.Fprintln(in.Stderr, err)
-		return 1
+	} else {
+		lo, hi, err := ParseSlotRange(in.Slots)
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "nova-swarm batch: %s\n", oneline.Err(err))
+			return 2
+		}
+		if err := assignSlots(cards, in.Root, lo, hi, in.Stderr); err != nil {
+			fmt.Fprintln(in.Stderr, err)
+			return 1
+		}
 	}
 	// Issue #457: a batch writes its own lock on every local slot it takes, so a slot already
 	// in use is refused -- for the card that named it, per issue #529, never for the batch --
@@ -441,12 +453,45 @@ func Batch(in BatchInput) int {
 		}
 	}
 
+	// A batch whose cards ALL abstained with the SAME reason and NONE ran is a uniform
+	// abstain, and the BATCH line says so (issue #618). This is the PIT-STOP shape -- a whole
+	// batch lost before any harness opened -- and it is one signal, not n independent faults:
+	// the manager policy escalates it at once and never requeues it.
+	uniform := ""
+	if done == 0 && abstain == len(cards) {
+		token, same := "", true
+		ran := false
+		for _, r := range rows {
+			fields := strings.Fields(r.reason)
+			if len(fields) == 0 {
+				same = false
+				break
+			}
+			if token == "" {
+				token = fields[0]
+			} else if token != fields[0] {
+				same = false
+				break
+			}
+			if cardRan(fields[0]) {
+				ran = true
+			}
+		}
+		if same && !ran {
+			uniform = token
+		}
+	}
+
 	// The packet's grammar. The BATCH line first, then one line per card in admission
 	// order (label, its resolved slot, then line 2 verbatim, or ABSTAIN with its one reason
 	// token), then HOLD lines -- at most maxHoldLines -- so the whole packet never grows
 	// past n + 12 lines whatever the batch holds.
-	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d\n",
+	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d",
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
+	if uniform != "" {
+		fmt.Fprintf(in.Stdout, " uniform-abstain=%s", oneline.Field(uniform))
+	}
+	fmt.Fprintln(in.Stdout)
 	for _, r := range rows {
 		if r.state == "done" {
 			fmt.Fprintf(in.Stdout, "%s slot=%d: %s log=%d\n", oneline.Field(r.label), r.slot, r.line2, r.logLines)
@@ -640,6 +685,20 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		}
 		if cardHarnessSilent(job) {
 			return "abstain", "harness-silent", "job=" + job, ""
+		}
+		// A RUNNER THAT EXITED BEFORE THE HARNESS STARTED (issue #618). No `NATIVE` line in
+		// the runner's own stdout and no harness capture is a run that never happened: the
+		// non-zero exit code is the RUNNER's, and rc=<n> is reserved for the harness. The
+		// runner's own last line is carried, bounded, because that is the only evidence of
+		// why it refused -- the fault this rule closes was five batches of rc=2 with no log
+		// and no coordinator looking until a person asked.
+		if !cardHarnessStarted(job) && rc != 0 {
+			last := runnerLastLine(filepath.Join(job, "harness.log"))
+			tail := ""
+			if last != "" {
+				tail = "last=" + oneline.Escape(oneline.Cap(last, oneline.TailBytes))
+			}
+			return "abstain", "runner-refused", tail, ""
 		}
 		// A card that ran to a clean exit and published nothing named no result; a card that
 		// ended non-zero names the code it ended with, which is the thing to go and read.
@@ -848,6 +907,54 @@ func cardFenceRejected(job string) (string, bool) {
 
 func formatUSD(n float64) string { return strconv.FormatFloat(n, 'f', 4, 64) }
 
+// cardHarnessStarted reports whether the harness ever began: the runner's own stdout holds a
+// `NATIVE` line, or the run left a harness capture, `<job>/harness-output.log` (issue #618).
+// A runner that exits before this is runner-refused, whatever its exit code, and rc=<n> is
+// left for a harness that ran.
+func cardHarnessStarted(job string) bool {
+	if fileExists(filepath.Join(job, "harness-output.log")) {
+		return true
+	}
+	raw, err := readRegular(filepath.Join(job, "harness.log"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "NATIVE ") {
+			return true
+		}
+	}
+	return false
+}
+
+// runnerLastLine is the last non-blank line a runner wrote to its own stdout, the evidence a
+// runner-refused card carries. The file is the job's `harness.log`, the file the batch pins
+// the runner's stdout to -- never one the harness writes.
+func runnerLastLine(path string) string {
+	raw, err := readRegular(path)
+	if err != nil {
+		return ""
+	}
+	last := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		if s := strings.TrimSpace(line); s != "" {
+			last = s
+		}
+	}
+	return last
+}
+
+// cardRan reports whether a card's harness could have started, from its reason token alone:
+// the classes that mean "it never ran" are the pre-run refusals. Every other token means a
+// harness opened -- so a batch of those is not the uniform-abstain PIT-STOP shape (issue #618).
+func cardRan(token string) bool {
+	switch token {
+	case "runner-refused", "admission", "bench-unreachable", "harness-silent", "input-limit":
+		return false
+	}
+	return true
+}
+
 // cardLogPath is the child's own log the gather counts: <slot>/native.log when the native
 // run wrote one, else the job's harness.log (which carries only the runner's own stdout, the
 // NATIVE OK line). Run 10's defect was counting a log the child never wrote: a card with a
@@ -954,24 +1061,51 @@ func busySlots(root string) map[int]bool {
 	return out
 }
 
-// assignSlots resolves every card's slot before any launch. A card that named a slot keeps
-// it; a slot named by two cards is refused outright. A card that asked for allocation (slot
-// zero) takes the lowest free slot under the root -- free means neither busy on disk (a live
-// lock) nor already assigned to another card in this batch.
-func assignSlots(cards []batchCard, root string) error {
+// assignSlots resolves every card's slot before any launch, from the batch's own range
+// (issue #618). Every card that NAMED a slot keeps it, and a slot named by two cards is
+// refused outright. Every card that asked for allocation (slot zero, an empty or '-' column)
+// takes the lowest free slot in [lo,hi] -- free means neither busy on disk (a live lock) nor
+// already reserved by another card in this batch. A hand slot outside [lo,hi] is refused AT
+// ADMISSION, for that card alone, with `ADMIT REFUSED slot=<n> range=<lo>-<hi> card=<label>`,
+// exactly where the spec says, never inside the runner where it costs a whole card's
+// deadline. hi 0 means no ceiling: allocation runs on from lo as before.
+//
+// Hand slots are reserved FIRST, so the order of the TSV cannot decide whether a hand slot
+// is honoured: an auto-allocated card never steals a slot another card named below it.
+func assignSlots(cards []batchCard, root string, lo, hi int, notes io.Writer) error {
 	busy := busySlots(root)
 	assigned := map[int]string{}
+	// Pass one: the cards that named a slot.
 	for i := range cards {
-		label := cards[i].label
-		if cards[i].slot != 0 {
-			if prev, ok := assigned[cards[i].slot]; ok {
-				return fmt.Errorf("BATCH REFUSED slot %d named twice (%s, %s)", cards[i].slot, prev, label)
-			}
-			assigned[cards[i].slot] = label
+		c := &cards[i]
+		if c.slot == 0 {
 			continue
 		}
-		n := 1
+		if hi > 0 && (c.slot < lo || c.slot > hi) {
+			c.admitWhy = fmt.Sprintf("slot=%d range=%d-%d", c.slot, lo, hi)
+			fmt.Fprintf(notes, "ADMIT REFUSED slot=%d range=%d-%d card=%s\n", c.slot, lo, hi, oneline.Field(c.label))
+			c.slot = 0
+			continue
+		}
+		if prev, ok := assigned[c.slot]; ok {
+			return fmt.Errorf("BATCH REFUSED slot %d named twice (%s, %s)", c.slot, prev, c.label)
+		}
+		assigned[c.slot] = c.label
+	}
+	// Pass two: the cards that asked for allocation, each the lowest free slot left.
+	for i := range cards {
+		c := &cards[i]
+		if c.slot != 0 || c.admitWhy != "" {
+			continue
+		}
+		n := lo
 		for {
+			if hi > 0 && n > hi {
+				c.admitWhy = fmt.Sprintf("no-free-slot range=%d-%d", lo, hi)
+				fmt.Fprintln(notes, admitRefusalLine(c.label, c.admitWhy))
+				n = 0
+				break
+			}
 			if busy[n] {
 				n++
 				continue
@@ -982,10 +1116,35 @@ func assignSlots(cards []batchCard, root string) error {
 			}
 			break
 		}
-		cards[i].slot = n
-		assigned[n] = label
+		c.slot = n
+		if n > 0 {
+			assigned[n] = c.label
+		}
 	}
 	return nil
+}
+
+// ParseSlotRange parses --slots: "" is no range at all (allocate from 1, no ceiling), "<n>"
+// is 1-<n>, and "<lo>-<hi>" is itself. lo is where allocation starts and hi is the last slot
+// it may take; hi 0 means no ceiling.
+func ParseSlotRange(s string) (lo, hi int, err error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 1, 0, nil
+	}
+	if a, b, ok := strings.Cut(s, "-"); ok {
+		l, err1 := strconv.Atoi(strings.TrimSpace(a))
+		h, err2 := strconv.Atoi(strings.TrimSpace(b))
+		if err1 != nil || err2 != nil || l < 1 || h < l {
+			return 0, 0, fmt.Errorf("--slots wants <lo>-<hi> with 1 <= lo <= hi, got %q", s)
+		}
+		return l, h, nil
+	}
+	n, e := strconv.Atoi(s)
+	if e != nil || n < 1 {
+		return 0, 0, fmt.Errorf("--slots wants a slot count or a <lo>-<hi> range, got %q", s)
+	}
+	return 1, n, nil
 }
 
 // batchLockPath is the lock a batch writes on a slot it takes: <root>/<slot>/BATCH, one line

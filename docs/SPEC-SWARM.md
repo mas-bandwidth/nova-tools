@@ -836,6 +836,15 @@ the batch that refused it. This is per card, and it supersedes the whole-batch
 refusal that landed with the lock in #568: an admission refusal is one card's,
 the slot's as much as the shape's (issue #529).
 
+**The batch allocates its own slots from a range** (issue #618). `--slots <lo>-<hi>` is
+the range the batch may take, and the `slot` column of the cards file is **optional**: an
+empty column or `-` asks for allocation, and the batch gives that card the lowest free slot
+in `[lo,hi]`, skipping a slot whose lock is live. A hand slot inside the range is kept; a
+hand slot **outside** it is refused at admission for that card alone,
+`ADMIT REFUSED slot=<n> range=<lo>-<hi> card=<label>`, and never reaches the runner —
+the fault this rule closes launched five read batches with slots 230-235 while the runner
+refused everything above 228, and every card scored ABSTAIN `rc=2` with no log to read.
+
 ### wait — all end, or the deadline
 
 `wait` blocks until every card has ended **or** the batch's deadline has
@@ -916,7 +925,8 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `no-result` | ended with rc 0 and published no `RESULT.md`, at the job root or below it |
 | `fence` | was stopped by the HARNESS'S OWN permission fence: it auto-rejected a path and the model stopped there, so the card never got to publish (issue #644). The path follows as `path=<p>` |
 | `harness-silent` | its harness wrote nothing at all — no word in the run's capture and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
-| `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it |
+| `runner-refused` | its RUNNER exited before the harness started — no `NATIVE` line and no `harness-output.log` — so the non-zero exit code is the runner's, not the harness's; the runner's last line follows as `last=<line>` (issue #618) |
+| `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it, and its harness DID run |
 | `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
 | `deadline` | was killed at the batch's deadline and published no `RESULT.md` |
 | `result-after-deadline` | published a matching `RESULT.md` that only landed because the deadline fired, so it is late, not done |
@@ -967,7 +977,10 @@ in #603), `gather-copies-result-up-from-repo` (`TestGatherCopiesResultUpFromRepo
 #603), `native-silent-harness-is-not-ok` (`TestNativeSilentHarnessIsNotOK`, PR
 #604), `native-tmpdir-is-outside-any-repo` (`TestNativeTmpDirIsOutsideAnyRepo`,
 #558), `local-route-is-one-slot` (two local-model cards in one batch: one runs,
-one is `ABSTAIN reason=admission local route is one slot`; open).
+one is `ABSTAIN reason=admission local route is one slot`; open), and, for the
+range and the pre-run refusals (issue #618), `TestBatchAllocatesSlots`,
+`TestBatchRefusesHandSlotOutOfRange`, `TestBatchScoresRunnerRefused` and
+`TestBatchLineNamesUniformAbstain`.
 
 ### read — one agent, one packet, once
 
@@ -979,13 +992,14 @@ are the thing the packet replaced.
 ### The packet's grammar
 
 ```
-BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
+ADMIT REFUSED slot=<n> range=<lo>-<hi> card=<label>
 ADMIT REFUSED bench=<name>: <reason>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
@@ -1002,6 +1016,14 @@ one reason token, each carrying that card's own `log=<n>`. `ADMIT REFUSED` and
 bytes stay bounded by n. `HOLD:` lines carry evidence a count would hide, each capped. Counts
 and caps bound the packet's bytes; a packet never lists a finding and never
 quotes a report body.
+
+**A batch that abstains uniformly is one PIT-STOP signal** (issue #618). When
+every card in the batch abstains with the same reason token and none ran, the
+`BATCH` line carries `uniform-abstain=<reason>`. It is one lost batch, not n
+independent faults: `nova-pulse status` counts it as a pit stop, and the manager
+policy escalates it at once and never requeues it. The fault that wrote the rule
+left five read batches to the same mistake, and a coordinator who had to be
+asked; the token is the thing nobody has to read a log to see.
 
 ### What this section does not do
 
@@ -1290,14 +1312,14 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n|
 ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
-BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>]
+BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BATCH THEN rc=<n>
 BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>

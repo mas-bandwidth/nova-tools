@@ -287,6 +287,11 @@ func reasonRunner(t *testing.T, dir string) string {
 	return runnerDoing(t, dir, "reason",
 		runnerStep{Op: "mkdir", Path: "{job}"},
 		runnerStep{Op: "exit", N: 0, When: "line2==MISSING"},
+		// RC7 is a HARNESS that ran and exited 7 (issue #618): rc=<n> is reserved for the
+		// harness, so the fixture leaves a harness capture first. A runner that exits
+		// non-zero with no NATIVE line and no capture is runner-refused, not rc=<n>.
+		runnerStep{Op: "write", Path: "{job}/harness-output.log", When: "line2==RC7",
+			Body: "the harness ran and said this\n"},
 		runnerStep{Op: "exit", N: 7, When: "line2==RC7"},
 		runnerStep{Op: "write", Path: "{job}/RESULT.md", When: "line2==WRONG",
 			Body: "RESULT: someone-else\nall green\n"},
