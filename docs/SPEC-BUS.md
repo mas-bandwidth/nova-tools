@@ -9,7 +9,7 @@ bounded, and tests use fakes.
 **The verb lines, as help prints them.**
 
 ```
-nova-bus wait --bus <dir> --as <name> --on-note --timeout <duration> --remote <name> --branch <name> [--interval <duration>] [--advance] [--notify <path>] [--max-notes <n>] [--max-bytes <n>] [--after <token>] [--git-timeout <seconds>]
+nova-bus wait --bus <dir> --as <name> --on-note --timeout <duration> --remote <name> --branch <name> [--interval <duration>] [--advance] [--max-notes <n>] [--max-bytes <n>] [--after <token>] [--git-timeout <seconds>]
 nova-bus receipt --bus <dir> --as <name> --verdict APPROVE|HOLD|ADOPTED --re <id-or-path> [--text <text>] --remote <name> --branch <name> [--attempts <n>] [--no-push] [--git-timeout <seconds>]
 ```
 
@@ -36,16 +36,13 @@ INBOX BODY END id=<id>
 
 Every field is named: the id, the sender, the repository-relative path, the body's
 byte count, and the existing frame fields. A service restart alone does not wake a
-harness parent — nothing in the unit's lifetime reaches the parent — so the wake is
-named two ways and the default is foreground. By default `wait --on-note` wakes a
-parent that is waiting inside its own turn, and the exit is the wake: a parent wakes
-on a note without ingesting the open list. A unit that waits outside a parent turn
-uses the durable notification-and-acknowledgement adapter instead, named by
-`--notify <path>`: after the note is complete on the bus the unit writes the arrived
-note to that named file or FIFO — the thing the harness watches — and the
-harness acknowledges by advancing the cursor (`--advance`), which is the only thing
-that retires the note. The note stays on the bus, and re-reads rather than drops,
-until that acknowledgement.
+harness parent — nothing in the unit's lifetime reaches the parent — so this slice
+waits in the foreground only: a FIFO is not durable, a file can overwrite pending
+notes, and `--advance` does not itself name the batch it acknowledges. `wait
+--on-note` wakes a parent that is waiting inside its own turn, and the exit is the
+wake: a parent wakes on a note without ingesting the open list. Background delivery
+is deferred to a later section, which must pin a real notification adapter and an
+acknowledgement-token protocol before it makes any claim.
 
 **The body and batch bounds, the continuation, and the cursor.** One note's body is
 bounded to `--max-bytes` bytes, default 65536 and hard ceiling 1048576; one wake
@@ -61,9 +58,10 @@ printed=<n> bytes=<b> oversize=<k> gaps=<g> drained=<true|false> complete=<false
 next=<token>`; the same verb called again with `--after <token>` returns the rest, and
 no run repeats itself. The cursor is the acknowledgement: without `--advance` no
 `CURSOR`, `OPEN`, `RECEIPTS`, `INDEX`, commit or push changes; with it the cursor
-advances only past notes fully delivered and acknowledged, so a crash mid-batch
-redelivers from the last acknowledged note and a body that was not acknowledged keeps
-its turn at being new.
+advances only past the batch the caller acknowledged by the batch token — the
+existing complete-batch cursor contract — so a crash mid-batch redelivers from the
+last acknowledged batch and a body that was not acknowledged keeps its turn at being
+new.
 
 **What `receipt --verdict` prints.** One line, or one `RECEIPT ALREADY` line per
 note already heard:
@@ -73,8 +71,7 @@ RECEIPT OK verdict=<APPROVE|HOLD|ADOPTED> re=<id> recorded=<n> already=<m> commi
 ```
 
 **The mistakes it removes.** `wait --on-note` removes the one-minute heartbeat loop
-that woke a 500k-context parent on every note — 53 tool calls per empty tick — and
-its service restart removes the silent poller death at the harness's ten-hour cap;
+that woke a 500k-context parent on every note — 53 tool calls per empty tick;
 `receipt --verdict` removes the hand-shaped receipt note; and `send`'s fold removes
 `SEND FAIL` on a BEAT rebase conflict (#488).
 
@@ -95,14 +92,12 @@ distinct from the wait's, so `pkill -f` on the wait never kills a send.
 **Red tests, written first.** Each uses a fake where the real thing is the network, a bench or a clock.
 1. `TestWaitOnNotePrintsOnlyTheNote`: a fake remote lands one To: note; stdout is the `WAIT OK` line and its `INBOX NOTE`/body and no `INBOX OPEN` or carrying count.
 2. `TestWaitOnNoteNeverWakesOnAnEmptyTick`: a fake clock and empty fake remote; the process prints one `WAIT TIMEOUT` and no frame, and no parent is woken.
-3. `TestWaitOnNoteRearmsAfterAHarnessCap`: a fake service manager kills the unit at the cap and restarts it; the restarted wait resumes with the note's arrival not lost.
-4. `TestReceiptVerdictWritesTheExactNoteShape`: a fake remote plus `--no-push`; the committed note is byte-for-byte the `Verdict`/`Re`/body shape and the `RECEIPT OK` line names every field.
-5. `TestReceiptVerdictRefusesAnUnknownVerdict`: exit 2 and one remedy line, with no write to a fake checkout.
-6. `TestSendFoldsOwnUncommittedBeat`: a fake checkout holding a dirty `from-<me>/BEAT` sends and commits it without a `SEND FAIL`.
-7. `TestSendFoldsOwnBeatOnlyCommit`: a fake remote behind a local beat-only commit sends without a rebase abort.
-8. `TestSendProcessNameIsDistinctFromWait`: a fake process-title probe asserts the send name and the wait name differ.
-9. `TestPkillOnWaitLeavesASendAlive`: a fake `pkill -f` matching only the wait name leaves a running fake send alive.
-10. `TestWaitOnNoteNotificationAdapterAcksByCursor`: a fake notification file or FIFO receives the arrived note; the note stays on the bus and re-reads until the harness advances the cursor, and a fake service restart by itself wakes no parent.
-11. `TestWaitOnNoteBoundsBodyAndBatch`: a body over `--max-bytes` prints the `INBOX BODY OVERSIZE` gap and no partial frame, and 21 notes under the default `--max-notes` print 20 with `complete=false`.
-12. `TestWaitOnNoteContinuationReturnsTheRest`: the `next=<token>` passed back as `--after` returns exactly the remainder once and ends with `next=-`.
-13. `TestWaitOnNoteCursorAdvancesOnlyPastAcknowledged`: a crash mid-batch leaves the cursor at the last fully delivered and acknowledged note, the next run redelivers from there, and a run without `--advance` moves no cursor.
+3. `TestReceiptVerdictWritesTheExactNoteShape`: a fake remote plus `--no-push`; the committed note is byte-for-byte the `Verdict`/`Re`/body shape and the `RECEIPT OK` line names every field.
+4. `TestReceiptVerdictRefusesAnUnknownVerdict`: exit 2 and one remedy line, with no write to a fake checkout.
+5. `TestSendFoldsOwnUncommittedBeat`: a fake checkout holding a dirty `from-<me>/BEAT` sends and commits it without a `SEND FAIL`.
+6. `TestSendFoldsOwnBeatOnlyCommit`: a fake remote behind a local beat-only commit sends without a rebase abort.
+7. `TestSendProcessNameIsDistinctFromWait`: a fake process-title probe asserts the send name and the wait name differ.
+8. `TestPkillOnWaitLeavesASendAlive`: a fake `pkill -f` matching only the wait name leaves a running fake send alive.
+9. `TestWaitOnNoteBoundsBodyAndBatch`: a body over `--max-bytes` prints the `INBOX BODY OVERSIZE` gap and no partial frame, and 21 notes under the default `--max-notes` print 20 with `complete=false`.
+10. `TestWaitOnNoteContinuationReturnsTheRest`: the `next=<token>` passed back as `--after` returns exactly the remainder once and ends with `next=-`.
+11. `TestWaitOnNoteCursorAdvancesOnlyPastAcknowledged`: a crash mid-batch leaves the cursor at the last fully delivered and acknowledged batch, the next run redelivers from there, and a run without `--advance` moves no cursor.
