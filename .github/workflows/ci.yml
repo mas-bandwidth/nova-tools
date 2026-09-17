@@ -488,6 +488,39 @@ jobs:
           # -timeout 20m stays as the ceiling, not the target.
           go test -short -count=1 -timeout 20m $pkgs
 
+  plan-merge:
+    # How many shard slots this merge group needs, decided before any leg starts.
+    # The matrix used to carry six slots per leg for every group: a group that
+    # changed one small package, or no Go at all (a spec PR), still took six
+    # runners per leg for checkout and Go setup, five of them to print "no
+    # tests". On the darwin leg that is the Studio: eight entries times six slots
+    # is forty-eight jobs a round on ten runners, and on 2026-09-17 the whole
+    # queue waited on it while sixty-one Linux runners sat idle. Slots: 6 when
+    # go.mod moves or a changed package is over 40 s in package-sizes.tsv, 1 when
+    # the changed packages sum under 20 s (or no Go changed), else 3. No Go
+    # toolchain needed: the table is keyed by import path, module path + dir.
+    name: plan-merge
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+      slots: ${{ steps.plan.outputs.slots }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: plan the shard slots
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ github.event.merge_group.base_sha }}"
+          git fetch -q --depth=1 origin "$base" 2>/dev/null || true
+          slots=$(bash .github/scripts/plan-merge-slots.sh "$base" HEAD)
+          case "$slots" in 1) shards='[0]';; 3) shards='[0,1,2]';; *) slots=6; shards='[0,1,2,3,4,5]';; esac
+          echo "plan-merge: slots=$slots"
+          echo "slots=$slots" >> "$GITHUB_OUTPUT"
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+
   test-hosted-merge:
     # RULE T (pit stop 4, 2026-09-16): the gate that lands a PR must run what
     # the dev push runs. The -short hosted-pr leg passed #858 while the full
@@ -511,6 +544,7 @@ jobs:
     # shards each crossed the two-minute cap.
     name: test-hosted-merge (${{ matrix.leg.name }}, ${{ matrix.shard }})
     if: github.event_name == 'merge_group'
+    needs: plan-merge
     strategy:
       fail-fast: false
       matrix:
@@ -523,7 +557,8 @@ jobs:
             labels: '["self-hosted","macOS","ARM64","studio"]'
           - name: windows
             runner: windows-latest
-        shard: [0, 1, 2, 3, 4, 5]
+        # Only the slots plan-merge says this group needs (1, 3 or 6).
+        shard: ${{ fromJSON(needs.plan-merge.outputs.shards) }}
     # A runs-on expression must resolve to one value, so the darwin leg's label
     # array is carried as a JSON string and parsed with fromJSON; the hosted legs
     # carry their runner image as a plain string and are quoted as a JSON string
@@ -586,7 +621,7 @@ jobs:
           echo "merge_group: full hosted on:${pkgs}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
 
-      - name: test (full, the packages this group changes, shard ${{ matrix.shard }} of 6)
+      - name: test (full, the packages this group changes, shard ${{ matrix.shard }} of ${{ needs.plan-merge.outputs.slots }})
         # NOT -short: the group commit must answer the hosted-only tests the
         # -short PR leg skips. Each shard runs the tests whose zero-based index
         # in its package's sorted test list is congruent to the shard, so a
@@ -601,6 +636,7 @@ jobs:
         run: |
           set -euo pipefail
           shard=${{ matrix.shard }}
+          slots=${{ needs.plan-merge.outputs.slots }}
           sizes=$(cat testdata/ci/package-sizes.tsv)
           for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
             secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
@@ -609,6 +645,9 @@ jobs:
             else
               n=3
             fi
+            # Never deal over more slots than the plan opened, or tests would
+            # land in a slot that does not exist and never run.
+            if [ "$n" -gt "$slots" ]; then n=$slots; fi
             list=$(go test -list '.*' "$pkg") || exit 1
             tests=$(printf '%s\n' "$list" | grep '^Test' | sort || true)
             if [ -z "$tests" ]; then
