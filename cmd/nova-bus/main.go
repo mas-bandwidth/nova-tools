@@ -2523,7 +2523,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		}
 		// #328 (2026-09-17): a beat or a cursor is never news. A wait that woke on every
 		// line's presence beat (one a minute, six lines) was a poll with extra steps and cost the
-		// window a turn per beat; --quiet-beats now only decides what a NOTE wake prints.
+		// window a turn per beat; --quiet-beats is accepted and changes nothing (Johnny's read).
 		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) }
 		// THE BEAT, written before the poll. A waiting line's cursor does not move --
 		// there was nothing to read, so nothing was recorded -- and a line whose cursor
