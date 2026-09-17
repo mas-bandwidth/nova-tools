@@ -393,6 +393,84 @@ seat the key names. It never prints a value. The benches run in parallel under
 or found no seat, and 3 when any bench was unreachable. ssh comes from `--ssh` (default
 `ssh`), so a test fakes it and no test reaches a machine.
 
+## Fleet hygiene
+
+`nova-pulse fleet hygiene --install` starts mechanical clean-as-we-work on the bench it runs
+on (Glenn 2026-09-17, #1139): it writes the hygiene script and a ten-minute systemd timer
+that runs it, so a bench never fills its disk while the loop sleeps. It is an admin act and
+obeys the fleet rule: one `HYGIENE` line per run, one `FLEET <name>` line per bench, the
+benches in parallel under `--timeout` (default 120), ssh from `--ssh` so a test fakes the
+bench, exit 0 ok / 2 refused / 3 unreachable, and `studio` refused by name.
+
+The verb line, as `nova-pulse help` will carry it:
+
+```
+nova-pulse fleet hygiene --install [--root <dir>] [--timeout <s>] [--max <n>]
+nova-pulse fleet hygiene --dry-run [--root <dir>] [--timeout <s>] [--max <n>]
+nova-pulse fleet hygiene --status --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
+```
+
+It reads the bench's own trees and writes nothing outside them. Under
+`$HOME/rowan-swarm-root` and `$HOME/rowan-working/tmp` a job is a slot's `jobs/<label>` or a
+`working/tmp` `<guid>-<label>`, and the verb reads that job's `harness-output.log`, its
+`RESULT.md` and its `.harvested` marker; it reads `_work/_temp` entry mtimes under
+`$HOME/runner-nova-tools-*/`, `df` free space, the size of `$HOME/.cache/go-build`, and the
+last `HYGIENE` line a previous run wrote to its log. `--install` writes
+`$HOME/nova-bench/bench-hygiene.sh` and a system-scope `bench-hygiene.timer` (ten minutes),
+both idempotent: a second `--install` rewrites nothing that already matches.
+
+One line per run, every field named:
+
+```
+HYGIENE <host> slots=<n> reaped=<n> jobs-deleted=<n> slots-deleted=<n> cache=<kept|dropped>(<size>G) free <a> -> <b>
+```
+
+`host` is `hostname -s`; `slots` the slot directories the run saw; `reaped` the slot `data`
+homes, `tmp` dirs and scratch it deleted; `jobs-deleted` the jobs it deleted whole;
+`slots-deleted` the empty slots it removed; `cache` is `kept` or `dropped` with the build
+cache's size in GB; `free <a> -> <b>` is disk free space before and after. `--dry-run` walks
+the same trees and prints one `WOULD rm -rf <path>` line per deletion it would make, deleting
+nothing, so a bench's first run is read before it is felt.
+
+The liveness rule decides every touch: a job whose `harness-output.log` is under fifteen
+minutes old with no `RESULT.md`, or that any process names in its command line or its cwd, is
+live and never touched, and a slot any live process's cwd sits in is live the same way. A
+harvested job (a `.harvested` marker) is deleted whole; a finished job nobody read goes after
+six hours; an empty slot goes; runner `_work/_temp` entries older than a day go; and the Go
+build cache is dropped when disk free is below 25 GB or the cache itself is above 20 GB. A
+live job is never reaped, however old its neighbours are.
+
+Refusals are exit 2, one remedy line each: without root, `FLEET REFUSED bench=<name> no-sudo
+(run it under sudo, or install the script by hand)`; without systemd, `FLEET REFUSED
+bench=<name> no-systemd (install the timer by hand)`; `studio` from any hygiene act,
+`FLEET REFUSED bench=studio (the reference bench is never cleaned by this tool)`; `--status`
+with no `--benches`, `refusing to guess`; a bench that answers no `HYGIENE` line,
+`FLEET <name> NO-HYGIENE (run fleet hygiene --install)`, exit 2, never a green line for a
+bench nobody cleaned.
+
+`--status --benches <file>` reads each bench's last `HYGIENE` line and its free space now,
+one `FLEET <name> HYGIENE slots=<n> reaped=<n> jobs-deleted=<n> slots-deleted=<n>
+cache=<kept|dropped>(<size>G) free=<a>G` per bench, so the coordinator sees a bench filling
+before it fills.
+
+The mistake it removes: two benches reached zero free in one night — 5 to 7 GB of slot data
+home and a 30 GB build cache each, grown while nobody watched.
+
+Red tests, one card writes them first; each fakes what the test cannot have:
+
+1. `hygiene-install-writes-script-and-timer`: a fake `ssh` bench with a fake `systemctl` on `PATH` records the script and the ten-minute timer written once, and a second `--install` writes neither again.
+2. `hygiene-install-refuses-without-sudo-or-systemd`: a fake `sudo` failing, and a bench whose fake `systemctl` reports no systemd, are each `FLEET REFUSED bench=<name>`, exit 2, and no script or timer is written.
+3. `hygiene-dry-run-prints-would-and-deletes-nothing`: a fixture root holding a stale job, a harvested job and an empty slot prints one `WOULD rm -rf` line each and every fixture file survives.
+4. `hygiene-never-touches-a-live-job`: with a fake clock, a job whose harness log is five minutes old and has no `RESULT.md`, and a job a fake `pgrep -f` names, are both untouched.
+5. `hygiene-deletes-a-harvested-job-whole`: a job carrying `.harvested` is removed in one piece and counted in `jobs-deleted`.
+6. `hygiene-deletes-an-unread-finished-job-after-six-hours`: with a fake clock, a job finished seven hours ago is deleted while one finished five hours ago stays.
+7. `hygiene-deletes-empty-slots`: a slot with no `jobs` entry is deleted and counted in `slots-deleted`, and one holding a live job is kept.
+8. `hygiene-prunes-runner-temp-older-than-a-day`: with a fake clock, a fixture `_work/_temp` entry older than a day goes and a younger one stays.
+9. `hygiene-drops-the-go-cache-below-25g-free-or-above-20g`: a fake `df` reporting 20 GB free, and a fake `du` reporting a 25 GB cache, each drop `$HOME/.cache/go-build`, while 40 GB free and a 10 GB cache keep it.
+10. `hygiene-status-prints-the-last-line-and-free-space-per-bench`: a fake `ssh` answering a stored `HYGIENE` line and a `df` output yields one `FLEET <name>` line per bench with the last counts and free space now.
+11. `hygiene-refuses-studio`: any hygiene act with `studio` in `--benches` is `FLEET REFUSED bench=studio`, exit 2, and the fake ssh log is empty.
+12. `hygiene-status-without-benches-refuses`: `--status` with no `--benches` is `refusing to guess`, exit 2, and no bench is contacted.
+
 ## The verbs
 
 ```
