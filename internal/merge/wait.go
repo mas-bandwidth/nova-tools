@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // Wait polls the SAME host reader the lane uses for PR state and checks --
@@ -37,7 +40,18 @@ func Wait(host Host, prNum int, timeout, interval time.Duration, now func() time
 				if sha == "" {
 					sha = "-"
 				}
-				fmt.Fprintf(stdout, "MERGE WAIT MERGED pr=%d sha=%s wall=%d\n", prNum, sha, wall())
+				// nova-tools #229 point 5: a merge line names its base, and only a
+				// base of main is a landing. #144 merged onto its stack
+				// (docs-migration), not main; without the base the MERGED line
+				// reads as a landing. The base is therefore on the line, and a
+				// merge onto any other base is a stack merge, not a landing.
+				base := strings.TrimSpace(pr.Base)
+				if base == "" {
+					base = "-"
+				} else {
+					base = oneline.Field(base)
+				}
+				fmt.Fprintf(stdout, "MERGE WAIT MERGED pr=%d base=%s sha=%s wall=%d\n", prNum, base, sha, wall())
 				return 0
 			}
 			if checks, err := host.Checks(pr.HeadOID); err == nil {
