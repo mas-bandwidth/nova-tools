@@ -1531,3 +1531,55 @@ Red tests, one per rule, each with a fake where the real thing is a network, a b
    `WATCH REFUSED` with a remedy, exit 2, and no poll is made.
 9. `watch-refuses-missing-paths`: a missing `--bus` and a missing `--jobs` are each one `WATCH
    REFUSED` with a remedy, exit 2.
+
+## Harvest on the working layout
+
+Glenn, 2026-09-17 (#1142): every script and hand step sketched on a bench becomes an official verb. `harvest` gains a second layout — the jobs a bench leaves under `<working>/tmp/<guid>-<label>/jobs/<label>`, beside the swarm roots it already folds — and the `--timer` that runs it with no coordinator's loop. The line this section adds, for `nova-pulse help`:
+
+```
+nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
+```
+
+It is documented here and not in **The verbs** until the implementation card lands, so `nova-pulse help` stays byte for byte that block (replay 36).
+
+1. **Every path comes from a flag.** `--working <dir>` names the working root and `--roots <dirs>` the swarm roots; it reads `<working>/tmp/<guid>-<label>/jobs/<label>` and each `<root>/<slot>/jobs/<label>`, so the old layout is folded too and no `$HOME`, `~/rowan-working` or `/tmp` is assumed. `--base <ref>` (default the default-branch head, read once per run) and `--since <stamp>` (the session window) are the caller's.
+
+2. **What it reads and what it writes.** Per job it reads the `RESULT.md` first line and `BRANCH` line, the clone's `git log -1 --format=%H %cI <base>..HEAD`, `git ls-remote` and the hosting CLI's open PRs. It writes one `<job>/.harvested` (empty, atomic), one `HARVEST JOB` line per job and one `HARVEST OK` summary, and edits no job, branch, PR or report body.
+
+3. **One `HARVEST JOB` line per job, every field named.** `label` is the job directory's label (the text after `<guid>-`); `class` is `fixed|already-fixed|no-change|failed|off-branch` (rule 4); `branch` is the job's `BRANCH` name (`-` when it wrote none); `pr` is the open PR whose head ref equals `branch` exactly (`-` when none); `commit` is the sha12 head of `<base>..HEAD`; `base` is the sha12 the no-commit test and the lease used; `took` is the job's milliseconds. The grammar:
+
+```
+HARVEST JOB label=<label> class=<fixed|already-fixed|no-change|failed|off-branch> branch=<name|-> pr=<n|-> commit=<sha12|-> base=<sha12> took=<ms>
+HARVEST OK jobs=<n> fixed=<n> already-fixed=<n> no-change=<n> off-branch=<n> failed=<n> pushed=<n> prs=<n> took=<ms>
+```
+
+4. **The five classes are the typed decision behind the floor (card 8336).** `fixed`: a commit past `base` was pushed and its PR opened or updated; `already-fixed`: an open PR's head already equals the job's head, so nothing is pushed; `no-change`: no commit past `base` (rule 5); `failed`: the push or the read could not complete; `off-branch`: rule 6. The class is the whole disposition, never inferred from a log.
+
+5. **No commit past the base is the NO-COMMIT line, and nothing is pushed.** An empty `git log <base>..HEAD` prints `HARVEST JOB label=<label> class=no-change base=<sha12> branch=- pr=- commit=-` — the NO-COMMIT line — and marks the job `.harvested`, the git fixture's argv log holding no push. This is the empty branch that was pushed.
+
+6. **A branch off `rowan/*`, or one before the session window, is off-branch.** A `BRANCH` name that is not `rowan/*`, or whose head commit date precedes `--since`, prints `HARVEST JOB label=<label> class=off-branch branch=<name> reason=<not-rowan|before-session>`, is never pushed or matched to a PR, and is `.harvested` all the same. This is the 149 stale branches.
+
+7. **The PR is matched by exact head branch, and the push's lease comes from `ls-remote`.** It reads `git ls-remote <url> refs/heads/<branch>` and pushes `git push <url> refs/heads/<branch> --force-with-lease=refs/heads/<branch>:<ls-remote sha>`, never a bare push, never to `main`. A lease that moved, or a branch whose PR the hosting CLI reports merged, is `failed`, not pushed. This is the push onto a merged PR's branch.
+
+8. **`.harvested` is the marker and the only state.** The disposition is followed by one empty `<job>/.harvested`; a job already carrying it is skipped with no line and no read, so a second harvest in the same window is a no-op.
+
+9. **`--timer install` gives the harvest a clock the bench owns.** On Linux it writes `~/.config/systemd/user/nova-pulse-harvest.service` and `.timer` with the harvest's own flags, runs `systemctl --user daemon-reload` and `systemctl --user enable --now nova-pulse-harvest.timer`, and appends one line per run to `<working>/harvest.log`. `--timer` takes `install` or nothing: any other action is `HARVEST REFUSED timer=<action> (only install)`, exit 2. A reaper silenced for hours by an `ssh -n` in a Studio loop is gone, because no coordinator loop is its clock.
+
+10. **Refusals are exit 2, one remedy line each.** A missing `--working` with no `--roots` is `HARVEST REFUSED: refusing to guess (name --working or --roots)`; an unreadable `--working` is `HARVEST REFUSED working=<dir>: <reason> (fix the path or the permissions)`; an unparsable `--since` is `HARVEST REFUSED since=<stamp>: not a timestamp (use RFC3339)`; an unknown `--timer` action is rule 9's. No refusal writes a `.harvested` or a `HARVEST JOB` line.
+
+11. **Bounded output, per SPEC.md.** Per-job lines are capped at `--max` (default 20), followed by one `HARVEST MORE kind=<class> shown=<n> total=<t> --max <n>`; the `HARVEST OK` count line prints on failure as well as success; every value is one `internal/oneline` token.
+
+**The mistake it removes.** A bench job no coordinator folded — a reaper silenced for hours by an `ssh -n` in a Studio loop — is now one `HARVEST JOB` line per job on a timer the bench owns, so 149 stale branches, an empty branch and a push onto a merged PR's branch are each a class, not a surprise.
+
+Red tests, one per rule, each faking the network, the bench or the clock:
+
+1. `harvest-working-reads-the-guid-layout` — a fixture working root of `<guid>-<label>` jobs plus a fixture old root yields one `HARVEST JOB` line per job (fixture `gh` and `git`).
+2. `harvest-working-refuses-without-a-flag` — no `--working` and no `--roots` is `refusing to guess`, exit 2, and the fixture `git` log is empty.
+3. `harvest-working-no-commit-is-skipped` — a fixture job whose HEAD equals `base` prints the NO-COMMIT line as class `no-change`, and the fixture `git` log records no push.
+4. `harvest-working-lease-comes-from-ls-remote` — the fixture `git` log records `ls-remote` then `push --force-with-lease=...:<sha>`, and a fixture remote whose sha moved is `failed`, no push.
+5. `harvest-working-off-branch-and-before-session` — fixture jobs on `feature/x` and on a commit before `--since` (fixture clock) are class `off-branch`, with a `reason` and no push.
+6. `harvest-working-matches-pr-by-exact-head` — a fixture `gh` with two similar-titled PRs matches `pr=<n>` only on the exact head branch and leaves the other `pr=-`.
+7. `harvest-working-marks-harvested` — after a run every fixture job holds `.harvested` and a second run prints no line for it (fixture clock and fixture `git`).
+8. `harvest-working-classes-are-the-five` — one fixture job per class prints exactly the five classes and an `HARVEST OK` whose counts sum, through fixture `gh`, `git` and clock.
+9. `harvest-working-timer-install` — a fixture `systemctl` records `daemon-reload` and `enable --now`, both unit files carry the harvest flags, and an unknown action is exit 2 with one remedy.
+10. `harvest-working-output-is-bounded` — 200 fixture jobs print at most `--max` lines plus one `HARVEST MORE`, every value one token, with fixture `gh`, `git` and `systemctl`.
