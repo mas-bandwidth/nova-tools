@@ -270,6 +270,17 @@ REFUSAL is a string when the request is not one of the five-field shape."
     (unless entry
       (return-from %submit-undo
         (values nil (format nil "UNDO FAIL request-of=~A: no such request" of) 1 nil)))
+    ;; A revision-bound plan the caller applied must revalidate: if the state
+    ;; moved past the plan's revision, the conflicting assumptions refuse and
+    ;; nothing is half-applied (SPEC-WORK.md:2831-2833, :2912).
+    (when (getf request :at-rev)
+      (let ((at (getf request :at-rev))
+            (rev (state-revision (kernel-state kernel))))
+        (unless (eql at rev)
+          (return-from %submit-undo
+            (values nil (format nil "UNDO FAIL request-of=~A: stale plan at-rev=~A rev=~D: not applied"
+                                of at rev)
+                    1 nil)))))
     (let ((verb (getf entry :verb)))
       (cond
         ((eq verb :external-effect)

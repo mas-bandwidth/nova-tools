@@ -562,6 +562,7 @@
     #:reconcile-operations
     #:*reversible-verbs*
     #:undo-request
+    #:undo-plan
     #:moved-preconditions
     #:redo-request
     ;; roadmap replays (card 8621)

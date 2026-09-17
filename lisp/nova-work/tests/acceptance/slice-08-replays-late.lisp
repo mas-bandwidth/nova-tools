@@ -270,7 +270,31 @@
       (check-equal 2 (length (getf after :history)) "the undo appends exactly one envelope")
       ;; every receipt stays exactly where it is.
       (check-equal (getf ledger :receipts) (getf after :receipts)
-                   "every receipt stays where it is"))))
+                   "every receipt stays where it is")))
+  ;; The same contract over the real kernel: an accepted edit's undo appends a
+  ;; typed compensating envelope against real inputs, and the original event and
+  ;; request stand exactly where they are (SPEC-WORK.md:2827-2845).
+  (let* ((k (fresh))
+         (node "acme/work/f1/t1"))
+    (submit k (edit-request node :request "real-edit" :title '(:set "t")))
+    (let ((hist (state-history (kernel-state k))))
+      (ok (find "real-edit" hist :key (lambda (r) (getf r :request)) :test #'string=)
+          "the original edit request is in the history")
+      (multiple-value-bind (okp line)
+          (submit k (list :verb :undo :of "real-edit" :by "rowan" :request "real-undo"
+                          :stamp "2026-09-14T13:00:00Z" :clock :tool
+                          :generation-owner "gen-4"))
+        (ok okp "the real kernel accepts the undo: ~A" line)
+        (ok (search "UNDO OK" line) "the undo appends its envelope: ~A" line)
+        (let ((hist2 (state-history (kernel-state k))))
+          (ok (find "real-edit" hist2 :key (lambda (r) (getf r :request)) :test #'string=)
+              "the original request's record stays in the history")
+          (ok (find "real-undo" hist2 :key (lambda (r) (getf r :request)) :test #'string=)
+              "the compensating envelope is appended")
+          (ok (member "real-edit" (journal-order (kernel-journal k)) :test #'string=)
+              "the original request still stands in the journal"))
+        (ok (absentp (node-title (kernel-state k) node))
+            "the compensating edit restores the preimage")))))
 
 (deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5640-5642"
     "expected=cancel-ack-own-disposition;accepted-mutation-not-erased;uncertain-external-reported-uncertain"

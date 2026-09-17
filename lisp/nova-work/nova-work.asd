@@ -27,6 +27,7 @@
                (:file "src/closed-history")
                (:file "src/node-verbs")
                (:file "src/edit-undo")
+               (:file "src/undo")
                (:file "src/pricing")
                (:file "src/operations")
                (:file "src/assignment")
