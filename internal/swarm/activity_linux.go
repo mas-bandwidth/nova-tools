@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The process table here is /proc, and the two fields read are the kernel's own: field 4 of
@@ -37,8 +38,11 @@ func newProcSnapshot() *procSnapshot {
 	return s
 }
 
-// cpuOf is one process's user plus system time in clock ticks, or false when the process is
-// gone.
+// cpuOf is one process's user plus system time in nanoseconds, or false when the process is
+// gone. /proc/<pid>/stat counts in USER_HZ, which the kernel fixes at 100 regardless of
+// CONFIG_HZ, so one tick is exactly ten milliseconds; the value is scaled here so both
+// platforms hand the monitor one unit and a CPU-activity floor can be compared across them
+// (issue #916).
 func cpuOf(pid int) (uint64, bool) {
 	fields, ok := statFields(pid)
 	// fields[0] is field 3, so fields[11] and fields[12] are fields 14 and 15: utime, stime.
@@ -50,7 +54,7 @@ func cpuOf(pid int) (uint64, bool) {
 	if err1 != nil || err2 != nil {
 		return 0, false
 	}
-	return utime + stime, true
+	return (utime + stime) * uint64(10*time.Millisecond), true
 }
 
 // statFields is /proc/<pid>/stat from after the comm field on, split on spaces.

@@ -82,35 +82,19 @@ func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) 
 	return code, out.String(), errb.String()
 }
 
-// testIdleBudget is the --idle every test in the idle family passes, and the
-// margin is the point. These tests drive a fake runner that writes every 150
-// to 200 ms and then assert either that it was left alone or that a silent one
-// was killed. A one-second budget makes the nominal margin 5x, which is not a
-// margin on a SHARED runner: a 200 ms sleep in a loop is 200 ms of sleeping
-// plus however long the machine takes to schedule the process again, and four
-// runners share each of these machines. Run 35019905236 caught
-// it both ways at once — in test (3/8 studio) a card that kept writing was
-// idle-killed, and in an earlier local run a card that publishes immediately
-// was killed before it could. Four seconds is a 20-27x margin on the same tick,
-// so a failure means the monitor watched the wrong file, not that the runner
-// was slow. It costs the three tests that DO expect a kill their budget each,
-// about nine seconds, and buys a test that means what it says.
-const testIdleBudget = 4 * time.Second
+// testIdleBudget is the --idle every test in the idle family passes. It is a
+// VIRTUAL window: since #916 these tests inject the manualClock seam and the
+// test alone advances the clock by this much to fire an idle kill, so no
+// assertion here depends on how loaded the machine is. The value is four
+// seconds only so the ABSTAIN token reads idle=4 and the four-second activity
+// poll is easy to reason about; no test waits it out in real time. The
+// wall-clock budget test allows the short literal for exactly this reason.
+const testIdleBudget = 4 * time.Second // wall-ok: the injected clock advances this idle window; it is never real time
 
 // idleReason is the ABSTAIN token the batch prints for an idle kill -- batch.go
 // formats it as "idle=<seconds>" -- derived from the budget so the two cannot
 // drift apart when the budget is retuned.
 var idleReason = "ABSTAIN reason=idle=" + itoa(int(testIdleBudget.Seconds()))
-
-func runBatchIdle(t *testing.T, cards, root, runner string, deadline, idle time.Duration) (int, string, string) {
-	t.Helper()
-	var out, errb bytes.Buffer
-	code := Batch(BatchInput{
-		ID: "B1", Deadline: deadline, Idle: idle, Cards: cards, Root: root, Runner: runner,
-		Stdout: &out, Stderr: &errb,
-	})
-	return code, out.String(), errb.String()
-}
 
 func TestBatchGathersLine2(t *testing.T) {
 	dir := t.TempDir()
@@ -120,7 +104,7 @@ func TestBatchGathersLine2(t *testing.T) {
 		{"b", "RESULT: b\ndone and clean"},
 	})
 	runner := fakeRunner(t, dir)
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 0 {
 		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -140,7 +124,7 @@ func TestBatchAbstainsMissingResult(t *testing.T) {
 		{"b", "RESULT: b\nMISSING"},
 	})
 	runner := fakeRunner(t, dir)
-	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, _ := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch with an abstain exits 1, got %d:\n%s", code, out)
 	}
@@ -171,7 +155,7 @@ func TestBatchNamesMissingResultOnCleanExit(t *testing.T) {
 		runnerStep{Op: "write", Path: "{root}/{slot}/native.log", Body: "line one"},
 		runnerStep{Op: "exit", N: 0},
 	)
-	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, _ := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a clean exit with no RESULT.md is an abstain, exits 1, got %d:\n%s", code, out)
 	}
@@ -199,7 +183,7 @@ func TestBatchAbstainsWrongLine1(t *testing.T) {
 		runnerStep{Op: "mkdir", Path: "{job}"},
 		runnerStep{Op: "write", Path: "{job}/RESULT.md", Body: "RESULT: someone-else\nall green\n"},
 	)
-	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, _ := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a wrong line 1 exits 1, got %d:\n%s", code, out)
 	}
@@ -216,13 +200,17 @@ func TestBatchKillsAtDeadline(t *testing.T) {
 	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// A runner that sleeps past the deadline and publishes nothing.
+	// A runner that sleeps past the deadline and publishes nothing. The deadline is
+	// fired by the injected clock, so the kill is the test's own event and never a
+	// bet on how loaded the machine is.
 	runner := runnerDoing(t, dir, "slow", runnerStep{Op: "sleep", Ms: 30000})
-	start := time.Now()
-	code, out, _ := runBatch(t, tsv, root, runner, 1*time.Second)
-	if time.Since(start) > 30*time.Second {
-		t.Fatalf("the wait ends at the deadline, it does not wait for the straggler")
-	}
+	clk := newManualClock()
+	code, out, _ := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		clk.waitDeadline()
+		clk.advance(30 * time.Second)
+	})
 	if code != 1 {
 		t.Fatalf("a batch whose only card is killed at the deadline exits 1, got %d:\n%s", code, out)
 	}
@@ -240,13 +228,17 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A runner that writes nothing to its log and never publishes a result: its harness.log
-	// stays empty, so the idle monitor kills it long before the batch's own deadline.
+	// stays empty, so the idle monitor kills it. The idle window is advanced by the injected
+	// clock, so the kill is the test's own event, not a race with the deadline.
 	runner := runnerDoing(t, dir, "idle", runnerStep{Op: "sleep", Ms: 30000})
-	start := time.Now()
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
-	if time.Since(start) > 10*time.Second {
-		t.Fatalf("the wait ends when the idle card is killed, it does not burn the deadline")
-	}
+	clk := newManualClock()
+	code, out, _ := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		clk.waitTick()
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
 	if code != 1 {
 		t.Fatalf("a batch with an idle-killed card exits 1, got %d:\n%s", code, out)
 	}
@@ -267,13 +259,27 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A runner whose log grows the whole time: it writes to stdout every tick, then publishes
-	// its result. The idle monitor must leave it alone because its log never sits still.
+	// its result. The idle monitor must leave it alone because its log never sits still. The
+	// window is injected: the test proves a tick at the end of a whole --idle sees the growth
+	// since the previous tick and does not kill, rather than betting the writes beat a real
+	// four-second clock.
 	runner := runnerDoing(t, dir, "writing",
 		runnerStep{Op: "mkdir", Path: "{job}"},
 		runnerStep{Op: "stdout", Body: "working {i}", N: 6, Ms: 150},
 		publishCard("{job}"),
 	)
-	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
+	log := filepath.Join(root, "1", "jobs", "a", "harness.log")
+	clk := newManualClock()
+	code, out, errs := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		clk.waitTick()
+		waitForLog(t, log, 1)
+		clk.tick()
+		waitForLog(t, log, 6)
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
 	if code != 0 {
 		t.Fatalf("a batch over a card that keeps writing exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -298,7 +304,19 @@ func TestBatchLineCountsIdle(t *testing.T) {
 		runnerStep{Op: "sleep", Ms: 30000, When: "label==a"},
 		publishCard("{job}"),
 	)
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
+	// Card b's published result is real and its process is real; the test waits for
+	// it (the event) before it lets the injected clock say card a has been silent
+	// for --idle. No sleep: the readiness wait is the assertion's event.
+	clk := newManualClock()
+	code, out, _ := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		clk.waitTick()
+		waitForFile(t, filepath.Join(root, "2", "jobs", "b", "RESULT.md"))
+		clk.tick()
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
 	if code != 1 {
 		t.Fatalf("a batch with one idle kill exits 1, got %d:\n%s", code, out)
 	}
@@ -326,7 +344,21 @@ func TestIdleWatchesNativeLog(t *testing.T) {
 		runnerStep{Op: "appendn", Path: "{root}/{slot}/native.log", Body: "line {i}", N: 12, Ms: 200},
 		publishCard("{job}"),
 	)
-	code, out, errs := runBatchIdle(t, tsv, root, runner, 15*time.Second, testIdleBudget)
+	// The kill window is injected: a tick after a whole --idle sees the growth since
+	// the previous tick and leaves the card alone, so the assertion is about the file
+	// the monitor watched, not about the runner beating a real clock.
+	log := filepath.Join(root, "1", "native.log")
+	clk := newManualClock()
+	code, out, errs := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		clk.waitTick()
+		waitForLog(t, log, 1)
+		clk.tick()
+		waitForLog(t, log, 6)
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
 	if code != 0 {
 		t.Fatalf("a card writing native.log is never idle-killed, exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -353,7 +385,20 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 		runnerStep{Op: "appendn", Path: "{root}/{slot}/native.log", Body: "line {i}", N: 3, Ms: 200},
 		runnerStep{Op: "sleep", Ms: 30000},
 	)
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
+	// The monitor watches the child's own native.log, and the kill is driven by the
+	// injected clock: the runner is given all the time the machine needs to write its
+	// three lines, then the clock alone says the file has sat still for --idle. The
+	// old test raced the runner's first write against a real four-second window.
+	clk := newManualClock()
+	code, out, _ := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		clk.waitTick()
+		waitForLog(t, filepath.Join(root, "1", "native.log"), 3)
+		clk.tick()
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
 	if code != 1 {
 		t.Fatalf("a card whose native.log stops growing is idle-killed, exits 1, got %d:\n%s", code, out)
 	}
@@ -375,7 +420,7 @@ func TestBatchOutputBounded(t *testing.T) {
 	}
 	tsv := writeCards(t, dir, cards)
 	runner := fakeRunner(t, dir)
-	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, _ := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch that holds exits 1, got %d", code)
 	}
@@ -427,7 +472,7 @@ func TestWorkingCardCountsLogLines(t *testing.T) {
 	})
 	runner := fakeRunnerLog(t, dir, "a.log",
 		"SANDBOX OK backend=fake-wall cmd=opencode\nline one\nline two\nline three\n")
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 0 {
 		t.Fatalf("a clean card exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -447,7 +492,7 @@ func TestBatchLineCountsStalled(t *testing.T) {
 		{"b", "RESULT: b\nMISSING"},
 	})
 	runner := fakeRunnerLog(t, dir, "log", "SANDBOX OK backend=fake-wall cmd=opencode\nline one\nline two\n")
-	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, _ := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch with one stalled card exits 1, got %d:\n%s", code, out)
 	}
@@ -493,7 +538,7 @@ func TestBatchSumsUsage(t *testing.T) {
 		}
 	}
 	runner := fakeRunner(t, dir)
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 0 {
 		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -533,7 +578,7 @@ func TestBatchSumsUsageFromSlotFallback(t *testing.T) {
 		}
 	}
 	runner := fakeRunner(t, dir)
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 0 {
 		t.Fatalf("a clean batch exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -552,7 +597,7 @@ func TestBatchAllocatesFreeSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := fakeRunner(t, dir)
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 0 {
 		t.Fatalf("a clean auto-allocated batch exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -574,7 +619,7 @@ func TestBatchRefusesDuplicateSlots(t *testing.T) {
 	}
 	sentinel := filepath.Join(dir, "launched")
 	runner := runnerDoing(t, dir, "marker", runnerStep{Op: "touch", Path: sentinel})
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch that names one slot twice exits 1, got %d; stderr: %s", code, errs)
 	}
@@ -605,7 +650,7 @@ func TestBatchSkipsBusySlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := fakeRunner(t, dir)
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 0 {
 		t.Fatalf("a batch that skips a busy slot exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -624,7 +669,7 @@ func TestGatherResultWinsOverEmptyLog(t *testing.T) {
 		{"a", "RESULT: a\nall green"},
 	})
 	runner := fakeRunner(t, dir)
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 0 {
 		t.Fatalf("a card with a valid RESULT.md exits 0 even with an empty log, got %d; stderr: %s", code, errs)
 	}
@@ -651,7 +696,7 @@ func TestGatherCountsNativeLog(t *testing.T) {
 			Body: "SANDBOX OK backend=fake-wall cmd=opencode\nline one\nline two\n"},
 		runnerStep{Op: "stdout", Body: "NATIVE OK label=a rc=0"},
 	)
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 0 {
 		t.Fatalf("a clean card exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -671,7 +716,7 @@ func TestGatherStallOnlyWithoutResult(t *testing.T) {
 		{"b", "RESULT: b\nMISSING"},
 	})
 	runner := fakeRunner(t, dir)
-	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, _ := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch with one stalled card exits 1, got %d:\n%s", code, out)
 	}
@@ -738,7 +783,7 @@ func TestBatchRelativeRootIsAbsolutized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, out, errs := runBatch(t, tsv, relRoot, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, relRoot, runner, 30*time.Second)
 	if code != 0 {
 		t.Fatalf("a clean batch exits 0, got %d; stderr: %s:\n%s", code, errs, out)
 	}
@@ -788,7 +833,7 @@ func TestBatchScoresInputLimit(t *testing.T) {
 		runnerStep{Op: "exit", N: 0, When: "line2==MISSING"},
 		publishCard("{job}"),
 	)
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch with an input-limited card is not green, got %d; stderr: %s", code, errs)
 	}
@@ -813,7 +858,7 @@ func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
 	runner := fakeRunner(t, dir)
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 		Then:   `[ "$BATCH_ID" = "B1" ] && [ "$BATCH_DONE" = "$BATCH_N" ] && exit 7`,
 		Stdout: &out, Stderr: &errb,
 	})
@@ -835,7 +880,7 @@ func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
 	out.Reset()
 	var out2, errb2 bytes.Buffer
 	code = Batch(BatchInput{
-		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 		Then:   `exit 0`,
 		Stdout: &out2, Stderr: &errb2,
 	})
@@ -872,21 +917,36 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 	// run of this test leaves no process behind: it ends on its own at 20 s whatever happens
 	// to its parent. It is a GRANDCHILD of the card, which is the point -- the monitor reads
 	// the whole process tree's CPU time.
+	// The marker appears once the spin card's grandchild has burned for five real
+	// seconds, so the test waits on that event rather than on a clock: between the
+	// first CPU sample and the sample taken after the marker, the tree's CPU time has
+	// grown, which is the only thing that saves the silent spinner. The sleeping card
+	// has no such growth, so the same tick sees it idle and kills it.
 	runner := runnerDoing(t, dir, "silent",
 		runnerStep{Op: "mkdir", Path: "{job}"},
 		runnerStep{Op: "sleep", Ms: 30000, When: "label==sleeps"},
 		runnerStep{Op: "exit", N: 0, When: "label==sleeps"},
 		runnerStep{Op: "spin", N: 20000, Ms: 5000},
+		runnerStep{Op: "write", Path: "{root}/spin-burned"},
 		publishCard("{job}"),
 	)
-	code, out, errs := runBatchIdle(t, tsv, root, runner, 30*time.Second, 2*time.Second)
+	clk := newManualClock()
+	code, out, errs := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		clk.waitTick()
+		clk.tick()
+		waitForFile(t, filepath.Join(root, "spin-burned"))
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
 	if code != 1 {
 		t.Fatalf("a batch holding one idle card exits 1, got %d; stderr: %s", code, errs)
 	}
 	if !strings.Contains(out, "spin slot=1: busy and silent") {
 		t.Fatalf("a card whose process tree is burning CPU is never idle-killed, however silent its log:\n%s", out)
 	}
-	if !strings.Contains(out, "sleeps slot=2: ABSTAIN reason=idle=2") {
+	if !strings.Contains(out, "sleeps slot=2: "+idleReason) {
 		t.Fatalf("a card whose log and process tree both sat still for --idle is idle-killed:\n%s", out)
 	}
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {

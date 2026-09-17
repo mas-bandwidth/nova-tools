@@ -46,7 +46,7 @@ func TestBatchAllocatesSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := fakeRunner(t, dir)
-	code, out, errs := runBatchSlots(t, tsv, root, runner, "5-7", 5*time.Second)
+	code, out, errs := runBatchSlots(t, tsv, root, runner, "5-7", 30*time.Second)
 	if code != 0 {
 		t.Fatalf("a clean batch allocated from the range exits 0, got %d; stderr: %s", code, errs)
 	}
@@ -78,7 +78,7 @@ func TestBatchRefusesHandSlotOutOfRange(t *testing.T) {
 		runnerStep{Op: "mkdir", Path: "{job}"},
 		publishCard("{job}"),
 	)
-	code, out, errs := runBatchSlots(t, tsv, root, runner, "5-6", 5*time.Second)
+	code, out, errs := runBatchSlots(t, tsv, root, runner, "5-6", 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch with an out-of-range hand slot exits 1, got %d; stderr: %s", code, errs)
 	}
@@ -109,7 +109,7 @@ func TestBatchScoresRunnerRefused(t *testing.T) {
 		runnerStep{Op: "stdout", Body: "runner refuses slot above 228"},
 		runnerStep{Op: "exit", N: 2},
 	)
-	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, _ := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch whose runner never started the harness exits 1, got %d:\n%s", code, out)
 	}
@@ -135,7 +135,7 @@ func TestBatchLineNamesUniformAbstain(t *testing.T) {
 		runnerStep{Op: "stdout", Body: "no"},
 		runnerStep{Op: "exit", N: 2},
 	)
-	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, _ := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch that abstains uniformly exits 1, got %d:\n%s", code, out)
 	}
@@ -151,7 +151,7 @@ func TestBatchLineNamesUniformAbstain(t *testing.T) {
 		{"b", "RESULT: b\ndone and clean"},
 	})
 	runner = fakeRunner(t, dir)
-	if _, out, _ = runBatch(t, tsv, root, runner, 5*time.Second); strings.Contains(out, "uniform-abstain=") {
+	if _, out, _ = runBatch(t, tsv, root, runner, 30*time.Second); strings.Contains(out, "uniform-abstain=") {
 		t.Fatalf("a batch with a done card is not a uniform abstain:\n%s", out)
 	}
 }

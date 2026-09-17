@@ -221,7 +221,7 @@ func TestBatchPinsSlotToCore(t *testing.T) {
 	}
 	var out, errb strings.Builder
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root,
+		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
 	})
 	if code == 2 {
@@ -294,7 +294,7 @@ func TestBatchRefusesMoreSlotsThanCores(t *testing.T) {
 	}
 	var out, errb strings.Builder
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root,
+		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
 	})
 	if code != 2 {
@@ -323,7 +323,7 @@ func TestBatchCopiesCardOnly(t *testing.T) {
 	}
 	var out, errb strings.Builder
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root,
+		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2", Stdout: &out, Stderr: &errb,
 	})
 	if code == 2 {

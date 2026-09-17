@@ -52,11 +52,12 @@ type procSnapshot struct {
 	known    bool
 }
 
-// TreeCPU sums the CPU time of pid and every descendant of it in this snapshot, in whatever
-// unit this platform counts -- nanoseconds on darwin, clock ticks on linux. The unit never
-// leaves this file: the caller compares two readings of the same counter and asks only
-// whether it grew. The second return is false when the platform cannot read the table, or
-// when the tree holds no live process at all: neither is an activity reading.
+// TreeCPU sums the CPU time of pid and every descendant of it in this snapshot, in
+// nanoseconds on every platform -- linux scales its clock ticks to the same unit. The unit
+// never leaves this file as a physical quantity: the caller compares two readings of the
+// same counter and, since issue #916, asks that the growth be a real share of the interval
+// rather than any increment at all. The second return is false when the platform cannot read
+// the table, or when the tree holds no live process at all: neither is an activity reading.
 func (s *procSnapshot) TreeCPU(pid int) (uint64, bool) {
 	if s == nil || !s.known || pid <= 0 {
 		return 0, false

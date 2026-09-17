@@ -101,7 +101,7 @@ func TestPullWaitsForResult(t *testing.T) {
 	var notes strings.Builder
 	if err := pullFromBench(benchPull{
 		host: "b2", remoteJob: remoteJob, localJob: localJob,
-		wait: 5 * time.Second, poll: 50 * time.Millisecond, notes: &notes,
+		wait: 30 * time.Second, poll: 50 * time.Millisecond, notes: &notes,
 	}); err != nil {
 		t.Fatalf("the pull failed on a bench that answered: %v", err)
 	}
@@ -134,8 +134,13 @@ func TestPullWaitsForResult(t *testing.T) {
 		t.Fatalf("three files come back, one explicit scp each; scp saw %d:\n%v", len(copies), copies)
 	}
 	for _, l := range copies {
-		for _, field := range strings.Fields(l) {
-			if strings.HasPrefix(field, "-") || strings.Contains(field, "*") {
+		// The filter check reads ARGUMENTS, not substrings of the whole line: a copy
+		// command names paths, and a temp path can hold "-r" or a glob character, so a
+		// substring match on the line would refuse a copy of one file because of where
+		// the work directory happens to live.
+		for _, arg := range strings.Fields(l) {
+			if strings.HasPrefix(arg, "-") || strings.Contains(arg, "*") ||
+				arg == "--include" || arg == "--exclude" || arg == "-r" || strings.ContainsAny(arg, "*?[") {
 				t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
 			}
 		}
@@ -214,7 +219,7 @@ func TestPullScoresBenchUnreachable(t *testing.T) {
 
 	var out, errb strings.Builder
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root,
+		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root,
 		Benches: bench, Bench: "b2",
 		PullWait: 150 * time.Millisecond, PullPoll: 50 * time.Millisecond,
 		Stdout: &out, Stderr: &errb,
