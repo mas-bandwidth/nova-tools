@@ -41,7 +41,7 @@ without a fetch and a turn.
 One local instance holds the live state. Every key obeys SPEC-REDIS's two rules that make this
 safe: `<owner>:<name>` with a mandatory TTL, and **nothing in Redis is the only copy of anything**.
 
-### The work queue — one Stream per bench kind, one consumer group per bench
+### The work queue — one Stream per bench kind, one consumer group per stream
 
 Where SPEC-JOBS puts `queue/lanes/{red,green,small,next}/` and takes a card by `rename`, Redis
 gives the same queue with the lease and the heartbeat built in. The stream is
@@ -51,55 +51,90 @@ the kernel's expander or `nova-pulse cut`:
 ```text
 XADD nova:queue:<kind>:<lane> * card <id> repo <owner/name> base <ref> branch <rule>
      budget <minutes/tokens/floor> affinity <bench/route> inputs <named>
-XGROUP CREATE nova:queue:<kind>:<lane> bench:<bench> $ MKSTREAM
+XGROUP CREATE nova:queue:<kind>:<lane> workers $ MKSTREAM
 ```
 
-The pull worker reads its own group and never the raw tail:
+**One consumer group per stream, not per bench.** The group is `workers`, shared by every bench;
+each bench reads as a distinct consumer inside it and never the raw tail:
 
 ```text
-XREADGROUP GROUP bench:<bench> <worker> COUNT <batch> BLOCK <ms>
+XREADGROUP GROUP workers <bench> COUNT <batch> BLOCK <ms>
      STREAMS nova:queue:<kind>:<lane> >
 ```
+
+Redis delivers a card to exactly one consumer in a group, so a card reaches exactly one bench.
+Per-bench affinity is expressed by **separate streams per kind** — a bench reads the streams it is
+for — and never by a separate group over one stream, because a second group over the same stream
+gets its own copy of every card and duplicates the whole queue. A bench that groups by itself gets
+every card twice; the group name is the work's, the consumer name is the bench's.
 
 It `XACK`s a card **on clip** — after `nova-work clip` commits and `nova-swarm batch` gathers the
 `RESULT.md` — so an acked card is a landed card and only a landed card is safe to forget. A worker
 that dies mid-card leaves the card in the group's pending list; the next puller reclaims it with
-`XAUTOCLAIM nova:queue:<kind>:<lane> bench:<bench> <worker> <min-idle> 0`, which is SPEC-JOBS's
+`XAUTOCLAIM nova:queue:<kind>:<lane> workers <worker> <min-idle> 0`, which is SPEC-JOBS's
 "lease whose heartbeat lapses is reclaimed" with no reaper to write. Lanes are read `red`, then
 `green`, then `small`, then `next`, so priority is the stream suffix and the puller's read order,
 never a scorer by default.
 
-### Slot leases — keys with TTL, renewed by the worker
+### Slot leases — one key, one fenced token, renewed only by its owner
 
 `nova-swarm slots take` has a file with a pid and an `until=`; Redis has the lease. A lease is one
-key, `swarm:lease:<store>:<slot>`, whose value names the owner and the card, and whose TTL is the
-lease's life:
+key, `swarm:lease:<store>:<slot>`, and the value is a **random fencing token** minted at take time,
+not an owner name: the token is what proves the holder is still the holder:
 
 ```text
-SET swarm:lease:<store>:<slot> <owner>/<card> NX EX <lease-seconds>
+SET swarm:lease:<store>:<slot> <token> NX PX <lease-ms>
 ```
 
-The worker renews it with `nova-work heartbeat` (`EXPIRE`), and a lease appears only if `SET NX`
-won it, so two workers cannot take one slot. **The TTL is the reaper**: a dead worker simply stops
-renewing, the key lapses, and the slot is free. A live worker past `until=` is still DRIFT and is
-still printed by name and never regranted (SPEC-SWARM rule 5); Redis removes only what stopped
-breathing. `slots list` is `SCAN swarm:lease:<store>:*` with the values, one line per lease.
-
-### In-flight caps — counters per provider/model/key
-
-The per-key in-flight counters run as a sorted set scored by each call's own deadline,
-`swarm:cap:<provider>:<model>`:
+`SET NX` means a lease appears only if it won the key, and **PX** puts the life on the key in
+milliseconds. Renewal and release **only ever run as a Lua script that compares the stored token
+to the caller's** and is a no-op on a mismatch:
 
 ```text
-ZADD swarm:cap:<provider>:<model> <deadline-unix> <call-id>
-ZREMRANGEBYSCORE swarm:cap:<provider>:<model> -inf <now>   # a lapsed call frees its seat
-ZCARD swarm:cap:<provider>:<model>                        # the live count
+-- renew: KEYS[1] is the key, ARGV[1] the token, ARGV[2] the new life in ms
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+-- release: the same token check, then DEL
 ```
 
-Admission is `ZCARD` below the cap, then `ZADD`. **The score is the expiry**, so a call whose
-worker dies drops out on the next admission with no reap pass; the same shape serves the per
-provider cap and the per key cap by naming them. `nova-swarm caps` prints the counts; the 41st
-Muse call of the day is refused by the counter, not by a spreadsheet.
+A bare `EXPIRE` (or `DEL`) without the token check is not allowed: it would let an old owner revive
+or drop a lease it no longer holds. With the check, a stale holder can neither renew nor release,
+so **two owners are impossible by construction** — the fenced token, not the TTL, is what fences
+the slot. **The TTL is the reaper**: a dead worker simply stops renewing, the key lapses, and the
+slot is free. A live worker past `until=` is still DRIFT and is still printed by name and never
+regranted (SPEC-SWARM rule 5); Redis removes only what stopped breathing. `slots list` is
+`SCAN swarm:lease:<store>:*` with the values, one line per lease.
+
+**One mode per bench, recorded at start.** A bench takes leases from Redis or from the file
+fallback, never both at once: it chooses a mode when it starts, records that mode, and every lease
+verb follows it until the bench restarts in the other mode. The file fallback is never active at
+the same time as the Redis lease, because a slot granted twice — once by each store — is a fence
+no token can see across.
+
+### In-flight caps — one atomic admission script per provider/model/key
+
+The per-key in-flight counter is a sorted set scored by each call's own deadline,
+`swarm:cap:<provider>:<model>`, but admission is **one atomic Lua script — a Lua INCR-with-limit
+that returns admitted or refused — never a `ZCARD` read followed by a separate `ZADD` write**:
+
+```text
+-- admit: KEYS[1] the cap set, ARGV = cap, deadline, call-id, now
+ZREMRANGEBYSCORE KEYS[1] -inf (now)                 -- a lapsed call frees its seat
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[1]) then
+  return 0                                          -- refused
+end
+redis.call('ZADD', KEYS[1], tonumber(ARGV[2]), ARGV[3])
+return 1                                            -- admitted
+```
+
+The script runs single-threaded inside Redis, so no two admissions interleave between the count and
+the add: the 41st in-flight Muse call is refused **inside** the script, and a check-then-add split
+across two round trips cannot admit it. **The score is the expiry**, so a call whose worker dies
+drops out on the next admission with no reap pass; the same script serves the per provider cap and
+the per key cap by naming them. `nova-swarm caps` prints the counts; admission is the script, not a
+spreadsheet.
 
 ### Presence — keys with TTL
 
@@ -207,6 +242,14 @@ Each slice shadows the last and is measured, so the old path is restorable until
   a `RESULT.md` lands; the subscriber returns once, inside a second, and re-reads the file.
 - `the-monthly-token-report-from-postgres-equals-the-folded-tsv-to-the-token` — `report` over
   `token_ledger` equals the folded day TSVs, every type and every `(day, model, repo)`.
+- `one-card-is-delivered-to-exactly-one-consumer` — with the `workers` group shared by two benches,
+  `XREADGROUP` hands a card to one bench and not the other; a second group over the same stream
+  would hand both a copy, so the test fails unless the group is per stream, never per bench.
+- `a-stale-lease-token-cannot-renew-or-release-a-slot` — a token that lost the `SET NX` renews and
+  releases as a no-op through the Lua script, no bare `EXPIRE` moves the key, and a bench that chose
+  the file mode never touches the Redis key (nor the reverse), so one slot never has two modes.
+- `a-cap-admission-is-one-atomic-script-that-refuses-the-41st` — concurrent admissions run through
+  the single script and exactly 40 hold the key; no `ZCARD`-then-`ZADD` interleaving lets a 41st in.
 
 **Invent nothing.** If Redis or Postgres already does it — streams, consumer groups,
 `XAUTOCLAIM`, `SET NX`, TTL, `ZREMRANGEBYSCORE`, pub/sub, a `GROUP BY`, a unique key, WAL — the
