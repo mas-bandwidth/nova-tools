@@ -149,6 +149,15 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 	anySecRe := regexp.MustCompile(`time[.]Second\b`)
 	bigSecRe := regexp.MustCompile(`[0-9]{2,}\s*[\*]\s*time[.]Second\b`)
 	trigRe := regexp.MustCompile(`WithTimeout|WithDeadline|time[.]After|NewTimer|time[.]Since|elapsed|took|waited`)
+	// A batch deadline or idle window is the other shape the wall-clock law
+	// reaches: unlike a runner deadline or a flag table, it drives a REAL
+	// subprocess kill. `deadline: time.Second` names no context and no elapsed
+	// assertion, so the check above never saw it, yet the kill is still a bet on
+	// how loaded the machine is (issue #916). Within a file that drives the
+	// batch, a literal under ten seconds assigned to `deadline:`/`idle:` is
+	// refused unless the line carries a // wall-ok: reason.
+	batchOptRe := regexp.MustCompile(`(?i)\b(deadline|idle)\s*:`)
+	secLitRe := regexp.MustCompile(`(?:([0-9]+)\s*[*]\s*)?time[.]Second\b`)
 	for _, dir := range []string{"internal", "cmd"} {
 		base := filepath.Join(root, dir)
 		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
@@ -164,6 +173,9 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, path)
+			// The batch-deadline shape is scoped to the files that drive the batch:
+			// only there does a `deadline:`/`idle:` literal reach a real process.
+			batchFile := strings.Contains(string(raw), "runBatch")
 			for i, line := range strings.Split(string(raw), "\n") {
 				if strings.Contains(line, "// wall-ok:") {
 					continue
@@ -171,6 +183,10 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 				code := line
 				if j := strings.Index(code, "//"); j >= 0 && (j == 0 || code[j-1] == ' ' || code[j-1] == '\t') {
 					code = code[:j]
+				}
+				if batchFile && batchOptRe.MatchString(code) && wallSecondsUnderTen(secLitRe, code) {
+					t.Errorf("%s:%d: batch deadline/idle option under ten seconds drives a real process kill (use thirty seconds or more, or an injected clock with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
+					continue
 				}
 				if !trigRe.MatchString(code) {
 					continue
@@ -190,6 +206,23 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// wallSecondsUnderTen reports whether code carries a time.Second literal of
+// fewer than ten seconds: a bare time.Second is one, and `n * time.Second` is n.
+func wallSecondsUnderTen(re *regexp.Regexp, code string) bool {
+	for _, m := range re.FindAllStringSubmatch(code, -1) {
+		n := 1
+		if m[1] != "" {
+			if v, err := strconv.Atoi(m[1]); err == nil {
+				n = v
+			}
+		}
+		if n < 10 {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultCLCeiling is the two-minute law: a CL-tier job caps at 2 minutes.

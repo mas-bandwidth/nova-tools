@@ -298,7 +298,19 @@ func TestBatchLineCountsIdle(t *testing.T) {
 		runnerStep{Op: "sleep", Ms: 30000, When: "label==a"},
 		publishCard("{job}"),
 	)
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
+	// Card b's published result is real and its process is real; the test waits for
+	// both before it lets the injected clock say card a has been silent for --idle.
+	clk := newManualClock()
+	code, out, _ := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		clk.waitTick()
+		waitForFile(t, filepath.Join(root, "2", "jobs", "b", "RESULT.md"))
+		time.Sleep(300 * time.Millisecond)
+		clk.tick()
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
 	if code != 1 {
 		t.Fatalf("a batch with one idle kill exits 1, got %d:\n%s", code, out)
 	}
@@ -353,7 +365,20 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 		runnerStep{Op: "appendn", Path: "{root}/{slot}/native.log", Body: "line {i}", N: 3, Ms: 200},
 		runnerStep{Op: "sleep", Ms: 30000},
 	)
-	code, out, _ := runBatchIdle(t, tsv, root, runner, 30*time.Second, testIdleBudget)
+	// The monitor watches the child's own native.log, and the kill is driven by the
+	// injected clock: the runner is given all the time the machine needs to write its
+	// three lines, then the clock alone says the file has sat still for --idle. The
+	// old test raced the runner's first write against a real four-second window.
+	clk := newManualClock()
+	code, out, _ := runBatchClock(BatchInput{
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+	}, clk, func() {
+		clk.waitTick()
+		waitForLog(t, filepath.Join(root, "1", "native.log"), 3)
+		clk.tick()
+		clk.advance(testIdleBudget)
+		clk.tick()
+	})
 	if code != 1 {
 		t.Fatalf("a card whose native.log stops growing is idle-killed, exits 1, got %d:\n%s", code, out)
 	}
@@ -813,7 +838,7 @@ func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
 	runner := fakeRunner(t, dir)
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 		Then:   `[ "$BATCH_ID" = "B1" ] && [ "$BATCH_DONE" = "$BATCH_N" ] && exit 7`,
 		Stdout: &out, Stderr: &errb,
 	})
@@ -835,7 +860,7 @@ func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
 	out.Reset()
 	var out2, errb2 bytes.Buffer
 	code = Batch(BatchInput{
-		ID: "B1", Deadline: 5 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 		Then:   `exit 0`,
 		Stdout: &out2, Stderr: &errb2,
 	})

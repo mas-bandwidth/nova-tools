@@ -70,6 +70,29 @@ type BatchInput struct {
 	Then     string // a follow-on command, run with sh -c only when every card is done; "" means none
 	Stdout   io.Writer
 	Stderr   io.Writer
+	// clock is the batch's time source. nil means the real clock; a test injects a
+	// manual one so the idle kill and the deadline are events it chooses, never the
+	// machine's load (#916).
+	clock batchClock
+}
+
+// batchClock is the batch's view of time: the idle window (Now), the whole-batch
+// deadline (After) and the idle poll (NewTicker). It is the seam the batch tests
+// inject so a kill is asserted on the code, not on how busy the machine is.
+type batchClock interface {
+	Now() time.Time
+	After(d time.Duration) <-chan time.Time
+	NewTicker(d time.Duration) (<-chan time.Time, func())
+}
+
+// realClock is the batch's time source in production.
+type realClock struct{}
+
+func (realClock) Now() time.Time                         { return time.Now() }
+func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+func (realClock) NewTicker(d time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTicker(d)
+	return t.C, t.Stop
 }
 
 // batchCard is one admitted card, in TSV order. slot is zero while the card asked for a
@@ -98,6 +121,10 @@ const idlePollInterval = 100 * time.Millisecond
 // 0 only when every card was done and none held, 1 otherwise, 2 when the admission could
 // not even be read.
 func Batch(in BatchInput) int {
+	clk := in.clock
+	if clk == nil {
+		clk = realClock{}
+	}
 	// The root is absolute AND symlink-resolved from here on: absolute alone left `/var/...`
 	// and `/private/var/...` naming one directory two ways on darwin (issue #578).
 	absroot, err := AbsResolved(in.Root)
@@ -229,7 +256,7 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 		_ = logFile.Close()
-		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label, lastGrow: time.Now()}
+		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label, lastGrow: clk.Now()}
 	}
 
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
@@ -270,8 +297,8 @@ func Batch(in BatchInput) int {
 		monitorWG.Add(1)
 		go func() {
 			defer monitorWG.Done()
-			ticker := time.NewTicker(idlePollInterval)
-			defer ticker.Stop()
+			tickC, stopTicker := clk.NewTicker(idlePollInterval)
+			defer stopTicker()
 			lastSize := make([]int64, len(procs))
 			var lastSample time.Time
 			for {
@@ -280,7 +307,7 @@ func Batch(in BatchInput) int {
 					return
 				case <-allDone:
 					return
-				case now := <-ticker.C:
+				case now := <-tickC:
 					// The process table is read once per activity poll, outside the lock, and
 					// every card is asked of that one snapshot (issue #593).
 					var snap *procSnapshot
@@ -329,7 +356,7 @@ func Batch(in BatchInput) int {
 
 	select {
 	case <-allDone:
-	case <-time.After(in.Deadline):
+	case <-clk.After(in.Deadline):
 		doneMu.Lock()
 		for i := range procs {
 			if procs[i].done || procs[i].cmd == nil {

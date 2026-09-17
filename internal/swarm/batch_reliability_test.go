@@ -320,6 +320,7 @@ func TestBatchAbstainNamesReason(t *testing.T) {
 		body     string
 		deadline time.Duration
 		idle     time.Duration
+		kill     string // how the injected clock ends the card: "deadline", "idle" or ""
 		want     string
 	}{
 		{
@@ -336,16 +337,18 @@ func TestBatchAbstainNamesReason(t *testing.T) {
 		},
 		{
 			name: "idle", model: "model", body: "RESULT: x\nSLEEP",
-			deadline: 30 * time.Second, idle: time.Second,
-			want: "x slot=1: ABSTAIN reason=idle=1 log=0",
+			deadline: 60 * time.Second, idle: 30 * time.Second, kill: "idle",
+			want: "x slot=1: ABSTAIN reason=idle=30 log=0",
 		},
 		{
 			name: "deadline", model: "model", body: "RESULT: x\nSLEEP",
-			deadline: time.Second, want: "x slot=1: ABSTAIN reason=deadline log=0",
+			deadline: 30 * time.Second, kill: "deadline",
+			want: "x slot=1: ABSTAIN reason=deadline log=0",
 		},
 		{
 			name: "result-after-deadline", model: "model", body: "RESULT: x\nLATE",
-			deadline: time.Second, want: "x slot=1: ABSTAIN reason=result-after-deadline log=0",
+			deadline: 30 * time.Second, kill: "deadline",
+			want: "x slot=1: ABSTAIN reason=result-after-deadline log=0",
 		},
 		{
 			name: "card-abstain", model: "model", body: "RESULT: x\nABSTAIN the repo needs credentials",
@@ -363,13 +366,29 @@ func TestBatchAbstainNamesReason(t *testing.T) {
 			root := filepath.Join(dir, "root")
 			tsv := writeCardsModels(t, dir, [][3]string{{"x", tc.model, tc.body}})
 			runner := reasonRunner(t, dir)
-			var code int
-			var out, errs string
-			if tc.idle > 0 {
-				code, out, errs = runBatchIdle(t, tsv, root, runner, tc.deadline, tc.idle)
-			} else {
-				code, out, errs = runBatch(t, tsv, root, runner, tc.deadline)
+			// The deadline and the idle window are fired by the injected clock: the
+			// runner is given all the time it needs to sleep or to publish, and then
+			// the test alone says the time is up. No case here races the machine.
+			clk := newManualClock()
+			in := BatchInput{ID: "B1", Deadline: tc.deadline, Idle: tc.idle, Cards: tsv, Root: root, Runner: runner}
+			drive := func() {}
+			switch tc.kill {
+			case "deadline":
+				drive = func() {
+					clk.waitDeadline()
+					if tc.name == "result-after-deadline" {
+						waitForFile(t, filepath.Join(root, "1", "jobs", "x", "RESULT.md"))
+					}
+					clk.advance(tc.deadline)
+				}
+			case "idle":
+				drive = func() {
+					clk.waitTick()
+					clk.advance(tc.idle)
+					clk.tick()
+				}
 			}
+			code, out, errs := runBatchClock(in, clk, drive)
 			if code != 1 {
 				t.Fatalf("a batch whose only card abstains exits 1, got %d:\n%s\n%s", code, out, errs)
 			}
