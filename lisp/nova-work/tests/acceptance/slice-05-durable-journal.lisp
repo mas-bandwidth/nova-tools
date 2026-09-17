@@ -163,8 +163,8 @@
   ;; modes refused rather than reused; no listener on any network address.
   (let* ((tmp (namestring (uiop:temporary-directory)))
          (base (if (< (length tmp) 80)
-                   (concatenate 'string tmp (format nil "nw-~D" (random 1000000)))
-                   (format nil "nw-~D" (random 1000000))))
+                   (concatenate 'string tmp (format nil "n~D" (random 99999)))
+                   (format nil "n~D" (random 99999))))
          (dir (concatenate 'string base "/s"))
          (sock (concatenate 'string dir "/w")))
     (unwind-protect

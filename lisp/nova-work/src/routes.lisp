@@ -118,8 +118,8 @@ cost and a cost on a non-metered route all refuse (SPEC-WORK.md:3762-3774,
            (setf (gethash id (route-registry-routes registry)) route)
            (push id (route-registry-order registry))
            (values route
-                   (format nil "ROUTE OK id=~A request=~A route=~A rev=~A pushed=- changed=1 emitted=0"
-                           (or request id) request id (route-registry-scope-revision registry))
+                   (format nil "ROUTE OK id=ev-route-~A request=~A route=~A rev=~A pushed=- changed=1 emitted=0"
+                           id (or request id) id (route-registry-scope-revision registry))
                    0))
          (%route-fail id "refusing to guess")))
     (cost-per-mtok
@@ -291,4 +291,85 @@ that carry a card (SPEC-WORK.md:2312, 3784-3798, 6292-6314)."
                                                    :capabilities (route-capabilities route)
                                                    :owner (route-owner route)
                                                    :line (route-row-line route)))
-                         :scope-revision rev))))
+                         :scope-revision rev)))) 
+
+;;; ------------------------------------------------------------------
+;;; The `route` verb (SPEC-WORK.md:2289, 3732-3799, E09 row 4)
+;;; ------------------------------------------------------------------
+;;;
+;;; One verb writes one `:kind :route` CONFIG member of the `routes` section,
+;;; or records a dated probe, or retires the record. It is configuration, never
+;;; work: `:node` is `(:absent)`, no count, roadmap or required set moves, and
+;;; the key is a location the team's own store resolves and never a value.
+
+(defun route-event (request change route)
+  "The one `:route` CONFIG event: `:kind :route`, `:node` `(:absent)`, the route
+identity as its subject."
+  (list :kind :route :change change :node (route-node-field route)
+        :route (route-id route)
+        :event-id (format nil "ev-route-~A-~A" (route-id route)
+                          (string-downcase (symbol-name change)))
+        :request (or (getf request :request)
+                     (format nil "route-~A" (route-id route)))
+        :rev 0 :pushed nil :changed 1 :emitted 0))
+
+(defun route-submit (kernel request)
+  "One `:route` event. `:register`, `:retire` and `:probe` are the three
+changes the grammar names (SPEC-WORK.md:2289); an unknown change refuses at
+exit 2 rather than guessing."
+  (let ((registry (kernel-routes kernel))
+        (change (getf request :change))
+        (id (getf request :route)))
+    (case change
+      (:register
+       (multiple-value-bind (route line code)
+           (route-register registry
+                           :id id
+                           :provider (getf request :provider)
+                           :endpoint (getf request :endpoint)
+                           :key-location (getf request :key-location)
+                           :plan (getf request :plan)
+                           :cost-per-mtok (getf request :cost-per-mtok)
+                           :capabilities (getf request :capabilities)
+                           :owner (getf request :owner)
+                           :request (getf request :request))
+         (if route
+             (values t line code (route-event request change route))
+             (values nil line code nil))))
+      (:retire
+       (let ((route (and id (route-member registry id))))
+         (if (null route)
+             (values nil (format nil "ROUTE FAIL route=~A: no such route"
+                                 (or id "-"))
+                     1 nil)
+             (progn
+               (remhash id (route-registry-routes registry))
+               (setf (route-registry-order registry)
+                     (remove id (route-registry-order registry) :test #'equal))
+               (values t (format nil "ROUTE OK route=~A" id) 0
+                       (route-event request change route))))))
+      (:probe
+       (let ((route (and id (route-member registry id))))
+         (if (null route)
+             (values nil (format nil "ROUTE FAIL route=~A: no such route"
+                                 (or id "-"))
+                     1 nil)
+             (progn
+               (route-probe registry id
+                            :card (getf request :card)
+                            :pass (getf request :pass)
+                            :wall (getf request :wall)
+                            :usd (getf request :usd)
+                            :source (getf request :source)
+                            :benched-until (getf request :benched-until))
+               (values t (format nil "PROBE OK route=~A pass=~A"
+                                 id
+                                 (string-downcase
+                                  (princ-to-string (getf request :pass))))
+                       0 (route-event request change route))))))
+      (otherwise
+       (values nil
+               (format nil "ROUTE FAIL route=~A: unsupported change ~A"
+                       (or id "-")
+                       (string-downcase (princ-to-string (or change "?"))))
+               2 nil)))))

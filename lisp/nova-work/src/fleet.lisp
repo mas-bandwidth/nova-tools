@@ -65,7 +65,71 @@ is ever echoed."
        (>= (length connect) 8)
        (string= "profile:" (subseq connect 0 8))))
 
+(defun machine-config-section (machine)
+  "A machine is the `:kind :machine` member record of the fleet section of
+CONFIG, and never a work-tree node (SPEC-WORK.md:3620)."
+  (list :section :fleet :kind :machine :id (machine-id machine)))
+
+(defun machine-work-tree-node-p (machine)
+  "Equipment never completes: a machine is no child of O and under no repository
+work set."
+  (declare (ignore machine))
+  nil)
+
+(defun machine-node-field (machine)
+  "Every :machine event writes :node (:absent) by the kind's own subject rule."
+  (declare (ignore machine))
+  +absent+)
+
+(defun machine-acceptance (machine)
+  (declare (ignore machine))
+  nil)
+
+(defun machine-derived-state (machine)
+  (declare (ignore machine))
+  nil)
+
+(defun machine-settle (machine)
+  "No verb can settle a machine."
+  (values nil
+          (format nil "STATE FAIL machine=~A: equipment does not settle"
+                  (machine-id machine))
+          2))
+
+(defun machine-to-done (machine)
+  "No verb can take a machine `:to :done`."
+  (values nil
+          (format nil "STATE FAIL machine=~A: equipment has no edge to done"
+                  (machine-id machine))
+          2))
+
+(defun machine-completion-evidence-p (machine)
+  "Equipment does not complete, so nothing a machine does is completion
+evidence."
+  (declare (ignore machine))
+  nil)
+
+(defun machine-ok-line (event)
+  (format nil "MACHINE OK id=~A request=~A machine=~A rev=~D pushed=~A changed=~D emitted=~D"
+          (getf event :event-id) (getf event :request) (getf event :machine)
+          (getf event :rev) (or (getf event :pushed) "-")
+          (getf event :changed) (getf event :emitted)))
+
+(defun %machine-event (kernel request change)
+  "The one `:machine` CONFIG event: `:kind :machine`, `:node` `(:absent)`, and
+the machine identity as its subject. It moves no work revision."
+  (let ((id (getf request :machine)))
+    (list :kind :machine :change change :node (machine-node-field nil)
+          :machine id
+          :event-id (format nil "ev-machine-~A-~A" id
+                            (string-downcase (symbol-name change)))
+          :request (or (getf request :request) (format nil "machine-~A" id))
+          :rev (state-revision (kernel-state kernel))
+          :pushed nil :changed 1 :emitted 0)))
+
 (defun %machine-register (kernel request)
+  "Write one `:kind :machine` fleet CONFIG member, or refuse whole. Every
+refusal phrase is fixed, so no refused value is ever echoed (SPEC-WORK.md:3541-3548)."
   (let ((id (getf request :machine))
         (owner (getf request :owner))
         (name (getf request :name))
@@ -109,19 +173,73 @@ is ever echoed."
                    :id id :name name :owner owner :connect connect
                    :roles (copy-list roles) :permits (copy-list permits)
                    :excludes (copy-list excludes) :limits (copy-list limits)
-                   :facts (copy-list facts))))
+                   :facts (copy-list facts)))
+          (event (%machine-event kernel request :register)))
       (setf (gethash id (fleet-machines fleet)) member)
       (push id (fleet-order fleet))
-      (values t (format nil "MACHINE OK machine=~A" id) 0 nil))))
+      ;; The machine is CONFIG; opening its one ACTIVE allocator is how a slot
+      ;; later becomes takeable (SPEC-WORK.md:3707-3715).
+      (%register-machine-allocator kernel request id limits facts connect roles)
+      (values t (machine-ok-line event) 0 event))))
+
+(defun %machine-change (kernel request)
+  "A `:permit`, `:exclude`, `:limit` or `:fact` change to one live member: a
+meaningful CONFIG change, never a heartbeat, a probe or a load sample
+(SPEC-WORK.md:3527-3554)."
+  (let* ((id (getf request :machine))
+         (member (and id (fleet-member (kernel-fleet kernel) id))))
+    (unless member
+      (return-from %machine-change
+        (%machine-fail id "no such member")))
+    (let ((change (getf request :change))
+          (workload (getf request :workload))
+          (key (getf request :key))
+          (value (getf request :value))
+          (declared-by (getf request :declared-by)))
+      (case change
+        (:permit (pushnew workload (machine-permits member) :test #'equal))
+        (:exclude (pushnew workload (machine-excludes member) :test #'equal))
+        (:limit (setf (machine-limits member)
+                      (let ((l (copy-list (machine-limits member))))
+                        (setf (getf l key) value)
+                        l)))
+        (:fact
+         (unless (and declared-by (stringp declared-by) (plusp (length declared-by)))
+           (return-from %machine-change
+             (%machine-fail (machine-id member) "fact without provenance")))
+         (setf (machine-facts member)
+               (list* (list :key key :value value
+                            :declared-by declared-by
+                            :declared-at (getf request :stamp))
+                      (remove key (machine-facts member)
+                              :key (lambda (f) (getf f :key)) :test #'equal)))))
+      (when (member change '(:permit :exclude :limit :fact))
+        (%sync-machine-allocator kernel member change))
+      (values t (format nil "MACHINE OK machine=~A" (machine-id member)) 0
+              (%machine-event kernel request change)))))
 
 (defun machine-submit (kernel request)
-  "One `:machine` event. SPEC-WORK.md:3541 --- `:register` is the only change
-this slice carries; a heartbeat, an `observe`, a probe and the other five
-changes are no part of the static configuration and change no member. The
-work tree is never touched: no count, roadmap or required set moves."
+  "One `:machine` event. SPEC-WORK.md:3541 --- `:register`, `:retire`, `:permit`,
+`:exclude`, `:limit` and `:fact` are the six static-configuration changes; a
+heartbeat, an `observe` and a probe are no part of CONFIG and change no member.
+The work tree is never touched: no count, roadmap or required set moves."
   (let ((change (getf request :change)))
     (case change
       (:register (%machine-register kernel request))
+      (:retire
+       (let* ((id (getf request :machine))
+              (fleet (kernel-fleet kernel))
+              (member (and id (fleet-member fleet id))))
+         (if (null member)
+             (%machine-fail id "no such member")
+             (progn
+               (remhash id (fleet-machines fleet))
+               (setf (fleet-order fleet) (remove id (fleet-order fleet)
+                                                 :test #'equal))
+               (remhash id (fleet-registry-allocators (kernel-allocations kernel)))
+               (values t (format nil "MACHINE OK machine=~A" id) 0
+                       (%machine-event kernel request :retire))))))
+      ((:permit :exclude :limit :fact) (%machine-change kernel request))
       (otherwise
        (values nil
                (format nil "MACHINE FAIL machine=~A: unsupported change ~A"
@@ -1251,6 +1369,115 @@ take is admitted once the reduced capacity is declared (SPEC-WORK.md:3722)."
     (values t (format nil "MACHINE OK machine=~A concurrent=~A active=~A"
                       machine concurrent (fleet-consumed allocator))
             0)))
+
+
+;;; ------------------------------------------------------------------
+;;; The ACTIVE fleet verbs over the kernel's one allocator per machine
+;;; (SPEC-WORK.md:3592-3731, E09 rows 5-6)
+;;; ------------------------------------------------------------------
+;;;
+;;; `take`, `heartbeat`, `release` and `probe` are the verbs of the fleet's
+;;; ACTIVE half. Each shares `submit`'s answer shape and writes the kernel's
+;;; allocation registry; none touches the work tree, its counters or CONFIG.
+
+(defun fleet-take-submit (kernel request)
+  "The `take` verb (SPEC-WORK.md:3646-3675). One ACTIVE allocation, all or
+none, over the kernel's one allocator for the machine."
+  (multiple-value-bind (ok line code)
+      (fleet-take (kernel-allocations kernel)
+                  :machine (getf request :machine)
+                  :node (getf request :node)
+                  :slots (or (getf request :slots) 1)
+                  :offer (getf request :offer)
+                  :attempt (getf request :attempt)
+                  :generation (getf request :generation)
+                  :request-ref (getf request :request-ref)
+                  :batch (getf request :batch)
+                  :request (getf request :request)
+                  :holder (or (getf request :holder) (getf request :by) "rowan")
+                  :allocation-id (getf request :allocation-id)
+                  :allocation-generation (getf request :allocation-generation)
+                  :parent (getf request :parent)
+                  :now (or (getf request :now) 0)
+                  :deadline (getf request :deadline))
+    (values ok line code nil)))
+
+(defun fleet-heartbeat-submit (kernel request)
+  "The `heartbeat` verb (SPEC-WORK.md:3665-3669): validate both generations
+against the ACTIVE record and the machine's CONFIG record."
+  (multiple-value-bind (ok line code)
+      (fleet-heartbeat (kernel-allocations kernel)
+                       :allocation (getf request :allocation)
+                       :generation (getf request :generation)
+                       :allocation-generation (getf request :allocation-generation)
+                       :now (or (getf request :now) 0)
+                       :request (getf request :request))
+    (values ok line code nil)))
+
+(defun fleet-release-submit (kernel request)
+  "The `release` verb (SPEC-WORK.md:3669-3687): free exactly that allocation's
+slot after both generations validate and, past the deadline, confirmed
+termination."
+  (multiple-value-bind (ok line code)
+      (fleet-release (kernel-allocations kernel)
+                     :allocation (getf request :allocation)
+                     :generation (getf request :generation)
+                     :allocation-generation (getf request :allocation-generation)
+                     :now (or (getf request :now) 0)
+                     :fenced (getf request :fenced)
+                     :stop-observed (getf request :stop-observed)
+                     :not-started (getf request :not-started)
+                     :handed (getf request :handed)
+                     :holder (getf request :holder))
+    (values ok line code nil)))
+
+(defun fleet-probe-submit (kernel request)
+  "The `probe` verb (SPEC-WORK.md:3691-3704): write dated observed ACTIVE
+evidence, never CONFIG."
+  (multiple-value-bind (ok line code)
+      (fleet-probe (kernel-allocations kernel)
+                   :machine (getf request :machine)
+                   :slot (getf request :slot)
+                   :source (getf request :source)
+                   :fact (or (getf request :fact) :observed)
+                   :at (or (getf request :at) 0))
+    (values ok line code nil)))
+
+(defun %register-machine-allocator (kernel request id limits facts connect roles)
+  "Open the ONE authoritative allocator for the physical machine in the
+kernel's ACTIVE allocation registry. The declared :limits supply the
+concurrency and cores; the machine generation is what `take`, `heartbeat` and
+`release` compare against."
+  (let ((registry (kernel-allocations kernel)))
+    (fleet-register-machine registry
+                            :machine-id id
+                            :aliases (getf request :aliases)
+                            :name (getf request :name)
+                            :owner (getf request :owner)
+                            :concurrent (or (getf limits :concurrent) 1)
+                            :cores (getf limits :cores)
+                            :generation (or (getf request :generation) 1)
+                            :facts (copy-list facts)
+                            :limits (copy-list limits)
+                            :connect connect
+                            :roles (copy-list roles))))
+
+(defun %sync-machine-allocator (kernel member change)
+  "A meaningful machine CONFIG change moves the live allocator's declared
+numbers and bumps the machine generation; an allocation is never touched
+(SPEC-WORK.md:3724-3730)."
+  (let ((allocator (fleet-allocator-of (kernel-allocations kernel)
+                                       (machine-id member))))
+    (when allocator
+      (setf (fleet-allocator-limits allocator) (copy-list (machine-limits member)))
+      (setf (fleet-allocator-facts allocator) (copy-list (machine-facts member)))
+      (unless (eq change :retire)
+        (when (eq change :limit)
+          (let ((concurrent (getf (machine-limits member) :concurrent)))
+            (when concurrent (setf (fleet-allocator-concurrent allocator) concurrent))))
+        (incf (fleet-allocator-generation allocator))))
+    allocator))
+
 
 
 ;;; ------------------------------------------------------------------

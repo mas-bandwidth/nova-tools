@@ -208,6 +208,8 @@
     ;; the fleet: static machine records in CONFIG (SPEC-WORK.md:3459-3588)
     #:make-fleet
     #:kernel-fleet
+    #:kernel-routes
+    #:kernel-allocations
     #:fleet-friends
     #:fleet-machines
     #:fleet-order
@@ -270,6 +272,8 @@
     #:routes-ask-exit-code
     #:routes-ask-scope-revision
     #:query-routes
+    #:route-submit
+    #:route-event
     #:route-plan-rank
     #:route-lessp
     #:*route-plans*
