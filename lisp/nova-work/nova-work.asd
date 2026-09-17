@@ -40,7 +40,8 @@
                (:file "src/replays-fleet-assignment")
                (:file "src/assignment")
                (:file "src/control")
-               (:file "src/replays-8641")))
+               (:file "src/replays-8641")
+               (:file "src/replays-8642")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -53,4 +54,5 @@
                (:file "tests/replays-8681")
                (:file "tests/replays-8683")
                (:file "tests/replays-8640")
-               (:file "tests/replays-8641")))
+               (:file "tests/replays-8641")
+               (:file "tests/replays-8642")))
