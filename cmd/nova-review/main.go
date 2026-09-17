@@ -29,6 +29,7 @@ const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REV
 
 usage:
   nova-review packet --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>] [--decide] [--floor 0.9] [--card <file>] [--key-env JEV_API_KEY] [--base-url <url>]
+  nova-review port --lane <dir> --table <section> --pr <n> [--head <sha>] [--out <file>] [--max <n>] [--timeout <seconds>]
   nova-review version    print this build identity (--version also accepted)
   nova-review help
 
@@ -69,6 +70,8 @@ func run(args []string, out, errOut io.Writer) int {
 		return cmdVersion(args[1:], out, errOut)
 	case "packet":
 		return packet(args[1:], out, errOut)
+	case "port":
+		return port(args[1:], out, errOut)
 	default:
 		return refuse(errOut, fmt.Sprintf("unknown subcommand %q", args[0]))
 	}
@@ -1834,6 +1837,11 @@ func writePacket(dest, body string, out io.Writer, entry, id, head, base, baseSH
 	return 0
 }
 
+// linkFile publishes the finished temporary under the destination name. It is
+// a variable so a test can inject the moment a killed run dies, between the
+// whole temporary and the published --out (SPEC-REVIEW.md, red test 7).
+var linkFile = os.Link
+
 func writeExclusive(dest string, body []byte) error {
 	if _, err := os.Lstat(dest); err == nil {
 		return fmt.Errorf("destination file %s already exists", dest)
@@ -1863,7 +1871,7 @@ func writeExclusive(dest string, body []byte) error {
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	if err = os.Link(tmpName, dest); err != nil {
+	if err = linkFile(tmpName, dest); err != nil {
 		return err
 	}
 	cleaned = true
