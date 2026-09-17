@@ -489,8 +489,9 @@ jobs:
     # leg is the Studio (the same darwin arm64 as macos-latest, without the
     # hosted concurrency wait): one hosted macOS job serialized every merge
     # group while the sixteen Studio runners sat idle. Only the runner changes;
-    # the steps, timeout and package selection are the hosted ones.
-    name: test-hosted-merge (${{ matrix.leg.name }})
+    # the steps, timeout and package selection are the hosted ones. Three shards
+    # per leg so each job fits the two-minute cap under load.
+    name: test-hosted-merge (${{ matrix.leg.name }}, ${{ matrix.shard }})
     if: github.event_name == 'merge_group'
     strategy:
       fail-fast: false
@@ -504,6 +505,7 @@ jobs:
             labels: '["self-hosted","macOS","ARM64","studio"]'
           - name: windows
             runner: windows-latest
+        shard: [0, 1, 2]
     # A runs-on expression must resolve to one value, so the darwin leg's label
     # array is carried as a JSON string and parsed with fromJSON; the hosted legs
     # carry their runner image as a plain string and are quoted as a JSON string
@@ -558,10 +560,39 @@ jobs:
           echo "merge_group: full hosted on:${pkgs}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
 
-      - name: test (full, the packages this group changes)
+      - name: test (full, the packages this group changes, shard ${{ matrix.shard }} of 3)
         # NOT -short: the group commit must answer the hosted-only tests the
-        # -short PR leg skips. -timeout 20m is the ceiling, not the target.
-        run: go test -count=1 -timeout 20m ${{ steps.pkgs.outputs.pkgs }}
+        # -short PR leg skips. Each shard runs the tests whose zero-based index
+        # in its package's sorted test list is congruent to the shard, so a
+        # loaded Studio or windows-latest answers inside the two-minute cap;
+        # -timeout 100s is the per-package ceiling, not the target.
+        shell: bash
+        run: |
+          set -euo pipefail
+          shard=${{ matrix.shard }}
+          for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
+            list=$(go test -list '.*' "$pkg") || exit 1
+            tests=$(printf '%s\n' "$list" | grep '^Test' | sort || true)
+            if [ -z "$tests" ]; then
+              if [ "$shard" -eq 0 ]; then
+                go test -count=1 -timeout 100s "$pkg"
+              fi
+              continue
+            fi
+            names=""
+            i=0
+            for name in $tests; do
+              if [ $((i % 3)) -eq "$shard" ]; then
+                if [ -n "$names" ]; then names="$names|$name"; else names="$name"; fi
+              fi
+              i=$((i + 1))
+            done
+            if [ -z "$names" ]; then
+              echo "shard $shard of 3: no tests from $pkg"
+              continue
+            fi
+            go test -count=1 -timeout 100s -run "^(${names})$" "$pkg"
+          done
 
   test-hosted-pr:
     # THE ONE EXCEPTION to "a pull request never touches GitHub-hosted
