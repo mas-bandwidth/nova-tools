@@ -65,6 +65,10 @@
    #:node-state
    #:node-required-count
    #:node-required-open
+   #:node-deps
+   #:node-needs-broken
+   #:ready-p
+   #:ready-nodes
    #:root-digest
    #:state-canonical-form
    #:reconstruct-state

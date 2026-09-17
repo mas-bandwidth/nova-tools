@@ -15,6 +15,12 @@
 
 (defstruct (wnode (:conc-name wnode-))
   id type parent children required required-count required-open state branch open-count links
+  ;; SPEC-WORK.md:850-886 -- `:deps` is a reference edge to another node:
+  ;; needed, not owned, not counted. DEPENDENTS is the reverse edge, kept so a
+  ;; revert reaches the dependents it breaks in one bounded walk.
+  deps dependents
+  ;; The flag a revert of a need raises on its dependents (SPEC-WORK.md:2110).
+  needs-broken
   ;; SPEC-WORK.md:1222 -- the newest row of an id carries revived=<rev|-> and
   ;; settles=<n>. Both are kept on the node and moved on write, like every
   ;; other counter here, so a row is written and never computed by a scan.
@@ -76,6 +82,9 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :branch :o
                           :open-count 0
                           :links (getf spec :links)
+                          :deps (copy-list (getf spec :deps))
+                          :dependents '()
+                          :needs-broken nil
                           :settles 0
                           :revived "-"))))
     (setf order (nreverse order))
@@ -107,6 +116,37 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                    (let ((node (gethash cur table)))
                      (unless node (return))
                      (setf cur (wnode-parent node)))))))
+    ;; SPEC-WORK.md:850-886 -- `:deps` is a reference edge, not containment:
+    ;; needed, not owned, not counted. Rule 2 checks every need resolves (against
+    ;; O's nodes, as the seed holds only O) and builds the reverse edge; rule 3
+    ;; refuses a dependency cycle, "a deadlock nobody can finish" (:5041).
+    (dolist (id order)
+      (let ((deps (wnode-deps (gethash id table))))
+        (unless (or (null deps) (listp deps))
+          (error 'unsupported-input
+                 :what (format nil "deps of ~A is not a list" id)))
+        (dolist (dep deps)
+          (unless (and (stringp dep) (plusp (length dep)))
+            (error 'unsupported-input
+                   :what (format nil "rule 2: ~A names a dependency that is not a non-empty id" id)))
+          (let ((target (gethash dep table)))
+            (unless target
+              (error 'unsupported-input
+                     :what (format nil "rule 2: ~A needs ~A which does not exist" id dep)))
+            (push id (wnode-dependents target))))))
+    (let ((color (make-hash-table :test #'equal)))
+      (labels ((visit (id)
+                 (let ((c (gethash id color)))
+                   (cond ((eq c :grey)
+                          (error 'unsupported-input
+                                 :what (format nil "rule 3: :deps edges contain a cycle through ~A" id)))
+                         ((eq c :black) nil)
+                         (t (setf (gethash id color) :grey)
+                            (let ((node (gethash id table)))
+                              (when node
+                                (dolist (dep (wnode-deps node)) (visit dep))))
+                            (setf (gethash id color) :black))))))
+        (dolist (id order) (visit id))))
     (let ((state (make-wstate :seed (copy-tree nodes) :nodes table :order order
                               :root-open 0 :closed 0 :leaf-open 0 :issue-open 0
                               :history '() :rows '() :revision 0)))
@@ -186,6 +226,53 @@ own id would not be the same counting rule one level down. Decision for review."
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (wnode-required-open n)))
 
+(defun node-deps (state id)
+  "The ids this node needs, in the order the seed gave them. A reference edge:
+it carries no count and is not a containment."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (copy-list (wnode-deps n))))
+
+(defun node-needs-broken (state id)
+  "True when a need of this node was reverted after this node landed
+(SPEC-WORK.md:2110, the `needs-broken` flag)."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (wnode-needs-broken n)))
+
+(defun %need-terminal-p (state id)
+  "A need is terminal accepted when its node has settled into C."
+  (let ((n (%node-quiet state id)))
+    (and n (eq :c (wnode-branch n)))))
+
+(defun ready-p (state id)
+  "Open leaf work whose every need is terminal accepted and which no reverted
+need has left needs-broken (SPEC-WORK.md:2110, `query ready`)."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (and (eq :o (wnode-branch n))
+         (member (wnode-type n) '(:task :bug))
+         (not (wnode-needs-broken n))
+         (every (lambda (dep) (%need-terminal-p state dep)) (wnode-deps n)))))
+
+(defun ready-nodes (state)
+  "`query ready`: the ready items, in seed order. This is a read -- it visits
+nodes and mutates none."
+  (loop for id in (wstate-order state)
+        when (ready-p state id) collect id))
+
+(defun %recheck-needs-broken (state id settled-p)
+  "Re-evaluate the dependents of ID after it settled (SETTLED-P true, clear the
+flag where every need is terminal again) or was reverted (false, raise it)."
+  (dolist (dependent (wnode-dependents (%node-quiet state id)))
+    (let ((d (%node-quiet state dependent)))
+      (when d
+        (setf (wnode-needs-broken d)
+              (if settled-p
+                  (not (every (lambda (dep) (%need-terminal-p state dep))
+                              (wnode-deps d)))
+                  t))))))
+
 ;;; The root, as bytes.
 
 (defun root-form (state)
@@ -254,14 +341,20 @@ own id would not be the same counting rule one level down. Decision for review."
                    :rev (work-event-rev event)
                    :disposition (getf (work-event-fields event) :disposition)
                    :stamp (work-event-stamp event)
-                   :revived (wnode-revived node)
-                   :settles (wnode-settles node))
-             (wstate-rows state)))
+                    :revived (wnode-revived node)
+                    :settles (wnode-settles node))
+             (wstate-rows state))
+       ;; A settle is a terminal accepted need: re-evaluate the dependents it
+       ;; unblocks, clearing needs-broken where their needs are all terminal.
+       (%recheck-needs-broken state id t))
       (:revive
        (unless (eq :c (wnode-branch node))
          (error 'unsupported-input :what (format nil "rule 18: ~A is not in C" id)))
        (setf (wnode-branch node) :o)
        (%adjust-counters state id 1)
+       ;; A revert breaks the dependents that had counted on this need: flag
+       ;; them needs-broken so they are re-evaluated, never silently launched.
+       (%recheck-needs-broken state id nil)
        (setf (wnode-revived node) (work-event-rev event))
        (push (list :key (closed-row-key event) :kind :revive :node id
                    :rev (work-event-rev event)
