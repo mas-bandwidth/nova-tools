@@ -1,0 +1,14 @@
+package fixture
+
+import (
+	"os"
+	"path/filepath"
+)
+
+// writesWorker builds a worker description by concatenating filepath.Join
+// RAW into the JSON literal. On Windows the joined path holds backslashes that
+// the JSON grammar reads as escapes, so the literal does not parse.
+func writesWorker(dir string) {
+	body := `{"name":"w","key_file":"` + filepath.Join(dir, "key") + `"}`
+	_ = os.WriteFile(filepath.Join(dir, "worker.json"), []byte(body), 0o644)
+}

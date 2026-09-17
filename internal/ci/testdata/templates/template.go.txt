@@ -1,0 +1,13 @@
+package fixture
+
+import (
+	"io"
+	"text/template"
+)
+
+// render executes into a fake writer; no subprocess is started and nothing is
+// read from disk. The template text carries an OS path unquoted.
+func render(w io.Writer) {
+	t := template.Must(template.New("t").Parse(`key={{.Key}} path=` + `C:\Users\RUNN\keys\key`))
+	_ = t.Execute(w, nil)
+}

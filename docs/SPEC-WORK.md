@@ -4639,6 +4639,82 @@ model, and the replacement's kind inherited on `supersede`.
 These items are epic E11 of the roadmap. They add no verified completion until implementation
 and failure replays pass.
 
+## The task packet *(nova-tools#1142; a draft for review)*
+
+**`task packet` writes one bounded artifact a worker starts from cold, and one line says what it
+is.** The verb prints nothing but its one `PACKET OK` line and writes the packet itself to the path
+`--into` names, bounded by `--max-bytes`, which defaults to the bound `session start` was given and
+may only lower it.
+
+```
+nova-work task packet --session <path> --node <id> --for <worker> --model <profile> --into <path> [--max-bytes <n>] [--now <stamp>]
+
+PACKET OK id=<event-id> request=<id> node=<id> for=<worker> model=<profile> goal=<id> goal-rev=<rev> owner=<name> stop=<none|requested|cancelled|deferred> hold=<none|id> tokens=<n|absent> usd=<amount|absent> hours=<duration|absent> delta=<receipt-id|none> delta-events=<n> result=<sha12> branch=<name> files=<n> evidence=<n> bytes=<n> into=<path> rev=<n> pushed=<rev|-> emitted=<bytes>
+```
+
+**It reads the node's accepted goal, its pinned inputs, its owner, its STOP and HOLD state and its
+budget, all from the resident session and nowhere else.** The goal is the accepted goal of the
+node's scope, read as `goal show` reads it; every pinned input is named by path and by the revision
+the packet pins, never by a path alone and never resolved at the moving tip; the owner is the
+node's responsible friend; STOP and HOLD are the goal's `stop=` state and the control id of any
+live hold; and the budget's three fields — tokens, dollars and hours — are separate, with a field
+the set does not carry printed `absent` and never `0`. **The delta is everything since the worker's
+last receipt**: the events and state changes after the `:packet` or receipt the named worker last
+held, printed `delta-events=<n>`, and a worker with no prior receipt sees the whole set with
+`delta=none`.
+
+**The prompt profile named by `--model` selects the packet's wording, never its facts.** It is the
+CONFIG `prompt profile` of *Friends, CONFIG and ACTIVE*: its pointer is hashed and compared with
+its pinned digest before use, and its model, harness and work type are identity. Two profiles built
+over one state carry the same goal, inputs, owner, budget, delta and contract, in the shape that
+model reads; the shapes that stall a model without a tool-call boundary are known, and they are
+profile data and never a second per-model switch inside this verb. A profile that is absent, stale
+or mismatched against its pinned digest refuses by name.
+
+**The packet carries the output contract whole**, so a cold worker never rebuilds it by hand: the
+exact one-line `RESULT` form it must print, the branch it must push, and the files it is expected
+to add or change. The `PACKET OK` line names them as `result=<sha12>`, the content digest of the
+RESULT-line template, `branch=<name>` and `files=<n>`, and the packet body prints the template and
+the file list in full, capped by the bound.
+
+**The packet is journaled as one typed event, so a replay reproduces it.** The event carries the
+node, the worker, the profile and its digest, the goal revision, the receipt the delta started
+from, and the packet's own digest; it is written through the one writer and the one journal the
+execution model names. `session replay` reconstructs the packet byte for byte from that event
+alone — its wording, its `bytes=`, its `emitted=` — with no clock read, no repository read and no
+id minted, so two benches replay one event to one packet.
+
+**Evidence is links, never a body.** The packet carries each evidence pointer with its criterion
+and against-revision as a link the worker can open, and it never inlines an evidence body, a log or
+a diff; a pointer the session cannot resolve is named unresolved in the packet, capped like every
+other field, and never dropped and never counted as verified.
+
+**A packet is refused, exit 2, with one remedy line, when it cannot start a worker honestly.** A
+node with no accepted goal refuses `PACKET FAIL node=<id>: no accepted goal; run: nova-work goal
+show --as <owner>`; a worker with no lease refuses `PACKET FAIL node=<id> for=<worker>: no lease;
+run: nova-work take --node <id> --by <duration> --default <policy>`; an unknown or mismatched
+profile refuses by name; and every flag the verb needs — `--node`, `--for`, `--model`, `--into` —
+is refused when absent with the one line `nova-work task packet: refusing to guess; run: nova-work
+help`. No refusal writes a file, a journal record or a dedup entry.
+
+**The mistake it removes:** every worker rebuilding its prompt and context by hand, reading a cold
+context on every card.
+
+**The red tests a card writes first**, each with a fake where the real thing is the network, a
+bench or a clock:
+
+1. `packet-is-one-line-and-one-file` — with a fake clock, a node with an accepted goal and a live lease prints exactly one `PACKET OK` line, writes one packet at `--into`, and `bytes=` equals that file's size and is at most `--max-bytes`.
+2. `packet-refuses-no-accepted-goal` — a node whose scope has no goal refuses at exit 2 with the one remedy line naming `goal show`, and writes nothing.
+3. `packet-refuses-no-lease` — a worker holding no lease on the node refuses at exit 2 with the one remedy line naming `take`, and writes nothing.
+4. `packet-refuses-missing-flag` — omitting `--node`, `--for`, `--model` or `--into` each refuses at exit 2 with the one `refusing to guess` line and a `run: nova-work help` remedy.
+5. `packet-pins-inputs-by-path-and-revision` — against a fake repository reader whose tip moves, every pinned input carries its path and the pinned revision, and none silently reads the later tip.
+6. `packet-delta-is-since-the-last-receipt` — against a fake receipt store, a worker with a prior receipt sees only later events, a worker with none sees the whole set, and `delta=` names the receipt it started from.
+7. `packet-replay-reproduces-it` — with a fake clock, replaying the `:packet` event alone reproduces the packet byte for byte, `bytes=` included, and mints no new id.
+8. `packet-profile-selects-wording` — two fake prompt profiles over one state produce different wording from the same facts, and a profile whose pinned digest does not match refuses.
+9. `packet-budget-absent-is-not-zero` — against a fake goal record with no hourly budget the packet prints `hours=absent`, while a real zero budget prints `hours=0`.
+10. `packet-stop-and-hold-are-named` — against a fake control record with a STOP request and a live HOLD, the `PACKET OK` line names both and hides neither.
+11. `packet-is-bounded` — against a fake state far past the bound the packet is capped at `--max-bytes` with its true `bytes=` still printed, and a `--max-bytes` of zero is refused.
+
 ## Recursive coordination nodes *(nova-work v2, nova-tools#321; a draft for review)*
 
 Glenn's v2 frame is *"As above, so below."*: a **node** is the unit of coordination, and every
@@ -7161,3 +7237,80 @@ are not a token saving; the implementation's own tokens are sunk cost and are ou
 before-and-after; usage nobody recorded stays unknown and is never estimated into the comparison;
 and the honest outcomes are a **verified saving**, **inconclusive evidence** or a **failed
 hypothesis**, each reportable and none of them a percentage invented to fill the line.
+
+## Capability inventory
+
+Stella's rows on nova-tools#1142, 2026-09-17: the adoption and probe spreadsheets stop being kept
+by hand. `capability inventory` records, per tool and verb at one exact revision on one exact
+machine, one of five states, and a documentation-only change never marks a Go tool as needing a
+rebuild because the stamp tells. The inventory is the one source the `TOOLS MOVED` note and the
+adoption receipts read. The lines, as `nova-work help` will print them:
+
+```
+nova-work capability inventory --session <path> <write flags> --revision <sha> --machine <name> [--tool <name>] [--verb <name>]
+nova-work capability inventory show (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --revision <sha> --machine <name> [--tool <name>] [--max <n>]
+nova-work capability inventory diff (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --revision <before> --revision <after> [--machine <name>] [--max <n>]
+```
+
+1. **Every path and value comes from a flag.** `--revision <sha>` names the repository revision
+   the probe runs at, `--machine <name>` a live *fleet* member, and `--session` or `--snapshot`
+   the reader's view; no branch, hostname, cwd or default machine is assumed.
+2. **What it reads and what it writes.** It reads the tool set the revision ships — each binary's
+   declared verbs from its own `--help` — and the row held for each `(tool, verb, revision,
+   machine)`; it writes one `:capability` event per row into O, and for an exercised row the
+   retained evidence file it names, all in one accepted envelope; `show` and `diff` write nothing.
+3. **One `CAPABILITY ROW` line per tool and verb, every field named.** `state` is exactly one of
+   the five; `stamp` is the tool's build stamp (rule 4); `evidence` is the retained path, `-`
+   when none; `detail` is the one escaped line the state rests on. The grammar:
+
+```
+CAPABILITY ROW tool=<name> verb=<name> revision=<sha12> machine=<name> state=<unsupported|refused|exercised-synthetic|exercised-live|unknown> stamp=<sha12> evidence=<path|-> detail=<text|->
+CAPABILITY OK tools=<n> verbs=<n> rows=<n> unsupported=<n> refused=<n> synthetic=<n> live=<n> unknown=<n> revision=<sha12> machine=<name>
+CAPABILITY DIFF tool=<name> verb=<name> before=<state> after=<state> stamp=<same|moved> rebuild=<yes|no>
+CAPABILITY OK rows=<n> changed=<n> rebuilds=<n> from=<sha12> to=<sha12>
+```
+
+4. **The stamp is the tool's build inputs, never the repository revision.** It is the digest of the
+   Go package the tool builds from and its transitive imports; two revisions differing only under
+   `docs/`, or in a test, a comment or another tool's tree, carry the same stamp, so `diff` prints
+   `rebuild=no` for a same-stamp pair and `rebuild=yes` only where the stamp moved.
+5. **The five states, and what each rests on.** `unsupported`: the revision's tool lists no such
+   verb. `refused`: the verb exists and answered a refusal, its exact line kept in `detail`, a
+   capability answer and not a gap. `exercised-synthetic`: the verb ran against a fake, so no
+   network, bench or clock was touched. `exercised-live`: the verb made a real call, its retained
+   evidence path named. `unknown`: the probe could not classify the pair, printed and never guessed.
+6. **A live row is a real call with a retained file, and a claim without one is refused.** The
+   evidence path is written under the session's evidence root before the row is accepted; a row
+   claiming `exercised-live` with `evidence=-`, or naming a path that is not there, is refused at
+   the candidate gate.
+7. **The inventory is the one source the `TOOLS MOVED` note and the adoption receipts read.** They
+   name rows by `(tool, verb, revision, machine)` and re-probe nothing; a note or receipt that
+   disagrees with the table is stale and refused.
+8. **Refusals are exit 2, one remedy line each, and write no row.** A missing `--revision` or
+   `--machine` is `CAPABILITY REFUSED: refusing to guess (<flag> is required)`; a `--machine` that
+   is not a live fleet member is `CAPABILITY REFUSED machine=<name>: not a live fleet member
+   (register it with machine --register)`; a `--revision` the repository does not hold is
+   `CAPABILITY REFUSED revision=<sha>: not a revision this repository holds (name a sha it holds)`;
+   `diff` with other than two `--revision` is `CAPABILITY REFUSED: diff needs two --revision (give
+   --revision exactly twice)`; `show` or `diff` with neither `--session` nor `--snapshot` is
+   `CAPABILITY REFUSED: refusing to guess (name --session or --snapshot)`.
+9. **Bounded output, per SPEC.md.** Rows are capped at `--max` (default 20, `0` all, negative
+   refused) with one `CAPABILITY MORE kind=<row|diff> shown=<n> total=<t> --max <n>` after them;
+   every value is one `internal/oneline` token; the `CAPABILITY OK` count line prints on failure
+   as well as success.
+
+**The mistake it removes.** The adoption and probe spreadsheets kept by hand, and the rebuild of a
+Go tool that a documentation-only change never touched, are one retained table now.
+
+Red tests, one per rule, each with a fake where the real thing is the network, a bench or a clock:
+
+1. `capability-records-the-five-states`: a fake tool set whose verbs each take one of the five paths, through a fake probe and a fake clock, prints one `CAPABILITY ROW` per pair and a `CAPABILITY OK` whose counts sum.
+2. `capability-live-keeps-the-evidence-path`: a fake probe records one real call; the row names the retained path, and a row claiming live with `evidence=-` is refused.
+3. `capability-refused-keeps-the-exact-line`: a fake tool that refuses records its `detail` byte for byte with state `refused`.
+4. `capability-stamp-tells-a-rebuild`: two fake revisions differing only under `docs/` carry the same stamp and print `rebuild=no`, and a fake revision editing one tool's package moves that stamp alone and prints `rebuild=yes`.
+5. `capability-diff-reads-two-revisions`: a fake record holding two revisions prints one `CAPABILITY DIFF` per changed pair and none for an unchanged pair.
+6. `capability-refuses-missing-flags`: no `--revision`, no `--machine` and no `--session`/`--snapshot` are each one `CAPABILITY REFUSED` with a remedy, exit 2, and no row is written to a fake session.
+7. `capability-refuses-a-bad-machine-or-revision`: a fake fleet without the name, and a fake repository that does not hold the sha, are each one `CAPABILITY REFUSED` with a remedy, exit 2, and no probe runs.
+8. `capability-unknown-on-an-unreadable-probe`: a fake probe timing out on a fake clock is `unknown`, with the timeout line in `detail`.
+9. `capability-output-is-bounded`: 200 fake rows print at most `--max` lines plus one `CAPABILITY MORE`, every value one token.
+10. `capability-is-the-source-the-note-reads`: a fake `TOOLS MOVED` note and adoption receipt resolve their rows from the table, and a disagreeing one is refused.

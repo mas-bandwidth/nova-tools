@@ -1459,6 +1459,65 @@ is trusted.
 - `status` on `bin/merge-lane.sh`'s `lane.json` is exit 2 with `refusing to
   guess` and the `init` command, and writes nothing.
 
+## The merge queue (#1142), 2026-09-17
+
+Every script and hand step sketched on the bench becomes an official verb, and the queue below owns the lane's order mechanically. **The mistake it removes, in one sentence.** It removes the night the queue was emptied and refilled by hand four times, the poison PR that dropped every innocent PR behind it, and the sweep that re-enqueued over a coordinator's hold.
+
+**The verb line, as `help` prints it.**
+
+```
+nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
+nova-merge classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
+```
+
+**What it reads and what it writes.** It reads the lane's `state.json` and the lane branch's records through the fold, and the host through `Host.PR` and `Host.Checks` — no new client, and no re-derivation inside one sweep (one snapshot per pass). It writes `<lane>/queue.json` (`queued`, `skipped`, `parked`), `<lane>/hold` (present means held; its first line is the reason), and one immutable `classify` record per decision under `<lane>/classify/<run>-<at>-<rand6>.json`, pushed by the tool exactly as a read is (rule 22). Every queue write is a read-modify-write under rule 1's kernel lock through a fixed temp name; every path comes from `--lane` and nothing goes under `/tmp` (rule 13).
+
+**One queue, one hold file, one order.** The queue is the order `run` walks: `queued` is the ordered pull requests, and `skipped` and `parked` are the sets the sweep must not touch. `add` is still a person's decision and appends; `queue` is the mechanical hand that keeps the order, so no coordinator empties and refills it by hand. A hold is a person's, never the tool's.
+
+**`hold <reason>` and `release`.** `hold` writes the reason into `<lane>/hold`; while it exists the sweep and every enqueue (`add`, `front`, and a `run` that would enqueue) refuse at exit 2 with the remedy `nova-merge queue release  # <reason>`, so a sweep can never re-enqueue over a coordinator's hold. `release` removes the file and prints how long it stood. An empty reason is refused: a hold nobody can read is not a hold.
+
+**`skip <pr>...` and `unskip <pr>...`.** `skip` dequeues each named pull request and records it in `skipped`; a skipped pull request is never swept and never advanced. `unskip` removes it from `skipped` and appends it to `queued`; because a poison park is `skipped` plus a park record, `unskip` is the one way a parked pull request returns.
+
+**`front <pr>`.** `front` dequeues everything, enqueues the named pull request at position one, and re-enqueues the rest in their old order after it; the pass retires the named one first and the rest follow in the order they held, so the queue is never emptied and refilled by hand. `QUEUE FRONT` prints `position=1 displaced=<n>`; a pull request not open, not green, or not in the lane is refused.
+
+**`sweep --window <duration>`.** The sweep walks every open pull request the host reports in the session window named by `--window` and enqueues each whose head run is green (zero fail, zero pending, at least one pass, rule 5) and that is not skipped, parked, dirty (`CONFLICTING`) or already queued. A stale red — a red run for a sha the head has moved past — is re-enqueued **only when the queue holds five entries or fewer**, and never otherwise; a red for the current head is never enqueued. A hold refuses the whole sweep, and `--window` has no default because a sweep with no window would enqueue the world.
+
+**The poison detector.** A pull request whose own merge-group run fails twice on one test, in a package that pull request changed, and whose `classify` decision is `own-change`, is poison: the sweep parks it — `skip` plus one issue naming the test, the package, the two run ids and the pull request — and no sweep ever re-enqueues it. A `flaky-under-load` or `environment` decision never parks, and `unskip` clears a park. `QUEUE PARK entry=<pr> test=<name> package=<path> runs=<n> issue=<url|->` is the one line.
+
+**`classify --run <id>`.** `classify` records one typed decision behind the merge group's floor — `flaky-under-load`, `own-change` or `environment` — keyed to the run id and the head sha, written and pushed as a record (rule 22) and folded beside the gates; the newest `at` for a run wins, a second classification is a second file, and the detector reads `own-change` to arm and the other two to disarm. It records a person's class and decides nothing.
+
+**The output, one line per verb.**
+
+```
+QUEUE HOLD reason=<text> path=<file> by=<who>
+QUEUE RELEASE held=<duration> path=<file>
+QUEUE SKIP entry=<pr> skipped=<n> queued=<n>
+QUEUE UNSKIP entry=<pr> skipped=<n> queued=<n>
+QUEUE FRONT entry=<pr> position=1 queued=<n> displaced=<n>
+QUEUE SWEEP window=<duration> scanned=<n> green=<n> queued=<n> already=<n> skipped=<n> dirty=<n> parked=<n> stale_red=<n> rerun=<n>
+QUEUE PARK entry=<pr> test=<name> package=<path> runs=<n> issue=<url|->
+QUEUE REFUSED: <reason>
+CLASSIFY OK run=<id> entry=<pr> verdict=<class> test=<name> by=<who> file=<path> pushed=true
+CLASSIFY FAIL run=<id> file=<path> pushed=false: <reason>; re-run the same verb to push it
+CLASSIFY REFUSED: <reason>
+```
+
+**The refusals, exit 2, each with its one remedy line.** `queue` with no subcommand names every subverb; `hold` with an empty reason wants `nova-merge queue hold "<reason>"`; `skip` and `unskip` with no `<pr>` want `nova-merge queue skip <pr>...`; `front` on a pull request not in the lane wants `nova-merge add --lane <dir> --pr <n>`; any enqueue while held wants `nova-merge queue release`; `sweep` with no `--window` wants `--window <duration>`; `classify` with no `--run` or an unknown `--verdict` names the flag and the three classes; and any of them on a directory with no `state.json` gets rule 20's `refusing to guess` line and the `init` command.
+
+### Red tests
+
+A card writes these first, each seen red before it is trusted; the network, the bench and the clock are fakes in every one.
+
+1. `hold` then a sweep against a fake host and a fake clock: the sweep is exit 2 with the `release` remedy, the fake host receives no enqueue, and `<lane>/hold`'s first line is the reason.
+2. `skip 12 13`, then `unskip 13`: the order omits both, `skipped` holds 12, and a sweep over a fake window with 12 green does not enqueue it.
+3. `front 7` on a four-entry queue: one `QUEUE FRONT entry=7 position=1 displaced=3`, the order is `[7, a, b, c]`, and after the fake host reports 7 merged the rest keep their old order.
+4. A sweep over a fake host of ten open pull requests — green, stale red, current red, dirty, skipped, parked and already queued — counts each bucket and enqueues only the green one.
+5. A sweep with a stale red and a queue of six does not re-enqueue it; the same sweep with a queue of five does; a mutation that drops the bound turns the test red.
+6. The detector with a fake host: one test failed twice in a changed package plus an `own-change` classify parks the pull request (`QUEUE PARK` names test and issue) and a green re-sweep does not enqueue it, while a `flaky-under-load` classify never parks.
+7. `classify --run` against a fake remote: one immutable record, `CLASSIFY OK … pushed=true`, a second classification for the same run is a second file with the newest `at` winning, and an unknown `--verdict` is exit 2 naming the three classes.
+8. `queue` with no subverb, `hold ""`, `skip` with no `<pr>`, `front` on a missing pull request, `sweep` with no `--window` and `classify` with no `--run`: each exit 2 with its one remedy line, and the fake remote sees no push.
+9. Two concurrent `hold`/`skip`/`front`/`sweep` writers: every write lands, `queue.json` parses at every read, a killed writer leaves the old queue whole (rule 1), and the sweep window is measured by a fake clock, never the wall clock.
+
 ## Tests this spec demands
 
 One line per rule in **the rules, numbered**. Each is a test the work list
@@ -1833,3 +1892,82 @@ reason.
 | Stella, closing read | durable outbox restored after every reset | rule 22: `<lane>/outbox/<submission id>`, restored after each fetch/reset, delivered only after the confirming fetch; one checkout lock; one immutable file per submission (test 22) |
 | Stella, closing read | an unreadable record blocks, never skipped | the state file: `FOLD REFUSED`, `MERGE BLOCKED … reason=malformed_record`, `RUN STOPPED` when the scope is unknown (test 22) |
 | Stella, closing read | a base gate is not an integration gate | output grammar: two kinds by shas; the parent check is the integration gate's only (test 18); `dry-run` folds in memory over a fetched tip (rule 22) |
+
+## The fold (#1142)
+
+`nova-merge fold --branches <file> --onto <base> --out <branch> [--lane <dir>]` folds
+an ordered list of branches onto one base and lands them as one squashed pull request.
+
+```
+nova-merge fold --branches <file> --onto <base> --out <branch>
+nova-merge fold --close-folded --pr <n>
+```
+
+**Reads and writes.** It reads `--branches`, one branch per line, each line
+carrying the cards that branch folds (`<branch> <card>...`); `--onto`, the base;
+and `--out`, the branch the squash lands on. The repository and the scratch
+clone come from the lane under `--lane` (rule 13), so no path is guessed. It
+writes the scratch clone, the branches merged in the file's order, one squashed
+commit on `--out`, a lease push of it, and one pull request; nothing else, and
+never a working copy.
+
+**Order and conflicts.** It merges the listed branches onto the base one at a
+time, in the file's order, in the scratch clone only. A conflict in a test file
+resolves **keep-both**; in a source file, the **incoming** side; anywhere else
+it drops that branch and says so. The order is never re-derived, and no resolved
+byte reaches a branch until the tests pass.
+
+**Tests after every merge; three tries.** After each branch it runs the package
+test the repository names for the tree — `lisp/nova-work/run-tests.sh` for a
+nova-work fold, `go test` for Go — and the layout test of #560. A branch still
+red after three tries is dropped, named and left out of the squash, and the
+fold moves on; it is never retried past the third try and no loop waits forever
+(rule 13).
+
+**Squash, push, pull request.** The exhausted list squashes to **one commit**
+whose message lists every folded branch and its cards. It pushes that commit
+with the one lease rule 4 allows,
+`--force-with-lease=refs/heads/<out>:<expected sha>`, and opens one pull request
+onto `--onto`; rule 4's mutating guard refuses `--auto`, `--force` and every
+other force spelling before a command is built.
+
+**One-line output.** `FOLD OK folded=<n> dropped=<n> pr=<n>`: `folded` is the
+branches in the squash, `dropped` those left out after three red tries, `pr` the
+pull request opened. `--close-folded` prints `FOLD CLOSED pr=<n> closed=<n>`:
+`pr` the merged fold's pull request, `closed` the folded pull requests closed as
+superseded by it.
+
+**Refusals (each exit 2, one remedy line).** No `--branches`, unreadable or
+empty: remedy `nova-merge fold --branches <file> --onto <base> --out <branch>`.
+No `--onto`: remedy `--onto <base>`; no `--out`: remedy `--out <branch>`;
+`--close-folded` without `--pr`: remedy `nova-merge fold --close-folded --pr
+<n>`; a `--lane` that is not a lane: rule 20's `refusing to guess` and the
+`init` remedy.
+
+**The mistake it removes.** A 98-commit fold that never got a mergeability
+verdict and was squashed by hand on the coordinator's window, and a queued
+branch that could not be pushed, become one reviewed pull request with a named
+dropped list and a lease push.
+
+**Red tests.** Each is written first and seen red, with a fake where the real thing is the network, a bench or a clock.
+
+1. A fold of three branches against a green fake test runner squashes to one
+   commit whose message lists all three branches and their cards, the fake
+   remote sees one lease push, and the line reads `FOLD OK folded=3 dropped=0
+   pr=<n>`.
+2. A fake runner red for one branch makes the fold try it three times and no
+   more, drop it, print `dropped=1`, and leave its tree out of the squash.
+3. A fake git merge conflicting in a test file and in a source file yields
+   keep-both and the incoming side in the scratch tree; a conflict in any other
+   file drops the branch with that file named.
+4. A fake remote that rejects the lease prints one refusal, says nothing was
+   published, and records no plain push and no `--force`.
+5. A fake clock proves the three tries are bounded and the fold ends on its own.
+6. `--close-folded --pr <n>` against a fake host records each folded pull
+   request closed superseded by the squash, and prints `FOLD CLOSED pr=<n>
+   closed=<n>`.
+7. No `--branches`, no `--onto`, no `--out` and `--close-folded` without `--pr`
+   are each exit 2 with their one remedy line; a directory that is not a lane is
+   exit 2 with the `init` remedy.
+8. The layout test of #560 runs after every merge; a fake run that fails it
+   drops that branch like any other red.

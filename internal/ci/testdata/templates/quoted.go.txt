@@ -1,0 +1,14 @@
+package fixture
+
+import (
+	"os"
+	"path/filepath"
+	"strconv"
+)
+
+// writesWorker wraps the path in strconv.Quote, whose escaped output is a
+// string on every platform. The bench this guards is a fake.
+func writesWorker(dir string) {
+	body := `{"name":"w","key_file":` + strconv.Quote(filepath.Join(dir, "key")) + `}`
+	_ = os.WriteFile(filepath.Join(dir, "worker.json"), []byte(body), 0o644)
+}

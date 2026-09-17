@@ -573,3 +573,26 @@ INDEX COVERAGE sessions=1 entries=1 shown=1
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
 RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual
 ```
+
+## nova-post
+
+The gate is draft, show, approve, send: the tool prepares and renders, and Glenn's
+bus receipt releases. A draft is rendered once, written under `--drafts` as
+`<hash>.post` and `<hash>.meta`, and shown byte for byte; `send` refuses unless the
+receipt exists in `--bus`, is Glenn's, names this hash and is under 24 hours old, and
+it transmits the stored bytes only. The examples below name throwaway drafts, an
+allowlist and a body of your own; a missing flag is one line on stderr at exit 2, and
+a target the allowlist does not name is exit 1.
+
+### First run
+
+```text
+$ nova-post draft --channel ghost --target example.com --file ./body.md --drafts ./drafts --allowlist ./allowlist
+POST DRAFT OK hash=<sha256> channel=ghost target=example.com bytes=42 drafts=./drafts
+
+$ nova-post show --draft <sha256> --drafts ./drafts
+POST SHOW OK hash=<sha256> channel=ghost bytes=42 drafts=./drafts
+
+$ nova-post send --draft <sha256> --approval glenn-0123456789ab --drafts ./drafts --bus ./bus --allowlist ./allowlist
+POST OK channel=ghost id=123 url=https://example.com/p/123 hash=<sha256> approval=glenn-0123456789ab bytes=42
+```
