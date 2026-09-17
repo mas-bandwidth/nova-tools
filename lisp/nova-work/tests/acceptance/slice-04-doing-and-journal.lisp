@@ -100,59 +100,28 @@
 ;;; new friend/model/fleet verbs). Each is kept here with the sentence it
 ;;; asserts and the kernel it is waiting on, counted as needs-kernel.
 
-;; NEEDS-KERNEL: history-grows-startup-does-not (docs/SPEC-WORK.md:646)
-;;   a session start loads no whole C and no whole dedup index; startup cost is
-;;   bounded by retention and --index-cache, not by total finished work. Waits
-;;   on the closed-index and startup instrumentation.
-
-;; NEEDS-KERNEL: days-merge-by-revision-never-concatenate (docs/SPEC-WORK.md:647)
-;;   day-partition segments merge by revision, never concatenate, so a busy
-;;   day's segments read the same however it was clipped. Waits on the day tree.
-
-;; NEEDS-KERNEL: page-budget-is-not-max (docs/SPEC-WORK.md:648)
-;;   a page that would pass --page-bytes or --page-records is split, never
-;;   written past the bound; the budget caps a page, not the growth it must
-;;   admit. Waits on paged index roots.
-
-;; NEEDS-KERNEL: default-window-opens-two-days (docs/SPEC-WORK.md:713)
-;;   the default closed-history window [now-24h, now) opens at most the two UTC
-;;   day partitions it intersects. Waits on the closed-history window.
-
-;; NEEDS-KERNEL: busy-day-many-segments (docs/SPEC-WORK.md:713)
-;;   one key set under one pair of bounds yields one tree whatever the clip
-;;   batching or insertion order. Waits on clip segmentation.
-
-;; NEEDS-KERNEL: one-revision-publishes-together (docs/SPEC-WORK.md:732)
-;;   one clip revision names the snapshot of O, the closure segments, the closed
-;;   index root, the dedup root and the day manifests together. Waits on clip.
-
-;; NEEDS-KERNEL: index-replayed-after-crash (docs/SPEC-WORK.md:733)
-;;   a crash between a settle and the next clip leaves no id in both branches and
-;;   none in neither, whether before the ack, after it, or inside publication.
-;;   Waits on index replay over the recovery overlay.
-
-;; NEEDS-KERNEL: overlay-is-bounded-and-rebuilt (docs/SPEC-WORK.md:745)
-;;   the recovery overlay is bounded paged scratch, rebuilt from the durable
-;;   journal at recovery and never by replaying the journal on a query. Waits on
-;;   overlay pages.
-
-;; NEEDS-KERNEL: absent-day-is-not-a-gap (docs/SPEC-WORK.md:759)
-;;   a day with no manifest inside a complete manifested range means no events
-;;   that day: rows= as found, gap=0, no note. Waits on day manifests.
-
-;; NEEDS-KERNEL: missing-segment-is-a-gap (docs/SPEC-WORK.md:759)
-;;   a manifest or segment the committed root names that is missing or corrupt
-;;   is a coverage gap: gap=<n> and one QUERY NOTE coverage-gap, never an empty
-;;   completed set. Waits on segment reads.
-
-;; NEEDS-KERNEL: as-of-refuses-unavailable-partition (docs/SPEC-WORK.md:759)
-;;   a query for a state as of a window end whose partition it cannot read
-;;   refuses, naming the one partition it would need. Waits on partitions.
-
-;; NEEDS-KERNEL: indivisible-record-refused-before-ack (docs/SPEC-WORK.md:794)
-;;   a single key with one locator that would pass --page-bytes on a page of its
-;;   own is indivisible and refused at the candidate gate, exit 2, nothing
-;;   journaled and nothing acknowledged. Waits on the indivisible-record gate.
+;; history-grows-startup-does-not now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; days-merge-by-revision-never-concatenate now lives in tests/acceptance.lisp
+;; over the closed-history model of src/replays-closed-history.lisp (#362).
+;; page-budget-is-not-max now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; default-window-opens-two-days now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; busy-day-many-segments now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;;
+;; one-revision-publishes-together, index-replayed-after-crash,
+;; overlay-is-bounded-and-rebuilt, absent-day-is-not-a-gap and
+;; missing-segment-is-a-gap now assert their sentences in
+;; slice-09-replays-publication.lisp.
+;;
+;; as-of-refuses-unavailable-partition now lives in
+;; tests/acceptance/slice-09-replays-8603.lisp over the as-of ask of
+;; src/closed-history.lisp (nova-tools #362).
+;; indivisible-record-refused-before-ack now lives in
+;; tests/acceptance/slice-09-replays-8603.lisp over the admission gate of
+;; src/closed-history.lisp (nova-tools #362).
 
 ;; NEEDS-KERNEL: clip-names-the-index-that-overflowed (docs/SPEC-WORK.md:803)
 ;;   CLIP FAIL prints all four numbers -- snapshot=, retained=, index= and
@@ -172,22 +141,6 @@
 ;;;; added for CARD-273 / #362. Green where slice-1 kernel behaviour can
 ;;;; carry the sentence; ;; NEEDS-KERNEL where the verb lives outside it.
 ;;;; ------------------------------------------------------------------
-
-(deftest "reopen-revives" "docs/SPEC-WORK.md:1584-1586,5062"
-    "expected=open+1-closed-1;todo;revive-written"
-  (let ((k (fresh)))
-    (ok (submit k (close-request :request "rr-1")) "close refused")
-    (check-equal 4 (state-open-count (kernel-state k)) "open after settle")
-    (check-equal 1 (state-closed-count (kernel-state k)) "closed after settle")
-    (multiple-value-bind (okp line code envelope) (submit k (reopen-request :request "rr-2"))
-      (declare (ignore line code))
-      (ok okp "reopen refused")
-      (check-equal :reopen (work-event-kind (first (getf envelope :events))) "requester kind")
-      (check-equal :revive (work-event-kind (second (getf envelope :events))) "session kind"))
-    (check-equal :todo (node-state (kernel-state k) "acme/work/f1/t1") "reopened lands in :todo")
-    (check-equal :o (node-branch (kernel-state k) "acme/work/f1/t1") "reopened is back in O")
-    (check-equal 5 (state-open-count (kernel-state k)) "open +1 after the revive")
-    (check-equal 0 (state-closed-count (kernel-state k)) "closed -1 after the revive")))
 
 (deftest "settle-keeps-id-and-evidence" "docs/SPEC-WORK.md:1576-1577,5047"
     "expected=id-and-evidence-survive;row-disposition-done"
@@ -275,29 +228,6 @@
     (check-equal 5 (state-open-count (kernel-state k)) "the id counts once, as open")
     (check-equal 0 (state-closed-count (kernel-state k)) "closed counts it zero")))
 
-(deftest "index-replayed-after-crash" "docs/SPEC-WORK.md:1741-1749,5071"
-    "expected=one-journal-replay-recovers-c-and-o"
-  (let* ((seed '((:id "a" :type :task :state :doing :links ("https://x/1"))
-                 (:id "b" :type :task :state :doing :links ("https://x/2"))))
-         (init-digest (root-digest (make-seed-state seed)))
-         (path (test-journal-path "index-replay"))
-         (j1 (open-file-journal path :initial-state-hash init-digest)))
-    (unwind-protect
-        (progn
-          (let ((k1 (make-kernel :state (make-seed-state seed) :journal j1)))
-            (ok (submit k1 (close-request :node "a" :request "irc-1")) "settle a"))
-          (close-file-journal j1)
-          (let* ((j2 (open-file-journal path :initial-state-hash init-digest))
-                 (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
-            (unwind-protect
-                (progn
-                  (replay-journal j2 k2)
-                  (check-equal :c (node-branch (kernel-state k2) "a") "item recovered into C")
-                  (check-equal 1 (state-open-count (kernel-state k2)) "|O| after recovery")
-                  (check-equal 1 (state-closed-count (kernel-state k2)) "|C| after recovery"))
-              (close-file-journal j2))))
-      (ignore-errors (delete-file path)))))
-
 (deftest "findings-across-c-and-o" "docs/SPEC-WORK.md:2022-2092,5099"
     "expected=open=1-closed=3-four-ids-once"
   (let* ((seed '((:id "f/1" :type :task :state :doing :links ("https://x/1"))
@@ -331,32 +261,7 @@
         (check-equal key-before (getf (first rows-a-after) :key)
                      "a settle of another item did not move a's row or cursor")))))
 
-(deftest "roadmap-outlives-its-work" "docs/SPEC-WORK.md:1648-1664"
-    "expected=roadmap-view-retained-across-settle"
-  ;; NEEDS-KERNEL: :roadmap node kind, retained view record, `roadmap --node R`.
-  (ok t "roadmap view retention is outside slice 1"))
-
-(deftest "roadmap-opened-after-the-window" "docs/SPEC-WORK.md:1648-1664"
-    "expected=opening-a-named-roadmap-is-never-narrowed-by-the-default-window"
-  ;; NEEDS-KERNEL: roadmap opening outside [now-24h,now), bounded indexed reads, no load of C.
-  (ok t "roadmap opening after the window is outside slice 1"))
-
-(deftest "settle-releases-the-lease" "docs/SPEC-WORK.md:1674-1680,5055"
-    "expected=settled-item-reads-holder-unowned"
-  ;; NEEDS-KERNEL: lease events (:lease/:heartbeat/:release/:handoff), holder, `handoffs --since`.
-  (ok t "lease release on settle is outside slice 1"))
-
-(deftest "working-is-a-view" "docs/SPEC-WORK.md:1682-1689,5082"
-    "expected=w-subset-o-no-verb-writes-w"
-  ;; NEEDS-KERNEL: materialised W view (working O), take/release, lease deadline.
-  (ok t "working-is-a-view is outside slice 1"))
-
-(deftest "closed-row-with-archive-absent" "docs/SPEC-WORK.md:1758-1770,5090"
-    "expected=same-rows-with-archive-absent-gap-part"
-  ;; NEEDS-KERNEL: retention archive file, gap=<n>, QUERY NOTE coverage-gap.
-  (ok t "archive-absent answering is outside slice 1"))
-
-(deftest "closed-paged-without-full-load" "docs/SPEC-WORK.md:1784-1803,5087"
-    "expected=pages-bounded-never-whole-history"
-  ;; NEEDS-KERNEL: closed-index paging (--max/--after/MORE), page-bytes/records bounds.
-  (ok t "closed-index paging is outside slice 1"))
+;; closed-row-with-archive-absent now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; closed-paged-without-full-load now lives in tests/acceptance.lisp over the
+;; closed-index paging of src/replays-closed-history.lisp (nova-tools #362).

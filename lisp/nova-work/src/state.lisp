@@ -15,13 +15,25 @@
 
 (defstruct (wnode (:conc-name wnode-))
   id type parent coordinator children required required-count required-open state branch
-  open-count links
+  open-count
+  ;; The five permitted metadata fields of `node edit` (SPEC-WORK.md:5798). An
+  ;; absent field is +ABSENT+ and an empty or false value is kept as itself, so
+  ;; keep, clear, set-empty and set-false are four distinguishable states.
+  (links +absent+) (title +absent+) (category +absent+)
+  (private +absent+) (version +absent+)
   ;; SPEC-WORK.md:850-886 -- `:deps` is a reference edge to another node:
   ;; needed, not owned, not counted. DEPENDENTS is the reverse edge, kept so a
   ;; revert reaches the dependents it breaks in one bounded walk.
   deps dependents
   ;; The flag a revert of a need raises on its dependents (SPEC-WORK.md:2110).
   needs-broken
+  ;; SPEC-WORK.md:3001 -- `node edit` owns exactly these five metadata fields.
+  ;; They live on the node like every other value and move on write. :repo is
+  ;; the `--repo` a root work-set may hold (SPEC-WORK.md:2846); :view is the
+  ;; roadmap's view record, written with its node by the one creator. :meta-log
+  ;; is the engine's append-only edit history, newest first, the :before/after
+  ;; pair `node edit` keeps outside the payload digest for its undo.
+  repo view meta-log
   ;; SPEC-WORK.md:1222 -- the newest row of an id carries revived=<rev|-> and
   ;; settles=<n>. Both are kept on the node and moved on write, like every
   ;; other counter here, so a row is written and never computed by a scan.
@@ -29,7 +41,11 @@
   ;; SPEC-WORK.md:4651 -- every node carries an estimate (units, hours, tokens,
   ;; usd; who estimated, when). It is read, never derived, and a node without
   ;; one holds +ABSENT+ so an estimate of zero stays a value.
-  estimate)
+  estimate
+  ;; SPEC-WORK.md:1674-1689 -- the live lease's holder, or NIL for
+  ;; `holder=unowned`. W is the view of O nodes whose holder is live, never a
+  ;; field of its own.
+  holder)
 
 (defstruct (wstate (:conc-name wstate-))
   seed       ; the seed forest, verbatim, so a reconstruction starts where this did
@@ -41,7 +57,10 @@
   issue-open ; the open linked-issue counter -- separate, and never labelled |O|
   history    ; envelope records, newest first
   rows       ; closed-index rows, newest first
-  revision)
+  revision
+  ;; SPEC-WORK.md:1674-1680 -- the lease log, newest first, "kept whole for
+  ;; handoffs". A settle of a live lease appends a :release here.
+  lease-log)
 
 (defun %node (state id)
   "Every node access goes through here so *VISITS* is honest."
@@ -52,6 +71,79 @@
   "Node access on a path that is not a read of the work set: the write path's
 own ancestor walk, and serialization of the whole state."
   (gethash id (wstate-nodes state)))
+
+;;; The five permitted metadata fields and their tagged patches
+;;; (SPEC-WORK.md:5798). A patch is (:keep), (:clear) or (:set V).
+
+(defparameter *metadata-fields* '(:title :category :links :private :version))
+(defparameter *metadata-patch-keys*
+  '((:title . :title-patch) (:category . :category-patch) (:links . :links-patch)
+    (:private . :private-patch) (:version . :version-patch)))
+
+(defun %links-list (value)
+  (if (absentp value) '() value))
+
+(defun wnode-field (node field)
+  (ecase field
+    (:title (wnode-title node))
+    (:category (wnode-category node))
+    (:links (wnode-links node))
+    (:private (wnode-private node))
+    (:version (wnode-version node))))
+
+(defun (setf wnode-field) (value node field)
+  (ecase field
+    (:title (setf (wnode-title node) value))
+    (:category (setf (wnode-category node) value))
+    (:links (setf (wnode-links node) value))
+    (:private (setf (wnode-private node) value))
+    (:version (setf (wnode-version node) value))))
+
+(defun %apply-patch (current patch)
+  "The postimage of one tagged patch over CURRENT."
+  (case (car patch)
+    (:keep current)
+    (:clear +absent+)
+    (:set (second patch))
+    (t (error 'unsupported-input
+              :what (format nil "malformed patch ~S" patch)))))
+
+(defun %field-expected-type (field)
+  (ecase field
+    (:title "a text")
+    (:category "a text")
+    (:links "a list of text")
+    (:private "a boolean")
+    (:version "a text")))
+
+(defun %field-type-ok-p (field value)
+  (ecase field
+    ((:title :category :version) (stringp value))
+    (:links (and (listp value) (every #'stringp value)))
+    ;; A boolean is a value of the restricted-data grammar, which carries no T:
+    ;; :true and :false are the two spellings and both are values, never absent.
+    (:private (member value '(:true :false)))))
+
+(defun node-metadata-reader (reader state id)
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (funcall reader n)))
+
+(defun node-title (state id) (node-metadata-reader #'wnode-title state id))
+(defun node-category (state id) (node-metadata-reader #'wnode-category state id))
+(defun node-links (state id) (node-metadata-reader #'wnode-links state id))
+(defun node-private (state id) (node-metadata-reader #'wnode-private state id))
+(defun node-version (state id) (node-metadata-reader #'wnode-version state id))
+
+(defun metadata-digest (state)
+  "A digest of the five metadata fields of every node, in id order. A no-effect
+edit leaves it unchanged; a real edit moves it (SPEC-WORK.md:5627)."
+  (sha256-hex
+   (canonical-string
+    (loop for id in (sort (copy-list (wstate-order state)) #'string<)
+          collect (let ((n (%node-quiet state id)))
+                    (list id (wnode-title n) (wnode-category n) (wnode-links n)
+                          (wnode-private n) (wnode-version n)))))))
 
 (defun %seed-required (spec)
   "Read the internal seed's boolean without accepting truthy lookalikes. An
@@ -91,13 +183,21 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :state (getf spec :state :unknown)
                           :branch :o
                           :open-count 0
-                          :links (getf spec :links)
                           :deps (copy-list (getf spec :deps))
                           :dependents '()
                           :needs-broken nil
+                          :links (getf spec :links +absent+)
+                          :title (getf spec :title +absent+)
+                          :category (getf spec :category +absent+)
+                          :private (getf spec :private +absent+)
+                          :version (getf spec :version +absent+)
+                          :repo (getf spec :repo)
+                          :view nil
+                          :meta-log '()
                           :settles 0
                           :revived "-"
-                          :estimate (getf spec :estimate +absent+)))))
+                          :estimate (getf spec :estimate +absent+)
+                          :holder nil))))
     (setf order (nreverse order))
     ;; Containment edges, in seed order.
     (dolist (id order)
@@ -181,7 +281,7 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                      (setf cur (wnode-coordinator node)))))))
     (let ((state (make-wstate :seed (copy-tree nodes) :nodes table :order order
                               :root-open 0 :closed 0 :leaf-open 0 :issue-open 0
-                              :history '() :rows '() :revision 0)))
+                              :history '() :rows '() :revision 0 :lease-log '())))
       ;; Seed the counters once, on the write path that builds the set.
       (dolist (id order)
         (%adjust-counters state id 1))
@@ -221,7 +321,7 @@ own id would not be the same counting rule one level down. Decision for review."
     (decf (wstate-closed state) delta)
     (when (member (wnode-type node) '(:task :bug))
       (incf (wstate-leaf-open state) delta))
-    (incf (wstate-issue-open state) (* delta (length (wnode-links node))))))
+    (incf (wstate-issue-open state) (* delta (length (%links-list (wnode-links node)))))))
 
 ;;; Reads that are the counters themselves. No node is visited here.
 
@@ -382,17 +482,34 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                  :issue-open (wstate-issue-open state)
                  :history (wstate-history state)
                  :rows (wstate-rows state)
-                 :revision (wstate-revision state))))
+                 :revision (wstate-revision state)
+                 :lease-log (wstate-lease-log state))))
 
 ;;; Applying one event. The live path and the replay path share it, which is
 ;;; what makes the reconstruction independent of the live counters.
 
 (defun apply-event (state event)
+  (let ((kind (work-event-kind event)))
+    ;; A recorded external effect is an outcome, not a verb of the state
+    ;; grammar: it advances the revision and changes nothing else.
+    (when (eq kind :external)
+      (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
+      (return-from apply-event state)))
   (let* ((id (work-event-node event))
          (node (%node-quiet state id)))
     (unless node
       (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (ecase (work-event-kind event)
+      (:edit
+       ;; The five permitted metadata fields, each a tagged patch.
+       (dolist (field *metadata-fields*)
+         (let* ((key (cdr (assoc field *metadata-patch-keys*)))
+                (patch (getf (work-event-fields event) key +absent+)))
+           (unless (absentp patch)
+             (setf (wnode-field node field)
+                   (%apply-patch (wnode-field node field) patch))))))
+      (:terminal
+       (setf (wnode-state node) (getf (work-event-fields event) :disposition)))
       (:transition
        (setf (wnode-state node) (getf (work-event-fields event) :to)))
       (:reopen
@@ -402,11 +519,25 @@ rather than zero. A view: it never writes, and a closed node is not in it."
          (error 'unsupported-input :what (format nil "rule 18: ~A is already in C" id)))
        (setf (wnode-branch node) :c)
        (%adjust-counters state id -1)
+       ;; SPEC-WORK.md:1674-1680 -- "the settle envelope carries a :release for
+       ;; a live lease on the node, written by the settling author and naming
+       ;; the holder it ended ... no item of C holds a live lease". The release
+       ;; is appended to the lease log and the node reads holder=unowned.
+       (when (wnode-holder node)
+         (push (list :kind :release :node id
+                     :by (work-event-by event)
+                     :holder (wnode-holder node)
+                     :stamp (work-event-stamp event)
+                     :rev (work-event-rev event))
+               (wstate-lease-log state))
+         (setf (wnode-holder node) nil))
        (incf (wnode-settles node))
        (setf (wnode-revived node) "-")
        (push (list :key (closed-row-key event) :kind :settle :node id
                    :rev (work-event-rev event)
                    :disposition (getf (work-event-fields event) :disposition)
+                   :reason (getf (work-event-fields event) :reason +absent+)
+                   :already-closed (getf (work-event-fields event) :already-closed +absent+)
                    :stamp (work-event-stamp event)
                     :revived (wnode-revived node)
                     :settles (wnode-settles node))

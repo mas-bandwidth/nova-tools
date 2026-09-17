@@ -21,7 +21,15 @@
 (in-package #:nova-work)
 
 (defstruct (kernel (:constructor %make-kernel))
-  state journal next-rev fleet)
+  state journal next-rev fleet
+  ;; The applied-request index the undo path reads for an original request's
+  ;; preimage and its reversibility. It is not the dedup index, which stays the
+  ;; journal's (SPEC-WORK.md:2117 forbids an unbounded request-id map).
+  (applied (make-hash-table :test #'equal))
+  ;; The execution-control state: attempts, offers, durable holds and their
+  ;; captures. It moves no work revision and writes no transition; see
+  ;; control.lisp and SPEC-WORK.md:3921-3980.
+  controls)
 
 (defvar *before-apply-hook* nil
   "A test seam. When bound, it is called with the envelope after the journal has
@@ -44,7 +52,8 @@ below the state's revision is refused rather than silently reissued."
                   :next-rev (or rev-base (1+ (state-revision state)))
                   ;; The fleet is CONFIG supplied to the session, never a
                   ;; constant in the tool; see src/fleet.lisp.
-                  :fleet (make-fleet :friends friends))))
+                  :fleet (make-fleet :friends friends)
+                  :controls (make-ctl))))
 
 ;;; What a request may carry, per verb. SPEC-WORK.md:3227
 ;;; `every-field-has-an-owning-verb` wants every field mapped to its owning
@@ -58,7 +67,14 @@ below the state's revision is refused rather than silently reissued."
     (:state-to-doing :verb :node :by :reason :evidence
      :request :stamp :clock :generation-owner)
     (:event-reopen :verb :node :by :reason
-     :request :stamp :clock :generation-owner)))
+     :request :stamp :clock :generation-owner)
+    (:node-edit :verb :node :by :reason :title-patch :category-patch :links-patch
+                :private-patch :version-patch :request :stamp :clock :generation-owner)
+    (:undo :verb :of :by :request :stamp :clock :generation-owner)
+    (:external-effect :verb :node :by :effect :handle
+                      :request :stamp :clock :generation-owner)
+    (:node-remove :verb :node :by :reason :request :stamp :clock :generation-owner)
+    (:event-cancel :verb :node :by :reason :request :stamp :clock :generation-owner)))
 
 (defparameter *kind-owned-fields* '(:to :blocked-by :evidence :disposition :already-closed)
   "Fields that belong to some event kind of SPEC-WORK.md:823-892. One of these
@@ -219,8 +235,9 @@ beside a reopen. Outside the payload digest (SPEC-WORK.md:894)."
    (1+ (work-event-rev requester))))
 
 (defun %static-container-p (node)
-  "The container kinds whose static containment sets this slice represents."
-  (member (wnode-type node) '(:work-set :feature)))
+  "The container kinds whose static containment sets this slice represents. A
+roadmap settles with its members like any other container (SPEC-WORK.md:1648)."
+  (member (wnode-type node) '(:work-set :feature :roadmap)))
 
 (defun %cascade-events (state verb requester session)
   "Build and validate the branch cascade on a private candidate. Each decision
@@ -273,6 +290,12 @@ whole envelope is applied."
               2 nil))))
 
 (defun %submit (kernel request)
+  (case (getf request :verb)
+    (:node-edit (return-from %submit (%submit-edit kernel request)))
+    (:undo (return-from %submit (%submit-undo kernel request)))
+    (:external-effect (return-from %submit (%submit-external kernel request)))
+    (:node-remove (return-from %submit (%submit-terminal kernel request :node-remove :removed)))
+    (:event-cancel (return-from %submit (%submit-terminal kernel request :event-cancel :cancelled))))
   (let ((verb (getf request :verb)))
     ;; The one verb that configures the fleet (SPEC-WORK.md:3541) is CONFIG,
     ;; not a work-tree transition: it shares `submit`'s answer shape but never
@@ -313,7 +336,8 @@ whole envelope is applied."
             (values nil (format nil "~A FAIL node=~A: rule ~D: ~A"
                                 word (work-event-node requester) rule reason)
                     1 nil))))
-      (let* ((session (unless (eq verb :state-to-doing)
+      (let* ((before-state (node-state (kernel-state kernel) (work-event-node requester)))
+             (session (unless (eq verb :state-to-doing)
                         (%session-event kernel verb requester)))
              ;; Doing stays inside O: one event, no branch change or cascade.
              (events (if session
@@ -344,9 +368,73 @@ whole envelope is applied."
           (let ((candidate (apply-envelope (kernel-state kernel) envelope)))
             (setf (kernel-state kernel) candidate)
             (setf (kernel-next-rev kernel) (1+ (work-event-rev last-event)))
+            (setf (gethash rid (kernel-applied kernel))
+                  (list :verb verb :node (work-event-node requester)
+                        :before-state before-state))
             (values t line 0 envelope)))))))
 
 ;;; The counters, read.
+
+;;; `node remove` (SPEC-WORK.md:2372-2396)
+
+(defun %open-subtree (state id)
+  "The subtree of ID split into its still-open ids and its already-closed ids,
+parents before children."
+  (let ((open '()) (closed '()))
+    (labels ((walk (x)
+               (if (eq :o (wnode-branch (%node-quiet state x)))
+                   (push x open)
+                   (push x closed))
+               (dolist (c (wnode-children (%node-quiet state x)))
+                 (walk c))))
+      (walk id))
+    (values (nreverse open) (nreverse closed))))
+
+(defun node-remove (kernel id &key (by "rowan") (reason "removed")
+                              (request (format nil "remove-~A" id))
+                              (stamp "2026-09-14T12:00:00Z")
+                              (generation-owner "gen-4"))
+  "A node and the still-open items of its subtree settle into C with disposition
+removed, one :settle each in one envelope; the node's own settle names the
+already-closed ids beneath it; a finished item's disposition, evidence and
+settle stamp are untouched. A node already in C is a no-effect NODE NOTE
+(SPEC-WORK.md:2372-2396, replay remove-settles-only-open-items)."
+  (let* ((state (kernel-state kernel))
+         (node (%node-quiet state id)))
+    (unless node
+      (error 'unsupported-input :what (format nil "no such node ~A" id)))
+    (if (eq :c (wnode-branch node))
+        (let ((row (find id (wstate-rows state) :key (lambda (r) (getf r :node))
+                         :test #'equal)))
+          (values t (format nil "NODE NOTE already-closed node=~A disposition=~A settled=~A"
+                            id (or (getf row :disposition) :done) (or (getf row :stamp) "-"))
+                  0))
+        (multiple-value-bind (open-ids closed-ids) (%open-subtree state id)
+          (let* ((rev (kernel-next-rev kernel))
+                 (last-rev rev)
+                 (events '()))
+            (dolist (item (reverse open-ids))
+              (push (make-work-event
+                     :kind :settle :node item :by by
+                     :fields (list :disposition :removed :reason reason
+                                   :already-closed (if (equal item id) closed-ids '()))
+                     :stamp stamp :clock :tool :request request
+                     :generation-owner generation-owner :rev rev
+                     :session-written-p t)
+                    events)
+              (setf last-rev rev)
+              (incf rev))
+            (setf events (nreverse events))
+            (let ((envelope (list :request request
+                                  :digest (payload-digest events)
+                                  :events events)))
+              (setf (kernel-state kernel) (apply-envelope state envelope))
+              (setf (kernel-next-rev kernel) (1+ last-rev))
+              (values t
+                      (format nil "NODE OK id=~A request=~A node=~A rev=~D pushed=- changed=~D"
+                              (event-id (car (last events))) request id last-rev
+                              (length events))
+                      0)))))))
 
 (defun ask-size (kernel)
   "`query --ask size` (SPEC-WORK.md:1575). It reads the counter and triggers no

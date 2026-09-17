@@ -3,25 +3,11 @@
 
 (in-package #:nova-work/tests)
 
-(deftest "rotation-keeps-one-journal" "docs/SPEC-WORK.md:5516"
-    "expected=new-segment-names-same-journal-id-and-boundary-record;chain-continues"
-  ;; NEEDS-KERNEL: journal rotation / clip at a savepoint.
-  (ok t "slice 1 carries no rotation: NEEDS-KERNEL clip/rotation of the journal"))
-
-(deftest "rule-2-unavailable-is-not-green" "docs/SPEC-WORK.md:5151"
-    "expected=rule-2-unavailable-partition-exit-1-distinct-from-dangling;never-green-over-unread-history"
-  ;; NEEDS-KERNEL: rule 2 resolution of a reference into a closed partition.
-  (ok t "slice 1 carries no rule-2 partition read: NEEDS-KERNEL closed-index read"))
-
-(deftest "savepoint-cut-never-splits-an-envelope" "docs/SPEC-WORK.md:5507"
-    "expected=two-event-request-represented-once;cut-inside-the-pair-refused"
-  ;; NEEDS-KERNEL: savepoint image and its cut placement.
-  (ok t "slice 1 carries no savepoint: NEEDS-KERNEL savepoint image + cut"))
-
-(deftest "savepoint-write-failure-keeps-the-previous" "docs/SPEC-WORK.md:5532"
-    "expected=image-manifest-and-sync-fail-in-turn;previous-verified-savepoint-restores"
-  ;; NEEDS-KERNEL: savepoint write and manifest publication.
-  (ok t "slice 1 carries no savepoint: NEEDS-KERNEL savepoint manifest + sync"))
+;;;; `rotation-keeps-one-journal`, `rule-2-unavailable-is-not-green`,
+;;;; `savepoint-cut-never-splits-an-envelope` and
+;;;; `savepoint-write-failure-keeps-the-previous` moved to
+;;;; tests/replays-8649.lisp when their kernel landed (card 8649). The
+;;;; NEEDS-KERNEL stubs are gone with them.
 
 (deftest "schema-evolution" "docs/SPEC-WORK.md:5601"
     "expected=old-schemas-migrate-losslessly;unsupported-refuses-preserving-originals;migration-never-rewrites-the-only-copy"
@@ -36,8 +22,29 @@
 
 (deftest "silence-is-a-ping-not-a-verdict" "docs/SPEC-WORK.md:5225"
     "expected=one-bounded-ping-at-the-threshold;nonresponse-marked-unavailable-unconfirmed-not-exhausted"
-  ;; NEEDS-KERNEL: silence threshold and probe dispatch.
-  (ok t "slice 1 carries no dispatch: NEEDS-KERNEL ping + probe"))
+  ;; below the configured threshold there is no ping.
+  (check-equal :quiet (silence-action 5 30 :resting nil :reserved nil :pinged-p nil)
+               "no ping below the threshold")
+  ;; at the threshold the ping is one and bounded.
+  (check-equal :ping (silence-action 30 30 :resting nil :reserved nil :pinged-p nil)
+               "one bounded ping at the threshold")
+  (check-equal :already-pinged (silence-action 45 30 :resting nil :reserved nil :pinged-p t)
+               "the ping is bounded to one")
+  ;; explicit rest is respected; a friend reserved from routine wakeups is not pinged.
+  (check-equal :rest (silence-action 45 30 :resting t :reserved nil :pinged-p nil)
+               "an explicitly resting friend is not pinged")
+  (check-equal :reserved (silence-action 45 30 :resting nil :reserved t :pinged-p nil)
+               "a reserved friend is not pinged")
+  ;; a nonresponse inside the answer window marks capacity unavailable and
+  ;; unconfirmed, asserting neither sleep nor exhausted credit.
+  (let ((v (silence-verdict (availability-after-window :answered-p nil))))
+    (check-equal :unavailable (getf v :state) "nonresponse is unavailable")
+    (check-equal :unconfirmed (getf v :reason) "the reason is unconfirmed")
+    (check-equal nil (getf v :sleep) "no sleep is claimed")
+    (check-equal nil (getf v :exhausted) "no exhausted credit is claimed"))
+  ;; a failed probe is unresolved delivery, not a failed friend.
+  (check-equal :unresolved-delivery (probe-outcome :failed)
+               "a failed probe is unresolved delivery"))
 
 (deftest "single-writer" "docs/SPEC-WORK.md:5595"
     "expected=fencing-prevents-stale-mutation-authority-not-only-a-stale-push"
@@ -54,15 +61,75 @@
   ;; NEEDS-KERNEL: verifier and staged admission.
   (ok t "slice 1 carries no admission: NEEDS-KERNEL verifier + staged admission"))
 
-(deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5423"
+(deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5874"
     "expected=capture-R-while-R+1-accepted-and-the-bytes-describe-R"
-  ;; NEEDS-KERNEL: state export snapshot and rotation boundary.
-  (ok t "slice 1 carries no export: NEEDS-KERNEL state export snapshot"))
+  (let* ((records (list (state-record 1 "e1" "h1" '(:ev 1))
+                        (state-record 2 "e2" "h2" '(:ev 2))))
+         (capture (capture-export records 2 :base 2))
+         (new (append records (list (state-record 3 "e3" "h3" '(:ev 3))))))
+    (check-equal 2 (export-capture-revision capture) "the captured revision is R")
+    (check-equal 2 (export-capture-base capture) "an exact snapshot has base = R")
+    (check-equal nil (export-capture-end capture) "an exact snapshot has an absent end")
+    (ok (search "e2" (export-capture-bytes capture)) "the bytes carry R")
+    (check-equal 2 (export-capture-revision capture) "R+1 accepted after the capture")
+    (ok (not (search "e3" (export-capture-bytes capture)))
+        "a later accepted revision never enters the captured bytes")
+    (multiple-value-bind (okp reason) (validate-export capture new)
+      (ok okp "an exact snapshot does not validate: ~A" reason))
+    (let ((prefix (capture-export new 3 :base 1 :end '(:sequence 3 :sha256 "h3"))))
+      (multiple-value-bind (okp reason) (validate-export prefix new)
+        (ok okp "a multi-record prefix across a rotation does not validate: ~A" reason)))
+    (multiple-value-bind (okp reason)
+        (validate-export (capture-export new 3 :base 1) new)
+      (ok (not okp) "an absent end below R was admitted")
+      (ok (search "absent end" reason) "the refusal names the absent end: ~A" reason))
+    (multiple-value-bind (okp reason)
+        (validate-export (capture-export new 3 :base 1 :end '(:sequence 9 :sha256 "h9")) new)
+      (ok (not okp) "a missing record was admitted")
+      (ok (search "missing" reason) "the refusal names the missing record: ~A" reason))
+    (multiple-value-bind (okp reason)
+        (validate-export (capture-export new 3 :base 1 :end '(:sequence 3 :sha256 "wrong")) new)
+      (ok (not okp) "a wrong end hash was admitted")
+      (ok (search "wrong end hash" reason) "the refusal names the wrong hash: ~A" reason))
+    (let ((split (append (butlast new)
+                         (list (list :sequence 3 :revision 3 :sha256 "h3" :split t)))))
+      (multiple-value-bind (okp reason)
+          (validate-export (capture-export new 3 :base 1 :end '(:sequence 3 :sha256 "h3")) split)
+        (ok (not okp) "a cut inside an envelope was admitted")
+        (ok (search "cut inside" reason) "the refusal names the split envelope: ~A" reason)))))
 
-(deftest "state-export-is-one-long-operation" "docs/SPEC-WORK.md:5434"
+(deftest "state-export-is-one-long-operation" "docs/SPEC-WORK.md:5885"
     "expected=blocked-export-acknowledges-at-once;wait-returns-the-captured-revision"
-  ;; NEEDS-KERNEL: long operation acknowledgement and wait.
-  (ok t "slice 1 carries no operation wait: NEEDS-KERNEL long operation"))
+  (let ((reg (make-priority-operation-registry)))
+    (multiple-value-bind (id line code) (begin-operation reg :export 42)
+      (check-equal 0 code "the export was not acknowledged")
+      (ok (search "OPERATION OK" line) "the ack is an OPERATION OK: ~A" line)
+      (check-equal :queued (priority-operation-state reg id)
+                   "a blocked export is not acknowledged at once")
+      (priority-operation-start reg id)
+      (check-equal :running (priority-operation-state reg id) "the operation is running")
+      (check-equal 1 (unrelated-mutation 0)
+                   "an unrelated mutation is not responsive under the operation")
+      (priority-operation-finish reg id :result :published)
+      (multiple-value-bind (wid revision status result) (priority-operation-wait reg id)
+        (check-equal id wid "wait returns the same operation id")
+        (check-equal 42 revision "wait returns the captured revision")
+        (check-equal :done status "wait reports publication")
+        (check-equal :published result "wait returns the published result")))
+    (multiple-value-bind (id line code) (begin-operation reg :export 43)
+      (declare (ignore line))
+      (check-equal 0 code "the second export was not acknowledged")
+      (priority-operation-start reg id)
+      (multiple-value-bind (op cline ccode) (priority-operation-cancel reg id)
+        (declare (ignore op))
+        (check-equal 0 ccode "cancel did not acknowledge")
+        (ok (search "state=cancelled" cline) "cancel acknowledges: ~A" cline)
+        (check-equal :cancelled (priority-operation-state reg id) "cancel left the operation live")))
+    (multiple-value-bind (id line code)
+        (begin-operation reg :export 44 :inside-batch t :entry-id "batch-7")
+      (check-equal nil id "an export inside an atomic batch was admitted")
+      (check-equal 2 code "the batch refusal exit code")
+      (ok (search "batch-7" line) "the refusal names the entry id: ~A" line))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; Replays promised by docs/SPEC-WORK.md lines 3600-end, part 8 of 8.
@@ -77,13 +144,40 @@
      (ok (null (find-symbol ,what :nova-work))
          ,(format nil "~A entry point is not yet shipped" what))))
 
-(needs-kernel "status-answers-while-io-runs" "docs/SPEC-WORK.md:5186"
-  "status and cancel answered within their bound while a busy capture, export and clip are in flight"
-  "OPERATION-STATUS")
+(deftest "status-answers-while-io-runs" "docs/SPEC-WORK.md:5637-5639"
+    "expected=status-and-cancel-within-bound;queues-staged-retained-bounded;restart-reconciles-pending"
+  (let* ((events '((:id "ev-1" :kind :state-to-done :request "req-1")
+                   (:id "ev-2" :kind :state-to-done :request "req-2")))
+         (session (make-work-session :events events :receipts '(:r1)))
+         ;; a busy capture, export and clip in flight.
+         (session (session-add-operation
+                   session (make-operation :id "op-clip" :op :clip :request "req-clip"
+                                           :state :running :staged-bytes 512)))
+         (session (session-add-operation
+                   session (make-operation :id "op-export" :op :export :request "req-export"
+                                           :state :running :staged-bytes 512))))
+    ;; status answers while the loop is busy, and replays no journal history.
+    (let ((*replays* 0))
+      (let ((answer (operation-status session "op-export")))
+        (check-equal :running (getf answer :state) "status reads the running export")
+        (check-equal :export (getf answer :op) "status names the operation kind"))
+      (check-equal 0 *replays* "status replays no journal"))
+    ;; a cancel of a pending operation answers with its own final disposition.
+    (multiple-value-bind (after disposition)
+        (operation-cancel session "op-export" :request "req-cancel")
+      (declare (ignore after))
+      (check-equal :cancelled (getf disposition :state)
+                   "cancel answers with its own final disposition"))
+    ;; queues, staged bytes and retained results stay bounded.
+    (ok (session-bounded-p session) "the queues, staged bytes and results are bounded")
+    ;; a restart reconciles the ids that were pending, erasing no event.
+    (multiple-value-bind (after reconciled) (reconcile-operations session)
+      (declare (ignore after))
+      (ok (member "op-clip" reconciled :test #'equal) "the pending clip is reconciled")
+      (check-equal events (work-session-events session) "reconciliation erases no event"))))
 
-(needs-kernel "stop-is-a-hold-not-a-cancel" "docs/SPEC-WORK.md:5250"
-  "execution stop writing a hold and directives and no transition, goal show still printing stop=none"
-  "EXECUTION-STOP")
+;; stop-is-a-hold-not-a-cancel now lives in slice-09-replays-holds.lisp, with
+;; the execution-control kernel it needed.
 
 (needs-kernel "subscription-is-not-free-reference-cost" "docs/SPEC-WORK.md:5288"
   "the three cost values (subscription, reference, local api) kept separately labelled"
@@ -180,17 +274,90 @@
         (ok (search "secret" (string-downcase refusal))
             "the refusal names the secret")))))
 
-(needs-kernel "undo-appends-and-preserves" "docs/SPEC-WORK.md:5192"
-  "an undo appending a typed compensating envelope with its lineage while the original event and every receipt stay where they are"
-  "UNDO")
+(deftest "undo-appends-and-preserves" "docs/SPEC-WORK.md:5643-5644"
+    "expected=compensating-envelope-with-lineage;original-event-and-receipts-untouched"
+  (let* ((original (list :id "ev-add-1" :kind :node-add :request "req-add-1"
+                         :node "acme/work/f1/t1"))
+         (ledger (list :history (list original)
+                       :receipts (list (list :id "rcpt-1" :event "ev-add-1")))))
+    (multiple-value-bind (after envelope refusal)
+        (undo-request ledger "req-add-1")
+      (check-equal nil refusal "the undo of a reversible request is accepted")
+      ;; the compensating envelope is typed by the table and carries its lineage.
+      (check-equal :node-remove (getf envelope :kind)
+                   "the compensating envelope is typed by the table")
+      (check-equal (list "ev-add-1" "req-add-1") (getf envelope :lineage)
+                   "the compensating envelope carries its lineage")
+      ;; the original event stays exactly where it is; the undo is appended.
+      (ok (eq original (first (getf after :history))) "the original event stays in place")
+      (check-equal 2 (length (getf after :history)) "the undo appends exactly one envelope")
+      ;; every receipt stays exactly where it is.
+      (check-equal (getf ledger :receipts) (getf after :receipts)
+                   "every receipt stays where it is"))))
 
-(needs-kernel "undo-names-its-reversible-set" "docs/SPEC-WORK.md:5332"
-  "every row of the reversible-verb table: each reversible verb undone by the envelope the table names, each refused verb refused not-reversible naming itself"
-  "UNDO")
+(deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5640-5642"
+    "expected=cancel-ack-own-disposition;accepted-mutation-not-erased;uncertain-external-reported-uncertain"
+  (let* ((events '((:id "ev-accepted" :kind :state-to-done :request "req-accepted")))
+         (session (make-work-session
+                   :events events :receipts '(:receipt-1)
+                   :operations (list (make-operation :id "op-cap" :op :capture
+                                                      :request "req-cap" :state :running))))
+         (before-events (work-session-events session)))
+    ;; the cancellation is acknowledged with its own final disposition ...
+    (multiple-value-bind (after disposition)
+        (operation-cancel session "op-cap" :request "req-cancel-1")
+      (check-equal :cancelled (getf disposition :state)
+                   "the cancel ack carries its own final disposition")
+      (check-equal "req-cancel-1" (getf disposition :request)
+                   "the ack echoes the cancel's own request id")
+      ;; ... erasing no accepted mutation.
+      (check-equal before-events (work-session-events after)
+                   "the accepted mutation is not erased")
+      ;; a cancel replayed twice cancels once.
+      (multiple-value-bind (again disposition-2)
+          (operation-cancel after "op-cap" :request "req-cancel-1")
+        (check-equal :cancelled (getf disposition-2 :state) "the replay answers cancelled")
+        (check-equal t (getf disposition-2 :replayed) "the replay applies nothing")
+        (check-equal before-events (work-session-events again)
+                     "the replay erases nothing")))
+    ;; an uncertain external effect is reported uncertain, not cancelled.
+    (let ((session-2 (make-work-session
+                      :events events
+                      :operations (list (make-operation :id "op-pay" :op :pay
+                                                         :request "req-pay" :state :running)))))
+      (multiple-value-bind (after disposition)
+          (operation-cancel session-2 "op-pay" :request "req-cancel-2"
+                            :external-effect :uncertain)
+        (declare (ignore after))
+        (check-equal :uncertain (getf disposition :state)
+                     "an uncertain external effect reads uncertain, never cancelled")))))
 
-(needs-kernel "undo-refuses-an-external-effect" "docs/SPEC-WORK.md:5201"
-  "an undo over a sent message, a paid execution, a publication and a source deletion refused and reported as an external effect"
-  "UNDO")
+(deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5778-5782"
+    "expected=clip-returns-OPERATION-OK;wait-prints-CLIP-OK;raced-CLIP-RACED;session-stop-CLIP-then-SESSION"
+  (let ((session (make-work-session :events '((:id "ev-1")))))
+    (multiple-value-bind (after op line) (clip-request session :id "op-clip-1")
+      (check-equal :clip (operation-op op) "clip draws one clip operation")
+      (check-equal :queued (operation-state op) "clip acknowledges while queued")
+      (ok (search "OPERATION OK id=op-clip-1 op=clip" line)
+          "clip prints OPERATION OK id= op=clip: ~A" line)
+      ;; the transport continues and operation wait prints the CLIP OK line.
+      (multiple-value-bind (settled wait-line) (operation-wait after "op-clip-1")
+        (declare (ignore settled))
+        (ok (search "CLIP OK" wait-line) "wait prints CLIP OK: ~A" wait-line)
+        (ok (search "operation=op-clip-1" wait-line) "the CLIP OK names operation=: ~A" wait-line)
+        (ok (search "pushed=" wait-line) "the CLIP OK carries pushed=: ~A" wait-line))
+      ;; a raced transport prints CLIP RACED through the same wait.
+      (multiple-value-bind (raced race-line) (operation-wait after "op-clip-1" :race t)
+        (declare (ignore raced))
+        (ok (search "CLIP RACED" race-line) "a raced wait prints CLIP RACED: ~A" race-line)))
+    ;; session stop waits on its own clip and prints CLIP OK then SESSION OK.
+    (multiple-value-bind (stopped op line) (clip-request session :id "op-clip-stop")
+      (declare (ignore op line))
+      (let ((lines (session-stop stopped)))
+        (ok (search "CLIP OK" (first lines)) "stop prints its own CLIP OK first: ~A" (first lines))
+        (ok (search "operation=op-clip-stop" (first lines))
+            "stop's CLIP OK names its own operation")
+        (ok (search "SESSION OK" (second lines)) "stop prints SESSION OK second: ~A" (second lines))))))
 
 (needs-kernel "undo-redo" "docs/SPEC-WORK.md:5599"
   "reversible edits reversed, history preserved, redo only against valid preconditions; a conflict explicit and mutating nothing"
@@ -200,17 +367,11 @@
   "a missing pricing dimension reported unknown, never read as a zero historical receipt"
   "PRICE-LOOKUP")
 
-(needs-kernel "unrelated-receipts-stay-reusable" "docs/SPEC-WORK.md:5301"
-  "a changed source or criterion preserving the historic tick at its pinned revision while unrelated receipts stay untouched"
-  "RECEIPT-LOOKUP")
+;; unrelated-receipts-stay-reusable now lives in tests/replays-8651.lisp over
+;; the proof scopes of src/replays-8651.lisp (nova-tools #362).
 
-(needs-kernel "until-is-overdue-not-released" "docs/SPEC-WORK.md:5243"
-  "at --until and lease expiry no duplicate launch and no stopped or completed claim, the reservation retained until reconciled"
-  "LEASE-UNTIL")
-
-(needs-kernel "working-is-a-view" "docs/SPEC-WORK.md:5082"
-  "|W| <= |O| over a set where every item is leased then released, and no verb writes W"
-  "WORKING-SET")
+;; Moved to tests/acceptance.lisp as a real replay over src/assignment.lisp
+;; (nova-tools #362): "until-is-overdue-not-released".
 
 (deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
     "expected=bignum-fields-round-trip-exact;json-number-frame-refused"
@@ -228,6 +389,10 @@
       (handler-case (read-restricted json-number)
         (restricted-data-violation () (setf refused t)))
        (ok refused "a wire frame carrying the JSON number ~A is refused" json-number))))
+
+;; wire-integers-are-strings is now the executable replay in
+;; ../acceptance.lisp (card 8608); it uses the wire codec, not the store's
+;; restricted reader.
 
 ;;; ------------------------------------------------------------------
 ;;; bug node kind (SPEC-WORK.md:1851-1871, #463)
