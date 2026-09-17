@@ -853,8 +853,9 @@ scoped exception is retained and the packet dispatches."
 (defstruct (work-session
              (:constructor make-work-session
                  (&key (operations nil) (events nil) (receipts nil)
+                       (cancellations nil)
                        (limits *operation-limits*) (git-timeout 30))))
-  operations events receipts limits git-timeout)
+  operations events receipts cancellations limits git-timeout)
 
 (defun session-operation (session id)
   "The operation record itself, found in the bounded operation list."
@@ -864,6 +865,7 @@ scoped exception is retained and the packet dispatches."
   (make-work-session :operations (cons op (work-session-operations session))
                      :events (work-session-events session)
                      :receipts (work-session-receipts session)
+                     :cancellations (work-session-cancellations session)
                      :limits (work-session-limits session)
                      :git-timeout (work-session-git-timeout session)))
 
@@ -894,24 +896,32 @@ loop is busy (SPEC-WORK.md:2731, :2756)."
 (defun operation-cancel (session id &key (request "req-cancel-1")
                                       (external-effect :none))
   "A cancellation is a request with its own acknowledgement and its own final
-disposition. A cancel replayed twice cancels once. It neither erases an
-accepted mutation nor claims an uncertain external effect was cancelled
-(SPEC-WORK.md:2734-2738)."
-  (let ((op (session-operation session id)))
-    (cond
-      ((null op)
-       (values session (list :id id :state :none :request request
-                             :reason "no such operation")))
-      ((member (operation-state op) '(:cancelled :uncertain))
-       (values session (list :id id :state (operation-state op)
-                             :request request :replayed t)))
-      ((eq external-effect :uncertain)
-       (setf (operation-state op) :uncertain)
-       (values session (list :id id :state :uncertain :request request
-                             :reason "external effect uncertain")))
-      (t
-       (setf (operation-state op) :cancelled)
-       (values session (list :id id :state :cancelled :request request))))))
+disposition. It is deduplicated by its own request id: the same cancel request
+replayed cancels once; a different request id is a fresh acknowledgement of the
+operation's final disposition. It neither erases an accepted mutation nor
+claims an uncertain external effect was cancelled (SPEC-WORK.md:2734-2738)."
+  (let ((recorded (assoc request (work-session-cancellations session)
+                         :test #'equal)))
+    (when recorded
+      (return-from operation-cancel
+        (values session (append (cdr recorded) (list :replayed t))))))
+  (let* ((op (session-operation session id))
+         (disposition
+           (cond
+             ((null op)
+              (list :id id :state :none :request request
+                    :reason "no such operation"))
+             ((eq external-effect :uncertain)
+              (setf (operation-state op) :uncertain)
+              (list :id id :state :uncertain :request request
+                    :reason "external effect uncertain"))
+             ((member (operation-state op) '(:cancelled :uncertain))
+              (list :id id :state (operation-state op) :request request))
+             (t
+              (setf (operation-state op) :cancelled)
+              (list :id id :state :cancelled :request request)))))
+    (push (cons request disposition) (work-session-cancellations session))
+    (values session disposition)))
 
 (defun clip-request (session &key (id "op-clip-1") (request "req-clip-1")
                                 (staged-bytes 0))
@@ -1351,21 +1361,30 @@ is refused by the kernel's dedup predicate."
 ;;;; The long-operation registry (SPEC-WORK.md:2719-2758).
 ;;;; ------------------------------------------------------------------
 
-(defstruct (operation-registry (:constructor make-operation-registry))
-  (journal '())
+(defstruct (operation-registry (:constructor %make-operation-registry))
+  (journal nil)
   (operations '()))
+
+(defun make-operation-registry (&key journal)
+  "The operation registry over its durable accept journal. When no journal is
+given the in-process implementation of the durable-accept seam is used; the
+real one is the bounded filesystem journal of src/journal.lisp."
+  (%make-operation-registry :journal (or journal (make-accept-journal))
+                            :operations '()))
 
 (defun operation-accept (registry &key id kind request author stamp)
   "The id is durable before it is printed: append the accept record -- the id,
-kind, request id, author and stamp -- to the local recovery journal, then
-answer the id. A crash between accepting the work and acknowledging it can
-never leave a caller holding an id the restart never heard of."
+kind, request id, author and stamp -- to the local recovery journal and make
+that record durable, then answer the id. A crash between accepting the work and
+acknowledging it can never leave a caller holding an id the restart never heard
+of (SPEC-WORK.md:2721-2730)."
   (let ((record (list :id id :kind kind :request request :author author
-                      :stamp stamp :state :running :result nil)))
+                      :stamp stamp)))
+    (durable-accept-record (operation-registry-journal registry) record)
     (setf (operation-registry-operations registry)
-          (append (operation-registry-operations registry) (list (cons id record))))
-    (setf (operation-registry-journal registry)
-          (append (operation-registry-journal registry) (list record)))
+          (append (operation-registry-operations registry)
+                  (list (cons id (append record (list :state :running
+                                                      :result nil))))))
     id))
 
 (defun registry-operation-state (registry id)
@@ -1389,13 +1408,19 @@ never leave a caller holding an id the restart never heard of."
   (let ((cell (assoc id (operation-registry-operations registry) :test #'string=)))
     (and cell (getf (cdr cell) :result))))
 
-(defun registry-operation-wait (registry id &key timeout)
-  "A bounded wait. A timeout leaves the operation running; a completed result
-is answered (values RESULT :done)."
+(defun registry-operation-wait (registry id &key timeout (after 0))
+  "A bounded wait over an event cursor, never a poll loop. AFTER is the cursor
+the caller last read, so a resumed wait does not read the operation's events
+again from zero. A timeout leaves the operation running and answers the cursor
+it reached; a completed result is answered (values RESULT :done CURSOR)
+(SPEC-WORK.md:2733-2735)."
   (declare (ignore timeout))
-  (if (eq :done (registry-operation-state registry id))
-      (values (registry-operation-result registry id) :done)
-      (values nil :timeout)))
+  (let ((cell (assoc id (operation-registry-operations registry) :test #'string=)))
+    (cond
+      ((null cell) (values nil :unknown after))
+      ((eq :done (getf (cdr cell) :state))
+       (values (getf (cdr cell) :result) :done 1))
+      (t (values nil :timeout after)))))
 
 (defun operation-client-exit (registry)
   "The CLI may exit while the work continues: the registry is already durable."
@@ -1403,4 +1428,4 @@ is answered (values RESULT :done)."
   t)
 
 (defun operation-journal-length (registry)
-  (length (operation-registry-journal registry)))
+  (accept-journal-count (operation-registry-journal registry)))
