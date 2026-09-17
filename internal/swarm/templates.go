@@ -56,6 +56,14 @@ shape and its mandatory ` + "`## Head`" + `, ` + "`## Findings`" + `, ` + "`## P
 ` + "`## Left owed`" + `, and ` + "`## One line`" + ` sections.
 In Gates, distinguish source checks from tests and report-writing commands.
 Mark only checks actually performed as pass; no tests run does not mean no commands run.
+
+BOUND THE REPORT (issue #74): findings only. No narration of the clone, no
+restated task, no praise, no summary. One line per finding: ` + "`file:line`" + `, the
+rule in twelve words, the severity, and the fix in one clause. Keep RESULT.md
+under 40 lines and every line under 300 characters, and no pipe inside backticks:
+a ` + "`|`" + ` in a quote broke the table grammar twice (D12), so quote the rule without
+it. Put the verdict line last. When there is nothing to report, write
+` + "`findings: 0`" + `.
 `
 
 const templateProbeRow = `probe-row — make one claim true or false
