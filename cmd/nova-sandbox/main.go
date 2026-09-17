@@ -63,6 +63,10 @@ usage:
                   net=nopromise.
   --net-listen    grant INBOUND ip as well; without it a job that does not
                   listen cannot be listened to. Never with --net-deny.
+  --no-system-reads
+                  omit the Linux system read roots (/etc, /usr, /lib, /lib64,
+                  /run/systemd/resolve, /proc/self); for the tests that assert
+                  the minimal policy. Without it Linux always reads them.
   --name <c>      the windows container name. Accepted and ignored on darwin, so
                   one caller builds one argv for three platforms.
   --acl <t|c>     who adds the windows ACEs. Accepted and ignored on darwin,
@@ -130,6 +134,7 @@ type flags struct {
 	reads, writes               []string
 	cwd, tmp, name, secret, acl string
 	netDeny, netListen          bool
+	noSystemReads               bool
 	max                         int
 	maxSet                      bool
 	argv                        []string
@@ -187,6 +192,8 @@ func parse(args []string) flags {
 			f.netDeny = true
 		case "--net-listen":
 			f.netListen = true
+		case "--no-system-reads":
+			f.noSystemReads = true
 		case "--max":
 			v, i = want(i, "--max")
 			n := 0
@@ -252,7 +259,7 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 	}
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
-		NetDeny: f.netDeny, NetListen: f.netListen, Argv: f.argv, Home: homeOf(env),
+		NetDeny: f.netDeny, NetListen: f.netListen, NoSystemReads: f.noSystemReads, Argv: f.argv, Home: homeOf(env),
 	})
 	if len(bad) > 0 {
 		return refuseAll(stderr, bad)
@@ -381,7 +388,8 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// earns together belong in the same print.
 	p, policyBad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, NetDeny: f.netDeny, NetListen: f.netListen,
-		Argv: []string{self, probeStepVerbName}, Home: homeOf(env),
+		NoSystemReads: f.noSystemReads,
+		Argv:          []string{self, probeStepVerbName}, Home: homeOf(env),
 	})
 	bad = append(bad, policyBad...)
 	if len(bad) > 0 {
@@ -737,7 +745,7 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	}
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
-		NetDeny: f.netDeny, NetListen: f.netListen, Argv: argv, Home: homeOf(env),
+		NetDeny: f.netDeny, NetListen: f.netListen, NoSystemReads: f.noSystemReads, Argv: argv, Home: homeOf(env),
 	})
 	if len(bad) > 0 {
 		for _, r := range bad {

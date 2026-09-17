@@ -625,6 +625,18 @@ is gone by then (rule 12) — so the sentence lives in the usage banner instead:
 *a command that runs outside the wall and dies inside it is missing a
 `--read`.*
 
+On Linux the sandbox always reads the system roots the resolver and TLS need;
+a harness that cannot resolve a name inside the sandbox is a sandbox bug, not a
+network one. Measured 2026-09-17 on hulk (landlock abi=4): inside nova-sandbox
+the harness could not resolve DNS or read CA certificates, because the default
+read set hid `/etc`, `/usr`, `/lib`, `/lib64` and `/run/systemd/resolve` — curl
+said `Could not resolve host`; with `--read /etc --read /usr
+--read /run/systemd/resolve` it got `http=200`. So on linux the policy builder
+adds `/etc`, `/usr`, `/lib`, `/lib64`, `/run/systemd/resolve` and `/proc/self`
+by default, each only if it exists, and the `SANDBOX OK` line's `read=` count
+includes them. `--no-system-reads` turns them off, for the tests that assert
+the minimal policy; `nova-swarm` passes nothing new and inherits the default.
+
 The home directory is never a root — **including by way of the command**. One
 root is computed rather than named, "the directory of the resolved command", and
 a command placed in a home directory would hand the wall that whole home:
