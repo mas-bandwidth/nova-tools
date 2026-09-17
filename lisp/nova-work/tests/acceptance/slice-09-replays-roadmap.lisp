@@ -10,37 +10,83 @@
 ;;; axisless-history                        docs/SPEC-WORK.md:5834
 ;;; ------------------------------------------------------------------
 
-(deftest "axisless-history" "docs/SPEC-WORK.md:5834"
+(deftest "axisless-history" "docs/SPEC-WORK.md:5986"
     "expected=ordered-rows;denominator-not-reduced-by-completion;retire-keeps-node;prior-view-at-captured-revision"
-  (let ((rows '()))
-    (setf rows (r8621-row-add rows "a" '("e-a")))
-    (setf rows (r8621-row-add rows "b" '("e-b")))
-    (check-equal 2 (length rows) "both ordered rows were not kept")
-    (check-equal '("a" "b") (mapcar (lambda (r) (getf r :id)) rows)
+  ;; SPEC-WORK.md:5986-5989 -- two ordered rows added by `roadmap row`, one
+  ;; finished, the state exported and loaded, the view reopened past the default
+  ;; window: both rows and their evidence present, the denominator not reduced by
+  ;; completion; a row retired records a scope movement, keeps its node, and the
+  ;; prior view reconstructs at its captured revision.
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f1/t" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f2" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f2/t" :type :task :parent "root/f2" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm" :parent "root" :title "R" :row-kind :feature
+                        :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '() :permitted-roots '() :reason "new"
+                        :request "rm-1" :stamp "2026-09-17T00:00:00Z")
+      (ok okp "the roadmap was not created: ~A" line)
+      (check-equal 0 code "roadmap create exit"))
+    ;; Two ordered rows, added by `roadmap row`.
+    (multiple-value-bind (okp line code)
+        (roadmap-row k :roadmap "rm" :member "root/f1" :op :add
+                     :reason "row" :request "rr-1")
+      (ok okp "the first row was refused: ~A" line)
+      (check-equal 0 code "first row exit"))
+    (multiple-value-bind (okp line code)
+        (roadmap-row k :roadmap "rm" :member "root/f2" :op :add
+                     :reason "row" :request "rr-2")
+      (ok okp "the second row was refused: ~A" line)
+      (check-equal 0 code "second row exit"))
+    (check-equal '("root/f1" "root/f2") (roadmap-view-members (kernel-state k) "rm")
                  "row order was not preserved")
     ;; One finished: completion is not removal.
-    (setf rows (r8621-row-finish rows "a"))
-    (check-equal 2 (r8621-row-active-count rows)
+    (multiple-value-bind (okp line code)
+        (submit k (close-request :node "root/f1/t" :request "done-1"))
+      (ok okp "finishing the first row was refused: ~A" line)
+      (check-equal 0 code "finish exit"))
+    (ok (not (roadmap-settled-p (kernel-state k) "rm"))
+        "the view settled while a row was still open")
+    (check-equal 2 (length (roadmap-view-members (kernel-state k) "rm"))
+                 "completion removed a row from the view")
+    (check-equal 1 (roadmap-open-member-count (kernel-state k) "rm")
                  "completion reduced the denominator")
+    (ok (roadmap-member-evidence (kernel-state k) "root/f1")
+        "the finished row lost its evidence")
     ;; The state exported and loaded, the view reopened past the default window.
-    (let* ((loaded (r8621-rows-load (r8621-rows-export rows)))
-           (reopened (r8621-view-reopen loaded :window 1)))
-      (check-equal 2 (length reopened) "reopen past the window dropped a row")
-      (dolist (id '("a" "b"))
-        (let ((r (find id reopened :key (lambda (x) (getf x :id)) :test #'string=)))
-          (ok r "row ~A was missing after reopen" id)
-          (ok (getf r :evidence) "row ~A lost its evidence after reopen" id)))
-      ;; A retired row records a scope movement and keeps its node.
-      (setf reopened (r8621-row-retire reopened "b" "scope-2"))
-      (let ((b (find "b" reopened :key (lambda (x) (getf x :id)) :test #'string=)))
-        (ok (getf b :retired) "the retired row was not marked retired")
-        (check-equal "b" (getf b :node) "the retired row lost its node")
-        (check-equal "scope-2" (getf b :scope-moved)
-                     "retirement did not record the scope movement"))
-      (check-equal 1 (r8621-row-active-count reopened)
+    (let* ((captured (export-roadmap-view (node-view (kernel-state k) "rm")))
+           (loaded (load-roadmap-view captured))
+           (reopened (roadmap-view-open loaded :window 1)))
+      (check-equal 2 (length (getf reopened :members))
+                   "reopen past the window dropped a row")
+      (dolist (id '("root/f1" "root/f2"))
+        (ok (member id (getf reopened :members) :test #'string=)
+            "row ~A was missing after reopen" id)
+        (ok (nova-work::%node-quiet (kernel-state k) id)
+            "row ~A lost its node after reopen" id))
+      ;; A row retired records a scope movement and keeps its node.
+      (let ((rev-before (roadmap-view-revision (kernel-state k) "rm")))
+        (multiple-value-bind (okp line code)
+            (roadmap-row k :roadmap "rm" :member "root/f2" :op :remove
+                         :reason "retire" :request "rr-3")
+          (ok okp "retiring a row was refused: ~A" line)
+          (check-equal 0 code "retire exit"))
+        (ok (> (roadmap-view-revision (kernel-state k) "rm") rev-before)
+            "retirement did not record a scope movement"))
+      (ok (member "root/f2" (roadmap-view-retired (kernel-state k) "rm") :test #'string=)
+          "the retired row was not recorded")
+      (ok (nova-work::%node-quiet (kernel-state k) "root/f2")
+          "retirement removed the node")
+      (check-equal '("root/f1") (roadmap-view-members (kernel-state k) "rm")
+                   "the retired row stayed in the view")
+      (check-equal 1 (length (roadmap-view-members (kernel-state k) "rm"))
                    "retirement did not drop the denominator")
       ;; The prior view reconstructs at its captured revision.
-      (check-equal 2 (length (r8621-rows-load (r8621-rows-export rows)))
+      (check-equal 2 (length (getf loaded :members))
                    "the prior view did not reconstruct at its captured revision"))))
 
 ;;; ------------------------------------------------------------------
@@ -98,63 +144,221 @@
 ;;; configure-no-effect-and-undo-conflict   docs/SPEC-WORK.md:5842
 ;;; ------------------------------------------------------------------
 
-(deftest "configure-no-effect-and-undo-conflict" "docs/SPEC-WORK.md:5842"
-    "expected=equal-value-receipt;retry-returns-original-receipt-and-keeps-later-value;undo-only-while-guards-match"
-  (let ((cfg0 (r8621-cfg-make 5)))
-    ;; An equal-value configure, its reply lost.
-    (multiple-value-bind (cfg1 r1) (r8621-cfg-configure cfg0 5 "r1")
-      (check-equal 0 (getf r1 :changed)
-                   "an equal-value configure did not report no effect")
-      ;; A later edit.
-      (multiple-value-bind (cfg2 r2) (r8621-cfg-configure cfg1 7 "r2")
-        (check-equal 1 (getf r2 :changed) "the later edit did not change the value")
-        ;; Then the retry: the original receipt returned and the later value kept.
-        (multiple-value-bind (cfg3 r3 code) (r8621-cfg-retry cfg2 "r1")
-          (check-equal 0 code "the retry was refused")
-          (check-equal 0 (getf r3 :changed)
-                       "the retry did not return the original receipt")
-          (check-equal 7 (r8621-cfg-value cfg3)
-                       "the retry clobbered the later value"))
-        ;; Undo restores an ordered preimage only while its guards match.
-        (multiple-value-bind (cfg4 line code) (r8621-cfg-undo cfg2 2)
-          (check-equal 0 code "an undo with a matching guard refused")
-          (check-equal 5 (r8621-cfg-value cfg4)
-                       "the undo did not restore the ordered preimage"))
-        (multiple-value-bind (cfg5 line code) (r8621-cfg-undo cfg2 0)
-          (check-equal 2 code "undo did not refuse a stale guard")
-          (check-equal 7 (r8621-cfg-value cfg5)
-                       "a refused undo moved the value"))))))
+(deftest "configure-no-effect-and-undo-conflict" "docs/SPEC-WORK.md:5994"
+    "expected=equal-value-receipt;retry-returns-original-receipt-and-keeps-later-value;undo-only-while-guards-match;all-keep-refused;bad-patch-refused;layout-populated-refused"
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/t1" :type :task :parent "root" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm" :parent "root" :title "R" :row-kind :epic
+                        :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '() :permitted-roots '() :reason "new"
+                        :request "rm-1" :stamp "2026-09-17T00:00:00Z")
+      (ok okp "the roadmap was not created: ~A" line)
+      (check-equal 0 code "roadmap create exit"))
+    ;; An equal-value configure is the no-effect receipt changed=0 and moves no
+    ;; scope revision.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:set :epic)
+                           :aggregation-patch '(:keep)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:keep)
+                           :permitted-roots-patch '(:keep)
+                           :reason "same" :request "r1")
+      (ok okp "an equal-value configure was refused: ~A" line)
+      (check-equal 0 code "equal-value configure exit")
+      (ok (search "change=configure changed=0" line)
+          "an equal-value configure was not a no-effect receipt: ~A" line))
+    (check-equal 0 (roadmap-view-revision (kernel-state k) "rm")
+                 "a no-effect configure moved the scope revision")
+    ;; A later effective edit.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:keep)
+                           :aggregation-patch '(:set :all-members)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:keep)
+                           :permitted-roots-patch '(:keep)
+                           :reason "later" :request "r2")
+      (ok okp "the later configure was refused: ~A" line)
+      (check-equal 0 code "later configure exit")
+      (ok (search "change=configure changed=1" line)
+          "the later configure did not change: ~A" line))
+    (check-equal 1 (roadmap-view-revision (kernel-state k) "rm")
+                 "an effective configure did not advance the scope revision")
+    ;; Then the retry of the lost reply: the original receipt returns and the
+    ;; later value stands.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:set :epic)
+                           :aggregation-patch '(:keep)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:keep)
+                           :permitted-roots-patch '(:keep)
+                           :reason "same" :request "r1")
+      (ok okp "the retry was refused: ~A" line)
+      (check-equal 0 code "retry exit")
+      (ok (search "change=configure changed=0" line)
+          "the retry did not return the original receipt: ~A" line))
+    (check-equal :all-members (roadmap-view-aggregation (kernel-state k) "rm")
+                 "the retry clobbered the later value")
+    ;; Undo restores the ordered preimage only while its guard matches.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure-undo k :roadmap "rm" :of "r2" :request "u1")
+      (ok okp "an undo with a matching guard refused: ~A" line)
+      (check-equal 0 code "matching-guard undo exit")
+      (check-equal :required-members (roadmap-view-aggregation (kernel-state k) "rm")
+                   "the undo did not restore the ordered preimage"))
+    ;; A later effective configure moves the postimage, so the same undo conflicts.
+    (roadmap-configure k :roadmap "rm"
+                       :row-kind-patch '(:keep)
+                       :aggregation-patch '(:set :leaves)
+                       :completion-policy-patch '(:keep)
+                       :axes-patch '(:keep)
+                       :permitted-roots-patch '(:keep)
+                       :reason "moved" :request "r3")
+    (multiple-value-bind (okp line code)
+        (roadmap-configure-undo k :roadmap "rm" :of "r2" :request "u2")
+      (ok (null okp) "an undo with a stale guard did not refuse")
+      (check-equal 1 code "stale-guard undo exit")
+      (ok (search "conflict" line) "the undo conflict was not named: ~A" line)
+      (check-equal :leaves (roadmap-view-aggregation (kernel-state k) "rm")
+                   "a refused undo moved the value"))
+    ;; An all-keep request is refused, not a no-effect receipt.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:keep)
+                           :aggregation-patch '(:keep)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:keep)
+                           :permitted-roots-patch '(:keep)
+                           :reason "nothing" :request "r4")
+      (ok (null okp) "an all-keep configure was accepted")
+      (check-equal 2 code "all-keep exit")
+      (ok (search "all keep" line) "the all-keep refusal: ~A" line))
+    ;; A clear on a policy or a malformed patch is a bad patch.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:clear)
+                           :aggregation-patch '(:keep)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:keep)
+                           :permitted-roots-patch '(:keep)
+                           :reason "bad" :request "r5")
+      (ok (null okp) "a clear on a policy patch was accepted")
+      (check-equal 2 code "bad-patch exit")
+      (ok (search "bad patch" line) "the bad-patch refusal: ~A" line))
+    ;; The layout changes only while every axis is empty and :members is empty.
+    (let ((view (node-view (kernel-state k) "rm")))
+      (setf (getf view :members) '("root/t1")))
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:keep)
+                           :aggregation-patch '(:keep)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:set ("col"))
+                           :permitted-roots-patch '(:keep)
+                           :reason "layout" :request "r6")
+      (ok (null okp) "a layout change on a populated roadmap was accepted")
+      (check-equal 2 code "layout-populated exit")
+      (ok (search "layout populated" line)
+          "the layout refusal did not name layout populated: ~A" line))))
 
 ;;; ------------------------------------------------------------------
 ;;; completed-view-mutation                 docs/SPEC-WORK.md:5845
 ;;; ------------------------------------------------------------------
 
-(deftest "completed-view-mutation" "docs/SPEC-WORK.md:5845"
+(deftest "completed-view-mutation" "docs/SPEC-WORK.md:5997"
     "expected=reads-revive-nothing;outstanding-member-revives-atomically;no-settled-container-holds-open-required-work;reference-fold-matches"
-  (let ((rm (r8621-roadmap-make '(("m1" . t) ("m2" . t)))))
-    (ok (r8621-roadmap-settled-p rm) "the roadmap was not settled")
-    ;; Metadata, projection and render on a settled roadmap revive nothing.
-    (dolist (op (list #'r8621-roadmap-metadata
-                      #'r8621-roadmap-project
-                      #'r8621-roadmap-render))
-      (let ((before (copy-tree rm)))
-        (funcall op rm)
-        (check-equal before rm "a read on a settled roadmap mutated it")))
-    (check-equal t (r8621-roadmap-settled-p rm)
-                 "a settled roadmap was revived by a read")
-    (check-equal 0 (r8621-roadmap-open-required rm)
+  ;; SPEC-WORK.md:5997-6000 -- metadata, projection and render on a settled
+  ;; roadmap reviving nothing; an outstanding member added applying the atomic
+  ;; revival rule so no settled container silently holds open required work;
+  ;; counts and indexes checked by the reference fold after each step.
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f1/t" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f2" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f2/t" :type :task :parent "root/f2" :state :doing)
+                 (:id "root/f3" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f3/t" :type :task :parent "root/f3" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed)))
+         (state nil)
+         (fold (lambda ()
+                 (let ((members (roadmap-view-members (kernel-state k) "rm")))
+                   (count-if-not (lambda (m) (eq :c (node-branch (kernel-state k) m)))
+                                 members)))))
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm" :parent "root" :title "R" :row-kind :feature
+                        :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '() :permitted-roots '() :reason "new"
+                        :request "rm-1" :stamp "2026-09-17T00:00:00Z")
+      (ok okp "the roadmap was not created: ~A" line)
+      (check-equal 0 code "roadmap create exit"))
+    (dolist (m '("root/f1" "root/f2"))
+      (multiple-value-bind (okp line code)
+          (roadmap-row k :roadmap "rm" :member m :op :add :reason "row"
+                       :request (format nil "rr-~A" m))
+        (ok okp "adding row ~A was refused: ~A" m line)
+        (check-equal 0 code "row add exit")))
+    (dolist (tn '("root/f1/t" "root/f2/t"))
+      (multiple-value-bind (okp line code)
+          (submit k (close-request :node tn :request (format nil "done-~A" tn)))
+        (ok okp "finishing ~A was refused: ~A" tn line)
+        (check-equal 0 code "finish exit")))
+    (setf state (kernel-state k))
+    (ok (roadmap-settled-p state "rm") "the roadmap did not settle with every row finished")
+    (check-equal 0 (roadmap-open-member-count state "rm")
                  "a settled roadmap held open required work")
+    (check-equal (funcall fold) (roadmap-open-member-count state "rm")
+                 "the counter and the reference fold disagreed at settle")
+    ;; Metadata, projection and render on a settled roadmap revive nothing.
+    (multiple-value-bind (okp line code)
+        (node-edit k "rm" :changes '(:title "Renamed") :reason "meta" :request "me-1")
+      (ok okp "metadata on a settled roadmap was refused: ~A" line)
+      (check-equal 0 code "metadata exit"))
+    (ok (stringp (roadmap-view-render (kernel-state k) "rm"))
+        "render on a settled roadmap produced nothing")
+    (multiple-value-bind (okp line code)
+        (roadmap-projection k :roadmap "rm" :op :add :id "p1" :root "root"
+                            :repo "acme/work" :path "docs/roadmap.md"
+                            :start "<!-- ROADMAP:START -->" :end "<!-- ROADMAP:END -->"
+                            :policy :markdown-table :reason "proj" :request "pp-1")
+      (ok okp "a projection on a settled roadmap was refused: ~A" line)
+      (check-equal 0 code "projection add exit"))
+    (ok (roadmap-settled-p (kernel-state k) "rm")
+        "a read or projection revived the settled roadmap")
+    (check-equal '() (roadmap-view-revive-events (kernel-state k) "rm")
+                 "a metadata, projection or render step revived the roadmap")
+    (check-equal (funcall fold) (roadmap-open-member-count (kernel-state k) "rm")
+                 "the counter and the reference fold disagreed after projection")
     ;; An outstanding member added applies the atomic revival rule.
-    (multiple-value-bind (rm2 ev) (r8621-roadmap-add-member rm '("m3" . nil))
-      (ok ev "adding an outstanding member did not revive the container")
-      (check-equal 1 (length (getf rm2 :revive-events)) "the revival was not atomic")
-      (check-equal nil (r8621-roadmap-settled-p rm2)
-                   "a settled container silently held open required work")
-      (check-equal 1 (r8621-roadmap-open-required rm2)
+    (multiple-value-bind (okp line code revive)
+        (roadmap-row k :roadmap "rm" :member "root/f3" :op :add :reason "new"
+                     :request "rr-f3")
+      (ok okp "adding an outstanding member was refused: ~A" line)
+      (check-equal 0 code "outstanding add exit")
+      (ok revive "adding an outstanding member did not revive the container")
+      (check-equal 1 (length (roadmap-view-revive-events (kernel-state k) "rm"))
+                   "the revival was not atomic")
+      (ok (not (roadmap-settled-p (kernel-state k) "rm"))
+          "a settled container silently held open required work")
+      (check-equal 1 (roadmap-open-member-count (kernel-state k) "rm")
                    "the added outstanding member was not counted")
-      ;; Counts and indexes checked by the reference fold after each step.
-      (check-equal (r8621-roadmap-fold-count rm2) (r8621-roadmap-open-required rm2)
-                   "the counter and the reference fold disagreed"))))
+      (check-equal (funcall fold) (roadmap-open-member-count (kernel-state k) "rm")
+                   "the counter and the reference fold disagreed after revival"))
+    ;; A matrix selection naming a missing or duplicate axis refuses.
+    (multiple-value-bind (okp line code)
+        (roadmap-projection k :roadmap "rm" :op :add :id "p2" :root "root"
+                            :repo "acme/work" :path "docs/matrix.md"
+                            :start "S" :end "E" :policy :markdown-table
+                            :row-axis "nope" :column-axis "nope" :fixed '()
+                            :reason "bad" :request "pp-2")
+      (ok (null okp) "a bad matrix selection was accepted")
+      (check-equal 2 code "bad-selection exit")
+      (ok (search "bad selection" line) "the bad-selection refusal: ~A" line))))
 
 ;;; ------------------------------------------------------------------
 ;;; chat-and-file-render-are-byte-identical docs/SPEC-WORK.md:5755

@@ -525,3 +525,537 @@ finding, exit 0 with `WORK OK` only when every rule was green
 
 ;;; The savepoint's create and list verbs live in savepoint.lisp; the journal's
 ;;; record identities and its cut-reachability helper stay here.
+;;; ------------------------------------------------------------------
+;;; The roadmap view record and the `roadmap configure` verb
+;;; (docs/SPEC-WORK.md:3078-3094, :3110-3124, :5994-5996)
+;;; ------------------------------------------------------------------
+;;;
+;;; `roadmap create` (src/node-verbs.lisp) writes the node and its view; these
+;;; are the reads and the four verbs that own the record after creation. This
+;;; slice carries `roadmap configure`: it patches `:row-kind`, `:aggregation`,
+;;; `:completion-policy`, `:axes` and `:permitted-roots` with `(:keep)` or
+;;; `(:set V)`, refuses `all keep` and `bad patch`, moves the layout only while
+;;; the roadmap is empty (`layout populated`), refuses a row-kind change whose
+;;; retained rows do not match (`row kind mismatch`), makes an equal-value
+;;; configure the no-effect receipt `changed=0` with no scope event, and undoes
+;;; a configure only while the current postimage still equals its `:after`.
+
+(defparameter *roadmap-config-keys*
+  '((:row-kind-patch . :row-kind)
+    (:aggregation-patch . :aggregation)
+    (:completion-policy-patch . :completion-policy)
+    (:axes-patch . :axes)
+    (:permitted-roots-patch . :permitted-roots))
+  "The five fields `roadmap configure` owns, in the spec's order (:3088).")
+
+(defun %roadmap-view (state id)
+  (let ((node (%node-or-nil state id)))
+    (and node (wnode-view node))))
+
+(defun roadmap-view-revision (state id)
+  "The roadmap view's scope revision: a no-effect configure leaves it."
+  (getf (%roadmap-view state id) :revision))
+
+(defun roadmap-view-aggregation (state id)
+  (getf (%roadmap-view state id) :aggregation))
+
+(defun roadmap-view-axes (state id)
+  "The declared axis ids, in order."
+  (getf (%roadmap-view state id) :axes))
+
+(defun roadmap-view-members (state id)
+  "The ordered rows of an axisless roadmap."
+  (getf (%roadmap-view state id) :members))
+
+(defun roadmap-structure-events (state id)
+  "The roadmap ID's `:roadmap-create` `:structure` events, oldest first."
+  (let ((node (%node-or-nil state id)))
+    (when (and node (wnode-view node))
+      (reverse (remove-if-not (lambda (e) (eq :structure (getf e :op)))
+                              (wnode-meta-log node))))))
+
+(defun %roadmap-config-postimage (view)
+  "The five configurable fields of VIEW, as the `:after` an undo guards on."
+  (list :row-kind (getf view :row-kind)
+        :aggregation (getf view :aggregation)
+        :completion-policy (getf view :completion-policy)
+        :axes (copy-list (getf view :axes))
+        :permitted-roots (copy-list (getf view :permitted-roots))))
+
+(defun %roadmap-patch-value (field patch)
+  "Answer (values VALUE REFUSAL) for one tagged patch. VALUE is `:keep` or the
+patched value. The three policies admit no clear; a clear is a bad patch, and
+the axes and roots lists are explicit empties, never a clear (:3087)."
+  (cond
+    ((not (and (consp patch) (member (car patch) '(:keep :set))))
+     (values nil (format nil "bad patch ~A" (string-downcase (symbol-name field)))))
+    ((eq (car patch) :keep) (values :keep nil))
+    ((cddr patch) (values nil (format nil "bad patch ~A" (string-downcase (symbol-name field)))))
+    (t
+     (let ((v (second patch)))
+       (case field
+         (:row-kind
+          (if (member v *roadmap-row-kinds*) (values v nil)
+              (values nil (format nil "bad patch ~A" (string-downcase (symbol-name field))))))
+         (:aggregation
+          (if (member v *roadmap-aggregations*) (values v nil)
+              (values nil (format nil "bad patch ~A" (string-downcase (symbol-name field))))))
+         (:completion-policy
+          (if (member v *roadmap-completion-policies*) (values v nil)
+              (values nil (format nil "bad patch ~A" (string-downcase (symbol-name field))))))
+         (:axes
+          (if (%roadmap-axis-ids-p v) (values v nil)
+              (values nil (format nil "bad patch ~A" (string-downcase (symbol-name field))))))
+         (:permitted-roots
+          (if (and (listp v)
+                   (every (lambda (r) (and (stringp r) (plusp (length r)))) v))
+              (values v nil)
+              (values nil (format nil "bad patch ~A" (string-downcase (symbol-name field))))))
+         (t (values nil (format nil "bad patch ~A" (string-downcase (symbol-name field))))))))))
+
+(defun %roadmap-configure-payload (roadmap row-kind-patch aggregation-patch
+                                            completion-policy-patch axes-patch
+                                            permitted-roots-patch reason)
+  "The request's own payload, compared so a retry replays and a changed payload
+under the same id refuses (:5364, :3030)."
+  (list :verb :roadmap-configure :roadmap roadmap
+        :row-kind-patch row-kind-patch :aggregation-patch aggregation-patch
+        :completion-policy-patch completion-policy-patch :axes-patch axes-patch
+        :permitted-roots-patch permitted-roots-patch :reason reason))
+
+(defun roadmap-configure (kernel &key roadmap row-kind-patch aggregation-patch
+                                       completion-policy-patch axes-patch
+                                       permitted-roots-patch reason request)
+  "Patch the roadmap view's row-kind, aggregation, completion-policy, axes and
+permitted-roots (:3086-3094). Answers (values OK-P LINE EXIT-CODE). An
+equal-value configure is the no-effect receipt changed=0 with no scope event;
+`all keep` and `bad patch` refuse at exit 2; a layout change on a populated
+roadmap refuses `layout populated`; a row-kind change whose retained rows do
+not match refuses `row kind mismatch` (:3110-3124)."
+  (let* ((state (kernel-state kernel))
+         (node (%node-quiet state roadmap))
+         (view (and node (wnode-view node))))
+    (unless view
+      (return-from roadmap-configure
+        (values nil (format nil "ROADMAP FAIL node=~A: no roadmap view" roadmap) 1)))
+    (let ((payload (%roadmap-configure-payload
+                    roadmap row-kind-patch aggregation-patch
+                    completion-policy-patch axes-patch permitted-roots-patch reason)))
+      ;; A lost reply's retry replays its original receipt even if the view has
+      ;; since moved on; a changed payload under the id is a conflict.
+      (when request
+        (let ((prior (gethash request (kernel-applied kernel))))
+          (when prior
+            (if (and (eq (getf prior :verb) :roadmap-configure)
+                     (equal (getf prior :payload) payload))
+                (return-from roadmap-configure (values t (getf prior :line) 0))
+                (return-from roadmap-configure
+                  (values nil
+                          (format nil "ROADMAP FAIL node=~A: reused with a different payload"
+                                  roadmap)
+                          1))))))
+      (let ((patches '()) (refusal nil))
+        (dolist (spec (list (list :row-kind row-kind-patch)
+                            (list :aggregation aggregation-patch)
+                            (list :completion-policy completion-policy-patch)
+                            (list :axes axes-patch)
+                            (list :permitted-roots permitted-roots-patch)))
+          (destructuring-bind (field patch) spec
+            (unless refusal
+              (multiple-value-bind (value why) (%roadmap-patch-value field patch)
+                (if why
+                    (setf refusal why)
+                    (push (cons field value) patches))))))
+        (when refusal
+          (return-from roadmap-configure
+            (values nil (format nil "ROADMAP FAIL node=~A: ~A" roadmap refusal) 2)))
+        (setf patches (nreverse patches))
+        (when (every (lambda (p) (eq :keep (cdr p))) patches)
+          (return-from roadmap-configure
+            (values nil (format nil "ROADMAP FAIL node=~A: all keep" roadmap) 2)))
+        (let* ((before (%roadmap-config-postimage view))
+               (after (copy-list before)))
+          (dolist (p patches)
+            (unless (eq :keep (cdr p))
+              (setf (getf after (car p))
+                    (let ((v (cdr p))) (if (listp v) (copy-list v) v)))))
+          (let ((changed (count-if-not
+                          (lambda (f) (equal (getf before f) (getf after f)))
+                          '(:row-kind :aggregation :completion-policy
+                            :axes :permitted-roots))))
+            ;; An equal-value configure is the no-effect receipt: changed=0, no
+            ;; scope event, no view write.
+            (if (zerop changed)
+                (let ((line (format nil "ROADMAP OK id=~A request=~A change=configure changed=0"
+                                    roadmap request)))
+                  (when request
+                    (setf (gethash request (kernel-applied kernel))
+                          (list :verb :roadmap-configure :roadmap roadmap
+                                :payload payload :line line :changed 0)))
+                  (return-from roadmap-configure (values t line 0)))
+                (progn
+                  ;; A row-kind change requires every retained row to match.
+                  (when (and (not (equal (getf before :row-kind) (getf after :row-kind)))
+                             (getf view :members))
+                    (dolist (member (getf view :members))
+                      (let ((m (%node-quiet state member)))
+                        (unless (and m (eq (getf after :row-kind) (wnode-type m)))
+                          (return-from roadmap-configure
+                            (values nil
+                                    (format nil "ROADMAP FAIL node=~A: row kind mismatch" roadmap)
+                                    2))))))
+                  ;; The axis layout changes only while the roadmap is empty.
+                  (when (and (not (equal (getf before :axes) (getf after :axes)))
+                             (or (getf view :members)
+                                 (getf view :cells)))
+                    (return-from roadmap-configure
+                      (values nil
+                              (format nil "ROADMAP FAIL node=~A: layout populated" roadmap)
+                              2)))
+                  (let ((rev (1+ (getf view :revision))))
+                    (setf (getf view :row-kind) (getf after :row-kind)
+                          (getf view :aggregation) (getf after :aggregation)
+                          (getf view :completion-policy) (getf after :completion-policy)
+                          (getf view :axes) (copy-list (getf after :axes))
+                          (getf view :permitted-roots) (copy-list (getf after :permitted-roots))
+                          (getf view :revision) rev)
+                    (push (list :op :configure :request request :rev rev
+                                :before before :after after :changed changed)
+                          (getf view :log))
+                    (let ((line (format nil "ROADMAP OK id=~A request=~A change=configure changed=~D rev=~D"
+                                        roadmap request changed rev)))
+                      (when request
+                        (setf (gethash request (kernel-applied kernel))
+                              (list :verb :roadmap-configure :roadmap roadmap
+                                    :payload payload :line line :changed changed
+                                    :before before :after after)))
+                      (values t line 0)))))))))))
+
+(defun roadmap-configure-undo (kernel &key roadmap of request)
+  "Undo a `roadmap configure` by restoring its ordered preimage, but only while
+the current postimage still equals the configure's `:after`; an intervening
+configure is a conflict, never guessed (:3121-3123, :5996)."
+  (let* ((state (kernel-state kernel))
+         (node (%node-quiet state roadmap))
+         (view (and node (wnode-view node))))
+    (unless view
+      (return-from roadmap-configure-undo
+        (values nil (format nil "UNDO FAIL request-of=~A: no roadmap view" of) 1)))
+    (let ((entry (find of (getf view :log)
+                       :key (lambda (e) (getf e :request)) :test #'equal)))
+      (unless entry
+        (return-from roadmap-configure-undo
+          (values nil (format nil "UNDO FAIL request-of=~A: no such configure" of) 1)))
+      (unless (equal (%roadmap-config-postimage view) (getf entry :after))
+        (return-from roadmap-configure-undo
+          (values nil
+                  (format nil "UNDO FAIL request-of=~A: conflict; the view moved" of)
+                  1)))
+      (let ((before (getf entry :before)))
+        (setf (getf view :row-kind) (getf before :row-kind)
+              (getf view :aggregation) (getf before :aggregation)
+              (getf view :completion-policy) (getf before :completion-policy)
+              (getf view :axes) (copy-list (getf before :axes))
+              (getf view :permitted-roots) (copy-list (getf before :permitted-roots)))
+        (incf (getf view :revision))
+        (push (list :op :undo :request request :undo-of of)
+              (getf view :log))
+        (values t
+                (format nil "UNDO OK request=~A of=~A roadmap=~A change=configure"
+                        request of roadmap)
+                0)))))
+
+;;; ------------------------------------------------------------------
+;;; The roadmap view record and the `roadmap row` / `roadmap projection`
+;;; verbs (docs/SPEC-WORK.md:3095-3117, :3118-3129).
+;;; ------------------------------------------------------------------
+;;;
+;;; `roadmap row --add|--remove` is admitted on an axisless roadmap only, its
+;;; member an existing node of the declared `:row-kind`; add appends to the
+;;; ordered `:members`, remove retires the row from the view alone and touches
+;;; no containment, state, evidence, lease or repository. `roadmap projection
+;;; --add|--remove` owns the stored `:projections`: ids unique per roadmap, only
+;;; `:markdown-table` a policy, a duplicate id with a different payload refuses
+;;; `duplicate projection`, a remove of an unknown id refuses `no such
+;;; projection`, and a matrix selection naming an unknown, missing or duplicate
+;;; axis or member refuses `bad selection` (:3095-3103).
+
+(defun roadmap-view-projections (state id)
+  "The roadmap ID's stored projections, in order."
+  (getf (%roadmap-view state id) :projections))
+
+(defun roadmap-view-retired (state id)
+  "The member ids retired from the roadmap ID's view, most recent first."
+  (getf (%roadmap-view state id) :retired))
+
+(defun roadmap-view-log (state id)
+  "The roadmap ID's scope events, newest first."
+  (getf (%roadmap-view state id) :log))
+
+(defun roadmap-view-revive-events (state id)
+  "The revivals a membership change implied, newest first (:3114-3115)."
+  (getf (%roadmap-view state id) :revive-events))
+
+(defun %roadmap-member-settled-p (state member)
+  "A row is finished when its node has settled into C (:1216-1222)."
+  (let ((n (%node-quiet state member)))
+    (and n (eq :c (wnode-branch n)))))
+
+(defun roadmap-open-member-count (state id)
+  "The live ordered rows of the roadmap that are not yet settled. Completion is
+not removal, so this is the denominator the aggregation reads."
+  (let ((view (%roadmap-view state id)))
+    (count-if-not (lambda (m) (%roadmap-member-settled-p state m))
+                  (getf view :members))))
+
+(defun roadmap-settled-p (state id)
+  "True when the roadmap has at least one live row and every one has settled.
+An empty required set never settles (:1511)."
+  (let* ((view (%roadmap-view state id))
+         (members (getf view :members)))
+    (and members
+         (every (lambda (m) (%roadmap-member-settled-p state m)) members)
+         t)))
+
+(defun roadmap-member-evidence (state member)
+  "The evidence a live row carries: its node's settle count, read from the node
+the retirement keeps (:3097, :5988)."
+  (let ((n (%node-quiet state member)))
+    (and n (wnode-settles n))))
+
+(defun %roadmap-member-row-kind-p (node row-kind)
+  (and node (eq row-kind (wnode-type node))))
+
+(defun roadmap-row (kernel &key roadmap member op reason request)
+  "`roadmap row --add|--remove` on an axisless roadmap (:3095-3098, :3111-3113).
+OP is `:add` or `:remove`; MEMBER is an existing node of the declared
+`:row-kind`. Add appends to `:members`, remove retires the row from the view
+alone and touches no containment, state, evidence, lease or repository. Writes
+one `:roadmap-row` scope event. Answers (values OK-P LINE EXIT-CODE REVIVE-EVENT)."
+  (let* ((state (kernel-state kernel))
+         (view (%roadmap-view state roadmap)))
+    (unless view
+      (return-from roadmap-row
+        (values nil (format nil "ROADMAP FAIL node=~A: no roadmap view" roadmap) 1 nil)))
+    (when (getf view :axes)
+      (return-from roadmap-row
+        (values nil (format nil "ROADMAP FAIL node=~A: has axes; use axis" roadmap) 2 nil)))
+    (unless (and (stringp member) (plusp (length member)))
+      (return-from roadmap-row
+        (values nil (format nil "ROADMAP FAIL node=~A: bad member" roadmap) 2 nil)))
+    (let ((mnode (%node-quiet state member)))
+      (unless mnode
+        (return-from roadmap-row
+          (values nil (format nil "ROADMAP FAIL node=~A: no such member ~A" roadmap member) 2 nil)))
+      (unless (%roadmap-member-row-kind-p mnode (getf view :row-kind))
+        (return-from roadmap-row
+          (values nil (format nil "ROADMAP FAIL node=~A: row kind mismatch" roadmap) 2 nil)))
+      (let ((members (getf view :members)))
+        (ecase op
+          (:add
+           (when (member member members :test #'string=)
+             (return-from roadmap-row
+               (values nil (format nil "ROADMAP FAIL node=~A: already a row" roadmap) 2 nil)))
+           (let ((was-settled (roadmap-settled-p state roadmap))
+                 (revive nil))
+             (setf (getf view :members) (append (copy-list members) (list member)))
+             (incf (getf view :revision))
+             (push (list :op :roadmap-row :change :row-add :member member
+                         :reason (or reason +absent+))
+                   (getf view :log))
+             ;; Adding an outstanding member to a settled roadmap revives it
+             ;; atomically, so no settled container silently holds open required
+             ;; work (:5997-5999).
+             (when (and was-settled (not (%roadmap-member-settled-p state member)))
+               (setf revive (list :kind :revive :member member))
+               (push revive (getf view :revive-events))
+               (let ((rm (%node-quiet state roadmap)))
+                 (when (and rm (eq :c (wnode-branch rm)))
+                   (setf (wnode-branch rm) :o))))
+             (values t
+                     (format nil "ROADMAP OK id=~A request=~A change=row-add changed=1 rev=~D"
+                             roadmap request (getf view :revision))
+                     0 revive)))
+          (:remove
+           (unless (member member members :test #'string=)
+             (return-from roadmap-row
+               (values nil (format nil "ROADMAP FAIL node=~A: no such row ~A" roadmap member) 2 nil)))
+           (setf (getf view :members) (remove member members :test #'string=))
+           (push member (getf view :retired))
+           (incf (getf view :revision))
+           (push (list :op :roadmap-row :change :row-remove :member member
+                       :reason (or reason +absent+))
+                 (getf view :log))
+           (values t
+                   (format nil "ROADMAP OK id=~A request=~A change=row-remove changed=1 rev=~D"
+                           roadmap request (getf view :revision))
+                   0 nil)))))))
+
+;;; ------------------------------------------------------------------
+;;; `roadmap projection --add|--remove` (docs/SPEC-WORK.md:3098-3103).
+;;; ------------------------------------------------------------------
+
+(defun %roadmap-projection-payload (projection)
+  (list :id (getf projection :id) :root (getf projection :root)
+        :repo (getf projection :repo) :path (getf projection :path)
+        :start (getf projection :start) :end (getf projection :end)
+        :policy (getf projection :policy)
+        :row-axis (getf projection :row-axis)
+        :column-axis (getf projection :column-axis)
+        :fixed (copy-list (getf projection :fixed))))
+
+(defun %roadmap-path-clean-p (path)
+  "The projection path is clean, relative and contained (:3082-3083)."
+  (and (stringp path) (plusp (length path))
+       (not (char= #\/ (char path 0)))
+       (not (find #\Nul path))
+       (not (search ".." path))))
+
+(defun %roadmap-markers-ok-p (start end)
+  (and (stringp start) (plusp (length start))
+       (stringp end) (plusp (length end))
+       (not (string= start end))))
+
+(defun %roadmap-selection (view row-axis column-axis fixed)
+  "Validate a projection's display selection against the declared axes. For a
+matrix the row and column axes are distinct declared axes with `:fixed` naming
+exactly one member of every other axis; for zero or one axis both are absent and
+`:fixed` is empty. Answers (values ROW COLUMN FIXED REFUSAL) (:3083-3085,
+:3102-3103)."
+  (let ((axes (getf view :axes)))
+    (cond
+      ((or (null axes) (null (cdr axes)))
+       (if (or row-axis column-axis fixed)
+           (values nil nil nil "bad selection")
+           (values nil nil '() nil)))
+      (t
+       (let ((row (and (stringp row-axis) (find row-axis axes :test #'string=)))
+             (col (and (stringp column-axis) (find column-axis axes :test #'string=))))
+         (cond
+           ((or (null row) (null col) (string= row col))
+            (values nil nil nil "bad selection"))
+           (t
+            (let* ((others (remove-if (lambda (a) (or (string= a row) (string= a col))) axes))
+                   (pairs '())
+                   (bad nil))
+              (dolist (entry fixed)
+                (let* ((a (car entry)) (m (cdr entry)))
+                  (when (or bad (not (member a others :test #'string=))
+                            (assoc a pairs :test #'string=)
+                            (not (and (stringp m) (plusp (length m)))))
+                    (setf bad t))
+                  (push (cons a m) pairs)))
+              (dolist (a others)
+                (unless (assoc a pairs :test #'string=) (setf bad t)))
+              (if bad
+                  (values nil nil nil "bad selection")
+                  (values row col (nreverse pairs) nil))))))))))
+
+(defun roadmap-projection (kernel &key roadmap op id root repo path start end
+                                       policy row-axis column-axis fixed reason request)
+  "`roadmap projection --add|--remove` (:3098-3103, :3116). OP is `:add` or
+`:remove`. Only `:markdown-table` is a policy; a duplicate id with a different
+payload refuses `duplicate projection`, an identical re-add is the no-effect
+receipt `changed=0`, a remove of an unknown id refuses `no such projection`, and
+a bad selection refuses `bad selection`. Answers (values OK-P LINE EXIT-CODE)."
+  (let* ((state (kernel-state kernel))
+         (view (%roadmap-view state roadmap)))
+    (unless view
+      (return-from roadmap-projection
+        (values nil (format nil "ROADMAP FAIL node=~A: no roadmap view" roadmap) 1)))
+    (unless (and (stringp id) (plusp (length id)))
+      (return-from roadmap-projection
+        (values nil (format nil "ROADMAP FAIL node=~A: bad projection id" roadmap) 2)))
+    (let ((existing (find id (getf view :projections)
+                          :key (lambda (p) (getf p :id)) :test #'string=)))
+      (ecase op
+        (:remove
+         (unless existing
+           (return-from roadmap-projection
+             (values nil (format nil "ROADMAP FAIL node=~A: no such projection ~A" roadmap id) 2)))
+         (setf (getf view :projections)
+               (remove id (getf view :projections)
+                       :key (lambda (p) (getf p :id)) :test #'string=))
+         (incf (getf view :revision))
+         (push (list :op :roadmap-projection :change :projection-remove :projection id
+                     :reason (or reason +absent+))
+               (getf view :log))
+         (values t
+                 (format nil "ROADMAP OK id=~A request=~A change=projection-remove changed=1 rev=~D"
+                         roadmap request (getf view :revision))
+                 0))
+        (:add
+         (unless (eq policy :markdown-table)
+           (return-from roadmap-projection
+             (values nil (format nil "ROADMAP FAIL node=~A: bad policy" roadmap) 2)))
+         (unless (%roadmap-path-clean-p path)
+           (return-from roadmap-projection
+             (values nil (format nil "ROADMAP FAIL node=~A: bad projection path" roadmap) 2)))
+         (unless (%roadmap-markers-ok-p start end)
+           (return-from roadmap-projection
+             (values nil (format nil "ROADMAP FAIL node=~A: bad markers" roadmap) 2)))
+         (multiple-value-bind (r c fx refusal)
+             (%roadmap-selection view row-axis column-axis fixed)
+           (when refusal
+             (return-from roadmap-projection
+               (values nil (format nil "ROADMAP FAIL node=~A: ~A" roadmap refusal) 2)))
+           (let* ((projection (list :id id :root root :repo repo :path path
+                                    :start start :end end :policy policy
+                                    :row-axis (or r +absent+)
+                                    :column-axis (or c +absent+)
+                                    :fixed (or fx '())))
+                  (payload (%roadmap-projection-payload projection)))
+             (when existing
+               (if (equal payload (%roadmap-projection-payload existing))
+                   (return-from roadmap-projection
+                     (values t
+                             (format nil "ROADMAP OK id=~A request=~A change=projection-add changed=0 rev=~D"
+                                     roadmap request (getf view :revision))
+                             0))
+                   (return-from roadmap-projection
+                     (values nil (format nil "ROADMAP FAIL node=~A: duplicate projection ~A" roadmap id) 2))))
+             (setf (getf view :projections)
+                   (append (copy-list (getf view :projections)) (list projection)))
+             (incf (getf view :revision))
+             (push (list :op :roadmap-projection :change :projection-add :projection id
+                         :reason (or reason +absent+))
+                   (getf view :log))
+             (values t
+                     (format nil "ROADMAP OK id=~A request=~A change=projection-add changed=1 rev=~D"
+                             roadmap request (getf view :revision))
+                     0))))))))
+
+;;; ------------------------------------------------------------------
+;;; The reads that keep a settled roadmap's head whole (:3124-3125).
+;;; ------------------------------------------------------------------
+
+(defun roadmap-view-render (state roadmap)
+  "Render the roadmap's whole current head from the retained view record. A read
+on a settled roadmap revives nothing (:5997-5998)."
+  (let ((view (%roadmap-view state roadmap)))
+    (with-output-to-string (s)
+      (format s "ROADMAP id=~A rev=~D~%" roadmap (getf view :revision))
+      (dolist (m (getf view :members))
+        (format s "row ~A state=~A~%" m
+                (if (%roadmap-member-settled-p state m) "done" "open"))))))
+
+(defun export-roadmap-view (view)
+  "The canonical durable bytes of a roadmap view record, so an export/load
+round-trip carries the whole head (:3124-3125)."
+  (canonical-string
+   (list :members (copy-list (getf view :members))
+         :axes (copy-list (getf view :axes))
+         :retired (copy-list (getf view :retired))
+         :projections (copy-tree (getf view :projections))
+         :revision (getf view :revision))))
+
+(defun load-roadmap-view (bytes)
+  "Reconstruct the view record from EXPORT-ROADMAP-VIEW's bytes."
+  (read-restricted bytes))
+
+(defun roadmap-view-open (view &key (window :default))
+  "Open a stored roadmap view. The record is a durable named view, so no live or
+retired row and no evidence is narrowed by the default closed window (SPEC-WORK.md
+:1648-1664); WINDOW changes no row here."
+  (declare (ignore window))
+  (copy-tree view))
