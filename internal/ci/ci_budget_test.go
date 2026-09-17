@@ -91,6 +91,30 @@ func TestCLTierJobsStayWithinTheBudget(t *testing.T) {
 	}
 }
 
+// TestMergeGateAllowanceCarriesItsReason pins the one exception: test-hosted-merge
+// declares exactly mergeGateCeiling minutes (five), and the reason it may is
+// recorded in the test as mergeGateReason. Every other job on the critical path
+// stays at defaultCLCeiling, which TestCLTierJobsStayWithinTheBudget enforces by
+// the map lookup above. If the job drifts back to two the fleet drops groups
+// again; if it drifts past five the exception has grown without a record.
+func TestMergeGateAllowanceCarriesItsReason(t *testing.T) {
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	mins, ok := jobTimeouts(src)["test-hosted-merge"]
+	if !ok {
+		t.Fatal("test-hosted-merge declares no timeout-minutes; the allowance has nothing to hold")
+	}
+	if mins != mergeGateCeiling {
+		t.Errorf("test-hosted-merge timeout-minutes = %d, want %d: the merge gate is the one allowed exception to the two-minute law, at the recorded five minutes", mins, mergeGateCeiling)
+	}
+	if strings.TrimSpace(mergeGateReason) == "" {
+		t.Error("the merge gate allowance carries no reason; the exception must say why it exists")
+	}
+	if !strings.Contains(src, "the one allowed exception") && !strings.Contains(src, "the one exception") {
+		t.Error("the test-hosted-merge comment does not name the gate as the exception to the two-minute law")
+	}
+}
+
 func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 	root := repoRoot(t)
 	cert := readFile(t, filepath.Join(root, ".github", "workflows", "certification.yml"))
@@ -284,12 +308,35 @@ func wallSecondsUnderTen(re *regexp.Regexp, code string) bool {
 // defaultCLCeiling is the two-minute law: a CL-tier job caps at 2 minutes.
 const defaultCLCeiling = 2
 
+// mergeGateCeiling is the one allowed exception to the two-minute law.
+// test-hosted-merge is on the CL path — the merge queue's group commit waits on
+// it — but it is not a small check: it runs the FULL hosted suite (no -short) of
+// the packages a group changes, on three platforms, sharded by size. Under load
+// (the Studio running sixteen self-hosted legs plus three friends, windows-latest
+// cold) its darwin shards were cancelled at 2:44 and its windows shards at 2:40
+// on 2026-09-17; a cancelled shard drops the whole group and restarts every group
+// behind it, so the two-minute cap on this one job was the throughput limit of
+// the whole fleet. Five minutes is the allowance; every other CL-path job stays
+// at the default two.
+const mergeGateCeiling = 5
+
+// mergeGateReason is the record beside that allowance: why the merge gate is
+// allowed five minutes. It is asserted in TestMergeGateAllowanceCarriesItsReason,
+// so the number and the why cannot drift apart silently.
+const mergeGateReason = "the merge gate runs the full suite of the packages a group changes on three platforms; sharded by size; cancelled under load at 2:40 on 2026-09-17"
+
 // clTierCeilings is where a job that does NOT cap at two minutes says so, and
 // says why. A number here is a claim about the machine the job runs on, so it
 // belongs in the repository beside the law rather than in a commit message.
 var clTierCeilings = map[string]int{
 	// The aggregate reads results and checks nothing out.
 	"ci-ok": 1,
+
+	// The one allowed exception. The merge gate runs the full suite of the
+	// packages a group changes, on three platforms, sharded by size; it was
+	// cancelled under load at 2:40 (2026-09-17), and a cancelled shard drops the
+	// group. mergeGateReason carries the record the budget test asserts.
+	"test-hosted-merge": mergeGateCeiling,
 
 	// The platform legs a PR runs only when it touches platform-specific paths
 	// (internal/sandbox on ubuntu-latest, the bus on windows-latest). A hosted
