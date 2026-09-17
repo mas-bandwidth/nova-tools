@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -779,13 +780,15 @@ func within(root, path string) bool {
 
 // copyAuth moves exactly the provider's entry from the auth file into
 // dataHome/auth.json, mode 0600, and returns the refusal reason when the source is
-// looser than 0600 or the copy cannot end 0600.
+// looser than 0600 or the copy cannot end 0600. Both mode questions are asked of the
+// platform (authmode.go): windows reports 0666 for every readable file, so neither rule
+// refuses there (#915).
 func copyAuth(src, provider, dataHome string) string {
 	st, err := os.Stat(src)
 	if err != nil {
 		return fmt.Sprintf("the auth file %s could not be read: %s", oneline.Field(src), oneline.Escape(err.Error()))
 	}
-	if st.Mode().Perm()&0o077 != 0 {
+	if authModeWiderThanOwner(runtime.GOOS, st.Mode()) {
 		return fmt.Sprintf("the auth copy would not be 0600: the auth file %s is mode %04o, so copying it spreads a secret beyond its owner; chmod 600 it first",
 			oneline.Field(src), st.Mode().Perm())
 	}
@@ -806,7 +809,7 @@ func copyAuth(src, provider, dataHome string) string {
 	if err := os.WriteFile(dst, body, 0o600); err != nil {
 		return fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error()))
 	}
-	if dstSt, err := os.Stat(dst); err == nil && dstSt.Mode().Perm() != 0o600 {
+	if dstSt, err := os.Stat(dst); err == nil && authModeNotOwnerOnly(runtime.GOOS, dstSt.Mode()) {
 		return fmt.Sprintf("the auth copy would not be 0600: %s ended mode %04o", oneline.Field(dst), dstSt.Mode().Perm())
 	}
 	ocDir := filepath.Join(dataHome, "opencode")

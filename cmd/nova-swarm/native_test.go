@@ -1555,6 +1555,62 @@ func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
 	}
 }
 
+// ISSUE #915 (windows leg): the legacy --auth native path refuses an auth source looser than
+// 0600 and a copy that does not end 0600 (copyAuth). NTFS carries no unix permission bits --
+// os.Stat reports 0666 for every readable file there (0444 when it is read-only) -- so on
+// windows-latest a source the test wrote 0600 read 0666 and the check refused it: the legacy
+// shape, TestNativeAuthWithAWorkerNamesItsLegacyCopy, died exit 2 on the line that says it
+// runs. This is the same class as the execute bit (executable.go) and the key file mode
+// (internal/swarm/key.go, which already answers nothing on windows). The rules now ask the
+// platform, and because they are written where every platform compiles them, darwin and linux
+// hold the windows answer to this contract.
+func TestAuthModeRulesAskThePlatform(t *testing.T) {
+	// The source question: is any group or other bit set? The answer is "no" on windows,
+	// however the file reads, because the bits do not exist there.
+	for _, tc := range []struct {
+		name string
+		goos string
+		mode os.FileMode
+		want bool
+	}{
+		{"windows_0600", "windows", 0o600, false},
+		{"windows_0644", "windows", 0o644, false},
+		{"windows_0666", "windows", 0o666, false},
+		{"linux_0600", "linux", 0o600, false},
+		{"linux_0400", "linux", 0o400, false},
+		{"linux_0644", "linux", 0o644, true},
+		{"linux_0666", "linux", 0o666, true},
+		{"darwin_0600", "darwin", 0o600, false},
+		{"darwin_0604", "darwin", 0o604, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := authModeWiderThanOwner(tc.goos, tc.mode); got != tc.want {
+				t.Fatalf("authModeWiderThanOwner(goos=%s, mode=%04o) = %v, want %v; a file written 0600 reads 0666 on windows, so the bits are not a refusal there (#915)", tc.goos, tc.mode, got, tc.want)
+			}
+		})
+	}
+	// The copy's own question: did the write end exactly 0600? Windows reports 0666 for
+	// every readable file, so the copy cannot be shown owner-only and is not refused.
+	for _, tc := range []struct {
+		name string
+		goos string
+		mode os.FileMode
+		want bool
+	}{
+		{"windows_0600", "windows", 0o600, false},
+		{"windows_0666", "windows", 0o666, false},
+		{"linux_0600", "linux", 0o600, false},
+		{"linux_0644", "linux", 0o644, true},
+		{"linux_0666", "linux", 0o666, true},
+	} {
+		t.Run("copy_"+tc.name, func(t *testing.T) {
+			if got := authModeNotOwnerOnly(tc.goos, tc.mode); got != tc.want {
+				t.Fatalf("authModeNotOwnerOnly(goos=%s, mode=%04o) = %v, want %v (#915)", tc.goos, tc.mode, got, tc.want)
+			}
+		})
+	}
+}
+
 // nativeWorkerDescription writes a worker description the native run can be pointed at: the
 // model it pins, and the key named either by the legacy key_file (for --auth) or by the
 // `secret` variable a nova-secrets exec would deliver.
