@@ -204,7 +204,52 @@
     #:role-from-config
     #:role-inferred-from-model-p
     #:agreed-limit-for
-    #:spend-role))
+    #:spend-role
+    ;; priority and captured-state export replays (nova-tools #362)
+    #:+rank-ceiling+
+    #:rank-atom-p
+    #:make-priority-table
+    #:priority-table
+    #:priority-table-p
+    #:priority-slot
+    #:priority-change-id
+    #:effective-rank
+    #:priority-set
+    #:priority-clear
+    #:priority-undo
+    #:priority-order
+    #:priority-rows
+    #:priority-page
+    #:make-work-view
+    #:work-view
+    #:work-view-p
+    #:work-view-who
+    #:work-view-lease
+    #:work-view-worker
+    #:work-view-approval
+    #:priority-grants-nothing-p
+    #:make-export-capture
+    #:export-capture
+    #:export-capture-p
+    #:export-capture-revision
+    #:export-capture-base
+    #:export-capture-end
+    #:export-capture-records
+    #:export-capture-bytes
+    #:state-record
+    #:capture-export
+    #:validate-export
+    #:make-operation-registry
+    #:operation-registry
+    #:operation-registry-p
+    #:begin-operation
+    #:operation
+    #:operation-state
+    #:operation-start
+    #:operation-finish
+    #:operation-cancel
+    #:operation-wait
+    #:unrelated-mutation))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
