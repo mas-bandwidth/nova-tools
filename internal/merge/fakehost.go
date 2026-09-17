@@ -23,6 +23,13 @@ type FakeHost struct {
 	Atomic       bool
 	Merges       []string
 	Err          error
+	// CreatePR and ClosePR are the fold verb's forge operations (docs/SPEC-MERGE.md
+	// "The fold (#1142)"). Created is one line per opened pull request and Closed is
+	// the numbers closed as superseded by a squash; nextPR hands out numbers so a fold
+	// reads one back on its FOLD OK line.
+	Created []string
+	Closed  []int
+	nextPR  int
 	// OnPR, when set, answers PR reads per poll so a test can script a PR that
 	// merges on the second poll. It receives the PR number and the 1-based call
 	// count; returning ok=false falls through to the PRs map. OnChecks does the
@@ -113,6 +120,34 @@ func (f *FakeHost) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 	if f.Do != nil {
 		return f.Do(n, headOID, baseSHA, mergeSHA)
 	}
+	return nil
+}
+
+// CreatePR records one opened pull request and hands back a fresh number. It is the
+// fold verb's forge side (docs/SPEC-MERGE.md "The fold (#1142)").
+func (f *FakeHost) CreatePR(head, base, title, body string) (int, error) {
+	if f.Err != nil {
+		return 0, f.Err
+	}
+	if f.nextPR == 0 {
+		f.nextPR = 900
+	}
+	f.nextPR++
+	n := f.nextPR
+	f.Created = append(f.Created, fmt.Sprintf("head=%s base=%s title=%s body=%s", head, base, title, body))
+	if f.PRs == nil {
+		f.PRs = map[int]PR{}
+	}
+	f.PRs[n] = PR{Number: n, Base: base, HeadRef: head, Body: body}
+	return n, nil
+}
+
+// ClosePR records a folded pull request closed as superseded by the squash.
+func (f *FakeHost) ClosePR(n int) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.Closed = append(f.Closed, n)
 	return nil
 }
 

@@ -85,6 +85,15 @@ var mergeAudit = audit.Config{
 		// parses the answers, and it never prints. Its one line is rendered back here
 		// through oneline/decide.Line, whose every field is escaped.
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// os/exec runs the package test and the layout test of #560 in the fold's own
+		// scratch clone (docs/SPEC-MERGE.md "The fold (#1142)"). It is a Runner for a
+		// non-git command: its output is captured and reduced to one line through
+		// oneline.Cap at the error site, and it writes nothing itself.
+		`"os/exec"`,
+		// regexp matches the `supersedes #<n>` lines a fold body carries so --close-folded
+		// knows which pull requests the squash replaced. FindAllStringSubmatch is a pure
+		// read of a string and holds no writer.
+		`"regexp"`,
 	},
 	MinClassified: 60,
 }

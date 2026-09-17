@@ -68,6 +68,12 @@ func TestTheBinaryWritesOnlyTheLanesOwnFiles(t *testing.T) {
 	allowed := map[string][]writeSite{
 		"verbs.go": {{`os.WriteFile(filepath.Join(lane, ".gitignore")`, "the lane branch's .gitignore, which init writes, under --lane"}},
 		"pass.go":  {{`os.WriteFile(path, []byte(deps.Now()`, "the lane's stop file, which the stop verb writes, under --lane"}},
+		// The fold (#1142) resolves a conflict in a TEST file keep-both and one in a
+		// SOURCE file to the incoming side, and that resolved byte has to land in the
+		// fold's OWN scratch clone under --lane before it is tested. The lane proper
+		// still never edits an entry's content; this is the one write the spec names,
+		// and it writes only both sides of a conflict git itself produced.
+		"fold.go": {{`os.WriteFile(filepath.Join(g.Dir, path)`, "the fold's keep-both resolution in its own scratch clone under --lane (docs/SPEC-MERGE.md \"The fold (#1142)\")"}},
 	}
 	used := map[string]int{}
 	for name, src := range mainPackageSource(t) {

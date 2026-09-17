@@ -106,6 +106,11 @@ type lab struct {
 	now    time.Time
 	build  string
 	runner merge.Runner
+	// testTree and testLayout are the fold verb's fake test runners (docs/SPEC-MERGE.md
+	// "The fold (#1142)"): the package test the repository names for the tree, and the
+	// layout test of #560. A nil one is the production subprocess.
+	testTree   func(dir string) error
+	testLayout func(dir string) error
 	// urlFor, when set, is what RepoURL answers -- so a test can point init at a
 	// repository that is not there.
 	urlFor func(string) string
@@ -329,7 +334,9 @@ func (l *lab) deps() Deps {
 			}
 			return nil
 		},
-		BuildID: func() string { return l.build },
+		BuildID:    func() string { return l.build },
+		TestTree:   l.testTree,
+		TestLayout: l.testLayout,
 	}
 }
 
