@@ -321,3 +321,48 @@ func TestCutStepsAreTheTurnBudget(t *testing.T) {
 		t.Fatal("21-step fix card: a card was written despite the refusal")
 	}
 }
+
+// cut-holds-to-one-model: a models.tsv that names only flash is legal, and every card --
+// including a fix card that would take pro when both are named -- routes to that one model,
+// so a spend rule ("flash only tonight") is expressible without a --model flag (#635).
+func TestCutHoldsToOneModel(t *testing.T) {
+	td := t.TempDir()
+	tmpl := filepath.Join(td, "templates")
+	if err := os.MkdirAll(tmpl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpl, "models.tsv"), []byte("flash opencode/deepseek-v4-flash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"read": readTemplate, "fix": fixTemplate} {
+		if err := os.WriteFile(filepath.Join(tmpl, name+".md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	poolPath := filepath.Join(td, "pool.tsv")
+	if err := os.WriteFile(poolPath, []byte("s\t1\tread\tt\tread\ns\t2\tfix\tt\tfix\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(td, "out")
+	var stdout, stderr strings.Builder
+	code := Cut(CutInput{
+		Pool: poolPath, Templates: tmpl, Out: out, Root: filepath.Join(td, "root"), Max: 20,
+		Stdout: &stdout, Stderr: &stderr,
+	})
+	if code != 0 {
+		t.Fatalf("cut = %d, want 0 (one model is a spend rule, not a refusal); stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "flash=2 pro=0") {
+		t.Fatalf("stdout=%q, want flash=2 pro=0 (every card holds to flash)", stdout.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "cards.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		parts := strings.Split(line, "\t")
+		if len(parts) < 3 || parts[2] != "opencode/deepseek-v4-flash" {
+			t.Fatalf("cards.tsv row %q, want model opencode/deepseek-v4-flash", line)
+		}
+	}
+}

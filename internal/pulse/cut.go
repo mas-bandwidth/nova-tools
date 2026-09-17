@@ -78,10 +78,10 @@ func Cut(in CutInput) int {
 			return 2
 		}
 		model := modelFor(row.Kind, in.Local, models)
-		if isFlashKind(row.Kind) {
-			flash++
-		} else {
+		if isProRoute(row.Kind, in.Local, models) {
 			pro++
+		} else {
+			flash++
 		}
 		cards = append(cards, CardRow{Label: row.ID, Slot: SlotDash, Model: model, Card: filepath.Join(in.Out, cardName)})
 	}
@@ -112,14 +112,34 @@ func isFlashKind(kind string) bool { return textKinds[kind] }
 
 // modelFor decides the model by kind and nowhere else: read/text/tone -> flash, the rest ->
 // pro, with --local naming an ollama/<tag> override for read and text (SPEC-PULSE rule 7).
+// A models.tsv may name only one of the two ids; the cards that would take the missing model
+// hold to the one the table names, so `flash <id>` alone is the spend rule "flash only".
 func modelFor(kind, local string, models map[string]string) string {
 	if local != "" && (kind == "read" || kind == "text") {
 		return "ollama/" + local
 	}
 	if isFlashKind(kind) {
-		return models["flash"]
+		if models["flash"] != "" {
+			return models["flash"]
+		}
+		return models["pro"]
 	}
-	return models["pro"]
+	if models["pro"] != "" {
+		return models["pro"]
+	}
+	return models["flash"]
+}
+
+// isProRoute says whether a card's route is the pro one, keyed the same way modelFor picks:
+// when the table names only one model every card rides it, and --local rides the flash route.
+func isProRoute(kind, local string, models map[string]string) bool {
+	if local != "" && (kind == "read" || kind == "text") {
+		return false
+	}
+	if isFlashKind(kind) {
+		return models["flash"] == "" && models["pro"] != ""
+	}
+	return models["pro"] != "" || models["flash"] == ""
 }
 
 // readPool reads pool.tsv: five fields per line, blank lines skipped.
@@ -142,7 +162,8 @@ func readPool(path string) ([]PoolRow, error) {
 	return rows, nil
 }
 
-// readModels reads models.tsv: two lines, `flash <model>` and `pro <model>`.
+// readModels reads models.tsv: one line `flash <model>` and/or one line `pro <model>`. A
+// table that names only one is legal and holds every card to that model (issue #635).
 func readModels(path string) (map[string]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -159,8 +180,8 @@ func readModels(path string) (map[string]string, error) {
 		}
 		models[parts[0]] = parts[1]
 	}
-	if models["flash"] == "" || models["pro"] == "" {
-		return nil, fmt.Errorf("models.tsv wants both a flash and a pro model id")
+	if models["flash"] == "" && models["pro"] == "" {
+		return nil, fmt.Errorf("models.tsv wants a flash or a pro model id (name one to hold every card to that model, or both to route read to flash and fix to pro)")
 	}
 	return models, nil
 }
