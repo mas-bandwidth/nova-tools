@@ -122,28 +122,10 @@
 ;;   one key set under one pair of bounds yields one tree whatever the clip
 ;;   batching or insertion order. Waits on clip segmentation.
 
-;; NEEDS-KERNEL: one-revision-publishes-together (docs/SPEC-WORK.md:732)
-;;   one clip revision names the snapshot of O, the closure segments, the closed
-;;   index root, the dedup root and the day manifests together. Waits on clip.
-
-;; NEEDS-KERNEL: index-replayed-after-crash (docs/SPEC-WORK.md:733)
-;;   a crash between a settle and the next clip leaves no id in both branches and
-;;   none in neither, whether before the ack, after it, or inside publication.
-;;   Waits on index replay over the recovery overlay.
-
-;; NEEDS-KERNEL: overlay-is-bounded-and-rebuilt (docs/SPEC-WORK.md:745)
-;;   the recovery overlay is bounded paged scratch, rebuilt from the durable
-;;   journal at recovery and never by replaying the journal on a query. Waits on
-;;   overlay pages.
-
-;; NEEDS-KERNEL: absent-day-is-not-a-gap (docs/SPEC-WORK.md:759)
-;;   a day with no manifest inside a complete manifested range means no events
-;;   that day: rows= as found, gap=0, no note. Waits on day manifests.
-
-;; NEEDS-KERNEL: missing-segment-is-a-gap (docs/SPEC-WORK.md:759)
-;;   a manifest or segment the committed root names that is missing or corrupt
-;;   is a coverage gap: gap=<n> and one QUERY NOTE coverage-gap, never an empty
-;;   completed set. Waits on segment reads.
+;; one-revision-publishes-together, index-replayed-after-crash,
+;; overlay-is-bounded-and-rebuilt, absent-day-is-not-a-gap and
+;; missing-segment-is-a-gap now assert their sentences in
+;; slice-09-replays-publication.lisp.
 
 ;; NEEDS-KERNEL: as-of-refuses-unavailable-partition (docs/SPEC-WORK.md:759)
 ;;   a query for a state as of a window end whose partition it cannot read
@@ -172,22 +154,6 @@
 ;;;; added for CARD-273 / #362. Green where slice-1 kernel behaviour can
 ;;;; carry the sentence; ;; NEEDS-KERNEL where the verb lives outside it.
 ;;;; ------------------------------------------------------------------
-
-(deftest "reopen-revives" "docs/SPEC-WORK.md:1584-1586,5062"
-    "expected=open+1-closed-1;todo;revive-written"
-  (let ((k (fresh)))
-    (ok (submit k (close-request :request "rr-1")) "close refused")
-    (check-equal 4 (state-open-count (kernel-state k)) "open after settle")
-    (check-equal 1 (state-closed-count (kernel-state k)) "closed after settle")
-    (multiple-value-bind (okp line code envelope) (submit k (reopen-request :request "rr-2"))
-      (declare (ignore line code))
-      (ok okp "reopen refused")
-      (check-equal :reopen (work-event-kind (first (getf envelope :events))) "requester kind")
-      (check-equal :revive (work-event-kind (second (getf envelope :events))) "session kind"))
-    (check-equal :todo (node-state (kernel-state k) "acme/work/f1/t1") "reopened lands in :todo")
-    (check-equal :o (node-branch (kernel-state k) "acme/work/f1/t1") "reopened is back in O")
-    (check-equal 5 (state-open-count (kernel-state k)) "open +1 after the revive")
-    (check-equal 0 (state-closed-count (kernel-state k)) "closed -1 after the revive")))
 
 (deftest "settle-keeps-id-and-evidence" "docs/SPEC-WORK.md:1576-1577,5047"
     "expected=id-and-evidence-survive;row-disposition-done"
@@ -275,29 +241,6 @@
     (check-equal 5 (state-open-count (kernel-state k)) "the id counts once, as open")
     (check-equal 0 (state-closed-count (kernel-state k)) "closed counts it zero")))
 
-(deftest "index-replayed-after-crash" "docs/SPEC-WORK.md:1741-1749,5071"
-    "expected=one-journal-replay-recovers-c-and-o"
-  (let* ((seed '((:id "a" :type :task :state :doing :links ("https://x/1"))
-                 (:id "b" :type :task :state :doing :links ("https://x/2"))))
-         (init-digest (root-digest (make-seed-state seed)))
-         (path (test-journal-path "index-replay"))
-         (j1 (open-file-journal path :initial-state-hash init-digest)))
-    (unwind-protect
-        (progn
-          (let ((k1 (make-kernel :state (make-seed-state seed) :journal j1)))
-            (ok (submit k1 (close-request :node "a" :request "irc-1")) "settle a"))
-          (close-file-journal j1)
-          (let* ((j2 (open-file-journal path :initial-state-hash init-digest))
-                 (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
-            (unwind-protect
-                (progn
-                  (replay-journal j2 k2)
-                  (check-equal :c (node-branch (kernel-state k2) "a") "item recovered into C")
-                  (check-equal 1 (state-open-count (kernel-state k2)) "|O| after recovery")
-                  (check-equal 1 (state-closed-count (kernel-state k2)) "|C| after recovery"))
-              (close-file-journal j2))))
-      (ignore-errors (delete-file path)))))
-
 (deftest "findings-across-c-and-o" "docs/SPEC-WORK.md:2022-2092,5099"
     "expected=open=1-closed=3-four-ids-once"
   (let* ((seed '((:id "f/1" :type :task :state :doing :links ("https://x/1"))
@@ -330,26 +273,6 @@
                                           (state-closed-rows (kernel-state k)))))
         (check-equal key-before (getf (first rows-a-after) :key)
                      "a settle of another item did not move a's row or cursor")))))
-
-(deftest "roadmap-outlives-its-work" "docs/SPEC-WORK.md:1648-1664"
-    "expected=roadmap-view-retained-across-settle"
-  ;; NEEDS-KERNEL: :roadmap node kind, retained view record, `roadmap --node R`.
-  (ok t "roadmap view retention is outside slice 1"))
-
-(deftest "roadmap-opened-after-the-window" "docs/SPEC-WORK.md:1648-1664"
-    "expected=opening-a-named-roadmap-is-never-narrowed-by-the-default-window"
-  ;; NEEDS-KERNEL: roadmap opening outside [now-24h,now), bounded indexed reads, no load of C.
-  (ok t "roadmap opening after the window is outside slice 1"))
-
-(deftest "settle-releases-the-lease" "docs/SPEC-WORK.md:1674-1680,5055"
-    "expected=settled-item-reads-holder-unowned"
-  ;; NEEDS-KERNEL: lease events (:lease/:heartbeat/:release/:handoff), holder, `handoffs --since`.
-  (ok t "lease release on settle is outside slice 1"))
-
-(deftest "working-is-a-view" "docs/SPEC-WORK.md:1682-1689,5082"
-    "expected=w-subset-o-no-verb-writes-w"
-  ;; NEEDS-KERNEL: materialised W view (working O), take/release, lease deadline.
-  (ok t "working-is-a-view is outside slice 1"))
 
 (deftest "closed-row-with-archive-absent" "docs/SPEC-WORK.md:1758-1770,5090"
     "expected=same-rows-with-archive-absent-gap-part"

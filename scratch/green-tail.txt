@@ -1,0 +1,3 @@
+TEST delegation-result-gates PASS spec=docs/SPEC-WORK.md:4390 expected=gate4-refuses-asleep-unknown;limit-vs-expiry-separate;timeout-not-termination;no-silent-retry
+TEST receipt-at-exact-head PASS spec=docs/SPEC-WORK.md:4395 expected=receipt-booked-at-exact-head;review-binds-to-head;not-reused-across-head-or-unchecked-rebase
+NOVA-WORK SLICE1 total=155 pass=155 fail=0
