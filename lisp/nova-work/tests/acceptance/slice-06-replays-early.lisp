@@ -22,10 +22,7 @@
     "expected=oversized/stale/unexplained-escalation-refuse-before-dispatch"
   (slice1-refuses-verb :route))
 
-;; NEEDS-KERNEL: a filtered historical ask whose filter rejects every row read.
-(deftest "page-budget-is-not-max" "docs/SPEC-WORK.md:5550"
-    "expected=shown=0;pages=<n>;whole-history-never-scanned"
-  (slice1-refuses-verb :query))
+;; page-budget-is-not-max is implemented in ../acceptance.lisp (card 8601).
 
 ;; NEEDS-KERNEL: the session transport's correlated reply frames.
 (deftest "pipeline-replies-are-correlated" "docs/SPEC-WORK.md:5165"
