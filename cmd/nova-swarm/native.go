@@ -130,14 +130,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 
 	// (2b) THE WORKER DESCRIPTION (issue #881). When `--worker <file>` names a
 	// description, the description is the source of the model: a key is authorized for ONE
-	// model only, and the description pins that one. A --model whose model half differs is
+	// model only, and the description pins that one. The gate compares provider/model as
+	// ONE NAME: a description's `model` without a slash takes the description's
+	// `provider` as its prefix, so `deepseek-v4-flash` under provider `opencode` is
+	// `opencode/deepseek-v4-flash`, the same name `--model` carries. A mismatch is
 	// refused, naming BOTH models on one line, before any directory is made and before any
-	// child starts. The description's `model` is the model ID (deepseek-chat); --model is
-	// provider/model, so the half after the slash is what is compared. Without --worker,
-	// native keeps --model as today.
+	// child starts. Without --worker, native keeps --model as today.
 	if cfg.worker != nil {
-		modelID := cfg.model[len(provider)+1:]
-		if cfg.worker.Model != modelID {
+		pinned := cfg.worker.Model
+		if !strings.Contains(pinned, "/") {
+			pinned = cfg.worker.Provider + "/" + pinned
+		}
+		if pinned != cfg.model {
 			refuseNative(errOut, fmt.Sprintf("--model %s differs from the worker description's model %s; a key is authorized for one model only, and the description pins the model this run launches",
 				oneline.Field(cfg.model), oneline.Field(cfg.worker.Model)))
 			return nativeRunResult{}, 2

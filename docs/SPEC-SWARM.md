@@ -815,6 +815,16 @@ still copies the provider's secret into the job's data home on disk — printing
 one `NATIVE NOTE` line that it does — because the legacy shape is the one that
 names a file.
 
+**`secret` implies `env_var`, and the model gate compares one qualified name**
+(issue #881): a description that names `"secret": "<NAME>"` but no `env_var`
+loads with `env_var` defaulting to NAME — the key arrives by that NAME and the
+harness reads it by that NAME, so the two fields are the same string unless the
+description says otherwise — and `native --worker` compares provider/model as
+one name, where a description's `model` without a slash takes the description's
+`provider` as its prefix, so provider `opencode` with model `deepseek-v4-flash`
+is `opencode/deepseek-v4-flash`, the name `--model` carries; a real mismatch is
+still refused naming both, exit 2, before any directory is made.
+
 **`native` owns `TMPDIR`, and it is outside every repository** (issue #460,
 landed in #558). The job directory is a git repository — admission wants one — so a
 `TMPDIR` under it makes every `t.TempDir()` a directory inside a repo, and a

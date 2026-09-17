@@ -1805,6 +1805,105 @@ func TestAuthModeRulesAskThePlatform(t *testing.T) {
 	}
 }
 
+// ISSUE #881: secret implies env_var, and the model gate compares provider/model as one
+// name -- a description's model without a slash takes the description's provider as its
+// prefix. A secret-only description (no env_var) with provider opencode and model
+// deepseek-v4-flash runs under --model opencode/deepseek-v4-flash; --model opencode/other
+// is refused naming both; --model other/deepseek-v4-flash is refused too, because the
+// provider half matters.
+func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
+	bin := nativeHarness(t)
+	writeSecretOnly := func(t *testing.T) string {
+		t.Helper()
+		home := t.TempDir()
+		desc := map[string]any{
+			"name": "opencode-1", "provider": "opencode", "model": "deepseek-v4-flash",
+			"secret": "CARD881_SECRET", "usage": "opencode",
+			"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
+			"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
+		}
+		raw, err := json.MarshalIndent(desc, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "worker.json")
+		if err := os.WriteFile(path, raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	t.Setenv("CARD881_SECRET", fakeKey)
+
+	t.Run("qualified_match_is_accepted", func(t *testing.T) {
+		root, slot := aSlot(t)
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		desc := writeSecretOnly(t)
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "opencode/deepseek-v4-flash",
+			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
+			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 0 {
+			t.Fatalf("provider opencode model deepseek-v4-flash under --model opencode/deepseek-v4-flash is accepted, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
+		}
+	})
+
+	t.Run("model_mismatch_is_refused_naming_both", func(t *testing.T) {
+		root, slot := aSlot(t)
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		desc := writeSecretOnly(t)
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "opencode/other",
+			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
+			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 2 {
+			t.Fatalf("--model opencode/other against model deepseek-v4-flash is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
+		}
+		line := strings.TrimSpace(stderr.String())
+		mustContain(t, "the refusal", line, "opencode/other")
+		mustContain(t, "the refusal", line, "deepseek-v4-flash")
+	})
+
+	t.Run("provider_mismatch_is_refused", func(t *testing.T) {
+		root, slot := aSlot(t)
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// A description the CURRENT loader already accepts (env_var present beside
+		// secret), so this subtest isolates the gate: the model half matches, only
+		// the provider half differs, and the gate must still refuse.
+		home := t.TempDir()
+		desc := map[string]any{
+			"name": "opencode-1", "provider": "opencode", "model": "deepseek-v4-flash",
+			"env_var": "CARD881_ENV", "secret": "CARD881_SECRET", "usage": "opencode",
+			"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
+			"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
+		}
+		t.Setenv("CARD881_SECRET", fakeKey)
+		raw, err := json.MarshalIndent(desc, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		descPath := filepath.Join(t.TempDir(), "worker.json")
+		if err := os.WriteFile(descPath, raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "other/deepseek-v4-flash",
+			"--worker", descPath, "--card", cardPath, "--slot", slot, "--root", root,
+			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 2 {
+			t.Fatalf("--model other/deepseek-v4-flash against provider opencode is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
+		}
+	})
+}
+
 // nativeWorkerDescription writes a worker description the native run can be pointed at: the
 // model it pins, and the key named either by the legacy key_file (for --auth) or by the
 // `secret` variable a nova-secrets exec would deliver.

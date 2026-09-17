@@ -1439,7 +1439,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	effectiveModel := *model
 	if workerGiven && effectiveModel == "" {
-		effectiveModel = w.Provider + "/" + w.Model
+		if strings.Contains(w.Model, "/") {
+			effectiveModel = w.Model
+		} else {
+			effectiveModel = w.Provider + "/" + w.Model
+		}
 	}
 	cfg := nativeRunConfig{
 		binary:         *harness,

@@ -405,6 +405,30 @@ func TestASecretNamedWorkerDescriptionIsAcceptedByTheLoader(t *testing.T) {
 	}
 }
 
+// ISSUE #881 (secret implies env_var): a worker description that names `secret` but no
+// `env_var` loads with env_var defaulting to the secret NAME (docs/SPEC-SWARM.md, the
+// worker description: the key is delivered by `nova-secrets exec` under that NAME, and the
+// harness config carries the variable's NAME).
+func TestSecretImpliesEnvVar(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "worker")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"name":"w","provider":"p","model":"m","secret":"MY_SECRET_881","usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` + strconv.Quote(home) + `,"deadline":"5m"}`
+	path := filepath.Join(dir, "w.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, problems := LoadWorker(path)
+	if len(problems) != 0 {
+		t.Fatalf("a description with secret alone loads, got %d problems: %v", len(problems), problems)
+	}
+	if w.EnvVar != "MY_SECRET_881" {
+		t.Fatalf("env_var defaults to the secret NAME, got %q want %q", w.EnvVar, "MY_SECRET_881")
+	}
+}
+
 // RULE 11, VERBATIM (SPEC-SWARM.md:148-155): a process of the job's own group that outlives
 // the job is a background subtask the prompt forbids, and the line carries `background=<n>`.
 //
