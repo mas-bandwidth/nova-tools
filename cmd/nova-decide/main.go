@@ -32,6 +32,9 @@ usage:
                    [--label <field, default label>] [--choice <field, default decision>]
                    [--conf <field, default confidence>] [--max-escalation 0.7]
 
+  nova-decide tune --kind <k> [--dsn <dsn>] [--decisions <tsv path>]
+                   (the decisions table: refuse a floor with no rows behind it)
+
   --questions <file>  JSON object of name to question: {"type": "choice"|"score"|"noul",
                       "instructions": <text>, "criteria": {<option>: <description>} for
                       choice, [<level texts>] for score, absent for noul} (required;
@@ -44,7 +47,12 @@ usage:
   --prefix <word>     first token of the one line printed (default DECIDE)
 
   --decisions <file>  JSONL decisions log: each row joins the decision, its
-                      confidence and the outcome label (rule 8)
+                      confidence and the outcome label (rule 8); with --kind it
+                      is the TSV fallback of the decisions table
+  --kind <k>          read the decisions table for kind k and refuse a floor
+                      with no rows behind it (rule 8)
+  --dsn <dsn>         decisions table DSN (a postgres:// URL, or a TSV path);
+                      default $NOVA_DSN
   --floors <list>     comma-separated confidence floors to try
   --label <field>     field holding the outcome (default label)
   --choice <field>    field holding the decision (default decision)
@@ -66,6 +74,12 @@ var version string
 
 // stdin is a var so tests can replace it; production reads the real stdin.
 var stdin io.Reader = os.Stdin
+
+// decisionsOpener opens the decisions table a DSN names. It is the seam a test
+// replaces with a fake driver, so no test needs a Postgres on a bench.
+var decisionsOpener = func(dsn string) (decide.DecisionDriver, error) {
+	return decide.OpenDecisions(dsn)
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -98,6 +112,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	baseURL := fs.String("base-url", decide.DefaultBaseURL, "Jev endpoint")
 	keyEnv := fs.String("key-env", decide.DefaultKeyEnv, "environment variable holding the key")
 	prefix := fs.String("prefix", "DECIDE", "first token of the one line printed")
+	dsn := fs.String("dsn", os.Getenv(decide.DecisionsEnv), "decisions table DSN or TSV path; records each call")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
@@ -142,6 +157,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, *prefix, "no-key", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	client.SetFloor(*floor)
+	if strings.TrimSpace(*dsn) != "" {
+		store, err := decisionsOpener(*dsn)
+		if err != nil {
+			return refuse(stderr, *prefix, "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		defer store.Close()
+		client.UseDecisions(store)
+	}
 	answers, _, err := client.Decide(context.Background(), state, qs)
 	if err != nil {
 		return refuse(stderr, *prefix, "provider-error", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -161,7 +185,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 // refusal: a floor with no rows behind it is untuned.
 func runTune(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("nova-decide tune", flag.ContinueOnError)
-	decisions := fs.String("decisions", "", "JSONL decisions log (required)")
+	decisions := fs.String("decisions", "", "JSONL decisions log; with --kind, the TSV fallback path (rule 8)")
+	kind := fs.String("kind", "", "read the decisions table for this kind and refuse a floor with no rows behind it")
+	dsn := fs.String("dsn", os.Getenv(decide.DecisionsEnv), "decisions table DSN; default $NOVA_DSN")
 	floors := fs.String("floors", "0.5,0.7,0.8,0.9,0.95", "comma-separated confidence floors to try")
 	label := fs.String("label", "label", "field holding the outcome")
 	choice := fs.String("choice", "decision", "field holding the decision")
@@ -174,6 +200,9 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, "TUNE", "bad-flags", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	}
+	if strings.TrimSpace(*kind) != "" {
+		return runTuneTable(*kind, *dsn, *decisions, stdout, stderr)
 	}
 	if strings.TrimSpace(*decisions) == "" {
 		return refuse(stderr, "TUNE", "bad-arguments", "--decisions is required; refusing to guess")
@@ -205,6 +234,46 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprint(stdout, res.Render())
 	return 0
+}
+
+// runTuneTable is the decisions-table read: it opens the table, reads the rows
+// for one kind, and refuses (exit 2, naming the kind) when none exist -- a
+// floor with no rows behind it is untuned (rule 8). With rows it reports each
+// row's confidence and the outcome that followed, the join rule 8 owes.
+func runTuneTable(kind, dsn, decisions string, stdout, stderr io.Writer) int {
+	source := strings.TrimSpace(dsn)
+	if source == "" {
+		source = strings.TrimSpace(decisions)
+	}
+	store, err := decisionsOpener(source)
+	if err != nil {
+		return refuse(stderr, "TUNE", "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	defer store.Close()
+	rows, err := store.Rows(kind)
+	if err != nil {
+		return refuse(stderr, "TUNE", "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if len(rows) == 0 {
+		return refuse(stderr, "TUNE", "no-rows",
+			fmt.Sprintf("kind %s has no decisions rows; a floor with no rows behind it is untuned, refusing to guess", oneline.Field(kind)))
+	}
+	fmt.Fprintf(stdout, "TUNE kind=%s rows=%d\n", oneline.Field(kind), len(rows))
+	for _, row := range rows {
+		fmt.Fprintf(stdout, "TUNE ROW question_hash=%s answer=%s provider_confidence=%.2f floor=%.2f outcome=%s\n",
+			oneline.Field(row.QuestionHash), oneline.Field(row.Answer), row.ProviderConfidence, row.Floor, orDash(row.Outcome))
+	}
+	fmt.Fprintf(stdout, "TUNE OK kind=%s rows=%d\n", oneline.Field(kind), len(rows))
+	return 0
+}
+
+// orDash renders an empty outcome as "-", so the row's last field is never an
+// empty token.
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return oneline.Field(s)
 }
 
 // parseFloors reads a comma-separated floor list, each between 0 and 1. An

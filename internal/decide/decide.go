@@ -77,9 +77,11 @@ type Usage struct {
 
 // Client talks to one Jev endpoint with one key the caller named.
 type Client struct {
-	baseURL string
-	key     string
-	http    *http.Client
+	baseURL   string
+	key       string
+	http      *http.Client
+	decisions DecisionDriver
+	floor     float64
 }
 
 // New reads the key from the environment variable keyEnv (DefaultKeyEnv when
@@ -195,7 +197,12 @@ func (c *Client) Decide(ctx context.Context, state string, qs map[string]Questio
 	if resp.StatusCode != http.StatusOK {
 		return nil, Usage{}, fmt.Errorf("decide: provider error: status %d", resp.StatusCode)
 	}
-	return decodeResponse(raw)
+	answers, usage, err := decodeResponse(raw)
+	if err != nil {
+		return nil, Usage{}, err
+	}
+	c.record(state, qs, answers)
+	return answers, usage, nil
 }
 
 // newRequest builds the documented POST: the state, the model and the typed
