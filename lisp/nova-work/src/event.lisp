@@ -23,7 +23,11 @@
   '((:transition :to :reason :blocked-by :evidence)   ; SPEC-WORK.md:823
     (:reopen     :reason)                             ; SPEC-WORK.md:887
     (:settle     :disposition :reason :already-closed) ; SPEC-WORK.md:889-892
-    (:revive     :reason))                            ; SPEC-WORK.md:892
+    (:revive     :reason)                             ; SPEC-WORK.md:892
+    (:edit       :title-patch :category-patch :links-patch :private-patch
+                 :version-patch :reason)              ; SPEC-WORK.md:5798
+    (:external   :effect :handle)                     ; SPEC-WORK.md:5652
+    (:terminal   :disposition :reason))               ; cancel/remove, SPEC-WORK.md:5783
   "The ordered field list per kind, for the four kinds slice 1 supports. Any
 other kind is refused rather than serialized on a guessed order.")
 

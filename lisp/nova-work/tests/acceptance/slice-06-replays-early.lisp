@@ -48,7 +48,8 @@
 ;; NEEDS-KERNEL: priority undo treated as history, not value.
 (deftest "priority-undo-is-history-not-value" "docs/SPEC-WORK.md:5418"
     "expected=same-value-set-and-clear-of-absent-slot-are-no-effect"
-  (slice1-refuses-verb :undo))
+  ;; undo is now implemented; redo is still outside the slice.
+  (slice1-refuses-verb :redo))
 
 ;; protocol-version-negotiated-or-refused is now the executable replay in
 ;; ../acceptance.lisp (card 8608).

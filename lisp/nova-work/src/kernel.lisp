@@ -21,7 +21,11 @@
 (in-package #:nova-work)
 
 (defstruct (kernel (:constructor %make-kernel))
-  state journal next-rev fleet)
+  state journal next-rev fleet
+  ;; The applied-request index the undo path reads for an original request's
+  ;; preimage and its reversibility. It is not the dedup index, which stays the
+  ;; journal's (SPEC-WORK.md:2117 forbids an unbounded request-id map).
+  (applied (make-hash-table :test #'equal)))
 
 (defvar *before-apply-hook* nil
   "A test seam. When bound, it is called with the envelope after the journal has
@@ -58,7 +62,14 @@ below the state's revision is refused rather than silently reissued."
     (:state-to-doing :verb :node :by :reason :evidence
      :request :stamp :clock :generation-owner)
     (:event-reopen :verb :node :by :reason
-     :request :stamp :clock :generation-owner)))
+     :request :stamp :clock :generation-owner)
+    (:node-edit :verb :node :by :reason :title-patch :category-patch :links-patch
+                :private-patch :version-patch :request :stamp :clock :generation-owner)
+    (:undo :verb :of :by :request :stamp :clock :generation-owner)
+    (:external-effect :verb :node :by :effect :handle
+                      :request :stamp :clock :generation-owner)
+    (:node-remove :verb :node :by :reason :request :stamp :clock :generation-owner)
+    (:event-cancel :verb :node :by :reason :request :stamp :clock :generation-owner)))
 
 (defparameter *kind-owned-fields* '(:to :blocked-by :evidence :disposition :already-closed)
   "Fields that belong to some event kind of SPEC-WORK.md:823-892. One of these
@@ -274,6 +285,12 @@ whole envelope is applied."
               2 nil))))
 
 (defun %submit (kernel request)
+  (case (getf request :verb)
+    (:node-edit (return-from %submit (%submit-edit kernel request)))
+    (:undo (return-from %submit (%submit-undo kernel request)))
+    (:external-effect (return-from %submit (%submit-external kernel request)))
+    (:node-remove (return-from %submit (%submit-terminal kernel request :node-remove :removed)))
+    (:event-cancel (return-from %submit (%submit-terminal kernel request :event-cancel :cancelled))))
   (let ((verb (getf request :verb)))
     ;; The one verb that configures the fleet (SPEC-WORK.md:3541) is CONFIG,
     ;; not a work-tree transition: it shares `submit`'s answer shape but never
@@ -314,7 +331,8 @@ whole envelope is applied."
             (values nil (format nil "~A FAIL node=~A: rule ~D: ~A"
                                 word (work-event-node requester) rule reason)
                     1 nil))))
-      (let* ((session (unless (eq verb :state-to-doing)
+      (let* ((before-state (node-state (kernel-state kernel) (work-event-node requester)))
+             (session (unless (eq verb :state-to-doing)
                         (%session-event kernel verb requester)))
              ;; Doing stays inside O: one event, no branch change or cascade.
              (events (if session
@@ -345,6 +363,9 @@ whole envelope is applied."
           (let ((candidate (apply-envelope (kernel-state kernel) envelope)))
             (setf (kernel-state kernel) candidate)
             (setf (kernel-next-rev kernel) (1+ (work-event-rev last-event)))
+            (setf (gethash rid (kernel-applied kernel))
+                  (list :verb verb :node (work-event-node requester)
+                        :before-state before-state))
             (values t line 0 envelope)))))))
 
 ;;; The counters, read.

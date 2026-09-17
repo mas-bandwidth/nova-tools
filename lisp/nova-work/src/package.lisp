@@ -80,6 +80,12 @@
    #:node-disposition
    #:roadmap-members
    #:roadmap-open
+   #:node-title
+   #:node-category
+   #:node-links
+   #:node-private
+   #:node-version
+   #:metadata-digest
    #:root-digest
    #:state-canonical-form
    #:reconstruct-state

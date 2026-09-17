@@ -1446,7 +1446,9 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
 ;; own-kind ordered-field envelopes.
 (deftest "new-verbs-have-a-kind-and-a-field-order" "docs/SPEC-WORK.md:5315"
     "expected=own-kind;field-order;:node(:absent);same-bytes"
-  (slice1-refuses-verb :undo))
+  ;; undo now has its own :edit/:external/:terminal kinds (see acceptance.lisp);
+  ;; redo is still outside the slice.
+  (slice1-refuses-verb :redo))
 
 ;; NEEDS-KERNEL: the six verbs above plus per-kind subject lines (nodes=/friend=/model=).
 (deftest "new-verbs-retry-to-one-event" "docs/SPEC-WORK.md:5319"
@@ -1458,16 +1460,8 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
     "expected=offer-before-pause-refused-at-send;held-acceptance-converts-nothing"
   (slice1-refuses-verb :execution-stop))
 
-(deftest "no-effect-mutation-is-journaled" "docs/SPEC-WORK.md:5176"
-    "expected=noop-journaled;changed=0;digest-unchanged;rev+1"
-  ;; NEEDS-KERNEL: a fresh-id no-op mutation and the changed= counter on the OK
-  ;; line. Slice 1's OK line is `<MUTATION> OK id=.. request=.. node=.. rev=..
-  ;; pushed=-` with no changed=, so this asserts the counter is still absent.
-  (let ((k (fresh)))
-    (multiple-value-bind (okp line code) (submit k (close-request :request "noop-probe"))
-      (declare (ignore code))
-      (ok okp "slice-1 transition refused")
-      (ok (not (search "changed=" line)) "the OK line already carries changed=: ~A" line))))
+;; The no-effect receipt (`no-effect-mutation-is-journaled`) now lives with the
+;; node-edit verbs that write it; see tests/acceptance.lisp.
 
 (deftest "no-friend-name-in-the-tool" "docs/SPEC-WORK.md:5209"
     "expected=binary-and-fixtures-carry-no-friend-bench-repo-or-house-name"
