@@ -1517,6 +1517,7 @@
     #:journal-chain-segments
     #:rotate-journal
     #:journal-append-record
+    #:journal-segment-by-path
     #:savepoint-cut-reachable-p
     #:export-journal-bundle
     #:rule-2-check
@@ -1529,6 +1530,7 @@
     #:savepoint-retained-replies
     #:savepoint-write
     #:savepoint-list
+    #:savepoint-compare
     #:savepoint-verify
     #:savepoint-restore
     #:make-savepoint-load
