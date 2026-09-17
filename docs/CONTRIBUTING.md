@@ -137,6 +137,13 @@ full suite, and a new push to a pull request cancels the in-progress run.
 `ci-ok` aggregates the self-hosted matrix on a pull request and the hosted
 matrix on main too, so the ruleset check never changes shape.
 
+The merge queue's group commit is the exception that makes the gate honest: it
+runs the full hosted legs — no `-short` — for the packages the group changes, on
+`ubuntu-latest`, `macos-latest` and `windows-latest`, so a package with
+hosted-only tests cannot land on the `-short` PR leg's result alone (Rule T,
+pit stop 4, 2026-09-16). The package selection is what keeps it inside the
+two-minute budget; the whole-tree hosted suite still runs on push and nightly.
+
 The built binary is smoke-tested for `nova-check nocode` and for the specific
 properties that job names — not for all of `nocode`, and four of those steps are
 skipped on Windows, the platform those steps most needed to cover. Everything
