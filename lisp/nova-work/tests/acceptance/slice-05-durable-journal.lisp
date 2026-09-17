@@ -1291,6 +1291,8 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
                                    verb))
             (check-equal 1 (length (state-history (kernel-state successor)))
                          (format nil "~A successor applied a second event" verb))))))))
+;; no-dispatch-slips-past-a-hold now lives in slice-09-replays-holds.lisp, with
+;; the pause/hold and dispatch gate it needed.
 
 ;; no-dispatch-slips-past-a-hold now lives in slice-09-replays-holds.lisp, with
 ;; the pause/hold and dispatch gate it needed.

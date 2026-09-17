@@ -31,6 +31,7 @@
   ;; preimage and its reversibility. It is not the dedup index, which stays the
   ;; journal's (SPEC-WORK.md:2117 forbids an unbounded request-id map).
   (applied (make-hash-table :test #'equal))
+  state journal next-rev
   ;; The execution-control state: attempts, offers, durable holds and their
   ;; captures. It moves no work revision and writes no transition; see
   ;; control.lisp and SPEC-WORK.md:3921-3980.
