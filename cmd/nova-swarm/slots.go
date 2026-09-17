@@ -115,7 +115,10 @@ func cmdSlotsList(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	for _, l := range leases {
-		fmt.Fprintln(stdout, l.Line(now))
+		fmt.Fprintf(stdout, "SLOT %s owner=%s pid=%d label=%s until=%s state=%s\n",
+			oneline.Field(l.ID), oneline.Field(l.Owner), l.Pid,
+			oneline.Field(dash(l.Label)), oneline.Field(l.Until.UTC().Format(time.RFC3339)),
+			oneline.Field(l.State(now)))
 	}
 	return 0
 }
