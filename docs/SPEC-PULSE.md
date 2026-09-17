@@ -416,6 +416,8 @@ STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
 STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
 STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
+STATUS STREAM <name> opened=<n> closed=<n> ratio=<x.xx>
+STATUS EXPANDING stream=<name> hours=<n>
 STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
 STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
 STATUS TOOLS merged_since_adoption=<n> <names>
@@ -440,6 +442,17 @@ properly or the engineering practice is lax, and the coordinator names which, on
 before another implementation card goes out. The same verdict belongs on nova-work `check`,
 from the journal, under #500. Replays: `status-expanding-after-two-hours-above-one`,
 `status-contraction-window-and-threshold-stay-visible`.
+
+**The contraction ratio is per stream, every tick.** A stream is the grouping the queue already
+has (a queue subdirectory) or, failing that, the card label's prefix before the first `-`:
+`card-8381.md` is stream `card`. `run` appends one `TICKS` line per tick per stream —
+`at=<RFC3339> stream=<name> opened=<n> closed=<n>` — where `opened` is the cards cut/refilled
+that tick and `closed` the cards done; a bench whose `run` does not write it yet gets it written
+here. `status` folds the rolling two-hour window into `<queue>/CONVERGENCE.tsv` and prints one
+`STATUS STREAM <name> opened=<n> closed=<n> ratio=<x.xx>` per stream, the ratio being the window's
+opened over closed. When a stream's ratio has been above 1 for every tick in two hours, `status`
+prints `STATUS EXPANDING stream=<name> hours=<n>` and exits 2 — the alarm is a state the
+coordinator must act on, like `PULSE UNDER-WIDTH`.
 
 ## Progress
 
