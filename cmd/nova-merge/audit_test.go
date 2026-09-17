@@ -51,7 +51,11 @@ var mergeAudit = audit.Config{
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
-	Escapers: []string{"buildinfo.Line"},
+	//
+	// classifyLine is `classify`'s whole line: every value from outside -- the kind,
+	// rerun, park and the raw answer -- is rendered through oneline.Field inside it, and
+	// the rest are the numeric run id, pull request, confidence and floor.
+	Escapers: []string{"buildinfo.Line", "classifyLine"},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
@@ -84,6 +88,13 @@ var mergeAudit = audit.Config{
 		// internal/decide is the typed-decision route: it builds one JSON request and
 		// parses the answers, and it never prints. Its one line is rendered back here
 		// through oneline/decide.Line, whose every field is escaped.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// classify.go calls the typed-decision client with a context deadline. context
+		// holds no writer: it carries only the deadline that bounds the provider call.
+		`"context"`,
+		// classify.go asks the one typed decision through internal/decide; the package
+		// holds no writer this binary does not hand it, and its answer is rendered through
+		// classifyLine, whose every outside value is oneline.Field-escaped.
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 	},
 	MinClassified: 60,
