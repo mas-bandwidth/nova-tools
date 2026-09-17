@@ -7,10 +7,8 @@
     "expected=one-note-cannot-cancel-two-live-attempts"
   (slice1-refuses-verb :event))
 
-;; NEEDS-KERNEL: long operations returning an id the CLI can query after exit.
-(deftest "operation-survives-the-client" "docs/SPEC-WORK.md:5183"
-    "expected=operation-id-retrievable-after-client-exit"
-  (slice1-refuses-verb :import))
+;; operation-survives-the-client is now the executable replay in
+;; ../acceptance.lisp (card 8608).
 
 ;; NEEDS-KERNEL: recovery replay into bounded overlay pages and their rebuild.
 (deftest "overlay-is-bounded-and-rebuilt" "docs/SPEC-WORK.md:5553"
@@ -27,10 +25,8 @@
     "expected=shown=0;pages=<n>;whole-history-never-scanned"
   (slice1-refuses-verb :query))
 
-;; NEEDS-KERNEL: the session transport's correlated reply frames.
-(deftest "pipeline-replies-are-correlated" "docs/SPEC-WORK.md:5165"
-    "expected=out-of-order-fragmented-replies-reach-only-their-request"
-  (slice1-refuses-verb :pipeline))
+;; pipeline-replies-are-correlated is now the executable replay in
+;; ../acceptance.lisp (card 8608).
 
 ;; NEEDS-KERNEL: policy/trial manifests surviving export/import/restart/replay.
 (deftest "policy-round-trip-and-replay" "docs/SPEC-WORK.md:4370"
@@ -62,10 +58,8 @@
     "expected=same-value-set-and-clear-of-absent-slot-are-no-effect"
   (slice1-refuses-verb :undo))
 
-;; NEEDS-KERNEL: the wire handshake refusing an unsupported version before admission.
-(deftest "protocol-version-negotiated-or-refused" "docs/SPEC-WORK.md:5162"
-    "expected=unsupported-version-refused-with-list-before-handshake"
-  (slice1-refuses-verb :connect))
+;; protocol-version-negotiated-or-refused is now the executable replay in
+;; ../acceptance.lisp (card 8608).
 
 ;;; replays of docs/SPEC-WORK.md lines 3600-end, part 6 of 8
 ;;; ------------------------------------------------------------------

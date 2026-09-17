@@ -262,7 +262,55 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+   ;; wire codec, protocol handshake, pipelined correlation, disconnect
+   ;; reconciliation and the long-operation registry (nova-tools card 8608)
+   #:wire-encode-integer
+   #:wire-decode-value
+   #:wire-number-token-p
+   #:wire-object-decode
+   #:wire-field
+   #:make-protocol-session
+   #:protocol-session-p
+   #:protocol-session-supported
+   #:protocol-session-version
+   #:protocol-session-handshaken-p
+   #:protocol-session-closed-p
+   #:protocol-session-max-frame-bytes
+   #:protocol-hello
+   #:protocol-admit
+   #:protocol-frame-ok-p
+   #:protocol-framed-error
+   #:make-wire-connection
+   #:wire-connection-p
+   #:wire-connection-protocol
+   #:wire-connection-outstanding
+   #:wire-connection-settled
+   #:wire-connection-buffer
+   #:wire-connection-closed-p
+   #:wire-close
+   #:wire-pipeline-request
+   #:wire-feed
+   #:wire-dispatch
+   #:independent-batch-results
+   #:atomic-batch-validate
+   #:make-wire-session
+   #:wire-session-p
+   #:wire-session-kernel
+   #:wire-session-pushed
+   #:wire-session-client-alive-p
+   #:wire-session-mutate
+   #:make-operation-registry
+   #:operation-registry-p
+   #:operation-registry-operations
+   #:operation-registry-journal
+   #:operation-accept
+   #:operation-state
+   #:operation-complete
+   #:operation-result
+   #:operation-wait
+   #:operation-client-exit
+   #:operation-journal-length))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
