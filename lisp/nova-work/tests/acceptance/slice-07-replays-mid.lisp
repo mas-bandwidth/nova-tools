@@ -46,7 +46,7 @@
 ;;; (SPEC-WORK.md:3129-3154; replays at :5755, :5849 and :5853).
 
 (deftest "render-artifact-is-bounded" "docs/SPEC-WORK.md:5398"
-    "expected=interleaved-replies-and-chat-artifact-bounded;oversize-refused-never-partial"
+    "expected=interleaved-replies-and-chat-artifact-bounded;oversize-refused-never-partial;check-receipt-and-no-write;marker-refusals"
   ;; ordinary replies and a --chat artifact interleaved in one correlated batch,
   ;; request ids, byte length and hash verified.
   (let* ((body "# Title")
@@ -69,75 +69,169 @@
   (let ((corrupt (list :encoding "utf8" :body "abc" :sha256 "deadbeef" :bytes 3)))
     (ok (not (artifact-hash-ok-p corrupt)) "a corrupt artifact hash fails verification")
     (ok (not (artifact-valid-p corrupt)) "a corrupt artifact is not valid"))
-  ;; --check creates no target, no receipt claiming a write, no commit, no push.
-  (let* ((session (make-render-session
+  ;; --check reads the stored target, captures the marker offsets and both
+  ;; hashes, and writes nothing; the receipt records the target identity and the
+  ;; render revision.
+  (let* ((path "/bench/acme/x.md")
+         (content "(START)old(END)")
+         (session (make-render-session
                    :permissions '((:root-a :file :chat))
-                   :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))))
-         (projection (make-render-projection :repo "acme/work" :root :root-a
-                                             :target "/bench/acme/x.md"))
-         (r (render-file session projection :path "/bench/acme/x.md" :mode :check
-                         :markers '(0 4) :current-hash "h1" :new-hash "h1")))
-    (ok (render-result-ok r) "a --check render succeeds")
+                   :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))
+                   :files (list (cons path content))))
+         (projection (make-render-projection :id "p1" :repo "acme/work" :root :root-a
+                                             :path "x.md"
+                                             :start "(START)" :end "(END)"))
+         (r (render-check session projection :body "NEW" :revision 3)))
+    (ok (render-result-ok r) "a --check render succeeds: ~A" (render-result-line r))
     (check-equal nil (render-result-wrote r) "--check writes nothing")
-    (check-equal nil (render-result-artifact r) "--check carries no artifact")))
+    (check-equal nil (render-result-artifact r) "--check carries no artifact")
+    (let ((receipt (render-result-receipt r)))
+      (check-equal path (getf receipt :target) "the receipt names the target identity")
+      (check-equal (sha256-hex content) (getf receipt :old)
+                   "the receipt records the old hash")
+      (check-equal (sha256-hex "(START)NEW(END)") (getf receipt :new)
+                   "the receipt records the new hash")
+      (check-equal 3 (getf receipt :revision) "the receipt records the render revision")
+      (check-equal '(7 10) (getf receipt :offsets) "the offsets bound the marker region"))
+    (check-equal content (cdr (assoc path (render-session-files session) :test #'equal))
+                 "--check left the target untouched")
+    ;; a missing, duplicated or reversed marker pair is refused, writing nothing.
+    (dolist (case (list (list "no markers here" "(START)" "(END)")
+                        (list "(START)a(START)b(END)" "(START)" "(END)")
+                        (list "(END)a(START)" "(START)" "(END)")))
+      (let ((s (make-render-session
+                :permissions '((:root-a :file :chat))
+                :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))
+                :files (list (cons path (first case)))))
+            (p (make-render-projection :id "p1" :repo "acme/work" :root :root-a
+                                       :path "x.md"
+                                       :start (second case) :end (third case))))
+        (let ((bad (render-file s p :mode :file :body "NEW")))
+          (ok (not (render-result-ok bad)) "a bad marker pair is refused")
+          (check-equal (first case) (cdr (assoc path (render-session-files s) :test #'equal))
+                       "a refused marker pair writes nothing"))))))
 
 (deftest "render-refuses-a-target-outside-its-roots" "docs/SPEC-WORK.md:5304"
-    "expected=target-outside-permitted-roots-refused-not-guessed"
-  (let* ((session (make-render-session
+    "expected=target-outside-permitted-roots-refused-not-guessed;in-root-writes;refusal-writes-nothing;moved-hash"
+  (let* ((path "/bench/acme/docs/SPEC.md")
+         (content "(START)old(END)")
+         (session (make-render-session
                    :permissions '((:root-a :file :chat))
-                   :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))))
-         (projection (make-render-projection :repo "acme/work" :root :root-a
-                                             :target "/bench/acme/docs/SPEC.md")))
-    ;; a target inside the mapping's root resolves and writes.
-    (let ((r (render-file session projection :path "/bench/acme/docs/SPEC.md"
-                          :mode :file :markers '(0 10)
-                          :current-hash "h1" :new-hash "h1")))
+                   :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))
+                   :files (list (cons path content))))
+         (projection (make-render-projection :id "p1" :repo "acme/work" :root :root-a
+                                             :path "docs/SPEC.md"
+                                             :start "(START)" :end "(END)")))
+    ;; a target inside the mapping's root resolves and writes, preserving every
+    ;; byte outside the marker region.
+    (let ((r (render-file session projection :mode :file :body "NEW" :revision 5)))
       (ok (render-result-ok r) "an in-root target resolves: ~A" (render-result-line r))
-      (check-equal t (render-result-wrote r) "a --file render writes"))
-    ;; a target outside every configured root is refused, never guessed.
-    (let ((r (render-file session projection :path "/bench/elsewhere/secret.md"
-                          :mode :file :markers '(0 10))))
-      (ok (not (render-result-ok r)) "an out-of-root target is refused")
+      (check-equal t (render-result-wrote r) "a --file render writes")
+      (check-equal "(START)NEW(END)"
+                   (cdr (assoc path (render-session-files session) :test #'equal))
+                   "the marker region was replaced and every other byte kept"))
+    ;; a target outside every configured root is refused, never guessed, and the
+    ;; file it names is left untouched.
+    (let* ((secret "/bench/elsewhere/secret.md")
+           (files (list (cons secret "(START)x(END)")))
+           (s2 (make-render-session
+                :permissions '((:root-a :file :chat))
+                :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))
+                :files files))
+           (p2 (make-render-projection :id "p2" :repo "acme/work" :root :root-a
+                                       :path "../elsewhere/secret.md"
+                                       :start "(START)" :end "(END)")))
+      (let ((r (render-file s2 p2 :mode :file :body "NEW")))
+        (ok (not (render-result-ok r)) "an out-of-root target is refused")
+        (ok (search "outside its root" (render-result-reason r))
+            "the refusal names the root boundary: ~A" (render-result-reason r))
+        (check-equal "(START)x(END)" (cdr (assoc secret files :test #'equal))
+                     "a refused render writes nothing")))
+    ;; an absolute path is not a clean relative path and is refused before any
+    ;; read.
+    (let ((r (render-file session
+                          (make-render-projection :id "p3" :repo "acme/work" :root :root-a
+                                                  :path "/bench/acme/docs/SPEC.md"
+                                                  :start "(START)" :end "(END)")
+                          :mode :file :body "NEW")))
+      (ok (not (render-result-ok r)) "an absolute target path is refused")
       (ok (search "outside its root" (render-result-reason r))
-          "the refusal names the root boundary: ~A" (render-result-reason r)))))
+          "the refusal names the root boundary"))
+    ;; a target whose bytes moved under the renderer refuses the hash recheck
+    ;; and writes nothing.
+    (let* ((moved (list (cons path content)))
+           (sm (make-render-session
+                :permissions '((:root-a :file :chat))
+                :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))
+                :files moved))
+           (pm (make-render-projection :id "p4" :repo "acme/work" :root :root-a
+                                       :path "docs/SPEC.md"
+                                       :start "(START)" :end "(END)")))
+      (let ((r (render-file sm pm :mode :file :body "NEW" :expected-hash "stale")))
+        (ok (not (render-result-ok r)) "a target whose hash moved refuses")
+        (ok (search "hash moved" (render-result-reason r))
+            "the refusal names the moved hash")
+        (check-equal content (cdr (assoc path moved :test #'equal))
+                     "a moved-hash refusal writes nothing")))))
 
 (deftest "a-root-id-grants-nothing" "docs/SPEC-WORK.md:5853"
-    "expected=no-mapping-file-refuses;chat-renders;escape-refused"
+    "expected=no-mapping-file-refuses;chat-renders;permission-needed;escape-refused;identity-refused;lock-advisory"
   ;; a stored permitted root with no --render-root mapping refuses file mode
   ;; while --chat renders.
   (let ((session (make-render-session :permissions '((:root-a :file :chat))
-                                      :mappings '())))
+                                      :mappings '()
+                                      :files '())))
     (let ((r (render-file session
-                          (make-render-projection :repo "acme/work" :root :root-a
-                                                  :target "/bench/acme/x.md")
-                          :path "/bench/acme/x.md" :mode :file :markers '(0 4))))
+                          (make-render-projection :id "p1" :repo "acme/work" :root :root-a
+                                                  :path "x.md"
+                                                  :start "(START)" :end "(END)")
+                          :mode :file :body "NEW")))
       (ok (not (render-result-ok r)) "no mapping: file mode refuses")
       (ok (search "no mapping" (render-result-reason r))
           "the refusal names the missing mapping"))
     (let ((r (render-chat "# Title")))
       (ok (render-result-ok r) "no mapping: --chat still renders")
       (ok (artifact-valid-p (render-result-artifact r)) "the chat artifact verifies")))
-  (let* ((session (make-render-session
+  ;; the stored permission is required too; a mapping alone grants nothing.
+  (let ((session (make-render-session
+                  :permissions '((:root-a :chat))
+                  :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))
+                  :files '(("/bench/acme/x.md" . "(START)old(END)")))))
+    (let ((r (render-file session
+                          (make-render-projection :id "p1" :repo "acme/work" :root :root-a
+                                                  :path "x.md" :start "(START)" :end "(END)")
+                          :mode :file :body "NEW")))
+      (ok (not (render-result-ok r)) "a mapping without the stored permission refuses")
+      (ok (search "no mapping" (render-result-reason r))
+          "the refusal names the missing permission")))
+  (let* ((path "/bench/acme/x.md")
+         (content "(START)old(END)")
+         (session (make-render-session
                    :permissions '((:root-a :file :chat))
-                   :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))))
-         (projection (make-render-projection :repo "acme/work" :root :root-a
-                                             :target "/bench/acme/x.md")))
+                   :mappings '((:root-a :repo "acme/work" :directory "/bench/acme"))
+                   :files (list (cons path content)))))
     ;; an escaping path refuses.
-    (let ((r (render-file session projection :path "/bench/acme/../other/x.md"
-                          :mode :file :markers '(0 4))))
+    (let ((r (render-file session
+                          (make-render-projection :id "p1" :repo "acme/work" :root :root-a
+                                                  :path "../other/x.md"
+                                                  :start "(START)" :end "(END)")
+                          :mode :file :body "NEW")))
       (ok (not (render-result-ok r)) "an escaping path refuses"))
     ;; a symlink escape refuses.
-    (let ((r (render-file session projection :path "/bench/acme/link/x.md" :mode :file
-                          :markers '(0 4)
+    (let ((r (render-file session
+                          (make-render-projection :id "p1" :repo "acme/work" :root :root-a
+                                                  :path "link/x.md"
+                                                  :start "(START)" :end "(END)")
+                          :mode :file :body "NEW"
                           :symlinks '(("/bench/acme/link" . "/bench/other")))))
       (ok (not (render-result-ok r)) "a symlink escape refuses")
       (ok (search "symlink" (render-result-reason r))
           "the refusal names the symlink escape"))
     ;; a target identity other than the mapping's refuses.
     (let ((r (render-file session
-                          (make-render-projection :repo "other/repo" :root :root-a
-                                                  :target "/bench/acme/x.md")
-                          :path "/bench/acme/x.md" :mode :file :markers '(0 4))))
+                          (make-render-projection :id "p1" :repo "other/repo" :root :root-a
+                                                  :path "x.md" :start "(START)" :end "(END)")
+                          :mode :file :body "NEW")))
       (ok (not (render-result-ok r)) "a mismatched target identity refuses")
       (ok (search "target identity" (render-result-reason r))
           "the refusal names the target identity")))
