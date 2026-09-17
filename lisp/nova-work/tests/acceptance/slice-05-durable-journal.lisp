@@ -318,37 +318,11 @@
 ;;; NEEDS-KERNEL, and counted but not yet run.
 ;;; ------------------------------------------------------------------
 
-;;; NEEDS-KERNEL: move-updates-every-roadmap-scope (SPEC-WORK.md:2891) — the
-;;;   `move` verb: a row referenced by two roadmaps outside both parent chains
-;;;   and one unrelated roadmap advances both referencing scope revisions in
-;;;   the envelope, leaves the unrelated one, a failed acceptance moves none,
-;;;   historical renders keep the old captured scope, and an intervening
-;;;   affected-roadmap mutation makes undo conflict.
-
-;;; NEEDS-KERNEL: axisless-history (SPEC-WORK.md:2948) — `roadmap row`/axis:
-;;;   two ordered rows added, one finished, the state exported and loaded, the
-;;;   view reopened past the default window: both rows and their evidence
-;;;   present, the denominator not reduced by completion; a row retired records
-;;;   a scope movement, keeps its node, and the prior view reconstructs at its
-;;;   captured revision.
-
-;;; NEEDS-KERNEL: matrix-retirement (SPEC-WORK.md:2948) — `axis --remove`: of a
-;;;   first-axis row then of another axis's member, only the selected
-;;;   coordinates retired and recoverable, no task cancelled, an unknown member
-;;;   refused, a layout change on a populated roadmap refused "layout
-;;;   populated" with no partial write, and a matrix never flattened without
-;;;   explicit selections.
-
-;;; NEEDS-KERNEL: configure-no-effect-and-undo-conflict (SPEC-WORK.md:2949) —
-;;;   `roadmap configure`: an equal-value configure, its reply lost, a later
-;;;   edit, then the retry: the original receipt returned and the later value
-;;;   kept; undo restores an ordered preimage only while its guards match.
-
-;;; NEEDS-KERNEL: completed-view-mutation (SPEC-WORK.md:2949) — metadata,
-;;;   projection and render on a settled roadmap revive nothing; an outstanding
-;;;   member added applies the atomic revival rule so no settled container
-;;;   silently holds open required work; counts and indexes are checked by the
-;;;   reference fold after each step.
+;;; The roadmap replays promised by SPEC-WORK.md prose :2891 / :2948 / :2949 —
+;;; move-updates-every-roadmap-scope, axisless-history, matrix-retirement,
+;;; configure-no-effect-and-undo-conflict and completed-view-mutation — are
+;;; real deftests in tests/acceptance/slice-09-replays-roadmap.lisp over
+;;; src/replays-8621.lisp and src/roadmap.lisp (nova-tools #362).
 ;;; NEEDS-KERNEL: move-refuses-by-name (SPEC-WORK.md:2890) — the `move` verb:
 ;;;   a wrong --from, a destination inside the subtree, a root container, a
 ;;;   repository root, a shared container, another repository, or a roadmap as
@@ -703,9 +677,8 @@
 ;;; (nova-tools #362) --- launch/cancel dispositions with no double launch and no
 ;;; false cancellation success.
 
-;; NEEDS-KERNEL: roadmap row ordering and completion; no roadmap verb exists yet.
-;; axisless-history (SPEC-WORK.md:5383) --- two ordered rows, one finished, exported/loaded and
-;; reopened past the window: both rows and evidence present, denominator not reduced by completion.
+;; axisless-history now lives in tests/acceptance/slice-09-replays-roadmap.lisp
+;; (nova-tools #362).
 
 ;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) now runs as the
 ;; real deftest in tests/replays-8640.lisp.
@@ -1068,15 +1041,8 @@ asserts does not exist in slice 1."
 ;; materialized-working-set now lives in tests/replays-8646.lisp over the
 ;; materialized W index of src/replays-8646.lisp (nova-tools #362).
 
-;; ------------------------------------------------------------------
-;; matrix-retirement   docs/SPEC-WORK.md:5387
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: roadmap axes (only selected coordinates retired and
-;; recoverable; no task cancelled; layout change on populated roadmap refused).
-;;(deftest "matrix-retirement" "docs/SPEC-WORK.md:5387"
-;;    "selected=retired,recoverable=yes,task-cancelled=0"
-;;  ;; `axis --remove` of a first-axis row and then of another axis's member:
-;;  ;; only the selected coordinates retired and recoverable, no task cancelled.)
+;; matrix-retirement now lives in tests/acceptance/slice-09-replays-roadmap.lisp
+;; (nova-tools #362).
 ;; merged-is-not-distributed   docs/SPEC-WORK.md:5093
 ;; ------------------------------------------------------------------
 ;; NEEDS-KERNEL: release/distribution state (a fix in C with `landed=<sha>` and
@@ -1276,16 +1242,8 @@ asserts does not exist in slice 1."
       (check-equal after (node-children (kernel-state k) "root/f2")
                    "the refused undo guessed no position"))))
 
-;; ------------------------------------------------------------------
-;; move-updates-every-roadmap-scope   docs/SPEC-WORK.md:5375
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: roadmap scope revisions (a row referenced by two roadmaps
-;; advances both referencing scopes, unrelated scope stays).
-;;(deftest "move-updates-every-roadmap-scope" "docs/SPEC-WORK.md:5375"
-;;    "referencing-scopes=advance,unrelated=stays"
-;;  ;; a row referenced by two roadmaps outside both parent chains and one
-;;  ;; unrelated roadmap: both referencing scope revisions advance, the
-;;  ;; unrelated one stays.)
+;; move-updates-every-roadmap-scope now lives in
+;; tests/acceptance/slice-09-replays-roadmap.lisp (nova-tools #362).
 ;; moving-source   docs/SPEC-WORK.md:5585
 ;; ------------------------------------------------------------------
 ;; NEEDS-KERNEL: provider intake adapter (a body edited / comment added and
