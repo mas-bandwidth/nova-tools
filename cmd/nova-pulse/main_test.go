@@ -37,7 +37,7 @@ func TestHelpListsOnlyBuiltVerbs(t *testing.T) {
 		t.Fatalf("help exit = %d, stderr=%s", code, errb.String())
 	}
 	usage := out.String()
-	shipped := map[string]bool{"pool": true, "launch": true, "harvest": true, "manager": true, "cut": true}
+	shipped := map[string]bool{"pool": true, "launch": true, "harvest": true, "manager": true, "cut": true, "progress": true}
 	unshipped := map[string]bool{"width": true}
 	for _, line := range strings.Split(usage, "\n") {
 		verb := strings.Fields(line)

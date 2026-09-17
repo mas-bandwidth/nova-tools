@@ -25,6 +25,7 @@ nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeout <s>] [--max <n>]
+nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--max <n>]
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>]
@@ -161,6 +162,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdManager(rest, stdout, stderr)
 	case "status":
 		return cmdStatus(rest, stdout, stderr)
+	case "progress":
+		return cmdProgress(rest, stdout, stderr)
 	case "gate":
 		return cmdGate(rest, stdout, stderr)
 	case "run":
@@ -397,6 +400,29 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 		Timeout: time.Duration(*timeout) * time.Second,
 		Stdout:  stdout,
 		Stderr:  stderr,
+	})
+}
+
+func cmdProgress(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("progress")
+	queue := f.fs.String("queue", "", "")
+	roots := f.fs.String("roots", "", "")
+	day := f.fs.String("day", "", "")
+
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*queue, "queue", "the queue directory holding pending, launched, done and the POLICY")
+	f.want(*roots, "roots", "the swarm roots whose usage.tsv is read, comma separated")
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.Progress(pulse.ProgressInput{
+		Queue:  *queue,
+		Roots:  *roots,
+		Day:    *day,
+		Stdout: stdout,
+		Stderr: stderr,
 	})
 }
 

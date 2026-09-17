@@ -15,6 +15,7 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
+nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help`
@@ -45,6 +46,8 @@ func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 		return harvestVerb(args, out, errs)
 	case "status":
 		return statusVerb(args, out, errs)
+	case "progress":
+		return progressVerb(args, out, errs)
 	}
 	return refusal(errs, "PULSE", fmt.Errorf("unknown verb %s (run %s help)", verb, name))
 }
@@ -113,5 +116,31 @@ func statusVerb(args []string, out, errs io.Writer) int {
 	return Status(StatusInput{
 		Queue: o.queue, Roots: o.roots, Day: o.day, Max: o.max,
 		Timeout: time.Duration(o.timeout) * time.Second, Stdout: out, Stderr: errs,
+	})
+}
+
+func progressVerb(args []string, out, errs io.Writer) int {
+	o := struct {
+		queue, roots, day string
+	}{}
+	f := flag.NewFlagSet("progress", flag.ContinueOnError)
+	f.SetOutput(io.Discard)
+	f.StringVar(&o.queue, "queue", "", "the queue directory")
+	f.StringVar(&o.roots, "roots", "", "the benches to measure, comma separated")
+	f.StringVar(&o.day, "day", "", "the day the window starts at, YYYY-MM-DD")
+	if err := f.Parse(args); err != nil {
+		return refusal(errs, "PROGRESS", fmt.Errorf("%s (run nova-pulse help)", err))
+	}
+	if len(f.Args()) != 0 {
+		return refusal(errs, "PROGRESS", fmt.Errorf("progress takes no positional arguments (run nova-pulse help)"))
+	}
+	if o.queue == "" {
+		return refusal(errs, "PROGRESS", fmt.Errorf("missing --queue; refusing to guess (supply the queue directory)"))
+	}
+	if o.roots == "" {
+		return refusal(errs, "PROGRESS", fmt.Errorf("missing --roots; refusing to guess (supply the benches, comma separated)"))
+	}
+	return Progress(ProgressInput{
+		Queue: o.queue, Roots: o.roots, Day: o.day, Stdout: out, Stderr: errs,
 	})
 }
