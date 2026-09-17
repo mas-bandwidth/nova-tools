@@ -596,3 +596,28 @@ POST SHOW OK hash=<sha256> channel=ghost bytes=42 drafts=./drafts
 $ nova-post send --draft <sha256> --approval glenn-0123456789ab --drafts ./drafts --bus ./bus --allowlist ./allowlist
 POST OK channel=ghost id=123 url=https://example.com/p/123 hash=<sha256> approval=glenn-0123456789ab bytes=42
 ```
+
+## nova-work
+
+No fixture: the graph file is created by the run itself under `--graph`, and every
+line below is local — plain JSON nodes and `:deps` edges, no Redis, no remote, no
+network. A `:deps` cycle is refused at exit 2 before anything is written.
+
+### First run
+
+```text
+$ nova-work dependencies --graph ./deps.json --node b
+DEPENDENCIES OK nodes=1 edges=0
+
+$ nova-work dependencies --graph ./deps.json --node a --needs b
+DEPENDENCIES OK nodes=2 edges=1
+
+$ nova-work ready --node a --graph ./deps.json
+READY node=a ready=false blocker=b state=open resolver="nova-merge queue"
+
+$ nova-work ready --node b --graph ./deps.json
+READY node=b ready=true
+
+$ nova-work dependencies --graph ./deps.json --node b --needs a
+nova-work dependencies: rule 3: :deps edges contain a cycle: b -> a -> b; run: nova-work help
+```
