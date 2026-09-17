@@ -1249,7 +1249,29 @@
     #:record-unresolved-p
     #:reconcile-inventory
     #:cost-breakdown
-    #:subscription-covers-cash-p))
+    #:subscription-covers-cash-p
+    ;; replays-8651 (undo-redo, unknown-price-is-not-zero, unrelated-receipts)
+    #:resolved-price
+    #:reversible-verb-p
+    #:edit-entry
+    #:make-edit-entry
+    #:edit-entry-id
+    #:edit-entry-verb
+    #:edit-entry-preimage
+    #:edit-entry-postimage
+    #:history-with-undo
+    #:redo-applies-p
+    #:conflict-is-explicit
+    #:proof-scope
+    #:make-proof-scope
+    #:proof-scope-paths
+    #:proof-scope-criteria
+    #:receipt
+    #:make-receipt
+    #:receipt-id
+    #:receipt-scope
+    #:change-within-scope-p
+    #:unrelated-receipts-stay-reusable))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
