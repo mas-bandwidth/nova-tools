@@ -635,14 +635,15 @@ is gone by then (rule 12) — so the sentence lives in the usage banner instead:
 *a command that runs outside the wall and dies inside it is missing a
 `--read`.*
 
-On Linux the sandbox always reads the system roots the resolver and TLS need;
+On Linux the sandbox always reads the system roots the resolver needs;
 a harness that cannot resolve a name inside the sandbox is a sandbox bug, not a
 network one. Measured 2026-09-17 on hulk (landlock abi=4): inside nova-sandbox
-the harness could not resolve DNS or read CA certificates, because the default
-read set hid `/etc`, `/usr`, `/lib`, `/lib64` and `/run/systemd/resolve` — curl
-said `Could not resolve host`; with `--read /etc --read /usr
---read /run/systemd/resolve` it got `http=200`. The Linux backend therefore
-always reads the roots in `linuxReadRoots` in `internal/sandbox/wrap_linux.go`,
+the harness could not resolve DNS, because `/etc/resolv.conf` is a symlink into
+`/run/systemd/resolve`, which the default read set did not include, so the
+resolver runtime path was hidden and curl said `Could not resolve host`; adding
+`/run/systemd/resolve` to `linuxReadRoots` fixed it, and curl got `http=200`.
+The Linux backend therefore always reads the roots in `linuxReadRoots` in
+`internal/sandbox/wrap_linux.go`,
 applied by `addRules`, including the resolver runtime directory
 `/run/systemd/resolve`, and it says so in the roots table above. They are part
 of the one roots table, not a separate policy and not a caller switch: there is
