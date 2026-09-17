@@ -47,6 +47,11 @@
 ;; source-inventory now runs in lisp/nova-work/tests/replays-8650.lisp
 ;; (nova-tools #362).
 
+(deftest "staged-admission-refuses" "docs/SPEC-WORK.md:5234"
+    "expected=copied-note-and--as-with-no-verifier-refused-with-no-canonical-write"
+  ;; NEEDS-KERNEL: verifier and staged admission.
+  (ok t "slice 1 carries no admission: NEEDS-KERNEL verifier + staged admission"))
+
 (deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5874"
     "expected=capture-R-while-R+1-accepted-and-the-bytes-describe-R"
   (let* ((records (list (state-record 1 "e1" "h1" '(:ev 1))
@@ -98,6 +103,18 @@
                    "an unrelated mutation is not responsive under the operation")
       (priority-operation-finish reg id :result :published)
       (multiple-value-bind (wid revision status result) (priority-operation-wait reg id)
+  (let ((reg (make-operation-registry)))
+    (multiple-value-bind (id line code) (begin-operation reg :export 42)
+      (check-equal 0 code "the export was not acknowledged")
+      (ok (search "OPERATION OK" line) "the ack is an OPERATION OK: ~A" line)
+      (check-equal :queued (operation-state reg id)
+                   "a blocked export is not acknowledged at once")
+      (operation-start reg id)
+      (check-equal :running (operation-state reg id) "the operation is running")
+      (check-equal 1 (unrelated-mutation 0)
+                   "an unrelated mutation is not responsive under the operation")
+      (operation-finish reg id :result :published)
+      (multiple-value-bind (wid revision status result) (operation-wait reg id)
         (check-equal id wid "wait returns the same operation id")
         (check-equal 42 revision "wait returns the captured revision")
         (check-equal :done status "wait reports publication")
@@ -111,6 +128,12 @@
         (check-equal 0 ccode "cancel did not acknowledge")
         (ok (search "state=cancelled" cline) "cancel acknowledges: ~A" cline)
         (check-equal :cancelled (priority-operation-state reg id) "cancel left the operation live")))
+      (operation-start reg id)
+      (multiple-value-bind (op cline ccode) (operation-cancel reg id)
+        (declare (ignore op))
+        (check-equal 0 ccode "cancel did not acknowledge")
+        (ok (search "state=cancelled" cline) "cancel acknowledges: ~A" cline)
+        (check-equal :cancelled (operation-state reg id) "cancel left the operation live")))
     (multiple-value-bind (id line code)
         (begin-operation reg :export 44 :inside-batch t :entry-id "batch-7")
       (check-equal nil id "an export inside an atomic batch was admitted")

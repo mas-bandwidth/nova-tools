@@ -27,6 +27,16 @@
 ;; pipeline-replies-are-correlated is now the executable replay in
 ;; ../acceptance.lisp (card 8608).
 
+;; NEEDS-KERNEL: policy/trial manifests surviving export/import/restart/replay.
+(deftest "policy-round-trip-and-replay" "docs/SPEC-WORK.md:4370"
+    "expected=survives-round-trip;malformed-intake-no-partial-effect"
+  (slice1-refuses-verb :config))
+
+;; NEEDS-KERNEL: estimate pinning by revision and unknown-price!=0.
+(deftest "pricing-is-pinned-by-revision" "docs/SPEC-WORK.md:5287"
+    "expected=old-estimate-reproducible;missing-dimension-unknown"
+  (slice1-refuses-verb :estimate))
+
 (deftest "priority-grants-nothing" "docs/SPEC-WORK.md:5872"
     "expected=who-unchanged;no-lease;no-bypass"
   (let* ((view (make-work-view :who "rowan" :lease nil :worker nil :approval :pending))
@@ -35,6 +45,7 @@
     (dolist (id ids)
       (multiple-value-bind (receipt line code)
           (priority-table-set table id :self 7 "ordering only" (format nil "ev-~A" id))
+          (priority-set table id :self 7 "ordering only" (format nil "ev-~A" id))
         (declare (ignore line))
         (check-equal 0 code "priority set exit code")
         (check-equal 1 (getf receipt :changed) "priority set did not move the slot")))
@@ -155,17 +166,26 @@
       (check-equal 0 code "the first set")
       (check-equal 1 (getf receipt :changed) "the first set did not move the slot"))
     (multiple-value-bind (receipt line code) (priority-table-set table "n" :self 2 "same" "ev-2")
+  (let ((table (make-priority-table)))
+    (multiple-value-bind (receipt line code) (priority-set table "n" :self 2 "first" "ev-1")
+      (declare (ignore line))
+      (check-equal 0 code "the first set")
+      (check-equal 1 (getf receipt :changed) "the first set did not move the slot"))
+    (multiple-value-bind (receipt line code) (priority-set table "n" :self 2 "same" "ev-2")
       (declare (ignore line))
       (check-equal 0 code "the same-value set")
       (check-equal 0 (getf receipt :changed) "a same-value set is not the no-effect receipt")
       (ok (getf receipt :no-effect) "a same-value set is marked no-effect"))
     (multiple-value-bind (receipt line code) (priority-table-clear table "other" :self "absent" "ev-3")
+    (multiple-value-bind (receipt line code) (priority-clear table "other" :self "absent" "ev-3")
       (declare (ignore line))
       (check-equal 0 code "the clear of an absent slot")
       (check-equal 0 (getf receipt :changed)
                    "a clear of an absent slot is not the no-effect receipt"))
     (priority-table-set table "n" :self 9 "second" "ev-4")
     (priority-table-set table "n" :self 2 "third" "ev-5")
+    (priority-set table "n" :self 9 "second" "ev-4")
+    (priority-set table "n" :self 2 "third" "ev-5")
     (multiple-value-bind (okp line code) (priority-undo table "n" :self "ev-1")
       (declare (ignore line))
       (ok (not okp) "undo of the first set was admitted although the value matches")
@@ -206,6 +226,10 @@
     (priority-table-set table "ten" :self 10 "r" "e10")
     (priority-table-set table "a" :self 5 "r" "ea")
     (priority-table-set table "b" :self 5 "r" "eb")
+    (priority-set table "two" :self 2 "r" "e2")
+    (priority-set table "ten" :self 10 "r" "e10")
+    (priority-set table "a" :self 5 "r" "ea")
+    (priority-set table "b" :self 5 "r" "eb")
     (let ((ordered (priority-rows table rows)))
       (check-equal expected (mapcar (lambda (r) (getf r :id)) ordered)
                    "rank 2 precedes 10; ties then defaults by id; blocked last"))
