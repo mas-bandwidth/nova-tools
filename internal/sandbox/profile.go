@@ -125,5 +125,13 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 			return "", nil, fmt.Errorf("the filled profile still carries the marker line %s", strings.TrimSpace(line))
 		}
 	}
-	return out.String(), params, nil
+	// Issue #230: the explicit local GPU capability is recorded, never widened
+	// silently. A metal opt-in adds no mach-lookup service and no blanket
+	// device grant here: the minimum Metal mechanisms are still unmeasured, so
+	// the profile stays closed and the GPU probe classifies the outcome.
+	text = out.String()
+	if p.GPUMode == GPUMetal {
+		text += ";; gpu=metal requested: no mach-lookup or device grant added; Metal stays denied until measured\n"
+	}
+	return text, params, nil
 }

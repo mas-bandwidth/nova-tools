@@ -526,13 +526,13 @@ Every line below goes to **stderr** except the body of `policy`,
 which is the thing asked for and goes to stdout.
 
 ```
-SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> write=<n> net=<denied|nopromise> cwd=<dir> ancestors=<n> cmd=<name>
+SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> write=<n> net=<denied|nopromise> cwd=<dir> ancestors=<n> cmd=<name> gpu=<none|metal>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
-SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
+SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
 PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
-PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise>
+PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise> gpu=<none|metal>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>
-POLICY OK backend=<name> read=<n> write=<n> bytes=<n>
+POLICY OK backend=<name> read=<n> write=<n> bytes=<n> gpu=<none|metal>
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
 CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> hosts=none note=<one clause|->
 SANDBOX VERSION tool=nova-sandbox version=<n> backend=<name> platform=<os>
@@ -1098,6 +1098,29 @@ failed check.
 The secret file's **contents are never read into memory**: the check is that
 `open(2)` (or `CreateFileW`) fails, and a probe that succeeded in opening it
 closes it without reading and reports `got=allow`.
+
+### Local GPU, and what the capability is and is not (#230)
+
+A bounded local model trial on Apple Silicon runs MLX GPU arithmetic normally
+outside the wall but fails at import inside it with `[metal::load_device] No
+Metal device available`, under the narrowed mach-lookup profile with no IOKit
+clauses. The cheap answer is a tiny engine/device probe run under the proposed
+child policy — real GPU arithmetic, never an unconfined parent probe — and the
+bounded taxonomy it reports is `gpu_ok`, `missing_runtime`,
+`package_discovery`, `device_unavailable`, or `policy_refusal`
+(`internal/sandbox.ClassifyGPUProbe`, fakes only, no provider calls). The
+virtualenv half is explicit first: the wrapper resolves the venv Python
+symlink to its base executable and loses the venv's packages, so
+`VenvSitePackages` reads the link's own `<venv>/lib/python*/site-packages`
+and the caller names it with `--read` before Metal itself is tested. The only
+opt-in is `--gpu none|metal` (default `none`, printed as `gpu=` on every OK
+line); it records intent and never widens mach-lookup nor grants blanket
+device access, whose minimum mechanisms are still unmeasured — the generated
+profile stays closed and a metal run that reaches no device reports
+`device_unavailable`. The compared option is a separately supervised inference
+service: sandboxing its client does not sandbox the service, and that trust
+and resource boundary stays visible. Dedicated child HOME/cache/output roots,
+deadlines, process ownership, and measured receipts are unchanged.
 
 ### The internal verb, and what its guard is and is not
 

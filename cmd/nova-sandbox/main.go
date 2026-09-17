@@ -67,6 +67,9 @@ usage:
                   omit the Linux system read roots (/etc, /usr, /lib, /lib64,
                   /run/systemd/resolve, /proc/self); for the tests that assert
                   the minimal policy. Without it Linux always reads them.
+  --gpu <n|m>     the explicit local GPU capability: none (default) or metal.
+                  Opt-in only; metal records intent and never widens
+                  mach-lookup or grants blanket device access (#230).
   --name <c>      the windows container name. Accepted and ignored on darwin, so
                   one caller builds one argv for three platforms.
   --acl <t|c>     who adds the windows ACEs. Accepted and ignored on darwin,
@@ -133,6 +136,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 type flags struct {
 	reads, writes               []string
 	cwd, tmp, name, secret, acl string
+	gpu                         string
 	netDeny, netListen          bool
 	noSystemReads               bool
 	max                         int
@@ -188,6 +192,8 @@ func parse(args []string) flags {
 			f.acl = v
 		case "--secret":
 			f.secret, i = want(i, "--secret")
+		case "--gpu":
+			f.gpu, i = want(i, "--gpu")
 		case "--net-deny":
 			f.netDeny = true
 		case "--net-listen":
@@ -260,6 +266,7 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
 		NetDeny: f.netDeny, NetListen: f.netListen, NoSystemReads: f.noSystemReads, Argv: f.argv, Home: homeOf(env),
+		GPU: f.gpu,
 	})
 	if len(bad) > 0 {
 		return refuseAll(stderr, bad)
@@ -286,9 +293,9 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 			fmt.Fprintf(stderr, "SANDBOX NOTE landlock abi %s is above this tool's table: the wall is built at abi %s (clamped), which this kernel enforces as asked; the rights the newer abi added are not handled until the table grows\n",
 				oneline.Field(sandbox.ABI()), oneline.Field(strconv.Itoa(n)))
 		}
-		fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s%s read=%d write=%d net=%s cwd=%s ancestors=%d cmd=%s\n",
+		fmt.Fprintf(stderr, "SANDBOX OK backend=%s abi=%s%s read=%d write=%d net=%s cwd=%s ancestors=%d cmd=%s gpu=%s\n",
 			oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), used, len(p.Reads), len(p.Writes),
-			oneline.Field(p.Net()), oneline.Field(p.Cwd), p.AncestorCount(), oneline.Field(p.CmdName()))
+			oneline.Field(p.Net()), oneline.Field(p.Cwd), p.AncestorCount(), oneline.Field(p.CmdName()), oneline.Field(string(p.GPUMode)))
 		if flusher, ok := stderr.(interface{ Sync() error }); ok {
 			_ = flusher.Sync()
 		}
@@ -388,8 +395,8 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// earns together belong in the same print.
 	p, policyBad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, NetDeny: f.netDeny, NetListen: f.netListen,
-		NoSystemReads: f.noSystemReads,
-		Argv:          []string{self, probeStepVerbName}, Home: homeOf(env),
+		NoSystemReads: f.noSystemReads, GPU: f.gpu,
+		Argv: []string{self, probeStepVerbName}, Home: homeOf(env),
 	})
 	bad = append(bad, policyBad...)
 	if len(bad) > 0 {
@@ -509,8 +516,8 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	if failed > 0 {
 		return sandbox.ExitProbeFailed
 	}
-	fmt.Fprintf(stdout, "PROBE OK backend=%s abi=%s steps=%d passed=%d net=%s\n",
-		oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), len(steps), passed, oneline.Field(p.Net()))
+	fmt.Fprintf(stdout, "PROBE OK backend=%s abi=%s steps=%d passed=%d net=%s gpu=%s\n",
+		oneline.Field(sandbox.Backend), oneline.Field(sandbox.ABI()), len(steps), passed, oneline.Field(p.Net()), oneline.Field(string(p.GPUMode)))
 	return 0
 }
 
@@ -746,6 +753,7 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
 		NetDeny: f.netDeny, NetListen: f.netListen, NoSystemReads: f.noSystemReads, Argv: argv, Home: homeOf(env),
+		GPU: f.gpu,
 	})
 	if len(bad) > 0 {
 		for _, r := range bad {
@@ -759,7 +767,7 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		return sandbox.ExitCannotRun
 	}
 	fmt.Fprint(stdout, text)
-	fmt.Fprintf(stderr, "POLICY OK backend=%s read=%d write=%d bytes=%d\n",
-		oneline.Field(sandbox.Backend), len(p.Reads), len(p.Writes), len(text))
+	fmt.Fprintf(stderr, "POLICY OK backend=%s read=%d write=%d bytes=%d gpu=%s\n",
+		oneline.Field(sandbox.Backend), len(p.Reads), len(p.Writes), len(text), oneline.Field(string(p.GPUMode)))
 	return 0
 }
