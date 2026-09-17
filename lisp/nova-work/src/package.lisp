@@ -53,6 +53,7 @@
    #:event-id
    #:closed-row-key
    #:payload-digest
+   #:kind-fields
    ;; state
    #:make-seed-state
    #:state-open-count
@@ -262,7 +263,49 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+    ;; replay-8645: the goal world, the historic tick and hostile-data intake
+    #:make-goal-world
+    #:goal-world-p
+    #:goal-world-rev
+    #:goal-world-nodes
+    #:goal-world-goals
+    #:goal-world-events
+    #:goal-world-seen
+    #:goal-world-scope-rev
+    #:gw-state
+    #:gw-branch
+    #:gw-goal
+    #:gw-state-to
+    #:gw-cancel
+    #:gw-accept-add
+    #:last-event
+    #:event-fields-keys
+    #:own-fields-ok-p
+    #:goal-show
+    #:goal-check
+    #:goal-update
+    #:goal-set
+    #:stop-field
+    #:make-tick-record
+    #:tick-record-p
+    #:tick-record-id
+    #:tick-record-pinned-rev
+    #:tick-record-source-sha
+    #:tick-record-scope
+    #:tick-record-historic-tick
+    #:tick-record-current-verification
+    #:source-change
+    #:make-intake-limits
+    #:intake-limits-p
+    #:intake-limits-max-depth
+    #:intake-limits-max-bytes
+    #:intake-limits-max-nodes
+    #:*intake-visits*
+    #:intake-scan
+    #:hostile-intake
+    #:archive-path-safe-p
+    #:imported-prose-effect))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
