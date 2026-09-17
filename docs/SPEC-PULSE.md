@@ -58,6 +58,11 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    unblocked, one candidate per node). A `work` node is unleased when no `launch` currently
    holds it and unblocked when it is not waiting on a merge; the node id rides on the card's
    line 1 (rule 5) so `harvest` can record the attempt on the node (rule 11).
+   A `work` checkout carries its poolable nodes in `<root>/nodes.tsv`, one tab-separated
+   row per node — `id`, `type` (`bug` or `item`), `state`, `lease` (empty when unleased),
+   `blocked-by` (empty when unblocked), `title`, and an optional template override — and
+   `pool` counts the source in `work=<n>` on the `POOL` line; a checkout with no readable
+   nodes file is one `POOL REFUSED` like every other unreadable source.
    A missing `--sources` is `refusing to guess`, exit 2. A source that cannot be read — a
    `gh` non-zero, a bus checkout that is not one, a roadmap file that does not parse — is one
    `POOL REFUSED` line naming the source and the remedy, exit 2, and no `pool.tsv` is written:
@@ -397,7 +402,7 @@ coordinator must act on, and it exits like a refusal so a wake fires on it). An
 `ADMIT REFUSED` line is an event, not a verdict: it leaves the exit code alone (rule 9).
 
 ```
-POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> prs=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
+POOL OK sources=<n> candidates=<n> issues=<n> audits=<n> slices=<n> roadmap=<n> prs=<n> work=<n> next=<n> plan=<n> seen=<n> took=<d> out=<path>
 POOL REFUSED source=<kind>:<locator>: <reason> (<remedy>)
 CUT OK cards=<n> skipped=<n> zero=<n> flat=<n> metered=<n> out=<dir>
 CUT ROUTE route=<model> reason=<class>

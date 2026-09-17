@@ -171,7 +171,7 @@ func TestPoolReadsOpenNonDraftPRs(t *testing.T) {
 	wantFields := []string{
 		"POOL", "OK",
 		"sources=1", "candidates=2",
-		"issues=0", "audits=0", "slices=0", "roadmap=0", "prs=2",
+		"issues=0", "audits=0", "slices=0", "roadmap=0", "prs=2", "work=0",
 		"next=0", "plan=0", "seen=0",
 		"took=", "out=" + filepath.Join(root, "pool.tsv"),
 	}
