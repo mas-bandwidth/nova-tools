@@ -86,11 +86,12 @@ window between them.**
 
 ```
 nova-chat serve   --allow <file> --state <dir> --box <path> --as <name> --transport <name>
+                  [--source <poll|gateway>]
                   (--token-env <NAME> | --token-file <path>) --harness <file> --sandbox-args <file>
                   --disclosure-file <path> --interval <duration> --hours <h> [--max <n>]
                   [--http-timeout <seconds>] [--attachments off]
 nova-chat serve   --state <dir> --resolve <turn-id> --outcome posted|not-posted (--token-env <NAME> | --token-file <path>)
-nova-chat check   --allow <file> --state <dir> --box <path> --as <name> --transport <name> --sandbox-args <file> --disclosure-file <path> [(--token-env <NAME> | --token-file <path>)] [--max <n>]
+nova-chat check   --allow <file> --state <dir> --box <path> --as <name> --transport <name> --sandbox-args <file> --disclosure-file <path> [(--token-env <NAME> | --token-file <path>)] [--source <poll|gateway>] [--max <n>]
 nova-chat status  --allow <file> --state <dir> --box <path> [--max <n>]
 nova-chat close   --allow <file> --state <dir> --box <path> --as <name> --harness <file> --sandbox-args <file> --conversation <id> --reason <text>
 nova-chat leave   --allow <file> --state <dir> --box <path> --as <name> --transport <name> (--token-env <NAME> | --token-file <path>) --conversation <id> --reason <text>
@@ -1026,8 +1027,9 @@ mechanism rests on.)*
 What it does not cover is a first DM from someone the file does not name. `check`
 prints `CHECK FAIL … a first DM from an id the allow-list does not name is not
 seen under source=poll` for an allow-list holding `dm *`, and the opening line
-says `source=poll`. The gateway is #93 and is the one place this spec
-would accept a hand-written protocol implementation (**Open questions**, 2).
+says `source=poll`. The gateway — **The gateway, behind `--source gateway`** — is
+the one place this spec would accept a hand-written protocol implementation
+(**Open questions**, 2), and it is work-list item 11.
 
 **`nova-secrets`**, named and not yet built. This tool needs two things of
 it: that `nova-secrets exec --as <line> -- nova-chat serve …` place in this
@@ -1038,6 +1040,57 @@ starts — of those two the tool unsets the token before the exec and carries th
 provider key through it. Until it exists, `--token-file` is the whole mechanism — `nova-swarm` rule 6's file, mode 0600,
 read as data. The provider's own API key reaches the harness through the harness
 description's named variable, inside the wall, and is not this tool's secret.
+
+## The gateway, behind `--source gateway`
+
+**`serve` and `check` take `--source <poll|gateway>`, and it defaults to
+`poll`; the poll path stays the fallback and `source= says which ran`: the
+opening line, `CHAT SERVE` and every `CHAT POLL` carry `source=<poll|gateway>`,
+so a run can be told apart without reading the transport. A gateway run that
+loses its connection and cannot Resume falls back to poll for the rest of the
+process, prints one `CHAT NOTE` naming the gateway and the fallback, and its
+lines then say `source=poll`; it never silently stops hearing a room, and a
+`serve` that never saw a gateway frame is a poll run in every observable.
+
+**It is the one place this spec accepts a hand-written protocol
+implementation, and it is reviewed as code.** Go's standard library has **no**
+WebSocket client and this repo takes **no third-party import**, so the client
+lives in `internal/chat/ws` and implements **RFC 6455** on `net`, `bufio`,
+`encoding/base64`, `encoding/binary`, `crypto/sha1` and `crypto/rand` alone:
+the **handshake, framing, masking, ping/pong, close** — the Upgrade request and
+its `Sec-WebSocket-Accept` check, the FIN/opcode and 7/16/64-bit length forms,
+the client-to-server mask RFC 6455 requires and the server-to-client frame that
+must not be masked, the control frames, and the close handshake with its code.
+Discord's protocol sits above it: `GET /gateway/bot` under `--http-timeout` for
+the WSS URL; **Identify** (op 2) carrying `Bot <token>`, the two privileged
+intents rule 6 already needs and the two message intents; the **Heartbeat**
+interval from Hello (op 10), driven by this process and acknowledged by op 11,
+with a missed ack a reconnect; and **Resume** (op 6) carrying the session id and
+last sequence across a reconnect, with op 7 and op 9 as the server's own
+reconnect and invalid-session asks. A fresh `serve` does not resume across
+process boundaries in v1: the poll path's cursor is what a restart uses, and a
+Resume without a recorded session id and sequence is a fresh Identify.
+
+**What it adds** is the one thing `source=poll` cannot cover: a **first DM from
+an id the allow-list does not name**, seen as a `MESSAGE_CREATE` in a DM channel
+the creation of **Dependencies** did not make, plus **sub-second** latency,
+because a create wakes the cycle instead of waiting for `--interval`. Edits,
+deletes and typing arrive as dispatch events, but v1 models **none of them as a
+turn** — a delete retires a queued turn, an edit refreshes it, and typing is not
+a turn at all, the way threads are not modeled in rule 6. **The gateway is a
+source, not a transport**: rule 5's adapter is unchanged, the body is still
+fetched by `/messages/{id}` for rule 14's byte-for-byte prompt, membership is
+re-checked on every wake (rule 11), the fuse is checked before the socket is
+opened (rule 20), the token never crosses the wall (rule 15), and the
+DM-channel creation still runs at start.
+
+**What it changes in `check`.** With `--source gateway` the `CHECK FAIL` for a
+`dm *` allow-list under `source=poll` is gone, because the stranger's first DM is
+now seen; with `--source poll` it stays. A gateway that cannot open — a bad URL,
+a refused Identify, a disallowed intent — is `CHECK FAIL` naming the frame or the
+intent, never a pass; a Server Members intent the gateway was refused is still
+rule 6's `CHAT HELD reason=stranger`, and `serve` never claims a room is being
+heard when the socket is not open.
 
 ## Tests this spec demands
 
@@ -1074,12 +1127,13 @@ specimens each rule was bought with.
 25. `TestTheLogCarriesNoBodiesAndAQuietPollIsSilent` — over fifty messages, stdout plus stderr contains no substring of any body of eight characters or more; an injected idle hour prints exactly the opening line and `CHAT SERVE`; printing a preview turns it red.
 26. `TestEveryTurnWritesAUsageRow` — one row per turn in `<state>/usage/<date>.tsv`, header and column order identical to `nova-swarm`'s, `end` one of the four words, an unreported field `-` and never `0`, written before the job directory is touched, and `nova-tokens fold` counting it once; a `--resolve` second attempt is its own row; an idle hour writes none.
 27. `TestEveryWaitEndsOnItsOwn` — `--hours` missing is exit 2; a run with no `--http-timeout` bounds every HTTP call at **30s** against a fake transport that never answers, and an unbounded call turns it red; `serve` reaches `--hours` with an injected clock and prints one `CHAT SERVE`; a `stop` file ends it; a harness ignoring terminate is killed and the turn is `reply=none` with no POST; a second `serve` on one `--state` is exit 2 naming the holder's pid; the tripwire finds no `pgrep`, no `ps`, no `/proc`, no `os.TempDir`, no literal `/tmp` and no flag named `--at`, `--stamp` or `--now`.
+28. `TestTheGatewayBehindSourceGateway` — a fake gateway, an `httptest` server speaking RFC 6455 by hand, delivers one `MESSAGE_CREATE` in a DM whose author the allow-list does not name and one turn fires; the handshake, masking, a ping/pong and a close are each driven by the fake, and a client that skips the mask or the `Sec-WebSocket-Accept` check turns it red; a dropped connection resumes with the session id and no duplicate turn, and a Resume without a recorded sequence is a fresh Identify; a gateway that cannot resume falls back to poll with one `CHAT NOTE` and its lines say `source=poll`; with `--source gateway` the stranger-DM `CHECK FAIL` is gone and with `--source poll` it stays; every Identify carries `Bot <token>` and the fake records the token in no frame; and the tripwire finds no WebSocket import outside `internal/chat/ws` and no third-party import anywhere.
 
 And three the rules assert but no single rule owns:
 
-28. `TestABareInvocationCostsOneLine` — every verb missing every flag prints one refusal naming **all** of them and the door (`nova-chat help`), never the banner; `nova-chat help` is stdout at exit 0; the `example:` block's lines execute against the fixtures.
-29. `TestOutputIsBoundedAtTheLargestPlausibleState` — 200 dropped, 50 conversations, 40 turns, 30 sessions and 20 held in one cycle print at most `4 * --max + 14` lines, measured in lines and bytes on stdout plus stderr, counts exact on `CHAT SERVE`, each kind with its own `CHAT MORE`.
-30. `TestNoRefusalNamesAnArtifactNothingWrites` — every path this tool refuses on is one that `quickstart`, `leave`, `close` or `serve` creates, asserted by walking the refusal texts. This closes the predecessor's most important finding by construction: a hold file that was gitignored, that nothing in the estate wrote, and whose absence made every post refuse with a remedy naming an artifact nothing produced — so the only followable branch was the override, and *"a control that is reflexively skipped is a disabled control with good paperwork."*
+29. `TestABareInvocationCostsOneLine` — every verb missing every flag prints one refusal naming **all** of them and the door (`nova-chat help`), never the banner; `nova-chat help` is stdout at exit 0; the `example:` block's lines execute against the fixtures.
+30. `TestOutputIsBoundedAtTheLargestPlausibleState` — 200 dropped, 50 conversations, 40 turns, 30 sessions and 20 held in one cycle print at most `4 * --max + 14` lines, measured in lines and bytes on stdout plus stderr, counts exact on `CHAT SERVE`, each kind with its own `CHAT MORE`.
+31. `TestNoRefusalNamesAnArtifactNothingWrites` — every path this tool refuses on is one that `quickstart`, `leave`, `close` or `serve` creates, asserted by walking the refusal texts. This closes the predecessor's most important finding by construction: a hold file that was gitignored, that nothing in the estate wrote, and whose absence made every post refuse with a remedy naming an artifact nothing produced — so the only followable branch was the override, and *"a control that is reflexively skipped is a disabled control with good paperwork."*
 
 ## Known limits
 
@@ -1178,16 +1232,18 @@ shared packages used rather than re-spelled (`internal/oneline`,
 7. **`internal/chat/fuse.go`** — the three or four `nova-fuse` calls in order — four with a guild, three on `class=dm` — before the first request of every cycle, and nowhere on the post path; the three mechanical blows. Tests: 11, 20.
 8. **`internal/chat/prompt.go`** — the open frame (boot, sandbox sentences, reply contract, conversation facts) and the turn block, written on every invocation (the sentinel, the escape, the standing sentence, the floor paragraph, the whole message, the window). Tests: 2, 10, 14, 22.
 9. **`internal/chat/run.go`** — the `nova-sandbox` argv from `--sandbox-args`, the explicitly built child environment with the pinned `HOME` and cwd, the `O_CLOEXEC` token read, the pipe drained outside the wall, the deadline held here with terminate-wait-kill against the process group, `REPLY.md` after exit. Tests: 15, 16, 27.
-10. **`cmd/nova-chat/main.go`** — the verbs, refusals naming what each flag wants and reporting every independent problem at once, the opening line, the poll loop with per-conversation due times and the 5s floor, the lossy collapse, the truncation with its mark, `internal/bounded` per kind. Tests: 21, 24, 28, 29, 30. Plus **onboarding**, which `internal/ci/onboarding_test.go` requires the moment `cmd/nova-chat/` exists: a usage banner ending in a runnable `example:` block, a `### First run` in `docs/CLI.md`, `nova-chat help` on stdout at exit 0, a one-line refusal for a bad invocation, `cmd/nova-chat/testdata/fakeharness` and the fake transport — and the `docs/SPEC.md`/`docs/CLI.md` wiring.
+10. **`cmd/nova-chat/main.go`** — the verbs, refusals naming what each flag wants and reporting every independent problem at once, the opening line, the poll loop with per-conversation due times and the 5s floor, the lossy collapse, the truncation with its mark, `internal/bounded` per kind. Tests: 21, 24, 29, 30, 31. Plus **onboarding**, which `internal/ci/onboarding_test.go` requires the moment `cmd/nova-chat/` exists: a usage banner ending in a runnable `example:` block, a `### First run` in `docs/CLI.md`, `nova-chat help` on stdout at exit 0, a one-line refusal for a bad invocation, `cmd/nova-chat/testdata/fakeharness` and the fake transport — and the `docs/SPEC.md`/`docs/CLI.md` wiring.
 
-11. **The deduplication cut of this document — owed at the first dogfood, about 190 lines, against read 2's per-rule table.** All of it is triple-telling and specimen (the invite order told three times, rule 22 restating rule 10 part two, rule 9 quoting `:14` verbatim, the specimens already in their tests' comments) plus the three this revision's read named — the DM-creation skip's reason in rule 6, **Dependencies** and test 6; the self-bot observable's reason in rule 6 and test 6; *"only us"* at `:12`, in rule 11 twice and in **First run** — and none of it is a test, a forbid or a rule's depth. It is not a blocker for ratification and it is not done by guessing: the table names every line.
+11. **`internal/chat/ws` — the gateway behind `--source gateway`**, if and when **Open questions** 2 says a stranger's first DM matters: the hand-written RFC 6455 client (handshake, framing, masking, ping/pong, close) and Discord's Identify/Heartbeat/Resume, under the section above, with the poll path kept as the fallback and the opening line's `source=` saying which ran. Blocks nothing and is not v1. Tests: 28.
 
-12. **The room's newest id for rule 17's gap switch — owed at the first dogfood, before item 5's adapter is written.** Rule 26 polls `GET /channels/{id}/messages?after=<cursor>`, which Discord pages at `limit` ≤ 100, while rule 17's gap switch compares the room's newest id against `gap-messages 200`; so the tool needs that newest id from a source this spec does not name — the channel object's `last_message_id`, or a second read of the room's most recent message — and the message poll itself pages when a non-gap backlog is 101-200 messages, so rule 26's one GET per interval is one *idle* GET, and item 5's paging clause names paging for members only. Rule 20's volume is unaffected, because a poll's volume is what the poll returns, paged or not. Name the extra read here before the adapter is coded.
+12. **The deduplication cut of this document — owed at the first dogfood, about 190 lines, against read 2's per-rule table.** All of it is triple-telling and specimen (the invite order told three times, rule 22 restating rule 10 part two, rule 9 quoting `:14` verbatim, the specimens already in their tests' comments) plus the three this revision's read named — the DM-creation skip's reason in rule 6, **Dependencies** and test 6; the self-bot observable's reason in rule 6 and test 6; *"only us"* at `:12`, in rule 11 twice and in **First run** — and none of it is a test, a forbid or a rule's depth. It is not a blocker for ratification and it is not done by guessing: the table names every line.
 
-Three more are filed as issues rather than carried here, because each blocks
-nothing and none is v1: **the gateway behind `--source gateway`** (#93),
-**`--transport page`** (#94), and **`internal/dispatch`**, lifted out of
-`nova-wake serve` when that lands so item 3 stops re-spelling it (#95).
+13. **The room's newest id for rule 17's gap switch — owed at the first dogfood, before item 5's adapter is written.** Rule 26 polls `GET /channels/{id}/messages?after=<cursor>`, which Discord pages at `limit` ≤ 100, while rule 17's gap switch compares the room's newest id against `gap-messages 200`; so the tool needs that newest id from a source this spec does not name — the channel object's `last_message_id`, or a second read of the room's most recent message — and the message poll itself pages when a non-gap backlog is 101-200 messages, so rule 26's one GET per interval is one *idle* GET, and item 5's paging clause names paging for members only. Rule 20's volume is unaffected, because a poll's volume is what the poll returns, paged or not. Name the extra read here before the adapter is coded.
+
+Two more are filed as issues rather than carried here, because each blocks
+nothing and none is v1: **`--transport page`** (#94), and **`internal/dispatch`**,
+lifted out of `nova-wake serve` when that lands so item 3 stops re-spelling it
+(#95).
 
 ## Open questions for Glenn and the lines
 
