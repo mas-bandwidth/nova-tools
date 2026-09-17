@@ -205,6 +205,9 @@ func renderCard(tmpl string, row PoolRow) (string, string) {
 	if strings.Contains(step1, "git@") || !strings.Contains(step1, "https://") {
 		return "", "rule 5: STEP 1 does not clone over https (the clone URL is https, never git@)"
 	}
+	if steps := countSteps(lines); steps > turnBudget(row.Kind) {
+		return "", fmt.Sprintf("the card has %d steps, over the %d-turn budget (#855; the step count is the turn budget: name the exact file and line range, one check per step)", steps, turnBudget(row.Kind))
+	}
 	if textKinds[row.Kind] {
 		if !strings.Contains(strings.ToLower(rendered), "do not run go build") {
 			return "", "rule 6: the text template lacks the no-build line (read, text and tone cards must state `Do not run go build, go test or any toolchain`)"
@@ -228,6 +231,28 @@ func stepOne(lines []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// countSteps counts the numbered STEP lines a card carries. Every tool call in a card
+// re-sends the whole context, so the step count is the turn budget and the budget is the
+// bill (#855: 1,434.6M cache-read tokens against 62.1M input).
+func countSteps(lines []string) int {
+	n := 0
+	for _, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "STEP ") {
+			n++
+		}
+	}
+	return n
+}
+
+// turnBudget is the step count each kind may spend: the read family (read, text, tone) gets
+// 8 turns, the writing family (fix, replay, drift) 20 (#855).
+func turnBudget(kind string) int {
+	if textKinds[kind] {
+		return 8
+	}
+	return 20
 }
 
 func branchOf(row PoolRow) string {

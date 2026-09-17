@@ -3,6 +3,7 @@ package pulse
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,5 +266,58 @@ func TestCutModelByKind(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "CUT SKIPPED source=s id=2 template=probe: no template") {
 		t.Fatalf("stderr=%q, want a CUT SKIPPED line", stderr)
+	}
+}
+
+// cut-steps-are-the-turn-budget: a read card is at most 8 turns and a fix card at most 20;
+// a template whose rendered card exceeds its budget is CUT REFUSED naming the rule, no card
+// written (#855: every tool call re-sends the whole context, so the step count is the bill).
+func TestCutStepsAreTheTurnBudget(t *testing.T) {
+	card := func(kind string, steps int) string {
+		var b strings.Builder
+		b.WriteString("RESULT <label> sha=<sha12>\nYou are a worker. The deadline is the machinery's.\n")
+		if kind == "read" {
+			b.WriteString("Do not run go build, go test or any toolchain; read and write only.\n")
+		}
+		b.WriteString("STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>\n")
+		for i := 2; i <= steps; i++ {
+			if kind == "read" {
+				b.WriteString(fmt.Sprintf("STEP %d. Read file.go:%d and write the note.\n", i, i))
+			} else {
+				b.WriteString(fmt.Sprintf("STEP %d. Fix file.go:%d; report the red line and then the green line.\n", i, i))
+			}
+		}
+		return b.String()
+	}
+
+	// A read card of exactly eight turns is cut.
+	if code, _, stderr, out := runCut(t, map[string]string{"read": card("read", 8)}, "s\t1\tread\tt\tread\n"); code != 0 {
+		t.Fatalf("8-step read card: cut = %d, want 0; stderr=%q", code, stderr)
+	} else if _, err := os.Stat(filepath.Join(out, "1.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	// A read card of nine turns is refused, naming the 8-turn budget, no card written.
+	code, _, stderr, out := runCut(t, map[string]string{"read": card("read", 9)}, "s\t1\tread\tt\tread\n")
+	if code != 2 || !strings.Contains(stderr, "over the 8-turn budget") {
+		t.Fatalf("9-step read card: code=%d stderr=%q, want CUT REFUSED naming the 8-turn budget", code, stderr)
+	}
+	if !strings.Contains(stderr, "CUT REFUSED template=read") {
+		t.Fatalf("9-step read card: stderr=%q, want CUT REFUSED template=read", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+		t.Fatal("9-step read card: a card was written despite the refusal")
+	}
+
+	// A fix card gets twenty turns; twenty-one is refused.
+	if code, _, stderr, _ := runCut(t, map[string]string{"fix": card("fix", 20)}, "s\t1\tfix\tt\tfix\n"); code != 0 {
+		t.Fatalf("20-step fix card: cut = %d, want 0; stderr=%q", code, stderr)
+	}
+	code, _, stderr, out = runCut(t, map[string]string{"fix": card("fix", 21)}, "s\t1\tfix\tt\tfix\n")
+	if code != 2 || !strings.Contains(stderr, "over the 20-turn budget") {
+		t.Fatalf("21-step fix card: code=%d stderr=%q, want CUT REFUSED naming the 20-turn budget", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+		t.Fatal("21-step fix card: a card was written despite the refusal")
 	}
 }
