@@ -44,9 +44,10 @@ type nativeRunConfig struct {
 	// github.com only, expressed as a wall host rule
 	recipients []string // bus lanes a card may address; default none, and a bus
 	// send is denied inside the wall regardless
-	sandbox    string // the nova-sandbox binary naming the wall; "" = resolve on PATH
-	noWall     bool   // the caller typed --no-wall: run with no containment, named by its OK line
-	configFile string // optional: an opencode.json provider config copied beside the auth copy
+	sandbox        string // the nova-sandbox binary naming the wall; "" = resolve on PATH
+	noWall         bool   // the caller typed --no-wall: run with no containment, named by its OK line
+	noSharedCaches bool   // the caller typed --no-shared-caches: the Go caches stay under HOME as today
+	configFile     string // optional: an opencode.json provider config copied beside the auth copy
 	// WORKER (issue #881): the worker description `--worker <file>` names, when one is
 	// given. It is the source of the model -- a key is authorized for one model only, and
 	// the description pins it -- and when it carries "secret": "<NAME>" it is the source of
@@ -187,6 +188,25 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		return nativeRunResult{}, 2
 	}
 
+	// (3b) THE BENCH-SHARED GO CACHES (card 8963). Go derives GOMODCACHE and GOCACHE from
+	// HOME, and a native run makes HOME the slot's data home, so every card used to download
+	// its own copy of the module cache -- and a toolchain -- and grew a slot to five to seven
+	// gigabytes. Instead the two caches live once per bench under <root>/cache, made here at
+	// mode 0755 BEFORE the child can derive them and handed to the child as GOMODCACHE and
+	// GOCACHE. GOTOOLCHAIN=local keeps a card from fetching a toolchain behind the bench's
+	// back. The sharing is safe because Go's caches are concurrency-safe by design and the
+	// module cache is read-mostly. --no-shared-caches keeps today's behaviour exactly: no
+	// names set, the caches under HOME.
+	cacheDir := nativeCacheDir(cfg)
+	if cacheDir != "" {
+		for _, d := range []string{filepath.Join(cacheDir, "go-mod"), filepath.Join(cacheDir, "go-build")} {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				refuseNative(errOut, fmt.Sprintf("the shared go cache %s could not be made: %s", oneline.Field(d), oneline.Escape(err.Error())))
+				return nativeRunResult{}, 2
+			}
+		}
+	}
+
 	// (4) THE AUTH COPY. One entry, the model's provider's, moved to the data home so
 	// the child's account resolves, and left mode 0600. A source that is looser than
 	// 0600 is refused: its copy would spread a secret further than its owner.
@@ -277,7 +297,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if cfg.worker != nil {
 		secretEnv = cfg.worker.Secret
 	}
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, secretEnv)
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv)
 	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
@@ -555,8 +575,14 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 		"--write", jobDir,
 		"--write", dataHome,
 		"--write", tmpDir,
-		"--cwd", jobDir,
 	}
+	// The bench-shared Go caches are a write for the same reason the data home is: a card
+	// extracts a module it downloads, and the wall denies a write it was not handed (card
+	// 8963). It is one directory for the whole bench, so the write is shared, not per-card.
+	if cacheDir := nativeCacheDir(cfg); cacheDir != "" {
+		argv = append(argv, "--write", cacheDir)
+	}
+	argv = append(argv, "--cwd", jobDir)
 	// The shell launcher read the harness's own directory and /opt/homebrew so git and the
 	// harness's libraries resolve inside the wall; the native path does the same (run 7).
 	// Without the harness directory the wall denies even the resolver's own files, and
@@ -583,12 +609,16 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 // XDG_CONFIG_HOME and XDG_CACHE_HOME are dropped, never inherited, so the harness defaults
 // them under HOME and never follows them outside the wall.
 //
+// cacheDir, when nonempty, points GOMODCACHE and GOCACHE at the bench-shared caches under
+// <root>/cache and pins GOTOOLCHAIN=local (card 8963); empty is --no-shared-caches, and the
+// three names are then as absent as they have always been.
+//
 // secretEnv is the NAME a worker description's `secret` carries (issue #881): the value is
 // passed through to the child BY NAME, exactly once -- stripped from the inherited set even
 // when its name already carries KEY/TOKEN/SECRET -- so a name that does not itself carry one
 // still reaches the harness. The value is never written to a file and never printed; the
 // argv log redacts any name that carries a secret.
-func nativeChildEnv(dataHome, jobDir, tmpDir, secretEnv string) []string {
+func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv string) []string {
 	var kept []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -609,12 +639,31 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, secretEnv string) []string {
 		"NOVA_SWARM_JOB="+jobDir,
 		"TMPDIR="+tmpDir,
 	)
+	if cacheDir != "" {
+		out = append(out,
+			"GOMODCACHE="+filepath.Join(cacheDir, "go-mod"),
+			"GOCACHE="+filepath.Join(cacheDir, "go-build"),
+			"GOTOOLCHAIN=local",
+		)
+	}
 	if secretEnv != "" {
 		if v, ok := os.LookupEnv(secretEnv); ok {
 			out = append(out, secretEnv+"="+v)
 		}
 	}
 	return out
+}
+
+// nativeCacheDir is the bench-shared Go cache root: <root>/cache, the one directory every
+// slot of a bench shares so a card's data home holds harness state only (card 8963). The
+// module and build caches are its two children. It is empty when the caller typed
+// --no-shared-caches, which restores the old per-card caches under HOME, and while the root
+// is unset (a unit test of the argv builder), when there is nothing to share.
+func nativeCacheDir(cfg nativeRunConfig) string {
+	if cfg.noSharedCaches || cfg.root == "" {
+		return ""
+	}
+	return filepath.Join(cfg.root, "cache")
 }
 
 // keepNativeEnv says whether one inherited name survives into the native child: the names a

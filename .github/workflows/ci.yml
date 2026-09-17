@@ -489,8 +489,14 @@ jobs:
     # leg is the Studio (the same darwin arm64 as macos-latest, without the
     # hosted concurrency wait): one hosted macOS job serialized every merge
     # group while the sixteen Studio runners sat idle. Only the runner changes;
-    # the steps, timeout and package selection are the hosted ones. Three shards
-    # per leg so each job fits the two-minute cap under load.
+    # the steps, timeout and package selection are the hosted ones. The matrix
+    # carries six shard slots, and each package's shard count comes from its
+    # measured idle-Linux size in testdata/ci/package-sizes.tsv: over 40 s gets
+    # six shards, everything else three. A package that a given slot has no
+    # tests for prints and exits 0, so six slots do not run a fast package six
+    # times. cmd/nova-swarm is the package that forced this: its full suite is
+    # 51 s idle and over three times that on a loaded Studio, where three
+    # shards each crossed the two-minute cap.
     name: test-hosted-merge (${{ matrix.leg.name }}, ${{ matrix.shard }})
     if: github.event_name == 'merge_group'
     strategy:
@@ -505,7 +511,7 @@ jobs:
             labels: '["self-hosted","macOS","ARM64","studio"]'
           - name: windows
             runner: windows-latest
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3, 4, 5]
     # A runs-on expression must resolve to one value, so the darwin leg's label
     # array is carried as a JSON string and parsed with fromJSON; the hosted legs
     # carry their runner image as a plain string and are quoted as a JSON string
@@ -560,17 +566,29 @@ jobs:
           echo "merge_group: full hosted on:${pkgs}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
 
-      - name: test (full, the packages this group changes, shard ${{ matrix.shard }} of 3)
+      - name: test (full, the packages this group changes, shard ${{ matrix.shard }} of 6)
         # NOT -short: the group commit must answer the hosted-only tests the
         # -short PR leg skips. Each shard runs the tests whose zero-based index
         # in its package's sorted test list is congruent to the shard, so a
         # loaded Studio or windows-latest answers inside the two-minute cap;
-        # -timeout 100s is the per-package ceiling, not the target.
+        # -timeout 100s is the per-package ceiling, not the target. How many
+        # shards a package gets is not fixed: testdata/ci/package-sizes.tsv
+        # records its measured idle-Linux size, and a package over 40 s gets
+        # six shards where the rest get three. cmd/nova-swarm is the one that
+        # needed six; on the six-slot matrix the extra slots have no tests for
+        # a fast package and say so rather than run it again.
         shell: bash
         run: |
           set -euo pipefail
           shard=${{ matrix.shard }}
+          sizes=$(cat testdata/ci/package-sizes.tsv)
           for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
+            secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
+            if [ -n "$secs" ] && awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then
+              n=6
+            else
+              n=3
+            fi
             list=$(go test -list '.*' "$pkg") || exit 1
             tests=$(printf '%s\n' "$list" | grep '^Test' | sort || true)
             if [ -z "$tests" ]; then
@@ -582,13 +600,13 @@ jobs:
             names=""
             i=0
             for name in $tests; do
-              if [ $((i % 3)) -eq "$shard" ]; then
+              if [ $((i % n)) -eq "$shard" ]; then
                 if [ -n "$names" ]; then names="$names|$name"; else names="$name"; fi
               fi
               i=$((i + 1))
             done
             if [ -z "$names" ]; then
-              echo "shard $shard of 3: no tests from $pkg"
+              echo "shard $shard of $n: no tests from $pkg"
               continue
             fi
             go test -count=1 -timeout 100s -run "^(${names})$" "$pkg"

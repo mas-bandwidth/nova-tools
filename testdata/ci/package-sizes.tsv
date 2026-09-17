@@ -1,0 +1,7 @@
+github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	51.0
+github.com/mas-bandwidth/nova-tools/internal/swarm	17.4
+github.com/mas-bandwidth/nova-tools/cmd/nova-bus	6.4
+github.com/mas-bandwidth/nova-tools/internal/pulse	4.5
+github.com/mas-bandwidth/nova-tools/cmd/nova-pulse	0.6
+github.com/mas-bandwidth/nova-tools/cmd/nova-merge	6.2
+github.com/mas-bandwidth/nova-tools/internal/ci	1.5

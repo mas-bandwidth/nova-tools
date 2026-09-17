@@ -1015,6 +1015,124 @@ func TestNativeEnvIsCleanAndInsideTheWall(t *testing.T) {
 	}
 }
 
+// TestNativeSharedGoCaches: the Go module and build caches are bench-shared under
+// <root>/cache, not one copy per card under the data home (card 8963). The child records
+// GOMODCACHE, GOCACHE and GOTOOLCHAIN and stats the two directories it was handed, and the
+// wall's argv carries the shared cache in its write set. The directories must exist with
+// mode 0755 BEFORE the child runs, which the child's own stat is what proves.
+func TestNativeSharedGoCaches(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	label := "shared-caches"
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-RECORD-CACHES\n"), slotDir: slot, root: root,
+		deadline: 30 * time.Second, sandbox: sandbox,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+	}
+	jobDir := filepath.Join(slot, "jobs", label)
+	record, err := os.ReadFile(filepath.Join(jobDir, "cache-record"))
+	if err != nil {
+		t.Fatalf("the harness recorded no cache-record: %v", err)
+	}
+	got := string(record)
+	cacheDir := filepath.Join(resolvedPath(t, root), "cache")
+	wantMod := filepath.Join(cacheDir, "go-mod")
+	wantBuild := filepath.Join(cacheDir, "go-build")
+
+	if !strings.Contains(got, "GOMODCACHE="+wantMod+"\n") {
+		t.Errorf("GOMODCACHE is not the shared module cache %s:\n%s", wantMod, got)
+	}
+	if !strings.Contains(got, "GOCACHE="+wantBuild+"\n") {
+		t.Errorf("GOCACHE is not the shared build cache %s:\n%s", wantBuild, got)
+	}
+	if !strings.Contains(got, "GOTOOLCHAIN=local\n") {
+		t.Errorf("GOTOOLCHAIN is not local:\n%s", got)
+	}
+	// Each directory existed before the child ran: the record is written by the child, so
+	// its own stat is the proof the parent made them first. Windows has no POSIX mode bits,
+	// so there the record proves existence and this test proves a file can be created;
+	// elsewhere the mode 0755 is the assertion.
+	for _, dir := range []struct{ name, path string }{
+		{"GOMODCACHE", wantMod},
+		{"GOCACHE", wantBuild},
+	} {
+		line := ""
+		for _, l := range strings.Split(got, "\n") {
+			if strings.HasPrefix(l, "stat "+dir.name+": ") {
+				line = l
+			}
+		}
+		if runtime.GOOS == "windows" {
+			if !strings.Contains(line, "dir=true") {
+				t.Errorf("%s was not an existing directory before the child ran:\n%s", dir.name, got)
+				continue
+			}
+			probe := filepath.Join(dir.path, "writable-probe")
+			if err := os.WriteFile(probe, []byte("probe\n"), 0o644); err != nil {
+				t.Errorf("%s is not writable for the child's caches: %v", dir.path, err)
+				continue
+			}
+			_ = os.Remove(probe)
+			continue
+		}
+		if !strings.Contains(line, "mode=0755 dir=true") {
+			t.Errorf("%s was not an existing 0755 directory before the child ran:\n%s", dir.name, got)
+		}
+	}
+	// The shared cache is in the wall's write set, so every card of the bench may extract a
+	// module inside the wall.
+	argv := strings.Fields(sandboxArgv(t, jobDir))
+	if !hasFlagPair(argv, "--write", cacheDir) {
+		t.Errorf("the wall argv does not write the shared cache %s:\n%s", cacheDir, strings.Join(argv, " "))
+	}
+}
+
+// TestNativeNoSharedCachesRestoresHomeCaches: --no-shared-caches restores today's behaviour
+// exactly -- GOMODCACHE, GOCACHE and GOTOOLCHAIN are not set (Go derives the caches from
+// HOME as before), <root>/cache is not made, and the wall's write set does not name it.
+func TestNativeNoSharedCachesRestoresHomeCaches(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	label := "no-shared-caches"
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-RECORD-CACHES\n"), slotDir: slot, root: root,
+		deadline: 30 * time.Second, sandbox: sandbox, noSharedCaches: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
+	}
+	jobDir := filepath.Join(slot, "jobs", label)
+	record, err := os.ReadFile(filepath.Join(jobDir, "cache-record"))
+	if err != nil {
+		t.Fatalf("the harness recorded no cache-record: %v", err)
+	}
+	got := string(record)
+	for _, name := range []string{"GOMODCACHE", "GOCACHE", "GOTOOLCHAIN"} {
+		if !strings.Contains(got, name+"=\n") {
+			t.Errorf("--no-shared-caches set %s; the caches must stay under HOME:\n%s", name, got)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "cache")); !os.IsNotExist(err) {
+		t.Errorf("--no-shared-caches made <root>/cache, want none: err=%v", err)
+	}
+	argv := strings.Fields(sandboxArgv(t, jobDir))
+	if hasFlagPair(argv, "--write", filepath.Join(resolvedPath(t, root), "cache")) {
+		t.Errorf("--no-shared-caches wrote <root>/cache into the wall argv:\n%s", strings.Join(argv, " "))
+	}
+}
+
 // nativeLoggedEnv reads the env lines of a native-argv.log into a name -> values map.
 func nativeLoggedEnv(t *testing.T, log string) map[string][]string {
 	t.Helper()
