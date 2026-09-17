@@ -23,13 +23,16 @@ var messageBusAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|parse|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|parse|name":              "a required flag's name, a literal map key at every call site in this file",
-		"main.go|count|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|count|name":              "a required flag's name, a literal at every call site in this file",
-		"main.go|receiptMaxWords|f.verb":  "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|openBus|verb":            "the verb's own name, a literal at every call site in this file",
-		"main.go|printOpenEntries|token":  "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
+		"main.go|parse|f.verb":           "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|parse|name":             "a required flag's name, a literal map key at every call site in this file",
+		"main.go|count|f.verb":           "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|count|name":             "a required flag's name, a literal at every call site in this file",
+		"main.go|receiptMaxWords|f.verb": "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|openBus|verb":           "the verb's own name, a literal at every call site in this file",
+		"main.go|printOpenEntries|token": "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
+		"main.go|printOpenEntries|suffix": "the decision trail on an INBOX NOTE line, built by noteClass.suffix (decide.go): the class " +
+			"went through oneline.Field there, conf is a number, and below=class is a literal, so the fragment is one line by construction. " +
+			"TestInboxDecideAsksSubjectOnlyAndPrintsClass is the behavioural test for this site.",
 		"main.go|printBodyItem|kind":      "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned immediately above the site",
 		"main.go|printBodyItem|bodyBytes": "the note body is the explicitly requested verbatim byte payload; framing is emitted separately and the body is never escaped or rewritten",
 		"main.go|atLeastZero|f.verb":      "the verb's own name, a literal at every newFlags call site in this file",
@@ -108,6 +111,12 @@ var messageBusAudit = audit.Config{
 		// stream -- the hook prints nothing, it only closes a channel.
 		`"bytes"`, `"encoding/base64"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"sync/atomic"`, `"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
+		// decide.go is the inbox triage call site. context carries the call's
+		// deadline and holds no writer; regexp recognises a leading PR number in
+		// a subject and writes nothing; internal/decide is the client that
+		// returns typed answers, which reach the INBOX NOTE line through
+		// noteClass.suffix and oneline.Field at the single exempted site above.
+		`"context"`, `"regexp"`, `"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at
 		// all and reaches no stream.

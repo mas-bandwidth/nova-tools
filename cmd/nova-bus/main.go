@@ -65,12 +65,14 @@ usage:
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
   nova-bus send --bus <dir> (--file <path>|--stdin | --prepared <path>|--prepared-stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
   nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]] [--full] [--open [--open-max <n>]] [--open-warn <n>]
+        [--decide [--only-act-now]]
         [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
         [--diagnostics]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
         [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]]
         [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
+        [--decide [--only-act-now]]
         [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
         [--quiet-beats]
@@ -1254,7 +1256,13 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyNow := f.fs.Bool("legacy-now", false, "draw the switch-day line at THIS run's UTC instant: exactly --legacy-before <now>, so everything already on the bus is history and everything after this moment is news")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
+	decideFlag := f.fs.Bool("decide", false, "ask one typed decision per new note and print class=<kind> conf=<c> on its INBOX NOTE line")
+	onlyActNowFlag := f.fs.Bool("only-act-now", false, "with --decide, above the floor print only notes the decision placed act-now")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
+		return 2
+	}
+	if *onlyActNowFlag && !*decideFlag {
+		fmt.Fprint(stderr, "nova-bus inbox: --only-act-now needs --decide; without a decision there is no class to gate on\n")
 		return 2
 	}
 	// --legacy-now IS --legacy-before, with the one value nobody can type worked out here:
@@ -1334,7 +1342,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
-		diagnostics: *diagnostics,
+		diagnostics: *diagnostics, decide: *decideFlag, onlyActNow: *onlyActNowFlag,
 	}
 	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --bus at a
 	// subdirectory of a bigger repository and the run refused with "participants.json: no
@@ -1392,6 +1400,12 @@ type inboxOpts struct {
 	maxBytes     int64
 	after        string
 	diagnostics  bool
+	// decide asks one typed decision per new note; onlyActNow drops above-floor
+	// notes the decision did not place act-now. Both are shared by `inbox` and
+	// `wait`, and both default off so today's listing is byte-identical without
+	// --decide.
+	decide     bool
+	onlyActNow bool
 	// quietBeats records that the caller passed `wait --quiet-beats`. Since #328 a change
 	// that is only beats and cursors never wakes a wait, so the flag is accepted and
 	// changes nothing; it is kept so callers that pass it keep working. It is `wait`'s
@@ -1679,6 +1693,33 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 		fmt.Fprintf(stdout, "INBOX UNADDRESSED path=%s: %s\n", oneline.Field(u.Path), oneline.Escape(u.Reason))
 	}
 	notes, receipts, heard := res.Counts()
+	// THE DECISION ROUTE, WHEN ASKED. One typed choice per new note, over the
+	// public header alone; below the floor every note prints as today and the
+	// line says below=class. --only-act-now is a listing choice over the
+	// above-floor answers, and a wait wakes on what it would print, so a
+	// coordinator's wait wakes only for act-now.
+	fresh := res.Fresh
+	newForWake := res.New
+	var classes map[string]noteClass
+	if o.decide {
+		dec, derr := newNoteDecider()
+		if derr != nil {
+			fmt.Fprintf(stderr, "INBOX REFUSED: --decide: %s\n", oneline.Err(derr))
+			return 2, r
+		}
+		// An incremental read decides only what is new; a full read derives the
+		// open list, so every note it would show is new to the reader and is
+		// decided. A carried note on an incremental read keeps today's listing.
+		candidates := fresh
+		if scope.Full {
+			candidates = res.Open
+		}
+		classes = triageNotes(dec, candidates)
+		if o.onlyActNow {
+			fresh = onlyActNow(fresh, classes)
+			newForWake = len(fresh)
+		}
+	}
 	// WHAT IS NEW, IN FULL, ON EVERY RUN. This is the listing a poll is FOR, and until now
 	// there was no way to get it on its own: the choice was one summary line, or the whole
 	// carried list. So a reader who wanted to see the note that had just arrived asked for
@@ -1765,7 +1806,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				return 1, inboxReading{}
 			}
 		} else {
-			printOpenEntries(stdout, res.Fresh, len(res.Fresh))
+			printOpenEntries(stdout, fresh, len(fresh), classes)
 		}
 	}
 	// THEN ONE LINE FOR THE BACKLOG, whichever way the run was asked. It was printed only on
@@ -1801,7 +1842,12 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// the listing says how many were left and which flag widens it.
 	if listCarried {
 		rows := bus.SortForListing(res.Open)
-		shown := printOpenEntries(stdout, rows, o.openMax)
+		// A carried note has no class, so onlyActNow keeps it and drops only the
+		// fresh above-floor notes the decision did not place act-now.
+		if o.decide && o.onlyActNow {
+			rows = onlyActNow(rows, classes)
+		}
+		shown := printOpenEntries(stdout, rows, o.openMax, classes)
 		if more := countListable(rows) - shown; more > 0 {
 			fmt.Fprintf(stdout, "INBOX OPEN listed=%d and %d more (--open-max to widen)\n", shown, more)
 		}
@@ -1830,10 +1876,15 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	if !o.bodies {
 		r.Open = res.Open
 	}
-	// What this run would show a reader as news; see inboxReading.New.
-	r.New = res.New
+	// What this run would show a reader as news; see inboxReading.New. With
+	// --only-act-now it is what the decision would print, so a wait wakes only
+	// for the act-now notes it was asked for.
+	r.New = newForWake
 	if scope.Full {
 		r.New = len(res.Open)
+		if o.decide && o.onlyActNow {
+			r.New = len(onlyActNow(res.Open, classes))
+		}
 	}
 	for _, e := range res.Fresh {
 		if e.Heard {
@@ -2017,7 +2068,7 @@ const remedyLarge = "reply or receipt each note, or close --before <instant> as 
 // The cap counts PRINTED entries and not entries considered, so a capped listing is the
 // first max of the same order a full one would have printed: the notes first, and the bare
 // acknowledgements last, which is the right end to lose.
-func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) int {
+func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int, classes map[string]noteClass) int {
 	shown := 0
 	for _, group := range []string{"NOTE", "HEARD", "RECEIPT"} {
 		for _, e := range entries {
@@ -2037,9 +2088,15 @@ func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) int {
 			if shown >= max {
 				return shown
 			}
-			fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n",
+			suffix := ""
+			if token == "NOTE" {
+				if c, ok := classes[e.Path]; ok {
+					suffix = c.suffix()
+				}
+			}
+			fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s%s\n",
 				token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)),
-				oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject))
+				oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject), suffix)
 			shown++
 		}
 	}
@@ -2268,11 +2325,17 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
 	quietBeats := f.fs.Bool("quiet-beats", false, "accepted for callers that pass it; since #328 (2026-09-17) a change that is only beats and cursors never wakes a wait, with or without this flag; it is not news")
+	decideFlag := f.fs.Bool("decide", false, "ask one typed decision per new note and print class=<kind> conf=<c> on its INBOX NOTE line")
+	onlyActNowFlag := f.fs.Bool("only-act-now", false, "with --decide, above the floor wake and print only for notes the decision placed act-now")
 	// --remote and --branch are required here and conditional on inbox, because a wait
 	// FETCHES: that is the difference between waiting and sleeping. A wait that read only
 	// what its checkout already held would wait out its whole timeout beside a bus full of
 	// notes, and this tool does not guess a remote.
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "remote": remote, "branch": branch}) {
+		return 2
+	}
+	if *onlyActNowFlag && !*decideFlag {
+		fmt.Fprint(stderr, "nova-bus wait: --only-act-now needs --decide; without a decision there is no class to gate on\n")
 		return 2
 	}
 	flagLegacy, ok := legacyLine("wait", *legacyBefore, stderr)
@@ -2368,6 +2431,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		me: me, beat: *beat, lease: *beatLease,
 		diagnostics: *diagnostics,
 		quietBeats:  *quietBeats,
+		decide:      *decideFlag, onlyActNow: *onlyActNowFlag,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
