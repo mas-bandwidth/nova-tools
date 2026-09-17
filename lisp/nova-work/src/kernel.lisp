@@ -88,7 +88,8 @@ below the state's revision is refused rather than silently reissued."
      :request :stamp :clock :generation-owner)
     (:node-edit :verb :node :by :reason :title-patch :category-patch :links-patch
                 :private-patch :version-patch :request :stamp :clock :generation-owner)
-    (:undo :verb :of :by :request :stamp :clock :generation-owner)
+    (:undo :verb :of :at-rev :by :request :stamp :clock :generation-owner)
+    (:undo-plan :verb :of :by :request :stamp :clock :generation-owner)
     (:external-effect :verb :node :by :effect :handle
                       :request :stamp :clock :generation-owner)
     (:node-remove :verb :node :by :reason :request :stamp :clock :generation-owner)
@@ -324,6 +325,7 @@ command loop is a defect)."
   (case (getf request :verb)
     (:node-edit (return-from %submit (%submit-edit kernel request)))
     (:undo (return-from %submit (%submit-undo kernel request)))
+    (:undo-plan (return-from %submit (%submit-undo-plan kernel request)))
     (:external-effect (return-from %submit (%submit-external kernel request)))
     (:node-remove (return-from %submit (%submit-terminal kernel request :node-remove :removed)))
     (:event-cancel (return-from %submit (%submit-terminal kernel request :event-cancel :cancelled))))

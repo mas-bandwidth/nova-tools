@@ -1508,7 +1508,70 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
                     :generation-owner "gen-4"))
     (multiple-value-bind (okp line) (submit k (undo-verb-request "cancel-1" "undo-cancel-1"))
       (ok (not okp) "an undo over event cancel must refuse")
-      (ok (search "not reversible here" line) "the terminal cancel is refused: ~A" line))))
+      (ok (search "not reversible here" line) "the terminal cancel is refused: ~A" line)))
+  ;; `undo-plan` is the revision-bound dry run the reversible-set paragraph
+  ;; names (SPEC-WORK.md:2277, :2827-2845, :2911-2912, :5394-5395): it shows the
+  ;; effects the compensating envelope would move, names the reversible set, and
+  ;; accepts no mutation.
+  (let ((pk (fresh)))
+    (submit pk (edit-request "acme/work/f1/t1" :request "plan-edit-1"
+                             :title '(:set "t")))
+    (let ((journal-length (length (journal-order (kernel-journal pk))))
+          (rev (state-revision (kernel-state pk))))
+      (multiple-value-bind (okp line code plan)
+          (submit pk (list :verb :undo-plan :of "plan-edit-1" :by "rowan"
+                           :request "plan-req-1" :stamp "2026-09-14T12:30:00Z"
+                           :clock :tool :generation-owner "gen-4"))
+        (ok okp "an undo-plan over a reversible edit is accepted: ~A" line)
+        (ok (search "UNDO PLAN" line) "the plan names itself: ~A" line)
+        (ok (search "at-rev=" line) "the plan is revision-bound: ~A" line)
+        (ok (search "request-of=plan-edit-1" line) "the plan names its request: ~A" line)
+        (check-equal 0 code "the plan exits 0")
+        (let* ((rows (getf plan :rows))
+               (row (find :state rows :key (lambda (r) (getf r :effect)))))
+          (ok rows "the plan carries the effects it would move")
+          (ok row "the plan names the state effect")
+          (check-string= "acme/work/f1/t1" (getf row :node) "the plan names the node")
+          (check-string= "t" (getf row :before) "the plan shows the current value")
+          (check-string= "-" (getf row :after) "the plan shows the preimage it restores"))
+        ;; the plan accepts no mutation: no journal record, no revision.
+        (check-equal journal-length (length (journal-order (kernel-journal pk)))
+                     "the dry run writes no journal record")
+        (check-equal rev (state-revision (kernel-state pk))
+                     "the dry run accepts no revision")
+        (check-string= "t" (node-title (kernel-state pk) "acme/work/f1/t1")
+                       "the dry run leaves the node unchanged")
+        ;; the plan's revision binds the undo; a stale plan refuses atomically.
+        (submit pk (edit-request "acme/work/f1/t1" :request "plan-edit-2"
+                                 :title '(:set "u")))
+        (multiple-value-bind (uokp uline)
+            (submit pk (list :verb :undo :of "plan-edit-1" :by "rowan"
+                             :request "plan-undo-1" :stamp "2026-09-14T12:31:00Z"
+                             :clock :tool :generation-owner "gen-4"
+                             :at-rev (getf plan :at-rev)))
+          (ok (not uokp) "an undo at a stale plan revision must refuse")
+          (ok (search "stale plan" uline) "the stale plan is named: ~A" uline)
+          (ok (search "at-rev=" uline) "the refusal names the plan revision: ~A" uline)))))
+  ;; a plan over an external effect is refused by name, names its handle, and
+  ;; rewinds no local state (SPEC-WORK.md:2893-2900).
+  (let ((pk (fresh)))
+    (submit pk (list :verb :external-effect :node "acme/work/f1/t1" :by "rowan"
+                     :effect :sent :handle "msg-plan-1" :request "plan-ext-1"
+                     :stamp "2026-09-14T12:00:00Z" :clock :tool :generation-owner "gen-4"))
+    (let ((hist (length (state-history (kernel-state pk))))
+          (rev (state-revision (kernel-state pk))))
+      (multiple-value-bind (okp line)
+          (submit pk (list :verb :undo-plan :of "plan-ext-1" :by "rowan"
+                           :request "plan-ext-req" :stamp "2026-09-14T12:30:00Z"
+                           :clock :tool :generation-owner "gen-4"))
+        (ok (not okp) "an undo-plan over an external effect must refuse")
+        (ok (search "effect=external" line) "the plan names the external effect: ~A" line)
+        (ok (search "msg-plan-1" line) "the plan names the external handle: ~A" line)
+        (ok (search "not reversible here" line) "the plan refuses by name: ~A" line)
+        (check-equal hist (length (state-history (kernel-state pk)))
+                     "the refused plan rewinds no local state")
+        (check-equal rev (state-revision (kernel-state pk))
+                     "the refused plan writes nothing")))))
 
 (deftest "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
     "expected=undo-restores-before;late-undo=conflict;both-events-stand"
