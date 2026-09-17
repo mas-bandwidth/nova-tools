@@ -4639,6 +4639,82 @@ model, and the replacement's kind inherited on `supersede`.
 These items are epic E11 of the roadmap. They add no verified completion until implementation
 and failure replays pass.
 
+## The task packet *(nova-tools#1142; a draft for review)*
+
+**`task packet` writes one bounded artifact a worker starts from cold, and one line says what it
+is.** The verb prints nothing but its one `PACKET OK` line and writes the packet itself to the path
+`--into` names, bounded by `--max-bytes`, which defaults to the bound `session start` was given and
+may only lower it.
+
+```
+nova-work task packet --session <path> --node <id> --for <worker> --model <profile> --into <path> [--max-bytes <n>] [--now <stamp>]
+
+PACKET OK id=<event-id> request=<id> node=<id> for=<worker> model=<profile> goal=<id> goal-rev=<rev> owner=<name> stop=<none|requested|cancelled|deferred> hold=<none|id> tokens=<n|absent> usd=<amount|absent> hours=<duration|absent> delta=<receipt-id|none> delta-events=<n> result=<sha12> branch=<name> files=<n> evidence=<n> bytes=<n> into=<path> rev=<n> pushed=<rev|-> emitted=<bytes>
+```
+
+**It reads the node's accepted goal, its pinned inputs, its owner, its STOP and HOLD state and its
+budget, all from the resident session and nowhere else.** The goal is the accepted goal of the
+node's scope, read as `goal show` reads it; every pinned input is named by path and by the revision
+the packet pins, never by a path alone and never resolved at the moving tip; the owner is the
+node's responsible friend; STOP and HOLD are the goal's `stop=` state and the control id of any
+live hold; and the budget's three fields — tokens, dollars and hours — are separate, with a field
+the set does not carry printed `absent` and never `0`. **The delta is everything since the worker's
+last receipt**: the events and state changes after the `:packet` or receipt the named worker last
+held, printed `delta-events=<n>`, and a worker with no prior receipt sees the whole set with
+`delta=none`.
+
+**The prompt profile named by `--model` selects the packet's wording, never its facts.** It is the
+CONFIG `prompt profile` of *Friends, CONFIG and ACTIVE*: its pointer is hashed and compared with
+its pinned digest before use, and its model, harness and work type are identity. Two profiles built
+over one state carry the same goal, inputs, owner, budget, delta and contract, in the shape that
+model reads; the shapes that stall a model without a tool-call boundary are known, and they are
+profile data and never a second per-model switch inside this verb. A profile that is absent, stale
+or mismatched against its pinned digest refuses by name.
+
+**The packet carries the output contract whole**, so a cold worker never rebuilds it by hand: the
+exact one-line `RESULT` form it must print, the branch it must push, and the files it is expected
+to add or change. The `PACKET OK` line names them as `result=<sha12>`, the content digest of the
+RESULT-line template, `branch=<name>` and `files=<n>`, and the packet body prints the template and
+the file list in full, capped by the bound.
+
+**The packet is journaled as one typed event, so a replay reproduces it.** The event carries the
+node, the worker, the profile and its digest, the goal revision, the receipt the delta started
+from, and the packet's own digest; it is written through the one writer and the one journal the
+execution model names. `session replay` reconstructs the packet byte for byte from that event
+alone — its wording, its `bytes=`, its `emitted=` — with no clock read, no repository read and no
+id minted, so two benches replay one event to one packet.
+
+**Evidence is links, never a body.** The packet carries each evidence pointer with its criterion
+and against-revision as a link the worker can open, and it never inlines an evidence body, a log or
+a diff; a pointer the session cannot resolve is named unresolved in the packet, capped like every
+other field, and never dropped and never counted as verified.
+
+**A packet is refused, exit 2, with one remedy line, when it cannot start a worker honestly.** A
+node with no accepted goal refuses `PACKET FAIL node=<id>: no accepted goal; run: nova-work goal
+show --as <owner>`; a worker with no lease refuses `PACKET FAIL node=<id> for=<worker>: no lease;
+run: nova-work take --node <id> --by <duration> --default <policy>`; an unknown or mismatched
+profile refuses by name; and every flag the verb needs — `--node`, `--for`, `--model`, `--into` —
+is refused when absent with the one line `nova-work task packet: refusing to guess; run: nova-work
+help`. No refusal writes a file, a journal record or a dedup entry.
+
+**The mistake it removes:** every worker rebuilding its prompt and context by hand, reading a cold
+context on every card.
+
+**The red tests a card writes first**, each with a fake where the real thing is the network, a
+bench or a clock:
+
+1. `packet-is-one-line-and-one-file` — with a fake clock, a node with an accepted goal and a live lease prints exactly one `PACKET OK` line, writes one packet at `--into`, and `bytes=` equals that file's size and is at most `--max-bytes`.
+2. `packet-refuses-no-accepted-goal` — a node whose scope has no goal refuses at exit 2 with the one remedy line naming `goal show`, and writes nothing.
+3. `packet-refuses-no-lease` — a worker holding no lease on the node refuses at exit 2 with the one remedy line naming `take`, and writes nothing.
+4. `packet-refuses-missing-flag` — omitting `--node`, `--for`, `--model` or `--into` each refuses at exit 2 with the one `refusing to guess` line and a `run: nova-work help` remedy.
+5. `packet-pins-inputs-by-path-and-revision` — against a fake repository reader whose tip moves, every pinned input carries its path and the pinned revision, and none silently reads the later tip.
+6. `packet-delta-is-since-the-last-receipt` — against a fake receipt store, a worker with a prior receipt sees only later events, a worker with none sees the whole set, and `delta=` names the receipt it started from.
+7. `packet-replay-reproduces-it` — with a fake clock, replaying the `:packet` event alone reproduces the packet byte for byte, `bytes=` included, and mints no new id.
+8. `packet-profile-selects-wording` — two fake prompt profiles over one state produce different wording from the same facts, and a profile whose pinned digest does not match refuses.
+9. `packet-budget-absent-is-not-zero` — against a fake goal record with no hourly budget the packet prints `hours=absent`, while a real zero budget prints `hours=0`.
+10. `packet-stop-and-hold-are-named` — against a fake control record with a STOP request and a live HOLD, the `PACKET OK` line names both and hides neither.
+11. `packet-is-bounded` — against a fake state far past the bound the packet is capped at `--max-bytes` with its true `bytes=` still printed, and a `--max-bytes` of zero is refused.
+
 ## Recursive coordination nodes *(nova-work v2, nova-tools#321; a draft for review)*
 
 Glenn's v2 frame is *"As above, so below."*: a **node** is the unit of coordination, and every
