@@ -358,6 +358,9 @@
 
 ;; unrelated-receipts-stay-reusable now lives in tests/replays-8651.lisp over
 ;; the proof scopes of src/replays-8651.lisp (nova-tools #362).
+;; Moved to tests/replays-8651.lisp as real replays (nova-tools #362):
+;; "undo-redo", "unknown-price-is-not-zero" and
+;; "unrelated-receipts-stay-reusable".
 
 ;; Moved to tests/acceptance.lisp as a real replay over src/assignment.lisp
 ;; (nova-tools #362): "until-is-overdue-not-released".
