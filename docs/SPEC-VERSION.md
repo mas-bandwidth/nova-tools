@@ -18,20 +18,31 @@ nova-update apply --sha <sha> --repo <dir> --bin <dir> [--timeout <d>]
    revision resolves in `--repo` alone — never the cwd, never `origin/HEAD`.
 2. **`moved` reads each revision's binaries, never a hand-written list.** For every
    `cmd/*` it builds both revisions, runs each `<tool> help`, and parses the verbs and
-   flags the help prints; the note is the added, removed and renamed sets that diff
-   yields, so a flag on no binary's help can never be announced.
+   flags the help prints; it inventories each revision separately — the tools and verbs
+   present at `--from`, and the tools and verbs present at `--to` — and reports the added
+   and deleted entries between them. It never infers a rename from help text: a tool that
+   disappears is *deleted* and one that appears is *added*, and a rename is stated only
+   when the commit message or a `MOVED` file says so. So a flag on no binary's help can
+   never be announced.
 3. **`moved` reads the two helps and writes the note to `--out`.** It prints one line to
-   stdout naming every field: `MOVED OK from=<sha> to=<sha> added=<n> removed=<n>
-   renamed=<n> verbs=<n> file=<path>`; an empty diff is `added=0 removed=0 renamed=0`,
+   stdout naming every field: `MOVED OK from=<sha> to=<sha> added=<n> deleted=<n>
+   renamed=<n> verbs=<n> file=<path>`; `renamed=` counts only the renames the commit
+   message or a `MOVED` file states, and an empty diff is `added=0 deleted=0 renamed=0`,
    exit 0, never a refusal.
 4. **`moved` refuses, exit 2, one remedy each.** A missing flag is *refusing to guess*,
    naming it; a revision that is not a commit in `--repo` names the revision and the
    `git fetch` that would bring it; a `cmd/*` that builds but answers no help names the
    tool, the revision and the build to repair there.
-5. **`apply --sha` is `apply` in its build mode.** With `--sha` it reads no `--file` and
-   takes no name: it builds `./cmd/...` at the revision under that revision's one stamp,
-   reads every built binary's `version` back, and installs the set; `--sha` given with
-   `--file` is a refusal naming both flags.
+5. **`apply --sha` is `apply` in its build mode, and it publishes the whole set
+   atomically.** With `--sha` it reads no `--file` and takes no name: it builds `./cmd/...`
+   at the revision under that revision's one stamp into a new staging directory, reads
+   every built binary's `version` back, and verifies the exact postflight set — every
+   expected tool present at the one stamp, and every tool the prior set held but this
+   revision no longer builds recorded by name as absent; it then switches the `--bin` link
+   to the staged set in one step, and records the set's full source metadata — repository,
+   revision, build host, go version, time — in the manifest; on any failure it performs one
+   verified rollback to the prior set. `--sha` given with `--file` is a refusal naming both
+   flags.
 6. **`apply --sha` prints one line, every field named.** `APPLY SHA sha=<sha> bin=<dir>
    stamp=<stamp> built=<n> took=<d>`; `built=` is the number of binaries installed and
    `stamp=` the identity every one of them reports.
@@ -65,3 +76,5 @@ network or a clock; `git`, `go` and every built binary are fakes on `PATH`.
 6. `TestApplyShaRefusesAMixedSetNamingThePair`: a fake `--bin` holding two binaries that answer two stamps is exit 2 naming both names and both stamps, and starts no build.
 7. `TestApplyShaRefusesALostStamp`: a fake build whose one binary answers `devel` while the rest answer the revision is refused naming that binary and both stamps, and installs nothing.
 8. `TestApplyShaIsBoundedByTheClock`: an injected clock and a fake build sleeping past `--timeout` is exit 2 with the timeout named and no partial `--bin` directory.
+9. `TestMovedNeverInfersARename`: a tool present only at `--from` and a differently named tool present only at `--to` whose helps are identical yield `deleted=1 added=1 renamed=0`, and the same pair with the rename stated by the commit message or a `MOVED` file yields `renamed=1` — help text alone never makes a rename.
+10. `TestApplyShaPublishesTheWholeSetAtomically`: a fake `--bin` link to a prior set and a fake build whose last binary fails verification is a non-zero exit with the prior set still linked and untouched, and a successful run swaps the link once and writes repository, revision, build host, go version and time into the manifest.
