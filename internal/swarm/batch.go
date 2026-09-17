@@ -311,8 +311,10 @@ func Batch(in BatchInput) int {
 					// The process table is read once per activity poll, outside the lock, and
 					// every card is asked of that one snapshot (issue #593).
 					var snap *procSnapshot
+					var sampleSpan time.Duration
 					if now.Sub(lastSample) >= activityInterval(in.Idle) {
 						snap = newProcSnapshot()
+						sampleSpan = now.Sub(lastSample)
 						lastSample = now
 					}
 					doneMu.Lock()
@@ -332,15 +334,47 @@ func Batch(in BatchInput) int {
 						// when NEITHER its log NOR its tree moved for the whole --idle window.
 						if snap != nil && procs[i].cmd != nil && procs[i].cmd.Process != nil {
 							if cpu, ok := snap.TreeCPU(procs[i].cmd.Process.Pid); ok {
-								grew := procs[i].haveCPU && cpu > procs[i].cpu
+								prev := procs[i].cpu
+								grew := procs[i].haveCPU && cpu > prev
+								// A tree whose CPU fell LOST a process since the last
+								// sample: that process was alive and charged, and its
+								// departure is work done, not the still, silent card
+								// the idle timeout is for. It is also the card whose
+								// runner has exited but not yet been reaped, whose CPU
+								// can no longer be read (issue #916).
+								shrank := procs[i].haveCPU && cpu < prev
 								procs[i].cpu, procs[i].haveCPU = cpu, true
-								if grew {
+								// CPU growth is activity only when the tree spent a real
+								// share of the sample interval working. Darwin counts
+								// CPU in nanoseconds, so a process that only slept
+								// still shows a few microseconds of runtime
+								// bookkeeping between two samples, and under the
+								// injected clock two polls can be a real microsecond
+								// apart while the virtual window says seconds:
+								// any-increment-at-all used to keep a silent card
+								// alive on darwin where linux's coarse ticks saw zero
+								// (issue #916). A tree that is working spends a large
+								// fraction of the interval; one percent separates the
+								// two by orders of magnitude on both platforms.
+								if grew && cpu-prev >= uint64(sampleSpan)/100 {
+									procs[i].lastGrow = now
+									continue
+								}
+								if shrank {
 									procs[i].lastGrow = now
 									continue
 								}
 							}
 						}
 						if now.Sub(procs[i].lastGrow) >= in.Idle {
+							// A card that already published a result is finishing, not
+							// idle: its file exists and gather will score it by that
+							// result, so the kill would only race the write and score
+							// a half-written RESULT (issue #916).
+							job := filepath.Join(in.Root, procs[i].scratch, "jobs", procs[i].label)
+							if _, ok := FindCardResult(job); ok {
+								continue
+							}
 							procs[i].idleKilled = true
 							procs[i].idleLog = cardLogPath(in.Root, procs[i].scratch, procs[i].label)
 							if procs[i].cmd.Process != nil {
@@ -665,33 +699,34 @@ func findResultBelow(dir string, depth int) (string, bool) {
 // holds, and a late result is named for its lateness so a coordinator reads the token
 // instead of the RESULT.
 //
-// THE ORDER, once there is no matching result anywhere the gather looks: the kill classes
-// the machinery watched itself first -- idle, input-limit, each pinned by its own test and
-// true whether or not a result exists -- then the result is read, and a matching result is
-// done (or result-after-deadline at the deadline), the card's own words (card-abstain),
-// then harness-silent, and only then the pair rc=<n> (ended non-zero) and no-result (ended
-// clean), which are one slot split by the exit code. rc is never first: an exit code from a
-// harness that never ran the card is nothing to go and read (issue #591). deadline is
-// decided only once the result is known: no result means the card never finished, a matching
-// result means it finished late. The tail is one bounded field the remedy needs -- the log
-// the idle monitor watched, or the job directory that holds no result -- printed after
-// log=<n>, never in place of the token.
+// THE ORDER, once the result has been looked for: a matching RESULT is the card's contract
+// and wins over everything the machinery watched, because a card that published its line 1
+// did its work however its process ended -- including an idle kill that raced the process's
+// own exit (issue #916). Only when no result was published do the kill classes apply: the
+// idle kill the monitor watched, then input-limit. Then the rest of the no-result ladder:
+// fence, then deadline, then harness-silent, and only then the pair rc=<n> (ended non-zero)
+// and no-result (ended clean), which are one slot split by the exit code. rc is never first:
+// an exit code from a harness that never ran the card is nothing to go and read (issue #591).
+// deadline is decided only once the result is known: no result means the card never finished,
+// a matching result means it finished late. The tail is one bounded field the remedy needs --
+// the log the idle monitor watched, or the job directory that holds no result -- printed
+// after log=<n>, never in place of the token.
 func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSeconds int, logPath, idleLog string) (state, reason, tail, line2 string) {
-	switch {
-	case idleKilled:
-		watched := idleLog
-		if watched == "" {
-			watched = logPath
-		}
-		return "abstain", fmt.Sprintf("idle=%d", idleSeconds), "watched=" + watched, ""
-	case cardEndsInputLimit(logPath):
-		return "abstain", "input-limit", "", ""
-	}
 	// A remote card's job came back under <root>/<bench>-<n>/jobs/<label>; a local card's
 	// sits under <root>/<n>/jobs/<label>.
 	job := filepath.Join(root, scratchName(c), "jobs", c.label)
 	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
 	if err != nil {
+		if idleKilled {
+			watched := idleLog
+			if watched == "" {
+				watched = logPath
+			}
+			return "abstain", fmt.Sprintf("idle=%d", idleSeconds), "watched=" + watched, ""
+		}
+		if cardEndsInputLimit(logPath) {
+			return "abstain", "input-limit", "", ""
+		}
 		// A harness that wrote nothing at all did not run this card, and that is the first
 		// thing to say about it: `harness-silent` comes before BOTH `no-result` and `rc=<n>`
 		// (issue #591). `no-result` is a harness that ran and published nothing, which is the
