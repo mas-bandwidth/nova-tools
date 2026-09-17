@@ -407,24 +407,102 @@
 
 (deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
     "expected=bignum-fields-round-trip-exact;json-number-frame-refused"
-  (dolist (field '((:id 9007199254740993)
-                   (:revision 9007199254740995)
-                   (:counter 9007199254740997)
-                   (:token-total 9007199254740999)))
-    (let ((n (second field)))
-      (let ((wire (canonical-string n)))
-        (ok (stringp wire) "~A serializes to a string: ~A" (first field) wire)
-        (check-string= (princ-to-string n) wire "exact decimal digits")
-        (check-equal n (read-restricted wire) "round-trip unchanged"))))
-  (dolist (json-number '("9007199254740993.0" "1e5" "1.5" "3/4"))
+  (let* ((id "9007199254740993")
+         (rev 9007199254740995)
+         (counter 9007199254740997)
+         (tokens 9007199254740999)
+         (json (wire-json-encode
+                (list (cons "id" id)
+                      (cons "revision" rev)
+                      (cons "counter" counter)
+                      (cons "token-total" tokens)))))
+    ;; Every integer the protocol carries is a JSON string of decimal digits,
+    ;; never a JSON number (:2663-2666).
+    (ok (search (format nil "\"~D\"" rev) json)
+        "the revision crosses as a quoted decimal string")
+    (ok (not (search (format nil ":~D" rev) json))
+        "the revision is nowhere a bare JSON number")
+    ;; One frame is a 4-byte big-endian unsigned length then that many bytes
+    ;; of one UTF-8 JSON object (:2661-2663).
+    (let ((frame (wire-frame json)))
+      (check-equal (length (wire-utf8-octets json)) (wire-frame-length frame)
+                   "the prefix is the payload's own byte count")
+      (check-equal (+ 4 (length (wire-utf8-octets json))) (length frame)
+                   "four prefix octets then the payload")
+      (check-string= json (wire-frame-payload frame) "the payload round-trips")
+      (ok (wire-frame-complete-p frame) "a whole frame is complete"))
+    ;; Crossing the wire and returning, each integer is unchanged.
+    (let ((obj (wire-parse-json (wire-frame-payload (wire-frame json)))))
+      (check-string= id (wire-field obj "id") "the id returns unchanged")
+      (check-equal rev (parse-integer (wire-field obj "revision"))
+                   "the revision returns exact")
+      (check-equal counter (parse-integer (wire-field obj "counter"))
+                   "the counter returns exact")
+      (check-equal tokens (parse-integer (wire-field obj "token-total"))
+                   "the token total returns exact")))
+  ;; A frame carrying a JSON number is refused whole (:2667-2668).
+  (dolist (number '("9007199254740993" "9007199254740993.0" "1e5" "1.5"))
     (let ((refused nil))
-      (handler-case (read-restricted json-number)
-        (restricted-data-violation () (setf refused t)))
-       (ok refused "a wire frame carrying the JSON number ~A is refused" json-number))))
+      (handler-case (wire-parse-json (format nil "{\"revision\": ~A}" number))
+        (unsupported-input () (setf refused t)))
+      (ok refused "a wire frame carrying the JSON number ~A is refused" number))))
 
-;; wire-integers-are-strings is now the executable replay in
-;; ../acceptance.lisp (card 8608); it uses the wire codec, not the store's
-;; restricted reader.
+(deftest "wire-is-length-prefixed-utf8-json" "docs/SPEC-WORK.md:2661-2663"
+    "expected=4-byte-big-endian-length;utf8-payload;fragments-buffered;oversized-refused-one-framed-error"
+  (let* ((json "{\"op\": \"hello\", \"protocol\": [\"1\"]}")
+         (payload (wire-utf8-octets json))
+         (frame (wire-frame json)))
+    ;; The prefix is one 4-byte big-endian unsigned length (:2661-2663).
+    (check-equal (length payload) (wire-frame-length frame)
+                 "the length is the count of payload octets")
+    (check-equal (ldb (byte 8 24) (length payload)) (aref frame 0)
+                 "the first octet is the top byte")
+    (check-equal (ldb (byte 8 0) (length payload)) (aref frame 3)
+                 "the fourth octet is the low byte")
+    ;; A UTF-8 payload round-trips; a multi-byte character counts as its bytes.
+    (let* ((nonascii "café") (eframe (wire-frame nonascii)))
+      (check-equal (length (wire-utf8-octets nonascii)) (wire-frame-length eframe)
+                   "the length counts UTF-8 bytes, not characters")
+      (check-string= nonascii (wire-frame-payload eframe)
+                     "a UTF-8 payload round-trips")))
+  ;; A reader delivers one payload only after the last fragment arrives.
+  (let* ((reader (make-wire-frame-reader :max-frame-bytes 1024))
+         (frame (wire-frame "{\"a\": \"b\"}"))
+         (cut 3))
+    (check-equal '() (wire-frame-reader-feed reader (subseq frame 0 cut))
+                 "a partial prefix dispatches nothing")
+    (check-equal '()
+                 (wire-frame-reader-feed reader (subseq frame cut (1- (length frame))))
+                 "a partial payload dispatches nothing")
+    (check-equal '("{\"a\": \"b\"}")
+                 (wire-frame-reader-feed reader
+                                         (subseq frame (1- (length frame))))
+                 "the last fragment yields the one payload")
+    (check-equal '("{\"a\": \"b\"}") (wire-frame-reader-feed reader frame)
+                 "the next whole frame yields the next payload")
+    (check-equal '() (wire-frame-reader-buffered reader)
+                 "nothing is left buffered"))
+  ;; A frame past the bound is refused with one framed error and closed
+  ;; (:2663-2665).
+  (let ((reader (make-wire-frame-reader :max-frame-bytes 4)))
+    (ok (wire-frame-oversized-p (wire-frame "12345") 4)
+        "a payload past the bound is oversized")
+    (ok (not (wire-frame-oversized-p (wire-frame "1234") 4))
+        "a payload at the bound is admitted")
+    (let ((err (wire-frame-error "frame exceeds max-frame-bytes")))
+      (ok (wire-frame-complete-p err) "the refusal is itself one complete frame")
+      (let ((obj (wire-parse-json (wire-frame-payload err))))
+        (ok (absentp (wire-field obj "request"))
+            "the framed refusal carries a null request id")
+        (ok (eq :false (wire-field obj "ok")) "the framed refusal is not ok")))
+    (let ((refused nil))
+      (handler-case (wire-frame-reader-feed reader (wire-frame "12345"))
+        (unsupported-input () (setf refused t)))
+      (ok refused "the reader refuses the oversized frame"))))
+
+;; wire-integers-are-strings, protocol-version-negotiated-or-refused and
+;; pipeline-replies-are-correlated are the executable replays over the real
+;; codec here; the store's restricted reader is a different codec.
 
 ;;; ------------------------------------------------------------------
 ;;; bug node kind (SPEC-WORK.md:1851-1871, #463)
@@ -490,6 +568,12 @@
       (ok (null why) "with no reason"))
     (ok (not (protocol-frame-ok-p sess 17)) "an oversized frame is not ok")
     (ok (protocol-frame-ok-p sess 16) "a frame at the bound is ok")
+    ;; The real codec measures the framed payload: a 17-byte JSON object
+    ;; framed with the 4-byte prefix is refused, a 16-byte one is admitted.
+    (ok (wire-frame-oversized-p (wire-frame (make-string 17 :initial-element #\x)) 16)
+        "the real frame past the bound is refused")
+    (ok (not (wire-frame-oversized-p (wire-frame (make-string 16 :initial-element #\x)) 16))
+        "the real frame at the bound is admitted")
     (let ((line (protocol-framed-error sess "frame exceeds max-frame-bytes")))
       (ok (search "request=null" line) "one framed error carries a null id")
       (ok (protocol-session-closed-p sess) "the connection is closed after it"))))

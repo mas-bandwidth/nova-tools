@@ -540,6 +540,23 @@
    #:wire-session-pushed
    #:wire-session-client-alive-p
    #:wire-session-mutate
+   ;; the framed length-prefixed JSON wire codec (nova-tools card 9132):
+   ;; a 4-byte big-endian unsigned length, then that many UTF-8 JSON bytes.
+   #:wire-utf8-octets
+   #:wire-utf8-string
+   #:wire-json-escape
+   #:wire-json-encode
+   #:wire-parse-json
+   #:wire-frame
+   #:wire-frame-length
+   #:wire-frame-payload
+   #:wire-frame-complete-p
+   #:wire-frame-oversized-p
+   #:make-wire-frame-reader
+   #:wire-frame-reader-p
+   #:wire-frame-reader-feed
+   #:wire-frame-reader-buffered
+   #:wire-frame-error
    #:make-operation-registry
    #:operation-registry-p
    #:operation-registry-operations
