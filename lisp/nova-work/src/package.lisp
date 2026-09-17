@@ -63,6 +63,10 @@
    #:state-revision
    #:state-history
    #:state-closed-rows
+   ;; indexes: the write-maintained counters and indexes and their reconstruction
+   #:reconstruct-state-index
+   #:state-holder-index
+   #:state-index-mismatches
    #:node-open-count
    #:node-branch
    #:node-state

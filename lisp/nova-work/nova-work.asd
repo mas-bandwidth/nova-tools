@@ -16,6 +16,7 @@
                (:file "src/value")
                (:file "src/event")
                (:file "src/state")
+               (:file "src/indexes")
                (:file "src/dependencies")
                (:file "src/lock")
                (:file "src/journal")

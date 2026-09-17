@@ -188,6 +188,9 @@ TMPDIR can exceed, so try short roots first and create the first that works."
   ;; modes refused rather than reused; no listener on any network address.
   ;; A short relative base: the AF_UNIX sun_path is capped near 107 bytes and a
   ;; deep TMPDIR (the card sandbox) overflows it, so the endpoint cannot bind.
+  ;; An AF_UNIX path is bounded (sun_path, about 108 bytes), so a deep TMPDIR
+  ;; cannot carry the session socket. Prefer a shorter writable root for the
+  ;; endpoint; the other replays' regular files keep the ambient directory.
   (let* ((tmp (namestring (uiop:temporary-directory)))
          (cwd (sb-posix:getcwd))
          (*default-pathname-defaults* (pathname tmp))
