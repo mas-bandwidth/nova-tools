@@ -40,8 +40,12 @@ type Worker struct {
 	// one of `key_file` and `secret` is set; run and supervise require that variable to
 	// be present and non-empty, and the value is never written to a file, never printed,
 	// and never in a RUN or SUPERVISE line.
-	Secret      string   `json:"secret,omitempty"`
-	Usage       string   `json:"usage"`
+	Secret string `json:"secret,omitempty"`
+	Usage  string `json:"usage"`
+	// CLASS (CARD-8390): `public` means this worker never sees private source
+	// (the public-class gate); `paid` is the default. Empty decodes as paid so
+	// no description written before the gate changes meaning by being re-read.
+	Class       string   `json:"class,omitempty"`
 	Harness     string   `json:"harness"`
 	HarnessArgs []string `json:"harness_args,omitempty"`
 	WorkerDir   string   `json:"worker_dir"`
@@ -122,7 +126,7 @@ func LoadWorker(path string) (Worker, []error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&w); err != nil {
-		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, class, input_limit_phrases, launch_grace", path, err)}
+		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, class, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, input_limit_phrases, launch_grace", path, err)}
 	}
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
@@ -186,6 +190,14 @@ func LoadWorker(path string) (Worker, []error) {
 		problems = append(problems, fmt.Errorf("%s: usage is required; it wants `opencode` (the job's own %s in the data home this tool exports for it, read with `%s -readonly`, five token types, a dash for absence) or `none` (it reports nothing, and only `--tokens unmetered` tasks may run under it)", path, OpenCodeDB, SQLiteBinary))
 	default:
 		problems = append(problems, fmt.Errorf("%s: usage wants `opencode` (the job's own %s, read with `%s -readonly`) or `none` (it reports nothing, and only `--tokens unmetered` tasks may run under it), got %q", path, OpenCodeDB, SQLiteBinary, w.Usage))
+	}
+	// CLASS (CARD-8390): `public` confines the worker to listed public source,
+	// `paid` (and empty, the default) confines nothing. Anything else is a
+	// misspelled confinement and is refused here, where it can still be fixed.
+	switch w.Class {
+	case "", WorkerClassPaid, WorkerClassPublic:
+	default:
+		problems = append(problems, fmt.Errorf("%s: class wants `public` (this worker never sees a card that clones an unlisted repo) or `paid` (the default), got %q", path, w.Class))
 	}
 	// D1, 2026-09-11: the model must REACH THE CHILD. A description that names a model and
 	// never places it in the harness's argv launches a harness that was told nothing, and

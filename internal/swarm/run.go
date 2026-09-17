@@ -388,6 +388,21 @@ func Run(in RunInput) int {
 			if err != nil || !claimed {
 				break
 			}
+			// THE PUBLIC-CLASS GATE (CARD-8390): a public-class worker never
+			// sees a card that clones an unlisted repo. The card is refused
+			// with CARD REFUSED and moved to failed/ without ever launching,
+			// so a free/contributor model never sees private source.
+			if repo, refused := CheckPublicCard(in.Worker, string(text), p.Dir); refused {
+				line := "CARD REFUSED " + PublicRefusalWhy(repo, in.Worker.Name)
+				fmt.Fprintln(errOut, line)
+				sc.End, sc.RC, sc.Ended = EndFailed, -1, Stamp(now())
+				_ = p.WriteSidecar(Running, sc)
+				_ = p.Claim(sc.ID, Running, Failed)
+				said = true
+				failed++
+				tasks.Line(line)
+				continue
+			}
 			leased := false
 			if in.SlotsStore != "" {
 				dur := taskDeadline(sc, in.Worker) + 2*time.Minute
