@@ -44,7 +44,7 @@ nova-pulse capacity --bench <name> [--cores <n>] [--load1 <n>] [--free-gb <n>] [
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]] [--max <n>]
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--dedupe --issues <file>] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
-nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
+nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--base-url <u>] [--key-env <v>] [--floor <f>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse event   --label <card> --event <queued|leased|started|turn|ok|fail|asked|harvested|pr|read|landed|jev> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--attempt <n>] [--bench <name>] [--model <name>] [--route <name>] [--tokens-in <n>] [--tokens-out <n>] [--usd <f>] [--pr <n>] [--head <sha>] [--at <RFC3339>] [--timeout <s>] [--print]
 nova-pulse fold    --db <file> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--group <name>] [--consumer <name>] [--interval <d>] [--count <n>] [--timeout <s>] [--max <n>] [--once] [--rebuild] [--init] [--report] [--dump]
@@ -241,6 +241,9 @@ sweep walks the approvals ledger: every read verdict is a row in <queue>/ledger.
 and each sweep enqueues the approved, green, undrafted, unheld ones exactly once,
 marks a moved head stale, and closes a merged or closed PR. --source replays it
 from a file of PR states instead of gh, and enqueues into <queue>/enqueued.tsv.
+--decide asks TypeSafe Jev one typed score per candidate PR before enqueueing,
+prints ORDER pr=<n> score=<s> conf=<c> per PR, and enqueues in descending score;
+below --floor the score is 0.5 and the existing order stands.
 
 example:
   nova-pulse sweep --repo mas-bandwidth/nova-tools --queue ./queue
