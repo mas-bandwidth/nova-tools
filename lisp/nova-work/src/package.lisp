@@ -179,6 +179,23 @@
     #:machine-excludes
     #:machine-limits
     #:machine-facts
+    ;; node verbs (nova-tools #362 replays)
+    #:node-metadata
+    #:node-edit
+    #:node-undo
+    #:node-edit-log
+    #:render-node
+    #:fetch-link
+    #:*link-fetch-count*
+    #:node-add
+    #:node-repo
+    #:repo-holder
+    #:node-type
+    #:node-view
+    #:node-parent
+    #:node-children
+    #:roadmap-create
+    #:node-move
     ;; applicable/delegation replays (Go card 8132)
     #:note-id
     #:make-note

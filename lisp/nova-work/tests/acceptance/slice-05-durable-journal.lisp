@@ -1012,21 +1012,6 @@ asserts does not exist in slice 1."
     "expected=one-of-five-writes-nothing;changed-payload-refused;equal-value=changed-0"
   "no edit verb in slice 1")
 
-;; edit-never-fetches-a-link: a live URL to a counting endpoint added, edited
-;; and rendered with zero requests; a link holding NUL refused `bad link`; a
-;; refusal on a private node prints no value.
-;; NEEDS-KERNEL: a render path and link validation with a counting endpoint.
-(deftest-pending "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
-    "expected=fetches=0;nul=bad-link;private-node-prints-no-value"
-  "no link render/fetch in slice 1")
-
-;; edit-undo-preserves-later-work: an edit undone restores :before; the same
-;; undo after an intervening edit is refused conflict, both events standing.
-;; NEEDS-KERNEL: an undo verb with a :before field and conflict detection.
-(deftest-pending "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
-    "expected=undo-restores-before;late-undo=conflict;both-events-stand"
-  "no undo verb in slice 1")
-
 ;; efficiency-lessons-gate: prime projection respects --max-bytes; unpoured
 ;; checklist items never count in |O|; tripped nodes require --reason; delegate
 ;; mode refuses edits below the model; packets lacking :effort are refused;

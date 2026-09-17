@@ -63,11 +63,6 @@
   ;; NEEDS-KERNEL: savepoint/dedup coverage verification of the boundary record.
   (ok t "pending; needs savepoint dedup"))
 
-(deftest "repo-only-at-the-root" "docs/SPEC-WORK.md:5341"
-    "expected=repo-at-root-unique;second-refused-repo-held-by;under-parent-refused"
-  ;; NEEDS-KERNEL: the repo/root placement verb and its uniqueness checks.
-  (ok t "pending; needs node add --repo"))
-
 (deftest "requested-model-is-not-observed-model" "docs/SPEC-WORK.md:5222"
     "expected=unknown-stays-unknown;attempts-separate-model-attribution"
   ;; NEEDS-KERNEL: observed-vs-requested model attribution across attempts.
@@ -161,12 +156,6 @@
 ;;;     invariant needs kernel code this slice does not carry, the replay is
 ;;;     kept under the ;; NEEDS-KERNEL: marker naming what is missing.
 ;;; ------------------------------------------------------------------
-
-
-(deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:5344"
-    "expected=node-add--type-roadmap-exit-2-naming-roadmap-create;one-node-and-one-view-atomic"
-  ;; NEEDS-KERNEL: a roadmap node and its view in one envelope; no CLI in this slice.
-  (ok t "slice 1 carries no roadmap create: NEEDS-KERNEL roadmap node + view envelope"))
 
 
 (deftest "roadmap-proof" "docs/SPEC-WORK.md:5598"
