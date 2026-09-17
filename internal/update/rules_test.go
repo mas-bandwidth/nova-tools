@@ -393,15 +393,18 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 	}
 }
 
-// #592: the snapshot verb is callable and produces report's manifest, yet help
-// never prints it. Its whole usage line belongs beside report so a reader
-// discovers the manifest-writing verb, distinguishable from report's unrelated
-// --snapshot <path> option by the verb spelling and its --bin/--out flags.
+// #592: the snapshot verb is callable, yet help never printed it. Its whole
+// usage line belongs beside report so a reader discovers the inventory verb,
+// distinguishable from report's unrelated --snapshot <path> option by the verb
+// spelling and its --bin/--out flags (docs/SPEC-VERSION.md).
 func TestHelpNamesTheSnapshotVerb(t *testing.T) {
 	var printed bytes.Buffer
 	help("nova-version", &printed)
-	if !strings.Contains(printed.String(), "nova-version snapshot --file <manifest") {
+	if !strings.Contains(printed.String(), "nova-version snapshot --bin <dir> --out <file.tsv>") {
 		t.Fatalf("nova-version help omits the snapshot verb:\n%s", printed.String())
+	}
+	if !strings.Contains(printed.String(), "nova-version diff --from <a.tsv> --to <b.tsv>") {
+		t.Fatalf("nova-version help omits the diff verb:\n%s", printed.String())
 	}
 }
 

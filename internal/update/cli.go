@@ -73,7 +73,8 @@ nova-update help`
 // named; the spec carries the same shape once (SPEC-UPDATE rule 2).
 const manifestShape = "one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand"
 
-const versionVerbs = `nova-version snapshot --file <manifest: ` + manifestShape + `>
+const versionVerbs = `nova-version snapshot --bin <dir> --out <file.tsv>
+nova-version diff --from <a.tsv> --to <b.tsv>
 nova-version report --file <manifest: ` + manifestShape + `> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-version send --file <manifest: ` + manifestShape + `> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
 nova-version help`
@@ -158,7 +159,13 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		if name != "nova-version" {
 			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
 		}
-		return snapshotVerb(name, args, out, errs)
+		return snapshotVerb(name, args, out, errs, env)
+	}
+	if verb == "diff" {
+		if name != "nova-version" {
+			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
+		}
+		return diffVerb(name, args, out, errs)
 	}
 	impliedSend := name == "nova-version" && verb == "send"
 	if impliedSend {
