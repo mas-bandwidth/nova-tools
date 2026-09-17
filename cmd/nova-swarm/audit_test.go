@@ -100,6 +100,12 @@ var swarmAudit = audit.Config{
 		// executable.go asks of PATHEXT, made a parameter so linux can hold the windows
 		// answer to its contract.
 		`"runtime"`,
+		// regexp (lint.go) compiles the patterns the card lint matches a card's text
+		// against; a *regexp.Regexp holds no writer and writes no stream. Every line it
+		// selects leaves this package through oneline.Escape(oneline.Cap(...)) on the
+		// LINT DRIFT line, so a card cannot write past the escape. It only reads the one
+		// file the caller named and writes nothing at all.
+		`"regexp"`,
 	},
 	MinClassified: 40,
 }
