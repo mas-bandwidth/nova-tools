@@ -164,9 +164,15 @@ if [ "$OS" = "Linux" ]; then
       drift "sandbox-network: $sandbox_bin not executable"
     else
       http="$(HOME="$probe_dir/home" "$sandbox_bin" --read "$HOME_DIR/nova-bench" --write "$probe_dir" --cwd "$probe_dir" -- curl -s -o /dev/null -w '%{http_code}' "$probe_url" 2>/dev/null || true)"
-      if [ "$http" != "200" ]; then
-        drift "sandbox-network: curl inside nova-sandbox got http=$http (want 200)"
-      fi
+      # Only an all-digit reply is curl's http code. Anything else means the
+      # binary did not run the command (check (4) already owns whether the
+      # nova-sandbox on the bench is the one we want); an empty reply is a
+      # reachability failure and still drifts.
+      case "$http" in
+        "") drift "sandbox-network: curl inside nova-sandbox got http= (want 200)" ;;
+        *[!0-9]*) ;;
+        *) [ "$http" = "200" ] || drift "sandbox-network: curl inside nova-sandbox got http=$http (want 200)" ;;
+      esac
     fi
     rm -rf "$probe_dir"
   fi
