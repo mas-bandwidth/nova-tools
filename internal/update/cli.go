@@ -26,11 +26,11 @@ type Environment struct {
 	Client *http.Client
 }
 type options struct {
-	file, host, snapshot, as, to, bus, remote, branch, target string
-	max                                                       int
-	timeout, budget                                           time.Duration
-	kinds                                                     kindFlags
-	draft, send                                               bool
+	file, host, snapshot, as, to, bus, remote, branch, target, adopt string
+	max                                                              int
+	timeout, budget                                                  time.Duration
+	kinds                                                            kindFlags
+	draft, send                                                      bool
 }
 type kindFlags []string
 
@@ -62,6 +62,7 @@ func refusal(w io.Writer, token string, err error) int {
 const updateVerbs = `nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update help`
 
 // manifestShape is the one sentence that says what the file --file names holds:
@@ -157,8 +158,11 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if impliedSend {
 		verb = "report"
 	}
-	if (name == "nova-version" && verb != "report") || (verb != "report" && verb != "check" && verb != "apply") {
+	if (name == "nova-version" && verb != "report") || (verb != "report" && verb != "check" && verb != "apply" && verb != "watch") {
 		return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
+	}
+	if verb == "watch" {
+		return watchMain(name, args, out, errs, env)
 	}
 	token := strings.ToUpper(verb)
 	if verb == "check" {

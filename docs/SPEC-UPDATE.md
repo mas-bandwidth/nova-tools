@@ -327,6 +327,21 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     budget. It installs nothing, pulls nothing, and no report line is a name for `apply`
     (rules 9, 10). It sends only under `--send`; `--draft` never sends; a plain `report`
     with `--as` and `--to` given still sends nothing — the send is a flag the caller typed.
+27. **Adoption is a mechanical step of the upgrade cycle, run by the coordinator itself.**
+    `nova-update watch --adopt <checks.tsv>` runs the coordinator's own adoption pass after
+    every rebuild: it reads the three-column checks file (`check`, `command`, `owner`, one
+    argv per check under rule 3), runs each check, and writes one `ADOPT OK` or `ADOPT
+    REFUSED` line per check plus one `ADOPT DONE sha= ok= refused=` line. The pass covers
+    the standing adoption checks — versions agree, a bus inbox round trip with the bus
+    defaults, nova-wake awake from config, one known-answer card per route through
+    nova-swarm native (flat, local, remote bench), snapshot then report, tokens sum from
+    jobs — each as a row of the checks file. With `--bus --remote --branch --as --to` the
+    pass posts the receipt to the bus as the coordinator's own through the prepared
+    artifact protocol (rule 24) and prints `ADOPT SENT`; without them it prints and sends
+    nothing (rule 26). Every REFUSED check is handed to the duty tier on an `ADOPT
+    ESCALATE` line naming its owner, and the duty tier files an issue in the dogfood shape
+    and a fix card. Exit is 0 when every check passes, 1 when any check refuses or the
+    receipt is unconfirmed, 2 on a refusal.
 
 ## The versions file
 
@@ -351,10 +366,11 @@ DIFFERENT line, so the morning names a person, not only a number.
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update help
 ```
 
-Those three usage lines are the string `nova-update help` prints, byte for byte: one string
+Those four usage lines are the string `nova-update help` prints, byte for byte: one string
 in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version snapshot …` reads the adopted manifest and reports its count on one line,
@@ -397,9 +413,16 @@ REPORT SENT to=<who,who> via=<nova-bus argv, escaped> line=<nova-bus's SEND OK l
 REPORT <OK|FAIL> checked=<n> known=<n> unknown=<n> changed=<yes|no|-> sent=<yes|no|uncertain|-> took=<d> file=<path>
 REPORT NOTE <something true about this run that is not a finding>
 REPORT REFUSED: <reason> (<remedy>)
+ADOPT OK check=<name> detail=<first line, escaped>
+ADOPT REFUSED check=<name> detail=<reason> (<remedy>)
+ADOPT ESCALATE check=<name> to=<owner>: duty files an issue and a fix card (<reason>)
+ADOPT DONE sha=<12 hex> ok=<n> refused=<m>
+ADOPT SENT to=<who,who> line=<nova-bus's SEND OK line, escaped>
+ADOPT NOTE <something true about this run that is not a finding>
+ADOPT REFUSED: <reason> (<remedy>)
 ```
 
-`UPDATE`, `APPLY` and `REPORT` are the first tokens, `OK` and `FAIL` the verdicts and the
+`UPDATE`, `APPLY`, `REPORT` and `ADOPT` are the first tokens, `OK` and `FAIL` the verdicts and the
 **last** line; the rest are informational second tokens, declared here as SPEC.md requires,
 on stdout, `REFUSED` and `FAIL` on stderr; every value is one `internal/oneline` token.
 
