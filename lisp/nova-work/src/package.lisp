@@ -53,6 +53,7 @@
    #:event-id
    #:closed-row-key
    #:payload-digest
+   #:kind-fields
    ;; state
    #:make-seed-state
    #:state-open-count
@@ -67,11 +68,26 @@
    #:node-required-count
    #:node-required-open
    #:node-deps
+   #:node-dependents
    #:node-needs-broken
    #:ready-p
    #:ready-nodes
    #:node-estimate
    #:forecast
+   #:node-holder
+   #:state-lease-log
+   #:take-lease
+   #:release-lease
+   #:working-count
+   #:node-disposition
+   #:roadmap-members
+   #:roadmap-open
+   #:node-title
+   #:node-category
+   #:node-links
+   #:node-private
+   #:node-version
+   #:metadata-digest
    #:root-digest
    #:state-canonical-form
    #:reconstruct-state
@@ -114,6 +130,13 @@
     #:kernel-journal
     #:kernel-next-rev
     #:submit
+    ;; the six new verbs (SPEC-WORK.md:1014-1058)
+    #:submit-new-verb
+    #:new-verb-p
+    #:new-verb-kind
+    #:new-verb-fields
+    #:new-verb-subject
+    #:new-verb-word
     #:ask-size
      #:open-issue-count
      #:open-leaf-count
@@ -165,6 +188,23 @@
     #:machine-excludes
     #:machine-limits
     #:machine-facts
+    ;; node verbs (nova-tools #362 replays)
+    #:node-metadata
+    #:node-edit
+    #:node-undo
+    #:node-edit-log
+    #:render-node
+    #:fetch-link
+    #:*link-fetch-count*
+    #:node-add
+    #:node-repo
+    #:repo-holder
+    #:node-type
+    #:node-view
+    #:node-parent
+    #:node-children
+    #:roadmap-create
+    #:node-move
     ;; applicable/delegation replays (Go card 8132)
     #:note-id
     #:make-note
@@ -286,7 +326,1194 @@
    #:unsupported-outcome
    #:correct-segment
    #:execution-correct
-   #:bare-correct))
+   #:bare-correct
+    ;; closed-history replays (Go card 8601)
+    #:make-closed-history
+    #:closed-history-rows
+    #:closed-history-page-records
+    #:closed-history-page-bytes
+    #:closed-history-root
+    #:default-window-days
+    #:window-days
+    #:day-before
+    #:stamp-day
+    #:stamp-midnight-p
+    #:merge-days-by-revision
+    #:clip-day
+    #:clip-day-batched
+    #:query-history
+    #:continue-query
+    #:make-query-cursor
+    #:query-cursor-root
+    #:query-cursor-index
+    #:query-cursor-days
+    #:query-cursor-from
+    #:query-cursor-to
+    #:make-query-result
+    #:query-result-shown
+    #:query-result-pages
+    #:query-result-more
+    #:query-result-cursor
+    #:query-result-days
+    #:query-result-root
+    #:query-result-read
+    #:query-result-line
+    #:query-result-expired
+    #:index-depth
+    #:make-history-cost
+    #:history-cost
+    #:history-cost-startup-resident-bytes
+    #:history-cost-segment-bytes-read
+    #:history-cost-parses
+    #:history-cost-replays
+    #:history-cost-emitted-bytes
+    #:history-cost-index-pages-read
+    #:history-cost-scanned-days
+    #:history-cost-dedup-loads
+    ;; publication, overlay and day coverage (replays of SPEC-WORK.md:716-762)
+    #:publication
+    #:make-publication
+    #:pub-revision
+    #:pub-snapshot-sha
+    #:pub-closed-sha
+    #:pub-dedup-sha
+    #:pub-manifests
+    #:pub-files
+    #:verify-publication
+    #:overlay
+    #:make-overlay
+    #:ov-pages
+    #:ov-entries
+    #:replay-overlay
+    #:closed-entry
+    #:make-closed-entry
+    #:ce-rev
+    #:ce-id
+    #:ce-stamp
+    #:closed-segment
+    #:make-closed-segment
+    #:seg-name
+    #:seg-entries
+    #:day-manifest
+    #:make-day-manifest
+    #:man-name
+    #:man-refs
+    #:manifest-for-day
+    #:closed-day-selection
+    ;; closed-history / clip / new-verb replays (card 8603)
+    #:ask-state-as-of
+    #:admit-record
+    #:clip
+    #:split-index-page
+    ;; replays-slice-05: merged-is-not-distributed
+    #:make-release-task
+    #:release-task-id
+    #:release-task-version
+    #:release-task-deps
+    #:release-task-branch
+    #:release-task-settle-stamp
+    #:make-finding
+    #:finding-id
+    #:finding-branch
+    #:finding-disposition
+    #:finding-evidence
+    #:finding-landed
+    #:finding-released
+    #:disposition-row
+    ;; replays-slice-05: ready-names-the-blocker-and-the-resolver
+    #:make-ready-item
+    #:ready-item-id
+    #:ready-item-branch
+    #:ready-item-deps
+    #:ready-item-holder
+    #:ready-item-responsible
+    #:ready-row-id
+    #:ready-row-ready
+    #:ready-row-reason
+    #:ready-row-resolver
+    #:ready-rows
+    ;; replays-slice-05: remove-settles-only-open-items
+    #:node-remove
+    ;; replays-slice-05: endpoint-is-local-and-private
+    #:make-session-endpoint
+    #:session-endpoint-directory
+    #:session-endpoint-socket-path
+    #:session-endpoint-directory-mode
+    #:session-endpoint-socket-mode
+    #:session-endpoint-owner
+    #:session-endpoint-socket-family
+    #:endpoint-network-listener-p
+    #:local-socket-family
+    #:current-account-uid
+   ;; wire codec, protocol handshake, pipelined correlation, disconnect
+   ;; reconciliation and the long-operation registry (nova-tools card 8608)
+   #:wire-encode-integer
+   #:wire-decode-value
+   #:wire-number-token-p
+   #:wire-object-decode
+   #:wire-field
+   #:make-protocol-session
+   #:protocol-session-p
+   #:protocol-session-supported
+   #:protocol-session-version
+   #:protocol-session-handshaken-p
+   #:protocol-session-closed-p
+   #:protocol-session-max-frame-bytes
+   #:protocol-hello
+   #:protocol-admit
+   #:protocol-frame-ok-p
+   #:protocol-framed-error
+   #:make-wire-connection
+   #:wire-connection-p
+   #:wire-connection-protocol
+   #:wire-connection-outstanding
+   #:wire-connection-settled
+   #:wire-connection-buffer
+   #:wire-connection-closed-p
+   #:wire-close
+   #:wire-pipeline-request
+   #:wire-feed
+   #:wire-dispatch
+   #:independent-batch-results
+   #:atomic-batch-validate
+   #:make-wire-session
+   #:wire-session-p
+   #:wire-session-kernel
+   #:wire-session-pushed
+   #:wire-session-client-alive-p
+   #:wire-session-mutate
+   #:make-operation-registry
+   #:operation-registry-p
+   #:operation-registry-operations
+   #:operation-registry-journal
+   #:operation-accept
+   #:operation-state
+   #:operation-complete
+   #:operation-result
+   #:operation-wait
+   #:operation-client-exit
+   #:operation-journal-length
+   ;; the registry API renamed to keep it distinct from the operation struct
+   ;; accessors added by card 8609 (operation-state/-result) and the session
+   ;; operation-wait.
+   #:registry-operation-state
+   #:registry-operation-result
+   #:registry-operation-wait
+    ;; long operation, cancel, clip and undo/redo replays (card 8609)
+    #:*operation-limits*
+    #:make-operation
+    #:operation-p
+    #:operation-id
+    #:operation-op
+    #:operation-request
+    #:operation-staged-bytes
+    #:operation-retained-results
+    #:make-work-session
+    #:work-session-p
+    #:work-session-operations
+    #:work-session-events
+    #:work-session-receipts
+    #:work-session-limits
+    #:work-session-git-timeout
+    #:session-operation
+    #:session-add-operation
+    #:operation-status
+    #:operation-pending-p
+    #:session-bounded-p
+    #:operation-cancel
+    #:clip-request
+    #:session-stop
+    #:reconcile-operations
+    #:*reversible-verbs*
+    #:undo-request
+    #:moved-preconditions
+    #:redo-request
+    ;; roadmap replays (card 8621)
+    #:r8621-row-add #:r8621-row-finish #:r8621-row-retire
+    #:r8621-row-active-count #:r8621-rows-export #:r8621-rows-load
+    #:r8621-view-reopen
+    #:r8621-matrix-make #:r8621-matrix-axis #:r8621-matrix-member-p
+    #:r8621-matrix-retired-p #:r8621-matrix-remove #:r8621-matrix-restore
+    #:r8621-matrix-add-axis #:r8621-matrix-flatten
+    #:r8621-cfg-make #:r8621-cfg-value #:r8621-cfg-rev #:r8621-cfg-configure
+    #:r8621-cfg-retry #:r8621-cfg-undo
+    #:r8621-roadmap-make #:r8621-roadmap-settled-p #:r8621-roadmap-open-required
+    #:r8621-roadmap-fold-count #:r8621-roadmap-metadata #:r8621-roadmap-project
+    #:r8621-roadmap-render #:r8621-roadmap-add-member
+    #:+r8621-marker-start+ #:+r8621-marker-end+
+    #:r8621-render-body #:r8621-render-chat #:r8621-marker-region
+    #:r8621-render-file
+    ;; roadmap scope revisions advanced by `node move` (src/roadmap.lisp)
+    #:make-scope-roadmap
+    #:scope-roadmap-id
+    #:scope-roadmap-revision
+    #:scope-roadmap-rows
+    #:scope-roadmap-references-p
+    #:scopes-on-move
+    #:scope-capture
+    #:scope-mutate
+    #:scopes-undo
+    ;; render replays (nova-tools #362)
+    #:make-render-session
+    #:render-session-p
+    #:render-session-permissions
+    #:render-session-mappings
+    #:make-render-projection
+    #:render-projection-p
+    #:render-projection-repo
+    #:render-projection-root
+    #:render-projection-target
+    #:render-result-p
+    #:render-result-ok
+    #:render-result-reason
+    #:render-result-line
+    #:render-result-artifact
+    #:render-result-wrote
+    #:path-within-p
+    #:render-symlink-escape-p
+    #:marker-refusal
+    #:render-file
+    #:render-chat
+    #:*render-frame-bound*
+    #:artifact-bytes-ok-p
+    #:artifact-hash-ok-p
+    #:artifact-valid-p
+    #:render-correlated-batch
+    #:acquire-render-lock
+    #:*render-lock-guards-external-editor*
+    ;; priority replays (nova-tools #362)
+    #:priority-field
+    #:priority-slot
+    #:priority-no-effect-p
+    #:priority-set
+    #:priority-clear
+    #:effective-priority
+    #:priority-settle
+    #:priority-reopen
+    #:priority-event
+    #:priority-only-moves-its-field-p
+    #:priority-lessp
+    #:ready-order
+    #:priority-order-refusal
+    #:priority-eligible-p
+    #:priority-starts-nothing-p
+    #:*priority-event-keys*
+    ;; priority and captured-state export replays (nova-tools #362)
+    #:+rank-ceiling+
+    #:rank-atom-p
+    #:make-priority-table
+    #:priority-table
+    #:priority-table-p
+    #:priority-change-id
+    #:effective-rank
+    #:priority-undo
+    #:priority-order
+    #:priority-rows
+    #:priority-page
+    #:make-work-view
+    #:work-view
+    #:work-view-p
+    #:work-view-who
+    #:work-view-lease
+    #:work-view-worker
+    #:work-view-approval
+    #:priority-grants-nothing-p
+    #:make-export-capture
+    #:export-capture
+    #:export-capture-p
+    #:export-capture-revision
+    #:export-capture-base
+    #:export-capture-end
+    #:export-capture-records
+    #:export-capture-bytes
+    #:state-record
+    #:capture-export
+    #:validate-export
+    #:operation-registry
+    #:begin-operation
+    #:operation
+    #:operation-start
+    #:operation-finish
+    #:unrelated-mutation
+    ;; the priority-and-export operation model renamed to keep it distinct
+    ;; from the operation struct and the registry operations.
+    #:priority-operation
+    #:priority-operation-p
+    #:priority-operation-registry
+    #:priority-operation-registry-p
+    #:make-priority-operation-registry
+    #:priority-operation-record
+    #:priority-operation-state
+    #:priority-operation-start
+    #:priority-operation-finish
+    #:priority-operation-cancel
+    #:priority-operation-wait
+    #:priority-table-set
+    #:priority-table-clear
+    ;; attempts/capabilities/silence replays (card 8626)
+    #:*capability-group-kinds*
+    #:make-capability-group
+    #:capability-group-p
+    #:capability-group-id
+    #:capability-group-kind
+    #:capability-group-source
+    #:capability-group-last-verified
+    #:capability-group-availability
+    #:capability-group-constraints
+    #:capability-group-declared-support
+    #:capability-group-runtime-verified
+    #:capability-group-free-capacity
+    #:capability-declared-support-p
+    #:capability-runtime-verified-p
+    #:capability-free-capacity
+    #:capability-fields-collapse-p
+    #:dispatch-fact
+    #:dispatch-fact-p
+    #:dispatch-fact-kind
+    #:dispatch-fact-request
+    #:dispatch-fact-node
+    #:dispatch-fact-to
+    #:dispatch-fact-state
+    #:dispatch-fact-reserved
+    #:dispatch-fact-declared
+    #:copy-dispatch-fact
+    #:dispatch-offer
+    #:delivery-receipt
+    #:acknowledgement
+    #:accepted-ownership
+    #:facts-collapsed-p
+    #:pending-offer-p
+    #:pending-offer-reserved
+    #:pending-offer-declared
+    #:offer-after-timeout
+    #:dispatch-launched-p
+    #:second-offer-admitted-p
+    #:make-attempt
+    #:attempt
+    #:attempt-p
+    #:attempt-id
+    #:attempt-node
+    #:attempt-requested-model
+    #:attempt-observed
+    #:attempt-usage
+    #:attempt-observed-model
+    #:append-attempt
+    #:attempts-collapsed-p
+    #:silence-action
+    #:availability-after-window
+    #:silence-verdict
+    #:probe-outcome
+    ;; fleet recommendation and the four assignment facts (Go card 8629)
+    #:make-machine
+    #:machine-id
+    #:machine-name
+    #:machine-owner
+    #:machine-roles
+    #:machine-permits
+    #:machine-excludes
+    #:machine-limits
+    #:machine-facts
+    #:machine-connect
+    #:machine-excludes-p
+    #:machine-admits-p
+    #:make-fleet-session
+    #:fleet-session-who
+    #:fleet-session-leases
+    #:make-fleet-ask
+    #:fleet-ask-kind
+    #:fleet-ask-rows
+    #:fleet-ask-fail
+    #:fleet-ask-lease
+    #:fleet-ask-exit-code
+    #:fleet-row
+    #:fleet-for
+    #:make-assignment-state
+    #:assignment-state-who
+    #:assignment-state-offers
+    #:assignment-state-deliveries
+    #:assignment-state-acceptances
+    #:assignment-state-declines
+    #:assignment-state-reservations
+    #:assignment-state-leases
+    #:assignment-state-attempts
+    #:assignment-state-evidence
+    #:assignment-state-completed
+    #:assignment-state-node-state
+    #:assignment-state-w
+    #:assignment-state-responsible
+    #:assignment-state-free-slots
+    #:assignment-state-launches
+    #:*session-written-fields*
+    #:make-staged-input
+    #:staged-input-bytes
+    #:staged-input-result
+    #:staged-input-valid-p
+    #:staged-input-rev
+    #:staged-input-reason
+    #:stage-provenance
+    #:session-written-field
+    #:assignment-offer
+    #:assignment-acknowledge
+    #:assignment-decline
+    #:session-status
+    ;; assignment/execution-control replays (Go card 8630)
+    #:make-leasebook
+    #:leasebook-nodes
+    #:leasebook-w
+    #:leasebook-leases
+    #:leasebook-holders
+    #:leasebook-pending
+    #:leasebook-reservations
+    #:leasebook-evidence
+    #:leasebook-completion
+    #:leasebook-receipts
+    #:leasebook-requests
+    #:leasebook-generation
+    #:leasebook-observed-models
+    #:leasebook-effects
+    #:leasebook-bindings
+    #:leasebook-index-node
+    #:leasebook-index-friend
+    #:leasebook-offer
+    #:leasebook-received
+    #:leasebook-accepted
+    #:leasebook-decline
+    #:lease-until
+    #:leasebook-expire
+    #:leasebook-receipt
+    ;; execution control: the durable hold, the capture, the dispatch barrier and
+    ;; the cancellation edge (SPEC-WORK.md:3921-3980)
+    #:kernel-controls
+    #:kernel-holds
+    #:kernel-offers
+    #:record-attempt
+    #:live-attempt-ids
+    #:live-attempt-p
+    #:attempt-generation
+    #:attempt-live-p
+    #:execution-stop
+    #:execution-pause
+    #:hold-p
+    #:hold-id
+    #:hold-action
+    #:hold-scope
+    #:hold-targets
+    #:hold-directives
+    #:hold-anchor
+    #:hold-revision
+    #:hold-span
+    #:hold-manifest
+    #:hold-released-p
+    #:hold-durable-p
+    #:hold-pin
+    #:hold-covers-node-p
+    #:held-p
+    #:capture-manifest
+    #:manifest-hold-id
+    #:manifest-revision
+    #:manifest-span
+    #:manifest-target-ids
+    #:manifest-content-hash
+    #:recover-controls
+    #:prepare-offer
+    #:send-offer
+    #:reconcile-offer
+    #:offer-effect
+    #:offer-lease-p
+    #:offer-launched-p
+    #:lease-count
+    #:launch-count
+    #:launch-attempt
+    #:correct-attempt
+    #:move-node
+    #:request-cancel
+    #:cancel-confirm
+    #:cancel-requested-p
+    #:goal-stop
+    ;; control-plane verbs renamed to keep them distinct from the replay
+    ;; kernel's clip / accept-offer / release-hold.
+    #:ctl-clip
+    #:ctl-accept-offer
+    #:ctl-release-hold
+    ;; regression receipts (card 8641)
+    #:regression-receipt
+    #:make-regression-receipt
+    #:regression-receipt-p
+    #:regression-receipt-criterion
+    #:regression-receipt-revision-coverage
+    #:regression-receipt-uncertainty
+    #:regression-receipt-assertion
+    #:regression-receipt-mutation
+    #:assertion-holds-p
+    #:regression-evidence-p
+    #:green-badge-p
+    ;; savepoint vs shared checkpoint (card 8641)
+    #:savepoint
+    #:make-savepoint
+    #:savepoint-p
+    #:savepoint-id
+    #:savepoint-schema
+    #:savepoint-local-revision
+    #:savepoint-age
+    #:checkpoint
+    #:make-checkpoint
+    #:checkpoint-p
+    #:checkpoint-id
+    #:checkpoint-shared-revision
+    #:savepoint-is-not-shared-backup-p
+    #:restore-open
+    #:savepoint-report
+    #:checkpoint-line
+    ;; a stop across distributed work (card 8641)
+    #:control-request
+    #:make-control-request
+    #:control-request-p
+    #:control-request-kind
+    #:control-request-request
+    #:control-request-targets
+    #:control-handle
+    #:make-control-handle
+    #:control-handle-p
+    #:control-handle-target
+    #:control-handle-request
+    #:control-handle-delivered
+    #:control-handle-acknowledged
+    #:control-handle-reconciled
+    #:control-handle-generation
+    #:copy-control-handle
+    #:blocked-question
+    #:make-blocked-question
+    #:blocked-question-p
+    #:blocked-question-node
+    #:blocked-question-question
+    #:blocked-question-fallback
+    #:blocked-question-persisted
+    #:*control-kinds*
+    #:control-kind-p
+    #:distribute-control
+    #:stop-reaches-p
+    #:control-retry-identity
+    #:apply-correction
+    #:fallback-plan
+    #:independent-tasks-stall-p
+    ;; node add field order (card 8641)
+    #:*node-add-structure-fields*
+    #:*node-add-pre-fold-fields*
+    #:node-add-field-value
+    #:node-add-structure
+    #:node-add-structure-keys
+    #:node-add-pre-fold-structure
+    #:node-add-digest
+    #:node-add-digest-second
+    #:write-node-add-value
+    #:load-node-add-fixture
+    ;; archive completeness (card 8641)
+    #:*archive-gap-kinds*
+    #:archive-gap
+    #:make-archive-gap
+    #:archive-gap-p
+    #:archive-gap-kind
+    #:archive-gap-detail
+    #:archive-gap-source-issue
+    #:archive-capture
+    #:make-archive-capture
+    #:archive-capture-p
+    #:archive-capture-source-issue
+    #:archive-capture-author
+    #:archive-capture-gaps
+    #:archive-gaps-explicit-p
+    #:archive-absorbable-p
+    #:author-retains-source-p
+    ;; replays-8642: bounds-are-not-prompts
+    #:launcher #:make-launcher
+    #:launcher-input-bound #:launcher-output-bound
+    #:launcher-deadline #:launcher-attempt-limit
+    #:missing-hard-limits #:auto-dispatch-allowed-p
+    #:deadline-handle #:admit-execution
+    ;; replays-8642: batch-with-bounds-and-urgency
+    #:batch-config #:make-batch-config
+    #:batch-config-max-bytes #:batch-config-max-records #:batch-config-max-delay-ms
+    #:packet-fragment #:make-packet-fragment
+    #:packet-fragment-id #:packet-fragment-bytes #:packet-fragment-kind
+    #:packet-fragment-dependencies #:packet-fragment-retry-of
+    #:packet #:make-packet #:packet-manifest #:packet-fragments
+    #:exhausted-bound #:within-bounds-p #:batch-unchanged-p #:validate-packet
+    #:delay-applies-p #:dependencies-of #:retry-identity-of
+    ;; replays-8642: async-operations
+    #:operation-launch #:async-operation-cancel
+    ;; replays-8642: batches-and-pipelines
+    #:apply-atomic-batch #:apply-independent-batch
+    ;; replays-8642: cache-aware-context-choice
+    #:cache-price #:make-cache-price
+    #:cache-price-input-rate #:cache-price-cache-read-rate #:cache-price-cache-write-rate
+    #:cache-cost #:tiered-input-cost
+    #:context-plan #:make-context-plan
+    #:context-plan-hit-rate #:context-plan-retention-tokens
+    #:context-plan-new-prefix-tokens #:context-plan-rebuild-tokens
+    #:plan-cost
+    #:refresh-admission #:make-refresh-admission
+    #:refresh-admission-decision #:refresh-admission-adapter #:refresh-admission-evidence
+    #:refresh-refusal #:refresh-allowed-p #:choose-context-plan
+    ;; replays card 8643: dry run, cost lineage, compaction and copied journals
+    #:make-replay-session
+    #:preview-mutation
+    #:apply-mutation
+    #:join-cost-lineage
+    #:compact-copies
+    #:restore-copy
+    #:start-over-copy
+    #:join-experiment-cost
+    ;; efficiency, adoption and goal replays (card 8644)
+    #:prime
+    #:make-checklist-item
+    #:checklist-item-text
+    #:checklist-item-independent-verification
+    #:checklist-item-independent-worker
+    #:checklist-item-explicit-dependency
+    #:checklist-item-isolated-recovery
+    #:materializes-node-p
+    #:checklist-open-delta
+    #:*default-max-attempts*
+    #:attempts-tripped-p
+    #:lease-admission
+    #:*delegate-refused-actions*
+    #:delegate-admission
+    #:make-trial-result
+    #:trial-result-prospective
+    #:trial-result-baseline
+    #:trial-result-coverage
+    #:trial-result-quality
+    #:trial-result-tolerances-matched
+    #:adoption-verdict
+    #:make-root-step-record
+    #:root-step-record
+    #:root-step-record-node
+    #:root-step-record-steps
+    #:step-record-count
+    #:step-record-node-explosion
+    #:make-next-trigger
+    #:next-trigger-kind
+    #:next-trigger-due
+    #:make-waiting-item
+    #:waiting-item-id
+    #:waiting-item-trigger
+    #:pulse-reexecutions
+    #:make-goal-store
+    #:snapshot-goal-store
+    #:goal-store-scope
+    #:goal-store-goal
+    #:goal-store-node-state
+    #:goal-store-rev
+    #:goal-store-notes
+    #:goal-store-history
+    #:goal-store-dedup
+    #:goal-stop-state
+    #:goal-add-note
+    #:goal-set
+    #:goal-update
+    #:goal-cancel
+    #:goal-show
+    ;; the goal-world verbs renamed to keep them distinct from the
+    ;; efficiency-goal replay's goal-set/-update/-show.
+    #:goal-world-set
+    #:goal-world-update
+    #:goal-world-show
+    ;; replay-8645: the goal world, the historic tick and hostile-data intake
+    #:make-goal-world
+    #:goal-world-p
+    #:goal-world-rev
+    #:goal-world-nodes
+    #:goal-world-goals
+    #:goal-world-events
+    #:goal-world-seen
+    #:goal-world-scope-rev
+    #:gw-state
+    #:gw-branch
+    #:gw-goal
+    #:gw-state-to
+    #:gw-cancel
+    #:gw-accept-add
+    #:last-event
+    #:event-fields-keys
+    #:own-fields-ok-p
+    #:goal-check
+    #:stop-field
+    #:make-tick-record
+    #:tick-record-p
+    #:tick-record-id
+    #:tick-record-pinned-rev
+    #:tick-record-source-sha
+    #:tick-record-scope
+    #:tick-record-historic-tick
+    #:tick-record-current-verification
+    #:source-change
+    #:make-intake-limits
+    #:intake-limits-p
+    #:intake-limits-max-depth
+    #:intake-limits-max-bytes
+    #:intake-limits-max-nodes
+    #:*intake-visits*
+    #:intake-scan
+    #:hostile-intake
+    #:archive-path-safe-p
+    #:imported-prose-effect
+   ;; replays-8646 (nova-tools card 8646)
+   #:inventory-accounting
+   #:make-inventory-accounting
+   #:inventory-accounting-baseline
+   #:inventory-denominator
+   #:inventory-observe
+   #:inventory-interval-deltas
+   #:inventory-sustained-divergence-p
+   #:inventory-report
+   #:make-cost
+   #:cost-record-measured-cash
+   #:cost-record-marginal-cash
+   #:cost-record-reference-token-cost
+   #:cost-known-p
+   #:local-inference-cost
+   #:make-working-set
+   #:working-set-reconciled-p
+   #:w-take
+   #:w-renew
+   #:w-release
+   #:w-member-p
+   #:w-count
+   #:w-reconstruction-equal-p
+   #:w-advance-clock
+   #:w-uncertain-retained-p
+   #:w-live-lease-p
+   #:w-ask
+   #:make-source-capture
+   #:capture-observe
+   #:capture-note-mutation
+   #:capture-versions
+   #:capture-reconcile
+   #:capture-consistent-claim
+   #:source-version-value
+   #:source-capture-reconciled-p
+   #:make-dispatch-packet
+   #:make-dispatch-route
+   #:dispatch-gates
+    ;; acceptance replays 8647: policy, price, quiet, intake, recovery
+    #:make-efficiency-policy
+    #:efficiency-policy-complete-p
+    #:make-policy-store
+    #:policy-store-policy
+    #:policy-store-history
+    #:policy-store-manifests
+    #:policy-store-executions
+    #:policy-store-rev
+    #:policy-intake
+    #:policy-store-export
+    #:policy-store-import
+    #:policy-undo
+    #:policy-replay
+    #:make-trial-manifest
+    #:trial-manifest-id
+    #:make-execution-reference
+    #:execution-reference-policy-revision
+    #:make-pricing-record
+    #:pricing-record-id
+    #:pricing-record-input
+    #:pricing-record-effective-time
+    #:make-pricing-registry
+    #:register-pricing
+    #:lookup-pricing
+    #:pricing-refresh
+    #:pricing-rate
+    #:estimate-cost
+    #:make-dispatch-pulse
+    #:dispatch-pulse-record-bound
+    #:dispatch-pulse-pending
+    #:dispatch-pulse-pending-bytes
+    #:dispatch-pulse-dispatches
+    #:dispatch-pulse-flush
+    #:observation-urgent-p
+    #:observe-pulse
+    #:make-recording-adapter
+    #:adapter-inventory
+    #:adapter-read
+    #:adapter-read-calls
+    #:adapter-mutation-calls
+    #:adapter-mutate
+    #:dry-run-capture
+    #:initial-import
+    #:apply-plan
+    #:trial-stage
+    #:trial-tolerances
+    #:trial-fallback
+    #:trial-tolerance-breach
+    #:role-limits-within-p
+    #:fallback-eligible-p
+    #:make-assignment-control
+    #:assignment-control-policy
+    #:assignment-control-attempts
+    #:assignment-control-handles
+    #:assignment-control-suspended
+    #:assignment-control-blocker
+    #:automatic-assignment-allowed-p
+    #:regression-recover
+    #:assign-automatic
+    ;; replays-8648: regression, retained replies, isolated restore,
+    ;; review reuse and review cycles
+    #:make-verification-summary
+    #:verification-summary-node
+    #:verification-summary-pinned-revision
+    #:verification-summary-current-revision
+    #:verification-summary-state
+    #:verification-summary-history
+    #:invalidate-verification
+    #:recheck-needed-p
+    #:confirm-regression
+    #:repair-work-id
+    #:repair-work-node
+    #:repair-work-state
+    #:make-retained-disposition
+    #:retained-disposition-request
+    #:retained-disposition-payload-digest
+    #:retained-disposition-sequence
+    #:retained-disposition-record-hash
+    #:retained-disposition-reply
+    #:retained-disposition-boundary
+    #:make-coverage
+    #:coverage-verified-p
+    #:retire-reply
+    #:make-restore-session
+    #:restore-session-read-only-p
+    #:restore-session-ownership
+    #:restore-session-assignments
+    #:restore-session-dispatch-count
+    #:restore-session-replayed-messages
+    #:restore-session-external-effects
+    #:restore-dispatch
+    #:promote-repair
+    #:make-scope-review
+    #:scope-review-friend
+    #:scope-review-head
+    #:scope-review-verdict
+    #:scope-review-reusable-p
+    #:make-review-cycle
+    #:review-cycle-friend
+    #:review-cycle-revision
+    #:review-cycle-finding-ids
+    #:review-cycle-dispositions
+    #:review-cycle-clearance
+    #:review-cycle-evidence-reused-p
+    #:review-cycle-reread-delta
+    #:review-cycle-cost
+    #:make-review-ledger
+    #:review-ledger-cycles
+    #:record-review-cycle
+    #:review-ledger-covers-friends-p
+    #:review-ledger-cycle-count
+    #:review-ledger-total-cost
+    ;; replays of card 8649: roadmap proof, journal rotation, rule 2's
+    ;; unavailable partition, savepoint cut and write failure
+    #:make-roadmap-row
+    #:roadmap-row-id
+    #:roadmap-row-axis
+    #:roadmap-row-kind
+    #:roadmap-row-state
+    #:roadmap-row-evidence
+    #:roadmap-row-status
+    #:make-roadmap
+    #:roadmap-id
+    #:roadmap-axes
+    #:roadmap-rows
+    #:roadmap-shared-prerequisites
+    #:roadmap-discovered
+    #:roadmap-closed
+    #:roadmap-render
+    #:roadmap-edit-marker
+    #:make-journal-record
+    #:journal-record-seq
+    #:journal-record-events
+    #:journal-record-hash
+    #:make-journal-segment
+    #:journal-segment-path
+    #:journal-segment-header
+    #:journal-segment-records
+    #:make-journal-chain
+    #:journal-chain-id
+    #:journal-chain-segments
+    #:rotate-journal
+    #:journal-append-record
+    #:savepoint-cut-reachable-p
+    #:export-journal-bundle
+    #:rule-2-check
+    #:validate-report
+    #:make-savepoint-store
+    #:savepoint-store-verified
+    #:savepoint-store-published
+    #:savepoint-store-attempts
+    #:savepoint-write
+    #:savepoint-list
+    ;; replays-8650 (nova-tools #362)
+    #:migrate-state-schema
+    #:declare-shared-prerequisite
+    #:own-shared-prerequisite
+    #:reference-shared-prerequisite
+    #:prerequisite-owner
+    #:prerequisite-cells
+    #:prerequisite-obligations
+    #:make-command-loop
+    #:command-loop-submit
+    #:command-loop-order
+    #:command-loop-sequence
+    #:mutate-outside-command-loop
+    #:inventory-record
+    #:record-resolved-p
+    #:record-unresolved-p
+    #:reconcile-inventory
+    #:cost-breakdown
+    #:subscription-covers-cash-p
+    ;; replays-8651 (undo-redo, unknown-price-is-not-zero, unrelated-receipts)
+    #:resolved-price
+    #:reversible-verb-p
+    #:edit-entry
+    #:make-edit-entry
+    #:edit-entry-id
+    #:edit-entry-verb
+    #:edit-entry-preimage
+    #:edit-entry-postimage
+    #:history-with-undo
+    #:redo-applies-p
+    #:conflict-is-explicit
+    #:proof-scope
+    #:make-proof-scope
+    #:proof-scope-paths
+    #:proof-scope-criteria
+    #:receipt
+    #:make-receipt
+    #:receipt-id
+    #:receipt-scope
+    #:change-within-scope-p
+    #:unrelated-receipts-stay-reusable
+    ;; replays-8660: the pure duty-tier model (Go card 8660)
+    #:make-policy-rule
+    #:policy-rule-id
+    #:policy-rule-by
+    #:policy-rule-task-class
+    #:policy-rule-models
+    #:duty-policy-version
+    #:duty-policy-rules
+    #:load-policy
+    #:author-policy
+    #:policy-rule-for
+    #:cheapest-qualified
+    #:execute-policy
+    #:make-escalation-row
+    #:escalation-row-rule
+    #:escalation-row-default
+    #:escalation-row-age
+    #:stale-pass
+    #:*wait-presence-columns*
+    #:make-wait-row
+    #:wait-row-harness
+    #:wait-presence
+    #:wait-holds-resident-p
+    #:wait-holds-duty-p
+    #:pulse-result-model-calls
+    #:pulse-result-notes
+    #:pulse-result-published
+    #:pulse-result-cost
+    #:quiet-pulse
+    ;; replays card 8661: the coordination measure, the single-writer total
+    ;; order, the field/verb grammar, the prompt-profile status line and the
+    ;; machine as fleet CONFIG
+    #:coordination-measure
+    #:kernel-command-loop
+    #:kernel-defect-line
+    #:journal-seq-numbers
+    #:*mutation-grammar*
+    #:*field-owning-verbs*
+    #:mutation-verbs
+    #:verb-event-kind
+    #:verb-ordered-fields
+    #:verb-subject
+    #:owning-verbs
+    #:every-field-has-an-owning-verb-p
+    #:make-prompt-profile
+    #:prompt-profile-name
+    #:prompt-profile-pointer
+    #:prompt-profile-digest
+    #:prompt-profile-policy-version
+    #:prompt-profile-evidence
+    #:prompt-profile-expiry
+    #:prompt-profile-owner
+    #:prompt-profile-state
+    #:prompt-profile-status-line
+    #:prompt-profile-invocation
+    #:make-machine-record
+    #:machine-record-id
+    #:machine-record-name
+    #:machine-record-owner
+    #:machine-record-connect
+    #:machine-record-roles
+    #:machine-record-permits
+    #:machine-record-limits
+    #:machine-record-facts
+    #:machine-record-declared-by
+    #:machine-record-declared-at
+    #:machine-config-section
+    #:machine-work-tree-node-p
+    #:machine-node-field
+    #:machine-acceptance
+    #:machine-derived-state
+    #:machine-settle
+    #:machine-to-done
+    #:machine-completion-evidence-p
+    #:register-machine
+    #:machine-ok-line
+    ;; fleet allocation replays (card 8662)
+    #:make-fleet-registry
+    #:fleet-registry-p
+    #:fleet-registry-allocators
+    #:fleet-registry-aliases
+    #:fleet-registry-events
+    #:fleet-allocator-p
+    #:fleet-allocator-machine-id
+    #:fleet-allocator-concurrent
+    #:fleet-allocator-cores
+    #:fleet-allocator-generation
+    #:fleet-allocator-allocations
+    #:fleet-allocator-observations
+    #:fleet-register-machine
+    #:fleet-open-allocator
+    #:fleet-resolve
+    #:fleet-allocator-of
+    #:fleet-take
+    #:fleet-heartbeat
+    #:fleet-release
+    #:fleet-list
+    #:fleet-probe
+    #:fleet-reduce-capacity
+    #:fleet-consumed
+    #:fleet-consumed-capacity
+    #:fleet-declared-facts
+    #:fleet-declared-limits
+    #:fleet-declared-connect
+    #:fleet-declared-roles
+    #:fleet-observations
+    #:fleet-live-allocations
+    #:allocation-record-p
+    #:allocation-record-allocation-id
+    #:allocation-record-machine
+    #:allocation-record-alias
+    #:allocation-record-slot
+    #:allocation-record-slots
+    #:allocation-record-node
+    #:allocation-record-batch
+    #:allocation-record-offer
+    #:allocation-record-attempt
+    #:allocation-record-machine-generation
+    #:allocation-record-allocation-generation
+    #:allocation-record-request
+    #:allocation-record-request-ref
+    #:allocation-record-holder
+    #:allocation-record-parent
+    #:allocation-record-deadline
+    #:allocation-record-state
+    #:allocation-record-line
+    #:allocation-record-admission-phase
+    #:allocation-record-core-pin
+    #:allocation-record-created
+    #:allocation-record-released
+    #:allocation-record-fenced
+    #:allocation-live-p
+    #:allocation-suspect-p
+    ;; replays card 8663: presence and the held lease, and the fleet allocation
+    #:*holder-silence-seconds*
+    #:friend-lease
+    #:make-friend-lease
+    #:friend-lease-holder
+    #:friend-lease-node
+    #:friend-lease-state
+    #:friend-lease-generation
+    #:held-lease-p
+    #:lease-fenced-p
+    #:fence-lease
+    #:holder-asleep-finding
+    #:friend-presence
+    #:make-friend-presence
+    #:friend-presence-name
+    #:friend-presence-state
+    #:offer-record
+    #:make-offer-record
+    #:offer-record-id
+    #:offer-record-node
+    #:offer-record-friend
+    #:offer-record-state
+    #:recovery-session
+    #:make-recovery-session
+    #:recovery-session-offers
+    #:recovery-session-leases
+    #:recovery-session-reassignments
+    #:recovery-session-rev
+    #:offer-to-sleeper
+    #:stale-entries
+    #:reassign-node
+    #:friend-heartbeat
+    #:friend-who
+    #:machine
+    #:machine-concurrent
+    #:machine-generation
+    #:assign-machine
+    #:make-assign-machine
+    #:assign-machine-id
+    #:assign-machine-concurrent
+    #:assign-machine-generation
+    #:allocation
+    #:make-allocation
+    #:allocation-id
+    #:allocation-machine
+    #:allocation-slot
+    #:allocation-slots
+    #:allocation-node
+    #:allocation-generation
+    #:allocation-state
+    #:allocation-active-p
+    #:fleet
+    #:make-fleet
+    #:assign-fleet
+    #:make-assign-fleet
+    #:assign-fleet-machine
+    #:assign-fleet-allocations
+    #:assign-fleet-take
+    #:assign-fleet-release
+    #:assign-fleet-heartbeat
+    #:assign-fleet-list
+    #:fleet-machine
+    #:fleet-allocations
+    #:fleet-occupied-slots
+    #:fleet-first-free-slot
+    #:fleet-active-slots
+    ;; replays card 8664: fleet allocation capacity and counters-and-indexes
+    #:make-replay-machine
+    #:replay-machine-id
+    #:replay-machine-cores
+    #:replay-machine-concurrent
+    #:replay-machine-allocations
+    #:machine-live-slots
+    #:find-allocation
+    #:alloc-state
+    #:alloc-holder
+    #:take-slot
+    #:preparation-interrupted
+    #:reconcile-allocation
+    #:make-replay-index
+    #:rindex-open-count
+    #:rindex-closed-count
+    #:replay-index-close
+    #:replay-index-reopen
+    #:replay-index-reparent
+    #:replay-index-assign
+    #:replay-index-open-p
+    #:replay-index-closed-p
+    #:replay-index-ancestor-p
+    #:holder-open-ids
+    #:index-mismatches))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

@@ -499,3 +499,69 @@
       (let ((k (make-kernel :state (make-seed-state '((:id "t" :type :task))))))
         (multiple-value-bind (yes line) (submit k (doing-request :reason reason :evidence evidence))
           (check-equal expected yes (format nil "unknown proof ~S: ~A" proof line)))))))
+
+(deftest "reopen-revives" "docs/SPEC-WORK.md:1584-1586,5062"
+    "expected=open+1-closed-1;todo;revive-written"
+  (let ((k (fresh)))
+    (ok (submit k (close-request :request "rr-1")) "close refused")
+    (check-equal 4 (state-open-count (kernel-state k)) "open after settle")
+    (check-equal 1 (state-closed-count (kernel-state k)) "closed after settle")
+    (multiple-value-bind (okp line code envelope) (submit k (reopen-request :request "rr-2"))
+      (declare (ignore line code))
+      (ok okp "reopen refused")
+      (check-equal :reopen (work-event-kind (first (getf envelope :events))) "requester kind")
+      (check-equal :revive (work-event-kind (second (getf envelope :events))) "session kind"))
+    (check-equal :todo (node-state (kernel-state k) "acme/work/f1/t1") "reopened lands in :todo")
+    (check-equal :o (node-branch (kernel-state k) "acme/work/f1/t1") "reopened is back in O")
+    (check-equal 5 (state-open-count (kernel-state k)) "open +1 after the revive")
+    (check-equal 0 (state-closed-count (kernel-state k)) "closed -1 after the revive")))
+
+(deftest "settle-releases-the-lease" "docs/SPEC-WORK.md:1674-1680,5055"
+    "expected=settled-item-reads-holder-unowned"
+  (let ((k (fresh)))
+    (take-lease k "acme/work/f1/t1" "emma")
+    (check-equal "emma" (node-holder (kernel-state k) "acme/work/f1/t1") "held by emma")
+    ;; One live lease per node; a second take is refused and names the holder.
+    (let ((refused nil))
+      (handler-case (take-lease k "acme/work/f1/t1" "sam")
+        (unsupported-input () (setf refused t)))
+      (ok refused "a second take was accepted"))
+    ;; A release from a third name is refused too.
+    (let ((refused nil))
+      (handler-case (release-lease k "acme/work/f1/t1" "sam")
+        (unsupported-input () (setf refused t)))
+      (ok refused "a third name ended the claim"))
+    (ok (submit k (close-request :request "srl-1" :by "rowan")) "close refused")
+    (check-equal :c (node-branch (kernel-state k) "acme/work/f1/t1") "the item settled")
+    (check-equal nil (node-holder (kernel-state k) "acme/work/f1/t1")
+                 "a settled item reads holder=unowned")
+    (let ((rel (first (state-lease-log (kernel-state k)))))
+      (check-equal :release (getf rel :kind) "the settle wrote a release")
+      (check-equal "rowan" (getf rel :by) "the settling author wrote it")
+      (check-equal "emma" (getf rel :holder) "it names the holder it ended"))))
+
+(deftest "working-is-a-view" "docs/SPEC-WORK.md:1682-1689,5082"
+    "expected=w-subset-o-no-verb-writes-w"
+  (let ((k (fresh)))
+    (check-equal 5 (state-open-count (kernel-state k)) "seed |O|")
+    (check-equal 0 (working-count k) "|W| starts at zero")
+    (check-equal :pending (node-disposition (kernel-state k) "acme/work/f1/t1")
+                 "a :doing item with no live lease is pending")
+    (take-lease k "acme/work/f1/t1" "emma")
+    (take-lease k "acme/work/f1/t2" "sam")
+    (check-equal 2 (working-count k) "two live leases")
+    (check-equal :working (node-disposition (kernel-state k) "acme/work/f1/t1")
+                 "a leased open item is working")
+    (ok (<= (working-count k) (state-open-count (kernel-state k))) "|W| <= |O|")
+    ;; W is a view: an independent walk agrees and no slot writes it.
+    (check-equal (independent-working-count (kernel-state k)) (working-count k)
+                 "W is the walk's own count")
+    (ok (null (find-symbol "WSTATE-WORKING" :nova-work)) "no verb writes W")
+    (release-lease k "acme/work/f1/t1" "emma")
+    (check-equal 1 (working-count k) "release shrinks W")
+    ;; A settled item leaves O and so leaves W; it is done, not working.
+    (ok (submit k (close-request :node "acme/work/f1/t2" :request "wiv-1" :by "sam"))
+        "close of a leased item refused")
+    (check-equal 0 (working-count k) "the settled item left W")
+    (check-equal :done (node-disposition (kernel-state k) "acme/work/f1/t2") "settled is done")
+    (ok (<= (working-count k) (state-open-count (kernel-state k))) "|W| <= |O| after settle")))

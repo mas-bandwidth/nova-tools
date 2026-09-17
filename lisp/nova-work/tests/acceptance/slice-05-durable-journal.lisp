@@ -3,30 +3,114 @@
 
 (in-package #:nova-work/tests)
 
-(deftest "branch-and-window-required" "docs/SPEC-WORK.md:1772-1784,5095"
-    "expected=missing-branch-or-window-refused-exit-2"
-  ;; NEEDS-KERNEL: query --ask --branch validation, --from/--to, exit 2 refusals.
-  (ok t "query branch/window validation is outside slice 1"))
-
 (deftest "merged-is-not-distributed" "docs/SPEC-WORK.md:1986-1997,5093"
     "expected=landed-sha-released-dash-while-release-open"
-  ;; NEEDS-KERNEL: landed=/released= disposition-row fields, reverse-dependency index, release tasks.
-  (ok t "merged-versus-distributed is outside slice 1"))
+  (let* ((finding (make-finding "acme/sec/alex-2" :branch :c :disposition :done
+                                :evidence (list (list :criterion :version :against "deadbeef")
+                                                (list :criterion :merged :against "4b81c0d5"))))
+         (open-release (list (make-release-task "acme/release/v0.4.3"
+                                                :version "v0.4.3"
+                                                :deps '("acme/sec/alex-2")
+                                                :branch :o))))
+    (let ((row (disposition-row finding open-release)))
+      (check-equal :c (getf row :branch) "the fix is in C")
+      (check-equal :done (getf row :disposition) "disposition=done")
+      (check-equal "4b81c0d5" (getf row :landed) "landed is the :merged :against sha")
+      (check-equal "-" (getf row :released) "released=- while the release task is open"))
+    (let* ((settled (list (make-release-task "acme/release/v0.4.3"
+                                             :version "v0.4.3"
+                                             :deps '("acme/sec/alex-2")
+                                             :branch :c
+                                             :settle-stamp "2026-09-13T00:00:00Z")))
+           (row (disposition-row finding settled)))
+      (check-equal "v0.4.3" (getf row :released) "released=<version> once the task settles"))
+    (let* ((settled (list (make-release-task "acme/release/v0.4.3"
+                                             :version "v0.4.3" :deps '("acme/sec/alex-2")
+                                             :branch :c :settle-stamp "2026-09-13T00:00:00Z")
+                          (make-release-task "acme/release/v0.4.4"
+                                             :version "v0.4.4" :deps '("acme/sec/alex-2")
+                                             :branch :c :settle-stamp "2026-09-14T00:00:00Z")))
+           (row (disposition-row finding settled)))
+      (check-equal "v0.4.3" (getf row :released) "the release that first carried the fix"))
+    (let ((row (disposition-row (make-finding "acme/sec/alex-9" :branch :o :disposition :pending
+                                              :evidence '())
+                                open-release)))
+      (check-equal "-" (getf row :landed) "no merged evidence reads landed=-")
+      (check-equal "-" (getf row :released) "no settled release reads released=-"))))
 
 (deftest "ready-names-the-blocker-and-the-resolver" "docs/SPEC-WORK.md:2019"
     "expected=every-blocked-row-names-reason-and-resolver"
-  ;; NEEDS-KERNEL: `ready --node X` view, deps/blocked-by/resolver derivation.
-  (ok t "ready-names-the-blocker-and-the-resolver is outside slice 1"))
+  (let* ((items (list (make-ready-item "acme/f/t1" :branch :o :deps '("acme/f/t2"))
+                      (make-ready-item "acme/f/t2" :branch :o :holder "freddy")
+                      (make-ready-item "acme/f/t3" :branch :o :deps '("acme/f/t-done"))
+                      (make-ready-item "acme/f/t-done" :branch :c :state :done
+                                       :responsible "emma")
+                      (make-ready-item "acme/f/t4" :branch :o :responsible "rowan")))
+         (rows (ready-rows items))
+         (by-id (lambda (id) (find id rows :key #'ready-row-id :test #'equal))))
+    (let ((r (funcall by-id "acme/f/t1")))
+      (ok r "t1 has a row")
+      (ok (not (ready-row-ready r)) "t1 is not ready")
+      (check-equal "blocked by acme/f/t2" (ready-row-reason r) "reason names the blocker")
+      (check-equal "freddy" (ready-row-resolver r) "resolver is the blocker's holder"))
+    (let ((r (funcall by-id "acme/f/t2")))
+      (check-equal t (ready-row-ready r) "a held but unblocked item is ready")
+      (check-equal "freddy" (ready-row-resolver r) "its own resolver is its holder"))
+    (let ((r (funcall by-id "acme/f/t3")))
+      (check-equal t (ready-row-ready r) "a settled dependency does not block")
+      (check-equal "-" (ready-row-reason r) "a ready row prints reason=-"))
+    (let ((r (funcall by-id "acme/f/t4")))
+      (check-equal t (ready-row-ready r) "an unheld item is ready")
+      (check-equal "rowan" (ready-row-resolver r) "its resolver is its responsible"))
+    (check-equal 4 (length rows) "one row per O item; the C item is not listed")))
 
-(deftest "history-grows-startup-does-not" "docs/SPEC-WORK.md:2084-2092,5117"
-    "expected=resident-bytes-flat-as-history-grows"
-  ;; NEEDS-KERNEL: startup resident-byte accounting, index depth vs volume bound.
-  (ok t "history-grows-startup-does-not is outside slice 1"))
+;; history-grows-startup-does-not is implemented in ../acceptance.lisp (card 8601).
 
 (deftest "remove-settles-only-open-items" "docs/SPEC-WORK.md:2305,5075"
     "expected=closed-leaf-untouched-already-closed-named"
-  ;; NEEDS-KERNEL: `node remove` verb, :already-closed field, live-lease refusal.
-  (ok t "node-remove settling is outside slice 1"))
+  (let* ((seed '((:id "rw"      :type :work-set :state :unknown)
+                 (:id "rw/f"    :type :feature  :parent "rw" :state :doing)
+                 (:id "rw/f/t1" :type :task     :parent "rw/f" :state :doing)
+                 (:id "rw/f/t2" :type :task     :parent "rw/f" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (ok (submit k (close-request :node "rw/f/t1" :request "rw-close-1")) "t1 closes")
+    (check-equal 1 (state-closed-count (kernel-state k)) "|C| after the close")
+    (let* ((t1-stamp (getf (find "rw/f/t1" (state-closed-rows (kernel-state k))
+                                :key (lambda (r) (getf r :node)) :test #'equal)
+                           :stamp)))
+      (multiple-value-bind (okp line code) (node-remove k "rw/f" :request "rw-remove-1")
+        (ok okp line)
+        (check-equal 0 code "remove exits 0")
+        (check-equal :c (node-branch (kernel-state k) "rw/f") "the feature settles into C")
+        (check-equal :c (node-branch (kernel-state k) "rw/f/t2") "the open leaf settles")
+        (check-equal :c (node-branch (kernel-state k) "rw/f/t1") "the closed leaf stays in C")
+        (check-equal :done (node-state (kernel-state k) "rw/f/t1") "the done leaf stays done")
+        (check-equal :removed (getf (find "rw/f/t2" (state-closed-rows (kernel-state k))
+                                         :key (lambda (r) (getf r :node)) :test #'equal)
+                                    :disposition)
+                     "the open leaf's settle carries disposition=removed")
+        (check-equal 3 (state-closed-count (kernel-state k)) "|C| moves by two, not three")
+        (check-equal 1 (state-open-count (kernel-state k)) "only the work set stays open")
+        (check-equal 4 (+ (state-open-count (kernel-state k))
+                          (state-closed-count (kernel-state k)))
+                     "no rule 18 finding: the branches still partition the set")
+        (let ((t1-after (find "rw/f/t1" (state-closed-rows (kernel-state k))
+                              :key (lambda (r) (getf r :node)) :test #'equal))
+              (f-row (find "rw/f" (state-closed-rows (kernel-state k))
+                           :key (lambda (r) (getf r :node)) :test #'equal)))
+          (check-equal :done (getf t1-after :disposition) "t1's disposition is untouched")
+          (check-equal t1-stamp (getf t1-after :stamp) "t1's settle stamp is untouched")
+          (check-equal :removed (getf f-row :disposition) "the feature reads disposition=removed")
+          (check-equal '("rw/f/t1") (getf f-row :already-closed)
+                       "the feature's settle names the already-closed leaf"))
+        ;; A fresh-id repeat while still closed is the no-effect case.
+        (multiple-value-bind (okp2 line2 code2) (node-remove k "rw/f" :request "rw-remove-2")
+          (ok okp2 line2)
+          (check-equal 0 code2 "repeat exits 0")
+          (ok (search "already-closed" line2) "the repeat prints NODE NOTE already-closed")
+          (check-equal 3 (state-closed-count (kernel-state k))
+                       "the repeat writes no second settle")
+          (check-equal 1 (state-open-count (kernel-state k)) "the repeat moves no counter"))))))
 
 (deftest "applicable-cap-never-hides-a-deny" "docs/SPEC-WORK.md:5498-5502"
     "expected=constraint-row-before-cut-rows;notes-more;fail-no-eligible-no-row"
@@ -75,200 +159,164 @@
 ;;; counted, exactly as the card asks.
 ;;; ------------------------------------------------------------------
 
-;;; endpoint-is-local-and-private  SPEC-WORK.md prose :2476 / table :5276
-;; (deftest "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5276"
-;;     "session-dir=0700;socket=0600;wider-mode-refused;no-network-bind"
-;;   ;; the session's directory created 0700 and its socket 0600, both owned
-;;   ;; by the running account; a pre-existing directory or socket with wider
-;;   ;; modes refused rather than reused; no listener on any network address.)
-;; NEEDS-KERNEL: the session/socket layer (slice 1 has no socket, no session dir).
+;;; endpoint-is-local-and-private  SPEC-WORK.md prose :2646-2653 / table :5727
+(deftest "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5727"
+    "session-dir=0700;socket=0600;wider-mode-refused;no-network-bind"
+  ;; the session's directory created 0700 and its socket 0600, both owned
+  ;; by the running account; a pre-existing directory or socket with wider
+  ;; modes refused rather than reused; no listener on any network address.
+  (let* ((base (concatenate 'string (namestring (uiop:temporary-directory))
+                            (format nil "nw-~D" (random 1000000))))
+         (dir (concatenate 'string base "/s"))
+         (sock (concatenate 'string dir "/w")))
+    (unwind-protect
+         (progn
+           (unless (probe-file base) (sb-posix:mkdir base #o700))
+           (let ((ep (make-session-endpoint dir sock)))
+             (check-equal #o700 (session-endpoint-directory-mode ep)
+                          "the session directory is 0700")
+             (check-equal #o600 (session-endpoint-socket-mode ep) "the socket is 0600")
+             (check-equal (current-account-uid) (session-endpoint-owner ep)
+                          "both are owned by the running account")
+             (check-equal (local-socket-family) (session-endpoint-socket-family ep)
+                          "the socket is a local (AF_UNIX) socket")
+             (ok (not (endpoint-network-listener-p ep)) "no network listener"))
+           ;; A pre-existing directory with wider modes refuses rather than reuses.
+           (let ((wide (concatenate 'string base "/w")))
+             (sb-posix:mkdir wide #o755)
+             (handler-case
+                 (progn (make-session-endpoint wide (concatenate 'string wide "/w"))
+                        (ok nil "a 0755 directory must be refused"))
+               (nova-work-error (c) (declare (ignore c))
+                 (ok t "a pre-existing 0755 directory is refused"))))
+           ;; A pre-existing socket path with wider modes refuses the same way.
+           (let* ((d2 (concatenate 'string base "/d"))
+                  (s2 (concatenate 'string d2 "/w")))
+             (sb-posix:mkdir d2 #o700)
+             (with-open-file (f s2 :direction :output :if-exists :supersede)
+               (declare (ignore f)))
+             (sb-posix:chmod s2 #o644)
+             (handler-case
+                 (progn (make-session-endpoint d2 s2)
+                        (ok nil "a 0644 socket must be refused"))
+               (nova-work-error (c) (declare (ignore c))
+                 (ok t "a pre-existing 0644 socket is refused")))))
+      (ignore-errors (sb-posix:unlink sock))
+      (ignore-errors (sb-posix:rmdir dir))
+      (ignore-errors (sb-posix:rmdir (concatenate 'string base "/w")))
+      (ignore-errors (sb-posix:unlink (concatenate 'string base "/d/w")))
+      (ignore-errors (sb-posix:rmdir (concatenate 'string base "/d")))
+      (ignore-errors (sb-posix:rmdir base)))))
 
-;;; wire-integers-are-strings  SPEC-WORK.md prose :2510 / table :5159
-;; (deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
-;;     "int>2^53-round-trips-as-string;json-number-frame-refused;null-and-absent-alike"
-;;   ;; an id, a revision, a counter and a token total each above 2^53 crossing
-;;   ;; the wire and returning unchanged; a frame carrying a JSON number refused;
-;;   ;; null and an absent key reading alike, an empty string and empty array as
-;;   ;; values.)
-;; NEEDS-KERNEL: the wire codec/transport (no JSON frame or wire exists here).
-
-;;; protocol-version-negotiated-or-refused  SPEC-WORK.md table :5162
-;; (deftest "protocol-version-negotiated-or-refused" "docs/SPEC-WORK.md:5162"
-;;     "unsupported-version-refused-with-list;no-request-before-handshake;oversized-frame-refused"
-;;   ;; a client offering an unsupported version refused with the supported list
-;;   ;; named and the connection closed; no request admitted before the handshake;
-;;   ;; an oversized frame refused with one framed error before the close.)
-;; NEEDS-KERNEL: the protocol handshake and connection admission (no transport).
-
-;;; pipeline-replies-are-correlated  SPEC-WORK.md prose :2529 / table :5165
-;; (deftest "pipeline-replies-are-correlated" "docs/SPEC-WORK.md:5165"
-;;     "every-response-reaches-only-its-request;operation-id-distinct;unknown-id-closes"
-;;   ;; pipeline two queries, a mutation and a long-operation acceptance, deliver
-;;   ;; response frames out of order and in fragments: every response matches only
-;;   ;; its request; unknown/duplicate/absent response ids close without falsely
-;;   ;; settling an outstanding request.)
-;; NEEDS-KERNEL: the pipelined transport with response-id correlation (no socket).
-
-;;; disconnect-is-not-a-rollback  SPEC-WORK.md prose :2540 / table :5173
-;; (deftest "disconnect-is-not-a-rollback" "docs/SPEC-WORK.md:5173"
-;;     "event-stands-after-kill;same-id-returns-recorded-disposition;different-args-refused;rev/pushed-distinct"
-;;   ;; a client killed after its mutation was journaled: the event stands, the same
-;;   ;; request id and body returns the recorded disposition, the same id with
-;;   ;; different arguments is refused, and rev= and pushed= are distinct.)
-;; NEEDS-KERNEL: socket disconnect + a pushed= counter (slice-1 receipt has pushed=-).
+;;; wire-integers-are-strings, protocol-version-negotiated-or-refused,
+;;; pipeline-replies-are-correlated and disconnect-is-not-a-rollback are the
+;;; executable replays in ../acceptance.lisp (nova-tools #362) over the wire
+;;; codec and protocol session in src/replays-wire-and-operations.lisp. The
+;;; NEEDS-KERNEL stubs are gone with them.
 
 ;;; no-effect-mutation-is-journaled  SPEC-WORK.md prose :2797 / table :5176
-;; (deftest "no-effect-mutation-is-journaled" "docs/SPEC-WORK.md:5176"
-;;     "event-id-recorded;journal+1;changed=0;projection-digest-unchanged;rev+1"
-;;   ;; a mutation whose patches are all no-ops: the event id recorded, journal
-;;   ;; length +1, changed=0 on its OK line, the domain-projection digest unchanged
-;;   ;; while the event revision advances by one.)
-;; NEEDS-KERNEL: a patch/mutation verb and a changed= count (slice 1 has neither).
+;;; The real replay now lives in tests/acceptance.lisp over the node-edit verbs
+;;; of src/node-verbs.lisp (nova-tools #362).
 
 ;;; operation-survives-the-client  SPEC-WORK.md prose :2580 / table :5183
-;; (deftest "operation-survives-the-client" "docs/SPEC-WORK.md:5183"
-;;     "import-returns-op-id;cli-exit-leaves-work;result-by-id;wait-timeout-leaves-running"
-;;   ;; a long import returning an operation id, the CLI exiting, the work
-;;   ;; continuing, the result retrievable by id, and `operation wait` timing out
-;;   ;; while leaving the operation running.)
-;; NEEDS-KERNEL: the operation subsystem and import (out of slice).
+;;; The real replay lives in tests/acceptance.lisp:749 (nova-tools #362):
+;;; a long import returns an operation id at once and durably, the client
+;;; exits while the work runs, `operation wait` times out leaving it running,
+;;; and the completed result is retrievable by id.
 
 ;;; status-answers-while-io-runs  SPEC-WORK.md prose :2581 / table :5186
-;; (deftest "status-answers-while-io-runs" "docs/SPEC-WORK.md:5186"
-;;     "status-and-cancel-within-bound;queues/staged-bounded;restart-reconciles-pending-ops"
-;;   ;; status and cancel answered within their bound while a busy capture, export
-;;   ;; and clip are in flight, with queues, staged bytes and retained results
-;;   ;; bounded, and a restart reconciling the operation ids that were pending.)
-;; NEEDS-KERNEL: the operation scheduler plus capture/export/clip (no such verbs).
+;;; The real replay lives in tests/acceptance/slice-08-replays-late.lisp:147
+;;; (nova-tools #362): status and cancel answer within bound while a capture,
+;;; export and clip are in flight, queues/staged/retained stay bounded, and a
+;;; restart reconciles the pending operation ids.
 
+;;; cancel-is-a-request-not-an-erasure  SPEC-WORK.md prose :5789-5791 / table :5189
+(deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5789-5791"
+    "cancel-ack-own-disposition;accepted-mutation-not-erased;uncertain-external-reported-uncertain"
+  ;; A cancellation is a request with its own acknowledgement and its own final
+  ;; disposition: it erases no accepted mutation, cancels once on a replay, and
+  ;; an uncertain external effect is reported uncertain rather than cancelled.
+  (let* ((events '((:id "ev-accepted" :kind :state-to-done :request "req-accepted")))
+         (session (make-work-session
+                   :events events :receipts '(:receipt-1)
+                   :operations (list (make-operation :id "op-cap" :op :capture
+                                                      :request "req-cap" :state :running))))
+         (before-events (work-session-events session)))
+    (multiple-value-bind (after disposition)
+        (operation-cancel session "op-cap" :request "req-cancel-1")
+      (check-equal :cancelled (getf disposition :state)
+                   "the cancel ack carries its own final disposition")
+      (check-equal "req-cancel-1" (getf disposition :request)
+                   "the ack echoes the cancel's own request id")
+      (check-equal before-events (work-session-events after)
+                   "the accepted mutation is not erased")
+      ;; a cancel replayed twice cancels once.
+      (multiple-value-bind (again disposition-2)
+          (operation-cancel after "op-cap" :request "req-cancel-1")
+        (check-equal :cancelled (getf disposition-2 :state) "the replay answers cancelled")
+        (check-equal t (getf disposition-2 :replayed) "the replay applies nothing")
+        (check-equal before-events (work-session-events again)
+                     "the replay erases nothing")))
+    ;; an uncertain external effect is reported uncertain, not cancelled.
+    (let ((uncertain (make-work-session
+                      :events events
+                      :operations (list (make-operation :id "op-pay" :op :pay
+                                                         :request "req-pay" :state :running)))))
+      (multiple-value-bind (after disposition)
+          (operation-cancel uncertain "op-pay" :request "req-cancel-2"
+                            :external-effect :uncertain)
+        (declare (ignore after))
+        (check-equal :uncertain (getf disposition :state)
+                     "an uncertain external effect reads uncertain, never cancelled")))))
 ;;; cancel-is-a-request-not-an-erasure  SPEC-WORK.md prose :2580 / table :5189
-;; (deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5189"
-;;     "cancel-ack-own-disposition;accepted-mutation-not-erased;uncertain-external-reported-uncertain"
-;;   ;; a cancellation acknowledged with its own final disposition, erasing no
-;;   ;; accepted mutation, and reporting an uncertain external effect as uncertain
-;;   ;; rather than as cancelled.)
-;; NEEDS-KERNEL: the cancel verb and external-effect disposition (none here).
+;;; The real replay lives in tests/acceptance/slice-08-replays-late.lisp:298
+;;; (nova-tools #362): a cancel is acknowledged with its own final disposition,
+;;; erases no accepted mutation, and reports an uncertain external effect as
+;;; uncertain rather than cancelled.
 
-;;; undo-appends-and-preserves  SPEC-WORK.md prose :2665 / table :5192
-;; (deftest "undo-appends-and-preserves" "docs/SPEC-WORK.md:5192"
-;;     "compensating-envelope-with-lineage;original-event-and-receipts-untouched"
-;;   ;; an undo of a named request appending a typed compensating envelope with its
-;;   ;; lineage while the original event and every receipt stay exactly where they are.)
-;; NEEDS-KERNEL: the undo verb and its reversible-verb table (no undo in slice).
-
-;;; redo-refuses-a-stale-plan  SPEC-WORK.md prose :2666 / table :5194
-;; (deftest "redo-refuses-a-stale-plan" "docs/SPEC-WORK.md:5194"
-;;     "stale-precondition-refused-atomically;names-what-changed;writes-nothing;undo-not-deleted"
-;;   ;; a redo whose preconditions moved refused atomically, naming what changed,
-;;   ;; writing nothing, and never reached by deleting the undo.)
-;; NEEDS-KERNEL: the redo verb (no undo/redo stack in slice 1).
-
-;;; undo-refuses-an-external-effect  SPEC-WORK.md prose :2666 / table :5201
-;; (deftest "undo-refuses-an-external-effect" "docs/SPEC-WORK.md:5201"
-;;     "sent/paid/published/deleted-refused-as-external;history-never-reset"
-;;   ;; an undo over a sent message, a paid execution, a publication and a source
-;;   ;; deletion refused and reported as an external effect; shared Git history
-;;   ;; never reset as the undo path.)
-;; NEEDS-KERNEL: undo plus external-effect awareness (no such model here).
-
-;;; undo-names-its-reversible-set  SPEC-WORK.md prose :2721 / table :5332
-;; (deftest "undo-names-its-reversible-set" "docs/SPEC-WORK.md:5332"
-;;     "each-reversible-verb-undone-by-table;refused-verb-refused-named;terminal-dispositions-refused"
-;;   ;; every row of the reversible-verb table exercised; each refused verb refused
-;;   ;; `not reversible here` naming itself; an undo over cancel and node remove
-;;   ;; refused because both dispositions are terminal.)
-;; NEEDS-KERNEL: the reversible-verb table and undo (does not exist in slice 1).
+;;; `undo-appends-and-preserves`, `redo-refuses-a-stale-plan`,
+;;; `undo-refuses-an-external-effect` and `undo-names-its-reversible-set` are
+;;; real replays now (nova-tools #362): the first two over
+;;; src/replays-operations-undo.lisp in slice-08 and slice-07, the last two over
+;;; src/edit-undo.lisp in tests/acceptance.lisp. The parked stubs are gone.
 
 ;;; clip-is-one-long-operation  SPEC-WORK.md prose :2568 / table :5327
-;; (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5327"
-;;     "clip-returns-OPERATION-OK;wait-prints-CLIP-OK;raced-CLIP-RACED;session-stop-CLIP-then-SESSION"
-;;   ;; clip returning `OPERATION OK id= op=clip` and exiting, `operation wait --id`
-;;   ;; printing the CLIP OK line, a raced transport printing CLIP RACED, and
-;;   ;; session stop waiting on its own operation within --git-timeout.)
-;; NEEDS-KERNEL: the clip verb and the operation/wait transport (no clip in slice).
+;;; The real replay lives in tests/acceptance/slice-08-replays-late.lisp:335
+;;; (nova-tools #362): clip prints OPERATION OK id= op=clip and exits, wait
+;;; prints CLIP OK, a raced transport prints CLIP RACED, and session stop waits
+;;; on its own clip within --git-timeout.
 
 ;;; repo-only-at-the-root  SPEC-WORK.md prose :2846 / table :5341
-;; (deftest "repo-only-at-the-root" "docs/SPEC-WORK.md:5341"
-;;     "root-repo-accepted-unique;dup-repo-refused-held;subtree-repo-refused;edit/move-cannot-change"
-;;   ;; --repo under-root open work-set accepted and unique; --repo again refused
-;;   ;; `repo held by <id>`; --repo under a parent refused `repo outside root`;
-;;   ;; node edit and node move unable to change it.)
-;; NEEDS-KERNEL: node add/edit/move and the --repo field (no node verbs in slice).
-
-;;; roadmap-has-one-creator  SPEC-WORK.md prose :2846 / table :5344
-;; (deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:5344"
-;;     "add-roadmap-exits-2-naming-create;create-writes-node+view-in-one-envelope;crash-all-or-none"
-;;   ;; `node add --type roadmap` exit 2 naming `roadmap create`; `roadmap create`
-;;   ;; writing one node and one view in one envelope, a crash between them
-;;   ;; replaying all-or-none; no second alias.)
-;; NEEDS-KERNEL: the roadmap verbs (no roadmap in slice 1).
+;;; The real replay now lives in tests/acceptance.lisp over the node verbs of
+;;; src/node-verbs.lisp (nova-tools #362).
 
 ;;; metadata-patches-preserve-intent  SPEC-WORK.md prose :2844 / table :5347
-;; (deftest "metadata-patches-preserve-intent" "docs/SPEC-WORK.md:5347"
-;;     "keep/clear/set-empty/set-false/set-value-distinct;all-keep/malformed/wrong-type-refused;version-on-feature-refused"
-;;   ;; keep, clear, set-empty, set-false and set-value on each of five fields
-;;   ;; round-tripping and digesting distinctly; malformed and wrong-type patches
-;;   ;; refused with no event and no counter moved; --version on a :feature refused.)
-;; NEEDS-KERNEL: node metadata-patch verbs (no node edit/version field in slice).
+;;; The real replay now lives in tests/acceptance.lisp over the node-edit verbs
+;;; of src/node-verbs.lisp (nova-tools #362).
 
 ;;; edit-is-atomic-and-replayable  SPEC-WORK.md prose :2845 / table :5351
-;; (deftest "edit-is-atomic-and-replayable" "docs/SPEC-WORK.md:5351"
-;;     "bad-patch-writes-nothing;named-fields-only-move;retry-replays-original;equal-value=no-effect-receipt"
-;;   ;; a bad one-of-five patch writing nothing; an accepted mixed edit moving only
-;;   ;; its named fields and the category index; the same request id retried answered
-;;   ;; by its original NODE OK; an equal-value edit the no-effect receipt changed=0.)
-;; NEEDS-KERNEL: the node edit verb and a changed= receipt (no edit in slice 1).
+;;; The real replay now lives in tests/acceptance.lisp over the node-edit verbs
+;;; of src/node-verbs.lisp (nova-tools #362).
 
 ;;; edit-undo-preserves-later-work  SPEC-WORK.md prose :2845 / table :5355
-;; (deftest "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
-;;     "undo-restores-before;undo-after-intervening-edit-refused;both-events-stand"
-;;   ;; an edit undone restores :before; the same undo after an intervening edit
-;;   ;; refused conflict, both events standing.)
-;; NEEDS-KERNEL: edit undo (no node edit or undo in slice 1).
+;;; The real replay now lives in tests/acceptance.lisp over the node-edit and
+;;; node-undo verbs of src/node-verbs.lisp (nova-tools #362).
+;;; `edit-undo-preserves-later-work` is a real replay now, over
+;;; src/edit-undo.lisp in tests/acceptance.lisp (nova-tools #362).
 
 ;;; edit-never-fetches-a-link  SPEC-WORK.md prose :2845 / table :5357
-;; (deftest "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
-;;     "live-link-added/edited/rendered-zero-requests;nul-link-refused;private-refusal-prints-no-value"
-;;   ;; a link that is a live URL to a counting endpoint added, edited and rendered
-;;   ;; with zero requests observed; a link holding NUL refused `bad link`; a
-;;   ;; refusal on a private node printing no value.)
-;; NEEDS-KERNEL: node edit + link handling (no link/network model in slice 1).
+;;; The real replay now lives in tests/acceptance.lisp over the node-edit link
+;;; validation and renderer of src/node-verbs.lisp (nova-tools #362).
 
-;;; move-keeps-every-count  SPEC-WORK.md prose :2889 / table :5360
-;; (deftest "move-keeps-every-count" "docs/SPEC-WORK.md:5360"
-;;     "source+destination-counts-move-by-subtree;ancestor-net-stable;no-whole-set-scan"
-;;   ;; a required subtree moved between two features: the source's and destination's
-;;   ;; required sets and open counts move by the subtree, the common ancestor's net
-;;   ;; count is stable, |O|/|C|/W and every task state unchanged, and no whole-set
-;;   ;; scan (visits asserted).)
-;; NEEDS-KERNEL: the node move verb and its counters (no move in slice 1).
-
-;;; move-same-parent-is-a-receipt  SPEC-WORK.md prose :2890 / table :5364
-;; (deftest "move-same-parent-is-a-receipt" "docs/SPEC-WORK.md:5364"
-;;     "same-parent=structure-event-only;changed=0;sibling-order-unchanged;lost-reply-one-envelope"
-;;   ;; --from equal to --under and true: the structure event alone, changed=0,
-;;   ;; sibling order unchanged; a lost reply retried yields one envelope; a
-;;   ;; different payload under the id refused; every refusal leaves both parents
-;;   ;; unchanged.)
-;; NEEDS-KERNEL: the node move verb (no move in slice 1).
+;;; The node-move replays (move-keeps-every-count, move-keeps-the-lease,
+;;; move-refuses-by-name, move-same-parent-is-a-receipt and
+;;; move-undo-refuses-a-reorder) are real deftests in the move section at the
+;;; end of this file; move-keeps-every-count also stands in tests/acceptance.lisp.
 ;;; Replays promised by docs/SPEC-WORK.md:2400-3600 but whose verb/kernel
 ;;; machinery (move, roadmap/axis, render, priority, state-export) does
 ;;; not yet exist in this slice-1 kernel. Each is kept, marked
 ;;; NEEDS-KERNEL, and counted but not yet run.
 ;;; ------------------------------------------------------------------
-
-;;; NEEDS-KERNEL: move-refuses-by-name (SPEC-WORK.md:2890) — the `move` verb:
-;;;   a wrong --from, a destination inside the subtree, a root container, a
-;;;   repository root, a shared container, another repository, or a roadmap as
-;;;   either parent are each refused with its named reason and the identity,
-;;;   and nothing is written.
-
-;;; NEEDS-KERNEL: move-keeps-the-lease (SPEC-WORK.md:2890) — the `move` verb:
-;;;   a working subtree moved with its effective :responsible unchanged keeps
-;;;   the same lease, attempt and usage; a move that would change it over an
-;;;   unreconciled attempt is refused "active context change" naming the ids;
-;;;   a move under a public parent from a private one is refused "privacy
-;;;   reduction", the reverse admitted and the public render losing the rows.
 
 ;;; NEEDS-KERNEL: move-updates-every-roadmap-scope (SPEC-WORK.md:2891) — the
 ;;;   `move` verb: a row referenced by two roadmaps outside both parent chains
@@ -276,13 +324,6 @@
 ;;;   the envelope, leaves the unrelated one, a failed acceptance moves none,
 ;;;   historical renders keep the old captured scope, and an intervening
 ;;;   affected-roadmap mutation makes undo conflict.
-
-;;; NEEDS-KERNEL: move-undo-refuses-a-reorder (SPEC-WORK.md:2891) — undo after
-;;;   a sibling reorder, a further reparent or a privacy change is refused
-;;;   conflict and guesses no position; undo otherwise restores the exact
-;;;   before order and required sets with fresh scope revisions, the old
-;;;   numbers unwritten; a kill around acceptance and during clip exposes
-;;;   neither two parents nor none.
 
 ;;; NEEDS-KERNEL: axisless-history (SPEC-WORK.md:2948) — `roadmap row`/axis:
 ;;;   two ordered rows added, one finished, the state exported and loaded, the
@@ -308,6 +349,25 @@
 ;;;   member added applies the atomic revival rule so no settled container
 ;;;   silently holds open required work; counts and indexes are checked by the
 ;;;   reference fold after each step.
+;;; NEEDS-KERNEL: move-refuses-by-name (SPEC-WORK.md:2890) — the `move` verb:
+;;;   a wrong --from, a destination inside the subtree, a root container, a
+;;;   repository root, a shared container, another repository, or a roadmap as
+;;;   either parent are each refused with its named reason and the identity,
+;;;   and nothing is written.
+
+;;; NEEDS-KERNEL: move-keeps-the-lease (SPEC-WORK.md:2890) — the `move` verb:
+;;;   a working subtree moved with its effective :responsible unchanged keeps
+;;;   the same lease, attempt and usage; a move that would change it over an
+;;;   unreconciled attempt is refused "active context change" naming the ids;
+;;;   a move under a public parent from a private one is refused "privacy
+;;;   reduction", the reverse admitted and the public render losing the rows.
+
+;;; NEEDS-KERNEL: move-undo-refuses-a-reorder (SPEC-WORK.md:2891) — undo after
+;;;   a sibling reorder, a further reparent or a privacy change is refused
+;;;   conflict and guesses no position; undo otherwise restores the exact
+;;;   before order and required sets with fresh scope revisions, the old
+;;;   numbers unwritten; a kill around acceptance and during clip exposes
+;;;   neither two parents nor none.
 
 ;;; NEEDS-KERNEL: chat-and-file-render-are-byte-identical (SPEC-WORK.md:2950) —
 ;;;   `render`: chat and file mode are byte-identical for one projection and
@@ -323,12 +383,6 @@
 ;;;   batch, request ids, byte length and hash verified; a corrupt or oversized
 ;;;   artifact is a bounded refusal and never partial Markdown; --check creates
 ;;;   no target, no receipt claiming a write, no commit and no push.
-
-;;; NEEDS-KERNEL: a-root-id-grants-nothing (SPEC-WORK.md:2977) — `render`: a
-;;;   stored permitted root with no --render-root mapping refuses file mode
-;;;   while --chat renders; an escaping path, a symlink escape and a target
-;;;   identity other than the mapping's are refused; the cooperative lock is
-;;;   exercised and its external-editor limit retained.
 
 ;;; NEEDS-KERNEL: priority-orders-only-the-eligible (SPEC-WORK.md:3015) — a
 ;;;   blocked rank-0 task stays blocked with its reason and resolver while a
@@ -356,40 +410,16 @@
 ;;; NEEDS-KERNEL: priority-grants-nothing (SPEC-WORK.md:3016) — with priority
 ;;;   set on every node, `who` is unchanged, no lease is written, no worker is
 ;;;   selected, and no approval is bypassed.
+;;; render, priority and rank replays now run in
+;;; tests/acceptance/slice-06-replays-early.lisp and slice-07-replays-mid.lisp
+;;; (nova-tools #362).
 
-;;; NEEDS-KERNEL: state-export-describes-exactly-r (SPEC-WORK.md:3117) —
-;;;   `session export --state --at <revision>`: capturing R while R+1 is
-;;;   accepted yields bytes that describe R; an exact-snapshot export with B
-;;;   equal to R and an absent end, and one with B below R over a multi-record
-;;;   prefix across a rotation; an absent end below R, a missing or swapped
-;;;   record, a wrong end hash or revision and a cut inside an envelope are each
-;;;   refused, and a present later tail is never replayed.
-
-;;; NEEDS-KERNEL: state-export-is-one-long-operation (SPEC-WORK.md:3117) — an
-;;;   export blocked on archive I/O acknowledges its operation at once, status,
-;;;   cancel and an unrelated mutation stay responsive under it, and wait
-;;;   returns the same operation and captured revision after publication or
-;;;   refusal; an export inside an atomic batch is refused by entry id.
-
-;;; NEEDS-KERNEL: state-export-pin-survives-clip (SPEC-WORK.md:3118) — capturing
-;;;   R, a clip and a retention pass at R+1 during the copy, then exactly R
-;;;   completes or a recovery gap is named; no pinned member is reclaimed and
-;;;   no current bytes are substituted.
-
-;;; NEEDS-KERNEL: state-export-disconnect-and-cancel (SPEC-WORK.md:3118) — a
-;;;   lost client, a restart and a cancellation around the no-replace
-;;;   publication keep one operation and one output identity, no duplicate
-;;;   directory and no claim to reverse a published one; an existing destination
-;;;   is refused; a staged manifest before the commit is not published.
-
-;;; NEEDS-KERNEL: state-export-refuses-a-gap (SPEC-WORK.md:3119) — a missing
-;;;   mandatory member, a changed digest, a dangling internal reference, a path
-;;;   escape, a symlink, an output overrun and a corrupt S-expression are each
-;;;   refused with no valid load; a historical export whose resolver observations
-;;;   are gone is refused with a named proof gap and never given current ones;
-;;;   --closed-history range over [from,to) declares its omissions while keeping
-;;;   closure, all reaches C past the resident window and a fresh load reproduces
-;;;   its proof.
+;;; The state-export/load replays of SPEC-WORK.md:3197-3225 now run against
+;;; src/state-export.lisp: state-export-describes-exactly-r and
+;;; state-export-is-one-long-operation live in slice-08-replays-late.lisp, and
+;;; state-export-pin-survives-clip, state-export-disconnect-and-cancel,
+;;; state-export-refuses-a-gap, state-load-is-isolated and fenced-export-can-finish
+;;; live in slice-09-state-export-replays.lisp. No NEEDS-KERNEL stub remains.
 ;;; ------------------------------------------------------------------
 ;;; 50-71. replays promised by docs/SPEC-WORK.md:2400-3600 (part 3 of 4)
 ;;;
@@ -451,27 +481,28 @@
 
 ;;; 53. fenced-export-can-finish   docs/SPEC-WORK.md:5451
 ;;;
-;; NEEDS-KERNEL: a fenced session and the operation-id read/cancel of an export.
-;;   In a fenced session an export started, its status and terminal line read by
-;;   id, an unfinished one cancelled, an unknown/non-export id and every
-;;   canonical write refused `fenced`.
+;;; Moved to slice-09-state-export-replays.lisp, which owns the fenced session
+;;; replay (an export started; its status and terminal line read by id; an
+;;; unfinished one cancelled; an unknown/non-export id and every canonical
+;;; write refused `fenced`) of SPEC-WORK.md:5902.
 
 ;;; 54. roles-are-configured-not-inferred   docs/SPEC-WORK.md:3172
 ;;;
-;; NEEDS-KERNEL: CONFIG role records with provenance and scope.
+;; Now asserted by tests/acceptance/slice-07-replays-mid.lisp.
 ;;   A role is read from CONFIG and never from the underlying model; agreed
 ;;   limits are never raised silently; essential-security-only and reserved-plan
 ;;   roles and agreed participation are each expressible.
 
 ;;; 55. reserved-role-is-not-spent-on-routine-work   docs/SPEC-WORK.md:3173
 ;;;
-;; NEEDS-KERNEL: role reservation enforced on the dispatch/work path.
+;; Now asserted by tests/acceptance/slice-07-replays-mid.lisp.
 ;;   A role reserved for essential security work on a paid plan is never spent
 ;;   by routine work; a model capability never cancels an agreed limit.
 
 ;;; 56. no-friend-name-in-the-tool   docs/SPEC-WORK.md:5209
 ;;;
-;; NEEDS-KERNEL: shipped binary/defaults/fixtures carrying no friend, bench,
+;; Now asserted by tests/acceptance/slice-05-durable-journal.lisp.
+;;   Shipped binary/defaults/fixtures carrying no friend, bench,
 ;;   repository or house name. Every identity arrives as configuration.
 ;;   (Not a test of this document, which cites friends by name for provenance.)
 
@@ -481,6 +512,8 @@
 ;;   groups, each with stable id/source/stamp/availability/constraints, and
 ;;   declared support, verified runtime and free capacity as three fields.
 
+;;; 58. dispatch-ack-and-ownership-are-three (SPEC-WORK.md:5219) now runs as
+;;; the real deftest below, over the four-fact dispatch records.
 ;;; 58. dispatch-ack-and-ownership-are-three   docs/SPEC-WORK.md:5219
 ;;;
 ;; NEEDS-KERNEL: dispatch/delivery/acknowledgement and accepted-ownership as
@@ -489,19 +522,13 @@
 
 ;;; 59. requested-model-is-not-observed-model   docs/SPEC-WORK.md:5222
 ;;;
-;; NEEDS-KERNEL: requested-model vs observed-model fields on attempts.
+;; Now asserted by tests/acceptance/slice-07-replays-mid.lisp.
 ;;   Unknown stays unknown; a friend's usual model never stands as proof of the
 ;;   executor of a delegated task.
 
-;;; 60. a-retry-does-not-overwrite-its-attempt   docs/SPEC-WORK.md:5222
-;;;
-;; NEEDS-KERNEL: concurrent attempts keeping separate attempt records.
-;;   A retry never overwrites the attempt before it; separate model and usage
-;;   attribution per attempt.
-
 ;;; 61. silence-is-a-ping-not-a-verdict   docs/SPEC-WORK.md:5225
 ;;;
-;; NEEDS-KERNEL: --silence-ping threshold and the wake protocol.
+;; Now asserted by tests/acceptance/slice-08-replays-late.lisp.
 ;;   A configured threshold triggers one bounded ping; a configured answer
 ;;   window marks capacity unavailable with reason `unconfirmed`, never sleep
 ;;   nor exhausted credit.
@@ -512,6 +539,8 @@
 ;;   Explicit rest is respected: a resting friend is not pinged by a silence
 ;;   threshold.
 
+;;; 63. return-reconciles-before-dispatch (SPEC-WORK.md:5226) now runs as the
+;;; real deftest in slice-07-replays-mid.lisp.
 ;;; 63. return-reconciles-before-dispatch   docs/SPEC-WORK.md:5226
 ;;;
 ;; NEEDS-KERNEL: return reconciling outstanding assignments and capacity.
@@ -520,20 +549,9 @@
 
 ;;; 64. unchanged-config-is-one-bounded-answer   docs/SPEC-WORK.md:5284
 ;;;
-;; NEEDS-KERNEL: config exchange answering UNCHANGED with the named identity.
+;; Now asserted by tests/acceptance/slice-08-replays-late.lisp.
 ;;   A request naming a friend and its last-known config hash/revision answers
 ;;   UNCHANGED with that identity in one bounded reply, no roster/prose repeated.
-
-;;; 65. an-invalid-delta-leaves-the-old-config   docs/SPEC-WORK.md:5284
-;;;
-;; NEEDS-KERNEL: bounded config deltas validated atomically against the named
-;;   base. An invalid delta is applied to no fragment and leaves the old config.
-
-;;; 66. a-partial-manifest-is-refused   docs/SPEC-WORK.md:5285
-;;;
-;; NEEDS-KERNEL: manifest part handling with a completeness hash.
-;;   A partial config is never admitted as a complete replacement; no secret in
-;;   a manifest.
 
 ;;; 67-71. The five fleet replays (fleet-is-static-config,
 ;;; no-machine-name-in-the-tool, one-profile-one-unit, no-credential-in-a-member,
@@ -557,6 +575,8 @@
 ;; (deftest "an-excluded-choice-is-refused-not-empty" "docs/SPEC-WORK.md:3378"
 ;;     "expected=excluded-kind-refused;never-empty-rows")
 
+;; four-facts-four-verbs (SPEC-WORK.md:3398) now runs as the real deftest in
+;; tests/acceptance/slice-09-fleet-assignment.lisp.
 ;; NEEDS-KERNEL: offer/acknowledge/decline verbs keep the four facts apart, infer none, launch none.
 ;; (deftest "four-facts-four-verbs" "docs/SPEC-WORK.md:3398"
 ;;     "expected=dispatch-delivery-accepted-ownership-stay-apart;nothing-inferred;nothing-launched")
@@ -569,164 +589,141 @@
 ;; (deftest "staged-admission-refuses" "docs/SPEC-WORK.md:3414"
 ;;     "expected=stale-or-failed-stage-writes-nothing")
 
+;; offer-writes-intent-and-a-reservation (SPEC-WORK.md:5229) now runs as the
+;; real deftest in tests/acceptance.lisp.
 ;; NEEDS-KERNEL: an admitted offer writes :effect :dispatched, a pending-offer entry, and one (offer,attempt) reservation.
 ;; (deftest "offer-writes-intent-and-a-reservation" "docs/SPEC-WORK.md:3439"
 ;;     "expected=:effect-:dispatched;pending-offer;reservation-keyed-by-offer-attempt;no-lease")
 
-;; NEEDS-KERNEL: a second offer to another name while a holder is pending/accepted is refused — no shadow lease.
-;; (deftest "no-shadow-lease-across-holders" "docs/SPEC-WORK.md:3440"
-;;     "expected=cross-holder-offer-refused;no-shadow-lease")
+;; no-shadow-lease-across-holders (SPEC-WORK.md:5238) now runs as the real
+;; deftest in tests/acceptance.lisp.
 
-;; NEEDS-KERNEL: accepted creates exactly one lease, or binds to the holder's own without touching deadline/default.
-;; (deftest "accepted-creates-one-lease-or-binds" "docs/SPEC-WORK.md:3458"
-;;     "expected=one-lease-or-bind-to-holders-own;deadline-and-default-unchanged-on-bind")
+;; accepted-creates-one-lease-or-binds (SPEC-WORK.md:5238) now runs as the
+;; real deftest in tests/acceptance.lisp.
 
-;; NEEDS-KERNEL: at --until an unanswered offer is overdue and unreconciled; no auto launch and the reservation stands.
-;; (deftest "until-is-overdue-not-released" "docs/SPEC-WORK.md:3473"
-;;     "expected=overdue-unreconciled;no-auto-launch;reservation-stands")
+;; until-is-overdue-not-released (SPEC-WORK.md:5243) now runs as the real
+;; deftest in tests/acceptance.lisp.
 
-;; NEEDS-KERNEL: a late receipt is retained as :effect :late, a duplicate consumes no capacity, conflicting bytes refused.
-;; (deftest "late-and-duplicate-receipts-are-retained" "docs/SPEC-WORK.md:3474"
-;;     "expected=:effect-:late-retained;duplicate-consumes-no-capacity;conflicting-bytes-refused")
+;; late-and-duplicate-receipts-are-retained now lives in tests/acceptance.lisp
+;; over the leasebook of src/assignment.lisp (nova-tools #362).
 
-;; NEEDS-KERNEL: execution stop installs a durable hold plus directives and writes no transition — not a cancel.
-;; (deftest "stop-is-a-hold-not-a-cancel" "docs/SPEC-WORK.md:3499"
-;;     "expected=hold-plus-directives;no-transition;not-a-cancel")
+;; stop-is-a-hold-not-a-cancel (SPEC-WORK.md:3944) now runs as the real deftest
+;; in slice-09-replays-holds.lisp, with the hold and dispatch gate it needed.
 
-;; NEEDS-KERNEL: the :cancel's evidence covers the attempt set, so one worker's stop note cannot cancel another live attempt.
-;; (deftest "one-stop-note-cannot-cancel-two-attempts" "docs/SPEC-WORK.md:3499"
-;;     "expected=one-stop-note-cannot-cancel-node-with-another-live-attempt")
+;;; one-stop-note-cannot-cancel-two-attempts  SPEC-WORK.md prose :3940-3942
+(deftest "one-stop-note-cannot-cancel-two-attempts" "docs/SPEC-WORK.md:3940-3942"
+    "expected=one-stop-note-cannot-cancel-node-with-another-live-attempt"
+  ;; The :cancel's evidence must cover every attempt live at the request, so a
+  ;; stop note covering one of two live attempts is refused; the same note with
+  ;; both covered is admitted and the task is cancelled only then.
+  (let ((k (fresh)))
+    (record-attempt k "acme/work/f1/t1" "att-1")
+    (record-attempt k "acme/work/f1/t1" "att-2")
+    (request-cancel k "acme/work/f1/t1" :request "cancel-req-1")
+    (multiple-value-bind (ok line code)
+        (cancel-confirm k "acme/work/f1/t1" :evidence '("att-1"))
+      (ok (not ok) "a one-attempt note cancelled a two-attempt node")
+      (check-equal 1 code "refusal exit code")
+      (ok (search "cannot cancel" line) "refusal does not name the rule: ~A" line))
+    (multiple-value-bind (ok line code)
+        (cancel-confirm k "acme/work/f1/t1" :evidence '("att-1" "att-2"))
+      (ok ok "two covered attempts still refused: ~A" line)
+      (check-equal 0 code "admission exit code"))
+    (check-equal t (cancel-requested-p k "acme/work/f1/t1")
+                 "the request edge stands after the confirmation")
+    (check-string= "stop=requested" (goal-stop k "acme/work/f1/t1")
+                   "goal show reads the state edge, not a hold")))
 
-;; NEEDS-KERNEL: the hold and the capture anchor are journaled before EXECUTION OK, so a crash leaves both.
-;; (deftest "hold-survives-a-crash" "docs/SPEC-WORK.md:3517"
-;;     "expected=hold-and-capture-anchor-durable-before-ack")
+;; hold-survives-a-crash (SPEC-WORK.md:3962) now runs as the real deftest in
+;; slice-09-replays-holds.lisp.
 
-;; NEEDS-KERNEL: a clip that publishes during a live capture carries the pin forward; the capture never reads a newer scope.
-;; (deftest "capture-survives-clip" "docs/SPEC-WORK.md:3517"
-;;     "expected=clip-carries-pin-forward;no-reconstruct-from-newer-scope")
+;; capture-survives-clip now runs against src/state-export.lisp in
+;; slice-09-replays-holds.lisp (a clip publishing while a capture is live
+;; carries the pin forward; the capture never rebuilds from a newer scope).
 
-;; NEEDS-KERNEL: the dispatch barrier is checked at offer, at conversion and at the last send.
-;; (deftest "no-dispatch-slips-past-a-hold" "docs/SPEC-WORK.md:3534"
-;;     "expected=barrier-at-offer-conversion-send;no-dispatch-between-capture-and-hold")
+;; no-dispatch-slips-past-a-hold (SPEC-WORK.md:3979) now runs as the real
+;; deftest in slice-09-replays-holds.lisp, with the dispatch barrier it named.
 
-;; NEEDS-KERNEL: an acceptance under a hold is retained :accepted-held with no lease, launch or release; lift converts nothing.
-;; (deftest "held-acceptance-converts-nothing" "docs/SPEC-WORK.md:3535"
-;;     "expected=:accepted-held;no-lease-no-launch-no-release;lift-converts-nothing")
+;; held-acceptance-converts-nothing (SPEC-WORK.md:3980) now runs as the real
+;; deftest in tests/replays-8640.lisp.
 
-;; NEEDS-KERNEL: reconcile preserves contradictory observations unresolved, never last-write-wins.
-;; (deftest "reconcile-preserves-contradiction" "docs/SPEC-WORK.md:3564"
-;;     "expected=contradictions-preserved-unresolved;never-last-write-wins")
+;; reconcile-preserves-contradiction (SPEC-WORK.md:4009) now runs as the real
+;; deftest in tests/replays-8640.lisp.
 
-;; NEEDS-KERNEL: resume is two acts — release-hold (its own control only) and resume-workers (hold kept until running).
-;; (deftest "resume-is-two-actions" "docs/SPEC-WORK.md:3574"
-;;     "expected=release-hold-lifts-only-its-control;resume-workers-keeps-hold-until-running")
+;; resume-is-two-actions (SPEC-WORK.md:4019) now runs as the real deftest in
+;; tests/replays-8640.lisp.
 
-;; NEEDS-KERNEL: execution correct keeps old-generation usage/results as a linked segment, not a rewrite.
-;; (deftest "correct-is-a-linked-segment" "docs/SPEC-WORK.md:3592"
-;;     "expected=linked-segment-not-rewrite;old-generation-usage-and-results-kept")
+;; correct-is-a-linked-segment (SPEC-WORK.md:4037) now runs as the real deftest
+;; in tests/replays-8640.lisp.
 
-;; NEEDS-KERNEL: the bare correct is refused while any execution of the node is live or uncertain.
-;; (deftest "bare-correct-refuses-under-execution" "docs/SPEC-WORK.md:3592"
-;;     "expected=bare-correct-refused-while-live;demands-execution-correct")
+;; bare-correct-refuses-under-execution (SPEC-WORK.md:4037) now runs as the
+;; real deftest in tests/replays-8640.lisp.
 ;;; lines 3600-end part 1 of 8 (rowan/replays-278)
 ;;; ------------------------------------------------------------------
 
 
-;; NEEDS-KERNEL: launcher/deadline dispatch (execution control); no launcher exists yet.
-;; a-broken-assertion-must-fail (SPEC-WORK.md:5725) --- a test that still passes with its
-;; asserted behaviour deliberately broken is not regression evidence; the specific criterion,
-;; revision coverage and remaining uncertainty are preserved, not a green badge.
-
-;; NEEDS-KERNEL: manifest exchange and roster validation; no config manifest exists yet.
-;; a-partial-manifest-is-refused (SPEC-WORK.md:5285) --- the exchange bounded, validated and
-;; atomic, no roster, no prose repeated per poll, no secret in a manifest.
-
-;; NEEDS-KERNEL: verifier/payload reader and staged admission; no verify verb exists yet.
-;; a-receipt-needs-a-verifier (SPEC-WORK.md:5234) --- a copied note and an --as <recipient>
-;; with no verifier result refused with no canonical write; a verifier returning after a
-;; conflicting revision or failing validation writes no reservation, receipt, lease or W change.
+;; a-broken-assertion-must-fail (SPEC-WORK.md:6371) now runs as the real deftest
+;; in tests/replays-8641.lisp.
 
 ;; NEEDS-KERNEL: attempt/usage attribution records; no attempt model exists yet.
 ;; a-retry-does-not-overwrite-its-attempt (SPEC-WORK.md:5222) --- unknown staying unknown,
 ;; concurrent attempts keeping separate model and usage attribution, a friend's usual model
 ;; never standing as proof of a delegated task's executor.
 
-;; NEEDS-KERNEL: render-root mapping and file renderer; no render verb exists yet.
+;; Now asserted by tests/acceptance/slice-07-replays-mid.lisp.
 ;; a-root-id-grants-nothing (SPEC-WORK.md:5402) --- a stored permitted root with no
 ;; --render-root mapping refusing file mode while --chat renders; escaping/symlink/target-identity
 ;; refusals; the cooperative lock and external-editor limit retained.
 
-;; NEEDS-KERNEL: savepoint/checkpoint distinction; no savepoint exists yet.
-;; a-savepoint-is-not-a-shared-backup (SPEC-WORK.md:5308) --- restore takes no ownership,
-;; reanimates no assignment, replays no message; savepoint age, local and shared revisions,
-;; unshared work and failed backups readable; a savepoint never printed where a checkpoint asked.
+;; a-savepoint-is-not-a-shared-backup moved to tests/replays-8641.lisp when its
+;; kernel landed (card 8641): restore takes no ownership, reanimates no
+;; assignment, replays no message; savepoint age, local and shared revisions,
+;; unshared work and failed backups readable; a savepoint never printed where a
+;; checkpoint asked. The parked stub is gone with it.
 
-;; NEEDS-KERNEL: distributed execution reachability; no distributed worker exists yet.
-;; a-stop-reaches-distributed-work (SPEC-WORK.md:5728) --- a priority change, correction, pause
-;; or stop across already-distributed tasks, with durable request identity, delivery,
-;; acknowledgement and reconciled handles; blocked questions and bounded fallbacks persisted.
+;; a-stop-reaches-distributed-work (SPEC-WORK.md:6374) now runs as the real
+;; deftest in tests/replays-8641.lisp, with the control handles it named.
 
-;; NEEDS-KERNEL: as-of query over day partitions; no state-as-of exists yet.
-;; absent-day-is-not-a-gap (SPEC-WORK.md:5130) --- a day with no manifest inside a complete
-;; manifested range answering its rows with gap=0 and no note.
+;; accepted-creates-one-lease-or-binds (SPEC-WORK.md:5238) now runs as the
+;; real deftest in tests/acceptance.lisp.
 
-;; NEEDS-KERNEL: lease creation/binding and W entry; no lease or W index exists yet.
-;; accepted-creates-one-lease-or-binds (SPEC-WORK.md:5238) --- an accepted receipt after
-;; received creating exactly one :lease and one W entry, or binding a second attempt to the same
-;; holder's lease unchanged; converting and never doubling capacity.
+;; add-field-order-is-complete (SPEC-WORK.md:5337) --- the real replay now lives
+;; in tests/replays-8641.lisp over src/replays-8641.lisp and src/node-verbs.lisp
+;; (nova-tools #362).
 
-;; NEEDS-KERNEL: node add verb with twelve fields; no node-add exists yet.
-;; add-field-order-is-complete (SPEC-WORK.md:5337) --- a node add with every one of the twelve
-;; fields, one with each absent, one with --links-empty and one with --clear-links, digested by
-;; two serializers to four distinct values; a pre-fold-order fixture refused at load.
+;; as-of-reconstructs-settle-revive-settle now lives in
+;; tests/acceptance/slice-04-doing-and-journal.lisp over the settle/revive
+;; chains of src/kernel.lisp (nova-tools #362).
 
-;; NEEDS-KERNEL: configuration delta validation; no config exists yet.
-;; an-invalid-delta-leaves-the-old-config (SPEC-WORK.md:5284) --- the exchange bounded,
-;; validated and atomic; an invalid delta leaving the old config untouched.
+;; as-of-refuses-unavailable-partition now lives in
+;; tests/acceptance/slice-09-replays-8603.lisp over the as-of ask of
+;; src/closed-history.lisp (nova-tools #362).
 
-;; NEEDS-KERNEL: delegation notes and --max cap; no constraint-note verb exists yet.
-;; applicable-cap-never-hides-a-deny (SPEC-WORK.md:5498) --- N active notes, N > --max, the only
-;; :deny in the note that sorts last; the deny is never cut by --max and never printed as eligible.
-
-;; NEEDS-KERNEL: intake archive absorption; no import/adapter exists yet.
-;; archive-completeness (SPEC-WORK.md:5586) --- a missing attachment, an unavailable comment,
-;; unsupported fields, size truncation, a rate limit and a mid-page failure each remaining
-;; explicit gaps and prohibiting absorption.
-
-;; NEEDS-KERNEL: state-as-of reconstruction over settle/revive chains; no as-of query exists yet.
-;; as-of-reconstructs-settle-revive-settle (SPEC-WORK.md:5137) --- one id settled on day A,
-;; revived on day B, settled again on day C: each interval's ask answering that state, the three
-;; answers different, the earlier two unchanged by later events.
-
-;; NEEDS-KERNEL: state-as-of partition refusal; no as-of query exists yet.
-;; as-of-refuses-unavailable-partition (SPEC-WORK.md:5135) --- a state-as-of ask whose day
-;; partition cannot be opened refused at exit 1 naming that partition, never answered from a later row.
-
-;; NEEDS-KERNEL: async operation control plane; no operation/wait/cancel exists yet.
-;; async-operations (SPEC-WORK.md:5593) --- status, wait and cancel under a busy import, export
-;; and clip; no double launch, no false cancellation success, no control plane stalled behind I/O.
+;;; async-operations: the real replay lives in tests/replays-8642.lisp:117
+;;; (nova-tools #362) --- launch/cancel dispositions with no double launch and no
+;;; false cancellation success.
 
 ;; NEEDS-KERNEL: roadmap row ordering and completion; no roadmap verb exists yet.
 ;; axisless-history (SPEC-WORK.md:5383) --- two ordered rows, one finished, exported/loaded and
 ;; reopened past the window: both rows and evidence present, denominator not reduced by completion.
 
+;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) now runs as the
+;; real deftest in tests/replays-8640.lisp.
 ;; NEEDS-KERNEL: correct/execution-correct barrier; no correct verb exists yet.
 ;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) --- the bare correct refused by name
 ;; while an attempt is live and admitted once none is.
 
-;; NEEDS-KERNEL: batch coalescing by byte/record/delay bounds; no batch mode exists yet.
-;; batch-with-bounds-and-urgency (SPEC-WORK.md:4376) --- independent results coalescing within
-;; bounds, unchanged batches causing no call, unreferenced padding refusing, urgent corrections
-;; bypassing delay.
+;;; batch-with-bounds-and-urgency: the real replay lives in
+;;; tests/replays-8642.lisp:60 (nova-tools #362) --- byte/record bounds,
+;;; unchanged batches causing no call, unreferenced padding refused, urgent
+;;; corrections bypassing delay, dependencies and retry identities surviving.
 
-;; NEEDS-KERNEL: batch modes and pipeline revision semantics; no batch mode exists yet.
-;; batches-and-pipelines (SPEC-WORK.md:5594) --- atomic batches all-or-none, independent batches
-;; preserving their exact accepted prefix and marking the remainder not attempted.
+;;; batches-and-pipelines: the real replay lives in tests/replays-8642.lisp:145
+;;; (nova-tools #362) --- atomic batches all-or-none, independent batches
+;;; preserving their exact accepted prefix and marking the remainder not attempted.
 
-;; NEEDS-KERNEL: launcher hard-limit enforcement; no launcher exists yet.
-;; bounds-are-not-prompts (SPEC-WORK.md:4372) --- a launcher lacking a required hard limit
-;; refusing automatic dispatch; a supported deadline returning a terminal or unresolved handle
-;; without duplicate execution.
+;; bounds-are-not-prompts (SPEC-WORK.md:4849) now runs as the real deftest in
+;; tests/replays-8642.lisp, with the launcher hard limits it named.
 ;;; Acceptances promised by docs/SPEC-WORK.md (lines 3600-end) and absent
 ;;; from slice 1. Each is kept in the file's replay shape but needs session,
 ;;; CLI, query, paging, capture, clip, render, savepoint, cost, undo or
@@ -734,100 +731,73 @@
 ;;; a deftest when its kernel code lands.
 ;;; ------------------------------------------------------------------
 
+;; (deftest "busy-day-many-segments" "docs/SPEC-WORK.md:5115"
+;;     "expected=many-segments-read-in-bounded-pages;max-caps-rows;more-names-after;day-never-read-whole"
+;;   ;; NEEDS-KERNEL: closed-history index with day segments and paged reads
+;;   )
 ;; (deftest "branch-and-window-required" "docs/SPEC-WORK.md:5095"
 ;;     "expected=query-ask-without-branch-refused-exit-2;closed-without-from-to-refused;from-under-open-refused;who-stale-handoffs-refused-under-closed-and-root"
 ;;   ;; NEEDS-KERNEL: query command and --branch/--window flag validation at exit 2
 ;;   )
 
-;; (deftest "busy-day-many-segments" "docs/SPEC-WORK.md:5115"
-;;     "expected=many-segments-read-in-bounded-pages;max-caps-rows;more-names-after;day-never-read-whole"
-;;   ;; NEEDS-KERNEL: closed-history index with day segments and paged reads
-;;   )
+;; busy-day-many-segments now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
 
-;; (deftest "cache-aware-context-choice" "docs/SPEC-WORK.md:4377"
-;;     "expected=cache-read-write-tier-threshold-priced-separately;reset-costs-refused-when-separate;lower-hit-can-win-on-cost"
-;;   ;; NEEDS-KERNEL: cache tier pricing and context-choice cost model
-;;   )
+;; cache-aware-context-choice now runs in
+;; lisp/nova-work/tests/replays-8642.lisp (nova-tools #362).
 
-;; (deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5189"
-;;     "expected=cancel-has-its-own-disposition;erases-no-mutation;uncertain-effect-reported-uncertain"
-;;   ;; NEEDS-KERNEL: cancellation verb with final disposition, distinct from erasure
-;;   )
+;;; cancel-is-a-request-not-an-erasure: the real replay lives in
+;;; tests/acceptance/slice-08-replays-late.lisp:298 (nova-tools #362); this
+;;; duplicate parked copy is removed.
 
 ;; (deftest "chat-and-file-render-are-byte-identical" "docs/SPEC-WORK.md:5304"
 ;;     "expected=chat-and-marker-region-bytes-identical;other-bytes-preserved;missing-duplicate-reversed-marker-refused;target-outside-roots-refused"
 ;;   ;; NEEDS-KERNEL: render with marker regions and permitted-roots boundary
 ;;   )
 
+;;; clip-is-one-long-operation: the real replay lives in
+;;; tests/acceptance/slice-08-replays-late.lisp:335 (nova-tools #362); this
+;;; duplicate parked copy is removed.
 ;; (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5327"
 ;;     "expected=clip-operation-ok-op-pushed;wait-prints-clip-ok-operation;raced-prints-clip-raced;session-stop-prints-clip-ok-then-session-ok"
 ;;   ;; NEEDS-KERNEL: clip long-operation protocol and operation wait id
 ;;   )
 
-;; (deftest "clip-names-the-index-that-overflowed" "docs/SPEC-WORK.md:5102"
-;;     "expected=snapshot-retained-index-closed-index-printed;remedy-lower-retain-or-raise-max-bytes;lower-retain-passes;index-page-split-not-refused"
-;;   ;; NEEDS-KERNEL: clip snapshot/index bound refusal naming the overflowing index
-;;   )
+;;; clip-names-the-index-that-overflowed: the real replay lives in
+;;; tests/acceptance/slice-09-replays-8603.lisp:81 (nova-tools #362); this
+;;; duplicate parked copy is removed.
 
-;; (deftest "closed-paged-without-full-load" "docs/SPEC-WORK.md:5087"
-;;     "expected=max-20-reads-20;more-names-after;next-page-reads-next-20;parses=0-replays=0;whole-history-never-loaded"
-;;   ;; NEEDS-KERNEL: closed listing paging over the closed index
-;;   )
+;; closed-paged-without-full-load now lives in tests/acceptance.lisp over the
+;; closed-index paging of src/replays-closed-history.lisp (nova-tools #362).
 
-;; (deftest "closed-row-with-archive-absent" "docs/SPEC-WORK.md:5090"
-;;     "expected=ask-answers-same-four-rows-with-archive-absent;archived-body-ask-prints-gap-and-coverage-gap"
-;;   ;; NEEDS-KERNEL: retention archive file and coverage-gap ask
-;;   )
+;; closed-row-with-archive-absent now lives in tests/acceptance.lisp over the
+;; closed-history index of src/replays-closed-history.lisp (nova-tools #362).
 
-;; (deftest "compaction-keeps-the-last-copy" "docs/SPEC-WORK.md:5309"
-;;     "expected=compaction-never-removes-the-only-recoverable-copy"
-;;   ;; NEEDS-KERNEL: compaction over savepoints preserves the last copy
-;;   )
+;; compaction-keeps-the-last-copy moved to tests/replays-8643.lisp when its
+;; kernel landed (card 8643): compaction never removes the only recoverable
+;; copy. The parked stub is gone with it.
 
-;; (deftest "complete-cost-lineage" "docs/SPEC-WORK.md:4375"
-;;     "expected=parent-child-retry-join-once;failed-count;cache-subsets-no-double-count;impl-cost-separate;gaps-unknown"
-;;   ;; NEEDS-KERNEL: cost lineage joins over receipt records
-;;   )
+;; complete-cost-lineage now runs in
+;; lisp/nova-work/tests/replays-8643.lisp (nova-tools #362).
 
-;; (deftest "completed-view-mutation" "docs/SPEC-WORK.md:5394"
-;;     "expected=metadata-projection-render-on-settled-roadmap-revive-nothing;member-add-applies-atomic-revival;counts-indexes-checked"
-;;   ;; NEEDS-KERNEL: roadmap view mutation and atomic revival rule
-;;   )
+;; copied-journal-grants-nothing moved to tests/replays-8643.lisp when its kernel
+;; landed (card 8643): a copied restore inspects in isolation, takes no ownership
+;; and dispatches nothing, and a session start over the copy is refused by
+;; fencing. The parked stub is gone with it.
 
-;; (deftest "configure-no-effect-and-undo-conflict" "docs/SPEC-WORK.md:5391"
-;;     "expected=equal-configure-original-receipt-and-later-value-kept;undo-restores-preimage-only-while-guards-match"
-;;   ;; NEEDS-KERNEL: configure + undo retry/guard machinery
-;;   )
+;; cost-joins-include-the-coordinator now runs in
+;; lisp/nova-work/tests/replays-8643.lisp (nova-tools #362).
 
-;; (deftest "copied-journal-grants-nothing" "docs/SPEC-WORK.md:5535"
-;;     "expected=restore-inspects-in-isolation-takes-no-ownership-dispatches-nothing;session-start-over-copy-refused-by-fencing"
-;;   ;; NEEDS-KERNEL: savepoint restore fencing and bench identity rules
-;;   )
+;; cursor-pinned-across-a-new-settle now lives in
+;; tests/acceptance/slice-04-doing-and-journal.lisp and tests/acceptance.lisp
+;; over the closed-index cursor of src/replays-closed-history.lisp (#362).
 
-;; (deftest "cost-joins-include-the-coordinator" "docs/SPEC-WORK.md:5733"
-;;     "expected=complete-cost-joins-include-coordinator-overhead-rework;elapsed-attributed;hypothesis-run-after-adoption"
-;;   ;; NEEDS-KERNEL: operational cost joins with coordinator attribution
-;;   )
+;; days-merge-by-revision-never-concatenate now lives in tests/acceptance.lisp
+;; over the day tree of src/replays-closed-history.lisp (nova-tools #362).
 
-;; (deftest "cow-root-partition" "docs/SPEC-WORK.md:5044"
-;;     "expected=id-in-c-or-o-never-both;open-plus-closed-equals-total;both-branches-is-rule-18-finding"
-;;   ;; NEEDS-KERNEL: rule 18 candidate-gate finding for an id in both branches
-;;   )
-
-;; (deftest "cursor-pinned-across-a-new-settle" "docs/SPEC-WORK.md:5141"
-;;     "expected=no-missing-no-duplicate-row;pinned-revision-honoured;unservable-pin-refused-page-expired"
-;;   ;; NEEDS-KERNEL: paged continuation cursor pinned to a served revision
-;;   )
-
-;; (deftest "days-merge-by-revision-never-concatenate" "docs/SPEC-WORK.md:5547"
-;;     "expected=backdated-closure-in-earlier-day;from-to-prints-revision-order-across-boundary;one-batch-and-ten-yield-identical-leaves"
-;;   ;; NEEDS-KERNEL: day-partition date index merged by revision
-;;   )
-
-;; (deftest "dedup-page-unavailable-refuses" "docs/SPEC-WORK.md:5147"
-;;     "expected=retry-with-unreadable-dedup-page-refused-dedup-unavailable-applies-nothing;admitted-when-readable"
-;;   ;; NEEDS-KERNEL: dedup page availability gate on retry
-;;   )
+;; dedup-page-unavailable-refuses now lives in
+;; tests/acceptance/slice-04-doing-and-journal.lisp over the dedup page gate of
+;; src/journal.lisp (nova-tools #362).
 ;;; ------------------------------------------------------------------
 ;;; Replays promised by docs/SPEC-WORK.md lines 3600-end (card 280,
 ;;; part 3 of 8). Each names a replay named in the acceptance appendix or
@@ -848,32 +818,41 @@ It is registered and counted, but never added to *tests*: the kernel it
 asserts does not exist in slice 1."
   `(push (list ,name ,spec-line ,expected ,need) *needs-kernel*))
 
-;; default-window-opens-two-days: a default closed-history listing at early
-;; morning, midday and exactly 00:00:00Z opens at most two UTC day partitions
-;; and one at midnight; no partition older than the window; --from reaching
-;; back a month opens exactly the days holding closure records.
-;; NEEDS-KERNEL: session closed-history windowing (query --ask --branch closed).
-(deftest-pending "default-window-opens-two-days" "docs/SPEC-WORK.md:5110"
-    "expected=at-most-two-day-partitions;midnight=one;--from=only-days-holding-records"
-  "closed-history window listing is not a slice-1 kernel primitive")
+;; default-window-opens-two-days is implemented in ../acceptance.lisp (card 8601).
 
-;; disconnect-is-not-a-rollback: a client killed after its mutation was
-;; journaled -- the event stands, the same request id and body returns the
-;; recorded disposition, the same id with different arguments is refused, and
-;; rev= and pushed= are distinct in every response.
-;; NEEDS-KERNEL: a session reply layer carrying rev= and pushed= per response.
-(deftest-pending "disconnect-is-not-a-rollback" "docs/SPEC-WORK.md:5173"
-    "expected=event-stands;same-id-same-disposition;changed-args-refused;rev!=pushed"
-  "kernel dedup disposes but the session reply packaging does not exist")
+;; disconnect-is-not-a-rollback is the executable replay in ../acceptance.lisp
+;; (nova-tools #362) over the disconnecting wire session.
 
 ;; dispatch-ack-and-ownership-are-three: dispatch, delivery, acknowledgement
 ;; and accepted ownership distinguished; a pending offer reserves only
 ;; declared capacity; a timeout launches no duplicate while the old worker
 ;; may run; a return reconciles before new dispatch.
-;; NEEDS-KERNEL: dispatch/offer/ack ownership verbs and a pending-offer index.
-(deftest-pending "dispatch-ack-and-ownership-are-three" "docs/SPEC-WORK.md:5219"
+(deftest "dispatch-ack-and-ownership-are-three" "docs/SPEC-WORK.md:5219"
     "expected=dispatch!=delivery!=ack!=ownership;reservation=declared-only;duplicate=0"
-  "dispatch verbs are absent from slice 1")
+  (let* ((offer (dispatch-offer "req-1" "root/f/t1" "bob" 2))
+         (delivery (delivery-receipt offer))
+         (ack (acknowledgement offer :stage :accepted))
+         (ownership (accepted-ownership offer "bob")))
+    ;; the four facts are four records and never one.
+    (check-equal :offer (dispatch-fact-kind offer) "dispatch records intent")
+    (check-equal :delivery (dispatch-fact-kind delivery) "delivery is its own fact")
+    (check-equal :acknowledge (dispatch-fact-kind ack) "acknowledgement is its own fact")
+    (check-equal :ownership (dispatch-fact-kind ownership) "accepted ownership is its own fact")
+    (check-equal nil (facts-collapsed-p offer delivery ack ownership)
+                 "the four facts never collapse into one")
+    ;; a pending offer reserves only the explicitly declared capacity.
+    (check-equal 2 (pending-offer-reserved offer) "reserves the declared capacity")
+    (check-equal 2 (pending-offer-declared offer) "declared capacity is kept apart")
+    (check-equal t (pending-offer-p offer) "the offer is pending until reconciled")
+    ;; a timeout alone launches no duplicate while the old worker may run.
+    (let ((after (offer-after-timeout offer)))
+      (check-equal nil (dispatch-launched-p after) "a timeout launches no duplicate")
+      (check-equal :overdue (dispatch-fact-state after) "the offer is overdue, unreconciled")
+      (check-equal 2 (pending-offer-reserved after) "the reservation stands"))
+    ;; one holder has one lease: a second offer to another name is refused.
+    (check-equal nil (second-offer-admitted-p offer
+                                              (dispatch-offer "req-2" "root/f/t1" "carol" 2))
+                 "no shadow lease: a cross-holder offer is refused")))
 
 ;; dry-run-writes-nothing: a dry run validates and projects without mutating;
 ;; after a green preview at revision R the --request id is still new to the
@@ -884,6 +863,8 @@ asserts does not exist in slice 1."
     "expected=preview-mutates-nothing;dedup-still-new;events-pending-pushed-unchanged"
   "no dry-run projection exists in slice 1")
 
+;; edit-is-atomic-and-replayable now lives in tests/acceptance.lisp over the
+;; node-edit verb of src/node-verbs.lisp (nova-tools #362).
 ;; edit-is-atomic-and-replayable: a bad one-of-five patch writes nothing; an
 ;; accepted mixed edit moves only its named fields and the category index; the
 ;; same request id retried answers NODE OK; a changed payload refuses; an
@@ -893,6 +874,8 @@ asserts does not exist in slice 1."
     "expected=one-of-five-writes-nothing;changed-payload-refused;equal-value=changed-0"
   "no edit verb in slice 1")
 
+;; efficiency-lessons-gate (SPEC-WORK.md:4916) now runs as the real deftest in
+;; tests/replays-8644.lisp, with the dispatch/effort/ceiling gates it named.
 ;; edit-never-fetches-a-link: a live URL to a counting endpoint added, edited
 ;; and rendered with zero requests; a link holding NUL refused `bad link`; a
 ;; refusal on a private node prints no value.
@@ -900,14 +883,6 @@ asserts does not exist in slice 1."
 (deftest-pending "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
     "expected=fetches=0;nul=bad-link;private-node-prints-no-value"
   "no link render/fetch in slice 1")
-
-;; edit-undo-preserves-later-work: an edit undone restores :before; the same
-;; undo after an intervening edit is refused conflict, both events standing.
-;; NEEDS-KERNEL: an undo verb with a :before field and conflict detection.
-(deftest-pending "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
-    "expected=undo-restores-before;late-undo=conflict;both-events-stand"
-  "no undo verb in slice 1")
-
 ;; efficiency-lessons-gate: prime projection respects --max-bytes; unpoured
 ;; checklist items never count in |O|; tripped nodes require --reason; delegate
 ;; mode refuses edits below the model; packets lacking :effort are refused;
@@ -916,24 +891,17 @@ asserts does not exist in slice 1."
 (deftest-pending "efficiency-lessons-gate" "docs/SPEC-WORK.md:4439"
     "expected=max-bytes-respected;unpoured!=O;tripped=reason;no-effort=refused;ceiling=refused"
   "dispatch/effort/ceiling enforcement is not in slice 1")
+;; edit-never-fetches-a-link now lives in tests/acceptance.lisp over the
+;; node-edit link validation and renderer of src/node-verbs.lisp (nova-tools #362).
 
-;; endpoint-is-local-and-private: the session's directory created 0700 and its
-;; socket 0600, both owned by the running account; a pre-existing directory or
-;; socket with wider modes refused rather than reused; the Windows named pipe
-;; created with FILE_FLAG_FIRST_PIPE_INSTANCE; no listener bound to a network
-;; address.
-;; NEEDS-KERNEL: a session socket/directory bootstrap and permission check.
-(deftest-pending "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5276"
-    "expected=dir-0700;socket-0600;wider-modes-refused;no-network-listener"
-  "no session endpoint exists in slice 1")
+;; edit-undo-preserves-later-work now lives in tests/acceptance.lisp over the
+;; node-edit and node-undo verbs of src/node-verbs.lisp (nova-tools #362).
+;; edit-undo-preserves-later-work is a real replay now, over
+;; src/edit-undo.lisp in tests/acceptance.lisp (nova-tools #362).
 
-;; evidence-before-adoption: missing baseline/coverage, unmatched quality or a
-;; retrospective correlation alone cannot auto-promote; a fully qualified
-;; prospective result can.
-;; NEEDS-KERNEL: an adoption/promotion gate over baseline, coverage and quality.
-(deftest-pending "evidence-before-adoption" "docs/SPEC-WORK.md:4378"
-    "expected=missing-baseline=no-promote;prospective-qualified=promote"
-  "adoption gating is not in slice 1")
+;; endpoint-is-local-and-private is the executable replay earlier in this file
+;; (a real deftest over src/replays-slice-05.lisp), so the duplicate stub is
+;; deleted.
 
 ;; explicit-rest-is-not-pinged: the configured silence threshold triggers one
 ;; bounded ping; a nonresponsive capacity marked unavailable with reason
@@ -968,14 +936,9 @@ asserts does not exist in slice 1."
     (check-equal :unconfirmed (availability-state active)
                  "a nonresponse reads unconfirmed")))
 
-;; fenced-export-can-finish: in a fenced session an export started, its status
-;; and terminal line read by id; an unfinished one cancelled with publication
-;; reconciled; an unknown id, a non-export id, operation list and every
-;; canonical write refused `fenced`; no second owner and no mutation authority.
-;; NEEDS-KERNEL: export/operation ids and a fenced (single-owner) session.
-(deftest-pending "fenced-export-can-finish" "docs/SPEC-WORK.md:5451"
-    "expected=terminal-read-by-id;cancel-reconciles;canonical-write=fenced;one-owner"
-  "export and fencing are not in slice 1")
+;; fenced-export-can-finish now runs against src/state-export.lisp in
+;; slice-09-state-export-replays.lisp (terminal read by id; cancel reconciled;
+;; canonical write refused `fenced`; one owner).
 
 ;; findings-across-c-and-o: the worked acceptance asserted line by line -- four
 ;; ids, four rows, open=1 closed=3 closed-in=3, no id twice, the dispositions
@@ -986,18 +949,64 @@ asserts does not exist in slice 1."
 ;; and one-shots each expressible as a capability group with stable id, source,
 ;; last-verified stamp, availability and constraints; declared support,
 ;; verified runtime and current free capacity kept as three fields.
-;; NEEDS-KERNEL: capability-group records and the three support fields.
-(deftest-pending "four-capability-groups-and-three-fields" "docs/SPEC-WORK.md:5280"
+(deftest "four-capability-groups-and-three-fields" "docs/SPEC-WORK.md:5280"
     "expected=groups=4;fields=support,runtime,free-capacity;never-collapse"
-  "capability records are not in slice 1")
+  (let ((groups
+          (mapcar (lambda (kind)
+                    (make-capability-group
+                     :id (format nil "cap-~(~A~)" kind)
+                     :kind kind
+                     :source "CONFIG"
+                     :last-verified "2026-09-15T00:00:00Z"
+                     :availability :available
+                     :constraints '(:budget "metered")))
+                  '(:child-agents :swarms :local-models :one-shots))))
+    ;; the four execution capability groups are each expressible.
+    (check-equal '(:child-agents :swarms :local-models :one-shots)
+                 (mapcar #'capability-group-kind groups)
+                 "four capability groups")
+    ;; every entry carries a stable id, source, verified stamp, availability
+    ;; and its budget or permission constraints.
+    (dolist (g groups)
+      (ok (stringp (capability-group-id g)) "~A has a stable id"
+          (capability-group-kind g))
+      (check-string= "CONFIG" (capability-group-source g) "the source is carried")
+      (check-string= "2026-09-15T00:00:00Z" (capability-group-last-verified g)
+                     "the last-verified stamp is carried")
+      (check-equal :available (capability-group-availability g) "availability is carried")
+      (check-string= "metered" (getf (capability-group-constraints g) :budget)
+                     "the constraints are carried"))
+    ;; declared support, runtime verification and free capacity stay three
+    ;; fields; a catalog entry is not evidence of a live child or free credits.
+    (let ((g (make-capability-group :id "cap-1" :kind :child-agents
+                                    :source "CONFIG"
+                                    :last-verified "2026-09-15T00:00:00Z"
+                                    :availability :available :constraints '()
+                                    :declared-support t :runtime-verified nil
+                                    :free-capacity nil)))
+      (check-equal t (capability-declared-support-p g) "declared support is true")
+      (check-equal nil (capability-runtime-verified-p g) "runtime is not verified")
+      (check-equal :unknown (capability-free-capacity g) "free capacity is unknown")
+      (check-equal nil (capability-fields-collapse-p g)
+                   "the three fields never collapse into one"))))
 
-;; four-facts-four-verbs: an admitted offer with declared free slots writing
-;; :effect :dispatched, a pending-offer index entry, refused by name while an
-;; attempt is live and admitted once none is.
-;; NEEDS-KERNEL: the offer verb and a pending-offer index.
-(deftest-pending "four-facts-four-verbs" "docs/SPEC-WORK.md:5229"
-    "expected=effect-dispatched;pending-offer-entry;live-attempt=refused;none=admitted"
-  "the offer/dispatch verbs are not in slice 1")
+;; a-retry-does-not-overwrite-its-attempt: a retry never overwrites the attempt
+;; before it; concurrent attempts keep separate model and usage attribution.
+(deftest "a-retry-does-not-overwrite-its-attempt" "docs/SPEC-WORK.md:5222"
+    "expected=unknown-stays-unknown;attempts-separate-attribution;never-overwrite"
+  (let* ((first (make-attempt :id "att-1" :node "root/f/t1"
+                              :requested-model "astra" :observed nil :usage 10))
+         (retry (make-attempt :id "att-2" :node "root/f/t1"
+                              :requested-model "astra" :observed "beta" :usage 7))
+         (attempts (append-attempt (list first) retry)))
+    (check-equal 2 (length attempts) "the retry is a second attempt")
+    (check-equal t (equal first (first attempts))
+                 "the attempt before the retry is not overwritten")
+    (check-equal :unknown (attempt-observed-model (first attempts))
+                 "the first attempt's unknown observation survives the retry")
+    (check-equal 10 (attempt-usage (first attempts)) "the first attempt's usage is intact")
+    (check-equal "att-2" (attempt-id (second attempts))
+                 "the retry keeps its own identity")))
 
 ;; full-round-trip: export a captured revision, load it in a fresh isolated
 ;; engine, export again, and compare every semantic field, stable ids, Unicode
@@ -1005,73 +1014,6 @@ asserts does not exist in slice 1."
 ;; ACTIVE observations, model and rate records, O and C history, roadmaps and
 ;; accounting provenance; derived caches rebuild to equivalent values.
 ;; NEEDS-KERNEL: an export/import path over a durable captured revision.
-
-;; gas-town-efficiency-accounting: root-only step records and inline checklists
-;; avoid node explosion; durable next-triggers ensure empty pulses cause zero
-;; model re-executions.
-;; NEEDS-KERNEL: step-record granularity and durable next-trigger accounting.
-(deftest-pending "gas-town-efficiency-accounting" "docs/SPEC-WORK.md:4438"
-    "expected=node-explosion=0;empty-pulse-reexecutions=0"
-  "efficiency accounting is not in slice 1")
-
-;; goal-crosses-harness: G a :doing leaf at revision r; harness A as coordinator
-;; C sets, updates, and writes a (:coordinator "C") note with a :deny; harness B
-;; shows --as C against the live session and the clipped snapshot, both print
-;; goal=G, rev= at or after every write, stop=requested (not cancelled), and the
-;; same note id and constraint row byte for byte; B's update --progress on G is
-;; refused `stop requested`; A writes cancel evidence; B's next show prints
-;; stop=cancelled; B copied no conversation.
-;; NEEDS-KERNEL: goal verb, coordinator notes/delegation, and a clipped snapshot.
-(deftest-pending "goal-crosses-harness" "docs/SPEC-WORK.md:5456"
-    "expected=goal=G;stop=requested;note-byte-for-byte;progress=refused;stop=cancelled"
-  "no goal/session/delegation in slice 1")
-
-;; goal-expect-is-required: goal set and goal update without --expect exit 2
-;; naming the flag, nothing written; with --expect at the current local
-;; revision, admitted; with --expect one behind, refused `stale` at exit 1 with
-;; the current value printed; --dry-run with the stale expectation prints the
-;; same refusal and writes no event, no journal revision and no dedup entry; a
-;; show never takes --expect.
-;; NEEDS-KERNEL: a goal CLI with --expect revision comparison and --dry-run.
-(deftest-pending "goal-expect-is-required" "docs/SPEC-WORK.md:5493"
-    "expected=no-expect=exit-2;one-behind=stale;dry-run-writes-nothing"
-  "no goal CLI in slice 1")
-
-;; goal-stale-update-refuses: A and B both show at r; A writes update, r+1; B's
-;; update --expect r is refused `GOAL FAIL ... expect=r current=r+1: stale`,
-;; snapshot unchanged; B's next show prints A's evidence row; A writes stop, r+2;
-;; B's update --expect r+1 refused stale; B's next show prints stop=requested;
-;; B's update --expect r+2 refused `stop requested`; a goal set to a closed
-;; branch node refused `disposition=done`.
-;; NEEDS-KERNEL: a goal CLI with stale --expect detection and a snapshot.
-(deftest-pending "goal-stale-update-refuses" "docs/SPEC-WORK.md:5466"
-    "expected=stale-named;snapshot-unchanged;stop-requested-stands;closed-refused"
-  "no goal CLI in slice 1")
-
-;; goal-stop-is-a-request-not-evidence: goal update --stop prints GOAL OK
-;; change=stop kind=transition rev=r+1 and the event is a :transition :to
-;; :cancel-requested carrying :reason and no :evidence; check has no finding;
-;; state --to doing --reason by id is admitted (the withdrawal); event --kind
-;; cancel --evidence <pointer> makes show print stop=cancelled, terminal, and
-;; goal set --goal G refused disposition=cancelled; --stop on :review and :done
-;; refused `no edge`.
-;; NEEDS-KERNEL: a goal verb, stop/cancel/withdrawal transitions and a check.
-(deftest-pending "goal-stop-is-a-request-not-evidence" "docs/SPEC-WORK.md:5475"
-    "expected=stop=request-not-evidence;cancel=terminal;done-refused-no-edge"
-  "no goal verb in slice 1")
-
-;; goal-update-writes-only-existing-kinds: every goal update form written, then
-;; the journal read: each event is a :transition or an :evidence with exactly
-;; the field list of its kind, on the goal node and no other node; --progress
-;; <text> alone on a :todo node writes :to :doing with the text as :reason, and
-;; on a :doing node refused `no edge`; --progress with the evidence triple on a
-;; :doing node writes the :evidence event; goal set and goal set --clear each
-;; write one :goal event; a retried set with the same --request id and payload
-;; returns the same event id once.
-;; NEEDS-KERNEL: goal update forms with kind-owned field lists.
-(deftest-pending "goal-update-writes-only-existing-kinds" "docs/SPEC-WORK.md:5484"
-    "expected=only-transition-or-evidence;exact-kind-fields;goal-node-only"
-  "no goal verb in slice 1")
 
 ;;; ------------------------------------------------------------------
 ;;; SPEC-WORK.md lines 3600-end, part 4 of 8: session/CLI-level replays.
@@ -1083,124 +1025,48 @@ asserts does not exist in slice 1."
 ;;; and marked NEEDS-KERNEL rather than run against an absent implementation.
 ;;; ------------------------------------------------------------------
 
-;; ------------------------------------------------------------------
-;; held-acceptance-converts-nothing   docs/SPEC-WORK.md:5258
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: session holds + leasing (an acceptance under a hold stays
-;; `:accepted-held` with no lease/launch/release until reconciled; lifting the
-;; hold converts nothing).
-;;(deftest "held-acceptance-converts-nothing" "docs/SPEC-WORK.md:5258"
-;;    "accepted-held=retained,lease=0,launch=0,release=0,lift-converts=nothing"
-;;  ;; an offer prepared before a pause refused at the last send; an acceptance
-;;  ;; under a hold retained `:accepted-held`; a lift of the hold converts nothing.)
-;;(pending))
+;; held-acceptance-converts-nothing (SPEC-WORK.md:5258) now runs as the real
+;; deftest in tests/replays-8640.lisp.
 
 ;; ------------------------------------------------------------------
 ;; historic-tick-survives-a-source-change   docs/SPEC-WORK.md:5300
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: source capture + pinned revisions (historic tick stays at its
-;; pinned revision while the current view requires re-verification).
-;;(deftest "historic-tick-survives-a-source-change" "docs/SPEC-WORK.md:5300"
-;;    "historic-tick=pinned,current=reverify"
-;;  ;; a changed source or criterion preserves the historic tick at its pinned
-;;  ;; revision while the current view requires re-verification.)
+;; historic-tick-survives-a-source-change now lives in tests/replays-8645.lisp
+;; over the tick records of src/replays-8645.lisp (nova-tools #362).
 
 ;; ------------------------------------------------------------------
 ;; history-grows-startup-does-not   docs/SPEC-WORK.md:5117
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: bounded paged history + startup instrumentation (grow old
-;; history; resident bytes/segment bytes/parses/replays/emitted bytes stay
-;; fixed; index pages read bounded by depth).
-;;(deftest "history-grows-startup-does-not" "docs/SPEC-WORK.md:5117"
-;;    "resident-bytes=stable,pages=bounded-by-depth"
-;;  ;; O, recent-window volume and page bounds held fixed while old history
-;;  ;; grows: startup resident bytes, segment bytes read, parses, replays and
-;;  ;; emitted bytes do not move; index pages read stay bounded by depth.)
+;; history-grows-startup-does-not now lives in tests/acceptance.lisp over the
+;; closed-history instrumentation of src/replays-closed-history.lisp (#362).
 
-;; ------------------------------------------------------------------
-;; hold-survives-a-crash   docs/SPEC-WORK.md:5254
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: crash durability of holds (crash after the hold recovers the
-;; same hold and target identities with no duplicate launch).
-;;(deftest "hold-survives-a-crash" "docs/SPEC-WORK.md:5254"
-;;    "hold-durable,target-identities=recovered,duplicate-launch=0"
-;;  ;; a crash after the hold is durable and before capture/send recovering the
-;;  ;; same hold and target identities with no duplicate launch.)
-
-;; ------------------------------------------------------------------
-;; hostile-data   docs/SPEC-WORK.md:5602
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: hostile-data intake adapter (reader evaluation disabled;
-;; depth/byte/node limits; no command execution or authority change; quadratic
-;; copying avoided).
-;;(deftest "hostile-data" "docs/SPEC-WORK.md:5602"
-;;    "eval-disabled,limits=enforced,command-execution=0,authority=unchanged"
-;;  ;; reader evaluation disabled; pre-parse depth, byte and node limits
-;;  ;; enforced; imported prose cannot execute a command or alter authority.)
-
-;; ------------------------------------------------------------------
-;; index-replayed-after-crash   docs/SPEC-WORK.md:5071
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: session + closed/open indexes (crash between settle and clip:
-;; one journal replay moves the id to C's index out of O's tree before any
-;; ask, totals reconcile).
-;;(deftest "index-replayed-after-crash" "docs/SPEC-WORK.md:5071"
-;;    "replay=one,open+closed=total,revive=recovered-in-O"
-;;  ;; a session killed between a `:settle` and the next clip: the restart's one
-;;  ;; journal replay puts the item in C's index and out of O's tree before the
-;;  ;; first ask, `open=` and `closed=` sum to the same total.)
+;; hold-survives-a-crash (SPEC-WORK.md:5254) now runs as the real deftest in
+;; tests/acceptance/slice-09-replays-holds.lisp.
 
 ;; ------------------------------------------------------------------
 ;; indivisible-record-refused-before-ack   docs/SPEC-WORK.md:5543
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: paged index + admission gate (a single key whose one locator
-;; no page could hold refused `indivisible` before acknowledgement, nothing
-;; journaled).
-;;(deftest "indivisible-record-refused-before-ack" "docs/SPEC-WORK.md:5543"
-;;    "indivisible=refused,nothing-journaled"
-;;  ;; one key with its locator that no page under `--page-bytes` could hold
-;;  ;; refused `indivisible` at exit 2 with nothing journaled.)
-
-;; ------------------------------------------------------------------
-;; inventory-expansion-and-contraction   docs/SPEC-WORK.md:5712
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: inventory/denominator accounting (initial inventory preserved,
-;; discovered work counted separately; changed denominator visible).
-;;(deftest "inventory-expansion-and-contraction" "docs/SPEC-WORK.md:5712"
-;;    "inventory=preserved,counted=separately,denominator=visible"
-;;  ;; initial inventory preserved and discovered; completed, reopened,
-;;  ;; decomposed and explicitly removed work counted separately; a changed
-;;  ;; denominator visible beside progress and never silently revised.)
+;; indivisible-record-refused-before-ack now lives in
+;; tests/acceptance/slice-09-replays-8603.lisp over the admission gate of
+;; src/closed-history.lisp (nova-tools #362).
 
 ;; ------------------------------------------------------------------
 ;; late-and-duplicate-receipts-are-retained   docs/SPEC-WORK.md:5243
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: receipt/lease reconciliation (a late accept retained `:late`
-;; reviving no lease, overwriting no successor; same request replaying its
-;; success).
-;;(deftest "late-and-duplicate-receipts-are-retained" "docs/SPEC-WORK.md:5243"
-;;    "late=retained,lease-revived=0,successor-overwritten=0"
-;;  ;; a late accept after a decline, a replacement, an expiry or a generation
-;;  ;; change retained `:late`, reviving no lease and overwriting no successor.)
+;; late-and-duplicate-receipts-are-retained now lives in tests/acceptance.lisp
+;; over the leasebook of src/assignment.lisp (nova-tools #362).
 
 ;; ------------------------------------------------------------------
 ;; local-tokens-cost-zero-api   docs/SPEC-WORK.md:5288
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: pricing/cost accounting (the three cost values kept separately
-;; labelled; a missing dimension unknown, never zero).
-;;(deftest "local-tokens-cost-zero-api" "docs/SPEC-WORK.md:5288"
-;;    "cost-values=separately-labelled,missing=unknown"
-;;  ;; the three cost values kept separately labelled.)
+;; local-tokens-cost-zero-api now runs in
+;; lisp/nova-work/tests/replays-8646.lisp (nova-tools #362).
 
 ;; ------------------------------------------------------------------
 ;; materialized-working-set   docs/SPEC-WORK.md:5597
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: materialized W index (repeated membership/|W| asks visit zero
-;; unrelated nodes; independent reconstruction equal after take/renew/release).
-;;(deftest "materialized-working-set" "docs/SPEC-WORK.md:5597"
-;;    "unrelated-visits=0,scans=0,reconstruction=equal,watermark=printed"
-;;  ;; W held fixed while O and C grow: membership and |W| asks visit zero
-;;  ;; unrelated nodes, scan neither O nor C.)
+;; materialized-working-set now lives in tests/replays-8646.lisp over the
+;; materialized W index of src/replays-8646.lisp (nova-tools #362).
 
 ;; ------------------------------------------------------------------
 ;; matrix-retirement   docs/SPEC-WORK.md:5387
@@ -1211,8 +1077,6 @@ asserts does not exist in slice 1."
 ;;    "selected=retired,recoverable=yes,task-cancelled=0"
 ;;  ;; `axis --remove` of a first-axis row and then of another axis's member:
 ;;  ;; only the selected coordinates retired and recoverable, no task cancelled.)
-
-;; ------------------------------------------------------------------
 ;; merged-is-not-distributed   docs/SPEC-WORK.md:5093
 ;; ------------------------------------------------------------------
 ;; NEEDS-KERNEL: release/distribution state (a fix in C with `landed=<sha>` and
@@ -1226,75 +1090,191 @@ asserts does not exist in slice 1."
 ;; ------------------------------------------------------------------
 ;; metadata-patches-preserve-intent   docs/SPEC-WORK.md:5347
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: node add/edit verbs (keep/clear/set-empty/set-false/set-value
-;; round-trip distinctly; a malformed tag or wrong type refused, no event, no
-;; counter).
-;;(deftest "metadata-patches-preserve-intent" "docs/SPEC-WORK.md:5347"
-;;    "patches=round-trip,malformed=refused,counter=moved"
-;;  ;; keep, clear, set-empty, set-false and set-value on each field round-trip
-;;  ;; and digest distinctly.)
+;; The real replay now lives in tests/acceptance.lisp over the node-edit metadata
+;; patches of src/node-verbs.lisp (nova-tools #362): keep, clear, set-empty,
+;; set-false and set-value round-trip and digest distinctly, a malformed or
+;; wrong-type patch is refused with no event and no counter moved, and
+;; --version on a :feature is refused.
 
 ;; ------------------------------------------------------------------
-;; missing-segment-is-a-gap   docs/SPEC-WORK.md:5132
+;; node move   docs/SPEC-WORK.md:3027-3070, :5360-5379
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: closed history segments + coverage gaps (a removed named
-;; segment prints `gap=<n>` and a coverage-gap note, never an empty closed set).
-;;(deftest "missing-segment-is-a-gap" "docs/SPEC-WORK.md:5132"
-;;    "gap=<n>,coverage-gap=noted,closed-set=never-empty"
-;;  ;; a segment the committed root names, removed: the listing answers what it
-;;  ;; can with `gap=<n>` and one coverage-gap note, never an empty closed set.)
+;; move-keeps-every-count lives in tests/acceptance.lisp, where the card that
+;; implemented the counters put it. The remaining move replays are real here.
 
-;; ------------------------------------------------------------------
-;; move-keeps-every-count   docs/SPEC-WORK.md:5360
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: node move verb (a required subtree moved keeps all counts
-;; consistent; no whole-set scan).
-;;(deftest "move-keeps-every-count" "docs/SPEC-WORK.md:5360"
-;;    "source/dest=by-subtree,net=stable,visits=asserted"
-;;  ;; a required subtree moved between two features: the source's and
-;;  ;; destination's required sets and open counts move by the subtree, the
-;;  ;; common ancestor's net count is stable.)
+(defun move-request (id from under &key (reason "redistribute")
+                                        (request "mv-1")
+                                        (stamp "2026-09-17T00:00:00Z"))
+  (list :id id :from from :under under :reason reason :request request :stamp stamp))
 
-;; ------------------------------------------------------------------
-;; move-keeps-the-lease   docs/SPEC-WORK.md:5370
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: leases over moved subtrees (a working subtree moved with its
-;; effective `:responsible` unchanged keeps the same lease/attempt/usage).
-;;(deftest "move-keeps-the-lease" "docs/SPEC-WORK.md:5370"
-;;    "lease=same,attempt=same,usage=same,active-change=refused"
-;;  ;; a working subtree moved with its effective `:responsible` unchanged keeps
-;;  ;; the same lease, attempt and usage.)
+(deftest "move-keeps-the-lease" "docs/SPEC-WORK.md:5370"
+    "lease=same,attempt=same,usage=same,active-change=refused,privacy-reduction=refused"
+  (let* ((seed '((:id "root"    :type :work-set :parent nil       :state :unknown)
+                 (:id "root/resp-a" :type :feature :parent "root" :state :unknown)
+                 (:id "root/resp-b" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f1" :type :feature  :parent "root"    :state :unknown
+                  :coordinator "root/resp-a")
+                 (:id "root/f2" :type :feature  :parent "root"    :state :unknown
+                  :coordinator "root/resp-a")
+                 (:id "root/f3" :type :feature  :parent "root"    :state :unknown
+                  :coordinator "root/resp-b")
+                 (:id "root/f4" :type :feature  :parent "root"    :state :unknown
+                  :private :true)
+                 (:id "root/f1/t1" :type :task :parent "root/f1" :state :doing
+                  :holder "carol")
+                 (:id "root/f1/t2" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f1/t3" :type :task :parent "root/f1" :state :doing
+                  :private :true)
+                 (:id "root/f1/t4" :type :task :parent "root/f1" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    ;; A live, unreconciled attempt on t2, and a lease on t1.
+    (record-attempt k "root/f1/t2" "att-2")
+    (check-equal "carol" (node-holder (kernel-state k) "root/f1/t1") "t1 holds a lease")
+    ;; Same effective :responsible: admitted, and the lease/attempt do not move.
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t1" "root/f1" "root/f2"
+                                           :request "lease-1"))
+      (ok okp "a same-responsible move refused: ~A" line))
+    (check-equal "carol" (node-holder (kernel-state k) "root/f1/t1") "the lease is kept")
+    (check-equal '("att-2") (live-attempt-ids k "root/f1/t2") "the attempt is kept")
+    ;; A move that would change the effective :responsible over a live attempt
+    ;; refuses `active context change`, naming the affected ids, and writes nothing.
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t2" "root/f1" "root/f3"
+                                           :request "lease-2"))
+      (ok (not okp) "a context-changing move must refuse")
+      (ok (search "active context change" line) "names the guard: ~A" line)
+      (ok (search "root/f1/t2" line) "names the affected id: ~A" line))
+    (check-equal "root/f1" (node-parent (kernel-state k) "root/f1/t2")
+                 "the refused move wrote nothing")
+    ;; Lowering privacy is refused; raising it is admitted.
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t3" "root/f1" "root/f2"
+                                           :request "lease-3"))
+      (ok (not okp) "a privacy-lowering move must refuse")
+      (ok (search "privacy reduction" line) "names the guard: ~A" line))
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t4" "root/f1" "root/f4"
+                                           :request "lease-4"))
+      (ok okp "raising privacy admitted: ~A" line))
+    (check-equal "root/f4" (node-parent (kernel-state k) "root/f1/t4")
+                 "the privacy-raising move is applied")))
 
-;; ------------------------------------------------------------------
-;; move-refuses-by-name   docs/SPEC-WORK.md:5367
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: node move verb refusals (a wrong `--from`, destination inside
-;; the subtree, a root container, etc. each refused with its named reason).
-;;(deftest "move-refuses-by-name" "docs/SPEC-WORK.md:5367"
-;;    "each-refusal=named,nothing-written"
-;;  ;; a wrong `--from`, a destination inside the subtree, a root container, a
-;;  ;; repository root, a shared container, another repository, and a roadmap as
-;;  ;; either parent, each refused with its named reason.)
+(deftest "move-refuses-by-name" "docs/SPEC-WORK.md:5367"
+    "each-refusal=named,nothing-written"
+  (let* ((seed '((:id "root"    :type :work-set :parent nil    :state :unknown
+                  :repo "acme/work")
+                 (:id "root/f1" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f1/t1" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f1/t1/s1" :type :task :parent "root/f1/t1" :state :doing)
+                 (:id "root/f2" :type :feature :parent "root"  :state :unknown)
+                 (:id "other"   :type :work-set :parent nil    :state :unknown
+                  :repo "acme/y")
+                 (:id "other/f" :type :feature :parent "other" :state :unknown)))
+         (k (make-kernel :state (make-seed-state seed)))
+         (f1 (node-children (kernel-state k) "root/f1"))
+         (f2 (node-children (kernel-state k) "root/f2")))
+    (ok (roadmap-create k :id "root/rm" :parent "root" :title "R" :axes '()
+                        :members '() :reason "new" :request "rm-1"
+                        :stamp "2026-09-17T00:00:00Z")
+        "roadmap create refused")
+    (flet ((refuses (reason args)
+             (multiple-value-bind (okp line)
+                 (apply #'node-move k args)
+               (ok (not okp) "~A must refuse: ~A" reason (or line ""))
+               (ok (search reason line) "~A names the reason: ~A" reason line))))
+      ;; a wrong --from is a `parent conflict`
+      (refuses "parent conflict"
+               (move-request "root/f1/t1" "root/f2" "root/f2" :request "r1"))
+      ;; a destination inside the subtree is a `cycle`
+      (refuses "cycle"
+               (move-request "root/f1/t1" "root/f1" "root/f1/t1/s1" :request "r2"))
+      ;; a root container is `not movable`
+      (refuses "not movable"
+               (move-request "root" nil "root/f1" :request "r3"))
+      ;; a destination under another repository is a `repository change`
+      (refuses "repository change"
+               (move-request "root/f1/t1" "root/f1" "other/f" :request "r4"))
+      ;; a roadmap as the destination is `roadmap operation required`
+      (refuses "roadmap operation required"
+               (move-request "root/f1/t1" "root/f1" "root/rm" :request "r5"))
+      ;; a way is found through the named reason and both parents are unchanged
+      (check-equal f1 (node-children (kernel-state k) "root/f1") "source unchanged")
+      (check-equal f2 (node-children (kernel-state k) "root/f2") "destination unchanged")
+      (check-equal "root/f1" (node-parent (kernel-state k) "root/f1/t1")
+                   "the node never moved"))))
 
-;; ------------------------------------------------------------------
-;; move-same-parent-is-a-receipt   docs/SPEC-WORK.md:5364
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: node move verb receipts (`--from` equal to `--under`: structure
-;; event alone, `changed=0`, sibling order unchanged).
-;;(deftest "move-same-parent-is-a-receipt" "docs/SPEC-WORK.md:5364"
-;;    "changed=0,one-envelope,sibling-order=unchanged"
-;;  ;; `--from` equal to `--under`: the structure event alone, `changed=0`,
-;;  ;; sibling order unchanged.)
+(deftest "move-same-parent-is-a-receipt" "docs/SPEC-WORK.md:5364"
+    "changed=0,one-envelope,sibling-order=unchanged"
+  (let* ((seed '((:id "root"    :type :work-set :parent nil    :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f1/t1" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f1/t2" :type :task :parent "root/f1" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed)))
+         (before (node-children (kernel-state k) "root/f1")))
+    (multiple-value-bind (okp line code)
+        (apply #'node-move k (move-request "root/f1/t1" "root/f1" "root/f1"
+                                           :request "same-1"))
+      (ok okp "a same-parent move refused: ~A" line)
+      (check-equal 0 code "same-parent exit")
+      (ok (search "changed=0" line) "the no-effect receipt: ~A" line)
+      ;; a lost reply retried yields the original line and one envelope
+      (multiple-value-bind (okp2 line2 code2)
+          (apply #'node-move k (move-request "root/f1/t1" "root/f1" "root/f1"
+                                             :request "same-1"))
+        (ok okp2 "the retry refused")
+        (check-equal 0 code2 "retry exit")
+        (check-string= line line2 "the retry replays the original line")))
+    (check-equal before (node-children (kernel-state k) "root/f1")
+                 "the receipt and its retry leave the sibling order unchanged")
+    ;; a different payload under the id refuses and still writes nothing
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t2" "root/f1" "root/f1"
+                                           :request "same-1"))
+      (ok (not okp) "a changed payload under the id must refuse")
+      (ok (search "different payload" line) "names the payload conflict: ~A" line))
+    (check-equal before (node-children (kernel-state k) "root/f1")
+                 "the refusal leaves both parents unchanged")))
 
-;; ------------------------------------------------------------------
-;; move-undo-refuses-a-reorder   docs/SPEC-WORK.md:5379
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: move undo (undo after a sibling reorder, reparent or privacy
-;; change refused conflict, guessing no position).
-;;(deftest "move-undo-refuses-a-reorder" "docs/SPEC-WORK.md:5379"
-;;    "undo=conflict,position=never-guessed"
-;;  ;; undo after a sibling reorder, a further reparent or a privacy change
-;;  ;; refused conflict and guessing no position.)
+(deftest "move-undo-refuses-a-reorder" "docs/SPEC-WORK.md:5379"
+    "undo=conflict,position=never-guessed,restore=exact"
+  ;; Without an intervening change the undo restores the exact before order.
+  (let* ((seed '((:id "root"    :type :work-set :parent nil    :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f2" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f1/t1" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f1/t2" :type :task :parent "root/f1" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t1" "root/f1" "root/f2"
+                                           :request "mv-ok"))
+      (ok okp "move refused: ~A" line))
+    (multiple-value-bind (okp line)
+        (submit k (undo-verb-request "mv-ok" "undo-ok"))
+      (ok okp "the undo refused: ~A" line))
+    (check-equal '("root/f1/t1" "root/f1/t2") (node-children (kernel-state k) "root/f1")
+                 "the exact before order is restored")
+    (check-equal '() (node-children (kernel-state k) "root/f2")
+                 "the destination returns to its before set"))
+  ;; An intervening reparent makes the undo conflict and guess no position.
+  (let* ((seed '((:id "root"    :type :work-set :parent nil    :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f2" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f1/t1" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f1/t2" :type :task :parent "root/f1" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (apply #'node-move k (move-request "root/f1/t1" "root/f1" "root/f2"
+                                       :request "reorder-1"))
+    (apply #'node-move k (move-request "root/f1/t2" "root/f1" "root/f2"
+                                       :request "reorder-2"))
+    (let ((after (node-children (kernel-state k) "root/f2")))
+      (multiple-value-bind (okp line code)
+          (submit k (undo-verb-request "reorder-1" "undo-reorder-1"))
+        (ok (not okp) "the undo must refuse after a sibling reparent")
+        (check-equal 1 code "the undo conflict exit")
+        (ok (search "conflict" line) "names the conflict: ~A" line))
+      (check-equal after (node-children (kernel-state k) "root/f2")
+                   "the refused undo guessed no position"))))
 
 ;; ------------------------------------------------------------------
 ;; move-updates-every-roadmap-scope   docs/SPEC-WORK.md:5375
@@ -1306,8 +1286,6 @@ asserts does not exist in slice 1."
 ;;  ;; a row referenced by two roadmaps outside both parent chains and one
 ;;  ;; unrelated roadmap: both referencing scope revisions advance, the
 ;;  ;; unrelated one stays.)
-
-;; ------------------------------------------------------------------
 ;; moving-source   docs/SPEC-WORK.md:5585
 ;; ------------------------------------------------------------------
 ;; NEEDS-KERNEL: provider intake adapter (a body edited / comment added and
@@ -1345,56 +1323,742 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
     (check-string= before (root-digest (kernel-state k))
                    (format nil "~A mutated state" verb))))
 
-;; NEEDS-KERNEL: undo/redo/friend/model/observe/config-intake verbs and their
-;; own-kind ordered-field envelopes.
+;; The six new verbs draft 26 added (SPEC-WORK.md:1014-1058): each writes an
+;; event of its own kind, with every field of its ordered list written in order,
+;; `:node` written `(:absent)`, and a retry of one request id answering with the
+;; original OK line and applying nothing.
+(defun new-verb-request (verb &key (request "nv-1") (by "rowan"))
+  (append (list :verb verb :by by :request request
+                :stamp "2026-09-14T12:00:00Z" :clock :tool
+                :generation-owner "gen-4")
+          (loop for f in (new-verb-fields verb)
+                append (list f
+                             (case f
+                               (:change :set)
+                               (:request-of "req-previous")
+                               ((:parts :samples :usage) (list "p-1"))
+                               (otherwise (format nil "~A-1"
+                                                  (string-downcase (symbol-name f)))))))))
+
 (deftest "new-verbs-have-a-kind-and-a-field-order" "docs/SPEC-WORK.md:5315"
     "expected=own-kind;field-order;:node(:absent);same-bytes"
-  (slice1-refuses-verb :undo))
+  (dolist (verb '(:undo :redo :friend :model :observe :config))
+    (let* ((k (fresh))
+           (request (new-verb-request verb :request (format nil "kind-~A" verb))))
+      (multiple-value-bind (okp line code envelope) (submit-new-verb k request)
+        (ok okp "~A refused: ~A" verb line)
+        (check-equal 0 code (format nil "~A exit code" verb))
+        (let ((ev (first (getf envelope :events))))
+          (ok ev "~A wrote no event" verb)
+          (check-equal (new-verb-kind verb) (work-event-kind ev)
+                       (format nil "~A did not write its own kind" verb))
+          (check-equal (new-verb-fields verb) (kind-fields (work-event-kind ev))
+                       (format nil "~A's kind does not carry its field order" verb))
+          (ok (absentp (work-event-node ev)) "~A wrote a node" verb)
+          (dolist (f (new-verb-fields verb))
+            (check-equal (getf request f) (getf (work-event-fields ev) f)
+                         (format nil "~A field ~A is not the request's" verb f))))))
+    (let* ((k (fresh))
+           (bare (list :verb verb :by "rowan" :request (format nil "bare-~A" verb)
+                       :stamp "2026-09-14T12:00:00Z" :clock :tool
+                       :generation-owner "gen-4")))
+      (multiple-value-bind (okp line code envelope) (submit-new-verb k bare)
+        (declare (ignore code))
+        (ok okp "~A bare refused: ~A" verb line)
+        (let ((ev (first (getf envelope :events))))
+          (dolist (f (new-verb-fields verb))
+            (ok (absentp (getf (work-event-fields ev) f))
+                "~A's absent field ~A is not (:absent)" verb f)))))
+    (let* ((a (fresh)) (b (fresh))
+           (ra (new-verb-request verb :request (format nil "build-a-~A" verb)))
+           (rb (new-verb-request verb :request (format nil "build-b-~A" verb))))
+      (multiple-value-bind (oka la ca ea) (submit-new-verb a ra)
+        (declare (ignore la ca))
+        (multiple-value-bind (okb lb cb eb) (submit-new-verb b rb)
+          (declare (ignore lb cb))
+          (ok (and oka okb) "~A build refused" verb)
+          (check-string= (nova-work::payload-digest (getf ea :events))
+                         (nova-work::payload-digest (getf eb :events))
+                         (format nil "~A two builds do not digest to the same bytes"
+                                 verb)))))))
 
-;; NEEDS-KERNEL: the six verbs above plus per-kind subject lines (nodes=/friend=/model=).
 (deftest "new-verbs-retry-to-one-event" "docs/SPEC-WORK.md:5319"
     "expected=one-event;original-OK;changed-payload-refuses"
-  (slice1-refuses-verb :redo))
+  (dolist (verb '(:undo :redo :friend :model :observe :config))
+    (let* ((k (fresh))
+           (request (new-verb-request verb :request (format nil "retry-~A" verb)))
+           (subject (ecase (new-verb-subject verb)
+                      (:nodes "nodes=")
+                      (:friend "friend=")
+                      (:model "model="))))
+      (multiple-value-bind (okp line code envelope) (submit-new-verb k request)
+        (declare (ignore code))
+        (ok okp "~A first submission refused: ~A" verb line)
+        (check-equal 1 (length (getf envelope :events))
+                     (format nil "~A wrote one event" verb))
+        (check-equal 1 (length (state-history (kernel-state k)))
+                     (format nil "~A wrote one history record" verb))
+        (ok (search subject line) "~A OK line lacks ~A: ~A" verb subject line)
+        (ok (not (search "node= " line)) "~A OK line carries an empty node=: ~A"
+            verb line)
+        (multiple-value-bind (ok2 line2 code2 envelope2)
+            (submit-new-verb k request)
+          (ok ok2 "~A retry refused: ~A" verb line2)
+          (check-equal 0 code2 (format nil "~A retry exit code" verb))
+          (check-string= line line2
+                         (format nil "~A retry did not return the original OK line" verb))
+          (ok (getf envelope2 :replayed) "~A retry applied a second event" verb)
+          (check-equal 1 (length (state-history (kernel-state k)))
+                       (format nil "~A retry wrote a second event" verb)))
+        (let ((changed (copy-list request)))
+          (setf (getf changed :reason) "a different reason")
+          (multiple-value-bind (ok3 line3 code3) (submit-new-verb k changed)
+            (ok (not ok3) "~A accepted the same id with a changed payload" verb)
+            (check-equal 1 code3 (format nil "~A changed-payload exit code" verb))
+            (ok (search "reused with a different payload" line3)
+                "~A refusal does not name the payload reuse: ~A" verb line3)))
+        (let ((successor (make-kernel :state (kernel-state k)
+                                      :journal (kernel-journal k))))
+          (multiple-value-bind (ok4 line4) (submit-new-verb successor request)
+            (ok ok4 "~A successor refused: ~A" verb line4)
+            (check-string= line line4
+                           (format nil "~A successor did not return the original line"
+                                   verb))
+            (check-equal 1 (length (state-history (kernel-state successor)))
+                         (format nil "~A successor applied a second event" verb))))))))
 
-;; NEEDS-KERNEL: a pause/hold and dispatch gate; acceptance retained :accepted-held.
-(deftest "no-dispatch-slips-past-a-hold" "docs/SPEC-WORK.md:5258"
-    "expected=offer-before-pause-refused-at-send;held-acceptance-converts-nothing"
-  (slice1-refuses-verb :execution-stop))
+;; no-dispatch-slips-past-a-hold now lives in slice-09-replays-holds.lisp, with
+;; the pause/hold and dispatch gate it needed.
 
-(deftest "no-effect-mutation-is-journaled" "docs/SPEC-WORK.md:5176"
-    "expected=noop-journaled;changed=0;digest-unchanged;rev+1"
-  ;; NEEDS-KERNEL: a fresh-id no-op mutation and the changed= counter on the OK
-  ;; line. Slice 1's OK line is `<MUTATION> OK id=.. request=.. node=.. rev=..
-  ;; pushed=-` with no changed=, so this asserts the counter is still absent.
-  (let ((k (fresh)))
-    (multiple-value-bind (okp line code) (submit k (close-request :request "noop-probe"))
-      (declare (ignore code))
-      (ok okp "slice-1 transition refused")
-      (ok (not (search "changed=" line)) "the OK line already carries changed=: ~A" line))))
+;; The no-effect receipt (`no-effect-mutation-is-journaled`) now lives with the
+;; node-edit verbs that write it; see tests/acceptance.lisp.
 
 (deftest "no-friend-name-in-the-tool" "docs/SPEC-WORK.md:5209"
     "expected=binary-and-fixtures-carry-no-friend-bench-repo-or-house-name"
-  ;; NEEDS-KERNEL: a binary/defaults/fixtures audit is the Go client's, not the
-  ;; slice-1 kernel's. The lisp seed already carries only the placeholder house.
+  ;; The tool ships no identity: a bare kernel's seed is empty and its fleet has
+  ;; no friends, so no friend, bench, repository or house name is a default of
+  ;; this build; every identity arrives as configuration.
+  (let ((bare (make-kernel)))
+    (check-equal 0 (state-open-count (kernel-state bare))
+                 "a bare kernel ships of its own")
+    (check-equal 0 (state-closed-count (kernel-state bare))
+                 "a bare kernel ships a closed fixture")
+    (check-equal '() (state-history (kernel-state bare))
+                 "a bare kernel ships a history record")
+    (check-equal '() (fleet-friends (kernel-fleet bare))
+                 "the fleet ships a friend identity"))
+  ;; An identity appears only when it is configured, and it is configuration:
+  ;; it writes no work state and no history.
+  (let ((configured (make-kernel :friends '("configured-friend"))))
+    (check-equal '("configured-friend") (fleet-friends (kernel-fleet configured))
+                 "the configured identity did not arrive as configuration")
+    (check-equal 0 (state-open-count (kernel-state configured))
+                 "a configured friend wrote work state")
+    (check-equal '() (state-history (kernel-state configured))
+                 "a configured friend wrote a work event"))
+  ;; The suite's own fixture carries only the placeholder house, never a real
+  ;; friend, bench, repository or house name.
   (dolist (node *seed*)
-    (ok (search "acme/work" (getf node :id))
-        "seed id ~A is not the placeholder house" (getf node :id))))
+    (let ((id (getf node :id)))
+      (ok (and (stringp id) (eql 0 (search "acme/work" id)))
+          "seed id ~A is not the placeholder house" id))
+    (ok (null (getf node :by)) "seed node ~A ships an author" (getf node :id))))
 
-;; NEEDS-KERNEL: offer/accept/lease verbs and the cross-holder lease rule.
-(deftest "no-shadow-lease-across-holders" "docs/SPEC-WORK.md:5238"
-    "expected=cross-holder-reply-creates-no-lease"
-  (slice1-refuses-verb :accept))
-
-;; NEEDS-KERNEL: the offer verb writing :dispatched plus a reservation index entry.
-(deftest "offer-writes-intent-and-a-reservation" "docs/SPEC-WORK.md:5229"
-    "expected=:dispatched;pending-offer;reservation;nothing-else"
-  (slice1-refuses-verb :offer))
+;; Moved to tests/acceptance.lisp as real replays over src/assignment.lisp
+;; (nova-tools #362): a second offer to another name while a holder is pending
+;; or accepted is refused -- "no-shadow-lease-across-holders"; an admitted offer
+;; writes :effect :dispatched, a pending-offer index entry and a reservation --
+;; "offer-writes-intent-and-a-reservation".
 
 ;; NEEDS-KERNEL: archive export/reload and a recent-only export never labelled full.
 
-;; NEEDS-KERNEL: clip staging/verify/commit in one revision with both index roots.
-(deftest "one-revision-publishes-together" "docs/SPEC-WORK.md:5124"
-    "expected=segments-indexes-files-one-commit;kill-leaves-prev-root"
-  (slice1-refuses-verb :clip))
-
 ;; NEEDS-KERNEL: execution stop as a hold plus an evidence-set custom cancel.
+
+(deftest "busy-day-many-segments" "docs/SPEC-WORK.md:5566"
+    "expected=many-segments-read-in-bounded-pages;max-caps-rows;more-names-after;day-never-read-whole"
+  (let* ((rows (loop for i from 1 to 50
+                     collect (history-row "2026-09-14" i (format nil "T-~3,'0D" i))))
+         (h (make-closed-history :rows rows :page-records 5 :root "busy-root"))
+         (total-leaves (length (clip-day rows 5))))
+    ;; --max caps the rows printed.
+    (let ((res (query-history h :from "2026-09-14" :to "2026-09-15" :max 12)))
+      (check-equal 12 (length (query-result-shown res)) "--max caps the rows")
+      (ok (query-result-more res) "a capped answer is MORE")
+      (ok (search "after=" (query-result-line res)) "MORE names --after")
+      (ok (< (query-result-pages res) total-leaves) "the day is never read whole"))
+    ;; the bounded pages stop at the page budget.
+    (let ((res (query-history h :from "2026-09-14" :to "2026-09-15"
+                              :max 100 :page-budget 4)))
+      (check-equal 20 (length (query-result-shown res))
+                   "four bounded pages of five rows print twenty rows")
+      (check-equal 4 (query-result-pages res) "the read is bounded by the budget")
+      (ok (query-result-more res) "the rest of the day is MORE")
+      (ok (< (query-result-pages res) total-leaves) "the day is never read whole"))))
+
+(deftest "branch-and-window-required" "docs/SPEC-WORK.md:5546"
+    "expected=branch-required;closed-window-required;open-refuses-from;who/stale/handoffs-refused"
+  (multiple-value-bind (okp line code) (nova-work::validate-ask :ask :size)
+    (ok (not okp) "an ask with no branch refuses")
+    (check-equal 2 code "exit 2")
+    (ok (search "branch" line) "the refusal names the flag: ~A" line))
+  (multiple-value-bind (okp line code)
+      (nova-work::validate-ask :ask :size :branch :closed)
+    (ok (not okp) "closed with no window refuses")
+    (check-equal 2 code "exit 2")
+    (ok (search "from" line) "the refusal names the window: ~A" line))
+  (multiple-value-bind (okp line code)
+      (nova-work::validate-ask :ask :size :branch :open :from 1)
+    (ok (not okp) "a window under open refuses")
+    (check-equal 2 code "exit 2"))
+  (dolist (ask '(:who :stale :handoffs))
+    (dolist (branch '(:closed :root))
+      (multiple-value-bind (okp line code)
+          (nova-work::validate-ask :ask ask :branch branch)
+        (declare (ignore line))
+        (ok (not okp) "~A under ~A refuses" ask branch)
+        (check-equal 2 code "exit 2"))))
+  (multiple-value-bind (okp line code)
+      (nova-work::validate-ask :ask :size :branch :closed :from 1 :to 2)
+    (ok okp "a closed ask with its window is admitted: ~A" line)
+    (check-equal 0 code "exit 0")))
+
+(deftest "metadata-patches-preserve-intent" "docs/SPEC-WORK.md:5798"
+    "keep/clear/set-empty/set-false/set-value round-trip and digest distinctly; all-keep/malformed/wrong-type refused; version-on-feature refused"
+  (let* ((k (fresh))
+         (node "acme/work/f1/t1")
+         (d0 (metadata-digest (kernel-state k))))
+    (multiple-value-bind (okp line code)
+        (submit k (edit-request node :title '(:set "hello") :category '(:set "infra")
+                                :links '(:set ("a" "b")) :private '(:set :true)
+                                :version '(:set "v1")))
+      (ok okp "set-value edit refused: ~A" line)
+      (check-equal 0 code "set-value edit exit"))
+    (check-string= "hello" (node-title (kernel-state k) node) "title set")
+    (check-string= "infra" (node-category (kernel-state k) node) "category set")
+    (check-equal '("a" "b") (node-links (kernel-state k) node) "links set")
+    (check-equal :true (node-private (kernel-state k) node) "private set")
+    (check-string= "v1" (node-version (kernel-state k) node) "version set")
+    (let ((d1 (metadata-digest (kernel-state k))))
+      (ok (not (string= d0 d1)) "set-value moves the digest")
+      (multiple-value-bind (okp2 line2) (submit k (edit-request node :request "edit-keep"
+                                                                :title '(:keep)
+                                                                :category '(:set "infra")))
+        (ok okp2 "keep edit refused: ~A" line2)
+        (check-string= d1 (metadata-digest (kernel-state k)) "a keep plus an equal set does not move the digest"))
+      (multiple-value-bind (okp3 line3) (submit k (edit-request node :request "edit-clear"
+                                                                :title '(:clear)))
+        (ok okp3 "clear edit refused: ~A" line3)
+        (ok (absentp (node-title (kernel-state k) node)) "clear writes absent")
+        (ok (not (string= d1 (metadata-digest (kernel-state k)))) "clear moves the digest"))
+      (multiple-value-bind (okp4 line4) (submit k (edit-request node :request "edit-empty"
+                                                                :links '(:set ())))
+        (ok okp4 "set-empty edit refused: ~A" line4)
+        (check-equal '() (node-links (kernel-state k) node) "set-empty writes ()")
+        (ok (not (absentp (node-links (kernel-state k) node))) "empty is a value, not absent"))
+      (multiple-value-bind (okp5 line5) (submit k (edit-request node :request "edit-false"
+                                                                :private '(:set :false)))
+        (ok okp5 "set-false edit refused: ~A" line5)
+        (check-equal :false (node-private (kernel-state k) node) "set-false writes false")
+        (ok (not (absentp (node-private (kernel-state k) node))) "false is a value, not absent")))
+    (let ((rev (state-revision (kernel-state k)))
+          (hist (length (state-history (kernel-state k)))))
+      (multiple-value-bind (okp line) (submit k (edit-request node :request "edit-allkeep"))
+        (ok (not okp) "all-keep must refuse")
+        (ok (search "all keep" line) "all-keep names itself: ~A" line))
+      (multiple-value-bind (okp line) (submit k (edit-request node :request "edit-malformed"
+                                                              :title '(:bogus "x")))
+        (ok (not okp) "malformed patch must refuse")
+        (ok (search "patch" line) "malformed patch is named: ~A" line))
+      (multiple-value-bind (okp line) (submit k (edit-request node :request "edit-wrongtype"
+                                                              :title '(:set 5)))
+        (ok (not okp) "wrong type must refuse")
+        (ok (search "title" line) "wrong type names the field: ~A" line))
+      (check-equal rev (state-revision (kernel-state k)) "refusals move no revision")
+      (check-equal hist (length (state-history (kernel-state k))) "refusals write no history"))
+    (let ((rev1 (state-revision (kernel-state k))))
+      (multiple-value-bind (okp line) (submit k (edit-request "acme/work/f1" :request "edit-feat-ver"
+                                                              :version '(:set "v1")))
+        (ok (not okp) "version on a feature must refuse")
+        (ok (search "version on a" line) "version refusal names the kind: ~A" line))
+      (check-equal rev1 (state-revision (kernel-state k)) "the version refusal writes nothing")
+      (multiple-value-bind (okp line) (submit k (edit-request "acme/work/f2" :request "edit-feat-keep"
+                                                              :title '(:set "f2") :version '(:keep)))
+        (ok okp "keep on a feature admitted: ~A" line)
+        (check-equal (1+ rev1) (state-revision (kernel-state k)) "the admitted keep advances the revision")))))
+
+(deftest "edit-is-atomic-and-replayable" "docs/SPEC-WORK.md:5802"
+    "bad-patch-writes-nothing; named-fields-only-move; retry-replays-original; changed-payload-refused; equal-value changed=0 rev+1"
+  (let* ((k (fresh))
+         (node "acme/work/f1/t1"))
+    (let ((rev (state-revision (kernel-state k)))
+          (hist (length (state-history (kernel-state k)))))
+      (multiple-value-bind (okp line) (submit k (edit-request node :request "edit-bad"
+                                                              :title '(:set "ok")
+                                                              :category '(:set 5)))
+        (ok (not okp) "a bad one-of-five patch must refuse: ~A" line)
+        (check-equal rev (state-revision (kernel-state k)) "bad patch writes no revision")
+        (check-equal hist (length (state-history (kernel-state k))) "bad patch writes no history")))
+    (multiple-value-bind (okp line) (submit k (edit-request node :request "edit-mixed"
+                                                            :title '(:set "t")
+                                                            :private '(:set :true)))
+      (ok okp "mixed edit refused: ~A" line)
+      (check-string= "t" (node-title (kernel-state k) node) "title moved")
+      (check-equal :true (node-private (kernel-state k) node) "private moved")
+      (ok (absentp (node-category (kernel-state k) node)) "an unnamed field stays put")
+      (let ((rev (state-revision (kernel-state k))))
+        (multiple-value-bind (okp2 line2) (submit k (edit-request node :request "edit-mixed"
+                                                                  :title '(:set "t") :private '(:set :true)))
+          (ok okp2 "the same request id retried refused: ~A" line2)
+          (check-string= line line2 "the retry replays the original NODE OK")
+          (check-equal rev (state-revision (kernel-state k)) "the retry applies nothing"))
+        (multiple-value-bind (okp3 line3) (submit k (edit-request node :request "edit-mixed"
+                                                                  :title '(:set "other") :private '(:set :true)))
+          (ok (not okp3) "a changed payload under the same id must refuse")
+          (ok (search "different payload" line3) "names the payload conflict: ~A" line3))))
+    (let ((rev (state-revision (kernel-state k))))
+      (multiple-value-bind (okp line) (submit k (edit-request node :request "edit-equal"
+                                                              :title '(:set "t") :private '(:set :true)))
+        (ok okp "equal-value edit refused: ~A" line)
+        (ok (search "changed=0" line) "changed=0 on the no-effect receipt: ~A" line)
+        (check-equal (1+ rev) (state-revision (kernel-state k)) "the no-effect edit advances rev by one")))))
+
+(deftest "no-effect-mutation-is-journaled" "docs/SPEC-WORK.md:5627"
+    "event-id-recorded;journal+1;changed=0;projection-digest-unchanged;rev+1"
+  (let* ((k (fresh))
+         (node "acme/work/f1/t1"))
+    (submit k (edit-request node :request "edit-base" :title '(:set "t") :private '(:set :true)))
+    (let* ((digest (metadata-digest (kernel-state k)))
+           (rev (state-revision (kernel-state k)))
+           (journal (kernel-journal k))
+           (before (length (journal-order journal))))
+      (multiple-value-bind (okp line) (submit k (edit-request node :request "no-effect-1"
+                                                              :title '(:set "t") :private '(:set :true)))
+        (ok okp "no-effect edit refused: ~A" line)
+        (ok (search "changed=0" line) "changed=0: ~A" line)
+        (check-equal (1+ before) (length (journal-order journal)) "journal length +1")
+        (ok (member "no-effect-1" (journal-order journal) :test #'string=)
+            "the event id is recorded in the journal")
+        (check-string= digest (metadata-digest (kernel-state k))
+                       "the domain-projection digest is unchanged")
+        (check-equal (1+ rev) (state-revision (kernel-state k)) "the event revision advances by one")
+        (ok (search "no-effect-1" line) "the OK line carries the request id")))))
+
+(deftest "undo-refuses-an-external-effect" "docs/SPEC-WORK.md:5652"
+    "sent/paid/published/deleted-refused-as-external;history-never-reset"
+  (let ((k (fresh))
+        (handles '()))
+    (dolist (spec '(("ext-sent" :sent "msg-1")
+                    ("ext-paid" :paid "inv-2")
+                    ("ext-pub" :published "note-3")
+                    ("ext-del" :deleted "src-4")))
+      (destructuring-bind (rid effect handle) spec
+        (push handle handles)
+        (multiple-value-bind (okp line)
+            (submit k (list :verb :external-effect :node "acme/work/f1/t1" :by "rowan"
+                            :effect effect :handle handle :request rid
+                            :stamp "2026-09-14T12:00:00Z" :clock :tool
+                            :generation-owner "gen-4"))
+          (ok okp "recording external ~A refused: ~A" effect line)
+          (let ((hist-before (length (state-history (kernel-state k)))))
+            (multiple-value-bind (uokp uline)
+                (submit k (undo-verb-request rid (concatenate 'string "undo-" rid)))
+              (ok (not uokp) "an undo over ~A must refuse" effect)
+              (ok (search "effect=external" uline) "names the external effect: ~A" uline)
+              (ok (search (string-downcase (symbol-name effect)) uline)
+                  "names the external kind: ~A" uline)
+              (ok (search handle uline) "names the external handle: ~A" uline)
+              (ok (search "not reversible here" uline) "refused as not reversible: ~A" uline)
+              (check-equal hist-before (length (state-history (kernel-state k)))
+                           "a refused undo writes no history"))))))
+    ;; shared history is never reset: the four recorded effects still stand.
+    (dolist (rid '("ext-sent" "ext-paid" "ext-pub" "ext-del"))
+      (ok (member rid (journal-order (kernel-journal k)) :test #'string=)
+          "~A still stands in the journal" rid))))
+
+(deftest "undo-names-its-reversible-set" "docs/SPEC-WORK.md:5783"
+    "each-reversible-verb-undone-by-table;refused-verb-refused-named;terminal-dispositions-refused"
+  (let ((k (fresh)))
+    (let ((node "acme/work/f1/t1"))
+      (submit k (edit-request node :request "edit-r1" :title '(:set "t")))
+      (check-string= "t" (node-title (kernel-state k) node) "the edit is applied")
+      (multiple-value-bind (okp line) (submit k (undo-verb-request "edit-r1" "undo-edit-r1"))
+        (ok okp "an undo of node edit refused: ~A" line)
+        (ok (absentp (node-title (kernel-state k) node)) "the compensating edit restores :before")
+        (ok (search "UNDO OK" line) "the undo appends its own envelope: ~A" line)))
+    (let ((node "acme/work/f1/t2"))
+      (check-equal :review (node-state (kernel-state k) node) "preimage is review")
+      (submit k (list :verb :state-to-doing :node node :by "rowan" :reason "start"
+                      :request "to-doing-1" :stamp "2026-09-14T12:00:00Z" :clock :tool
+                      :generation-owner "gen-4"))
+      (check-equal :doing (node-state (kernel-state k) node) "moved to doing")
+      (multiple-value-bind (okp line) (submit k (undo-verb-request "to-doing-1" "undo-to-doing-1"))
+        (ok okp "an undo of a transition refused: ~A" line)
+        (check-equal :review (node-state (kernel-state k) node) "the preimage state is restored")))
+    (submit k (list :verb :external-effect :node "acme/work/f1/t1" :by "rowan"
+                    :effect :sent :handle "m-1" :request "ext-1"
+                    :stamp "2026-09-14T12:00:00Z" :clock :tool :generation-owner "gen-4"))
+    (multiple-value-bind (okp line) (submit k (undo-verb-request "ext-1" "undo-ext-1"))
+      (ok (not okp) "an undo over a recorded effect must refuse")
+      (ok (search "not reversible here" line) "refused by name: ~A" line))
+    (submit k (list :verb :node-remove :node "acme/work/f1/t1" :by "rowan" :reason "drop"
+                    :request "rm-1" :stamp "2026-09-14T12:00:00Z" :clock :tool
+                    :generation-owner "gen-4"))
+    (multiple-value-bind (okp line) (submit k (undo-verb-request "rm-1" "undo-rm-1"))
+      (ok (not okp) "an undo over node remove must refuse")
+      (ok (search "not reversible here" line) "the terminal remove is refused: ~A" line))
+    (submit k (list :verb :event-cancel :node "acme/work/f1/t2" :by "rowan" :reason "drop"
+                    :request "cancel-1" :stamp "2026-09-14T12:00:00Z" :clock :tool
+                    :generation-owner "gen-4"))
+    (multiple-value-bind (okp line) (submit k (undo-verb-request "cancel-1" "undo-cancel-1"))
+      (ok (not okp) "an undo over event cancel must refuse")
+      (ok (search "not reversible here" line) "the terminal cancel is refused: ~A" line))))
+
+(deftest "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
+    "expected=undo-restores-before;late-undo=conflict;both-events-stand"
+  ;; SPEC-WORK.md:5806 -- an edit undone restores :before; the same undo after
+  ;; an intervening edit is refused conflict, both events standing.
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/t" :type :task :parent "root" :state :doing :title "a")))
+         (k (make-kernel :state (make-seed-state seed))))
+    (multiple-value-bind (okp line code)
+        (node-edit k "root/t" :changes (list :title "b") :request "edit-1"
+                   :reason "rename" :stamp "2026-09-17T00:00:00Z")
+      (ok okp "first edit accepted: ~A" line)
+      (check-equal 0 code "first edit exit"))
+    (check-string= "b" (getf (node-metadata (kernel-state k) "root/t") :title)
+                   "edit postimage")
+    (multiple-value-bind (okp line code)
+        (node-undo k "root/t" :undo-of "edit-1" :request "undo-1"
+                   :reason "revert" :stamp "2026-09-17T00:01:00Z")
+      (ok okp "undo accepted: ~A" line)
+      (check-equal 0 code "undo exit"))
+    (check-string= "a" (getf (node-metadata (kernel-state k) "root/t") :title)
+                   "undo restores :before")
+    (node-edit k "root/t" :changes (list :title "c") :request "edit-2"
+               :reason "again" :stamp "2026-09-17T00:02:00Z")
+    (multiple-value-bind (okp line code)
+        (node-undo k "root/t" :undo-of "edit-1" :request "undo-2"
+                   :reason "late" :stamp "2026-09-17T00:03:00Z")
+      (ok (null okp) "late undo refused")
+      (check-equal 1 code "late undo conflict exit")
+      (ok (search "conflict" line) "conflict named: ~A" line))
+    (check-string= "c" (getf (node-metadata (kernel-state k) "root/t") :title)
+                   "later work stands")
+    (check-equal 2 (length (node-edit-log (kernel-state k) "root/t"))
+                  "both edit events stand")))
+
+(deftest "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
+    "expected=fetches=0;nul=bad-link;private-node-prints-no-value"
+  ;; SPEC-WORK.md:5808 -- a link that is a live URL to a counting endpoint
+  ;; added, edited and rendered with zero requests observed; a link holding NUL
+  ;; refused `bad link`; a refusal on a private node printing no value.
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/t" :type :task :parent "root" :state :doing)
+                 (:id "root/p" :type :task :parent "root" :state :doing :private t)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (setf *link-fetch-count* 0)
+    (node-edit k "root/t" :changes (list :links (list "http://127.0.0.1:9/count"))
+               :request "link-1" :reason "add" :stamp "2026-09-17T00:00:00Z")
+    (node-edit k "root/t" :changes (list :links (list "http://127.0.0.1:9/other"))
+               :request "link-2" :reason "edit" :stamp "2026-09-17T00:01:00Z")
+    (let ((rendered (render-node k "root/t")))
+      (ok (search "127.0.0.1" rendered) "link rendered: ~A" rendered))
+    (check-equal 0 *link-fetch-count* "zero requests on add, edit and render")
+    (multiple-value-bind (okp line code)
+        (node-edit k "root/t"
+                   :changes (list :links (list (format nil "http://x/~C" #\Nul)))
+                   :request "link-3" :reason "bad" :stamp "2026-09-17T00:02:00Z")
+      (ok (null okp) "NUL link refused")
+      (check-equal 1 code "NUL link exit")
+      (ok (search "bad link" line) "bad link named: ~A" line))
+    (multiple-value-bind (okp line code)
+        (node-edit k "root/p" :changes (list :title 7)
+                   :request "priv-1" :reason "bad type" :stamp "2026-09-17T00:03:00Z")
+      (ok (null okp) "private node refusal")
+      (check-equal 1 code "private refusal exit")
+      (ok (search "private=1" line) "private marker printed: ~A" line)
+      (ok (null (search "7" line)) "no value printed: ~A" line))))
+
+(deftest "repo-only-at-the-root" "docs/SPEC-WORK.md:5341"
+    "expected=repo-at-root-unique;second-refused-repo-held-by;under-parent-refused;edit-cannot-change"
+  ;; SPEC-WORK.md:5792 -- `--repo` under the open root and `--type work-set`
+  ;; accepted and unique; the same `--repo` again refused `repo held by <id>`;
+  ;; `--repo` under a parent refused `repo outside root`; `node edit` cannot
+  ;; change it (node move has no repository field to change).
+  (let ((k (make-kernel :state (make-seed-state '()))))
+    (multiple-value-bind (okp line code)
+        (node-add k :id "r1" :type :work-set :parent nil :repo "acme/x")
+      (ok okp "root repo accepted: ~A" line)
+      (check-equal 0 code "root repo exit"))
+    (check-string= "acme/x" (node-repo (kernel-state k) "r1") "repo recorded")
+    (multiple-value-bind (okp line code)
+        (node-add k :id "r2" :type :work-set :parent nil :repo "acme/x")
+      (ok (null okp) "second repo refused")
+      (check-equal 1 code "second repo exit")
+      (ok (search "repo held by r1" line) "holder named: ~A" line))
+    (multiple-value-bind (okp line code)
+        (node-add k :id "r3" :type :work-set :parent "r1" :repo "acme/y")
+      (ok (null okp) "under-parent repo refused")
+      (check-equal 1 code "under-parent exit")
+      (ok (search "repo outside root" line) "outside root named: ~A" line))
+    (multiple-value-bind (okp line code)
+        (node-edit k "r1" :changes (list :repo "acme/z") :request "edit-repo"
+                   :reason "change" :stamp "2026-09-17T00:04:00Z")
+      (ok (null okp) "a repo patch on node edit must refuse")
+      (check-equal 1 code "repo patch exit")
+      (ok (search "bad patch repo" line) "the repo patch is named: ~A" line))
+    (check-string= "acme/x" (node-repo (kernel-state k) "r1")
+                   "node edit left the repository unchanged")))
+
+(deftest "move-keeps-every-count" "docs/SPEC-WORK.md:5360"
+    "expected=source+destination-counts-move-by-subtree;ancestor-net-stable;no-whole-set-scan"
+  ;; SPEC-WORK.md:5811 -- a required subtree moved between two features: the
+  ;; source's and destination's required sets and open counts move by the
+  ;; subtree, the common ancestor's net count is stable, |O|, |C| and every
+  ;; task state unchanged, and no whole-set scan (visits asserted).
+  (let* ((seed '((:id "root"     :type :work-set :parent nil       :state :unknown)
+                 (:id "root/f1"  :type :feature  :parent "root"    :state :unknown)
+                 (:id "root/f2"  :type :feature  :parent "root"    :state :unknown)
+                 (:id "root/f1/t1" :type :task   :parent "root/f1" :state :doing)
+                 (:id "root/f1/t2" :type :task   :parent "root/f1" :state :doing)
+                 (:id "root/f2/t3" :type :task   :parent "root/f2" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed)))
+         (o-before (state-open-count (kernel-state k)))
+         (c-before (state-closed-count (kernel-state k)))
+         (t1-state (node-state (kernel-state k) "root/f1/t1")))
+    (check-equal 3 (node-open-count (kernel-state k) "root/f1") "source open before")
+    (check-equal 2 (node-open-count (kernel-state k) "root/f2") "destination open before")
+    (let ((okp nil) (line nil) (code 0) (visits 0))
+      (with-instrumentation
+        (setf (values okp line code)
+              (node-move k :id "root/f1/t1" :from "root/f1" :under "root/f2"
+                         :reason "redistribute" :request "mv-1"
+                         :stamp "2026-09-17T00:00:00Z"))
+        (setf visits *visits*))
+      (ok okp "move accepted: ~A" line)
+      (check-equal 0 code "move exit")
+      (ok (< visits 6) "no whole-set scan (visits=~D)" visits))
+    (check-equal 2 (node-open-count (kernel-state k) "root/f1") "source count falls by subtree")
+    (check-equal 3 (node-open-count (kernel-state k) "root/f2") "destination count rises by subtree")
+    (check-equal 1 (node-required-count (kernel-state k) "root/f1") "source required set falls")
+    (check-equal 2 (node-required-count (kernel-state k) "root/f2") "destination required set rises")
+    (check-equal 1 (node-required-open (kernel-state k) "root/f1") "source required-open falls")
+    (check-equal 2 (node-required-open (kernel-state k) "root/f2") "destination required-open rises")
+    (check-equal o-before (state-open-count (kernel-state k)) "|O| unchanged")
+    (check-equal c-before (state-closed-count (kernel-state k)) "|C| unchanged")
+    (check-equal t1-state (node-state (kernel-state k) "root/f1/t1") "moved task state unchanged")
+    (check-equal '("root/f2/t3" "root/f1/t1") (node-children (kernel-state k) "root/f2")
+                 "appended at destination end")
+    (check-equal '("root/f1/t2") (node-children (kernel-state k) "root/f1")
+                 "removed from source")))
+
+(deftest "offer-writes-intent-and-a-reservation" "docs/SPEC-WORK.md:5229"
+    "expected=:effect-:dispatched;pending-offer;reservation-keyed-by-offer-attempt;nothing-else"
+  (let* ((book (make-leasebook
+                :nodes '(("n1" . :doing))
+                :w '(("n1" . "alice"))
+                :leases '(("n0" . (:holder "carol"
+                                          :deadline "2026-09-20T00:00:00Z"
+                                          :default "release")))
+                :evidence '(("ev-1"))
+                :completion '(("c-1"))))
+         (before (list (leasebook-nodes book) (leasebook-w book) (leasebook-leases book)
+                       (leasebook-evidence book) (leasebook-completion book))))
+    (multiple-value-bind (okp line effect nbook)
+        (leasebook-offer book :offer "off-1" :node "n1" :generation "gen-4"
+                         :attempt "att-1" :to "alice" :profile "cap@1"
+                         :reserve 2 :until "2026-09-14T12:30:00Z" :free-slots 4
+                         :profile-ok t :payload-sha256 "sha-1" :staged-digest "sha-1"
+                         :current-generation "gen-4")
+      (ok okp "offer refused: ~A" line)
+      (check-equal :dispatched effect "offer writes :effect :dispatched")
+      (ok (alist-get "off-1" (leasebook-pending nbook)) "a pending-offer entry is written")
+      (let ((r (alist-get (cons "off-1" "att-1") (leasebook-reservations nbook))))
+        (ok r "a reservation keyed by (offer,attempt) is written")
+        (check-equal :held (getf r :state) "the reservation is held")
+        (check-equal 2 (getf r :reserve) "the declared slots are reserved"))
+      (ok (equal (list "off-1") (alist-get "n1" (leasebook-index-node nbook)))
+          "the pending offer is indexed under the node")
+      (ok (equal (list "off-1") (alist-get "alice" (leasebook-index-friend nbook)))
+          "the pending offer is indexed under the friend")
+      (check-equal (first before) (leasebook-nodes nbook) "node state unchanged")
+      (check-equal (second before) (leasebook-w nbook) "W unchanged")
+      (check-equal (third before) (leasebook-leases nbook) "the lease index unchanged")
+      (check-equal (fourth before) (leasebook-evidence nbook) "evidence unchanged")
+      (check-equal (fifth before) (leasebook-completion nbook) "completion unchanged"))))
+
+(deftest "no-shadow-lease-across-holders" "docs/SPEC-WORK.md:5238"
+    "expected=cross-holder-offer-refused;no-shadow-lease;cross-holder-reply-creates-no-lease"
+  (multiple-value-bind (okp line effect book)
+      (leasebook-offer (make-leasebook :nodes '(("n1" . :doing)))
+                       :offer "off-1" :node "n1" :generation "gen-4" :attempt "att-1"
+                       :to "alice" :profile "cap@1" :reserve 2
+                       :until "2026-09-14T12:30:00Z" :free-slots 4 :profile-ok t)
+    (declare (ignore effect))
+    (ok okp "the first offer to alice is admitted: ~A" line)
+    (multiple-value-bind (okp2 line2 effect2 book2)
+        (leasebook-offer book :offer "off-2" :node "n1" :generation "gen-4"
+                         :attempt "att-2" :to "bob" :profile "cap@1" :reserve 1
+                         :until "2026-09-14T12:30:00Z" :free-slots 4 :profile-ok t)
+      (declare (ignore effect2))
+      (ok (null okp2) "a cross-holder offer is refused")
+      (ok (search "shadow" line2) "the refusal names the shadow lease: ~A" line2)
+      (check-equal nil (alist-get (cons "off-2" "att-2") (leasebook-reservations book2))
+                   "the refused offer writes no reservation")
+      (check-equal (leasebook-leases book) (leasebook-leases book2) "no lease is created"))
+    (let* ((held (make-leasebook
+                  :nodes '(("n1" . :doing))
+                  :leases '(("n1" . (:holder "alice"
+                                             :deadline "2026-09-20T00:00:00Z"
+                                             :default "release")))
+                  :holders '(("n1" . "alice"))
+                  :pending '(("off-9" :offer "off-9" :node "n1" :to "bob"
+                              :attempt "att-9" :generation "gen-4" :reserve 1
+                              :until "2026-09-14T12:30:00Z" :state :pending
+                              :received t))
+                  :reservations '((("off-9" . "att-9") :reserve 1 :state :held))))
+           (nleases (length (leasebook-leases held))))
+      (multiple-value-bind (okp3 line3 effect3 held2)
+          (leasebook-accepted held :offer "off-9" :node "n1" :generation "gen-4"
+                              :attempt "att-9" :by "bob" :default "release"
+                              :deadline "2026-09-21T00:00:00Z")
+        (ok okp3 "a cross-holder reply is retained, not applied: ~A" line3)
+        (check-equal :late effect3 "a cross-holder accept is retained :late")
+        (check-equal nleases (length (leasebook-leases held2))
+                     "the cross-holder reply creates no lease")
+        (check-equal 1 nleases "the lease index still holds only alice's one lease")))))
+
+(deftest "accepted-creates-one-lease-or-binds" "docs/SPEC-WORK.md:5238"
+    "expected=one-lease-or-bind-to-holders-own;deadline-and-default-unchanged-on-bind"
+  (multiple-value-bind (okp line effect book)
+      (leasebook-offer (make-leasebook :nodes '(("n1" . :doing)))
+                       :offer "off-1" :node "n1" :generation "gen-4" :attempt "att-1"
+                       :to "alice" :profile "cap@1" :reserve 2
+                       :until "2026-09-14T12:30:00Z" :free-slots 4 :profile-ok t)
+    (declare (ignore effect))
+    (ok okp "offer: ~A" line)
+    (multiple-value-bind (rok rline reffect rbook)
+        (leasebook-received book :offer "off-1" :node "n1" :generation "gen-4"
+                            :attempt "att-1" :receipt-digest "rd-1" :receipt-id "rc-1"
+                            :request "q-recv" :verifier "op-verifier")
+      (declare (ignore reffect))
+      (ok rok "received: ~A" rline)
+      (multiple-value-bind (aok aline aeffect abook)
+          (leasebook-accepted rbook :offer "off-1" :node "n1" :generation "gen-4"
+                              :attempt "att-1" :by "alice" :default "release"
+                              :deadline "2026-09-14T12:30:00Z" :observed-model nil
+                              :receipt-id "rc-2" :receipt-digest "rd-2" :request "q-acc")
+        (ok aok "accepted: ~A" aline)
+        (check-equal :accepted aeffect "the accepted envelope writes :effect :accepted")
+        (check-equal 1 (length (leasebook-leases abook)) "exactly one lease is created")
+        (check-equal 1 (length (leasebook-w abook)) "exactly one W entry is created")
+        (check-equal :unknown (alist-get "n1" (leasebook-observed-models abook))
+                     "an absent observed model is recorded unknown")
+        (multiple-value-bind (o2ok o2line o2effect o2book)
+            (leasebook-offer abook :offer "off-2" :node "n1" :generation "gen-4"
+                             :attempt "att-2" :to "alice" :profile "cap@1" :reserve 1
+                             :until "2026-09-14T13:00:00Z" :free-slots 4 :profile-ok t)
+          (declare (ignore o2effect))
+          (ok o2ok "a second offer to the same holder is admitted: ~A" o2line)
+          (multiple-value-bind (r2ok r2line r2effect r2book)
+              (leasebook-received o2book :offer "off-2" :node "n1" :generation "gen-4"
+                                  :attempt "att-2" :receipt-digest "rd-3" :receipt-id "rc-3"
+                                  :request "q-recv2" :verifier "op-verifier")
+            (declare (ignore r2effect))
+            (ok r2ok "second received: ~A" r2line)
+            (multiple-value-bind (a2ok a2line a2effect a2book)
+                (leasebook-accepted r2book :offer "off-2" :node "n1" :generation "gen-4"
+                                    :attempt "att-2" :by "alice" :default "escalate:bob"
+                                    :deadline "2026-09-30T00:00:00Z"
+                                    :receipt-id "rc-4" :receipt-digest "rd-4" :request "q-acc2")
+              (ok a2ok "second accepted binds: ~A" a2line)
+              (check-equal :accepted a2effect "binding is still an :accepted")
+              (check-equal 1 (length (leasebook-leases a2book))
+                           "binding writes no second lease")
+              (let ((lease (alist-get "n1" (leasebook-leases a2book))))
+                (check-equal "2026-09-14T12:30:00Z" (getf lease :deadline)
+                             "the held lease's deadline is unchanged")
+                (check-equal "release" (getf lease :default)
+                             "the held lease's default is unchanged")))))))))
+
+(deftest "until-is-overdue-not-released" "docs/SPEC-WORK.md:5243"
+    "expected=overdue-unreconciled;no-auto-launch;reservation-stands;lease-expiry-out-of-w"
+  (multiple-value-bind (okp line effect book)
+      (leasebook-offer (make-leasebook :nodes '(("n1" . :doing)))
+                       :offer "off-1" :node "n1" :generation "gen-4" :attempt "att-1"
+                       :to "alice" :profile "cap@1" :reserve 2
+                       :until "2026-09-14T12:30:00Z" :free-slots 4 :profile-ok t)
+    (declare (ignore effect))
+    (ok okp "offer: ~A" line)
+    (multiple-value-bind (uok uline ueffect ubook)
+        (lease-until book :offer "off-1" :now "2026-09-14T13:00:00Z")
+      (ok uok "until: ~A" uline)
+      (check-equal :overdue ueffect "at --until the offer is :overdue")
+      (check-equal :overdue (getf (alist-get "off-1" (leasebook-pending ubook)) :state)
+                   "the offer is overdue and unreconciled")
+      (check-equal :held
+                   (getf (alist-get (cons "off-1" "att-1")
+                                    (leasebook-reservations ubook)) :state)
+                   "the reservation stands")
+      (check-equal nil (alist-get "n1" (leasebook-leases ubook))
+                   "no lease is created or released")
+      (multiple-value-bind (nok nline neffect nbook)
+          (leasebook-offer ubook :offer "off-2" :node "n1" :generation "gen-4"
+                           :attempt "att-2" :to "alice" :profile "cap@1" :reserve 1
+                           :until "2026-09-14T14:00:00Z" :free-slots 4 :profile-ok t)
+        (declare (ignore neffect))
+        (ok (null nok) "no new offer is admitted for an overdue offer")
+        (check-equal (leasebook-pending ubook) (leasebook-pending nbook)
+                     "the refused offer changes nothing"))
+      (let* ((accepted (accepted-book))
+             (xok (nth-value 0 (leasebook-expire accepted :node "n1"
+                                                :now "2026-09-15T00:00:00Z")))
+             (xbook (nth-value 3 (leasebook-expire accepted :node "n1"
+                                                   :now "2026-09-15T00:00:00Z"))))
+        (ok xok "lease expiry is admitted")
+        (check-equal 0 (length (leasebook-w xbook))
+                     "lease expiry takes the task out of W")
+        (ok (alist-get "n1" (leasebook-leases xbook))
+            "lease expiry retains the friend's capacity and any uncertain execution")))))
+
+(deftest "late-and-duplicate-receipts-are-retained" "docs/SPEC-WORK.md:5243"
+    "expected=:effect-:late-retained;duplicate-consumes-no-capacity;conflicting-bytes-refused"
+  (let ((book (declined-book)))
+    (multiple-value-bind (okp line effect nbook)
+        (leasebook-accepted book :offer "off-1" :node "n1" :generation "gen-4"
+                            :attempt "att-1" :by "alice" :default "release"
+                            :deadline "2026-09-14T13:00:00Z")
+      (ok okp "a late accept is retained, not refused: ~A" line)
+      (check-equal :late effect "the late accept carries :effect :late")
+      (check-equal nil (alist-get "n1" (leasebook-leases nbook))
+                   "a late accept revives no lease")))
+  (multiple-value-bind (okp line effect book)
+      (leasebook-offer (make-leasebook :nodes '(("n1" . :doing)))
+                       :offer "off-1" :node "n1" :generation "gen-4" :attempt "att-1"
+                       :to "alice" :profile "cap@1" :reserve 2
+                       :until "2026-09-14T12:30:00Z" :free-slots 4 :profile-ok t)
+    (declare (ignore effect))
+    (ok okp "offer: ~A" line)
+    (let ((before (leasebook-reservations book)))
+      (multiple-value-bind (rok rline reffect rbook)
+          (leasebook-receipt book :receipt-id "rc-1" :receipt-digest "rd-1"
+                             :request "q1" :stage :received :offer "off-1" :node "n1"
+                             :generation "gen-4" :attempt "att-1" :verifier "v")
+        (declare (ignore reffect))
+        (ok rok "first receipt: ~A" rline)
+        (multiple-value-bind (dok dline deffect dbook)
+            (leasebook-receipt rbook :receipt-id "rc-1" :receipt-digest "rd-1"
+                               :request "q2" :stage :received :offer "off-1" :node "n1"
+                               :generation "gen-4" :attempt "att-1" :verifier "v")
+          (ok dok "duplicate receipt: ~A" dline)
+          (check-equal :duplicate deffect "a duplicate receipt is :duplicate")
+          (check-equal before (leasebook-reservations dbook)
+                       "a duplicate consumes no capacity twice")
+          (multiple-value-bind (cok cline ceffect cbook)
+              (leasebook-receipt dbook :receipt-id "rc-1" :receipt-digest "other-bytes"
+                                 :request "q3" :stage :received :offer "off-1" :node "n1"
+                                 :generation "gen-4" :attempt "att-1" :verifier "v")
+            (declare (ignore ceffect))
+            (ok (null cok) "conflicting bytes for one receipt id are refused")
+            (ok (search "conflicting" cline)
+                "the refusal names the conflict: ~A" cline)))))))
