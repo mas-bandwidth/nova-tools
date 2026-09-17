@@ -63,6 +63,7 @@ const updateVerbs = `nova-update check --file <path> [--max <n>] [--timeout <d>]
 nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
+nova-update adoption --file <path> [--as <friend>] [--max <n>]
 nova-update help`
 
 // manifestShape is the one sentence that says what the file --file names holds:
@@ -157,6 +158,12 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	impliedSend := name == "nova-version" && verb == "send"
 	if impliedSend {
 		verb = "report"
+	}
+	if verb == "adoption" {
+		if name != "nova-update" {
+			return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
+		}
+		return adoptionVerb(name, args, stamp, out, errs)
 	}
 	if (name == "nova-version" && verb != "report") || (verb != "report" && verb != "check" && verb != "apply" && verb != "watch") {
 		return refusal(errs, "UPDATE", fmt.Errorf("unknown verb (run %s help)", name))
