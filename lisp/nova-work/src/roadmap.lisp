@@ -525,6 +525,8 @@ finding, exit 0 with `WORK OK` only when every rule was green
 
 ;;; The savepoint's create and list verbs live in savepoint.lisp; the journal's
 ;;; record identities and its cut-reachability helper stay here.
+
+
 ;;; ------------------------------------------------------------------
 ;;; The roadmap view record and the `roadmap configure` verb
 ;;; (docs/SPEC-WORK.md:3078-3094, :3110-3124, :5994-5996)
