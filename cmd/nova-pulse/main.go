@@ -404,6 +404,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("status")
 	queue := f.fs.String("queue", "", "")
 	roots := f.fs.String("roots", "", "")
+	slotsStore := f.fs.String("slots-store", "", "")
 	day := f.fs.String("day", "", "")
 	oneLine := f.fs.Bool("oneline", false, "")
 	timeout := f.fs.Int("timeout", 120, "")
@@ -445,6 +446,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 	return pulse.Status(pulse.StatusInput{
 		Queue:          *queue,
 		Roots:          *roots,
+		SlotsStores:    *slotsStore,
 		Day:            *day,
 		Max:            *max,
 		Timeout:        time.Duration(*timeout) * time.Second,

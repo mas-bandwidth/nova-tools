@@ -26,6 +26,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // StatusInput is everything the status verb needs, apart from flag parsing so a test can
@@ -33,6 +34,7 @@ import (
 type StatusInput struct {
 	Queue          string // the queue directory: pending, launched, done, failed and the state files
 	Roots          string // comma-separated bench roots, the benches in scope
+	SlotsStores    string // comma-separated bench slot-lease stores to report utilisation for
 	Day            string // YYYY-MM-DD the day window starts at; empty means today (UTC)
 	Max            int
 	Timeout        time.Duration
@@ -177,12 +179,58 @@ func Status(in StatusInput) int {
 	merged, toolNames := mergedTools(prs, dayStart, now)
 	fmt.Fprintf(out, "STATUS TOOLS merged_since_adoption=%d %s\n", merged, strings.Join(toolNames, ", "))
 
-	if expanding {
+	starved := false
+	for _, store := range splitList(in.SlotsStores) {
+		bench := filepath.Base(store)
+		capacity, reserve, held, free, heldBy, shares, serr := swarm.SlotUtilisation(store, now)
+		if serr != nil {
+			return refusal(in.Stderr, "STATUS", serr)
+		}
+		fmt.Fprintf(out, "STATUS SLOTS bench=%s capacity=%d reserve=%d held=%d free=%d owners=%s\n",
+			oneline.Field(bench), capacity, reserve, held, free, slotOwnersField(heldBy, shares))
+		if queue.pending > 0 && free > 0 {
+			marker := filepath.Join(in.Queue, "STARVED-"+bench)
+			if _, merr := os.Stat(marker); merr == nil {
+				fmt.Fprintf(out, "STATUS STARVED bench=%s free=%d pending=%d\n",
+					oneline.Field(bench), free, queue.pending)
+				starved = true
+			} else {
+				_ = os.WriteFile(marker, []byte(now.UTC().Format(time.RFC3339)+"\n"), 0o644)
+			}
+		} else {
+			_ = os.Remove(filepath.Join(in.Queue, "STARVED-"+bench))
+		}
+	}
+	if expanding || starved {
 		// The alarm is a state the coordinator must act on: it exits like a refusal,
 		// the same way PULSE UNDER-WIDTH does (SPEC-PULSE, exit codes).
 		return 2
 	}
 	return 0
+}
+
+// slotOwnersField renders owner:held/share pairs in name order for the SLOTS line.
+func slotOwnersField(heldBy map[string]int, shares map[string]int) string {
+	names := map[string]bool{}
+	for n := range heldBy {
+		names[n] = true
+	}
+	for n := range shares {
+		names[n] = true
+	}
+	var sorted []string
+	for n := range names {
+		sorted = append(sorted, n)
+	}
+	sort.Strings(sorted)
+	parts := make([]string, 0, len(sorted))
+	for _, n := range sorted {
+		parts = append(parts, fmt.Sprintf("%s:%d/%d", oneline.Field(n), heldBy[n], shares[n]))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ",")
 }
 
 // widthLine reads one bench's slot files into its WIDTH line.

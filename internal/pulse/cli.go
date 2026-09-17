@@ -91,14 +91,15 @@ func harvestVerb(args []string, out, errs io.Writer) int {
 
 func statusVerb(args []string, out, errs io.Writer) int {
 	o := struct {
-		queue, roots, day string
-		timeout, max      int
-		expandingHours    int
+		queue, roots, slotsStore, day string
+		timeout, max                  int
+		expandingHours                int
 	}{timeout: 120, max: 20, expandingHours: 2}
 	f := flag.NewFlagSet("status", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	f.StringVar(&o.queue, "queue", "", "the queue directory")
 	f.StringVar(&o.roots, "roots", "", "the benches to report, comma separated")
+	f.StringVar(&o.slotsStore, "slots-store", "", "bench slot-lease stores, comma separated")
 	f.StringVar(&o.day, "day", "", "the day the window starts at, YYYY-MM-DD")
 	f.IntVar(&o.timeout, "timeout", 120, "bound on each gh child, seconds")
 	f.IntVar(&o.max, "max", 20, "per-kind output cap")
@@ -119,7 +120,7 @@ func statusVerb(args []string, out, errs io.Writer) int {
 		return refusal(errs, "STATUS", fmt.Errorf("invalid bound (use --max >= 0, --timeout >= 1 and --expanding-hours >= 1)"))
 	}
 	return Status(StatusInput{
-		Queue: o.queue, Roots: o.roots, Day: o.day, Max: o.max,
+		Queue: o.queue, Roots: o.roots, SlotsStores: o.slotsStore, Day: o.day, Max: o.max,
 		Timeout: time.Duration(o.timeout) * time.Second, ExpandingHours: o.expandingHours,
 		Stdout: out, Stderr: errs,
 	})
