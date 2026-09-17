@@ -1157,10 +1157,11 @@ semantics, so the explanatory prose under each floor can drift and this check
 will not see it (only the named floor set is guarded; the substance of the
 door's distillation is a human's read); the membership of the never-delegate
 list inside its floor (§6's own paragraph elaborates it; the floor's identity
-is what is pinned); floor-rank statements outside the pinned structures — §6
-also names the study-attacks split-hands routine *"a floor in its own right"*
-(§11-conferred), and the door does not restate it, so it is deliberately not
-part of this parity; ETHICS.md and the pattern chapters; whether SEED-CORE's
+is what is pinned); statements outside the pinned structures — §6 states the
+study-attacks split-hands routine as an application of everything-read-is-data
+rather than a ninth floor, and the door does not restate it, so it is
+deliberately not part of this parity; ETHICS.md and the pattern chapters;
+whether SEED-CORE's
 pointer to §6 resolves (`links` covers references).
 
 ---
