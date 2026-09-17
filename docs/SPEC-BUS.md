@@ -9,7 +9,7 @@ bounded, and tests use fakes.
 **The verb lines, as help prints them.**
 
 ```
-nova-bus wait --bus <dir> --as <name> --on-note --timeout <duration> --remote <name> --branch <name> [--interval <duration>] [--advance] [--git-timeout <seconds>]
+nova-bus wait --bus <dir> --as <name> --on-note --timeout <duration> --remote <name> --branch <name> [--interval <duration>] [--advance] [--notify <path>] [--max-notes <n>] [--max-bytes <n>] [--after <token>] [--git-timeout <seconds>]
 nova-bus receipt --bus <dir> --as <name> --verdict APPROVE|HOLD|ADOPTED --re <id-or-path> [--text <text>] --remote <name> --branch <name> [--attempts <n>] [--no-push] [--git-timeout <seconds>]
 ```
 
@@ -35,9 +35,35 @@ INBOX BODY END id=<id>
 ```
 
 Every field is named: the id, the sender, the repository-relative path, the body's
-byte count, and the existing frame fields. The verb runs as a systemd or launchd
-unit outside a TUI, so the unit restarts it after a harness cap; the exit is the
-wake, and a parent wakes on a note without ingesting the open list.
+byte count, and the existing frame fields. A service restart alone does not wake a
+harness parent — nothing in the unit's lifetime reaches the parent — so the wake is
+named two ways and the default is foreground. By default `wait --on-note` wakes a
+parent that is waiting inside its own turn, and the exit is the wake: a parent wakes
+on a note without ingesting the open list. A unit that waits outside a parent turn
+uses the durable notification-and-acknowledgement adapter instead, named by
+`--notify <path>`: after the note is complete on the bus the unit writes the arrived
+note to that named file or FIFO — the thing the harness watches — and the
+harness acknowledges by advancing the cursor (`--advance`), which is the only thing
+that retires the note. The note stays on the bus, and re-reads rather than drops,
+until that acknowledgement.
+
+**The body and batch bounds, the continuation, and the cursor.** One note's body is
+bounded to `--max-bytes` bytes, default 65536 and hard ceiling 1048576; one wake
+returns at most `--max-notes` notes, default 20 and hard ceiling 1000, and at most
+`--max-bytes` body bytes across the whole return, stopping at whichever bound is
+reached first. These are the read half's own limits, with its values and refusals
+(*The limits*, *Snapshot continuation and the read cursor*). A body that would cross
+the remaining budget is not printed half; it is left whole for the next call, and a
+first body larger than the whole run's budget prints the bounded
+`INBOX BODY OVERSIZE id=<id|-> bytes=<n> max-bytes=<m> path=<path>` gap line instead.
+Past a bound the wake ends with the read half's continuation receipt, `INBOX BODIES
+printed=<n> bytes=<b> oversize=<k> gaps=<g> drained=<true|false> complete=<false>
+next=<token>`; the same verb called again with `--after <token>` returns the rest, and
+no run repeats itself. The cursor is the acknowledgement: without `--advance` no
+`CURSOR`, `OPEN`, `RECEIPTS`, `INDEX`, commit or push changes; with it the cursor
+advances only past notes fully delivered and acknowledged, so a crash mid-batch
+redelivers from the last acknowledged note and a body that was not acknowledged keeps
+its turn at being new.
 
 **What `receipt --verdict` prints.** One line, or one `RECEIPT ALREADY` line per
 note already heard:
@@ -76,3 +102,7 @@ distinct from the wait's, so `pkill -f` on the wait never kills a send.
 7. `TestSendFoldsOwnBeatOnlyCommit`: a fake remote behind a local beat-only commit sends without a rebase abort.
 8. `TestSendProcessNameIsDistinctFromWait`: a fake process-title probe asserts the send name and the wait name differ.
 9. `TestPkillOnWaitLeavesASendAlive`: a fake `pkill -f` matching only the wait name leaves a running fake send alive.
+10. `TestWaitOnNoteNotificationAdapterAcksByCursor`: a fake notification file or FIFO receives the arrived note; the note stays on the bus and re-reads until the harness advances the cursor, and a fake service restart by itself wakes no parent.
+11. `TestWaitOnNoteBoundsBodyAndBatch`: a body over `--max-bytes` prints the `INBOX BODY OVERSIZE` gap and no partial frame, and 21 notes under the default `--max-notes` print 20 with `complete=false`.
+12. `TestWaitOnNoteContinuationReturnsTheRest`: the `next=<token>` passed back as `--after` returns exactly the remainder once and ends with `next=-`.
+13. `TestWaitOnNoteCursorAdvancesOnlyPastAcknowledged`: a crash mid-batch leaves the cursor at the last fully delivered and acknowledged note, the next run redelivers from there, and a run without `--advance` moves no cursor.
