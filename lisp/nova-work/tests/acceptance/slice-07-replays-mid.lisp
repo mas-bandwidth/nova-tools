@@ -45,9 +45,6 @@
 ;;; render: the stored target, its permitted roots and the one bounded artifact
 ;;; (SPEC-WORK.md:3129-3154; replays at :5755, :5849 and :5853).
 
-;;; render: the stored target, its permitted roots and the one bounded artifact
-;;; (SPEC-WORK.md:3129-3154; replays at :5755, :5849 and :5853).
-
 (deftest "render-artifact-is-bounded" "docs/SPEC-WORK.md:5398"
     "expected=interleaved-replies-and-chat-artifact-bounded;oversize-refused-never-partial"
   ;; ordinary replies and a --chat artifact interleaved in one correlated batch,

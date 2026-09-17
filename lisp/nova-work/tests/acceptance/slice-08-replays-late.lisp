@@ -360,9 +360,22 @@
 ;; Moved to tests/acceptance.lisp as a real replay over src/assignment.lisp
 ;; (nova-tools #362): "until-is-overdue-not-released".
 
-;; wire-integers-are-strings is now the executable replay in
-;; ../acceptance.lisp (card 8608); it uses the wire codec, not the store's
-;; restricted reader.
+(deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
+    "expected=bignum-fields-round-trip-exact;json-number-frame-refused"
+  (dolist (field '((:id 9007199254740993)
+                   (:revision 9007199254740995)
+                   (:counter 9007199254740997)
+                   (:token-total 9007199254740999)))
+    (let ((n (second field)))
+      (let ((wire (canonical-string n)))
+        (ok (stringp wire) "~A serializes to a string: ~A" (first field) wire)
+        (check-string= (princ-to-string n) wire "exact decimal digits")
+        (check-equal n (read-restricted wire) "round-trip unchanged"))))
+  (dolist (json-number '("9007199254740993.0" "1e5" "1.5" "3/4"))
+    (let ((refused nil))
+      (handler-case (read-restricted json-number)
+        (restricted-data-violation () (setf refused t)))
+       (ok refused "a wire frame carrying the JSON number ~A is refused" json-number))))
 
 ;; wire-integers-are-strings is now the executable replay in
 ;; ../acceptance.lisp (card 8608); it uses the wire codec, not the store's
