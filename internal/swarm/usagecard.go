@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -57,10 +56,7 @@ func cardMessagesSQL(startedMs, endedMs int64) string {
 // run points both HOME and XDG_DATA_HOME at the same data directory, so both live under the
 // path native.go passes here.
 func cardStoreLocations(dataHome string) []string {
-	return []string{
-		filepath.Join(dataHome, "opencode", "opencode.db"),
-		filepath.Join(dataHome, ".local", "share", "opencode", "opencode.db"),
-	}
+	return OpenCodeStoreLocations(dataHome)
 }
 
 // ReadCardUsage reads one card's accounting out of its harness store and returns the values,

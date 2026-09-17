@@ -259,9 +259,22 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     distinct from reporting no rows yet — on three consecutive samples ends
     the job: `RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3: <reason>`,
     `end=budget-unverifiable`, findings kept, files to `failed/`, because a
-    numeric budget the tool has stopped being able to see is a budget the
-    caller believes is enforced and is not. A worker
-    is handed a task file and the files the task names, never a conversation
+     numeric budget the tool has stopped being able to see is a budget the
+     caller believes is enforced and is not. The database is read under the
+     job's **own data home**, at either spelling OpenCode may give it there:
+     `$XDG_DATA_HOME/opencode/opencode.db`, and the `$HOME/.local/share/
+     opencode/opencode.db` a Linux harness derives from `HOME` — the two point
+     at the same per-job directory, because the dispatcher exports `HOME` and
+     `XDG_DATA_HOME` beside each other, and a reader that knew only the XDG
+     spelling found no database and wrote an all-dash row for a run that spent
+     real tokens (measured on hulk, vision, mini and space). A read that lands
+     while a write-ahead log is still beside the database waits up to **5
+     seconds** for the writer to checkpoint it, because the harness closes its
+     connection as it exits and the read lands in that window. And a bench
+     without the reader is a **named refusal**, never a silent dash:
+     `USAGE REFUSED reason=no_sqlite`, the literal line the final read leaves
+     on the record when `sqlite3` is not on `PATH`. A worker
+     is handed a task file and the files the task names, never a conversation
     and never a repository to wander: the task template's file list is the
     reading list, `--files` is its ceiling, and a job that reads past it is
     the refusal rule 1 already names. (2026-09-11: 21 children spent 2.4M

@@ -19,6 +19,12 @@ import (
 // its owner is a unix fact.
 const NotADatabase = "not a database"
 
+// FlushMarker is the suffix a test appends to the -wal path to say "flush on the next
+// refusal". With it, the fake refuses once with `database is locked` and removes the -wal
+// on its way out, so the reader that retries sees the flush land. Without it the -wal
+// stays and every attempt is refused.
+const FlushMarker = ".flush-on-refusal"
+
 func main() {
 	// argv is `-readonly -tabs <db> <query>`: the query is last, the database before it.
 	args := os.Args[1:]
@@ -37,6 +43,22 @@ func main() {
 		// The source is READ-ONLY, and this fake is where that is kept true: a caller that
 		// forgets the flag gets a failure here rather than a green test.
 		fmt.Fprintln(os.Stderr, "Error: fake sqlite3 refuses to open a database for writing")
+		os.Exit(1)
+	}
+	// A WRITE-AHEAD LOG THE HARNESS HAS NOT CHECKPOINTED: `-readonly` cannot replay it, so a
+	// real sqlite3 refuses with `database is locked` until the writer flushes and the -wal
+	// goes. The fake says exactly that while a -wal sits beside the database, so a reader
+	// that must wait out a flush can be tested with no sqlite3 and no clock of its own.
+	if _, err := os.Stat(db + "-wal"); err == nil {
+		// A test that wants the flush to land mid-read drops FlushMarker beside the -wal:
+		// this refusal takes the -wal with it, so the reader's NEXT attempt sees a
+		// checkpointed database. The writer flushing is an event the fake produces, not a
+		// clock the test sleeps on (docs/SPEC-CI.md, the fixed-waits class).
+		if _, err := os.Stat(db + "-wal" + FlushMarker); err == nil {
+			_ = os.Remove(db + "-wal" + FlushMarker)
+			_ = os.Remove(db + "-wal")
+		}
+		fmt.Fprintln(os.Stderr, "Error: database is locked")
 		os.Exit(1)
 	}
 	raw, err := os.ReadFile(db)
