@@ -1892,3 +1892,82 @@ reason.
 | Stella, closing read | durable outbox restored after every reset | rule 22: `<lane>/outbox/<submission id>`, restored after each fetch/reset, delivered only after the confirming fetch; one checkout lock; one immutable file per submission (test 22) |
 | Stella, closing read | an unreadable record blocks, never skipped | the state file: `FOLD REFUSED`, `MERGE BLOCKED … reason=malformed_record`, `RUN STOPPED` when the scope is unknown (test 22) |
 | Stella, closing read | a base gate is not an integration gate | output grammar: two kinds by shas; the parent check is the integration gate's only (test 18); `dry-run` folds in memory over a fetched tip (rule 22) |
+
+## The fold (#1142)
+
+`nova-merge fold --branches <file> --onto <base> --out <branch> [--lane <dir>]` folds
+an ordered list of branches onto one base and lands them as one squashed pull request.
+
+```
+nova-merge fold --branches <file> --onto <base> --out <branch>
+nova-merge fold --close-folded --pr <n>
+```
+
+**Reads and writes.** It reads `--branches`, one branch per line, each line
+carrying the cards that branch folds (`<branch> <card>...`); `--onto`, the base;
+and `--out`, the branch the squash lands on. The repository and the scratch
+clone come from the lane under `--lane` (rule 13), so no path is guessed. It
+writes the scratch clone, the branches merged in the file's order, one squashed
+commit on `--out`, a lease push of it, and one pull request; nothing else, and
+never a working copy.
+
+**Order and conflicts.** It merges the listed branches onto the base one at a
+time, in the file's order, in the scratch clone only. A conflict in a test file
+resolves **keep-both**; in a source file, the **incoming** side; anywhere else
+it drops that branch and says so. The order is never re-derived, and no resolved
+byte reaches a branch until the tests pass.
+
+**Tests after every merge; three tries.** After each branch it runs the package
+test the repository names for the tree — `lisp/nova-work/run-tests.sh` for a
+nova-work fold, `go test` for Go — and the layout test of #560. A branch still
+red after three tries is dropped, named and left out of the squash, and the
+fold moves on; it is never retried past the third try and no loop waits forever
+(rule 13).
+
+**Squash, push, pull request.** The exhausted list squashes to **one commit**
+whose message lists every folded branch and its cards. It pushes that commit
+with the one lease rule 4 allows,
+`--force-with-lease=refs/heads/<out>:<expected sha>`, and opens one pull request
+onto `--onto`; rule 4's mutating guard refuses `--auto`, `--force` and every
+other force spelling before a command is built.
+
+**One-line output.** `FOLD OK folded=<n> dropped=<n> pr=<n>`: `folded` is the
+branches in the squash, `dropped` those left out after three red tries, `pr` the
+pull request opened. `--close-folded` prints `FOLD CLOSED pr=<n> closed=<n>`:
+`pr` the merged fold's pull request, `closed` the folded pull requests closed as
+superseded by it.
+
+**Refusals (each exit 2, one remedy line).** No `--branches`, unreadable or
+empty: remedy `nova-merge fold --branches <file> --onto <base> --out <branch>`.
+No `--onto`: remedy `--onto <base>`; no `--out`: remedy `--out <branch>`;
+`--close-folded` without `--pr`: remedy `nova-merge fold --close-folded --pr
+<n>`; a `--lane` that is not a lane: rule 20's `refusing to guess` and the
+`init` remedy.
+
+**The mistake it removes.** A 98-commit fold that never got a mergeability
+verdict and was squashed by hand on the coordinator's window, and a queued
+branch that could not be pushed, become one reviewed pull request with a named
+dropped list and a lease push.
+
+**Red tests.** Each is written first and seen red, with a fake where the real thing is the network, a bench or a clock.
+
+1. A fold of three branches against a green fake test runner squashes to one
+   commit whose message lists all three branches and their cards, the fake
+   remote sees one lease push, and the line reads `FOLD OK folded=3 dropped=0
+   pr=<n>`.
+2. A fake runner red for one branch makes the fold try it three times and no
+   more, drop it, print `dropped=1`, and leave its tree out of the squash.
+3. A fake git merge conflicting in a test file and in a source file yields
+   keep-both and the incoming side in the scratch tree; a conflict in any other
+   file drops the branch with that file named.
+4. A fake remote that rejects the lease prints one refusal, says nothing was
+   published, and records no plain push and no `--force`.
+5. A fake clock proves the three tries are bounded and the fold ends on its own.
+6. `--close-folded --pr <n>` against a fake host records each folded pull
+   request closed superseded by the squash, and prints `FOLD CLOSED pr=<n>
+   closed=<n>`.
+7. No `--branches`, no `--onto`, no `--out` and `--close-folded` without `--pr`
+   are each exit 2 with their one remedy line; a directory that is not a lane is
+   exit 2 with the `init` remedy.
+8. The layout test of #560 runs after every merge; a fake run that fails it
+   drops that branch like any other red.
