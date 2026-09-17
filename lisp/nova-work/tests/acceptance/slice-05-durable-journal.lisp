@@ -252,20 +252,16 @@
 ;;; of src/node-verbs.lisp (nova-tools #362).
 
 ;;; operation-survives-the-client  SPEC-WORK.md prose :2580 / table :5183
-;; (deftest "operation-survives-the-client" "docs/SPEC-WORK.md:5183"
-;;     "import-returns-op-id;cli-exit-leaves-work;result-by-id;wait-timeout-leaves-running"
-;;   ;; a long import returning an operation id, the CLI exiting, the work
-;;   ;; continuing, the result retrievable by id, and `operation wait` timing out
-;;   ;; while leaving the operation running.)
-;; NEEDS-KERNEL: the operation subsystem and import (out of slice).
+;;; The real replay lives in tests/acceptance.lisp:749 (nova-tools #362):
+;;; a long import returns an operation id at once and durably, the client
+;;; exits while the work runs, `operation wait` times out leaving it running,
+;;; and the completed result is retrievable by id.
 
 ;;; status-answers-while-io-runs  SPEC-WORK.md prose :2581 / table :5186
-;; (deftest "status-answers-while-io-runs" "docs/SPEC-WORK.md:5186"
-;;     "status-and-cancel-within-bound;queues/staged-bounded;restart-reconciles-pending-ops"
-;;   ;; status and cancel answered within their bound while a busy capture, export
-;;   ;; and clip are in flight, with queues, staged bytes and retained results
-;;   ;; bounded, and a restart reconciling the operation ids that were pending.)
-;; NEEDS-KERNEL: the operation scheduler plus capture/export/clip (no such verbs).
+;;; The real replay lives in tests/acceptance/slice-08-replays-late.lisp:147
+;;; (nova-tools #362): status and cancel answer within bound while a capture,
+;;; export and clip are in flight, queues/staged/retained stay bounded, and a
+;;; restart reconciles the pending operation ids.
 
 ;;; cancel-is-a-request-not-an-erasure  SPEC-WORK.md prose :5789-5791 / table :5189
 (deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5789-5791"
@@ -305,6 +301,11 @@
         (declare (ignore after))
         (check-equal :uncertain (getf disposition :state)
                      "an uncertain external effect reads uncertain, never cancelled")))))
+;;; cancel-is-a-request-not-an-erasure  SPEC-WORK.md prose :2580 / table :5189
+;;; The real replay lives in tests/acceptance/slice-08-replays-late.lisp:298
+;;; (nova-tools #362): a cancel is acknowledged with its own final disposition,
+;;; erases no accepted mutation, and reports an uncertain external effect as
+;;; uncertain rather than cancelled.
 
 ;;; undo-appends-and-preserves  SPEC-WORK.md prose :2665 / table :5192
 ;; (deftest "undo-appends-and-preserves" "docs/SPEC-WORK.md:5192"
@@ -337,12 +338,10 @@
 ;; NEEDS-KERNEL: the reversible-verb table and undo (does not exist in slice 1).
 
 ;;; clip-is-one-long-operation  SPEC-WORK.md prose :2568 / table :5327
-;; (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5327"
-;;     "clip-returns-OPERATION-OK;wait-prints-CLIP-OK;raced-CLIP-RACED;session-stop-CLIP-then-SESSION"
-;;   ;; clip returning `OPERATION OK id= op=clip` and exiting, `operation wait --id`
-;;   ;; printing the CLIP OK line, a raced transport printing CLIP RACED, and
-;;   ;; session stop waiting on its own operation within --git-timeout.)
-;; NEEDS-KERNEL: the clip verb and the operation/wait transport (no clip in slice).
+;;; The real replay lives in tests/acceptance/slice-08-replays-late.lisp:335
+;;; (nova-tools #362): clip prints OPERATION OK id= op=clip and exits, wait
+;;; prints CLIP OK, a raced transport prints CLIP RACED, and session stop waits
+;;; on its own clip within --git-timeout.
 
 ;;; repo-only-at-the-root  SPEC-WORK.md prose :2846 / table :5341
 ;;; The real replay now lives in tests/acceptance.lisp over the node verbs of
@@ -797,9 +796,9 @@
 ;; as-of-refuses-unavailable-partition (SPEC-WORK.md:5135) --- a state-as-of ask whose day
 ;; partition cannot be opened refused at exit 1 naming that partition, never answered from a later row.
 
-;; NEEDS-KERNEL: async operation control plane; no operation/wait/cancel exists yet.
-;; async-operations (SPEC-WORK.md:5593) --- status, wait and cancel under a busy import, export
-;; and clip; no double launch, no false cancellation success, no control plane stalled behind I/O.
+;;; async-operations: the real replay lives in tests/replays-8642.lisp:117
+;;; (nova-tools #362) --- launch/cancel dispositions with no double launch and no
+;;; false cancellation success.
 
 ;; NEEDS-KERNEL: roadmap row ordering and completion; no roadmap verb exists yet.
 ;; axisless-history (SPEC-WORK.md:5383) --- two ordered rows, one finished, exported/loaded and
@@ -808,14 +807,14 @@
 ;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) now runs as the
 ;; real deftest in tests/replays-8640.lisp.
 
-;; NEEDS-KERNEL: batch coalescing by byte/record/delay bounds; no batch mode exists yet.
-;; batch-with-bounds-and-urgency (SPEC-WORK.md:4376) --- independent results coalescing within
-;; bounds, unchanged batches causing no call, unreferenced padding refusing, urgent corrections
-;; bypassing delay.
+;;; batch-with-bounds-and-urgency: the real replay lives in
+;;; tests/replays-8642.lisp:60 (nova-tools #362) --- byte/record bounds,
+;;; unchanged batches causing no call, unreferenced padding refused, urgent
+;;; corrections bypassing delay, dependencies and retry identities surviving.
 
-;; NEEDS-KERNEL: batch modes and pipeline revision semantics; no batch mode exists yet.
-;; batches-and-pipelines (SPEC-WORK.md:5594) --- atomic batches all-or-none, independent batches
-;; preserving their exact accepted prefix and marking the remainder not attempted.
+;;; batches-and-pipelines: the real replay lives in tests/replays-8642.lisp:145
+;;; (nova-tools #362) --- atomic batches all-or-none, independent batches
+;;; preserving their exact accepted prefix and marking the remainder not attempted.
 
 ;; bounds-are-not-prompts (SPEC-WORK.md:4849) now runs as the real deftest in
 ;; tests/replays-8642.lisp, with the launcher hard limits it named.
@@ -841,20 +840,22 @@
 ;;   ;; NEEDS-KERNEL: cache tier pricing and context-choice cost model
 ;;   )
 
+;;; cancel-is-a-request-not-an-erasure: the real replay lives in
+;;; tests/acceptance/slice-08-replays-late.lisp:298 (nova-tools #362); this
+;;; duplicate parked copy is removed.
+
 ;; (deftest "chat-and-file-render-are-byte-identical" "docs/SPEC-WORK.md:5304"
 ;;     "expected=chat-and-marker-region-bytes-identical;other-bytes-preserved;missing-duplicate-reversed-marker-refused;target-outside-roots-refused"
 ;;   ;; NEEDS-KERNEL: render with marker regions and permitted-roots boundary
 ;;   )
 
-;; (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5327"
-;;     "expected=clip-operation-ok-op-pushed;wait-prints-clip-ok-operation;raced-prints-clip-raced;session-stop-prints-clip-ok-then-session-ok"
-;;   ;; NEEDS-KERNEL: clip long-operation protocol and operation wait id
-;;   )
+;;; clip-is-one-long-operation: the real replay lives in
+;;; tests/acceptance/slice-08-replays-late.lisp:335 (nova-tools #362); this
+;;; duplicate parked copy is removed.
 
-;; (deftest "clip-names-the-index-that-overflowed" "docs/SPEC-WORK.md:5102"
-;;     "expected=snapshot-retained-index-closed-index-printed;remedy-lower-retain-or-raise-max-bytes;lower-retain-passes;index-page-split-not-refused"
-;;   ;; NEEDS-KERNEL: clip snapshot/index bound refusal naming the overflowing index
-;;   )
+;;; clip-names-the-index-that-overflowed: the real replay lives in
+;;; tests/acceptance/slice-09-replays-8603.lisp:81 (nova-tools #362); this
+;;; duplicate parked copy is removed.
 
 ;; (deftest "closed-paged-without-full-load" "docs/SPEC-WORK.md:5087"
 ;;     "expected=max-20-reads-20;more-names-after;next-page-reads-next-20;parses=0-replays=0;whole-history-never-loaded"
