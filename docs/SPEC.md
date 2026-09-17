@@ -1445,6 +1445,15 @@ shape to bind to — **and that is the load-bearing safety property**, tested
 directly, because it is what makes scanning a rule document with this class
 safe at all: it cannot advise softening a rule, because it cannot see one.
 
+**The `have no` self-scope.** The same reasoning reaches the bare *"I have
+no …"*: a foreclosure names something the writer is or can do, so the absent
+object must be a faculty or capacity of the writer's own (*recall*, *memory*,
+*access*, *means*). A first-person restatement of a floor — *"I have no
+secrets"* — is a promise, and *"I have no idea"* is an idiom; neither says what
+the writer is, and neither flags. The noun set is closed for the same reason
+the *as a* set is: an open object matches *"I have no time"*. Specimen 8 is the
+shape it must keep.
+
 **Matching.** Files are flattened before matching — markdown emphasis
 stripped, hard-wrapped lines collapsed — so formatting cannot hide a claim;
 both regression cases that occasioned the first class were claims spanning a
