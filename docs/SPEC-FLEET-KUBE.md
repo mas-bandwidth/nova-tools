@@ -35,18 +35,30 @@ OS packages; the per-line unix users and their homes; the runner services
 the k3s install on each Linux bench (`curl -sfL https://get.k3s.io | sh`, pinned to the release
 the fleet tests against) and the k3s agent join on the others; the shared-cache and mirror
 volumes under `$HOME/nova-bench`; and the secrets **seat public keys** — public by definition, so
-they may sit in state and in the module's inputs. On an already-provisioned host these run over
-the SSH connection a `null_resource` carries, with `triggers` keyed to the content hash of each
-unit, timer and config file, so a hand edit that changes a file re-plans the resource that owns
-it.
+they may sit in state and in the module's inputs. On an already-provisioned host the *writes* run
+once over the SSH connection a `null_resource` carries — but a `null_resource` is not the drift
+detector. Its `triggers` hash the content the module *declares*, not the bytes on the host, so a
+file edited by hand on the bench leaves `plan` empty until someone also changes the declaration.
+**Every managed file is therefore paired with a data source that reads the host on every plan.**
+`data "external" "file_state"` runs `ssh <bench> 'sha256sum <path>'` (or reads the file back over
+ssh) and returns the observed hash; the resource that owns the file carries a `precondition` (or
+a `check`) comparing that observed hash with the declared one, so the drift you did by hand is an
+attribute that differs and the plan is not empty. The same shape covers facts no provider exposes
+as a resource: `data "external" "bench_standard"` runs `tools/bench-standard.sh` on the host each
+plan and parses its lines, and the precondition fails the plan when the script and the
+declaration disagree. A `null_resource` may still carry the `remote-exec` that writes; it never
+carries the *witness*.
 
 **How `plan` shows drift.** For every object a provider can read back — the Kubernetes objects in
-Part 2, the k3s release, the files a `remote-exec` writes — `terraform plan` refreshes and prints
-the attribute that differs, and a plan that is not empty before an apply *is* the drift report.
-For the OS facts no provider reads, the trigger hash prints the drift the same way, and the
-authoritative witness on a live host stays `tools/bench-standard.sh`, folded by `nova-pulse fleet
-survey`. The two are not allowed to disagree silently: a `DRIFT` line the standard prints while
-`plan` is clean is itself a red test.
+Part 2, the k3s release — `terraform plan` refreshes and prints the attribute that differs, and a
+plan that is not empty before an apply *is* the drift report. For files and OS facts no provider
+reads natively, the read-each-plan data source above is the witness: it reads the remote state on
+every refresh, and the precondition on the owning resource fails the plan the moment the host and
+the declaration disagree, a hand edit nobody declared included. The authoritative in-sandbox
+witness on a live host stays `tools/bench-standard.sh`, folded by `nova-pulse fleet survey`; the
+data source makes `plan` read the same script rather than a hash of what was once written. The
+two are not allowed to disagree silently: a `DRIFT` line the standard prints while `plan` is clean
+is itself a red test.
 
 **A new bench is one apply.** Add one entry to `benches.auto.tfvars`, run `terraform apply`, and
 that apply installs packages, creates users, writes and starts the runner units, arms the timers,
@@ -94,6 +106,23 @@ and is **not reinvented**: the puller reads `load1` (`nova-wake probe --here`) a
 submit while `cores*1.5 - load1 <= 0`. Kubernetes enforces the two terms it can; the puller
 enforces the one it cannot.
 
+**One admission owner while both run.** In slice 2 a bench runs the native `nova-pulse launch`
+and the puller at once, and the capacity line must be owned by exactly one of them or both admit
+the same free slot. **The pull worker is the admission owner on a mixed bench.** It reads the
+capacity line (`nova-wake probe --here` for `load1`, the scheduler's allocatable for the two
+memory terms), decrements it for the Job it is about to submit, and writes the decremented value
+to the bench's admission file under `taken/` before it creates the Job. The native launcher keeps
+no copy of the line: it **consults that file** and admits a card only into what the puller has
+not taken, so one owner runs both drivers without over-admitting. (The alternative is allowed and
+simpler: **retire the native launcher on that bench first**, and the puller is the only admission
+owner.) **And an admission that is retried is reconciled.** A puller that fails between writing
+the decrement and creating the Job leaves a slot charged to nothing; the retry completes the
+first admission rather than making a second, and a card **admitted twice is refused by its
+`guid`** — the take already renames `<name>.card` to `taken/<worker>-<name>.card`, and the
+admission file records that same `guid` against the slot, so a second take of a card already held
+is refused instead of charged twice. A slot held with no Job is the state the reconciliation
+names, and the red test below measures it.
+
 **Node labels and affinity.** Each bench labels its node
 `nova.mas-bandwidth.com/bench=<name>` and one or more
 `nova.mas-bandwidth.com/kind=go|lisp|docs|schema-leg`. A Job carries the kind of its card and
@@ -113,14 +142,24 @@ The kernel's ready set is not a thing Kubernetes exposes and is not invented her
 *is* the ready set, and the take is its lock. A card whose Job dies is returned by the puller to
 the lane it came from; `taken/` is the only place a card waits on a lease.
 
-**Secrets: sealed, decrypted at apply, injected as env only.** The store stays sops. At apply,
-the plaintext is produced from the store and immediately sealed into a SealedSecret, so state
-and git hold only the ciphertext, and the sealed-secrets controller decrypts it in-cluster into
-an ordinary Secret. A Job receives it with `envFrom.secretRef` — **environment only, never a
-`volumeMount`, never an image layer, never a build argument** — and only the keys the card's
-`--only` names, with `--require` refusing before the harness starts. A Job whose card names a
-secret path (`.key`, the store path, `auth.json`, a `secretRef` mounted as a file) is refused by
-the puller, because the exec-env rule of SPEC-SECRETS is the only delivery a process may have.
+**Secrets: sealed, decrypted at apply, named key by key.** The store stays sops. At apply, the
+plaintext is produced from the store and immediately sealed into a SealedSecret, so state and git
+hold only the ciphertext, and the sealed-secrets controller decrypts it in-cluster into an
+ordinary Secret. **That Secret holds only the keys one worker kind is entitled to, and no other
+key exists in it** — it is generated per kind (`nova-secrets-<kind>`), not one fleet-wide Secret a
+container could draw from. **A Job never uses `envFrom`.** `envFrom` projects every key a Secret
+holds and cannot promise a subset, so it cannot keep the promise this section makes. Each
+container names the exact keys it gets, one `valueFrom.secretKeyRef` per key: a **`go`** worker
+gets `DEEPSEEK_API_KEY` and `GH_TOKEN`; a **`lisp`** worker gets `ANTHROPIC_API_KEY` and
+`GH_TOKEN`; a **`docs`** worker gets `ANTHROPIC_API_KEY` and `GH_TOKEN`; a **`schema-leg`** worker
+gets `ANTHROPIC_API_KEY` and `GH_TOKEN`. The `<kind>` Secret is sealed with exactly those keys,
+so a key a worker is not named to hold is not in its Secret and cannot be projected even by a
+mistake. The container's command is the same `nova-secrets exec --only <those names> --require
+<the required one>` the native launcher runs, so `--require` refuses before the harness starts
+if the Secret is short. **Environment only, never a `volumeMount`, never an image layer, never a
+build argument.** A Job whose card names a secret path (`.key`, the store path, `auth.json`, a
+`secretRef` mounted as a file) is refused by the puller, because the exec-env rule of
+SPEC-SECRETS is the only delivery a process may have.
 
 **Logs, the timeline, and the clip.** The pod's stdout is the harness log and goes to the
 node's log store; the Job's start, end, exit and cost are appended to the **same `usage.tsv`**
@@ -189,3 +228,15 @@ Each test is red before the work and names what it proves.
   `RESULT.md` kept as evidence.
 - `a-card-that-names-a-secret-path-is-refused` — a card mentioning a `.key`, the store path or a
   file-mounted secret is refused by the puller before a Job is created, and no pod ever starts.
+- `a-hand-edited-remote-file-is-shown-by-the-plan-not-by-the-declaration` — a fixture bench whose
+  remote file is edited by hand while the declaration is unchanged plans that file, because the
+  read-each-plan data source reports the observed hash and the resource's precondition fails;
+  the same edit with only a `null_resource` trigger stays clean, proving the trigger is not the
+  witness.
+- `a-job-gets-only-the-keys-its-kind-names` — a fixture `<kind>` Secret carrying the named keys
+  and one extra key turns the test red, and the pod's environment holds exactly the named keys
+  through `valueFrom.secretKeyRef` and nothing else; a pod built with `envFrom` projects the
+  extra key and is the mutation.
+- `a-card-admitted-twice-is-refused-by-its-guid` — after a puller fails between the decrement and
+  the Job, the retry charges one slot and not two, and a second take of the same `guid` already
+  held is refused before a Job is created.
