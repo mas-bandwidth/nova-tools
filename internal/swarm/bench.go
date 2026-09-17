@@ -20,13 +20,16 @@ import (
 
 // Bench is one row of the benches table: a machine that runs slots.
 type Bench struct {
-	Name    string // one word; the local machine is the row "local"
-	Host    string // an ssh alias from the caller's own ssh config, or "local"
-	Root    string // the swarm root on that host, absolute there
-	Cores   string // a taskset list ("1-15", "2,4,6") or "-" for no pinning
-	Harness string // the harness binary on that host, absolute there
-	Auth    string // the harness auth file on that host, absolute there, mode 0600
-	Wall    string // "sandbox" or "none": what bench probe found
+	Name     string // one word; the local machine is the row "local"
+	Host     string // an ssh alias from the caller's own ssh config, or "local"
+	Root     string // the swarm root on that host, absolute there
+	Cores    string // a taskset list ("1-15", "2,4,6") or "-" for no pinning
+	Harness  string // the harness binary on that host, absolute there
+	Auth     string // the harness auth file on that host, absolute there, mode 0600
+	Wall     string // "sandbox" or "none": what bench probe found
+	Width    int    // the measured width, a power of two; 0 is unmeasured
+	Measured string // the stamp the width was measured at, or ""
+	Version  string // the tool's sha8 the width was measured with, or ""
 }
 
 // Pinned reports whether the row pins cores (a list) rather than "-". A pinned row
@@ -72,7 +75,9 @@ func CoresList(cores string) ([]int, error) {
 // LoadBenchTable reads --benches TSV, one header line and one row per bench, and
 // validates every row: seven columns in order, an absolute root, harness and auth,
 // a cores column that is "-" or parses, a wall that is "sandbox" or "none", and a
-// name used once. A row that fails names itself in the error.
+// name used once, with three optional trailing columns width, measured and
+// version (docs/SPEC-SWARM.md "Benches"): a row without them is unmeasured and
+// fills by cores. A row that fails names itself in the error.
 func LoadBenchTable(path string) ([]Bench, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -89,14 +94,23 @@ func LoadBenchTable(path string) ([]Bench, error) {
 			continue
 		}
 		cols := strings.Split(line, "\t")
-		if len(cols) != 7 {
-			return nil, fmt.Errorf("row %q has %d columns, wants 7 (name host root cores harness auth wall)", line, len(cols))
+		if len(cols) != 7 && len(cols) != 10 {
+			return nil, fmt.Errorf("row %q has %d columns, wants 7 (name host root cores harness auth wall) or 7 with width measured version", line, len(cols))
 		}
 		if !seenHeader {
 			seenHeader = true
 			continue
 		}
 		b := Bench{Name: cols[0], Host: cols[1], Root: cols[2], Cores: cols[3], Harness: cols[4], Auth: cols[5], Wall: cols[6]}
+		if len(cols) == 10 {
+			w, err := strconv.Atoi(strings.TrimSpace(cols[7]))
+			if err != nil || !IsPowerOfTwo(w) {
+				return nil, fmt.Errorf("bench %q width %q is not a measured power of two", cols[0], cols[7])
+			}
+			b.Width = w
+			b.Measured = cols[8]
+			b.Version = cols[9]
+		}
 		if err := b.validate(names); err != nil {
 			return nil, err
 		}
@@ -171,7 +185,7 @@ func ReadBenchTable(path string) (map[string]Bench, error) {
 			continue
 		}
 		parts := strings.Split(line, "\t")
-		if len(parts) != 7 {
+		if len(parts) != 7 && len(parts) != 10 {
 			return nil, fmt.Errorf("--benches line %d wants name<TAB>host<TAB>root<TAB>cores<TAB>harness<TAB>auth<TAB>wall, got %d fields", i+1, len(parts))
 		}
 		if parts[0] == "name" {
@@ -181,13 +195,25 @@ func ReadBenchTable(path string) (map[string]Bench, error) {
 		if _, dup := out[name]; dup {
 			return nil, fmt.Errorf("--benches names %s twice", name)
 		}
-		out[name] = Bench{
+		b := Bench{
 			Name:    name,
 			Host:    parts[1],
 			Root:    parts[2],
 			Cores:   parts[3],
 			Harness: parts[4],
+			Auth:    parts[5],
+			Wall:    parts[6],
 		}
+		if len(parts) == 10 {
+			w, err := strconv.Atoi(strings.TrimSpace(parts[7]))
+			if err != nil || !IsPowerOfTwo(w) {
+				return nil, fmt.Errorf("--benches line %d: width %q is not a measured power of two", i+1, parts[7])
+			}
+			b.Width = w
+			b.Measured = parts[8]
+			b.Version = parts[9]
+		}
+		out[name] = b
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("--benches names no bench row")

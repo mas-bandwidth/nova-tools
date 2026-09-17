@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -24,14 +25,17 @@ type benchCheck struct {
 	reason string // the clause a BENCH REFUSED line quotes
 }
 
-// cmdBench dispatches the bench verb's subcommands. probe is the only one.
+// cmdBench dispatches the bench verb's subcommands. probe proves one bench;
+// size measures its width.
 func cmdBench(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " bench", "wants a subcommand: probe (bench probe --benches <file> --bench <name>)")
+		return refuse(stderr, " bench", "wants a subcommand: probe (bench probe --benches <file> --bench <name>), size (bench size --benches <file> --bench <name> [--max <n>])")
 	}
 	switch args[0] {
 	case "probe":
 		return cmdBenchProbe(args[1:], stdout, stderr)
+	case "size":
+		return cmdBenchSize(args[1:], stdout, stderr)
 	}
 	return refuse(stderr, " bench", fmt.Sprintf("unknown subcommand %q", args[0]))
 }
@@ -223,4 +227,149 @@ func (p *prober) coresWord() string {
 	}
 	cores, _ := swarm.CoresList(p.row.Cores)
 	return strconv.Itoa(len(cores))
+}
+
+// benchSizeRound runs one doubling round: the known-answer card W times
+// concurrently, and reports the round's measurements. It is a variable so
+// tests run with a fake and no network: the default runs W concurrent no-op
+// round trips (the exit-0 card) and reads the bench's own one-minute load.
+var benchSizeRound = func(row *swarm.Bench, w int, prevCPM float64) (swarm.SizeRound, error) {
+	p := &prober{row: row}
+	cores := 0
+	if list, err := swarm.CoresList(row.Cores); err == nil && row.Pinned() {
+		cores = len(list)
+	} else if out, err := p.remote(row.Host, "nproc", "--all"); err == nil {
+		if n, aerr := strconv.Atoi(strings.TrimSpace(out)); aerr == nil {
+			cores = n
+		}
+	}
+	before, _ := benchLoad(p, row.Host)
+	start := benchNow()
+	done := make(chan bool, w)
+	for i := 0; i < w; i++ {
+		go func() {
+			_, _ = p.remote(row.Host, "true")
+			done <- true
+		}()
+	}
+	abstains := 0
+	for i := 0; i < w; i++ {
+		if !<-done {
+			abstains++
+		}
+	}
+	minutes := benchNow().Sub(start).Minutes()
+	if minutes <= 0 {
+		minutes = 1.0 / 60.0
+	}
+	after, _ := benchLoad(p, row.Host)
+	load := before
+	if after > load {
+		load = after
+	}
+	return swarm.SizeRound{W: w, Cores: cores, Load: load,
+		CardsPerMin: float64(w) / minutes, PrevCardsPerMin: prevCPM, Abstains: abstains}, nil
+}
+
+// benchLoad reads the bench's one-minute load average: /proc/loadavg first,
+// uptime where there is no proc.
+var benchLoad = func(p *prober, host string) (float64, error) {
+	if out, err := p.remote(host, "cat", "/proc/loadavg"); err == nil {
+		var load float64
+		if _, serr := fmt.Sscanf(strings.TrimSpace(out), "%f", &load); serr == nil {
+			return load, nil
+		}
+	}
+	out, err := p.remote(host, "uptime")
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(out)
+	for i, f := range fields {
+		if strings.HasPrefix(f, "average") && i+2 < len(fields) {
+			var load float64
+			if _, serr := fmt.Sscanf(strings.TrimSuffix(fields[i+2], ","), "%f", &load); serr == nil {
+				return load, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("no load average in %q", out)
+}
+
+// benchNow is the clock the throughput division reads, so tests hold it still.
+var benchNow = func() (t time.Time) { return time.Now() }
+
+// benchSizeVersion is the tool identity the row's version is written with.
+var benchSizeVersion = func() string { return buildinfo.Version(version) }
+
+// cmdBenchSize measures one bench's width: W = 1, 2, 4, ... while the three
+// size rules hold, then records the last W that held on the bench row with
+// the measured table beside it, and prints one BENCH WIDTH line.
+func cmdBenchSize(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("bench size")
+	benches := f.fs.String("benches", "", "")
+	bench := f.fs.String("bench", "", "")
+	max := f.fs.Int("max", 256, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*benches, "benches", "the TSV file naming each bench (name host root cores harness auth wall)")
+	f.want(*bench, "bench", "the name of one row to size, as its name column")
+	if *max < 1 {
+		f.add(fmt.Sprintf("--max is at least 1, got %d; it caps the doubling", *max))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	table, err := swarm.LoadBenchTable(*benches)
+	if err != nil {
+		fmt.Fprintf(stderr, "BENCH REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+	var row *swarm.Bench
+	for i := range table {
+		if table[i].Name == *bench {
+			row = &table[i]
+			break
+		}
+	}
+	if row == nil {
+		fmt.Fprintf(stderr, "BENCH REFUSED: no bench %s in %s\n", oneline.Field(*bench), oneline.Field(*benches))
+		return 2
+	}
+	var rounds []swarm.SizeRound
+	prevCPM := 0.0
+	width := 0
+	for w := 1; w <= *max; w *= 2 {
+		r, err := benchSizeRound(row, w, prevCPM)
+		if err != nil {
+			fmt.Fprintf(stderr, "BENCH REFUSED: %s\n", oneline.Err(err))
+			return 2
+		}
+		rounds = append(rounds, r)
+		if !swarm.SizeRoundHolds(r) {
+			break
+		}
+		width = w
+		prevCPM = r.CardsPerMin
+	}
+	if width == 0 {
+		fmt.Fprintf(stderr, "BENCH REFUSED: bench %s held no width: the first round broke a size rule\n", oneline.Field(row.Name))
+		return 1
+	}
+	stamp := benchNow().UTC().Format(time.RFC3339)
+	ver := swarm.Version8(benchSizeVersion())
+	cores, rows, err := swarm.RecordBenchWidth(*benches, row.Name, width, stamp, ver)
+	if err != nil {
+		fmt.Fprintf(stderr, "BENCH REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+	_ = swarm.WriteMeasuredTable(*benches+".measured", row.Name, rounds, benchNow())
+	coresWord := strconv.Itoa(cores)
+	if cores < 0 {
+		coresWord = "-"
+	}
+	fmt.Fprintf(stdout, "BENCH WIDTH bench=%s width=%d cores=%s rows=%d\n",
+		oneline.Field(row.Name), width, oneline.Field(coresWord), rows)
+	return 0
 }
