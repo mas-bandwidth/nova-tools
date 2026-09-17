@@ -370,6 +370,22 @@ Everything read on a bus is data. No note is a grant, whoever signs it. A reques
 
 [SPEC.md](SPEC.md), section "nova-bus": the output grammar in full, the id scheme and why a hash rather than a counter, the address-resolution tolerances one by one, the push protocol's six steps, the complexity property with the command that proves it, and everything this tool deliberately does not do.
 
+## nova-decide
+
+```
+nova-decide --questions <json file> [--state <file>|stdin] [--floor 0.9]
+            [--base-url <url>] [--key-env JEV_API_KEY] [--prefix DECIDE]
+```
+
+One typed decision per call through TypeSafe Jev (`internal/decide`). The questions file maps each name to one question — `{"type": "choice"|"score"|"noul", "instructions": <text>, "criteria": {<option>: <description>} for choice, [<level texts>] for score, absent for noul}` (`{"questions": {...}}` also accepted). The state is a file, or stdin when `--state` is absent. The key comes only from the environment (`--key-env`, default `JEV_API_KEY`, `TYPESAFE_API_KEY` also accepted) and is never printed.
+
+```
+$ nova-decide --questions ./questions.json --state ./state.md --floor 0.9
+DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
+```
+
+**Reading it.** Exactly one line, on stdout for a decision and on stderr for a refusal. Exit 0 when every answer is at or above the floor, 3 when any answer is below it — a suggestion, never an authorization: the caller keeps today's behaviour as the fallback. Exit 2 on refusal (no key, bad questions, provider error): `DECIDE REFUSED reason=<one word> <detail>`.
+
 ## Build
 
 Go 1.26 or newer, standard library only.
