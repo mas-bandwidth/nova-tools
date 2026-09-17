@@ -1029,6 +1029,38 @@ func TestPacketHeadBypassBuildsWhenTheEntryHeadFetchFails(t *testing.T) {
 	}
 }
 
+func TestPacketHeadBypassRefusesFabricatedSHA(t *testing.T) {
+	lane, _, head := packetLabPR(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	// A mistyped suffix keeps the 40-hex shape while naming no object (#183:
+	// resolve the actual full Git object, reject fabricated/mistyped suffixes).
+	last := head[39:]
+	flip := "0"
+	if last == "0" {
+		flip = "1"
+	}
+	fabricated := head[:39] + flip
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--pr", "411", "--who", "Johnny", "--head", fabricated, "--out", "pkt.md"}, &out, &errb); code != 2 {
+		t.Fatalf("packet fabricated --head code=%d, want 2 stderr=%s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "names no commit") {
+		t.Fatalf("refusal does not name the unresolvable head; got %q", errb.String())
+	}
+	if _, e := os.Lstat("pkt.md"); !os.IsNotExist(e) {
+		t.Fatalf("packet file was written for a fabricated head")
+	}
+	st, e := merge.Load(lane)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if got := st.Find("411").OID; got != head {
+		t.Fatalf("lane head moved to %s, want %s", got, head)
+	}
+}
+
 func TestPacketRefusalNamesAddRemedy(t *testing.T) {
 	lane, _ := packetLab(t)
 	old, _ := os.Getwd()

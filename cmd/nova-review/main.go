@@ -143,6 +143,13 @@ func packet(args []string, out, errOut io.Writer) int {
 	current, err := fetchEntryHead(ctx, repo, *pr, *branch, st.Repo)
 	if err != nil {
 		if *asked != "" && merge.IsSHA(*asked) {
+			// The fetch failed, so nothing resolved this sha: a full-shape string
+			// is not proof it names a commit (#183). Resolve the actual object
+			// in the lane's clone and refuse a fabricated or mistyped suffix
+			// at the door, before any range or diff is built from it.
+			if _, verr := gitOut(ctx, repo, "rev-parse", *asked+"^{commit}"); verr != nil {
+				return refuse(errOut, fmt.Sprintf("--head %s names no commit in the lane's clone; give the full 40-character sha the reader had open", merge.Short(*asked)))
+			}
 			current = *asked
 			fmt.Fprintf(errOut, "PACKET NOTE fetch failed, using --head\n")
 		} else {

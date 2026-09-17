@@ -658,6 +658,8 @@ head, never from the lane's `--remote` when that remote is a local rehearsal
 with no `main` (#493); a branch entry keeps fetching its base from the lane
 remote.
 
+**When the head fetch fails, a supplied `--head` is resolved, never trusted on shape.** The fetch-failure bypass keeps an offline reader working, but a 40-hex string is not proof it names a commit (#183): the tool resolves `--head` as `<sha>^{commit}` in the lane's clone and refuses, exit 2, naming the short head, when it names no object there — a fabricated or mistyped suffix dies at the door with its name on the refusal, before any range, merge-base or diff is built from it and before the lane's recorded head is touched. A fetched head needs no second resolution, because the fetch already resolved it; a supplied one is always resolved, because nothing else did.
+
 **`verdict --head` is required and is the full 40-character sha the reader had
 open**, exactly as `nova-merge read --head`; the tool never fills it in. `VERDICT
 OK` prints `current=true|false` against the head the host reports at record
