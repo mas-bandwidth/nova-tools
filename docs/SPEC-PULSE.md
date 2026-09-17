@@ -260,6 +260,23 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     `pulses/<id>.tsv`, and the cards under `cards/<pulse id>/`. No database, no lock of this
     tool's own: the swarm's `slots.lock` is the only lock touched, and only through `nova-swarm`.
     A missing `--root` is `refusing to guess`, exit 2.
+20. **The gate classifies a failing job by a typed decision behind a floor.** With
+    `--decide [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]` the gate reads the
+    failing job it already fetched and sends `internal/decide` one call: the state is the
+    job's name, the last 60 lines of its log (escaped and capped as triage escapes evidence)
+    and the open known-flaky patterns of `<queue>/FLAKY.txt`, one regex per line, and the two
+    questions are `verdict` — a choice of `flaky` (a timing, network, runner or rate-limit
+    failure unrelated to the change), `real` (a test or build failure caused by the code) or
+    `unknown` (cannot tell from the tail) — and `same_class_as_known`, a noul. A `flaky`
+    verdict at or above the floor, for a head with no `<queue>/RERUN-<sha>` marker, reruns the
+    run's failed jobs once, writes the marker and prints `GATE RERUN sha=<s> job=<j>
+    conf=<c>`; the job is never rerun twice for the same head. Anything else — `real`,
+    `unknown`, an error, or any verdict below the floor — leaves the gate's STOP exactly as
+    it is today and carries ` decide=<verdict> conf=<c>` on the `GATE RED` line, `decide=?`
+    below the floor. A decision below the floor is a suggestion, never an authorization: the
+    gate keeps today's behaviour as the fallback. Replays:
+    `gate-reruns-a-flaky-job-once-per-head`, `gate-real-verdict-keeps-stop`,
+    `gate-below-floor-changes-nothing`.
 
 ## Fleet
 

@@ -12,11 +12,13 @@ import (
 // fakeRuns is the RunSource a test drives the gate with: no gh, no network, and a record of
 // every ask so a test can prove the answer came from here.
 type fakeRuns struct {
-	runs   []CIRun
-	runErr error
-	job    CIJob
-	jobErr error
-	asked  []string
+	runs     []CIRun
+	runErr   error
+	job      CIJob
+	jobErr   error
+	asked    []string
+	rerunErr error
+	reruns   []int64
 }
 
 func (f *fakeRuns) LatestRun(repo, branch string) ([]CIRun, error) {
@@ -27,6 +29,15 @@ func (f *fakeRuns) LatestRun(repo, branch string) ([]CIRun, error) {
 func (f *fakeRuns) FailedJob(repo string, runID int64) (CIJob, error) {
 	f.asked = append(f.asked, fmt.Sprintf("job %s %d", repo, runID))
 	return f.job, f.jobErr
+}
+
+func (f *fakeRuns) RerunFailed(repo string, runID int64) error {
+	f.asked = append(f.asked, fmt.Sprintf("rerun %s %d", repo, runID))
+	if f.rerunErr != nil {
+		return f.rerunErr
+	}
+	f.reruns = append(f.reruns, runID)
+	return nil
 }
 
 func gateRun(t *testing.T, queue string, src RunSource) (string, string, int) {
