@@ -27,6 +27,7 @@ nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [
 nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
+nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
@@ -269,7 +270,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		return cmdCut(rest, stdout, stderr)
 	case "harvest":
-		return cmdHarvest(rest, stdout, stderr)
+		return cmdHarvest(rest, stdout, stderr, now)
 	case "beat":
 		return cmdBeat(rest, stdout, stderr, now)
 	case "watch":
@@ -430,7 +431,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	})
 }
 
-func cmdHarvest(args []string, stdout, stderr io.Writer) int {
+func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("harvest")
 	id := f.fs.String("id", "", "")
 	root := f.fs.String("root", "", "")
@@ -454,9 +455,34 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	failedDir := f.fs.String("failed", "", "")
 	var clones benchFlag
 	f.fs.Var(&clones, "clone", "")
+	working := f.fs.String("working", "", "")
+	roots := f.fs.String("roots", "", "")
+	timer := f.fs.String("timer", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	// The working layout names no --id and no --root: it folds the bench's jobs
+	// under --working and the swarm roots under --roots. The old layout is
+	// unchanged and still wants both.
+	if strings.TrimSpace(*working) != "" || strings.TrimSpace(*roots) != "" {
+		if *max < 0 {
+			f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
+		}
+		if f.refused(stderr) {
+			return 2
+		}
+		return pulse.HarvestWorking(pulse.HarvestInput{
+			Working:    *working,
+			Roots:      *roots,
+			Base:       *base,
+			SinceStamp: *since,
+			Timer:      *timer,
+			Max:        *max,
+			Stdout:     stdout,
+			Stderr:     stderr,
+			Now:        func() time.Time { return now },
+		})
 	}
 	// A bench harvest folds what is on the bench. There is no pulse packet to name and no
 	// relaunch to feed, so --id, --sources and --templates are not its to supply: a
