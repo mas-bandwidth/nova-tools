@@ -57,7 +57,7 @@ usage:
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>]
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
   nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher
@@ -1285,6 +1285,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	label := f.fs.String("label", "", "")
 	auth := f.fs.String("auth", "", "")
 	config := f.fs.String("config", "", "")
+	workerFile := f.fs.String("worker", "", "")
 	sandbox := f.fs.String("sandbox", "", "")
 	noWall := f.fs.Bool("no-wall", false, "")
 	var repos, recipients []string
@@ -1296,8 +1297,38 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if *noWall && *sandbox != "" {
 		f.add("--no-wall and --sandbox together: one asks for no containment at all and the other names the wall to use; pass at most one")
 	}
+	// ISSUE #881: `--worker <file>` names a worker description, and the description is the
+	// source of the model and of the key. It is loaded HERE, before the flag checks, so a
+	// description that is not readable is one refusal and a description whose fields are
+	// wrong is the same. Without --worker, native keeps --model and --auth as today.
+	var w swarm.Worker
+	workerGiven := *workerFile != ""
+	if workerGiven {
+		loaded, problems := swarm.LoadWorker(*workerFile)
+		if len(problems) > 0 {
+			for _, problem := range problems {
+				fmt.Fprintf(stderr, "nova-swarm native: %s\n", oneline.Err(problem))
+			}
+			return 2
+		}
+		w = loaded
+		if w.Secret != "" {
+			// The key is in the environment, never in a file: --auth and --config are the
+			// legacy shape's, and a description that names a secret writes no auth file and
+			// carries its own provider declaration. Both are refused where the caller can
+			// still fix them.
+			if *auth != "" {
+				f.add("--auth is the legacy shape's and this worker description names a secret; the key comes from the environment and no auth file is written")
+			}
+			if *config != "" {
+				f.add("--config is the legacy shape's and this worker description names a secret; the description's own provider declaration is written instead")
+			}
+		}
+	}
 	f.want(*harness, "harness", "the harness binary path, checked for existence and execution")
-	f.want(*model, "model", "the model to run: provider/model, one slash, both sides nonempty")
+	if !workerGiven {
+		f.want(*model, "model", "the model to run: provider/model, one slash, both sides nonempty; --worker <file> names a description that pins the model instead")
+	}
 	f.want(*cardPath, "card", "the path to the card file")
 	f.want(*slot, "slot", "the slot directory this run executes in")
 	f.want(*root, "root", "the configured root the slot directory must sit under")
@@ -1319,9 +1350,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if lbl == "" {
 		lbl = strings.TrimSuffix(filepath.Base(*cardPath), filepath.Ext(*cardPath))
 	}
+	effectiveModel := *model
+	if workerGiven && effectiveModel == "" {
+		effectiveModel = w.Provider + "/" + w.Model
+	}
 	cfg := nativeRunConfig{
 		binary:     *harness,
-		model:      *model,
+		model:      effectiveModel,
 		label:      lbl,
 		card:       cardRaw,
 		slotDir:    *slot,
@@ -1333,6 +1368,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		recipients: recipients,
 		sandbox:    *sandbox,
 		noWall:     *noWall,
+	}
+	if workerGiven {
+		cfg.worker = &w
 	}
 	res, code := nativeRun(cfg, stderr)
 	if code != 0 {

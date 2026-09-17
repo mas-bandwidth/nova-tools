@@ -45,6 +45,12 @@ type nativeRunConfig struct {
 	sandbox    string // the nova-sandbox binary naming the wall; "" = resolve on PATH
 	noWall     bool   // the caller typed --no-wall: run with no containment, named by its OK line
 	configFile string // optional: an opencode.json provider config copied beside the auth copy
+	// WORKER (issue #881): the worker description `--worker <file>` names, when one is
+	// given. It is the source of the model -- a key is authorized for one model only, and
+	// the description pins it -- and when it carries "secret": "<NAME>" it is the source of
+	// the key, taken from the environment and passed through by name, with no auth file
+	// ever written. nil means native keeps --model and --auth as today.
+	worker *swarm.Worker
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -119,6 +125,33 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		return nativeRunResult{}, 2
 	}
 
+	// (2b) THE WORKER DESCRIPTION (issue #881). When `--worker <file>` names a
+	// description, the description is the source of the model: a key is authorized for ONE
+	// model only, and the description pins that one. A --model whose model half differs is
+	// refused, naming BOTH models on one line, before any directory is made and before any
+	// child starts. The description's `model` is the model ID (deepseek-chat); --model is
+	// provider/model, so the half after the slash is what is compared. Without --worker,
+	// native keeps --model as today.
+	if cfg.worker != nil {
+		modelID := cfg.model[len(provider)+1:]
+		if cfg.worker.Model != modelID {
+			refuseNative(errOut, fmt.Sprintf("--model %s differs from the worker description's model %s; a key is authorized for one model only, and the description pins the model this run launches",
+				oneline.Field(cfg.model), oneline.Field(cfg.worker.Model)))
+			return nativeRunResult{}, 2
+		}
+		// A description naming "secret": "<NAME>" takes the key from THIS process's own
+		// environment -- `nova-secrets exec` set it around the run -- and the value is
+		// never written to a file, never printed, and never in a REFUSED or OK line. An
+		// absent or empty variable is refused HERE, before anything runs, the way run and
+		// supervise refuse it.
+		if cfg.worker.Secret != "" {
+			if _, err := swarm.SecretFromEnv(cfg.worker.Secret); err != nil {
+				refuseNative(errOut, oneline.Escape(err.Error()))
+				return nativeRunResult{}, 2
+			}
+		}
+	}
+
 	// (3) THE SLOT IS UNDER THE ROOT. A slot outside the configured root is a write
 	// this run has no business making, and it refuses before any directory is made.
 	if !within(cfg.root, cfg.slotDir) {
@@ -155,10 +188,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// (4) THE AUTH COPY. One entry, the model's provider's, moved to the data home so
 	// the child's account resolves, and left mode 0600. A source that is looser than
 	// 0600 is refused: its copy would spread a secret further than its owner.
+	// --auth stays ONLY the legacy shape's (issue #881): a description that names
+	// "secret": "<NAME>" takes the key from the environment and writes no auth file, so
+	// this step is skipped entirely for one. When a description IS given and --auth is
+	// used, the copy is the legacy path and one NOTE line says so.
 	if cfg.authFile != "" {
 		if reason := copyAuth(cfg.authFile, provider, dataHome); reason != "" {
 			refuseNative(errOut, reason)
 			return nativeRunResult{}, 2
+		}
+		if cfg.worker != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: --auth %s copies the provider secret into the job's data home on disk, mode 0600; the legacy shape -- a description naming \"secret\": \"<NAME>\" would keep the key in the environment and write no auth file\n",
+				oneline.Field(cfg.authFile))
 		}
 	}
 
@@ -187,7 +228,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if cfg.noWall {
 		reads = swarm.CardReadPaths(cfg.card)
 	}
-	configSHA, reason := writeJobConfig(cfg.configFile, cfg.authFile, provider, dataHome, jobDir, reads, errOut)
+	configSHA, reason := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
 	if reason != "" {
 		refuseNative(errOut, reason)
 		return nativeRunResult{}, 2
@@ -232,7 +273,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// own group) is killed when the wall runs out, not merely handed a suggestion.
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.deadline)
 	defer cancel()
-	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir)
+	secretEnv := ""
+	if cfg.worker != nil {
+		secretEnv = cfg.worker.Secret
+	}
+	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, secretEnv)
 	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
 	cmd := exec.CommandContext(ctx, runPath, runArgv...)
 	cmd.Env = childEnv
@@ -484,7 +529,13 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 // of the caller's own, which the wall denies.
 // XDG_CONFIG_HOME and XDG_CACHE_HOME are dropped, never inherited, so the harness defaults
 // them under HOME and never follows them outside the wall.
-func nativeChildEnv(dataHome, jobDir, tmpDir string) []string {
+//
+// secretEnv is the NAME a worker description's `secret` carries (issue #881): the value is
+// passed through to the child BY NAME, exactly once -- stripped from the inherited set even
+// when its name already carries KEY/TOKEN/SECRET -- so a name that does not itself carry one
+// still reaches the harness. The value is never written to a file and never printed; the
+// argv log redacts any name that carries a secret.
+func nativeChildEnv(dataHome, jobDir, tmpDir, secretEnv string) []string {
 	var kept []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -492,15 +543,25 @@ func nativeChildEnv(dataHome, jobDir, tmpDir string) []string {
 			kept = append(kept, kv)
 		}
 	}
-	for _, name := range []string{"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR"} {
+	remove := []string{"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR"}
+	if secretEnv != "" {
+		remove = append(remove, secretEnv)
+	}
+	for _, name := range remove {
 		kept = environWithoutName(kept, name)
 	}
-	return append(kept,
+	out := append(kept,
 		"HOME="+dataHome,
 		"XDG_DATA_HOME="+dataHome,
 		"NOVA_SWARM_JOB="+jobDir,
 		"TMPDIR="+tmpDir,
 	)
+	if secretEnv != "" {
+		if v, ok := os.LookupEnv(secretEnv); ok {
+			out = append(out, secretEnv+"="+v)
+		}
+	}
+	return out
 }
 
 // keepNativeEnv says whether one inherited name survives into the native child: the names a
@@ -705,26 +766,37 @@ func copyAuth(src, provider, dataHome string) string {
 // can check the run against.
 //
 // It carries two things. The provider config a caller named with --config (issue #465),
-// whose entry for THE MODEL'S provider is refused when its key is absent from the auth file:
+// whose entry for THE MODEL's provider is refused when its key is absent from the auth file:
 // that provider is exactly the one the harness is about to call, and the refusal names the
 // provider, never the key. And this job's own fence block (issue #644), which is written
 // WHETHER OR NOT a config was named, because the harness's default fence auto-rejects the
 // card's own `../scratch` and every path it names on a `READ:` line.
 //
+// A WORKER DESCRIPTION THAT NAMES A SECRET IS THE CONFIG (issue #881): its own provider
+// declaration carries `{env:NAME}` -- the variable's NAME, never its value, the exact rule
+// the legacy run path writes by -- and there is no auth file for a key to be absent from,
+// so the missing-auth check does not apply. --config is refused with such a description at
+// the verb, because the description's declaration is the one this run means.
+//
 // A config file this side cannot parse is still carried verbatim -- the refusal check is
 // best-effort and the copy is not -- and then the fence cannot be merged into it, which is
 // said once on stderr as a NATIVE NOTE rather than refused: a run with an unparseable config
 // is a run the caller has already chosen, and it is better fenced-by-default than not run.
-func writeJobConfig(configPath, authPath, provider, dataHome, jobDir string, reads []string, notes io.Writer) (sha8, reason string) {
+func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, reads []string, notes io.Writer) (sha8, reason string) {
 	var raw []byte
-	if configPath != "" {
+	configPath := cfg.configFile
+	switch {
+	case cfg.worker != nil && cfg.worker.Secret != "":
+		raw = cfg.worker.HarnessConfig()
+		configPath = ""
+	case configPath != "":
 		body, err := os.ReadFile(configPath)
 		if err != nil {
 			return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error()))
 		}
-		if modelProviderMissingAuth(body, authPath, provider) {
+		if modelProviderMissingAuth(body, cfg.authFile, provider) {
 			return "", fmt.Sprintf("the config file %s names provider %s, whose key is absent from the auth file %s; add it to --auth or drop the provider from --config",
-				oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(authPath)))
+				oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(cfg.authFile)))
 		}
 		raw = body
 	}
