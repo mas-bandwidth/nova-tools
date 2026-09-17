@@ -3,6 +3,7 @@ package swarm
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +19,9 @@ import (
 
 func plantSymlinkRunner(t *testing.T, dir string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: no symlink privilege / no FIFO")
+	}
 	secret := filepath.Join(dir, "secret-outside-the-wall")
 	if err := os.WriteFile(secret, []byte("a secret the wall was keeping\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -36,6 +40,9 @@ func plantSymlinkRunner(t *testing.T, dir string) string {
 
 func plantFIFORunner(t *testing.T, dir string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: no symlink privilege / no FIFO")
+	}
 	path := filepath.Join(dir, "plant-fifo.sh")
 	body := "#!/bin/sh\n" +
 		"label=\"$1\"; slot=\"$2\"; root=\"$5\"\n" +
