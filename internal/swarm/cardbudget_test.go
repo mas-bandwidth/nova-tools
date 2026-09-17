@@ -21,8 +21,9 @@ func TestCardBudgetLoadsFromWorkerDescription(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "w.json")
-	body := `{"name":"w","provider":"p","model":"m","env_var":"FAKE_KEY","key_file":"` + filepath.Join(dir, "key") +
-		`","usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` +
+	body := `{"name":"w","provider":"p","model":"m","env_var":"FAKE_KEY","key_file":` +
+		strconv.Quote(filepath.Join(dir, "key")) +
+		`,"usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` +
 		strconv.Quote(home) + `,"deadline":"5m","max_turns":30,"max_cache_read":1000}`
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
