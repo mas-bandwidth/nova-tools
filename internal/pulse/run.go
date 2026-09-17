@@ -28,6 +28,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
 // Undecided is one thing no rule could decide, and the whole evidence for it. It is what
@@ -257,6 +258,10 @@ func (r *runner) tick() {
 		} else {
 			r.seam("harvest", "the shipped nova-pulse harvest verb")
 		}
+		// 2b. Fold every root's pool usage into the month's ledger, after harvest. It is
+		// mechanical accounting -- no model call, no child -- and it stays silent unless a
+		// root's rows moved the ledger, so a tick with nothing new to fold says nothing.
+		r.foldLedgers()
 		// 3. Sweep.
 		if s := r.in.Sweep; s != nil {
 			n, err := s.Sweep(r.ticks)
@@ -477,6 +482,42 @@ func (r *runner) seam(step, owner string) {
 	}
 	r.seamed[step] = true
 	r.notes.Line(fmt.Sprintf("RUN NOTE seam=%s not wired: %s", step, owner))
+}
+
+// foldLedgers folds every root's pool usage into the queue's monthly ledger with
+// nova-tokens fold-pool semantics (SPEC-TOKENS), called as a library and never shelled
+// out. One FOLD line prints per root whose fold moved the ledger; a fold that changes
+// nothing is silent, which is what makes the step idempotent on every tick.
+func (r *runner) foldLedgers() {
+	month := r.in.Now().UTC().Format("2006-01")
+	for _, root := range r.roots {
+		pool := filepath.Join(root, "pool")
+		if fi, err := os.Stat(pool); err != nil || !fi.IsDir() {
+			continue
+		}
+		groups, tasks, err := tokens.FoldPool(pool, "")
+		if err != nil {
+			r.stepErr("fold", err)
+			continue
+		}
+		if len(groups) == 0 {
+			continue
+		}
+		ledger := filepath.Join(r.in.Queue, "ledger-"+month+".tsv")
+		before, _ := os.ReadFile(ledger)
+		if err := tokens.WritePoolLedger(ledger, groups); err != nil {
+			r.stepErr("fold", err)
+			continue
+		}
+		after, err := os.ReadFile(ledger)
+		if err != nil {
+			r.stepErr("fold", err)
+			continue
+		}
+		if !bytes.Equal(before, after) {
+			fmt.Fprintf(r.in.Stdout, "FOLD rows=%d tasks=%d ledger=%s\n", len(groups), tasks, oneline.Field(ledger))
+		}
+	}
 }
 
 // loadNoted reads <queue>/NOTED, the keys this queue has already told a person about, so a
