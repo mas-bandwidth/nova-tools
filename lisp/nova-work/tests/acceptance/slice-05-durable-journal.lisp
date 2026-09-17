@@ -591,6 +591,9 @@
 
 ;; offer-writes-intent-and-a-reservation (SPEC-WORK.md:5229) now runs as the
 ;; real deftest in tests/acceptance.lisp.
+;; NEEDS-KERNEL: an admitted offer writes :effect :dispatched, a pending-offer entry, and one (offer,attempt) reservation.
+;; (deftest "offer-writes-intent-and-a-reservation" "docs/SPEC-WORK.md:3439"
+;;     "expected=:effect-:dispatched;pending-offer;reservation-keyed-by-offer-attempt;no-lease")
 
 ;; no-shadow-lease-across-holders (SPEC-WORK.md:5238) now runs as the real
 ;; deftest in tests/acceptance.lisp.
@@ -661,11 +664,6 @@
 
 ;; a-broken-assertion-must-fail (SPEC-WORK.md:6371) now runs as the real deftest
 ;; in tests/replays-8641.lisp.
-
-;; NEEDS-KERNEL: verifier/payload reader and staged admission; no verify verb exists yet.
-;; a-receipt-needs-a-verifier (SPEC-WORK.md:5234) --- a copied note and an --as <recipient>
-;; with no verifier result refused with no canonical write; a verifier returning after a
-;; conflicting revision or failing validation writes no reservation, receipt, lease or W change.
 
 ;; NEEDS-KERNEL: attempt/usage attribution records; no attempt model exists yet.
 ;; a-retry-does-not-overwrite-its-attempt (SPEC-WORK.md:5222) --- unknown staying unknown,
