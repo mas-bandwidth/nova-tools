@@ -4684,3 +4684,88 @@ is trusted.
 
 - a `quickstart` of one tree walks the root once and hands the same path list to `links` and `nocode`;
 - `--fail-max <n>` caps each kind's findings at `n`, the `MORE` line names the flag that lifts it, and `--fail-max 0` prints every finding.
+
+## The efficiency card (#81), nova-bus
+
+The card is a measurement, taken read-only against the live checkout
+`/Users/glenn/rowan-working/rowan-stella` as Rowan on **2026-09-12**. That bus
+held **3,401 notes** on disk, **65 MB** of `.git`, and one reader carrying
+`carrying=986`. This section is the part of the efficiency-card set that binds
+`nova-bus`; the cross-tool half lives in [SPEC-SWARM.md](SPEC-SWARM.md), and
+nothing here restates it.
+
+### REPEATS: a git fetch per poll, and a whole-history walk on `check --full`
+
+`wait` polls on its own clock and **every poll is a git fetch** — the comment on
+`minWaitInterval` says so (`cmd/nova-bus/main.go:2423`), and the measured fetch
+was **0.98 s**:
+
+```
+$ git -C <bus> fetch origin main     0.98 s
+```
+
+At `defaultWaitInterval = 10 * time.Second` (`cmd/nova-bus/main.go:2404`) a
+60-minute wait is **360 fetches**, about **5m 53s** of the hour spent inside
+git. The same clock lives in `waitLoop` (`cmd/nova-bus/main.go:2443`).
+
+`check --full` re-walks everything every time it is run; `check --as` reads from
+the cursor and pays only for what changed:
+
+```
+$ nova-bus check --bus . --full      342 lines  76,616 B  0.15 s  rc=1
+$ nova-bus check --bus . --as Rowan    2 lines     135 B  0.09 s  rc=0
+```
+
+`check --full` is the whole-history walk and no cursor bounds it; `check --as
+<name>` is the bounded read, and the difference between the two is the cost
+this card prices.
+
+### COORDINATOR READ: bounded on `inbox`, unbounded on `check --full`
+
+```
+$ nova-bus names --bus .                                          8 lines     693 B
+$ nova-bus inbox --bus . --as Rowan --receipt-max-words 20         5 lines     509 B   (carrying=986)
+$ nova-bus inbox --bus . --as Rowan --receipt-max-words 20 --full 63 lines  12,035 B
+$ nova-bus check --bus . --full                                 342 lines  76,616 B
+```
+
+`inbox` at 986 carried notes is 5 lines: the SCOPE line, the LEGACY line,
+`INBOX OPEN carrying=986 heard=1`, the one remedy line, and `INBOX OK`. That is
+the shape `tool-output-costs-tokens` asks for, and it holds at the largest state
+on the bench: the carried list is behind `--full` and `--open`, not printed on
+every read.
+
+`check` has no `--max`. Its usage line is `nova-bus check --bus <dir> (--full |
+--as <name> | --since <commit>) [--legacy-before ...] [--rebuild-index]` — no
+cap flag, no MORE line. 342 of the 342 lines printed; 340 of them were `BUS
+WARN` about one class of missing `INDEX` entry, each carrying the same
+**220-byte remedy** sentence. It is the one listing among the seven verbs
+measured that grows with the bus and has no ceiling.
+
+The missing bound is the one **"The missing bound — full checks (#81)"** above
+already states in full: a per-kind cap at `--fail-max <n>` (default 20, and
+`--fail-max 0` for all), repeated remedies aggregated to one `BUS FINDING` line
+per shape, one `BUS MORE` line per capped kind, and a `BUS SUMMARY` whose counts
+are the truth about the bus whether or not the lines printed, paged with
+`--after` (a snapshot token) on the shared collector. It is proposed and not
+implemented; this card is the measurement that motivates it.
+
+### WAITS ON: its own clock, and a quiet poll prints nothing
+
+`waitLoop` polls immediately, then every `--interval` (default 10s, floor 100ms,
+ceiling `maxWaitTimeout = 60 * time.Minute`). A poll that found nothing returns
+no lines at all ("twenty polls of a quiet bus are not twenty listings", the
+`waitPoll` comment), so an idle tick costs one git fetch (0.98 s wall) and zero
+tokens. The token cost of a wait is the one turn it sits inside: **652M cache
+read** over **1,204 turns** on 2026-09-11 is about **542K cache-read tokens**
+for the turn, whatever the wait's length
+(`memory/window-tokens-are-turns.md`). Related: nova-tools#53.
+
+### Red tests
+
+The card earns the same red-first bar as every rule here: seen red before it is
+trusted.
+
+- `inbox` at the largest carried state returns the SCOPE, LEGACY, OPEN, remedy and OK lines and not the carried list, so the coordinator read is bounded by the state's counts and not its length;
+- a wait's poll is one git fetch and a quiet poll prints nothing, so an idle tick costs zero tokens;
+- the uncapped `check --full` is the missing bound, and `--fail-max` is the flag that closes it.
