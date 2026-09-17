@@ -29,9 +29,41 @@
   (ok t "node-remove settling is outside slice 1"))
 
 (deftest "applicable-cap-never-hides-a-deny" "docs/SPEC-WORK.md:5498-5502"
-    "expected=deny-in-cut-note-still-excludes"
-  ;; NEEDS-KERNEL: Delegation note :deny constraints, applicable/goal show cap, notes index.
-  (ok t "applicable-cap-never-hides-a-deny is outside slice 1"))
+    "expected=constraint-row-before-cut-rows;notes-more;fail-no-eligible-no-row"
+  ;; N active notes, N > --max, the only :deny in the note that sorts last. The
+  ;; cap orders the constraint-bearing note ahead of the narrative rows, so
+  ;; --max 1 still prints the deny row and sets NOTES MORE. With the notes index
+  ;; unloadable the read prints FAIL and neither an eligible verdict nor a row.
+  (let* ((n1 (make-note :scope '(:node) :author "glenn" :date "2026-01-01T00:00Z"
+                        :source "meeting" :kind :observation :text "weigh price"))
+         (n2 (make-note :scope '(:node) :author "glenn" :date "2026-01-02T00:00Z"
+                        :source "meeting" :kind :observation :text "weigh rework"))
+         (deny (make-note :scope '(:node) :author "glenn" :date "2026-01-03T00:00Z"
+                          :source "instruction" :kind :instruction
+                          :text "no coding on Astra"
+                          :constraint '(:constraint
+                                        (:deny (:model "astra"))
+                                        (:prefer ())
+                                        (:reason "coordinator instruction"))))
+         (a (applicable "stella" :coding '("coordinator/astra")
+                        (list n1 n2 deny)
+                        :source :live :models '("astra") :max 1)))
+    (check-equal 1 (length (applicable-answer-shown a))
+                 "the cap shows one row")
+    (ok (applicable-answer-more a) "--max cuts rows, so NOTES MORE is set")
+    (ok (member deny (applicable-answer-shown a) :test #'equal)
+        "the constraint row is shown before any cut row: the deny is never hidden")
+    (let ((v (cdr (assoc "coordinator/astra" (applicable-answer-verdicts a)
+                         :test #'equal))))
+      (ok (verdict-excluded-p v) "the capped read still excludes the denied route")
+      (ok (member (getf deny :id) (excluded-note-ids v) :test #'equal)
+          "the excluded verdict names the note id that --max tried to cut")))
+  ;; the notes index unloadable: FAIL, no eligible verdict and no row at all.
+  (let ((a (applicable "stella" :coding '("coordinator/astra") '()
+                       :source :live :notes-index nil :models '("astra") :max 1)))
+    (ok (applicable-answer-fail a) "an unloadable notes index prints FAIL")
+    (check-equal '() (applicable-answer-shown a) "a failed read prints no row")
+    (check-equal '() (applicable-answer-verdicts a) "a failed read prints no verdict")))
 ;;; Slice-1 boundary replays promised by docs/SPEC-WORK.md lines
 ;;; 2400-3600 (part 1 of 4). Every name is dated to the acceptance
 ;;; table's own paragraph (the `docs/SPEC-WORK.md:` reference below) and

@@ -96,8 +96,9 @@ group it belongs to, or the shared :node (SPEC-WORK.md:4334)."
 ;;; ------------------------------------------------------------------
 
 (defstruct (applicable-answer
-             (:constructor make-applicable-answer (&key rev from verdicts notes fail)))
-  rev from verdicts notes fail)
+             (:constructor make-applicable-answer
+                 (&key rev from verdicts notes fail shown more)))
+  rev from verdicts notes fail shown more)
 
 (defun verdict-eligible-p (v) (eq v :eligible))
 (defun verdict-unknown-p (v) (eq v :unknown))
@@ -136,24 +137,43 @@ so no model is unknown when the registry is not consulted."
 :planning (SPEC-WORK.md:4351)."
   (if (verdict-eligible-p verdict) :planning verdict))
 
+(defun note-constraint-p (note)
+  (constraint-p (getf note :constraint)))
+
+(defun cap-notes (notes max)
+  "The note rows the `--max` cap presents, and whether any row was cut. A
+constraint-bearing note is ordered before a narrative one, so a :deny that
+sorts last under --max 1 is still printed (SPEC-WORK.md:5498)."
+  (if (null max)
+      (values notes nil)
+      (let* ((constraints (remove-if-not #'note-constraint-p notes))
+             (narrative (remove-if #'note-constraint-p notes))
+             (ordered (append constraints narrative)))
+        (values (subseq ordered 0 (min max (length ordered)))
+                (> (length ordered) max)))))
+
 (defun applicable (as task-class candidates notes
                    &key (rev 0) (source :live) (notes-index t) (snapshot-bound-ok t)
-                        (models t) (groups nil))
+                        (models t) (groups nil) (max nil))
   "Evaluate every active note whose scope covers AS against every candidate,
 header first, and answer one verdict per candidate. A load failure answers NOTES
-FAIL with no verdict; a snapshot answer admits no route."
+FAIL with no verdict and no row; a snapshot answer admits no route. MAX caps the
+printed note rows, ordered so a constraint row is never cut for a narrative one."
   (let ((fail (applicable-load-error source notes-index snapshot-bound-ok)))
     (when fail
       (return-from applicable
-        (make-applicable-answer :rev rev :from source :verdicts '() :notes '() :fail fail))))
+        (make-applicable-answer :rev rev :from source :verdicts '() :notes '()
+                                :shown '() :more nil :fail fail))))
   (let ((app-notes (remove-if-not (lambda (n) (note-scope-covers-p n as groups)) notes))
         (verdicts '()))
     (dolist (candidate candidates)
       (let ((v (candidate-verdict candidate task-class app-notes models)))
         (when (eq source :snapshot) (setf v (snapshot-downgrade v)))
         (push (cons candidate v) verdicts)))
-    (make-applicable-answer :rev rev :from source
-                            :verdicts (nreverse verdicts) :notes app-notes :fail nil)))
+    (multiple-value-bind (shown more) (cap-notes app-notes max)
+      (make-applicable-answer :rev rev :from source
+                              :verdicts (nreverse verdicts) :notes app-notes
+                              :shown shown :more more :fail nil))))
 
 
 ;;; ------------------------------------------------------------------
