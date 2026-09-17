@@ -399,6 +399,37 @@ a third collaborator is the repair on the day there is one to add (*default: acc
 Glenn keeps `admin` on both accounts, the review is a courtesy between two administrators and
 this page must stop calling it a control.
 
+### `place` and `placed`
+
+```
+nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> \
+  --machine <name> --secret <name> [--path <remote path>] \
+  [--machines <file>] [--receipts <dir>] [--ssh <path>]
+nova-secrets placed --machine <name> [--receipts <dir>]
+SECRETS PLACE  OK   machine=<name> secret=<name> path=<path> sha256=<hex> stamp=<stamp>
+SECRETS PLACED OK   machine=<name> count=<n>
+SECRETS PLACED ITEM machine=<name> secret=<name> path=<path> sha256=<hex> stamp=<stamp>
+```
+
+**What it asserts.** Issue #764: a bench or a runner gets the keys it needs by machinery rather
+than by a person's `scp`. `place` decrypts `<store>/<as>.yaml`, takes exactly the one `--secret`
+named, and writes it to `--path` on the machine named by `--machine` over ssh, mode `0600` — or,
+without `--path`, to `<home>/.config/nova-secrets/<secret>.env` using the machine's home from the
+fleet registry. The machine's ssh target comes from `--machines` (the tab-separated fleet file:
+name, ssh target, home, the fourth pulse column ignored), defaulting to
+`~/.config/nova-tools/fleet.tsv`; it is the materialised form of the **machines** section of
+nova-work's CONFIG, and a name it does not hold is refused naming the file, because a route whose
+key was never placed is a bench the routing rule must skip. **The value travels on the ssh child's
+stdin, never in an argument list, and `place` writes a receipt — machine, secret, path, sha256 of
+the value, stamp — under `--receipts` (default `~/.config/nova-secrets/placed`), keyed by machine
+and replaced per secret.** `placed` reads those receipts back by name and hash; a machine with
+none placed is `count=0` at exit 0, an answer and not a failure. **No value, fragment, length or
+transcript appears on any line or in any receipt**, and a `place` refusal is exit 2 naming the
+missing machine or the store and the file to add it to, before anything is copied. Reading the
+machine set from nova-work's CONFIG records rather than this file, its fourth-column mac, and the
+routing rule that benches a route whose key is absent are **owed and not done**; this verb does
+the file it is handed.
+
 ### Refused, by name, with where it lives
 
 One line, on stderr, naming the door — exit 2, or 125 from `exec`:

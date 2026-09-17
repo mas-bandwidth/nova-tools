@@ -28,6 +28,9 @@ var secretsAudit = audit.Config{
 		"main.go|runKeygenCLI|okLine":     "formatted OK line from internal/secrets.RunKeygen",
 		"main.go|runKeygenCLI|l":          "formatted RULE line from internal/secrets.RunKeygen",
 		"main.go|runKeygenCLI|noteLine":   "formatted NOTE line from internal/secrets.RunKeygen",
+		"main.go|runPlaceCLI|okLine":      "formatted OK line from internal/secrets.RunPlace",
+		"main.go|runPlacedCLI|okLine":     "formatted OK line from internal/secrets.RunPlaced",
+		"main.go|runPlacedCLI|l":          "formatted ITEM line from internal/secrets.RunPlaced",
 	},
 	Imports: []string{
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,

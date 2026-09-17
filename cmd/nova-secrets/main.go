@@ -20,6 +20,8 @@ usage:
   nova-secrets names  --store <dir> --as <name> [--max <n>]
   nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
   nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>]
+  nova-secrets placed --machine <name> [--receipts <dir>]
   nova-secrets help
 
 flags:
@@ -31,12 +33,20 @@ flags:
   --only <names|all>   comma-separated list of keys to inject, or 'all'
   --require <name>     assert key must be present in the file (repeatable)
   --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
+  --machine <name>     fleet machine to place a secret on (its target comes from --machines)
+  --secret <name>      the key in <store>/<as>.yaml to copy to the machine
+  --path <remote path> remote path to write; default <home>/.config/nova-secrets/<secret>.env
+  --machines <file>    fleet registry file: name, ssh target, home, tab separated
+  --receipts <dir>     where placed receipts live; default ~/.config/nova-secrets/placed
+  --ssh <path>         ssh executable to use (default ssh)
 
 example:
   nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
   nova-secrets names  --store ./secrets --as rowan
   nova-secrets check  --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
   nova-secrets exec   --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
+  nova-secrets place  --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --machine mini --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+  nova-secrets placed --machine mini
 `
 
 // version is empty in ordinary builds and is filled only by a release stamp.
@@ -109,6 +119,12 @@ func main() {
 
 	case "keygen":
 		runKeygenCLI(os.Args[2:])
+
+	case "place":
+		runPlaceCLI(os.Args[2:])
+
+	case "placed":
+		runPlacedCLI(os.Args[2:])
 
 	default:
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unknown verb %q; run: nova-secrets help\n", oneline.Field(verb))
@@ -285,6 +301,81 @@ func runKeygenCLI(args []string) {
 	}
 	if noteLine != "" {
 		fmt.Println(noteLine)
+	}
+	os.Exit(0)
+}
+
+func runPlaceCLI(args []string) {
+	fs := flag.NewFlagSet("place", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	storeFlag := fs.String("store", "", "store dir")
+	asFlag := fs.String("as", "", "seat name")
+	keyFlag := fs.String("key", "", "key path")
+	sopsFlag := fs.String("sops", "", "sops path")
+	machineFlag := fs.String("machine", "", "fleet machine name")
+	secretFlag := fs.String("secret", "", "secret key name")
+	pathFlag := fs.String("path", "", "remote path")
+	machinesFlag := fs.String("machines", "", "fleet registry file")
+	receiptsFlag := fs.String("receipts", "", "receipts dir")
+	sshFlag := fs.String("ssh", "ssh", "ssh executable")
+
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		os.Exit(2)
+	}
+	if len(fs.Args()) > 0 {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		os.Exit(2)
+	}
+
+	okLine, err := secrets.RunPlace(secrets.PlaceInput{
+		StoreDir:   *storeFlag,
+		AsName:     *asFlag,
+		KeyPath:    *keyFlag,
+		SopsPath:   *sopsFlag,
+		Machine:    *machineFlag,
+		Secret:     *secretFlag,
+		RemotePath: *pathFlag,
+		Machines:   *machinesFlag,
+		Receipts:   *receiptsFlag,
+		SSH:        *sshFlag,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		os.Exit(2)
+	}
+	fmt.Println(okLine)
+	os.Exit(0)
+}
+
+func runPlacedCLI(args []string) {
+	fs := flag.NewFlagSet("placed", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	machineFlag := fs.String("machine", "", "fleet machine name")
+	receiptsFlag := fs.String("receipts", "", "receipts dir")
+
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		os.Exit(2)
+	}
+	if len(fs.Args()) > 0 {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		os.Exit(2)
+	}
+
+	okLine, itemLines, err := secrets.RunPlaced(secrets.PlacedInput{
+		Machine:  *machineFlag,
+		Receipts: *receiptsFlag,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		os.Exit(2)
+	}
+	fmt.Println(okLine)
+	for _, l := range itemLines {
+		fmt.Println(l)
 	}
 	os.Exit(0)
 }
