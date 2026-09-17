@@ -286,17 +286,26 @@ func Batch(in BatchInput) int {
 		// scratch is the directory under the local root this card's files are read from:
 		// <bench>-<n> for a remote card, whose files the pull below brings back, and the
 		// bare <n> for a local one.
-		scratch    string
-		bench      string
-		label      string
-		idleLog    string // the file the idle monitor watched; set only on an idle kill
-		cpu        uint64 // the card's process tree's CPU time at the last sample; guarded by doneMu
-		haveCPU    bool   // whether cpu holds a sample to compare against; guarded by doneMu
-		done       bool   // guarded by doneMu
-		idleKilled bool   // guarded by doneMu
-		deadKilled bool   // killed at the batch deadline; guarded by doneMu
-		rc         int    // the child's exit code; guarded by doneMu
-		lastGrow   time.Time
+		scratch string
+		bench   string
+		label   string
+		// host, harnessLog and remoteLog are the remote kill and idle path
+		// (SPEC-SWARM, "Benches"): the ssh alias, the local file the ssh child's
+		// own stdout -- with its RUN pgid= line -- is pinned to, and the bench's
+		// own native.log the idle watch measures. Empty on a local card.
+		host        string
+		harnessLog  string
+		remoteLog   string
+		lastPoll    time.Time // the last remote idle poll; enforces the --idle/3 cadence
+		unreachable bool      // the bench stopped answering; scored bench-unreachable
+		idleLog     string    // the file the idle monitor watched; set only on an idle kill
+		cpu         uint64    // the card's process tree's CPU time at the last sample; guarded by doneMu
+		haveCPU     bool      // whether cpu holds a sample to compare against; guarded by doneMu
+		done        bool      // guarded by doneMu
+		idleKilled  bool      // guarded by doneMu
+		deadKilled  bool      // killed at the batch deadline; guarded by doneMu
+		rc          int       // the child's exit code; guarded by doneMu
+		lastGrow    time.Time
 	}
 	var doneMu sync.Mutex
 	procs := make([]proc, len(cards))
@@ -364,7 +373,13 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 		_ = logFile.Close()
-		procs[i] = proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label, lastGrow: clk.Now()}
+		p := proc{cmd: cmd, slot: c.slot, scratch: scratchName(c), bench: c.bench, label: c.label, lastGrow: clk.Now()}
+		if c.bench != "" {
+			p.host = benches[c.bench].Host
+			p.harnessLog = logPath
+			p.remoteLog = remoteLogPath(benches[c.bench], c.slot, c.label)
+		}
+		procs[i] = p
 	}
 
 	// wait: every card ends, or the deadline. The wait is one select over one "all done"
@@ -430,8 +445,37 @@ func Batch(in BatchInput) int {
 						lastSample = now
 					}
 					doneMu.Lock()
+					var idleKills []*proc
 					for i := range procs {
 						if procs[i].done || procs[i].idleKilled {
+							continue
+						}
+						if procs[i].bench != "" {
+							// The remote idle watch measures the remote log's byte size
+							// via ssh stat -c %s, at most once per --idle/3. A bench
+							// unreachable at a poll is not a dead card: it stays
+							// unknown until the deadline.
+							if now.Sub(procs[i].lastPoll) < in.Idle/3 {
+								continue
+							}
+							procs[i].lastPoll = now
+							size, err := statRemoteSize(procs[i].host, procs[i].remoteLog)
+							if err != nil {
+								if isUnreachable(err) {
+									procs[i].unreachable = true
+								}
+								continue
+							}
+							if size != lastSize[i] {
+								lastSize[i] = size
+								procs[i].lastGrow = now
+								continue
+							}
+							if now.Sub(procs[i].lastGrow) >= in.Idle {
+								procs[i].idleKilled = true
+								procs[i].idleLog = procs[i].remoteLog
+								idleKills = append(idleKills, &procs[i])
+							}
 							continue
 						}
 						size := logSize(cardLogPath(in.Root, procs[i].scratch, procs[i].label))
@@ -495,6 +539,19 @@ func Batch(in BatchInput) int {
 						}
 					}
 					doneMu.Unlock()
+					// A remote idle kill ends with the full kill sequence -- SIGTERM
+					// to the ssh child's group, then pkill by the RUN pgid -- outside
+					// the lock: the sequence sleeps between its two signals.
+					for _, p := range idleKills {
+						if p.cmd.Process == nil {
+							continue
+						}
+						if killRemote(p.cmd.Process.Pid, p.host, remotePgid(p.harnessLog)) {
+							doneMu.Lock()
+							p.unreachable = true
+							doneMu.Unlock()
+						}
+					}
 				}
 			}
 		}()
@@ -504,16 +561,35 @@ func Batch(in BatchInput) int {
 	case <-allDone:
 	case <-clk.After(in.Deadline):
 		doneMu.Lock()
+		var remotes []*proc
 		for i := range procs {
 			if procs[i].done || procs[i].cmd == nil {
 				continue
 			}
 			procs[i].deadKilled = true
+			if procs[i].bench != "" {
+				remotes = append(remotes, &procs[i])
+				continue
+			}
 			if procs[i].cmd.Process != nil {
 				_ = procs[i].cmd.Process.Kill()
 			}
 		}
 		doneMu.Unlock()
+		// A remote card ends with its full kill sequence: SIGTERM to the ssh
+		// child's group, then pkill -TERM -g <pgid>, then -KILL after the delay.
+		// An unreachable bench skips the pkill and is scored bench-unreachable
+		// instead of deadline.
+		for _, p := range remotes {
+			if p.cmd.Process == nil {
+				continue
+			}
+			if killRemote(p.cmd.Process.Pid, p.host, remotePgid(p.harnessLog)) {
+				doneMu.Lock()
+				p.unreachable = true
+				doneMu.Unlock()
+			}
+		}
 	}
 	close(stopMonitor)
 	monitorWG.Wait()
@@ -592,9 +668,10 @@ func Batch(in BatchInput) int {
 		logPath := cardLogPath(in.Root, scratchName(c), c.label)
 		rows[i].logLines = logOutputLines(logPath)
 		// A card whose bench could not be reached is its own score, and the reason token
-		// says which of the two it is: the bench never answered the pull, so nothing about
-		// what the card did on it is known here (SPEC-SWARM, "Benches").
-		if unreachable[i] {
+		// says which of the two it is: the bench never answered the pull, the idle
+		// polls or the deadline kill, so nothing about what the card did on it is
+		// known here (SPEC-SWARM, "Benches").
+		if unreachable[i] || procs[i].unreachable {
 			rows[i].state = "abstain"
 			rows[i].reason = "bench-unreachable"
 			abstain++
@@ -671,13 +748,51 @@ func Batch(in BatchInput) int {
 	// The packet's grammar. The BATCH line first, then one line per card in admission
 	// order (label, its resolved slot, then line 2 verbatim, or ABSTAIN with its one reason
 	// token), then HOLD lines -- at most maxHoldLines -- so the whole packet never grows
-	// past n + 12 lines whatever the batch holds.
-	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d",
+	// past n + 12 lines whatever the batch holds. With --bench the BATCH line gains
+	// benches=<n>, followed by one BENCH line per named bench before the first card line
+	// (SPEC-SWARM, "Benches"); the packet's ceiling is then n + 12 + benches lines.
+	batchLine := fmt.Sprintf("BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d",
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
-	if uniform != "" {
-		fmt.Fprintf(in.Stdout, " uniform-abstain=%s", oneline.Field(uniform))
+	benchNames := splitBenchNames(in.Bench)
+	if len(benchNames) > 0 {
+		batchLine += fmt.Sprintf(" benches=%d", len(benchNames))
 	}
-	fmt.Fprintln(in.Stdout)
+	if uniform != "" {
+		batchLine += " uniform-abstain=" + oneline.Field(uniform)
+	}
+	fmt.Fprintln(in.Stdout, batchLine)
+	for _, name := range benchNames {
+		// One BENCH line per named bench: the slots dealt to it, its done and
+		// abstain, and its token sums from the pulled usage.tsv rows -- in and
+		// out are - when no usage came back for any of its cards.
+		var slots, bdone, babstain, bin, bout int
+		var busd float64
+		hasUsage := false
+		for i, c := range cards {
+			onBench := c.bench == name || (c.bench == "" && name == "local")
+			if !onBench {
+				continue
+			}
+			slots++
+			if rows[i].state == "done" {
+				bdone++
+			} else {
+				babstain++
+			}
+			bin += rows[i].in
+			bout += rows[i].out
+			busd += rows[i].usd
+			if fileExists(cardUsagePath(in.Root, scratchName(c), c.label)) {
+				hasUsage = true
+			}
+		}
+		inTok, outTok := "-", "-"
+		if hasUsage {
+			inTok, outTok = strconv.Itoa(bin), strconv.Itoa(bout)
+		}
+		fmt.Fprintf(in.Stdout, "BENCH %s slots=%d done=%d abstain=%d in=%s out=%s usd=%s\n",
+			oneline.Field(name), slots, bdone, babstain, inTok, outTok, formatUSD(busd))
+	}
 	for _, r := range rows {
 		if r.state == "done" {
 			line := fmt.Sprintf("%s slot=%d: %s log=%d", oneline.Field(r.label), r.slot, r.line2, r.logLines)

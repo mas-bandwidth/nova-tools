@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -308,6 +309,74 @@ func remoteRun(c batchCard, b Bench, localRoot string, deadline int, slotsStore,
 	cmd.Stderr = logFile
 	ownGroup(cmd)
 	return cmd, nil
+}
+
+// remoteKillDelay is how long the batch waits between the remote SIGTERM and the
+// SIGKILL: SIGTERM to the ssh child's own process group first, then ssh <host>
+// pkill -TERM -g <pgid>, then -KILL after this long (SPEC-SWARM, "Benches").
+var remoteKillDelay = 5 * time.Second
+
+// remoteLogPath is a remote card's own log, the file the idle watch measures growth
+// by: <root>/<n>/jobs/<label>/native.log on the bench, the bench's own slot number.
+func remoteLogPath(b Bench, slot int, label string) string {
+	return filepath.Join(b.Root, strconv.Itoa(slot), "jobs", label, "native.log")
+}
+
+// remotePgid extracts the process group the remote native runs under from the ssh
+// child's first line, "RUN pgid=<n>", printed before any card work so the batch can
+// name it for a kill. Empty means the run never said, and the batch kills only the
+// local ssh group.
+func remotePgid(logPath string) string {
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "RUN pgid=") {
+			return strings.TrimPrefix(line, "RUN pgid=")
+		}
+	}
+	return ""
+}
+
+// pkillRemote asks the bench to signal one remote process group:
+// ssh <host> pkill -<sig> -g <pgid>.
+func pkillRemote(host, sig, pgid string) error {
+	return sshRun(host, "pkill", "-"+sig, "-g", pgid)
+}
+
+// statRemoteSize reads one remote file's byte size: ssh <host> stat -c %s <path>, the
+// growth the local idle watch measures by. An error is the caller's to classify: ssh's
+// own 255 is an unreachable bench, anything else is the bench answering.
+func statRemoteSize(host, path string) (int64, error) {
+	out, err := sshOutput(host, "stat", "-c", "%s", path)
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// killRemote ends a remote card at the deadline or on idle: SIGTERM to the ssh child's
+// own process group first, then ssh <host> pkill -TERM -g <pgid> with the pgid native
+// reported on its RUN pgid= line, then -KILL after remoteKillDelay. It reports whether
+// the bench itself was unreachable, in which case the card is scored
+// reason=bench-unreachable rather than deadline or idle.
+func killRemote(pid int, host, pgid string) (unreachable bool) {
+	TerminateGroup(pid, "")
+	if host == "" || pgid == "" {
+		return false
+	}
+	if err := pkillRemote(host, "TERM", pgid); err != nil {
+		return isUnreachable(err)
+	}
+	time.Sleep(remoteKillDelay)
+	_ = pkillRemote(host, "KILL", pgid)
+	return false
 }
 
 // copyCardToBench runs rsync to move the card to the bench's cards directory, the one file
