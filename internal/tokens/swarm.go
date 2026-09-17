@@ -101,11 +101,15 @@ func ReadSwarm(label, pool string, rules *Rules) *Source {
 				s.Stat.NoID++
 				continue
 			}
-			if seen[job] {
+			// One row per (job, attempt): a failed attempt followed by a retry
+			// retains both costs (SPEC-TOKENS rule 14: a row for a second attempt
+			// is its own row). Only a repeated row for the same attempt is a
+			// duplicate, never a retry.
+			if seen[job+"\x00"+cells[cols["attempt"]]] {
 				s.Stat.Dup++
 				continue
 			}
-			seen[job] = true
+			seen[job+"\x00"+cells[cols["attempt"]]] = true
 			day, okDay := DayOfStamp(cells[cols["ended"]])
 			if !okDay {
 				s.unparsed(path, n, "the ended stamp is not a date this tool can read: "+cells[cols["ended"]])

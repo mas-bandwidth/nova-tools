@@ -272,8 +272,10 @@ is the day it was learned.
     is not the sixteen columns SPEC-SWARM names is refused by name. All five
     types are present; a cell the swarm wrote as `-` (its rule 12: a field
     the provider did not report is a dash, never a zero) stays `-` here and
-    is never summed as zero, and a row for a second attempt (`attempt=2`) is
-    its own row, because the swarm already keeps one file per attempt.
+   is never summed as zero, and a row for a second attempt (`attempt=2`) is
+   its own row, because the swarm already keeps one file per attempt. Two rows
+   for one job are duplicates only when they repeat the same `attempt`; a
+   failed attempt followed by a retry retains both costs.
 15. **The five types are kept apart, a type the source did not report is a
     dash, and the key is exactly `(day, model, repo)`.** `input`, `output`,
     `cache_write`, `cache_read`, `reasoning`, each written as the source
