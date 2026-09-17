@@ -246,3 +246,74 @@ func TestPoolMaxFlagBoundsCandidates(t *testing.T) {
 		t.Fatalf("want 1 pool row, got %d: %q", len(lines), string(raw))
 	}
 }
+
+// cut-source-is-locator-not-kind (issue #631): the card's STEP 1 clone URL renders the
+// locator the sources line declares (mas-bandwidth/nova-tools), never the source kind.
+// Today pool writes the kind into pool.tsv field 1, so every issues card clones
+// github.com/issues.git (the dogfood probe's quoted line); pool must write the locator,
+// and cut renders <source> from it. This runs the pool then the cut command from the issue
+// and asserts the expected STEP 1 line.
+func TestCutSourceIsLocatorNotKind(t *testing.T) {
+	dir := t.TempDir()
+	jsonBody := writeMainFile(t, dir, "issues.json", `[
+  {"number": 417, "title": "cut renders the kind into the clone URL", "labels": [{"name": "card"}], "body": ""}
+]`)
+	ghLog := mainGhFixture(t, dir, jsonBody)
+
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sources := writeMainFile(t, dir, "sources.tsv", "issues\tmas-bandwidth/nova-tools\tfix\n")
+
+	var out, errb bytes.Buffer
+	code := run([]string{"pool", "--sources", sources, "--root", root}, &out, &errb, time.Now().UTC())
+	if code != 0 {
+		t.Fatalf("pool exit = %d, stderr=%s", code, errb.String())
+	}
+	calls, err := os.ReadFile(ghLog)
+	if err != nil || !strings.Contains(string(calls), "gh issue list --repo mas-bandwidth/nova-tools") {
+		t.Fatalf("the fake gh recorded %q (err=%v); want one `gh issue list --repo mas-bandwidth/nova-tools`", calls, err)
+	}
+
+	poolTSV := filepath.Join(root, "pool.tsv")
+	raw, err := os.ReadFile(poolTSV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.SplitN(strings.TrimSpace(string(raw)), "\n", 2)[0]
+	if got := strings.Split(first, "\t")[0]; got != "mas-bandwidth/nova-tools" {
+		t.Fatalf("pool.tsv field 1 = %q, want %q (the locator, so cut renders the repo the card is about)", got, "mas-bandwidth/nova-tools")
+	}
+
+	templates := filepath.Join(dir, "templates")
+	writeMainFile(t, templates, "models.tsv", "flash opencode/deepseek-v4-flash\npro opencode/deepseek-v4-pro\n")
+	writeMainFile(t, templates, "fix.md", `RESULT <label> sha=<sha12>
+You are a worker. The deadline is the machinery's.
+STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+   check: git rev-parse HEAD prints a head.
+STEP 2. Make the fix; report the red line and then the green line, one row per item.
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.`)
+
+	code = run([]string{"cut", "--pool", poolTSV, "--templates", templates, "--out", filepath.Join(dir, "cards"), "--root", root}, &out, &errb, time.Now().UTC())
+	if code != 0 {
+		t.Fatalf("cut exit = %d, stderr=%s", code, errb.String())
+	}
+	card, err := os.ReadFile(filepath.Join(dir, "cards", "417.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	step1 := ""
+	for _, line := range strings.Split(string(card), "\n") {
+		if strings.HasPrefix(line, "STEP 1") {
+			step1 = line
+			break
+		}
+	}
+	if strings.Contains(step1, "https://github.com/issues.git") {
+		t.Fatalf("STEP 1 = %q, still renders the source kind into the clone URL", step1)
+	}
+	if want := "https://github.com/mas-bandwidth/nova-tools.git"; !strings.Contains(step1, want) {
+		t.Fatalf("STEP 1 = %q, want the clone URL %q (the locator, not the source kind)", step1, want)
+	}
+}
