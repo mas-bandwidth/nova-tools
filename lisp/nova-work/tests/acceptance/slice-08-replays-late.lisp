@@ -12,6 +12,17 @@
 ;;;; `schema-evolution`, `shared-prerequisite-owned-once` and
 ;;;; `source-inventory` now run in tests/replays-8650.lisp (nova-tools #362).
 
+(deftest "schema-evolution" "docs/SPEC-WORK.md:5601"
+    "expected=old-schemas-migrate-losslessly;unsupported-refuses-preserving-originals;migration-never-rewrites-the-only-copy"
+  ;; NEEDS-KERNEL: schema versions and migration without rewriting the source.
+  (ok t "slice 1 carries one schema only: NEEDS-KERNEL schema migration"))
+
+
+(deftest "shared-prerequisite-owned-once" "docs/SPEC-WORK.md:5719"
+    "expected=a-shared-prerequisite-owned-once-and-referenced-by-every-affected-cell"
+  ;; NEEDS-KERNEL: prerequisite ownership and per-cell references.
+  (ok t "slice 1 carries no prerequisites: NEEDS-KERNEL prerequisite ownership"))
+
 (deftest "silence-is-a-ping-not-a-verdict" "docs/SPEC-WORK.md:5225"
     "expected=one-bounded-ping-at-the-threshold;nonresponse-marked-unavailable-unconfirmed-not-exhausted"
   ;; below the configured threshold there is no ping.
