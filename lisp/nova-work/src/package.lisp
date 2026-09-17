@@ -543,6 +543,16 @@
     #:+r8621-marker-start+ #:+r8621-marker-end+
     #:r8621-render-body #:r8621-render-chat #:r8621-marker-region
     #:r8621-render-file
+    ;; roadmap scope revisions advanced by `node move` (src/roadmap.lisp)
+    #:make-scope-roadmap
+    #:scope-roadmap-id
+    #:scope-roadmap-revision
+    #:scope-roadmap-rows
+    #:scope-roadmap-references-p
+    #:scopes-on-move
+    #:scope-capture
+    #:scope-mutate
+    #:scopes-undo
     ;; render replays (nova-tools #362)
     #:make-render-session
     #:render-session-p

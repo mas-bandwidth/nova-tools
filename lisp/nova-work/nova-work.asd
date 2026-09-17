@@ -36,6 +36,7 @@
                (:file "src/replays-operations-undo")
                (:file "src/edit-undo")
                (:file "src/replays-8621")
+               (:file "src/roadmap")
                (:file "src/replays-render-priority")
                (:file "src/replays-priority-and-export")
                (:file "src/replays-attempts-capabilities")

@@ -342,14 +342,6 @@
 ;;; The real replay now lives in tests/acceptance.lisp over the node verbs of
 ;;; src/node-verbs.lisp (nova-tools #362).
 
-;;; roadmap-has-one-creator  SPEC-WORK.md prose :2846 / table :5344
-;; (deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:5344"
-;;     "add-roadmap-exits-2-naming-create;create-writes-node+view-in-one-envelope;crash-all-or-none"
-;;   ;; `node add --type roadmap` exit 2 naming `roadmap create`; `roadmap create`
-;;   ;; writing one node and one view in one envelope, a crash between them
-;;   ;; replaying all-or-none; no second alias.)
-;; NEEDS-KERNEL: the roadmap verbs (no roadmap in slice 1).
-
 ;;; metadata-patches-preserve-intent  SPEC-WORK.md prose :2844 / table :5347
 ;;; The real replay now lives in tests/acceptance.lisp over the node-edit verbs
 ;;; of src/node-verbs.lisp (nova-tools #362).
@@ -407,6 +399,29 @@
 ;;;   member added applies the atomic revival rule so no settled container
 ;;;   silently holds open required work; counts and indexes are checked by the
 ;;;   reference fold after each step.
+;;; NEEDS-KERNEL: move-refuses-by-name (SPEC-WORK.md:2890) — the `move` verb:
+;;;   a wrong --from, a destination inside the subtree, a root container, a
+;;;   repository root, a shared container, another repository, or a roadmap as
+;;;   either parent are each refused with its named reason and the identity,
+;;;   and nothing is written.
+
+;;; NEEDS-KERNEL: move-keeps-the-lease (SPEC-WORK.md:2890) — the `move` verb:
+;;;   a working subtree moved with its effective :responsible unchanged keeps
+;;;   the same lease, attempt and usage; a move that would change it over an
+;;;   unreconciled attempt is refused "active context change" naming the ids;
+;;;   a move under a public parent from a private one is refused "privacy
+;;;   reduction", the reverse admitted and the public render losing the rows.
+
+;;; NEEDS-KERNEL: move-undo-refuses-a-reorder (SPEC-WORK.md:2891) — undo after
+;;;   a sibling reorder, a further reparent or a privacy change is refused
+;;;   conflict and guesses no position; undo otherwise restores the exact
+;;;   before order and required sets with fresh scope revisions, the old
+;;;   numbers unwritten; a kill around acceptance and during clip exposes
+;;;   neither two parents nor none.
+
+;;; NEEDS-KERNEL: chat-and-file-render-are-byte-identical (SPEC-WORK.md:2950) —
+;;;   `render`: chat and file mode are byte-identical for one projection and
+;;;   revision, shared prerequisites and private-data filtering included.
 
 ;;; NEEDS-KERNEL: render-refuses-a-target-outside-its-roots (SPEC-WORK.md:2950)
 ;;;   — `render`: a projection target is resolved only within explicitly
@@ -772,6 +787,9 @@
 
 ;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) now runs as the
 ;; real deftest in tests/replays-8640.lisp.
+;; NEEDS-KERNEL: correct/execution-correct barrier; no correct verb exists yet.
+;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) --- the bare correct refused by name
+;; while an attempt is live and admitted once none is.
 
 ;;; batch-with-bounds-and-urgency: the real replay lives in
 ;;; tests/replays-8642.lisp:60 (nova-tools #362) --- byte/record bounds,
@@ -840,16 +858,6 @@
 
 ;; complete-cost-lineage now runs in
 ;; lisp/nova-work/tests/replays-8643.lisp (nova-tools #362).
-
-;; (deftest "completed-view-mutation" "docs/SPEC-WORK.md:5394"
-;;     "expected=metadata-projection-render-on-settled-roadmap-revive-nothing;member-add-applies-atomic-revival;counts-indexes-checked"
-;;   ;; NEEDS-KERNEL: roadmap view mutation and atomic revival rule
-;;   )
-
-;; (deftest "configure-no-effect-and-undo-conflict" "docs/SPEC-WORK.md:5391"
-;;     "expected=equal-configure-original-receipt-and-later-value-kept;undo-restores-preimage-only-while-guards-match"
-;;   ;; NEEDS-KERNEL: configure + undo retry/guard machinery
-;;   )
 
 ;; (deftest "copied-journal-grants-nothing" "docs/SPEC-WORK.md:5535"
 ;;     "expected=restore-inspects-in-isolation-takes-no-ownership-dispatches-nothing;session-start-over-copy-refused-by-fencing"
@@ -1163,6 +1171,15 @@ asserts does not exist in slice 1."
 ;;    "selected=retired,recoverable=yes,task-cancelled=0"
 ;;  ;; `axis --remove` of a first-axis row and then of another axis's member:
 ;;  ;; only the selected coordinates retired and recoverable, no task cancelled.)
+;; merged-is-not-distributed   docs/SPEC-WORK.md:5093
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: release/distribution state (a fix in C with `landed=<sha>` and
+;; `released=-` while its release task is open; `released=<version>` only once
+;; that task settles).
+;;(deftest "merged-is-not-distributed" "docs/SPEC-WORK.md:5093"
+;;    "landed=set,released=-,released-set-only-when-task-settles"
+;;  ;; a fix in C with `landed=<sha>` and `released=-` while its release task is
+;;  ;; open, and `released=<version>` on the same row once that task settles.)
 
 ;; ------------------------------------------------------------------
 ;; metadata-patches-preserve-intent   docs/SPEC-WORK.md:5347
@@ -1363,6 +1380,15 @@ asserts does not exist in slice 1."
 ;;  ;; a row referenced by two roadmaps outside both parent chains and one
 ;;  ;; unrelated roadmap: both referencing scope revisions advance, the
 ;;  ;; unrelated one stays.)
+;; moving-source   docs/SPEC-WORK.md:5585
+;; ------------------------------------------------------------------
+;; NEEDS-KERNEL: provider intake adapter (a body edited / comment added and
+;; deleted during capture: captured versions preserved, incomplete marked).
+;;(deftest "moving-source" "docs/SPEC-WORK.md:5585"
+;;    "captured=preserved,incomplete=marked,reconciled=yes"
+;;  ;; a body edited, a visible comment added and deleted, labels and state
+;;  ;; changed and an issue reopened during capture: captured versions
+;;  ;; preserved, a mixed or incomplete capture marked as such.)
 
 ;;;; ------------------------------------------------------------------
 ;;;; Draft-25..27 replays promised by docs/SPEC-WORK.md and absent here.
