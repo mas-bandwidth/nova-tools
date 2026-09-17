@@ -387,6 +387,20 @@ The exit of a pit stop is a trust batch: the fix cards of the stop rerun as one 
 one scores `done` with its red line quoted, before the queue widens again
 ([PIT-STOP.md](PIT-STOP.md), **The exit gate**).
 
+## The pit stop
+
+A **pit stop** is the coordinator's decision to stop widening the queue and spend
+the machine on the faults that make every card slower, until one trust batch
+proves them gone ([PIT-STOP.md](PIT-STOP.md)). The activity it names is bugs
+only: fixes with a reproducing test and its red line quoted, reads and rebases,
+one PR per fault, while the policy's `scope-regex` admits nothing else and
+anything expansionary is labelled `next-push` in its issue and never carded
+(rule 7 of **Rate and convergence**). A pit stop is finished when the fix cards
+of the stop rerun as one trust batch on the fixed tools and every card scores
+`done` with its red line quoted — no abstain, no `harness-silent`, no `idle`,
+no false red in any package — and only then does the queue widen again
+([PIT-STOP.md](PIT-STOP.md), **The exit gate**).
+
 ## Exit codes and the output grammar
 
 Per SPEC.md: **0** the verb ran and the state it reports is consistent — a pool written, cards
