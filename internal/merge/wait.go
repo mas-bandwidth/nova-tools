@@ -55,6 +55,12 @@ func Wait(host Host, prNum int, timeout, interval time.Duration, now func() time
 				return 0
 			}
 			if checks, err := host.Checks(pr.HeadOID); err == nil {
+				// nova-tools #1014: the host may answer a whole pull request
+				// rather than one commit, so an old merge-queue run's failed
+				// ci-ok on a sha the head has moved past can sit beside the
+				// head's in-progress run. Judge the head's own runs only: a
+				// conclusion on another sha is not evidence about this head.
+				checks = checks.ForSHA(pr.HeadOID)
 				pending = checks.PendingList()
 				if checks.Red > 0 {
 					names := append([]string(nil), checks.RedNames...)

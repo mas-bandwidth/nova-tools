@@ -13,10 +13,16 @@ type FakeHost struct {
 	PRs      map[int]PR
 	Branches map[string]string
 	ChecksBy map[string]Checks
-	Readied  []int
-	Atomic   bool
-	Merges   []string
-	Err      error
+	// CheckResults is a rollup whose every entry carries the commit it ran on,
+	// so a test can put an old failure on one sha and an in-progress run on the
+	// head and see which one the wait verb judges. Checks answers these for any
+	// oid, the way a pull-request rollup answers more than the head; the verb,
+	// not the fake, is the thing that filters.
+	CheckResults []CheckDetail
+	Readied      []int
+	Atomic       bool
+	Merges       []string
+	Err          error
 	// OnPR, when set, answers PR reads per poll so a test can script a PR that
 	// merges on the second poll. It receives the PR number and the 1-based call
 	// count; returning ok=false falls through to the PRs map. OnChecks does the
@@ -64,9 +70,10 @@ func (f *FakeHost) BranchOID(branch string) (string, error) {
 	return oid, nil
 }
 
-// Checks answers the buckets a test set for that commit. An unknown commit has no checks
-// at all, which is PENDING and not green -- the same answer the real host gives for a
-// pull request whose workflows have not been queued.
+// Checks answers the buckets a test set for that commit, plus the sha-carrying
+// rollup. An unknown commit has no checks at all, which is PENDING and not
+// green -- the same answer the real host gives for a pull request whose
+// workflows have not been queued.
 func (f *FakeHost) Checks(oid string) (Checks, error) {
 	if f.Err != nil {
 		return Checks{}, f.Err
@@ -77,7 +84,11 @@ func (f *FakeHost) Checks(oid string) (Checks, error) {
 			return c, nil
 		}
 	}
-	return f.ChecksBy[oid], nil
+	c := f.ChecksBy[oid]
+	for _, r := range f.CheckResults {
+		c.AddRun(r.Name, r.Conclusion, r.SHA)
+	}
+	return c, nil
 }
 
 func (f *FakeHost) Ready(n int) error {
@@ -127,4 +138,11 @@ func (f *FakeHost) SetCheckDetails(oid string, details ...CheckDetail) {
 		c.Add(d.Name, d.Conclusion)
 	}
 	f.ChecksBy[oid] = c
+}
+
+// SetCheckResult records one check run against the commit whose head_sha it
+// names. A run on a sha the pull request has moved past is a stale conclusion,
+// and a test uses this to prove the wait verb ignores it (nova-tools #1014).
+func (f *FakeHost) SetCheckResult(sha, name, conclusion string) {
+	f.CheckResults = append(f.CheckResults, CheckDetail{Name: name, Conclusion: conclusion, SHA: sha})
 }
