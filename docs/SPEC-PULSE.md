@@ -287,6 +287,7 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
+nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
@@ -370,20 +371,22 @@ under #500. Replay: `status-expanding-after-two-hours-above-one`.
 ## Progress
 
 `nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]` answers "how fast, at what cost,
-how long" from records and never from a guess (Glenn, 2026-09-15, #536; the line joins **The
-verbs** block, which `help` prints byte for byte, when the verb lands). It reads every job's
+how long" from records and never from a guess (Glenn, 2026-09-15, #536). It reads every job's
 `usage.tsv` under `--roots` (start, end, rc, usd) for the day and the queue's rows, no model,
 two lines:
 
 ```
-PROGRESS cards=<n> rc0=<n> wall_p50_s=<n> wall_p90_s=<n> usd_per_card=<x.xxxx> span_h=<n> effective_parallelism=<n.n> cards_per_hour=<n>
-ESTIMATE remaining_cards=<n> hours=<n>
+PROGRESS cards=<n> rc0=<n> wall_p50_s=<n> wall_p90_s=<n> usd_per_card=<x.xxxx> span_h=<n.n> effective_parallelism=<n.n> cards_per_hour=<n.n>
+ESTIMATE remaining_cards=<n> hours=<n.n>
 ```
 
 `effective_parallelism` is busy card-seconds over span seconds — what the benches did, not
 what they had. `remaining_cards` is pending + launched + open PRs needing a read + 2 x open
 in-scope issues; `hours` is `remaining x p90 / parallelism x 1.5`, conservative by that factor.
-The `PULSE WIDTH` line carries `hours=<n>` from the same estimate. First measurement,
+`span_h`, `effective_parallelism`, `cards_per_hour` and `hours` print one decimal; the verb
+reads `usage.tsv` columns by header name, so column order never matters, and without a
+`POLICY` naming the repo the PR and issue terms are zero and the estimate counts the queue
+alone. The `PULSE WIDTH` line carries `hours=<n>` from the same estimate. First measurement,
 2026-09-15: 326 cards, p90 10 min, USD 0.18 per card, 44.6 cards per hour, effective
 parallelism 3.5 against 64 slots — the benches were mostly idle across the day, which is the
 number rule 3 of **Rate and convergence** answers. Replays: `progress-counts-only-the-day`,
@@ -461,8 +464,8 @@ HANDOFF OK to=<name> inflight=<n> pending=<n> escalations=<n>
 HANDOFF REFUSED: <reason> (<remedy>)
 TAKEOVER OK from=<name> inherited=<inflight/pending/escalations>
 TAKEOVER REFUSED owner=<name> pid=<n> host=<h> (wait, or clear the stale lock)
-PROGRESS cards=<n> rc0=<n> wall_p50_s=<n> wall_p90_s=<n> usd_per_card=<x.xxxx> span_h=<n> effective_parallelism=<n.n> cards_per_hour=<n>
-ESTIMATE remaining_cards=<n> hours=<n>
+PROGRESS cards=<n> rc0=<n> wall_p50_s=<n> wall_p90_s=<n> usd_per_card=<x.xxxx> span_h=<n.n> effective_parallelism=<n.n> cards_per_hour=<n.n>
+ESTIMATE remaining_cards=<n> hours=<n.n>
 <TOKEN> MORE kind=<k> shown=<n> total=<t> <remedy>
 <TOKEN> NOTE <something true about this run that is not a finding>
 ```
