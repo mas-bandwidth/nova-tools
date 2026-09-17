@@ -49,6 +49,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
@@ -2423,6 +2424,17 @@ const maxWaitTimeout = 60 * time.Minute
 // minWaitInterval is as fast as a wait will poll, because a poll is a git fetch.
 const minWaitInterval = 100 * time.Millisecond
 
+// waitBlockedHook is a test-only sync point, set behind this unexported name. It
+// is called with the bus directory at the exact boundary a wait becomes blocked:
+// it has polled, found nothing new, and is about to sleep until its next poll.
+// Tests point it at a channel close so a note can be pushed at that boundary
+// instead of after a sleep that races the poll (#370). It is an atomic because it
+// is read from whichever goroutine runs waitLoop and written once by a test, and
+// parallel tests may run waitLoop while a sibling's hook is installed.
+type waitBlockedHook func(busDir string)
+
+var testWaitBlockedHook atomic.Pointer[waitBlockedHook]
+
 // writeBeatLease writes the lane's BEAT carrying until=now+lease, so a line whose manager
 // process is alive but between waits still reads awake to `nova-wake awake`. It is called
 // on entry, every tick and on exit; the stamp and until come from the same Now so the
@@ -2584,6 +2596,11 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		// out by being told about none of them.
 		if polls == 1 && !r.Legacy.Before.IsZero() && r.Legacy.Before.After(pollNow) && !r.SwitchDay {
 			fmt.Fprintf(stdout, "WAIT NOTE %s\n", oneline.Escape(hiddenReason(r.Legacy, pollNow)))
+		}
+		if polls == 1 {
+			if h := testWaitBlockedHook.Load(); h != nil {
+				(*h)(o.busDir)
+			}
 		}
 		left := time.Until(deadline)
 		if left <= 0 {

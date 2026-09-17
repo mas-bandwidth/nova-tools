@@ -102,7 +102,11 @@ var messageBusAudit = audit.Config{
 		// strconv is the same shape from the other side: FormatInt turns the byte count on
 		// an INBOX BODIES GAP line into digits. It is a converter, it writes to no stream,
 		// and its result reaches the line through oneline.Field.
-		`"bytes"`, `"encoding/base64"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"time"`,
+		//
+		// sync/atomic carries testWaitBlockedHook, the #370 sync point: it stores a function
+		// pointer a test installs and waitLoop invokes, holds no writer, and reaches no
+		// stream -- the hook prints nothing, it only closes a channel.
+		`"bytes"`, `"encoding/base64"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"sync/atomic"`, `"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at
