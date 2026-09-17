@@ -48,12 +48,14 @@ changed_dirs=$(git diff --name-only "$base" HEAD -- '*.go' | xargs -r -n1 dirnam
 want=""
 for d in $changed_dirs; do want="$want ./$d"; done
 
-# A change to the workflow (or its testdata) moves the package that holds the
-# workflow's own law, which no *.go diff can see. Select it explicitly so a
-# ci.yml edit still answers internal/ci on the PR that makes it.
-if git diff --name-only "$base" HEAD | grep -q '^\.github/'; then
-  want="$want ./internal/ci"
-fi
+# internal/ci holds the class tests that read the workflow and script files as
+# text; it scans the tree rather than importing what it guards, so no *.go diff
+# can name it as a dependent. A cmd/nova-swarm edit (PR #1073) left an
+# internal/ci class test red and no shard was selected to run it, so the branch
+# sat for two hours. Select it on every run, not only when the diff touches
+# .github/: a change that can move the workflow's law always pays for the
+# package that holds it.
+want="$want ./internal/ci"
 
 # dependents: every package in the tree that imports a changed one.
 while read -r pkg deps; do

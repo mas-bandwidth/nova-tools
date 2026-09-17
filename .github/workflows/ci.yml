@@ -580,9 +580,12 @@ jobs:
               pkgs="$pkgs $p"
             done
           fi
-          # A group that changes no Go package still runs the package that holds
-          # this file's own law, so the leg is never green by doing nothing.
-          [ -n "$pkgs" ] || pkgs="./internal/ci"
+          # The package that holds this file's own law is never named by the
+          # *.go diff: internal/ci scans the tree rather than importing what it
+          # guards, so a cmd/nova-swarm edit (PR #1073) selected no shard to run
+          # it. Always append it, so the leg is never green by doing nothing and
+          # never blind to the workflow's own law.
+          pkgs="$pkgs ./internal/ci"
           echo "merge_group: full hosted on:${pkgs}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
 
