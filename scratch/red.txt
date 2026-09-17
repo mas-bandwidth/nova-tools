@@ -1,10 +1,10 @@
 === RUN   TestHarvestReadsPoolLayout
     harvest_pool_test.go:65: pool card X must be harvested from pool/reports, got:
-        HARVEST RETRY label=X card=/Users/glenn/rowan-working/swarm-root/94/jobs/card-8310/repo/scratch/TestHarvestReadsPoolLayout465972535/001/cardsrc/X.md: -
-        HARVEST RETRY label=Y card=/Users/glenn/rowan-working/swarm-root/94/jobs/card-8310/repo/scratch/TestHarvestReadsPoolLayout465972535/001/cardsrc/Y.md: -
+        HARVEST RETRY label=X card=/home/gaffer/rowan-swarm-root/flash-card-8310/jobs/card-8310/scratch/pre-fix/scratch/TestHarvestReadsPoolLayout3665223031/001/cardsrc/X.md: -
+        HARVEST RETRY label=Y card=/home/gaffer/rowan-swarm-root/flash-card-8310/jobs/card-8310/scratch/pre-fix/scratch/TestHarvestReadsPoolLayout3665223031/001/cardsrc/Y.md: -
         HARVEST OK id=p1 done=0 pushed=0 prs=0 abstain=2 mismatch=0 refused=0 retry=2 usd=- took=0s
         PULSE POOL EMPTY in-flight=0
---- FAIL: TestHarvestReadsPoolLayout (0.26s)
+--- FAIL: TestHarvestReadsPoolLayout (0.27s)
 FAIL
-FAIL	github.com/mas-bandwidth/nova-tools/internal/pulse	0.485s
+FAIL	github.com/mas-bandwidth/nova-tools/internal/pulse	0.287s
 FAIL
