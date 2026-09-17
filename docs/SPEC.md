@@ -4619,3 +4619,51 @@ identity across retries. UPDATE/APPLY/REPORT are the primary tokens. TOOL, UNKNO
 CHANGED, MORE, SENT, NOTE, BEFORE, RUN, AFTER, STALE, NEWER and DIFFERENT are
 informational second tokens; OK/FAIL are final verdicts, REFUSED is an invocation
 refusal. All data fields use internal/oneline.
+
+## The efficiency card (#86), nova-check
+
+The card is a measurement, taken on the bench on **2026-09-12**, of the work
+`nova-check` pays for twice. This section is the part of the efficiency-card
+set that binds `nova-check`; the cross-tool half lives in
+[SPEC-SWARM.md](SPEC-SWARM.md), and nothing here restates it.
+
+### REPEATS: two full walks of one tree in one quickstart
+
+`quickstart` runs `links` and then `nocode`, and each opened its own
+`filepath.WalkDir` of the same root — `internal/check/links.go:52` and
+`internal/check/nocode.go:356`. One `quickstart` over the measured self repo
+(1,496 `.md` files, 1,810 files under the floor, **71 MB**) stats
+**1,496 + 1,810** entries across two traversals of one directory. That is the
+same tree, read twice, in one process, and both checks want the same thing
+from it: the path list. So the rule is **one walk of the root per
+`quickstart`**, and `links` and `nocode` consume the path list it yields. The
+walk is not the wall clock here — a `quickstart` returned in **0.27 s**, the
+page cache warm and process start dominating — so the duplication is work,
+not time. `links`, `nocode`, `attest`, `floors` and `corpus` each keep their
+own walk when run as their own verb.
+
+### COORDINATOR READ: capped at 20 per kind, with the remedy on the MORE line
+
+A first run is **capped**: it prints 20 finding lines per kind, one MORE line
+and one FAIL line, however many findings the tree holds. At the measured self,
+`LINKS` printed 22 lines / 2,295 B for 25 broken links and `NOCODE` 22 lines /
+2,395 B for 24 findings, and a tree with 500 broken links returns the same 20
+finding lines, one MORE and one FAIL. `--fail-max <n>` raises the ceiling and
+`--fail-max 0` prints every finding; the `shown=<n>` / `total=<t>` pair prints
+in both the MORE line and the closing line.
+
+### WAITS ON: nothing
+
+`nova-check` is the one tool of the seven with no clock, no subprocess, no
+network and no lock. There is no `--timeout`, no interval, no poll, no `gh`
+and no `git`: it waits only on the filesystem, and every verb measured
+returned **under 0.30 s** — inside the two-minute rule by two orders of
+magnitude, so it is the one that can be run between edits.
+
+### Red tests
+
+The card earns the same red-first bar as every rule here: seen red before it
+is trusted.
+
+- a `quickstart` of one tree walks the root once and hands the same path list to `links` and `nocode`;
+- `--fail-max <n>` caps each kind's findings at `n`, the `MORE` line names the flag that lifts it, and `--fail-max 0` prints every finding.
