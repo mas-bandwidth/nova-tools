@@ -630,7 +630,7 @@ nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --runner <cmd>
 nova-swarm bench    probe --benches <file> --bench <name>
 nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
 nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--worker <file>]
-nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
+nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox] [--slots-store <dir>]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
 nova-swarm stop     --pool <dir>
@@ -676,6 +676,25 @@ outcomes without an automatic same-text descendant, while preserving the
 attempt's report, usage, failure reason and manual `requeue`. It is an
 invocation policy, not task metadata: a later `run` that recovers an ended job
 needs the flag again. Absent it, the default automatic behavior below applies.
+
+**In-flight caps and stalls (issue #917).** A worker description may name
+`route` (default `provider/model`) and `max_inflight` (optional). `run` counts
+the live tasks on that route — every job it is watching, plus, when
+`--slots-store <dir>` names a bench slot-lease store, every unexpired lease whose
+`label=` carries the route — and starts nothing while the count is at the
+ceiling. The count is printed as `STATUS ROUTE <route> inflight=<n> cap=<c>`
+whenever it changes, so the line that holds a task is visible in the run's own
+log. The count is never cached across admissions: a lease may expire and a
+watcher may end between two of them. A description may also name `stall_after`
+(default 4m). When a running task's `<job>/harness.log` has not grown for that
+long, the supervisor reaps the task's whole group, records `end=stall` on
+`exit.json`, prints `STALL task=<id> silent=<s> last=<last log line, 120 chars>`,
+and the dispatcher re-queues the task **once** through rule 7's own path — a new
+attempt in `pending/`, never a launch in the instant the stalled task vacated its
+slot — so `max_inflight` decides when the retry runs. A second stall is final,
+exactly as a second reap is. The three fields are optional; a `max_inflight`
+below zero and a `stall_after` that is not a positive duration are refusals at
+load.
 
 `batch --tasks <dir>` queues one task per regular file directly under `<dir>`,
 in name order, each with the same `--files`, `--tokens`, `--template` and
@@ -1453,7 +1472,7 @@ RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|fals
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
-RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|stall|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
@@ -1463,6 +1482,7 @@ RUN PROVIDER id=<id> slot=<n> after=<d> attempts=<n> dest=<failed> provider=<ref
 RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|malformed> findings=<n> refusals=<n> notes=<sent>/<read|-> unpublished=<true|false> budget=<spent|n+|->/<n> dest=<done|failed> [log=<one bounded line of what the harness said>]
 RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
 RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<true|false> budget=<spent|n+|->/<n> survived=<true|false> requeued=<true|false> reaped=<1|2>
+RUN STALL id=<id> slot=<n> after=<d> findings=<n> requeued=<true|false> reaped=<1|2> last=<last log line, 120 chars>
 RUN MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
 RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> recovered=<n> auto_retry=<true|false> after=<d>
 RUN NOTE <the one remedy line>
@@ -1474,6 +1494,7 @@ NATIVE REFUSED: <reason>
 ADMIT REFUSED benchmark window open until <stamp>
 NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> [fence=rejected path=<p>] [usage=none reason=<r> path=<p>]
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
+STATUS ROUTE <route> inflight=<n> cap=<n>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
 TRIAGE REPORT id=<id> rev=<sha12> job=<name> result=<ok|clean|plan-only> items=<n> red=<n> green=<n> notdone=<n>: <head>

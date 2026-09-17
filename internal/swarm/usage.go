@@ -41,6 +41,9 @@ const (
 	// grace with a provider server error in its tail. It is retried with backoff and,
 	// after the third fast failure, is filed with the provider's own ref (issue #900).
 	EndProvider = "provider"
+	// EndStall is a running task whose harness log stopped growing for stall_after:
+	// the supervisor reaps it and records the last line it said (issue #917).
+	EndStall = "stall"
 )
 
 // Dash is the absence this file writes, and never a zero.
