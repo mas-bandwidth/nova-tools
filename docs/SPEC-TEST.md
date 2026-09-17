@@ -22,6 +22,11 @@ below is reviewed. Nothing here is a new gate for current release or Fixed
 Tables work. Related: #185 (over-budget CI samples, tier-routing repair),
 #83 #183 #229, specs #236/#237.
 
+The second slice (#561, from proposal #247) fixes the test and CI rules of
+2026-09-15 as the five verbs **The local and CI verbs** below. Where this
+section and the first-slice text or the original proposal of #247 disagree,
+this section supersedes them.
+
 ## Verbs
 
 - `plan` reads a versioned repository validation manifest — source,
@@ -63,3 +68,42 @@ commit; a newer failed attempt supersedes; a partial rerun covers only its
 scope; a changed dependency breaks equivalence; a timeout, a missing job
 and a superseded cancellation each read as their own receipt. Measure
 coordinator turns and duplicate execution with unchanged coverage.
+
+## The local and CI verbs
+
+The test and CI rules of 2026-09-15 as verbs. Each runs a suite or a
+workflow; none dispatches a new validation run (that stays the first
+slice's `run`).
+
+- `fast` runs the per-package suite under the one-minute budget, one line
+  per package with its seconds, and fails on a budget breach.
+  `docs/TEST-DURATIONS.md` is its record.
+- `slow` runs the slow-tagged suite; it is the nightly job, never the
+  per-change path.
+- `ci` generates and validates the workflow matrix from the package list.
+  Pull requests run on self-hosted runners in parallel with fail-fast off,
+  a fork guard and a concurrency group; hosted runners run only on main
+  and nightly; `ci-ok` aggregates the tier; every action is pinned by SHA;
+  the YAML is never hand-edited.
+- `runners` mints the registration token, registers N runners per bench
+  with platform labels and core pinning, and lists status. Any machine a
+  person can ssh to may be a runner.
+- `local` runs the fast suite: what a card or a read runs before a PR, so
+  branch checks are local by verb.
+
+### Rules it encodes
+
+1. Tests answer inside the two-minute rule: one minute per package, two at
+   most (#516).
+2. The CI rule of 2026-09-15, memory
+   `ci-on-main-only-self-hosted-parallel`: pull requests run in parallel
+   on self-hosted runners, and hosted runners run only on main and nightly.
+3. Rule of the day: slow CI is a crawl forever, so the slow tier is
+   explicitly requested and nightly, never the per-change path.
+
+### Replays
+
+`fast-fails-on-budget-breach`, `slow-runs-only-with-tag`,
+`ci-matrix-matches-package-list`, `ci-prs-never-use-hosted-runners`,
+`ci-fork-guard-present`, `runners-register-with-pinning`,
+`local-runs-fast-suite`.
