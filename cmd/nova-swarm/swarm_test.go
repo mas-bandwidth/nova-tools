@@ -897,6 +897,42 @@ func TestTheHarnessIsToldWhichModelToRun(t *testing.T) {
 	}
 }
 
+// ISSUE #881 (a), the run half: the worker description already pins the model, and the
+// dispatcher launches exactly that one. The fake harness records the model it was handed;
+// the test asserts the description's model is the ONLY --model the harness ever sees, so a
+// future path that launched another model for a key authorized for one goes red here.
+func TestRunLaunchesOnlyTheDescriptionModel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a worker under a pinned model\nFAKE-FINDINGS 1\n")
+
+	// --no-sandbox, the one loud workaround (rule 11): the model reaches the harness the
+	// same way walled or not, and this test runs on a machine whose sandbox backend is
+	// blocked. The model pin is about the harness argv, never about the wall.
+	exit, stdout, stderr := b.run("--no-sandbox")
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the start summary", lineWith(t, stdout, "RUN POOL"), "model=fake-model")
+	argv := b.jobFile(id, "argv")
+	fields := strings.Fields(argv)
+	saw := false
+	for i, a := range fields {
+		if a == "--model" && i+1 < len(fields) {
+			saw = true
+			if fields[i+1] != "fake-model" {
+				t.Errorf("the harness was handed model %q, want the description's fake-model:\n%s", fields[i+1], argv)
+			}
+		}
+	}
+	if !saw {
+		t.Errorf("the harness's argv carries no --model at all:\n%s", argv)
+	}
+}
+
 // A worker description that never places the model is refused BEFORE any worker starts,
 // naming the field and showing the shape. This is D1 caught at the door.
 func TestAWorkerDescriptionWithoutTheModelIsRefused(t *testing.T) {
