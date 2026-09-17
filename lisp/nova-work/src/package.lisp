@@ -1300,7 +1300,54 @@
     #:pulse-result-notes
     #:pulse-result-published
     #:pulse-result-cost
-    #:quiet-pulse))
+    #:quiet-pulse
+    ;; replays card 8661: the coordination measure, the single-writer total
+    ;; order, the field/verb grammar, the prompt-profile status line and the
+    ;; machine as fleet CONFIG
+    #:coordination-measure
+    #:kernel-command-loop
+    #:kernel-defect-line
+    #:journal-seq-numbers
+    #:*mutation-grammar*
+    #:*field-owning-verbs*
+    #:mutation-verbs
+    #:verb-event-kind
+    #:verb-ordered-fields
+    #:verb-subject
+    #:owning-verbs
+    #:every-field-has-an-owning-verb-p
+    #:make-prompt-profile
+    #:prompt-profile-name
+    #:prompt-profile-pointer
+    #:prompt-profile-digest
+    #:prompt-profile-policy-version
+    #:prompt-profile-evidence
+    #:prompt-profile-expiry
+    #:prompt-profile-owner
+    #:prompt-profile-state
+    #:prompt-profile-status-line
+    #:prompt-profile-invocation
+    #:make-machine-record
+    #:machine-record-id
+    #:machine-record-name
+    #:machine-record-owner
+    #:machine-record-connect
+    #:machine-record-roles
+    #:machine-record-permits
+    #:machine-record-limits
+    #:machine-record-facts
+    #:machine-record-declared-by
+    #:machine-record-declared-at
+    #:machine-config-section
+    #:machine-work-tree-node-p
+    #:machine-node-field
+    #:machine-acceptance
+    #:machine-derived-state
+    #:machine-settle
+    #:machine-to-done
+    #:machine-completion-evidence-p
+    #:register-machine
+    #:machine-ok-line))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
