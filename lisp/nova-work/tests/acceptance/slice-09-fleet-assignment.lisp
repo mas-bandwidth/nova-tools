@@ -12,8 +12,8 @@
 (defun honest-verifier (bytes)
   "The operator-configured verifier: the configured recipient identity, a stable
 receipt id and the digest of the received bytes. Test-only stand-in."
-  (declare (ignore bytes))
-  '(:sender "rowan" :recipient "glenn" :receipt-id "receipt-1" :digest "sha256:1111"))
+  (list :sender "rowan" :recipient "glenn" :receipt-id "receipt-1"
+        :digest (sha256-hex bytes)))
 
 (defun failing-verifier (bytes)
   "A verifier that fails validation."
@@ -172,6 +172,14 @@ receipt id and the digest of the received bytes. Test-only stand-in."
       (check-equal nil ok "a plain request carrying :sender is refused")
       (check-equal 2 code "that refusal is exit 2")
       (ok (search "session" line) "the refusal names the session's own half: ~A" line))
+    (multiple-value-bind (ok line code)
+        (assignment-acknowledge state :received
+                                :staged (stage-provenance "x" #'honest-verifier :rev 1)
+                                :request (list :receipt-digest "sha256:0")
+                                :offer-id "o-1" :current-rev 1)
+      (check-equal nil ok "a plain request carrying :receipt-digest is refused")
+      (check-equal 2 code "that refusal is exit 2")
+      (ok (search "session" line) "the refusal names the session's own half: ~A" line))
     ;; no bus body is promoted to authority and nothing canonical was written.
     (check-equal '() (assignment-state-deliveries state) "no delivery was written")
     (check-equal '() (assignment-state-acceptances state) "no accepted ownership was written")
@@ -182,7 +190,55 @@ receipt id and the digest of the received bytes. Test-only stand-in."
                  "the pending offer is untouched")
     (ok (notany (lambda (record) (search "BUS NOTE" (princ-to-string record)))
                 (assignment-state-acceptances state))
-        "no bus body became an accepted record")))
+        "no bus body became an accepted record")
+    ;; The verifier result a receipt needs: the configured recipient identity, a
+    ;; stable receipt id and the digest of the received bytes; the session's own
+    ;; half is derived from it and never carried on the request
+    ;; (SPEC-WORK.md:3851-3853, 5837-5838).
+    (let* ((bytes "received o-1")
+           (verifier (make-receipt-verifier
+                      :recipient "glenn"
+                      :verify (lambda (b)
+                                (list :recipient "glenn" :receipt-id "receipt-1"
+                                      :digest (sha256-hex b))))))
+      (let ((staged (stage-provenance bytes verifier :rev 1)))
+        (ok (staged-input-valid-p staged) "a full verifier result stages")
+        (check-equal "glenn" (getf (staged-input-result staged) :recipient)
+                     "the result names the configured recipient")
+        (check-equal (sha256-hex bytes) (staged-input-digest staged)
+                     "the staged digest is the digest of the received bytes")
+        (check-equal bytes (staged-input-bytes staged) "the stage holds the bytes"))
+      ;; a result that names another recipient is not the configured verifier's.
+      (check-equal nil
+                   (staged-input-valid-p
+                    (stage-provenance bytes
+                                      (make-receipt-verifier
+                                       :recipient "glenn"
+                                       :verify (lambda (b)
+                                                 (list :recipient "rowan"
+                                                       :receipt-id "receipt-x"
+                                                       :digest (sha256-hex b))))
+                                      :rev 1))
+                   "a result for another recipient is refused")
+      ;; the writer derives :sender, :receipt-digest and :effect from the result.
+      (let ((fresh (make-assignment-state
+                    :who "glenn" :free-slots 4
+                    :offers (list (list :offer-id "o-1" :effect :dispatched)))))
+        (multiple-value-bind (ok line code)
+            (assignment-acknowledge fresh :received
+                                    :staged (stage-provenance bytes verifier :rev 1)
+                                    :offer-id "o-1" :current-rev 1 :expect 1)
+          (ok ok "a verified received receipt is admitted: ~A" line)
+          (check-equal 0 code "the verified receipt exits 0"))
+        (let ((receipt (first (assignment-state-deliveries fresh))))
+          (check-equal "glenn" (getf receipt :sender)
+                       "the sender is derived from the verifier's recipient")
+          (check-equal "receipt-1" (getf receipt :receipt-id)
+                       "the receipt carries the verifier's stable receipt id")
+          (check-equal (sha256-hex bytes) (getf receipt :receipt-digest)
+                       "the receipt digest is the verifier's digest of the bytes")
+          (check-equal :delivered (getf receipt :effect)
+                       "the effect is the session's own half"))))))
 
 ;;; ------------------------------------------------------------------
 ;;; staged-admission-refuses                       SPEC-WORK.md:3859,5685
@@ -216,4 +272,63 @@ receipt id and the digest of the received bytes. Test-only stand-in."
     ;; session status answers while a stage is still running.
     (multiple-value-bind (ok line) (session-status state)
       (ok ok "session status answers while the stage runs: ~A" line)
-      (ok (search "SESSION OK" line) "status prints its line: ~A" line))))
+      (ok (search "SESSION OK" line) "status prints its line: ~A" line)))
+  ;; The one writer revalidates --expect, the offer's immutable tuple, the
+  ;; profile and the capacity, and the offered payload's staged digest, before
+  ;; admitting one envelope (SPEC-WORK.md:3854-3858, 5839-5840).
+  (let* ((bytes "o-1 bytes")
+         (staged (stage-provenance bytes #'honest-verifier :rev 6))
+         (fresh (make-assignment-state
+                 :who "glenn" :free-slots 4
+                 :offers (list (list :offer-id "o-1" :node "n-1" :attempt "a-1")))))
+    ;; a stage behind the writer's --expect.
+    (multiple-value-bind (ok line code)
+        (assignment-acknowledge fresh :received :staged staged :offer-id "o-1"
+                                :current-rev 6 :expect 5)
+      (check-equal nil ok "the writer refuses when --expect trails the revision")
+      (check-equal 2 code "the stale --expect refusal is exit 2")
+      (ok (search "expect" line) "the refusal names --expect: ~A" line))
+    ;; the offer's immutable tuple is revalidated.
+    (multiple-value-bind (ok line code)
+        (assignment-acknowledge fresh :received :staged staged :offer-id "o-1"
+                                :current-rev 6 :expect 6 :attempt "a-2")
+      (check-equal nil ok "the writer refuses an offer tuple that moved")
+      (check-equal 2 code "the moved-tuple refusal is exit 2")
+      (ok (search "attempt" line) "the refusal names the attempt: ~A" line))
+    ;; the profile is revalidated against the friend's CONFIG at that revision.
+    (multiple-value-bind (ok line code)
+        (assignment-acknowledge fresh :received :staged staged :offer-id "o-1"
+                                :current-rev 6 :expect 6 :profile-ok nil)
+      (check-equal nil ok "the writer refuses a profile that is not that friend's")
+      (check-equal 2 code "the profile refusal is exit 2")
+      (ok (search "profile" line) "the refusal names the profile: ~A" line))
+    ;; the offered payload's staged digest must match --payload-sha256.
+    (multiple-value-bind (ok line code)
+        (assignment-acknowledge fresh :received :staged staged :offer-id "o-1"
+                                :current-rev 6 :expect 6
+                                :staged-payload (stage-payload "other payload")
+                                :payload-sha256 (sha256-hex bytes))
+      (check-equal nil ok "the writer refuses a mismatched staged payload")
+      (check-equal 2 code "the payload refusal is exit 2")
+      (ok (search "payload" line) "the refusal names the payload: ~A" line))
+    ;; the capacity is revalidated at the write.
+    (multiple-value-bind (ok line code)
+        (assignment-acknowledge fresh :received :staged staged :offer-id "o-1"
+                                :current-rev 6 :expect 6 :reserve 5)
+      (check-equal nil ok "the writer refuses more than the free capacity")
+      (check-equal 2 code "the capacity refusal is exit 2")
+      (ok (search "capacity" line) "the refusal names the capacity: ~A" line))
+    ;; none of the refusals wrote, and a fully revalidated stage is admitted.
+    (check-equal '() (assignment-state-deliveries fresh)
+                 "no refused stage wrote a receipt")
+    (multiple-value-bind (ok line code)
+        (assignment-acknowledge fresh :received :staged staged :offer-id "o-1"
+                                :current-rev 6 :expect 6 :node "n-1" :attempt "a-1"
+                                :staged-payload (stage-payload bytes)
+                                :payload-sha256 (sha256-hex bytes))
+      (ok ok "a stage that revalidates is admitted: ~A" line)
+      (check-equal 0 code "the admitted stage exits 0"))
+    (check-equal 1 (length (assignment-state-deliveries fresh))
+                 "exactly one admitted envelope wrote exactly one receipt")
+    (multiple-value-bind (ok line) (session-status fresh)
+      (ok ok "session status still answers: ~A" line))))

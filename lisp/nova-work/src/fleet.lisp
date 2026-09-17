@@ -1372,29 +1372,6 @@ launches anything."
 request carrying one is refused, because they are the session's own half of the
 envelope (SPEC-WORK.md:3856).")
 
-(defstruct (staged-input
-            (:constructor make-staged-input
-                (&key bytes result valid-p rev reason)))
-  "Immutable staged bytes and the validation result produced outside the
-mutation loop. RESULT is the verifier's (values); VALID-P is false when the
-verifier could not vouch for the provenance."
-  bytes result valid-p rev reason)
-
-(defun stage-provenance (bytes verifier &key (rev 0))
-  "Run the operator-configured VERIFIER over the staged provenance BYTES outside
-the mutation loop. A verifier result carries the configured recipient identity,
-a stable receipt id and the digest of the received bytes; a verifier outage or a
-failing result is an invalid stage that admits nothing (SPEC-WORK.md:3852-3858)."
-  (handler-case
-      (let ((result (and verifier (funcall verifier bytes))))
-        (if result
-            (make-staged-input :bytes bytes :result result :valid-p t :rev rev)
-            (make-staged-input :bytes bytes :result nil :valid-p nil :rev rev
-                               :reason "provenance unverified")))
-    (error ()
-      (make-staged-input :bytes bytes :result nil :valid-p nil :rev rev
-                         :reason "provenance unverified"))))
-
 (defun session-written-field (request)
   "The first key of REQUEST that belongs to the session's own half, or NIL."
   (loop for (key value) on request by #'cddr
@@ -1431,11 +1408,15 @@ state, W, the lease index, attempts, evidence and completion unchanged
   (decf (assignment-state-free-slots state) reserve)
   (values t (format nil "OFFER OK id=~A effect=dispatched" offer-id) 0))
 
-(defun %admission-refusal (state request staged current-rev what)
-  "The shared admission boundary for acknowledge and decline: a plain request
-carrying the session's own half, an unverified provenance and a stage from a
-conflicting revision each refuse with no canonical write."
-  (declare (ignore state))
+(defun %admission-refusal (state request staged current-rev what
+                           &key expect offer-id node generation attempt
+                                (profile-ok t) staged-payload payload-sha256 reserve)
+  "The shared admission boundary for acknowledge and decline. The staged reader
+runs outside the mutation loop; here the one writer revalidates the stage
+against the expected revision, --expect, the offer's immutable tuple, the
+profile and the capacity before admitting one envelope. A plain request carrying
+the session's own half, an unverified provenance, a conflicting revision and a
+stale --expect each refuse with no canonical write (SPEC-WORK.md:3854-3858)."
   (let ((field (and request (session-written-field request))))
     (when field
       (return-from %admission-refusal
@@ -1445,10 +1426,48 @@ conflicting revision each refuse with no canonical write."
   (unless (and staged (staged-input-valid-p staged))
     (return-from %admission-refusal
       (values nil (format nil "~A FAIL: provenance unverified" what) 2)))
+  (when (and expect (/= expect current-rev))
+    (return-from %admission-refusal
+      (values nil (format nil "~A FAIL: stale admission (--expect rev ~D, now ~D)"
+                          what expect current-rev)
+              2)))
   (unless (= (staged-input-rev staged) current-rev)
     (return-from %admission-refusal
       (values nil (format nil "~A FAIL: stale stage (rev ~D, now ~D)"
                           what (staged-input-rev staged) current-rev)
+              2)))
+  ;; the offer's immutable tuple, revalidated against the pending offer.
+  (when (and offer-id (or node generation attempt))
+    (let ((entry (find offer-id (assignment-state-offers state)
+                       :key (lambda (offer) (getf offer :offer-id)) :test #'equal)))
+      (cond
+        ((null entry)
+         (return-from %admission-refusal
+           (values nil (format nil "~A FAIL: no such offer ~A" what offer-id) 2)))
+        ((and node (not (equal (getf entry :node) node)))
+         (return-from %admission-refusal
+           (values nil (format nil "~A FAIL: offer is for another node" what) 2)))
+        ((and generation (not (equal (getf entry :generation) generation)))
+         (return-from %admission-refusal
+           (values nil (format nil "~A FAIL: offer is for another generation" what) 2)))
+        ((and attempt (not (equal (getf entry :attempt) attempt)))
+         (return-from %admission-refusal
+           (values nil (format nil "~A FAIL: offer is for another attempt" what) 2))))))
+  (when (null profile-ok)
+    (return-from %admission-refusal
+      (values nil (format nil "~A FAIL: profile is not that friend's at that revision"
+                          what)
+              2)))
+  (when (and staged-payload payload-sha256
+             (not (equal (staged-input-digest staged-payload) payload-sha256)))
+    (return-from %admission-refusal
+      (values nil (format nil "~A FAIL: staged payload digest is not --payload-sha256"
+                          what)
+              2)))
+  (when (and reserve (plusp reserve) (< (assignment-state-free-slots state) reserve))
+    (return-from %admission-refusal
+      (values nil (format nil "~A FAIL: declared free capacity does not cover ~D"
+                          what reserve)
               2)))
   (values t nil 0))
 
@@ -1463,16 +1482,25 @@ conflicting revision each refuse with no canonical write."
           :effect effect)))
 
 (defun assignment-acknowledge (state stage &key staged request offer-id
-                                              (expect 0) (current-rev 0))
+                                              expect (current-rev 0)
+                                              node generation attempt
+                                              (profile-ok t) staged-payload
+                                              payload-sha256 reserve)
   "`acknowledge --stage received` writes delivery, a verified report that the
 named recipient received that exact offer, and consents to nothing;
 `--stage accepted` writes accepted ownership, the admission of a verified
 acceptance as an assignment, changing no :responsible and proving nothing about
-whether remote work began. Both admit only behind the verifier; an unverified
-provenance writes nothing (SPEC-WORK.md:3835-3858)."
+whether remote work began. Both admit only behind the verifier, and the one
+writer revalidates --expect, the offer's immutable tuple, the profile and the
+capacity at the expected revision before admitting one envelope; an unverified
+or stale provenance writes nothing (SPEC-WORK.md:3835-3861)."
   (let ((what (ecase stage (:received "ACKNOWLEDGE") (:accepted "ACKNOWLEDGE"))))
     (multiple-value-bind (admitted refusal code)
-        (%admission-refusal state request staged current-rev what)
+        (%admission-refusal state request staged current-rev what
+                            :expect expect :offer-id offer-id :node node
+                            :generation generation :attempt attempt
+                            :profile-ok profile-ok :staged-payload staged-payload
+                            :payload-sha256 payload-sha256 :reserve reserve)
       (unless admitted
         (return-from assignment-acknowledge (values nil refusal code))))
     (ecase stage
@@ -1489,12 +1517,17 @@ provenance writes nothing (SPEC-WORK.md:3835-3858)."
                          offer-id)
                0)))))
 
-(defun assignment-decline (state &key staged request offer-id (expect 0) (current-rev 0))
-  "Write a verified refusal, and nothing else. It is inferred from nothing: a
-delivery or an acceptance already recorded is neither erased nor duplicated
+(defun assignment-decline (state &key staged request offer-id expect (current-rev 0)
+                                  node generation attempt (profile-ok t))
+  "Write a verified refusal, and nothing else. The one writer revalidates the
+stage and --expect the same way `acknowledge` does. It is inferred from nothing:
+a delivery or an acceptance already recorded is neither erased nor duplicated
 (SPEC-WORK.md:3839-3843)."
   (multiple-value-bind (admitted refusal code)
-      (%admission-refusal state request staged current-rev "DECLINE")
+      (%admission-refusal state request staged current-rev "DECLINE"
+                          :expect expect :offer-id offer-id :node node
+                          :generation generation :attempt attempt
+                          :profile-ok profile-ok)
     (unless admitted
       (return-from assignment-decline (values nil refusal code))))
   (push (%verified-receipt offer-id staged :declined)

@@ -152,7 +152,52 @@
     (let ((rebuilt (reconstruct-state (canonical-string (state-canonical-form (kernel-state k))))))
       (check-string= (root-digest (kernel-state k)) (root-digest rebuilt) "reconstruction root")
       (check-equal (state-history (kernel-state k)) (state-history rebuilt) "history retained")
-      (check-equal (state-closed-rows (kernel-state k)) (state-closed-rows rebuilt) "rows retained"))))
+      (check-equal (state-closed-rows (kernel-state k)) (state-closed-rows rebuilt) "rows retained")))
+    ;; `verify` over the item prints the same VERIFY ROW verdicts it printed
+    ;; while the item was open, and the evidence set and its fields are read the
+    ;; same before and after (SPEC-WORK.md:5649-5654). The cache holds the raw
+    ;; resolution, never a verdict, so the second pass fetches nothing.
+    (let* ((k2 (fresh))
+           (cache (make-verification-cache))
+           (calls (list 0))
+           (resolver (make-verification-resolver
+                      "test" "resolver-cmd"
+                      :function (lambda (pointer subject)
+                                  (declare (ignore pointer subject))
+                                  (incf (first calls))
+                                  (values :holds "2026-09-14T12:00:00Z"))))
+           (session (make-verification-session
+                     :cache cache :resolvers (list resolver)
+                     :source-revision "gen-4"))
+           (evidence (list (make-verify-evidence
+                            "ev-1" :pointer "test:acme/work/t1@gen-4"
+                            :criterion :test :subject "acme/work/t1"
+                            :against "gen-4" :generation "gen-4"
+                            :node "acme/work/f1/t1"))))
+      (multiple-value-bind (open-line open-rows open-exit)
+          (verify session evidence :node "acme/work/f1/t1")
+        (declare (ignore open-line))
+        (check-equal 0 open-exit "verify while the item is open exits 0")
+        (check-equal 1 (length open-rows) "one VERIFY ROW per evidence event")
+        (check-equal 1 (first calls) "the resolver ran once while the item was open")
+        (ok (submit k2 (close-request :request "ski-2")) "verify fixture close refused")
+        ;; The item is settled; the evidence events and their five fields read
+        ;; the same from the closed index, and verify prints exactly the rows it
+        ;; printed while the item was open.
+        (multiple-value-bind (closed-line closed-rows closed-exit)
+            (verify session evidence :node "acme/work/f1/t1")
+          (check-equal open-rows closed-rows
+                       "the VERIFY ROW verdicts are unchanged by the settle")
+          (check-equal open-exit closed-exit
+                       "the verdict count is unchanged by the settle")
+          (check-equal 1 (first calls)
+                       "the second verify fetched nothing: the cache answered")
+          (check-equal 1 (verification-cache-size cache)
+                       "the cache holds one raw fact, never a verdict")
+          (ok (search "verdict=verified" (first closed-rows))
+              "the cached fact still qualifies: ~A" (first closed-rows))
+          (ok (search "cached=1" closed-line)
+              "the cached fact answered the closed item: ~A" closed-line)))))
 
 (deftest "settle-moves-no-required-set" "docs/SPEC-WORK.md:1628-1633,5051"
     "expected=parent-required-set-and-branch-unmoved"
