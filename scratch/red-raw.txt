@@ -1,0 +1,5 @@
+TEST roadmap-outlives-its-work FAIL spec=docs/SPEC-WORK.md:1648-1664 expected=roadmap-view-retained-across-settle: the roadmap settled with its feature: expected :C got :O
+TEST roadmap-opened-after-the-window FAIL spec=docs/SPEC-WORK.md:1648-1664 expected=opening-a-named-roadmap-is-never-narrowed-by-the-default-window: The
+TEST settle-releases-the-lease FAIL spec=docs/SPEC-WORK.md:1674-1680,5055 expected=settled-item-reads-holder-unowned: The
+TEST working-is-a-view FAIL spec=docs/SPEC-WORK.md:1682-1689,5082 expected=w-subset-o-no-verb-writes-w: The
+NOVA-WORK SLICE1 total=155 pass=151 fail=4

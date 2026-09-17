@@ -29,7 +29,11 @@
   ;; SPEC-WORK.md:4651 -- every node carries an estimate (units, hours, tokens,
   ;; usd; who estimated, when). It is read, never derived, and a node without
   ;; one holds +ABSENT+ so an estimate of zero stays a value.
-  estimate)
+  estimate
+  ;; SPEC-WORK.md:1674-1689 -- the live lease's holder, or NIL for
+  ;; `holder=unowned`. W is the view of O nodes whose holder is live, never a
+  ;; field of its own.
+  holder)
 
 (defstruct (wstate (:conc-name wstate-))
   seed       ; the seed forest, verbatim, so a reconstruction starts where this did
@@ -41,7 +45,10 @@
   issue-open ; the open linked-issue counter -- separate, and never labelled |O|
   history    ; envelope records, newest first
   rows       ; closed-index rows, newest first
-  revision)
+  revision
+  ;; SPEC-WORK.md:1674-1680 -- the lease log, newest first, "kept whole for
+  ;; handoffs". A settle of a live lease appends a :release here.
+  lease-log)
 
 (defun %node (state id)
   "Every node access goes through here so *VISITS* is honest."
@@ -97,7 +104,8 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :needs-broken nil
                           :settles 0
                           :revived "-"
-                          :estimate (getf spec :estimate +absent+)))))
+                          :estimate (getf spec :estimate +absent+)
+                          :holder nil))))
     (setf order (nreverse order))
     ;; Containment edges, in seed order.
     (dolist (id order)
@@ -181,7 +189,7 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                      (setf cur (wnode-coordinator node)))))))
     (let ((state (make-wstate :seed (copy-tree nodes) :nodes table :order order
                               :root-open 0 :closed 0 :leaf-open 0 :issue-open 0
-                              :history '() :rows '() :revision 0)))
+                              :history '() :rows '() :revision 0 :lease-log '())))
       ;; Seed the counters once, on the write path that builds the set.
       (dolist (id order)
         (%adjust-counters state id 1))
@@ -382,7 +390,8 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                  :issue-open (wstate-issue-open state)
                  :history (wstate-history state)
                  :rows (wstate-rows state)
-                 :revision (wstate-revision state))))
+                 :revision (wstate-revision state)
+                 :lease-log (wstate-lease-log state))))
 
 ;;; Applying one event. The live path and the replay path share it, which is
 ;;; what makes the reconstruction independent of the live counters.
@@ -402,6 +411,18 @@ rather than zero. A view: it never writes, and a closed node is not in it."
          (error 'unsupported-input :what (format nil "rule 18: ~A is already in C" id)))
        (setf (wnode-branch node) :c)
        (%adjust-counters state id -1)
+       ;; SPEC-WORK.md:1674-1680 -- "the settle envelope carries a :release for
+       ;; a live lease on the node, written by the settling author and naming
+       ;; the holder it ended ... no item of C holds a live lease". The release
+       ;; is appended to the lease log and the node reads holder=unowned.
+       (when (wnode-holder node)
+         (push (list :kind :release :node id
+                     :by (work-event-by event)
+                     :holder (wnode-holder node)
+                     :stamp (work-event-stamp event)
+                     :rev (work-event-rev event))
+               (wstate-lease-log state))
+         (setf (wnode-holder node) nil))
        (incf (wnode-settles node))
        (setf (wnode-revived node) "-")
        (push (list :key (closed-row-key event) :kind :settle :node id

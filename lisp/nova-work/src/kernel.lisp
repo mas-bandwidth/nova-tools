@@ -219,8 +219,9 @@ beside a reopen. Outside the payload digest (SPEC-WORK.md:894)."
    (1+ (work-event-rev requester))))
 
 (defun %static-container-p (node)
-  "The container kinds whose static containment sets this slice represents."
-  (member (wnode-type node) '(:work-set :feature)))
+  "The container kinds whose static containment sets this slice represents. A
+roadmap settles with its members like any other container (SPEC-WORK.md:1648)."
+  (member (wnode-type node) '(:work-set :feature :roadmap)))
 
 (defun %cascade-events (state verb requester session)
   "Build and validate the branch cascade on a private candidate. Each decision

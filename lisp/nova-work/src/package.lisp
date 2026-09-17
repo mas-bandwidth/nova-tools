@@ -72,6 +72,14 @@
    #:ready-nodes
    #:node-estimate
    #:forecast
+   #:node-holder
+   #:state-lease-log
+   #:take-lease
+   #:release-lease
+   #:working-count
+   #:node-disposition
+   #:roadmap-members
+   #:roadmap-open
    #:root-digest
    #:state-canonical-form
    #:reconstruct-state

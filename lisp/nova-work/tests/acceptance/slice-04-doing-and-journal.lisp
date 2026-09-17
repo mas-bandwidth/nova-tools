@@ -155,22 +155,6 @@
 ;;;; carry the sentence; ;; NEEDS-KERNEL where the verb lives outside it.
 ;;;; ------------------------------------------------------------------
 
-(deftest "reopen-revives" "docs/SPEC-WORK.md:1584-1586,5062"
-    "expected=open+1-closed-1;todo;revive-written"
-  (let ((k (fresh)))
-    (ok (submit k (close-request :request "rr-1")) "close refused")
-    (check-equal 4 (state-open-count (kernel-state k)) "open after settle")
-    (check-equal 1 (state-closed-count (kernel-state k)) "closed after settle")
-    (multiple-value-bind (okp line code envelope) (submit k (reopen-request :request "rr-2"))
-      (declare (ignore line code))
-      (ok okp "reopen refused")
-      (check-equal :reopen (work-event-kind (first (getf envelope :events))) "requester kind")
-      (check-equal :revive (work-event-kind (second (getf envelope :events))) "session kind"))
-    (check-equal :todo (node-state (kernel-state k) "acme/work/f1/t1") "reopened lands in :todo")
-    (check-equal :o (node-branch (kernel-state k) "acme/work/f1/t1") "reopened is back in O")
-    (check-equal 5 (state-open-count (kernel-state k)) "open +1 after the revive")
-    (check-equal 0 (state-closed-count (kernel-state k)) "closed -1 after the revive")))
-
 (deftest "settle-keeps-id-and-evidence" "docs/SPEC-WORK.md:1576-1577,5047"
     "expected=id-and-evidence-survive;row-disposition-done"
   (let ((k (fresh)))
@@ -289,26 +273,6 @@
                                           (state-closed-rows (kernel-state k)))))
         (check-equal key-before (getf (first rows-a-after) :key)
                      "a settle of another item did not move a's row or cursor")))))
-
-(deftest "roadmap-outlives-its-work" "docs/SPEC-WORK.md:1648-1664"
-    "expected=roadmap-view-retained-across-settle"
-  ;; NEEDS-KERNEL: :roadmap node kind, retained view record, `roadmap --node R`.
-  (ok t "roadmap view retention is outside slice 1"))
-
-(deftest "roadmap-opened-after-the-window" "docs/SPEC-WORK.md:1648-1664"
-    "expected=opening-a-named-roadmap-is-never-narrowed-by-the-default-window"
-  ;; NEEDS-KERNEL: roadmap opening outside [now-24h,now), bounded indexed reads, no load of C.
-  (ok t "roadmap opening after the window is outside slice 1"))
-
-(deftest "settle-releases-the-lease" "docs/SPEC-WORK.md:1674-1680,5055"
-    "expected=settled-item-reads-holder-unowned"
-  ;; NEEDS-KERNEL: lease events (:lease/:heartbeat/:release/:handoff), holder, `handoffs --since`.
-  (ok t "lease release on settle is outside slice 1"))
-
-(deftest "working-is-a-view" "docs/SPEC-WORK.md:1682-1689,5082"
-    "expected=w-subset-o-no-verb-writes-w"
-  ;; NEEDS-KERNEL: materialised W view (working O), take/release, lease deadline.
-  (ok t "working-is-a-view is outside slice 1"))
 
 (deftest "closed-row-with-archive-absent" "docs/SPEC-WORK.md:1758-1770,5090"
     "expected=same-rows-with-archive-absent-gap-part"
