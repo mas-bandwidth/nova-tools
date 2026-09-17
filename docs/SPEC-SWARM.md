@@ -860,6 +860,33 @@ supervisor's own open included: two processes write a card's `harness.log` at
 their own offsets, and a truncating open destroys the head of what the other
 already wrote.
 
+**A card's minutes are measured per phase, and the measurement is a file the native
+run writes** (card 8964, Glenn 2026-09-17: *"speed up average wall clock time per
+card; make each card operate more efficiently in tokens and in time from start to
+finish; look at single cards"*). The harness log carried no timestamps, so no one
+could say which of clone, deps, read, edit, test, retry and result spent a card's
+wall. The harness now **reports its own model turns and tool calls on the child's
+output** with an adapter grammar, two lines per span so both ends are observed and
+never guessed — `NOVA-TIMELINE TURN BEGIN` / `END in=<n|-> out=<n|->` and
+`NOVA-TIMELINE TOOL BEGIN name=<tool> cmd=<command to end of line>` / `END
+name=<tool> rc=<n>` — and `native` **timestamps each report as it arrives**, holding
+one row per model turn and per tool call in `<job>/timeline.tsv` beside the card's
+`RESULT.md` and `usage.tsv`. The six columns are exactly `t_start`, `t_end`, `tool`,
+`wall_ms`, `input_tokens` and `output_tokens`: a token count the harness did not
+report is the empty cell, never a zero, and an event without a `BEGIN` (a span
+already open closes where the next began) or without an `END` is dropped rather
+than invented. **`nova-swarm profile --jobs <glob>` reads only those files** — it
+launches no worker and calls no model — and prints one `PROFILE
+job=<label> wall=<s> turns=<n> tools=<n> clone=<s> deps=<s> read=<s> edit=<s>
+test=<s> retry=<s> result=<s>` line per job and one `PROFILE SUMMARY jobs=<n>
+mean_wall=<s> ...` line with the mean per phase. The phase is inferred from the tool
+call's command: `git clone`/`git fetch` is clone; `go mod`, and only the first `go
+build`, is deps; `Read`/`Grep`/`cat`/`sed -n` is read; `Edit`/`Write` is edit; `go
+test`/`run-tests.sh`/`make test` is test, and a test run after a failing test run
+(`rc=` non-zero) is retry; a `RESULT.md` write is result. The wall is the span from
+the first start to the last end, and a job whose harness reported nothing phases as
+nothing rather than failing the fold.
+
 **A silent harness is never OK, and this is the one definition of it.** The
 `NATIVE OK` line always carries `harness=<ok|silent>`, and a run is `silent`
 **iff** the capture above holds no line the child wrote **and** no `RESULT.md` is
@@ -1080,7 +1107,8 @@ in #603), `gather-copies-result-up-from-repo` (`TestGatherCopiesResultUpFromRepo
 one is `ABSTAIN reason=admission local route is one slot`; open), and, for the
 range and the pre-run refusals (issue #618), `TestBatchAllocatesSlots`,
 `TestBatchRefusesHandSlotOutOfRange`, `TestBatchScoresRunnerRefused` and
-`TestBatchLineNamesUniformAbstain`.
+`TestBatchLineNamesUniformAbstain`; and, for the per-turn timeline and the phase
+profile (card 8964), `TestNativeRunWritesTimeline` and `TestProfilePrintsPhases`.
 
 ### read — one agent, one packet, once
 

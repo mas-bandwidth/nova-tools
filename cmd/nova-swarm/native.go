@@ -321,7 +321,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// is where the tool learns the wall's name and the cwd it actually applied, and neither
 	// is guessed. The logs still carry every byte; the buffer holds stderr for the parse.
 	var wallOut bytes.Buffer
-	capture := io.MultiWriter(log, harnessOut)
+	// THE PER-TURN TIMELINE (card 8964). The harness reports its own model turns and tool
+	// calls on the child's output with no timestamps of its own; this recorder stamps each
+	// report as it arrives, so the card's minutes can be read per phase afterwards.
+	timeline := swarm.NewTimeline()
+	capture := io.MultiWriter(log, harnessOut, timeline)
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -389,6 +393,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// to publish nothing. The path is carried onto the NATIVE OK line, where the batch reads
 	// it and scores the card `fence` instead of `no-result`.
 	res.fence = fenceRejected(jobDir)
+	// The timeline lands beside RESULT.md and usage.tsv once the child is gone, with one
+	// row per model turn and per tool call, in report order. A run whose harness reported no
+	// events writes no file: an absent timeline is an empty measurement, never a zero row.
+	if rows := timeline.Rows(); len(rows) > 0 {
+		if err := swarm.WriteTimeline(filepath.Join(jobDir, swarm.TimelineFileName), rows); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the timeline.tsv could not be written: %s\n", oneline.Escape(err.Error()))
+		}
+	}
 
 	if wall != "" {
 		backend, cwd, reason := wallNamed(wallOut.String())

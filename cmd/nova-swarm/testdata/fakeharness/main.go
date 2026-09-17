@@ -201,6 +201,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 503; ref=err_fake_5xx")
 		os.Exit(1)
 	}
+	// FAKE-TIMELINE REPORTS THE HARNESS'S OWN EVENTS (card 8964): a model turn and five tool
+	// calls, one span at a time, on the child's output. The native run timestamps each report
+	// line as it arrives and writes one timeline row per span; the small sleeps keep a span's
+	// wall above zero so a reader sees a real duration and not a same-instant pair.
+	if _, ok := directive(prompt, "FAKE-TIMELINE"); ok {
+		emitTimeline()
+	}
 	if _, ok := directive(prompt, "FAKE-BADUSAGE"); ok {
 		// A source that FAILS to read, which rule 13 keeps apart from one that has reported
 		// nothing yet: bytes that are not a database, in a file that refuses its own owner.
@@ -498,6 +505,25 @@ func duration(prompt, name string) (time.Duration, bool) {
 		return 0, false
 	}
 	return time.Duration(f * float64(time.Second)), true
+}
+
+// emitTimeline prints the harness's own per-turn and per-tool report lines, the grammar the
+// native run reads: two lines per span -- a BEGIN and an END -- so both ends of a tool call
+// are observed rather than guessed. The command rides to the end of the BEGIN line.
+func emitTimeline() {
+	spans := [][2]string{
+		{"NOVA-TIMELINE TURN BEGIN", "NOVA-TIMELINE TURN END in=1200 out=340"},
+		{"NOVA-TIMELINE TOOL BEGIN name=bash cmd=git clone https://github.com/mas-bandwidth/nova-tools", "NOVA-TIMELINE TOOL END name=bash rc=0"},
+		{"NOVA-TIMELINE TOOL BEGIN name=read cmd=cat internal/swarm/usage.go", "NOVA-TIMELINE TOOL END name=read rc=0"},
+		{"NOVA-TIMELINE TOOL BEGIN name=bash cmd=go test ./internal/swarm/", "NOVA-TIMELINE TOOL END name=bash rc=1"},
+		{"NOVA-TIMELINE TOOL BEGIN name=bash cmd=go test ./internal/swarm/", "NOVA-TIMELINE TOOL END name=bash rc=0"},
+		{"NOVA-TIMELINE TOOL BEGIN name=edit cmd=Write RESULT.md", "NOVA-TIMELINE TOOL END name=edit rc=0"},
+	}
+	for _, s := range spans {
+		fmt.Println(s[0])
+		time.Sleep(2 * time.Millisecond)
+		fmt.Println(s[1])
+	}
 }
 
 // checkInvocation is what a real harness requires of its argv: its own subcommand, the
