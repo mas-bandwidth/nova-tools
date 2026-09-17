@@ -441,7 +441,21 @@ STATUS EXPANDING stream=<name> hours=<n>
 STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
 STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
 STATUS TOOLS merged_since_adoption=<n> <names>
+STATUS SLOTS bench=<name> capacity=<n> reserve=<n> held=<n> free=<n> owners=<owner:held/share,...>
+STATUS STARVED bench=<name> free=<n> pending=<n>
 ```
+
+**Utilisation is per bench, every slot working all the time** (Glenn). With
+`--slots-store <dir>[,<dir>]` status reads each bench slot-lease store
+(`shares.tsv` plus the lease directories) and prints one `STATUS SLOTS` line
+per store: `bench` is the store directory's base name, `capacity` and
+`reserve` are the store's rows, `held` is the leases held, `free` is
+`capacity-reserve-held`, and `owners` names each owner's `held/share` in name
+order. When the queue holds pending cards and a bench has `free > 0` on two
+consecutive ticks — the first tick leaves a `STARVED-<bench>` marker file in
+the queue, the second prints `STATUS STARVED` — status exits 2, so a wake
+fires on idle slots with waiting work; one tick alone never starves, and a
+tick with no pending or no free slots clears the marker.
 
 **The verdict is the health metric** (Glenn, 2026-09-15, #549, #553). Contraction is tracked
 every tick, and the `CONTRACTION` line's `verdict` is `CONVERGING`, or `EXPANDING` when any one
