@@ -2,6 +2,7 @@ package pulse
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -72,6 +73,17 @@ func Harvest(in HarvestInput) int {
 		jobDir := jobDir(in.Root, c.Slot, c.Label)
 		contract := cardContract(c.Card)
 		state, branch, repo, resultLines := classify(jobDir, c, contract)
+
+		// The pool layout beside the slot layout (SPEC-PULSE rule 12): launch
+		// admits cards into <root>/pool and run finalizes each task's report
+		// to pool/reports/<id>/RESULT.md with the task file in
+		// pool/{done,failed}/<id>.task. A pool card is never under the slot
+		// job directory, so without this it is never harvested.
+		if state != "done" {
+			if ps, pb, pr, pl, pd := classifyPool(in.Root, c, contract); ps != "" {
+				state, branch, repo, resultLines, jobDir = ps, pb, pr, pl, pd
+			}
+		}
 
 		switch state {
 		case "mismatch":
@@ -209,7 +221,13 @@ func classify(jobDir string, c CardRow, contract string) (state, branch, repo st
 	if err != nil {
 		return "abstain", "", "", nil
 	}
-	norm := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	return classifyResult(c, contract, string(raw))
+}
+
+// classifyResult folds one RESULT.md body by the card's own two lines -- line 1
+// the contract, line 2 the verdict -- and by the BRANCH line.
+func classifyResult(c CardRow, contract, body string) (state, branch, repo string, resultLines []string) {
+	norm := strings.ReplaceAll(body, "\r\n", "\n")
 	lines := strings.Split(norm, "\n")
 	line1 := strings.TrimSpace(firstNonEmpty(lines))
 	if line1 != contract {
@@ -242,6 +260,102 @@ func classify(jobDir string, c CardRow, contract string) (state, branch, repo st
 		return "refused", branch, repo, lines
 	}
 	return "done", branch, repo, lines
+}
+
+// classifyPool folds the pool layout beside the slot layout: launch admits cards
+// into <root>/pool and run finalizes each task's published report to
+// pool/reports/<id>/RESULT.md while the task file sits in
+// pool/{done,failed}/<id>.task. The task id maps back to its card label through
+// the task file's own label line -- line 1, the card's RESULT contract line --
+// or the sidecar's label written by nova-swarm add --label. A task in failed/
+// whose RESULT.md exists with a first line equal to the card's RESULT line is
+// harvested as a result, not a failure: done/ is read first, failed/ second,
+// latest task first. It returns "" when no pool task carries this card's label
+// with a published report.
+func classifyPool(root string, c CardRow, contract string) (state, branch, repo string, resultLines []string, dir string) {
+	pool := filepath.Join(root, "pool")
+	for _, st := range []string{"done", "failed"} {
+		for _, id := range poolTaskIDs(pool, st, c.Label) {
+			raw, err := os.ReadFile(filepath.Join(pool, "reports", id, "RESULT.md"))
+			if err != nil {
+				continue
+			}
+			state, branch, repo, resultLines := classifyResult(c, contract, string(raw))
+			return state, branch, repo, resultLines, poolPushDir(pool, st, id)
+		}
+	}
+	return "", "", "", nil, ""
+}
+
+// poolTaskIDs returns the task ids in pool/<state>/ whose task file's label line
+// or sidecar label names the card, latest first.
+func poolTaskIDs(pool, state, label string) []string {
+	entries, err := os.ReadDir(filepath.Join(pool, state))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".task") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".task")
+		if poolTaskLabel(pool, state, id) == label {
+			out = append(out, id)
+		}
+	}
+	// ReadDir sorts by name and an id begins with its UTC stamp: reverse for latest first.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+// poolTaskLabel is the card label a pool task carries: the label on the task
+// file's own first line (the card's RESULT contract line), else the sidecar's
+// label written by nova-swarm add --label.
+func poolTaskLabel(pool, state, id string) string {
+	if raw, err := os.ReadFile(filepath.Join(pool, state, id+".task")); err == nil {
+		norm := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		if label := contractLabel(firstNonEmpty(strings.Split(norm, "\n"))); label != "" {
+			return label
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(pool, state, id+".json")); err == nil {
+		var sc struct {
+			Label string `json:"label"`
+		}
+		if json.Unmarshal(raw, &sc) == nil {
+			return sc.Label
+		}
+	}
+	return ""
+}
+
+// contractLabel is the label on a card's RESULT contract line: the word after RESULT.
+func contractLabel(line string) string {
+	f := strings.Fields(strings.TrimSpace(line))
+	if len(f) >= 2 && f[0] == "RESULT" {
+		return f[1]
+	}
+	return ""
+}
+
+// poolPushDir is where harvest pushes a pool card's branch from: the job's own
+// directory while the sidecar still names one on disk, else the retained report
+// directory.
+func poolPushDir(pool, state, id string) string {
+	if raw, err := os.ReadFile(filepath.Join(pool, state, id+".json")); err == nil {
+		var sc struct {
+			Job string `json:"job"`
+		}
+		if json.Unmarshal(raw, &sc) == nil && sc.Job != "" {
+			if fi, err := os.Stat(sc.Job); err == nil && fi.IsDir() {
+				return sc.Job
+			}
+		}
+	}
+	return filepath.Join(pool, "reports", id)
 }
 
 func hasRedLine(lines []string) bool {
