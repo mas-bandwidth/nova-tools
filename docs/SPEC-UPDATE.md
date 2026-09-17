@@ -375,7 +375,6 @@ in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version snapshot …` reads the adopted manifest and reports its count on one line,
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
-<<<<<<< HEAD
 name, `send` implying `--send` (rule 20), and `nova-version snapshot --file <manifest>` reports
 the adopted manifest, not every executable on PATH (the opening paragraph);
 its `help` prints those three lines the same way.
