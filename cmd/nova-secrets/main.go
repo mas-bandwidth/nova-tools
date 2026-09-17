@@ -20,6 +20,7 @@ usage:
   nova-secrets names  --store <dir> --as <name> [--max <n>]
   nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
   nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
   nova-secrets help
 
 flags:
@@ -31,6 +32,11 @@ flags:
   --only <names|all>   comma-separated list of keys to inject, or 'all'
   --require <name>     assert key must be present in the file (repeatable)
   --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
+  --name NAME          key to seal (seal only)
+  --stdin              read the value from stdin instead of the terminal (seal only)
+  --no-pr              stop after the commit; make no gh call (seal only)
+  --gh <path>          path to the gh executable (seal only, default: gh)
+  --git <path>         path to the git executable (seal only, default: git)
 
 example:
   nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
@@ -109,6 +115,9 @@ func main() {
 
 	case "keygen":
 		runKeygenCLI(os.Args[2:])
+
+	case "seal":
+		runSealCLI(os.Args[2:])
 
 	default:
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unknown verb %q; run: nova-secrets help\n", oneline.Field(verb))
@@ -286,5 +295,54 @@ func runKeygenCLI(args []string) {
 	if noteLine != "" {
 		fmt.Println(noteLine)
 	}
+	os.Exit(0)
+}
+
+func runSealCLI(args []string) {
+	fs := flag.NewFlagSet("seal", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	storeFlag := fs.String("store", "", "store dir")
+	asFlag := fs.String("as", "", "seat name")
+	keyFlag := fs.String("key", "", "key path")
+	sopsFlag := fs.String("sops", "", "sops path")
+	nameFlag := fs.String("name", "", "key to seal")
+	ghFlag := fs.String("gh", "gh", "gh path")
+	gitFlag := fs.String("git", "git", "git path")
+	stdinFlag := fs.Bool("stdin", false, "read value from stdin")
+	noPRFlag := fs.Bool("no-pr", false, "stop after commit")
+
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		os.Exit(2)
+	}
+
+	if len(fs.Args()) > 0 {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		os.Exit(2)
+	}
+
+	fi, statErr := os.Stdin.Stat()
+	stdinIsTerminal := statErr == nil && fi.Mode()&os.ModeCharDevice != 0
+
+	line, err := secrets.RunSeal(secrets.SealOptions{
+		StoreDir:        *storeFlag,
+		AsName:          *asFlag,
+		KeyPath:         *keyFlag,
+		SopsPath:        *sopsFlag,
+		Name:            *nameFlag,
+		GHPath:          *ghFlag,
+		GitPath:         *gitFlag,
+		NoPR:            *noPRFlag,
+		UseStdin:        *stdinFlag,
+		Stdin:           os.Stdin,
+		StdinIsTerminal: stdinIsTerminal,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SECRETS SEAL FAIL %s\n", oneline.Err(err))
+		os.Exit(2)
+	}
+
+	fmt.Println(line)
 	os.Exit(0)
 }
