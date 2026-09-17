@@ -852,6 +852,41 @@ above names** — your rule merged, the file not yet `updatekeys`-ed — **exit 
 with the `updatekeys` line. The first two are the right answer rather than a stumble; the third
 is the wait, said as a red, and it clears when the second pull request lands.
 
+## Additions from dogfooding (2026-09-16/17)
+
+Ten rules measured on the 2026-09-16/17 dogfooding, each with the hurt that produced it and the
+red test that carries it. They extend **The model** and **Rotation**; they do not replace them.
+
+1. **ingest is rotation** — a value enters by seal and the old value is revoked at the provider the
+   same hour, because sealing the new value while the old one still works banks a rotation nobody
+   finished. Red test demanded: `TestIngestIsRotation`.
+2. **one seat per OS user, keys for swarms not people** — an AI is a unix user with one file and
+   one key, and a pool of workers shares a swarm key, because a person's credential in a shared
+   seat cannot be told from a worker's. Red test demanded: `TestOneSeatPerOSUser`.
+3. A seat file is **opened only by its seat key and the recovery key, exactly two recipients**,
+   enforced by the seat-rule gate on `.sops.yaml`, because a third recipient is the grant every
+   review is meant to catch. Red test demanded: `TestSeatRuleGateIsExactlyTwoRecipients`.
+4. A value reaches a process **only by `exec --only NAME`, never a file, argv, log or transcript**,
+   because every other road leaves the plaintext where a sibling process can read it. Red test
+   demanded: `TestValuesReachProcessesOnlyByExecOnly`.
+5. All **harness configs reference `{env:NAME}`**; a literal key in a config is DRIFT, because a
+   copied value outlives its rotation in a file nobody watches. Red test demanded:
+   `TestHarnessConfigsReferenceEnvNames`.
+6. The bench standard checks **exactly one seat key per owner prefix** and that check passes,
+   because two keys for one owner is either a lost key still trusted or a grant nobody declared.
+   Red test demanded: `TestBenchStandardChecksOneSeatKeyPerOwnerPrefix`.
+7. The store is pulled on a bench over a **bench-owned read-only deploy key, never a person's credential**,
+   because a person's key in a bench's clone is that person on that bench. Red test
+   demanded: `TestStorePullUsesBenchDeployKey`.
+8. A key is **generated off-bench for recovery only**; the **private half lives in the owner's password manager**,
+   because recovery that sits beside the ciphertext is not recovery. Red test
+   demanded: `TestRecoveryKeyLivesOnlyInThePasswordManager`.
+9. **seal is one step** (see #910): stdin or hidden prompt, PR, gate, merge, check, because a
+   multi-step seal is a step somebody stops halfway. Red test demanded: `TestSealIsOneStep`.
+10. The ADOPT pass and the bench standard **fail loudly on any plaintext key file** (`auth.json`,
+    `*.env`) anywhere under `HOME`, because a plaintext key on the bench is the boundary this page
+    is about, already crossed. Red test demanded: `TestPlaintextKeyFilesFailLoudly`.
+
 ## Owed, and where the rest lives
 
 The full work list is in this pull request's body, and new ideas are issues. Owed before this
