@@ -156,7 +156,8 @@ REFUSAL is a string when the request is not one of the five-field shape."
                  (line (format nil "NODE OK id=~A request=~A node=~A change=edit changed=~D rev=~D pushed=-"
                                (event-id event) rid node changed (work-event-rev event))))
             (%oneshot-submit kernel rid digest line event "NODE"
-                             (list :verb :node-edit :node node :before before :changed changed))))))))
+                             (list :verb :node-edit :node node :before before
+                                   :after after :changed changed :request request))))))))
 
 ;;; An external effect is an outcome, not a verb of the state grammar
 ;;; (SPEC-WORK.md:5652). Recording it is what lets an undo over it be refused.
@@ -189,7 +190,7 @@ REFUSAL is a string when the request is not one of the five-field shape."
                          handle (work-event-rev event))))
       (%oneshot-submit kernel rid digest line event "EXTERNAL"
                        (list :verb :external-effect :node node
-                             :effect effect :handle handle)))))
+                             :effect effect :handle handle :request request)))))
 
 ;;; Terminal dispositions: `node remove` and `event --kind cancel`. Both are
 ;;; recorded so an undo over either is refused (SPEC-WORK.md:5783).
@@ -218,7 +219,8 @@ REFUSAL is a string when the request is not one of the five-field shape."
                          word (event-id event) rid node
                          (string-downcase (symbol-name disposition)) (work-event-rev event))))
       (%oneshot-submit kernel rid digest line event word
-                       (list :verb verb :node node :terminal t :disposition disposition)))))
+                       (list :verb verb :node node :terminal t
+                             :disposition disposition :request request)))))
 
 ;;; `undo` appends a typed compensating envelope; it never erases the original.
 
@@ -281,41 +283,51 @@ REFUSAL is a string when the request is not one of the five-field shape."
             (values nil (format nil "UNDO FAIL request-of=~A: stale plan at-rev=~A rev=~D: not applied"
                                 of at rev)
                     1 nil)))))
-    (let ((verb (getf entry :verb)))
-      (cond
-        ((eq verb :external-effect)
-         (values nil (format nil "UNDO FAIL request-of=~A effect=external kind=~A handle=~A: not reversible here"
-                             of (string-downcase (symbol-name (getf entry :effect)))
-                             (getf entry :handle))
-                 1 nil))
-        ((member verb '(:node-remove :event-cancel))
-         (values nil (format nil "UNDO FAIL request-of=~A: not reversible here (~A is terminal)"
-                             of (string-downcase (symbol-name verb)))
-                 1 nil))
-        ((eq verb :node-edit)
-         (let* ((node (getf entry :node))
-                (patches (%compensating-patches (getf entry :before)))
-                (event (%edit-event node patches +absent+ rid by stamp clock owner
-                                    (kernel-next-rev kernel)))
-                (digest (payload-digest (list event)))
-                (line (format nil "UNDO OK id=~A request=~A of=~A node=~A rev=~D pushed=-"
-                              (event-id event) rid of node (work-event-rev event))))
-           (%undo-submit kernel rid digest line (list event))))
-        ((eq verb :node-move)
-         (node-move-undo kernel entry rid))
-        ((member verb '(:state-to-doing :state-to-done :event-reopen))
-         (let* ((events (%undo-compensating-events entry by stamp clock owner rid
-                                                   (kernel-next-rev kernel)))
-                (digest (payload-digest events))
-                (last (car (last events)))
-                (line (format nil "UNDO OK id=~A request=~A of=~A node=~A rev=~D pushed=-"
-                              (event-id last) rid of (getf entry :node)
-                              (work-event-rev last))))
-           (%undo-submit kernel rid digest line events)))
-        (t
-         (values nil (format nil "UNDO FAIL request-of=~A: verb ~A is not reversible here"
-                             of (string-downcase (symbol-name verb)))
-                 1 nil))))))
+    (let ((result
+            (let ((verb (getf entry :verb)))
+              (cond
+                ((eq verb :external-effect)
+                 (list nil (format nil "UNDO FAIL request-of=~A effect=external kind=~A handle=~A: not reversible here"
+                                   of (string-downcase (symbol-name (getf entry :effect)))
+                                   (getf entry :handle))
+                       1 nil))
+                ((member verb '(:node-remove :event-cancel))
+                 (list nil (format nil "UNDO FAIL request-of=~A: not reversible here (~A is terminal)"
+                                   of (string-downcase (symbol-name verb)))
+                       1 nil))
+                ((eq verb :node-edit)
+                 (multiple-value-list
+                  (let* ((node (getf entry :node))
+                         (patches (%compensating-patches (getf entry :before)))
+                         (event (%edit-event node patches +absent+ rid by stamp clock owner
+                                             (kernel-next-rev kernel)))
+                         (digest (payload-digest (list event)))
+                         (line (format nil "UNDO OK id=~A request=~A of=~A node=~A rev=~D pushed=-"
+                                       (event-id event) rid of node (work-event-rev event))))
+                    (%undo-submit kernel rid digest line (list event)))))
+                ((eq verb :node-move)
+                 (multiple-value-list (node-move-undo kernel entry rid)))
+                ((member verb '(:state-to-doing :state-to-done :event-reopen))
+                 (multiple-value-list
+                  (let* ((events (%undo-compensating-events entry by stamp clock owner rid
+                                                            (kernel-next-rev kernel)))
+                         (digest (payload-digest events))
+                         (last (car (last events)))
+                         (line (format nil "UNDO OK id=~A request=~A of=~A node=~A rev=~D pushed=-"
+                                       (event-id last) rid of (getf entry :node)
+                                       (work-event-rev last))))
+                    (%undo-submit kernel rid digest line events))))
+                (t
+                 (list nil (format nil "UNDO FAIL request-of=~A: verb ~A is not reversible here"
+                                   of (string-downcase (symbol-name verb)))
+                       1 nil))))))
+      ;; A successful undo is itself an accepted request: remember it so a redo
+      ;; can find the intent it reapplies and the postimage it must find intact
+      ;; (SPEC-WORK.md:2827-2845).
+      (when (first result)
+        (setf (gethash rid (kernel-applied kernel))
+              (list :verb :undo :of of :original entry :request request)))
+      (values-list result))))
 
 
 ;;; ------------------------------------------------------------------

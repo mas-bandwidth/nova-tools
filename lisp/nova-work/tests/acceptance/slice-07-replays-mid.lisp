@@ -35,7 +35,107 @@
                        "redo appends rather than deletes")
           (ok (find (getf undo-envelope :request) (getf after-redo :history)
                     :key (lambda (e) (getf e :request)) :test #'equal)
-              "the undo still stands after a fresh redo"))))))
+              "the undo still stands after a fresh redo")))
+  ;; The same contract over the real kernel: `redo-plan` is the revision-bound
+  ;; dry run of the redo, and `redo` reapplies the undone intent against current
+  ;; preconditions, refusing a stale or conflicting plan atomically and never
+  ;; deleting the undo (SPEC-WORK.md:2279, :2827-2845, :5394).
+  (let* ((k (fresh))
+         (node "acme/work/f1/t1"))
+    (submit k (edit-request node :request "redo-edit-1" :title '(:set "t")))
+    (multiple-value-bind (uokp uline)
+        (submit k (list :verb :undo :of "redo-edit-1" :by "rowan"
+                        :request "redo-undo-1" :stamp "2026-09-14T13:00:00Z"
+                        :clock :tool :generation-owner "gen-4"))
+      (ok uokp "the real kernel accepts the undo: ~A" uline)
+      (ok (absentp (node-title (kernel-state k) node)) "the undo restored the preimage"))
+    (let ((journal-length (length (journal-order (kernel-journal k))))
+          (rev (state-revision (kernel-state k))))
+      (multiple-value-bind (pokp pline pcode plan)
+          (submit k (list :verb :redo-plan :of "redo-undo-1" :by "rowan"
+                          :request "redo-plan-1" :stamp "2026-09-14T13:01:00Z"
+                          :clock :tool :generation-owner "gen-4"))
+        (ok pokp "a redo-plan over an accepted undo is accepted: ~A" pline)
+        (ok (search "REDO PLAN" pline) "the redo plan names itself: ~A" pline)
+        (ok (search "at-rev=" pline) "the redo plan is revision-bound: ~A" pline)
+        (ok (search "request-of=redo-undo-1" pline) "the redo plan names its undo: ~A" pline)
+        (check-equal 0 pcode "the redo plan exits 0")
+        (let ((row (find :state (getf plan :rows) :key (lambda (r) (getf r :effect)))))
+          (ok row "the redo plan names the state effect")
+          (check-string= "-" (getf row :before) "the redo plan shows the current preimage")
+          (check-string= "t" (getf row :after) "the redo plan shows the intent it reapplies"))
+        ;; the dry run accepts no mutation.
+        (check-equal journal-length (length (journal-order (kernel-journal k)))
+                     "the redo plan writes no journal record")
+        (check-equal rev (state-revision (kernel-state k))
+                     "the redo plan accepts no revision")
+        (ok (absentp (node-title (kernel-state k) node))
+            "the redo plan leaves the node unchanged")
+        ;; a fresh redo at the plan's revision reapplies the intent.
+        (multiple-value-bind (rokp rline)
+            (submit k (list :verb :redo :of "redo-undo-1" :by "rowan"
+                            :request "redo-1" :stamp "2026-09-14T13:02:00Z"
+                            :clock :tool :generation-owner "gen-4"
+                            :at-rev (getf plan :at-rev)))
+          (ok rokp "a fresh redo is accepted: ~A" rline)
+          (ok (search "REDO OK" rline) "the redo appends its envelope: ~A" rline)
+          (check-string= "t" (node-title (kernel-state k) node)
+                         "the redo reapplies the intent")
+          (let ((hist (state-history (kernel-state k))))
+            (ok (find "redo-undo-1" hist :key (lambda (r) (getf r :request)) :test #'string=)
+                "the undo still stands after the redo")
+            (ok (find "redo-1" hist :key (lambda (r) (getf r :request)) :test #'string=)
+                "the redo is appended rather than deleting the undo"))))))
+  ;; a redo at a revision the state has moved past refuses atomically.
+  (let* ((k (fresh))
+         (node "acme/work/f1/t1"))
+    (submit k (edit-request node :request "redo-edit-2" :title '(:set "t")))
+    (submit k (list :verb :undo :of "redo-edit-2" :by "rowan"
+                    :request "redo-undo-2" :stamp "2026-09-14T13:00:00Z"
+                    :clock :tool :generation-owner "gen-4"))
+    (multiple-value-bind (pokp pline pcode plan)
+        (submit k (list :verb :redo-plan :of "redo-undo-2" :by "rowan"
+                        :request "redo-plan-2" :stamp "2026-09-14T13:01:00Z"
+                        :clock :tool :generation-owner "gen-4"))
+      (declare (ignore pokp pline pcode))
+      (submit k (edit-request node :request "redo-later-2" :title '(:set "moved")))
+      (let ((hist (state-history (kernel-state k)))
+            (rev (state-revision (kernel-state k))))
+        (multiple-value-bind (rokp rline)
+            (submit k (list :verb :redo :of "redo-undo-2" :by "rowan"
+                            :request "redo-2" :stamp "2026-09-14T13:02:00Z"
+                            :clock :tool :generation-owner "gen-4"
+                            :at-rev (getf plan :at-rev)))
+          (ok (not rokp) "a redo at a stale revision must refuse")
+          (ok (search "stale plan" rline) "the stale redo names the plan: ~A" rline)
+          (ok (search "at-rev=" rline) "the stale refusal names the revision: ~A" rline)
+          (check-equal hist (state-history (kernel-state k))
+                       "a refused stale redo writes nothing")
+          (check-equal rev (state-revision (kernel-state k))
+                       "a refused stale redo moves no revision")
+          (ok (find "redo-undo-2" (state-history (kernel-state k))
+                    :key (lambda (r) (getf r :request)) :test #'string=)
+              "the undo is never reached by deleting it")))))
+  ;; a conflicting redo (preconditions moved) refuses, naming what changed.
+  (let* ((k (fresh))
+         (node "acme/work/f1/t1"))
+    (submit k (edit-request node :request "redo-edit-3" :title '(:set "t")))
+    (submit k (list :verb :undo :of "redo-edit-3" :by "rowan"
+                    :request "redo-undo-3" :stamp "2026-09-14T13:00:00Z"
+                    :clock :tool :generation-owner "gen-4"))
+    (submit k (edit-request node :request "redo-later-3" :title '(:set "moved")))
+    (let ((hist (state-history (kernel-state k))))
+      (multiple-value-bind (rokp rline)
+          (submit k (list :verb :redo :of "redo-undo-3" :by "rowan"
+                          :request "redo-3" :stamp "2026-09-14T13:02:00Z"
+                          :clock :tool :generation-owner "gen-4"))
+        (ok (not rokp) "a conflicting redo must refuse")
+        (ok (search "stale plan" rline) "the conflict names the stale plan: ~A" rline)
+        (ok (search "changed" rline) "the conflict names what changed: ~A" rline)
+        (check-equal hist (state-history (kernel-state k))
+                     "a refused conflicting redo writes nothing")
+        (check-string= "moved" (node-title (kernel-state k) node)
+                       "the later edit stands untouched")))))))
 
 ;; regression-and-recovery and regression-opens-repair-work now run in
 ;; lisp/nova-work/tests/replays-8647.lisp and tests/replays-8648.lisp

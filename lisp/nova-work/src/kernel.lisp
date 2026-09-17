@@ -90,6 +90,8 @@ below the state's revision is refused rather than silently reissued."
                 :private-patch :version-patch :request :stamp :clock :generation-owner)
     (:undo :verb :of :at-rev :by :request :stamp :clock :generation-owner)
     (:undo-plan :verb :of :by :request :stamp :clock :generation-owner)
+    (:redo :verb :of :at-rev :by :request :stamp :clock :generation-owner)
+    (:redo-plan :verb :of :by :request :stamp :clock :generation-owner)
     (:external-effect :verb :node :by :effect :handle
                       :request :stamp :clock :generation-owner)
     (:node-remove :verb :node :by :reason :request :stamp :clock :generation-owner)
@@ -326,6 +328,8 @@ command loop is a defect)."
     (:node-edit (return-from %submit (%submit-edit kernel request)))
     (:undo (return-from %submit (%submit-undo kernel request)))
     (:undo-plan (return-from %submit (%submit-undo-plan kernel request)))
+    (:redo (return-from %submit (%submit-redo kernel request)))
+    (:redo-plan (return-from %submit (%submit-redo-plan kernel request)))
     (:external-effect (return-from %submit (%submit-external kernel request)))
     (:node-remove (return-from %submit (%submit-terminal kernel request :node-remove :removed)))
     (:event-cancel (return-from %submit (%submit-terminal kernel request :event-cancel :cancelled))))
@@ -403,7 +407,7 @@ command loop is a defect)."
             (setf (kernel-next-rev kernel) (1+ (work-event-rev last-event)))
             (setf (gethash rid (kernel-applied kernel))
                   (list :verb verb :node (work-event-node requester)
-                        :before-state before-state))
+                        :before-state before-state :request request))
             (values t line 0 envelope)))))))
 
 ;;; The counters, read.
