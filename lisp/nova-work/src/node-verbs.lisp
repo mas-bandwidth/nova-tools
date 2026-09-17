@@ -447,7 +447,8 @@ original line, and a different payload under the id refuses (:5364, :5367)."
             (when request
               (setf (gethash request (kernel-applied kernel))
                     (list :verb :node-move :payload payload :line line
-                          :node id :from from :under under :changed 0)))
+                          :node id :from from :under under :changed 0
+                          :request request)))
             (return-from node-move (values t line 0))))
         ;; The accepted move: append at the destination's end and remember the
         ;; preimage position and both parents' listings for the undo guard.
@@ -463,6 +464,7 @@ original line, and a different payload under the id refuses (:5364, :5367)."
               (setf (gethash request (kernel-applied kernel))
                     (list :verb :node-move :payload payload :line line
                           :node id :from from :under under :changed 1
+                          :request request
                           :position position
                           :before (list :from-children before-from
                                         :under-children before-under)

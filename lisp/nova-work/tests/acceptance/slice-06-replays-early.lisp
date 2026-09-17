@@ -136,8 +136,9 @@
 
 (deftest "priority-undo-is-history-not-value" "docs/SPEC-WORK.md:5869"
     "expected=same-value-set-and-clear-of-absent-slot-are-no-effect"
-  ;; undo is now implemented; redo is still outside the slice.
-  (slice1-refuses-verb :redo)
+  ;; undo and redo are now implemented as kernel verbs; the reversible-mistake
+  ;; contract they carry is exercised by `redo-refuses-a-stale-plan` and
+  ;; `undo-redo`. This replay stays about the priority history identity.
   (let ((table (make-priority-table)))
     (multiple-value-bind (receipt line code) (priority-table-set table "n" :self 2 "first" "ev-1")
       (declare (ignore line))

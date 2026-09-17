@@ -1454,22 +1454,32 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
         (ok (search "no-effect-1" line) "the OK line carries the request id")))))
 
 (deftest "undo-refuses-an-external-effect" "docs/SPEC-WORK.md:5652"
-    "sent/paid/published/deleted-refused-as-external;history-never-reset"
+    "sent/paid/published/deleted-refused-as-external;handle-is-the-operation-id-or-pointer;owner-and-state-named;history-revision-node-and-counters-never-rewound"
   (let ((k (fresh))
         (handles '()))
-    (dolist (spec '(("ext-sent" :sent "msg-1")
-                    ("ext-paid" :paid "inv-2")
-                    ("ext-pub" :published "note-3")
-                    ("ext-del" :deleted "src-4")))
-      (destructuring-bind (rid effect handle) spec
+    ;; Each recorded outcome reaches the undo through the verb that recorded it
+    ;; -- an :attempt with its :usage, an :evidence pointer, a model rate
+    ;; receipt or an operation id whose external state is :known or :uncertain
+    ;; (SPEC-WORK.md:2893-2902). The handle the refusal prints is that operation
+    ;; id or pointer, never a local-state rewind.
+    (dolist (spec '(("ext-sent" :sent "op-101" :operation :known)
+                    ("ext-paid" :paid "attempt-202" :attempt :uncertain)
+                    ("ext-pub" :published "publish:run:f1#7@abc123" :evidence :known)
+                    ("ext-del" :deleted "op-404" :operation :uncertain)))
+      (destructuring-bind (rid effect handle owner state) spec
         (push handle handles)
         (multiple-value-bind (okp line)
             (submit k (list :verb :external-effect :node "acme/work/f1/t1" :by "rowan"
-                            :effect effect :handle handle :request rid
+                            :effect effect :handle handle :owner owner :state state
+                            :request rid
                             :stamp "2026-09-14T12:00:00Z" :clock :tool
                             :generation-owner "gen-4"))
           (ok okp "recording external ~A refused: ~A" effect line)
-          (let ((hist-before (length (state-history (kernel-state k)))))
+          (let ((hist-before (length (state-history (kernel-state k))))
+                (rev-before (state-revision (kernel-state k)))
+                (open-before (state-open-count (kernel-state k)))
+                (closed-before (state-closed-count (kernel-state k)))
+                (title-before (node-title (kernel-state k) "acme/work/f1/t1")))
             (multiple-value-bind (uokp uline)
                 (submit k (undo-verb-request rid (concatenate 'string "undo-" rid)))
               (ok (not uokp) "an undo over ~A must refuse" effect)
@@ -1477,13 +1487,74 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
               (ok (search (string-downcase (symbol-name effect)) uline)
                   "names the external kind: ~A" uline)
               (ok (search handle uline) "names the external handle: ~A" uline)
+              (ok (search (string-downcase (symbol-name owner)) uline)
+                  "names the recording verb: ~A" uline)
+              (ok (search (string-downcase (symbol-name state)) uline)
+                  "names the external state: ~A" uline)
               (ok (search "not reversible here" uline) "refused as not reversible: ~A" uline)
               (check-equal hist-before (length (state-history (kernel-state k)))
-                           "a refused undo writes no history"))))))
+                           "a refused undo writes no history")
+              (check-equal rev-before (state-revision (kernel-state k))
+                           "a refused undo rewinds no revision")
+              (check-equal open-before (state-open-count (kernel-state k))
+                           "a refused undo moves no open counter")
+              (check-equal closed-before (state-closed-count (kernel-state k))
+                           "a refused undo moves no closed counter")
+              (check-equal title-before (node-title (kernel-state k) "acme/work/f1/t1")
+                           "a refused undo rewinds no local node state"))))))
     ;; shared history is never reset: the four recorded effects still stand.
     (dolist (rid '("ext-sent" "ext-paid" "ext-pub" "ext-del"))
       (ok (member rid (journal-order (kernel-journal k)) :test #'string=)
-          "~A still stands in the journal" rid))))
+          "~A still stands in the journal" rid))
+    ;; The seam an owning verb calls records an operation whose external state
+    ;; is uncertain; `undo` and `undo-plan` both refuse it, name the operation id
+    ;; as the handle, and rewind no local state (SPEC-WORK.md:2893-2902).
+    (let ((sk (fresh)))
+      (multiple-value-bind (rok rline rcode)
+          (record-external-effect sk "req-op-9" :owner :attempt :effect :paid
+                                  :handle "op-9" :state :uncertain)
+        (ok rok "the outcome seam records the attempt: ~A" rline)
+        (check-equal 0 rcode "the seam exits 0"))
+      (let ((rev (state-revision (kernel-state sk)))
+            (hist (length (state-history (kernel-state sk))))
+            (open (state-open-count (kernel-state sk)))
+            (closed (state-closed-count (kernel-state sk))))
+        (multiple-value-bind (uokp uline)
+            (submit sk (undo-verb-request "req-op-9" "undo-op-9"))
+          (ok (not uokp) "an undo over the seam's outcome must refuse")
+          (ok (search "effect=external" uline) "the refusal names the external effect: ~A" uline)
+          (ok (search "op-9" uline) "the refusal names the operation id handle: ~A" uline)
+          (ok (search "owner=attempt" uline) "the refusal names the recording verb: ~A" uline)
+          (ok (search "state=uncertain" uline) "the refusal names the uncertain state: ~A" uline)
+          (ok (search "not reversible here" uline) "refused as not reversible: ~A" uline)
+          (check-equal rev (state-revision (kernel-state sk))
+                       "the refused seam undo rewinds no revision")
+          (check-equal hist (length (state-history (kernel-state sk)))
+                       "the refused seam undo writes no history")
+          (check-equal open (state-open-count (kernel-state sk))
+                       "the refused seam undo moves no open counter")
+          (check-equal closed (state-closed-count (kernel-state sk))
+                       "the refused seam undo moves no closed counter")))
+      (multiple-value-bind (pok pline pcode plan)
+          (submit sk (list :verb :undo-plan :of "req-op-9" :by "rowan"
+                           :request "undo-plan-op-9" :stamp "2026-09-14T12:00:00Z"
+                           :clock :tool :generation-owner "gen-4"))
+        (declare (ignore plan))
+        (ok (not pok) "a plan over the seam's outcome must refuse")
+        (ok (search "op-9" pline) "the plan names the operation id handle: ~A" pline)
+        (ok (search "state=uncertain" pline) "the plan names the uncertain state: ~A" pline)
+        (check-equal 1 pcode "the refused plan exits 1"))
+      ;; A state that is neither known nor uncertain is refused at the seam.
+      (multiple-value-bind (bok bline) (record-external-effect sk "req-bad" :owner :operation
+                                                                :effect :sent :handle "op-x"
+                                                                :state :maybe)
+        (ok (not bok) "a state that is neither known nor uncertain must refuse")
+        (ok (search "neither known nor uncertain" bline) "the seam names the bad state: ~A" bline))
+      ;; An empty handle is refused at the seam.
+      (multiple-value-bind (bok bline) (record-external-effect sk "req-bad-2" :owner :attempt
+                                                                :effect :paid :handle "" :state :known)
+        (ok (not bok) "an empty handle must refuse")
+        (ok (search "no handle" bline) "the seam names the missing handle: ~A" bline)))))
 
 (deftest "undo-names-its-reversible-set" "docs/SPEC-WORK.md:5783"
     "each-reversible-verb-undone-by-table;refused-verb-refused-named;terminal-dispositions-refused"
@@ -1505,11 +1576,23 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
         (ok okp "an undo of a transition refused: ~A" line)
         (check-equal :review (node-state (kernel-state k) node) "the preimage state is restored")))
     (submit k (list :verb :external-effect :node "acme/work/f1/t1" :by "rowan"
-                    :effect :sent :handle "m-1" :request "ext-1"
+                    :effect :sent :handle "op-77" :owner :operation :state :uncertain
+                    :request "ext-1"
                     :stamp "2026-09-14T12:00:00Z" :clock :tool :generation-owner "gen-4"))
-    (multiple-value-bind (okp line) (submit k (undo-verb-request "ext-1" "undo-ext-1"))
-      (ok (not okp) "an undo over a recorded effect must refuse")
-      (ok (search "not reversible here" line) "refused by name: ~A" line))
+    (let ((rev (state-revision (kernel-state k)))
+          (hist (length (state-history (kernel-state k)))))
+      (multiple-value-bind (okp line) (submit k (undo-verb-request "ext-1" "undo-ext-1"))
+        (ok (not okp) "an undo over a recorded effect must refuse")
+        (ok (search "not reversible here" line) "refused by name: ~A" line)
+        ;; SPEC-WORK.md:2900-2902: the operation id or pointer is printed as the
+        ;; handle and no local state is rewound.
+        (ok (search "handle=op-77" line) "names the operation id handle: ~A" line)
+        (ok (search "owner=operation" line) "names the recording verb: ~A" line)
+        (ok (search "state=uncertain" line) "names the uncertain state: ~A" line)
+        (check-equal rev (state-revision (kernel-state k))
+                     "a refused external undo rewinds no revision")
+        (check-equal hist (length (state-history (kernel-state k)))
+                     "a refused external undo writes no history")))
     (submit k (list :verb :node-remove :node "acme/work/f1/t1" :by "rowan" :reason "drop"
                     :request "rm-1" :stamp "2026-09-14T12:00:00Z" :clock :tool
                     :generation-owner "gen-4"))

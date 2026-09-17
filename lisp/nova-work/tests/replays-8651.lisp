@@ -69,7 +69,65 @@
                  "a conflict names what moved")
     (check-equal nil (conflict-is-explicit h "r1" '(:title "old"))
                  "no conflict while the preconditions still hold")
-    (check-equal h h "the history is untouched by the conflict")))
+    (check-equal h h "the history is untouched by the conflict"))
+  ;; The same contract over the real kernel: an accepted edit is undone by an
+  ;; appended compensation and redone against current preconditions, while a
+  ;; conflicting redo is explicit and mutates nothing (SPEC-WORK.md:2827-2845,
+  ;; :6366).
+  (let* ((k (fresh))
+         (node "acme/work/f1/t1"))
+    (submit k (edit-request node :request "ur-edit" :title '(:set "t")))
+    (submit k (list :verb :undo :of "ur-edit" :by "rowan" :request "ur-undo"
+                    :stamp "2026-09-14T13:00:00Z" :clock :tool
+                    :generation-owner "gen-4"))
+    (ok (absentp (node-title (kernel-state k) node)) "the real undo restores the preimage")
+    (submit k (list :verb :redo :of "ur-undo" :by "rowan" :request "ur-redo"
+                    :stamp "2026-09-14T13:01:00Z" :clock :tool
+                    :generation-owner "gen-4"))
+    (check-string= "t" (node-title (kernel-state k) node) "the real redo reapplies the intent")
+    (let ((hist (state-history (kernel-state k))))
+      (ok (find "ur-undo" hist :key (lambda (r) (getf r :request)) :test #'string=)
+          "the undo still stands after the redo")
+      (ok (find "ur-redo" hist :key (lambda (r) (getf r :request)) :test #'string=)
+          "the redo is appended")))
+  (let* ((k (fresh))
+         (node "acme/work/f1/t1"))
+    (submit k (edit-request node :request "ur-edit-2" :title '(:set "t")))
+    (submit k (list :verb :undo :of "ur-edit-2" :by "rowan" :request "ur-undo-2"
+                    :stamp "2026-09-14T13:00:00Z" :clock :tool
+                    :generation-owner "gen-4"))
+    (submit k (edit-request node :request "ur-later-2" :title '(:set "moved")))
+    (let ((hist (state-history (kernel-state k))))
+      (multiple-value-bind (rokp rline)
+          (submit k (list :verb :redo :of "ur-undo-2" :by "rowan" :request "ur-redo-2"
+                          :stamp "2026-09-14T13:02:00Z" :clock :tool
+                          :generation-owner "gen-4"))
+        (ok (not rokp) "a conflicting real redo must refuse")
+        (ok (search "stale plan" rline) "the real conflict is explicit: ~A" rline)
+        (check-equal hist (state-history (kernel-state k))
+                     "the real conflict mutates nothing"))))
+  ;; close, reopen and redo across a real settle/revive envelope.
+  (let* ((k (fresh))
+         (node "acme/work/f1/t1"))
+    (submit k (list :verb :state-to-done :node node :by "rowan" :reason "shipped"
+                    :evidence '("ev-1") :request "ur-close"
+                    :stamp "2026-09-14T13:00:00Z" :clock :tool
+                    :generation-owner "gen-4"))
+    (check-equal :c (node-branch (kernel-state k) node) "the close settled the node")
+    (multiple-value-bind (uokp uline)
+        (submit k (list :verb :undo :of "ur-close" :by "rowan" :request "ur-undo-close"
+                        :stamp "2026-09-14T13:01:00Z" :clock :tool
+                        :generation-owner "gen-4"))
+      (ok uokp "the undo of the close is accepted: ~A" uline))
+    (check-equal :o (node-branch (kernel-state k) node) "the undo revived the node")
+    (multiple-value-bind (rokp rline)
+        (submit k (list :verb :redo :of "ur-undo-close" :by "rowan" :request "ur-redo-close"
+                        :stamp "2026-09-14T13:02:00Z" :clock :tool
+                        :generation-owner "gen-4"))
+      (ok rokp "the redo of the close is accepted: ~A" rline)
+      (ok (search "REDO OK" rline) "the redo names itself: ~A" rline))
+    (check-equal :c (node-branch (kernel-state k) node)
+                 "the redo reapplied the settle against current preconditions")))
 
 ;;; ------------------------------------------------------------------
 ;;; unrelated-receipts-stay-reusable                SPEC-WORK.md:4943-4951
