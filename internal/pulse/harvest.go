@@ -36,6 +36,16 @@ type HarvestInput struct {
 	Decide  bool
 	Floor   float64
 	Decider Decider
+
+	// The working layout (SPEC-PULSE, "Harvest on the working layout"): every
+	// path from a flag. --working names the bench's working root, --roots the
+	// swarm roots it also folds, --base the ref the commit is measured past,
+	// --since the session window and --timer installs the bench's own clock.
+	Working string
+	Roots   string
+	Base    string
+	Since   string
+	Timer   string
 }
 
 func field(s string) string {

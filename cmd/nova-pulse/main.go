@@ -29,6 +29,7 @@ nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue 
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> [--bench <name>]... [--once]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
@@ -239,7 +240,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		return cmdCut(rest, stdout, stderr)
 	case "harvest":
-		return cmdHarvest(rest, stdout, stderr)
+		return cmdHarvest(rest, stdout, stderr, now)
 	case "beat":
 		return cmdBeat(rest, stdout, stderr, now)
 	case "watch":
@@ -404,7 +405,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	})
 }
 
-func cmdHarvest(args []string, stdout, stderr io.Writer) int {
+func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("harvest")
 	id := f.fs.String("id", "", "")
 	root := f.fs.String("root", "", "")
@@ -416,9 +417,36 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	floor := f.fs.Float64("floor", 0.9, "")
 	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
 	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
+	working := f.fs.String("working", "", "")
+	roots := f.fs.String("roots", "", "")
+	base := f.fs.String("base", "", "")
+	since := f.fs.String("since", "", "")
+	timer := f.fs.String("timer", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	if *max < 0 {
+		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
+	}
+	// The working layout names no --id and no --root: it folds the bench's jobs
+	// under --working and the swarm roots under --roots. The old layout is
+	// unchanged and still wants both.
+	if strings.TrimSpace(*working) != "" || strings.TrimSpace(*roots) != "" {
+		if f.refused(stderr) {
+			return 2
+		}
+		return pulse.HarvestWorking(pulse.HarvestInput{
+			Working: *working,
+			Roots:   *roots,
+			Base:    *base,
+			Since:   *since,
+			Timer:   *timer,
+			Max:     *max,
+			Stdout:  stdout,
+			Stderr:  stderr,
+			Now:     func() time.Time { return now },
+		})
 	}
 	f.want(*id, "id", "the pulse id whose cards this harvest folds")
 	f.want(*root, "root", "the pulse root this pulse's state hangs under")
