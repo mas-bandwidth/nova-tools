@@ -1,0 +1,103 @@
+;;;; replays-8651.lisp --- the three named acceptance replays of the
+;;;; undo/redo, unknown-price and unrelated-receipt paragraphs.
+;;;;
+;;;; Each deftest names the line of docs/SPEC-WORK.md it comes from and asserts
+;;;; what that line says the replay must show. The pure functions and records
+;;;; these call live in src/replays-8651.lisp; this file is red before that
+;;;; file exists.
+
+(in-package #:nova-work/tests)
+
+;;; ------------------------------------------------------------------
+;;; unknown-price-is-not-zero                        SPEC-WORK.md:4636-4651
+;;; ------------------------------------------------------------------
+
+(deftest "unknown-price-is-not-zero" "docs/SPEC-WORK.md:4636-4651"
+    "missing-dimension=unknown,unsupported=unknown,unknown!=zero"
+  ;; A missing price dimension is unknown, never read as a zero historical receipt.
+  (check-equal :unknown (resolved-price nil)
+               "a missing price dimension resolves to :unknown")
+  (check-equal :unknown (resolved-price :unsupported)
+               "an unsupported price dimension resolves to :unknown")
+  (check-equal 7 (resolved-price 7)
+               "a present dimension keeps its value")
+  (ok (not (eql 0 (resolved-price nil)))
+      "an unknown dimension is never read as zero")
+  (ok (not (eql 0 (resolved-price :unsupported)))
+      "an unsupported dimension is never read as zero"))
+
+;;; ------------------------------------------------------------------
+;;; undo-redo                                       SPEC-WORK.md:6245
+;;; ------------------------------------------------------------------
+
+(deftest "undo-redo" "docs/SPEC-WORK.md:6245"
+    "reversible=reversed-refused-by-name,undo=appends-preserves,redo=valid-preconditions,conflict=explicit-mutates-nothing"
+  ;; Which verbs are reversible, verb by verb; terminal dispositions and
+  ;; recorded receipts are refused by name and never reach an undo.
+  (ok (reversible-verb-p :node-edit) "node edit is reversible")
+  (ok (reversible-verb-p :state-transition) "close and reopen (state transition) is reversible")
+  (ok (reversible-verb-p :event-reopen) "reopen is reversible")
+  (ok (reversible-verb-p :decompose) "decomposition is reversible")
+  (ok (reversible-verb-p :accept) "a changed criterion (accept) is reversible")
+  (ok (not (reversible-verb-p :node-remove)) ":removed is terminal, never reversible")
+  (ok (not (reversible-verb-p :event-cancel)) "cancel reaches a terminal disposition")
+  (ok (not (reversible-verb-p :heartbeat)) "a recorded receipt is not reversible")
+  (ok (not (reversible-verb-p :acknowledge)) "an accounting receipt is not reversible")
+  ;; Undo appends a compensation and preserves the original in place.
+  (let* ((h (list (make-edit-entry :id "r1" :verb :node-edit
+                                   :preimage '(:title "old") :postimage '(:title "new"))))
+         (h2 (history-with-undo h "r1")))
+    (check-equal 2 (length h2) "undo appends exactly one compensating entry")
+    (check-equal '(:title "new") (edit-entry-preimage (car (last h2)))
+                 "the compensation's preimage is the original's postimage")
+    (check-equal h (butlast h2) "the original entry stays exactly where it was"))
+  ;; Redo reapplies intent against current preconditions, never deletes the undo.
+  (let ((e (make-edit-entry :id "r1" :verb :node-edit
+                            :preimage '(:title "old") :postimage '(:title "new"))))
+    (ok (redo-applies-p e '(:title "old")) "redo is admitted while preconditions match")
+    (ok (not (redo-applies-p e '(:title "changed")))
+        "redo is refused when a dependent later edit no longer holds"))
+  (let ((e (make-edit-entry :id "r2" :verb :accept
+                            :preimage '(:criteria ("old")) :postimage '(:criteria ("new")))))
+    (ok (not (redo-applies-p e '(:criteria ("other"))))
+        "redo is refused when the criteria changed"))
+  ;; A conflict is explicit and mutates nothing.
+  (let ((h (list (make-edit-entry :id "r1" :verb :node-edit
+                                  :preimage '(:title "old") :postimage '(:title "new")))))
+    (check-equal (list :conflict "r1" :expected '(:title "old") :current '(:title "changed"))
+                 (conflict-is-explicit h "r1" '(:title "changed"))
+                 "a conflict names what moved")
+    (check-equal nil (conflict-is-explicit h "r1" '(:title "old"))
+                 "no conflict while the preconditions still hold")
+    (check-equal h h "the history is untouched by the conflict")))
+
+;;; ------------------------------------------------------------------
+;;; unrelated-receipts-stay-reusable                SPEC-WORK.md:4943-4951
+;;; ------------------------------------------------------------------
+
+(deftest "unrelated-receipts-stay-reusable" "docs/SPEC-WORK.md:4943-4951"
+    "outside-proof-scope=still-reusable,inside-single-scope=invalidated"
+  (let* ((scope-a (make-proof-scope :paths '("src/a.lisp")
+                                    :criteria '("test/a_test.lisp")))
+         (scope-b (make-proof-scope :paths '("src/b.lisp")
+                                    :criteria '("test/b_test.lisp")))
+         (ra (make-receipt :id "ra" :scope scope-a))
+         (rb (make-receipt :id "rb" :scope scope-b)))
+    ;; A change inside A's scope invalidates A and leaves B reusable.
+    (check-equal '("rb")
+                 (mapcar #'receipt-id
+                         (unrelated-receipts-stay-reusable
+                          (list ra rb) (list :path "src/a.lisp")))
+                 "a change in one feature's scope leaves the unrelated receipt reusable")
+    ;; The same holds for a changed criterion.
+    (check-equal '("rb")
+                 (mapcar #'receipt-id
+                         (unrelated-receipts-stay-reusable
+                          (list ra rb) (list :criterion "test/a_test.lisp")))
+                 "a changed criterion leaves the unrelated receipt reusable")
+    ;; A change touching neither scope invalidates nothing.
+    (check-equal '("ra" "rb")
+                 (mapcar #'receipt-id
+                         (unrelated-receipts-stay-reusable
+                          (list ra rb) (list :path "src/c.lisp")))
+                 "a change outside every declared proof scope invalidates no receipt")))

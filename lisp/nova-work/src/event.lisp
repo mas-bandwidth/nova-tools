@@ -23,9 +23,16 @@
   '((:transition :to :reason :blocked-by :evidence)   ; SPEC-WORK.md:823
     (:reopen     :reason)                             ; SPEC-WORK.md:887
     (:settle     :disposition :reason :already-closed) ; SPEC-WORK.md:889-892
-    (:revive     :reason))                            ; SPEC-WORK.md:892
-  "The ordered field list per kind, for the four kinds slice 1 supports. Any
-other kind is refused rather than serialized on a guessed order.")
+    (:revive     :reason)                             ; SPEC-WORK.md:892
+    (:edit       :title-patch :category-patch :links-patch :private-patch
+                 :version-patch :reason)              ; SPEC-WORK.md:5798
+    (:external   :effect :handle)                     ; SPEC-WORK.md:5652
+    (:terminal   :disposition :reason)                ; cancel/remove, SPEC-WORK.md:5783
+    (:goal       :change :scope :goal :reason)        ; SPEC-WORK.md:1060
+    (:evidence   :pointer :criterion :against :generation :attempt)) ; :996
+  "The ordered field list per kind. Slice 1 supports the four transition kinds;
+the goal and evidence rows are the goal verb's two event kinds, added by
+nova-tools #362 so a `goal update` writes a kind of its own field list.")
 
 (defun kind-fields (kind)
   (let ((row (assoc kind *kind-field-order*)))
