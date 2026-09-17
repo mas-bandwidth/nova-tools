@@ -20,6 +20,7 @@
                (:file "src/kernel")
                (:file "src/state-export")
                (:file "src/fleet")
+               (:file "src/replays-8605")
                (:file "src/replays-applicable-delegation")
                (:file "src/replays-config-and-availability")))
 

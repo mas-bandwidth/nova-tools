@@ -208,10 +208,6 @@
   "at --until and lease expiry no duplicate launch and no stopped or completed claim, the reservation retained until reconciled"
   "LEASE-UNTIL")
 
-(needs-kernel "working-is-a-view" "docs/SPEC-WORK.md:5082"
-  "|W| <= |O| over a set where every item is leased then released, and no verb writes W"
-  "WORKING-SET")
-
 (deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
     "expected=bignum-fields-round-trip-exact;json-number-frame-refused"
   (dolist (field '((:id 9007199254740993)
