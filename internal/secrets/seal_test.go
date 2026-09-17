@@ -79,6 +79,10 @@ func newSealFixture(t *testing.T, decryptOut string) *sealFixture {
 		"case \"$*\" in\n" +
 		"  *\"-d\"*) cat \"$DECOUT\"; exit 0;;\n" +
 		"esac\n" +
+		"# strict like real sops: encrypt needs a file argument and the store as cwd\n" +
+		"for last; do :; done\n" +
+		"if [ \"$last\" != \"/dev/stdin\" ]; then exit 100; fi\n" +
+		"pwd -P > \"$ARGS.cwd\"\n" +
 		"cat > \"$STDIN\"\n" +
 		"echo \"ENC[marker]\"\n"
 	f.sopsPath = f.writeScript(t, "sops", sopsBody)
@@ -153,6 +157,13 @@ func TestSealPipedValueLandsInEncryptStdinNotArgv(t *testing.T) {
 	}
 	if !strings.Contains(argv, "--filename-override") || !strings.Contains(argv, "rowan.yaml") {
 		t.Errorf("encrypt did not use --filename-override rowan.yaml:\n%s", argv)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(argv), "/dev/stdin") {
+		t.Errorf("encrypt argv must end with the /dev/stdin file argument (real sops exits 100 without it):\n%s", argv)
+	}
+	wantCwd, _ := filepath.EvalSymlinks(f.storeDir)
+	if got := strings.TrimSpace(readMaybe(t, f.sopsArgs+".cwd")); got != wantCwd {
+		t.Errorf("encrypt ran in %q, want the store %q (sops finds .sops.yaml from its cwd)", got, wantCwd)
 	}
 	if strings.Contains(line, "newsecretvalue") {
 		t.Errorf("value leaked into the OK line: %s", line)
@@ -237,17 +248,54 @@ func TestSealFullPathOpensPRAndMerges(t *testing.T) {
 	}
 }
 
+// TestSealSaysWhatItIsDoing: a person at a terminal must be able to tell waiting from
+// hung (Glenn 2026-09-17: the verb polled for approval in silence and read as a hang).
+// Every step that can take time has a progress line; none of them carries the value;
+// and after the merge the store goes back to the branch it was on before pulling.
+func TestSealSaysWhatItIsDoing(t *testing.T) {
+	skipPOSIXFakesOnWindows(t)
+	f := newSealFixture(t, "TARGET: old\n")
+	opts := f.options(t, "TARGET", "quietsecretvalue\n", false)
+	var progress strings.Builder
+	opts.Progress = &progress
+	if _, err := RunSeal(opts); err != nil {
+		t.Fatalf("RunSeal: %v", err)
+	}
+	got := progress.String()
+	for _, want := range []string{"reading rowan.yaml", "encrypting", "committing on branch seal/rowan-TARGET-",
+		"pushing", "opening the pull request", "pull request #42 is open; waiting", "approved; merging #42",
+		"returning the store to its branch", "checking the seat decrypts"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("progress missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "quietsecretvalue") {
+		t.Errorf("value leaked into progress:\n%s", got)
+	}
+	for _, l := range strings.Split(strings.TrimSpace(got), "\n") {
+		if !strings.HasPrefix(l, "seal: ") {
+			t.Errorf("progress line without the seal: prefix: %q", l)
+		}
+	}
+	git := strings.ReplaceAll(readMaybe(t, f.gitArgs), "\n", " ")
+	back, pull := strings.Index(git, "checkout - "), strings.LastIndex(git, "pull")
+	if back < 0 || pull < 0 || back > pull {
+		t.Errorf("after the merge git must checkout - and then pull; got: %s", git)
+	}
+}
+
 // TestSealEncryptTakesValueOnStdin asserts the core seal promise on every
 // platform: the plaintext reaches the encrypt child on stdin and never in its
 // argv. The child is a pure-Go fake supplied through the exec seam, so no
 // shell and no POSIX mode bits are involved (card 8517).
 func TestSealEncryptTakesValueOnStdin(t *testing.T) {
-	var gotStdin string
+	var gotStdin, gotDir string
 	var gotArgs []string
 	run := func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
 		if name != "sops" {
 			t.Fatalf("unexpected helper %q", name)
 		}
+		gotDir = dir
 		gotArgs = append([]string(nil), args...)
 		b, err := io.ReadAll(stdin)
 		if err != nil {
@@ -259,7 +307,7 @@ func TestSealEncryptTakesValueOnStdin(t *testing.T) {
 
 	const value = "newsecretvalue"
 	plaintext := []byte("TARGET: " + value + "\n")
-	out, err := sealEncrypt(run, "sops", "/nonexistent/rowan.key", "rowan.yaml", plaintext)
+	out, err := sealEncrypt(run, "sops", "/nonexistent/rowan.key", "/the/store", "rowan.yaml", plaintext)
 	if err != nil {
 		t.Fatalf("sealEncrypt: %v", err)
 	}
@@ -273,6 +321,12 @@ func TestSealEncryptTakesValueOnStdin(t *testing.T) {
 		if strings.Contains(a, value) {
 			t.Errorf("value leaked into encrypt argv: %q", a)
 		}
+	}
+	if len(gotArgs) == 0 || gotArgs[len(gotArgs)-1] != "/dev/stdin" {
+		t.Errorf("encrypt argv must end with /dev/stdin, got %q", gotArgs)
+	}
+	if gotDir != "/the/store" {
+		t.Errorf("encrypt dir = %q, want the store", gotDir)
 	}
 	if !strings.Contains(string(out), "ENC[marker]") {
 		t.Errorf("encrypt stdout not returned: %q", out)

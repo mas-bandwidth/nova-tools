@@ -33,6 +33,13 @@ func realExecCommand(stdin io.Reader, env []string, dir, name string, args ...st
 	return out.Bytes(), err
 }
 
+// say writes one progress line; never a value, only step names and public facts.
+func (o SealOptions) say(format string, a ...interface{}) {
+	if o.Progress != nil {
+		fmt.Fprintf(o.Progress, "seal: "+format+"\n", a...)
+	}
+}
+
 // SealOptions carries one seal request and the test seams around it.
 //
 // The value travels from Stdin (or the controlling terminal) to the encrypt child's
@@ -51,6 +58,12 @@ type SealOptions struct {
 
 	Stdin           io.Reader
 	StdinIsTerminal bool
+
+	// Progress receives one short line per step that can take time (nil = silent).
+	// A person at a terminal must be able to tell waiting from hung: any interactive
+	// verb says what it is doing before each step that can exceed a blink. The lines
+	// go to stderr so the one-line result on stdout stays the whole machine answer.
+	Progress io.Writer
 
 	Now   func() time.Time
 	Check func(storeDir, asName, keyPath, sopsPath string) error
@@ -131,13 +144,15 @@ func RunSeal(opts SealOptions) (string, error) {
 	seatFile := opts.AsName + ".yaml"
 	targetFile := filepath.Join(opts.StoreDir, seatFile)
 
+	opts.say("reading %s", seatFile)
 	existing, err := sealDecrypt(run, opts.SopsPath, opts.KeyPath, targetFile)
 	if err != nil {
 		return "", err
 	}
 	plaintext := sealApply(existing, opts.Name, value)
 
-	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, seatFile, plaintext)
+	opts.say("encrypting to the seat's recipients")
+	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, plaintext)
 	if err != nil {
 		return "", err
 	}
@@ -146,6 +161,7 @@ func RunSeal(opts SealOptions) (string, error) {
 	}
 
 	branch := fmt.Sprintf("seal/%s-%s-%s", opts.AsName, opts.Name, opts.Now().UTC().Format("20060102-150405"))
+	opts.say("committing on branch %s", branch)
 	if err := sealGit(run, opts.StoreDir, opts.GitPath, "checkout", "-b", branch); err != nil {
 		return "", err
 	}
@@ -162,11 +178,13 @@ func RunSeal(opts SealOptions) (string, error) {
 			oneline.Field(opts.Name), oneline.Field(opts.AsName)), nil
 	}
 
+	opts.say("pushing the branch")
 	if err := sealGit(run, opts.StoreDir, opts.GitPath, "push", "-u", "origin", branch); err != nil {
 		return "", err
 	}
 	title := fmt.Sprintf("seal %s into %s", opts.Name, seatFile)
 	body := "Sealed with nova-secrets seal. The value was never written to a file in the clear, to argv, or to output."
+	opts.say("opening the pull request")
 	createOut, err := sealGH(run, opts.GHPath, opts.StoreDir, "pr", "create", "--head", branch, "--title", title, "--body", body)
 	if err != nil {
 		return "", err
@@ -180,7 +198,10 @@ func RunSeal(opts SealOptions) (string, error) {
 	}
 
 	approved := false
-	deadline := time.Now().Add(2 * time.Minute)
+	started := time.Now()
+	deadline := started.Add(2 * time.Minute)
+	lastSaid := started
+	opts.say("pull request #%s is open; waiting for the gate's approval (up to 2 min)", prNum)
 	for {
 		view, err := sealGH(run, opts.GHPath, opts.StoreDir, "pr", "view", prNum, "--json", "reviewDecision", "--jq", ".reviewDecision")
 		if err != nil {
@@ -193,6 +214,10 @@ func RunSeal(opts SealOptions) (string, error) {
 		if time.Now().After(deadline) {
 			break
 		}
+		if time.Since(lastSaid) >= 15*time.Second {
+			opts.say("still waiting for approval (%ds)", int(time.Since(started).Seconds()))
+			lastSaid = time.Now()
+		}
 		time.Sleep(5 * time.Second)
 	}
 	if !approved {
@@ -200,13 +225,21 @@ func RunSeal(opts SealOptions) (string, error) {
 			oneline.Field(opts.Name), oneline.Field(opts.AsName), prNum), nil
 	}
 
+	opts.say("approved; merging #%s", prNum)
 	if _, err := sealGH(run, opts.GHPath, opts.StoreDir, "pr", "merge", prNum, "--squash"); err != nil {
+		return "", err
+	}
+	// Back to the branch the store was on: the squash leaves the seal branch stale, and a
+	// store parked on it would serve the next exec from a branch nobody merges again.
+	opts.say("returning the store to its branch and pulling")
+	if err := sealGit(run, opts.StoreDir, opts.GitPath, "checkout", "-"); err != nil {
 		return "", err
 	}
 	if err := sealGit(run, opts.StoreDir, opts.GitPath, "pull"); err != nil {
 		return "", err
 	}
 
+	opts.say("checking the seat decrypts")
 	checkFn := opts.Check
 	if checkFn == nil {
 		checkFn = func(storeDir, asName, keyPath, sopsPath string) error {
@@ -336,15 +369,21 @@ func sealDecrypt(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 
 // sealEncrypt hands the plaintext to sops on stdin, with the seat file named only through
 // --filename-override so the config's own rule picks the recipients.
-func sealEncrypt(run execCommand, sopsPath, keyPath, seatFile string, plaintext []byte) ([]byte, error) {
+//
+// Two things real sops insists on, which a lenient fake once hid: it needs a file
+// argument even when the bytes come from stdin (/dev/stdin; without it sops exits 100,
+// "no file specified"), and it finds .sops.yaml from its working directory, whose
+// path_regex rules are relative to the store. So the child runs inside the store and
+// the verb works from any directory the caller happens to be in.
+func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile string, plaintext []byte) ([]byte, error) {
 	tmpDir, err := os.MkdirTemp("", "nova-secrets-seal-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	out, err := run(bytes.NewReader(plaintext), sealSopsEnv(keyPath, tmpDir), "", sopsPath,
-		"-e", "--filename-override", seatFile, "--input-type", "yaml", "--output-type", "yaml")
+	out, err := run(bytes.NewReader(plaintext), sealSopsEnv(keyPath, tmpDir), storeDir, sopsPath,
+		"-e", "--filename-override", seatFile, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
 	if err != nil {
 		exitCode := 1
 		if exitErr, ok := err.(*exec.ExitError); ok {
