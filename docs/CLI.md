@@ -776,6 +776,24 @@ the deployment's native runner on PATH; the one batch is recorded in
 `<root>/pulses/<id>.tsv`. A swarm refusal is relayed as one `PULSE REFUSED`
 line with the swarm's reason.
 
+### cut
+
+```
+nova-pulse cut --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
+```
+
+`cut` writes one practice-17 card per `pool.tsv` candidate from its typed
+template, plus a `cards.tsv` naming the model by kind. `--max` bounds the
+number of cards cut, in pool order (default 20, `0` for all) — `--max 6` cuts
+six cards and the rest of the pool waits for the next call — and also caps the
+`CUT SKIPPED` lines printed. One line on success:
+
+```
+CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
+```
+
+Exit 0 when every candidate was cut, 1 when any was skipped, 2 on a refusal.
+
 ### status
 
 ```

@@ -246,6 +246,11 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     one `<TOKEN> MORE
     kind=<k> shown=<n> total=<t> <remedy>`; the count line prints on failure as well as
     success; every value is one `internal/oneline` token. No verb prints a list of titles.
+    On `pool` and `cut`, `--max` also bounds the work, never just the print: `pool` admits at
+    most `--max` candidates and `cut` writes at most `--max` cards, in pool order, so `CUT OK
+    cards=<n>` is the bound when one was named (`--max 6` cuts six cards), and `0` means no
+    bound. The rest of the pool is left for the next call — never dropped, never counted
+    skipped.
 19. **State is files under `--root`, all of them tab-separated, all of them in the open.**
     `pool.tsv`, `cards.tsv`, `queue.tsv`, `next.tsv`, `retry.tsv`, `skipped.tsv`, `seen.tsv`,
     `pulses/<id>.tsv`, and the cards under `cards/<pulse id>/`. No database, no lock of this

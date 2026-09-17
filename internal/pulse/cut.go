@@ -28,7 +28,7 @@ type CutInput struct {
 	Out       string // the directory the card files go into
 	Root      string // the state root; skipped.tsv is written here
 	Local     string // an optional ollama tag that overrides the flash model for read and text cards
-	Max       int    // per-kind cap on skipped lines; 0 prints all
+	Max       int    // cap on the cards cut, and on the skipped lines printed; 0 means no cap
 	Stdout    io.Writer
 	Stderr    io.Writer
 }
@@ -57,6 +57,9 @@ func Cut(in CutInput) int {
 	var cards []CardRow
 
 	for _, row := range pool {
+		if in.Max > 0 && len(cards) >= in.Max {
+			break
+		}
 		name := row.Template
 		raw, err := os.ReadFile(filepath.Join(in.Templates, name+".md"))
 		if err != nil {

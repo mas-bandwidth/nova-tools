@@ -494,7 +494,7 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	f.want(*out, "out", "the directory the cut cards go into")
 	f.want(*root, "root", "the state root; skipped.tsv is written here")
 	if *max < 0 {
-		f.problems = append(f.problems, fmt.Sprintf("--max is 0 or more, got %d; 0 already means all, so a negative ceiling is a typo with two readings", *max))
+		f.problems = append(f.problems, fmt.Sprintf("--max is the number of cards to cut, 0 or more, got %d; 0 already means no bound", *max))
 	}
 	if f.refused(stderr) {
 		return 2
