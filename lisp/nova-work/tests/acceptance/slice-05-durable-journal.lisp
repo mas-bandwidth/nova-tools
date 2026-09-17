@@ -611,11 +611,8 @@
 ;;   groups, each with stable id/source/stamp/availability/constraints, and
 ;;   declared support, verified runtime and free capacity as three fields.
 
-;;; 58. dispatch-ack-and-ownership-are-three   docs/SPEC-WORK.md:5219
-;;;
-;; NEEDS-KERNEL: dispatch/delivery/acknowledgement and accepted-ownership as
-;;   distinct facts; a pending offer reserving only declared capacity; a timeout
-;;   alone launching no duplicate.
+;;; 58. dispatch-ack-and-ownership-are-three (SPEC-WORK.md:5219) now runs as
+;;; the real deftest below, over the four-fact dispatch records.
 
 ;;; 59. requested-model-is-not-observed-model   docs/SPEC-WORK.md:5222
 ;;;
@@ -642,11 +639,8 @@
 ;;   Explicit rest is respected: a resting friend is not pinged by a silence
 ;;   threshold.
 
-;;; 63. return-reconciles-before-dispatch   docs/SPEC-WORK.md:5226
-;;;
-;; NEEDS-KERNEL: return reconciling outstanding assignments and capacity.
-;;   A return reconciles outstanding assignments and observed capacity before
-;;   any new dispatch.
+;;; 63. return-reconciles-before-dispatch (SPEC-WORK.md:5226) now runs as the
+;;; real deftest in slice-07-replays-mid.lisp.
 
 ;;; 64. unchanged-config-is-one-bounded-answer   docs/SPEC-WORK.md:5284
 ;;;
@@ -687,9 +681,8 @@
 ;; (deftest "an-excluded-choice-is-refused-not-empty" "docs/SPEC-WORK.md:3378"
 ;;     "expected=excluded-kind-refused;never-empty-rows")
 
-;; NEEDS-KERNEL: offer/acknowledge/decline verbs keep the four facts apart, infer none, launch none.
-;; (deftest "four-facts-four-verbs" "docs/SPEC-WORK.md:3398"
-;;     "expected=dispatch-delivery-accepted-ownership-stay-apart;nothing-inferred;nothing-launched")
+;; four-facts-four-verbs (SPEC-WORK.md:3398) now runs as the real deftest in
+;; tests/acceptance/slice-09-fleet-assignment.lisp.
 
 ;; NEEDS-KERNEL: acknowledge/decline admit only behind an operator-configured verifier.
 ;; (deftest "a-receipt-needs-a-verifier" "docs/SPEC-WORK.md:3413"
@@ -699,73 +692,59 @@
 ;; (deftest "staged-admission-refuses" "docs/SPEC-WORK.md:3414"
 ;;     "expected=stale-or-failed-stage-writes-nothing")
 
-;; NEEDS-KERNEL: an admitted offer writes :effect :dispatched, a pending-offer entry, and one (offer,attempt) reservation.
-;; (deftest "offer-writes-intent-and-a-reservation" "docs/SPEC-WORK.md:3439"
-;;     "expected=:effect-:dispatched;pending-offer;reservation-keyed-by-offer-attempt;no-lease")
+;; offer-writes-intent-and-a-reservation (SPEC-WORK.md:5229) now runs as the
+;; real deftest in tests/acceptance.lisp.
 
-;; NEEDS-KERNEL: a second offer to another name while a holder is pending/accepted is refused — no shadow lease.
-;; (deftest "no-shadow-lease-across-holders" "docs/SPEC-WORK.md:3440"
-;;     "expected=cross-holder-offer-refused;no-shadow-lease")
+;; no-shadow-lease-across-holders (SPEC-WORK.md:5238) now runs as the real
+;; deftest in tests/acceptance.lisp.
 
-;; NEEDS-KERNEL: accepted creates exactly one lease, or binds to the holder's own without touching deadline/default.
-;; (deftest "accepted-creates-one-lease-or-binds" "docs/SPEC-WORK.md:3458"
-;;     "expected=one-lease-or-bind-to-holders-own;deadline-and-default-unchanged-on-bind")
+;; accepted-creates-one-lease-or-binds (SPEC-WORK.md:5238) now runs as the
+;; real deftest in tests/acceptance.lisp.
 
-;; NEEDS-KERNEL: at --until an unanswered offer is overdue and unreconciled; no auto launch and the reservation stands.
-;; (deftest "until-is-overdue-not-released" "docs/SPEC-WORK.md:3473"
-;;     "expected=overdue-unreconciled;no-auto-launch;reservation-stands")
+;; until-is-overdue-not-released (SPEC-WORK.md:5243) now runs as the real
+;; deftest in tests/acceptance.lisp.
 
 ;; NEEDS-KERNEL: a late receipt is retained as :effect :late, a duplicate consumes no capacity, conflicting bytes refused.
 ;; (deftest "late-and-duplicate-receipts-are-retained" "docs/SPEC-WORK.md:3474"
 ;;     "expected=:effect-:late-retained;duplicate-consumes-no-capacity;conflicting-bytes-refused")
 
-;; NEEDS-KERNEL: execution stop installs a durable hold plus directives and writes no transition — not a cancel.
-;; (deftest "stop-is-a-hold-not-a-cancel" "docs/SPEC-WORK.md:3499"
-;;     "expected=hold-plus-directives;no-transition;not-a-cancel")
+;; stop-is-a-hold-not-a-cancel (SPEC-WORK.md:3944) now runs as the real deftest
+;; in slice-09-replays-holds.lisp, with the hold and dispatch gate it needed.
 
 ;; NEEDS-KERNEL: the :cancel's evidence covers the attempt set, so one worker's stop note cannot cancel another live attempt.
 ;; (deftest "one-stop-note-cannot-cancel-two-attempts" "docs/SPEC-WORK.md:3499"
 ;;     "expected=one-stop-note-cannot-cancel-node-with-another-live-attempt")
 
-;; NEEDS-KERNEL: the hold and the capture anchor are journaled before EXECUTION OK, so a crash leaves both.
-;; (deftest "hold-survives-a-crash" "docs/SPEC-WORK.md:3517"
-;;     "expected=hold-and-capture-anchor-durable-before-ack")
+;; hold-survives-a-crash (SPEC-WORK.md:3962) now runs as the real deftest in
+;; slice-09-replays-holds.lisp.
 
 ;; NEEDS-KERNEL: a clip that publishes during a live capture carries the pin forward; the capture never reads a newer scope.
 ;; (deftest "capture-survives-clip" "docs/SPEC-WORK.md:3517"
 ;;     "expected=clip-carries-pin-forward;no-reconstruct-from-newer-scope")
 
-;; NEEDS-KERNEL: the dispatch barrier is checked at offer, at conversion and at the last send.
-;; (deftest "no-dispatch-slips-past-a-hold" "docs/SPEC-WORK.md:3534"
-;;     "expected=barrier-at-offer-conversion-send;no-dispatch-between-capture-and-hold")
+;; no-dispatch-slips-past-a-hold (SPEC-WORK.md:3979) now runs as the real
+;; deftest in slice-09-replays-holds.lisp, with the dispatch barrier it named.
 
-;; NEEDS-KERNEL: an acceptance under a hold is retained :accepted-held with no lease, launch or release; lift converts nothing.
-;; (deftest "held-acceptance-converts-nothing" "docs/SPEC-WORK.md:3535"
-;;     "expected=:accepted-held;no-lease-no-launch-no-release;lift-converts-nothing")
+;; held-acceptance-converts-nothing (SPEC-WORK.md:3980) now runs as the real
+;; deftest in tests/replays-8640.lisp.
 
-;; NEEDS-KERNEL: reconcile preserves contradictory observations unresolved, never last-write-wins.
-;; (deftest "reconcile-preserves-contradiction" "docs/SPEC-WORK.md:3564"
-;;     "expected=contradictions-preserved-unresolved;never-last-write-wins")
+;; reconcile-preserves-contradiction (SPEC-WORK.md:4009) now runs as the real
+;; deftest in tests/replays-8640.lisp.
 
-;; NEEDS-KERNEL: resume is two acts — release-hold (its own control only) and resume-workers (hold kept until running).
-;; (deftest "resume-is-two-actions" "docs/SPEC-WORK.md:3574"
-;;     "expected=release-hold-lifts-only-its-control;resume-workers-keeps-hold-until-running")
+;; resume-is-two-actions (SPEC-WORK.md:4019) now runs as the real deftest in
+;; tests/replays-8640.lisp.
 
-;; NEEDS-KERNEL: execution correct keeps old-generation usage/results as a linked segment, not a rewrite.
-;; (deftest "correct-is-a-linked-segment" "docs/SPEC-WORK.md:3592"
-;;     "expected=linked-segment-not-rewrite;old-generation-usage-and-results-kept")
+;; correct-is-a-linked-segment (SPEC-WORK.md:4037) now runs as the real deftest
+;; in tests/replays-8640.lisp.
 
-;; NEEDS-KERNEL: the bare correct is refused while any execution of the node is live or uncertain.
-;; (deftest "bare-correct-refuses-under-execution" "docs/SPEC-WORK.md:3592"
-;;     "expected=bare-correct-refused-while-live;demands-execution-correct")
+;; bare-correct-refuses-under-execution (SPEC-WORK.md:4037) now runs as the
+;; real deftest in tests/replays-8640.lisp.
 ;;; lines 3600-end part 1 of 8 (rowan/replays-278)
 ;;; ------------------------------------------------------------------
 
 
-;; NEEDS-KERNEL: launcher/deadline dispatch (execution control); no launcher exists yet.
-;; a-broken-assertion-must-fail (SPEC-WORK.md:5725) --- a test that still passes with its
-;; asserted behaviour deliberately broken is not regression evidence; the specific criterion,
-;; revision coverage and remaining uncertainty are preserved, not a green badge.
+;; a-broken-assertion-must-fail (SPEC-WORK.md:6371) now runs as the real deftest
+;; in tests/replays-8641.lisp.
 
 ;; NEEDS-KERNEL: manifest exchange and roster validation; no config manifest exists yet.
 ;; a-partial-manifest-is-refused (SPEC-WORK.md:5285) --- the exchange bounded, validated and
@@ -791,15 +770,11 @@
 ;; reanimates no assignment, replays no message; savepoint age, local and shared revisions,
 ;; unshared work and failed backups readable; a savepoint never printed where a checkpoint asked.
 
-;; NEEDS-KERNEL: distributed execution reachability; no distributed worker exists yet.
-;; a-stop-reaches-distributed-work (SPEC-WORK.md:5728) --- a priority change, correction, pause
-;; or stop across already-distributed tasks, with durable request identity, delivery,
-;; acknowledgement and reconciled handles; blocked questions and bounded fallbacks persisted.
+;; a-stop-reaches-distributed-work (SPEC-WORK.md:6374) now runs as the real
+;; deftest in tests/replays-8641.lisp, with the control handles it named.
 
-;; NEEDS-KERNEL: lease creation/binding and W entry; no lease or W index exists yet.
-;; accepted-creates-one-lease-or-binds (SPEC-WORK.md:5238) --- an accepted receipt after
-;; received creating exactly one :lease and one W entry, or binding a second attempt to the same
-;; holder's lease unchanged; converting and never doubling capacity.
+;; accepted-creates-one-lease-or-binds (SPEC-WORK.md:5238) now runs as the
+;; real deftest in tests/acceptance.lisp.
 
 ;; NEEDS-KERNEL: node add verb with twelve fields; no node-add exists yet.
 ;; add-field-order-is-complete (SPEC-WORK.md:5337) --- a node add with every one of the twelve
@@ -836,9 +811,8 @@
 ;; axisless-history (SPEC-WORK.md:5383) --- two ordered rows, one finished, exported/loaded and
 ;; reopened past the window: both rows and evidence present, denominator not reduced by completion.
 
-;; NEEDS-KERNEL: correct/execution-correct barrier; no correct verb exists yet.
-;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) --- the bare correct refused by name
-;; while an attempt is live and admitted once none is.
+;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) now runs as the
+;; real deftest in tests/replays-8640.lisp.
 
 ;; NEEDS-KERNEL: batch coalescing by byte/record/delay bounds; no batch mode exists yet.
 ;; batch-with-bounds-and-urgency (SPEC-WORK.md:4376) --- independent results coalescing within
@@ -849,10 +823,8 @@
 ;; batches-and-pipelines (SPEC-WORK.md:5594) --- atomic batches all-or-none, independent batches
 ;; preserving their exact accepted prefix and marking the remainder not attempted.
 
-;; NEEDS-KERNEL: launcher hard-limit enforcement; no launcher exists yet.
-;; bounds-are-not-prompts (SPEC-WORK.md:4372) --- a launcher lacking a required hard limit
-;; refusing automatic dispatch; a supported deadline returning a terminal or unresolved handle
-;; without duplicate execution.
+;; bounds-are-not-prompts (SPEC-WORK.md:4849) now runs as the real deftest in
+;; tests/replays-8642.lisp, with the launcher hard limits it named.
 ;;; Acceptances promised by docs/SPEC-WORK.md (lines 3600-end) and absent
 ;;; from slice 1. Each is kept in the file's replay shape but needs session,
 ;;; CLI, query, paging, capture, clip, render, savepoint, cost, undo or
@@ -1034,14 +1006,8 @@ asserts does not exist in slice 1."
     "expected=one-of-five-writes-nothing;changed-payload-refused;equal-value=changed-0"
   "no edit verb in slice 1")
 
-;; efficiency-lessons-gate: prime projection respects --max-bytes; unpoured
-;; checklist items never count in |O|; tripped nodes require --reason; delegate
-;; mode refuses edits below the model; packets lacking :effort are refused;
-;; dispatches crossing the configured daily fleet spend ceiling are refused.
-;; NEEDS-KERNEL: model dispatch, delegate mode, :effort and spend-ceiling gates.
-(deftest-pending "efficiency-lessons-gate" "docs/SPEC-WORK.md:4439"
-    "expected=max-bytes-respected;unpoured!=O;tripped=reason;no-effort=refused;ceiling=refused"
-  "dispatch/effort/ceiling enforcement is not in slice 1")
+;; efficiency-lessons-gate (SPEC-WORK.md:4916) now runs as the real deftest in
+;; tests/replays-8644.lisp, with the dispatch/effort/ceiling gates it named.
 ;; edit-never-fetches-a-link: a live URL to a counting endpoint added, edited
 ;; and rendered with zero requests; a link holding NUL refused `bad link`; a
 ;; refusal on a private node prints no value.
@@ -1230,17 +1196,8 @@ asserts does not exist in slice 1."
 ;;; and marked NEEDS-KERNEL rather than run against an absent implementation.
 ;;; ------------------------------------------------------------------
 
-;; ------------------------------------------------------------------
-;; held-acceptance-converts-nothing   docs/SPEC-WORK.md:5258
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: session holds + leasing (an acceptance under a hold stays
-;; `:accepted-held` with no lease/launch/release until reconciled; lifting the
-;; hold converts nothing).
-;;(deftest "held-acceptance-converts-nothing" "docs/SPEC-WORK.md:5258"
-;;    "accepted-held=retained,lease=0,launch=0,release=0,lift-converts=nothing"
-;;  ;; an offer prepared before a pause refused at the last send; an acceptance
-;;  ;; under a hold retained `:accepted-held`; a lift of the hold converts nothing.)
-;;(pending))
+;; held-acceptance-converts-nothing (SPEC-WORK.md:5258) now runs as the real
+;; deftest in tests/replays-8640.lisp.
 
 ;; ------------------------------------------------------------------
 ;; historic-tick-survives-a-source-change   docs/SPEC-WORK.md:5300
@@ -1264,15 +1221,8 @@ asserts does not exist in slice 1."
 ;;  ;; grows: startup resident bytes, segment bytes read, parses, replays and
 ;;  ;; emitted bytes do not move; index pages read stay bounded by depth.)
 
-;; ------------------------------------------------------------------
-;; hold-survives-a-crash   docs/SPEC-WORK.md:5254
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: crash durability of holds (crash after the hold recovers the
-;; same hold and target identities with no duplicate launch).
-;;(deftest "hold-survives-a-crash" "docs/SPEC-WORK.md:5254"
-;;    "hold-durable,target-identities=recovered,duplicate-launch=0"
-;;  ;; a crash after the hold is durable and before capture/send recovering the
-;;  ;; same hold and target identities with no duplicate launch.)
+;; hold-survives-a-crash (SPEC-WORK.md:5254) now runs as the real deftest in
+;; tests/acceptance/slice-09-replays-holds.lisp.
 
 ;; ------------------------------------------------------------------
 ;; hostile-data   docs/SPEC-WORK.md:5602

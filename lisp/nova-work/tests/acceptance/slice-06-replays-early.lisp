@@ -8,10 +8,8 @@
 ;; operation-survives-the-client is now the executable replay in
 ;; ../acceptance.lisp (card 8608).
 
-;; NEEDS-KERNEL: oversized packet, stale route and escalation gates before dispatch.
-(deftest "packet-and-route-gates" "docs/SPEC-WORK.md:4371"
-    "expected=oversized/stale/unexplained-escalation-refuse-before-dispatch"
-  (slice1-refuses-verb :route))
+;; packet-and-route-gates (SPEC-WORK.md:4848) now runs as the real deftest in
+;; tests/replays-8646.lisp, with the packet and route gates it named.
 
 ;; page-budget-is-not-max is implemented in ../acceptance.lisp (card 8601).
 ;; NEEDS-KERNEL: a filtered historical ask whose filter rejects every row read.
@@ -223,7 +221,5 @@
 ;; quiet-until-actionable and read-only-intake now run in
 ;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 
-(deftest "reconcile-preserves-contradiction" "docs/SPEC-WORK.md:5262"
-    "expected=contradictory-observations-kept-unresolved;no-forged-inference"
-  ;; NEEDS-KERNEL: the reconcile/index surface over receipts and targets.
-  (ok t "pending; needs reconcile"))
+;; reconcile-preserves-contradiction (SPEC-WORK.md:4009) now runs as the real
+;; deftest in tests/replays-8640.lisp, with the reconcile surface it named.
