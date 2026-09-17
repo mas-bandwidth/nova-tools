@@ -17,6 +17,14 @@ type FakeHost struct {
 	Atomic   bool
 	Merges   []string
 	Err      error
+	// OnPR, when set, answers PR reads per poll so a test can script a PR that
+	// merges on the second poll. It receives the PR number and the 1-based call
+	// count; returning ok=false falls through to the PRs map. OnChecks does the
+	// same for check reads by commit sha.
+	OnPR        func(n, call int) (PR, bool)
+	OnChecks    func(oid string, call int) (Checks, bool)
+	PRCalls     int
+	ChecksCalls int
 	// Do is what this fake's two-precondition merge actually DOES, when a test wants the
 	// base really moved -- so that the read-back of rule 21 is exercised rather than
 	// skipped. A nil Do records the call and moves nothing.
@@ -31,6 +39,12 @@ func NewFakeHost() *FakeHost {
 func (f *FakeHost) PR(n int) (PR, error) {
 	if f.Err != nil {
 		return PR{}, f.Err
+	}
+	f.PRCalls++
+	if f.OnPR != nil {
+		if pr, ok := f.OnPR(n, f.PRCalls); ok {
+			return pr, nil
+		}
 	}
 	pr, ok := f.PRs[n]
 	if !ok {
@@ -56,6 +70,12 @@ func (f *FakeHost) BranchOID(branch string) (string, error) {
 func (f *FakeHost) Checks(oid string) (Checks, error) {
 	if f.Err != nil {
 		return Checks{}, f.Err
+	}
+	f.ChecksCalls++
+	if f.OnChecks != nil {
+		if c, ok := f.OnChecks(oid, f.ChecksCalls); ok {
+			return c, nil
+		}
 	}
 	return f.ChecksBy[oid], nil
 }
@@ -88,5 +108,23 @@ func (f *FakeHost) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 // SetChecks is the shorthand a test uses to say what a commit's evidence is.
 func (f *FakeHost) SetChecks(oid string, green, pending int, red ...string) {
 	c := Checks{Green: green, Pending: pending, Red: len(red), RedNames: red}
+	for i := 0; i < pending; i++ {
+		name := fmt.Sprintf("pending-%d", i+1)
+		c.PendingNames = append(c.PendingNames, name)
+		c.Details = append(c.Details, CheckDetail{Name: name, Conclusion: "pending"})
+	}
+	for _, name := range red {
+		c.Details = append(c.Details, CheckDetail{Name: name, Conclusion: "failure"})
+	}
+	f.ChecksBy[oid] = c
+}
+
+// SetCheckDetails sets a commit's checks from explicit name/conclusion pairs,
+// so a test can name the one pending or failing check the wait verb must print.
+func (f *FakeHost) SetCheckDetails(oid string, details ...CheckDetail) {
+	var c Checks
+	for _, d := range details {
+		c.Add(d.Name, d.Conclusion)
+	}
 	f.ChecksBy[oid] = c
 }

@@ -52,6 +52,7 @@ usage:
   nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
   nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
   nova-merge stop       --lane <dir>
+  nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
 
@@ -238,6 +239,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdPacket(rest, stdout, stderr, deps)
 	case "stop":
 		return cmdStop(rest, stdout, stderr, deps)
+	case "wait":
+		return cmdWait(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -254,7 +257,13 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		return false
 	}
 	creation := verb == "init" || verb == "quickstart"
+	// `wait` watches one pull request by polling the host, so it names the
+	// repository outright like `init` does; every other verb reads the lane's.
+	watch := verb == "wait"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
+		if name == "repo" && watch {
+			continue
+		}
 		if !creation && has(name) {
 			return refuse(stderr, " "+verb, fmt.Sprintf("--%s belongs to `init`, which writes it into the lane once; every other verb reads it from the lane's state", name)), true
 		}
