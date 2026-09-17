@@ -29,10 +29,11 @@ func invokePulse(t *testing.T, args ...string) (int, string, string) {
 // <queue>/pulse.log where the hand loop wrote it.
 func TestRunOnceIsOneWidthLineAndOneVerdict(t *testing.T) {
 	specs := fakePATH(t)
-	// One green ci run for the gate; the same body is harmless to the refill's listings,
-	// which find no number they are allowed to touch.
+	// One green ci push run for the gate -- the one run it reads (issue #879); the same
+	// body is harmless to the refill's listings, which find no number they are allowed
+	// to touch.
 	fakeTool(t, specs, "gh", fakeSpec{Default: fakeRule{
-		Stdout: `[{"databaseId":77,"status":"completed","conclusion":"success","headSha":"0123456789abcdef"}]`,
+		Stdout: `[{"databaseId":77,"status":"completed","conclusion":"success","headSha":"0123456789abcdef","workflowName":"ci","event":"push"}]`,
 	}})
 	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stdout: "BATCH OK\n"}})
 

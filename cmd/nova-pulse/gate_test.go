@@ -17,7 +17,7 @@ func TestGateVerbWritesStopFromASourceFile(t *testing.T) {
 	if err := os.MkdirAll(queue, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	source := writeMainFile(t, dir, "runs.json", `{"runs":[{"databaseId":35120376309,"status":"completed","conclusion":"failure","headSha":"8f3714d1c0de0000"}],
+	source := writeMainFile(t, dir, "runs.json", `{"runs":[{"databaseId":35120376309,"status":"completed","conclusion":"failure","headSha":"8f3714d1c0de0000","workflowName":"ci","event":"push"}],
 	 "job":{"name":"studio-fast","log":"--- FAIL: TestOne\nfix #828 first\n"}}`)
 
 	var out, errb bytes.Buffer
