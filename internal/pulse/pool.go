@@ -104,10 +104,10 @@ func Pool(in PoolInput) int {
 		return 2
 	}
 
-	fmt.Fprintf(in.Stdout, "POOL OK sources=%d candidates=%d issues=%d audits=%d slices=%d roadmap=%d prs=%d next=%d plan=%d seen=%d took=%s out=%s\n",
+	fmt.Fprintf(in.Stdout, "POOL OK sources=%d candidates=%d issues=%d audits=%d slices=%d roadmap=%d prs=%d work=%d next=%d plan=%d seen=%d took=%s out=%s\n",
 		len(srcs), len(rows),
 		counts["issue"], counts["audit"], counts["slice"], counts["roadmap"], counts["read"],
-		0, planCount, seenCount,
+		counts["work"], 0, planCount, seenCount,
 		time.Since(started).Round(time.Millisecond), oneline.Field(out))
 	return 0
 }
@@ -174,8 +174,10 @@ func poolSource(s source, seen map[string]bool, in PoolInput) ([]PoolRow, int, i
 		return poolRoadmap(s, seen)
 	case "prs":
 		return poolPRs(s, seen, in)
+	case "work":
+		return poolWork(s, seen)
 	default:
-		return nil, 0, 0, fmt.Errorf("unknown source kind %q (a source is issues, audits, bus, roadmap or prs)", s.kind)
+		return nil, 0, 0, fmt.Errorf("unknown source kind %q (a source is issues, audits, bus, roadmap, prs or work)", s.kind)
 	}
 }
 
@@ -365,6 +367,71 @@ func poolPRs(s source, seen map[string]bool, in PoolInput) ([]PoolRow, int, int,
 	return rows, 0, seenCount, nil
 }
 
+// poolWork pools one candidate per open, unleased, unblocked bug or item node in
+// a nova-work checkout. The locator is the work root; nodes are read from
+// <root>/nodes.tsv, one tab-separated row per node: id, type (bug|item), state,
+// lease (empty when no launch holds it), blocked-by (empty when not waiting on a
+// merge), title, and an optional template override. A node is pooled only when
+// its state is open, its lease is empty and its blocked-by is empty; the row id
+// is the node id, so cut carries it on the card's line 1 and harvest can record
+// the attempt on the node.
+func poolWork(s source, seen map[string]bool) ([]PoolRow, int, int, error) {
+	path := s.locator
+	if fi, err := os.Stat(path); err != nil {
+		return nil, 0, 0, fmt.Errorf("work root unreadable: %w", err)
+	} else if fi.IsDir() {
+		path = filepath.Join(path, "nodes.tsv")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("work nodes unreadable: %w", err)
+	}
+	var rows []PoolRow
+	seenCount := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 6 {
+			continue
+		}
+		id, typ, state, lease, blockedBy, title := parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+		if typ != "bug" && typ != "item" {
+			continue
+		}
+		if !workOpen(state) || strings.TrimSpace(lease) != "" || strings.TrimSpace(blockedBy) != "" {
+			continue
+		}
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		if strings.TrimSpace(title) == "" {
+			title = id
+		}
+		tpl := s.template
+		if len(parts) >= 7 && strings.TrimSpace(parts[6]) != "" {
+			tpl = strings.TrimSpace(parts[6])
+		}
+		key := s.kind + "\x00" + id
+		if seen[key] {
+			seenCount++
+			continue
+		}
+		rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: typ, Title: title, Template: tpl})
+	}
+	return rows, 0, seenCount, nil
+}
+
+// workOpen reports whether a work node state counts as open for the pool.
+func workOpen(state string) bool {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "open", "todo", "doing", "review":
+		return true
+	}
+	return false
+}
+
 func hasLabel(iss ghIssue, name string) bool {
 	for _, l := range iss.Labels {
 		if l.Name == name {
@@ -466,6 +533,8 @@ func remedy(kind string) string {
 		return "point --sources at a nova-bus checkout"
 	case "roadmap":
 		return "point --sources at a roadmap file that parses"
+	case "work":
+		return "point --sources at a nova-work checkout with nodes.tsv"
 	}
 	return "fix the source line"
 }
@@ -483,7 +552,7 @@ func writePool(path string, rows []PoolRow) error {
 
 // sourceCountKey maps a source kind (declared in the sources TSV: issues, audits,
 // bus, roadmap, work) to the count slot the POOL line prints (issues=, audits=,
-// slices=, roadmap=). The row's Kind is the card kind for the routing, the source
+// slices=, roadmap=, work=). The row's Kind is the card kind for the routing, the source
 // kind is the count: poolRoadmap writes the cell's :card as row.Kind, so cuts can
 // key rule 6 on row.Kind even when the cell's :card does not match the source kind;
 // we count by source kind because that is what the line says.
@@ -499,6 +568,8 @@ func sourceCountKey(kind string) string {
 		return "roadmap"
 	case "prs":
 		return "read"
+	case "work":
+		return "work"
 	}
 	return kind
 }
