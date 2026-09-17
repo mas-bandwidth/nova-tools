@@ -191,8 +191,16 @@
     #:cancel-state-export
     #:retention-pass
     #:load-state
+    ;; the isolated read-only load on its real export directory
+    ;; (SPEC-WORK.md:3225-3299): the writer seam, the verb and the fresh reader.
+    #:write-state-export
+    #:state-load
+    #:read-loaded-snapshot
     #:snapshot-state
     #:snapshot-revision
+    #:snapshot-directory
+    #:snapshot-cache
+    #:snapshot-manifest-hash
     #:snapshot-query
     #:snapshot-accept-session-p
     #:with-isolation
