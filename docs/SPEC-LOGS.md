@@ -63,7 +63,7 @@ fields a query needs. The fields are fixed, so `\| json` never guesses:
 
 ```json
 {"ts":"2026-09-17T16:56:03.412Z","level":"INFO","source":"nova-pulse","bench":"space",
- "verb":"nova-pulse","job":"","card":"8973x","pr":0,"run":"","slot":"3","guid":"a1b2…",
+ "verb":"fill","job":"","card":"8973x","pr":0,"run":"","slot":"3","guid":"a1b2…",
  "event":"start","msg":"fill: cut one card","dur_ms":0,"err":""}
 ```
 
@@ -96,7 +96,7 @@ with `dur_ms` and `err` when it finishes. A hang is then just a `start` with no 
   attempt, `reclaim` with the lapsed lease it took, `clip`/`ack` on a landed card, `refuse` when
   a card is too big or the input limit bites, `retry` on a reclaim.
 - **The harness run.** `start` with the model, the provider and the card; one `tool_call` event
-  per call **folded from `usage.tsv`** (the thirteen `CardUsageColumns` become the fields); then
+  per call **folded from `timeline.tsv`** (its six columns become the fields); then
   `deadline` when the card's budget ends, `abstain` when it declines, and `done`/`fail` with the
   result and the token counts. `harness-output.log` and `harness.log` stay the pinned evidence;
   the events point at them, they do not replace them.
@@ -162,9 +162,9 @@ sum(count_over_time({source="nova-swarm", event="start"}[5m]))
 | line_format "{{.bench}}: {{.msg}}"
 ```
 
-**What did a verb do between two timestamps?**
+**What did a tool do between two timestamps?**
 ```logql
-{verb="nova-merge"} | json
+{source="nova-merge"} | json
 | ts >= "2026-09-17T15:00:00Z" and ts <= "2026-09-17T15:30:00Z"
 | line_format "{{.ts}} {{.event}} {{.card}} {{.msg}} dur={{.dur_ms}}ms"
 ```
