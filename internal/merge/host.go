@@ -137,6 +137,10 @@ type PR struct {
 	Fork      bool
 	URL       string
 	Subject   string
+	// Body is the pull request's body, read for ONE thing and one thing only: the
+	// 'carries #n' line that names the stacked pull requests this one lands with it, so
+	// rule S can refuse an --admin merge over an open HOLD on any of them. It is DATA.
+	Body string
 	// Merged and Closed are the wait verb's poll state, read back every poll from
 	// the same gh reader as everything else here. MergeSHA is the merge commit
 	// the host reports for a merged PR, empty when the host names none.
@@ -201,7 +205,7 @@ func (h *GH) gh(args ...string) (string, error) {
 // PR reads the fields the merge condition needs, in one call.
 func (h *GH) PR(n int) (PR, error) {
 	out, err := h.gh("pr", "view", strconv.Itoa(n), "--repo", h.Repo, "--json",
-		"number,author,baseRefName,headRefName,headRepositoryOwner,headRefOid,mergeable,isDraft,url,title,state,mergedAt,mergeCommit")
+		"number,author,baseRefName,headRefName,headRepositoryOwner,headRefOid,mergeable,isDraft,url,title,body,state,mergedAt,mergeCommit")
 	if err != nil {
 		return PR{}, err
 	}
@@ -224,6 +228,7 @@ func decodePR(out string, n int, repo string) (PR, error) {
 		IsDraft             bool                   `json:"isDraft"`
 		URL                 string                 `json:"url"`
 		Title               string                 `json:"title"`
+		Body                string                 `json:"body"`
 		State               string                 `json:"state"`
 		MergedAt            string                 `json:"mergedAt"`
 		MergeCommit         struct {
@@ -249,7 +254,7 @@ func decodePR(out string, n int, repo string) (PR, error) {
 		Number: raw.Number, Author: raw.Author.Login, Base: raw.BaseRefName,
 		HeadRef: raw.HeadRefName, HeadOID: raw.HeadRefOid, Mergeable: raw.Mergeable,
 		Draft: raw.IsDraft, Fork: raw.HeadRepositoryOwner.Login != "" && raw.HeadRepositoryOwner.Login != owner,
-		URL: raw.URL, Subject: raw.Title,
+		URL: raw.URL, Subject: raw.Title, Body: raw.Body,
 		Merged: merged, Closed: closed, MergeSHA: strings.TrimSpace(raw.MergeCommit.OID),
 	}, nil
 }

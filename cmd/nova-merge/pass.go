@@ -25,6 +25,10 @@ func cmdRun(args []string, stdout, stderr io.Writer, deps Deps) int {
 	loop := f.fs.Duration("loop", 0, "")
 	hours := f.fs.Float64("hours", 0, "")
 	plannedRed := f.fs.String("planned-red", "", "")
+	// --admin declares that this pass is the coordinator's hands reaching a protected
+	// base. It grants nothing: rule S refuses every merge it lands that is not a revert,
+	// and every merge over an open HOLD on the entry or on a pull request it carries.
+	admin := f.fs.Bool("admin", false, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -68,7 +72,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, deps Deps) int {
 			fmt.Fprintf(stdout, "RUN NOTE %s\n", oneline.Escape("a stop file is present in this lane: start nothing new; remove it to run again"))
 			return exit
 		}
-		exit = onePass(n, *f.lane, st, f, stdout, stderr, deps, build, *plannedRed)
+		exit = onePass(n, *f.lane, st, f, stdout, stderr, deps, build, *plannedRed, *admin)
 		if *once {
 			return exit
 		}
@@ -93,7 +97,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, deps Deps) int {
 }
 
 // onePass folds the branch's records, runs the pass, and writes the state back.
-func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr io.Writer, deps Deps, build, plannedRed string) int {
+func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr io.Writer, deps Deps, build, plannedRed string, admin bool) int {
 	recs := merge.NewRecords(lane, st.LaneBranch, "origin", merge.NewGit(lane, f.dur(), deps.Runner), f.dur())
 	pulled, problems, err := foldInto(lane, st, recs, f.dur())
 	if err != nil {
@@ -103,7 +107,7 @@ func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr i
 		Lane: lane, State: st, Host: deps.NewHost(st.Repo, f.dur()),
 		Clone:   merge.NewGit(filepath.Join(lane, merge.RepoDir), f.dur(), deps.Runner),
 		Records: recs, Remote: "origin", Max: *f.max, PlannedRed: plannedRed,
-		Build: build, Now: deps.Now(), Stdout: stdout, Stderr: stderr,
+		Admin: admin, Build: build, Now: deps.Now(), Stdout: stdout, Stderr: stderr,
 		Problems: problems, Pulled: pulled,
 	}
 	if code := discoverDefault("RUN", p, stderr); code != 0 {

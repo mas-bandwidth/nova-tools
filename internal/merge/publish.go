@@ -25,6 +25,26 @@ import (
 func (p *Pass) merge(e *Entry, c Classification, baseSHA string, res *Result) bool {
 	rec := c.Gate.Record
 
+	// RULE S STANDS BEFORE EVERYTHING THE PUBLICATION DOES. An --admin merge is refused
+	// unless the pull request is a revert and stands over no open HOLD, its own or a
+	// carried one. It is checked here, at the one call site of the publication helper, so
+	// no path reaches a merge over a hold, and it refuses rather than filters.
+	if p.Admin {
+		var pr PR
+		if e.IsPR() {
+			got, err := p.Host.PR(e.PR)
+			if err != nil {
+				p.mergeFail(e, res, oneline.Cap(err.Error(), oneline.TailBytes))
+				return false
+			}
+			pr = got
+		}
+		if why := p.adminRefusal(e, pr); why != "" {
+			p.mergeFail(e, res, why)
+			return false
+		}
+	}
+
 	// The predicate's second line: the gate's merge is an object IN THIS CLONE whose
 	// first parent is the base sha and whose second is the entry's oid. A record naming
 	// a merge this clone does not hold names an object nobody can publish, and this tool

@@ -30,6 +30,7 @@ type Pass struct {
 	Remote     string
 	Max        int
 	PlannedRed string
+	Admin      bool // rule S: this pass lands only a revert, and never over an open HOLD
 	Build      string
 	Now        time.Time
 	Stdout     io.Writer
