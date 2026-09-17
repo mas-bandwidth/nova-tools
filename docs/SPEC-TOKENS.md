@@ -458,6 +458,9 @@ nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
                     [--provider <label>=<file>]...
                     [--scratch <dir>] [--timeout <seconds>] [--max <n>]
+nova-tokens profiles --swarm-root <dir>
+nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
+nova-tokens fold-pool --pool <dir> --ledger <file> [--since <stamp>]
 nova-tokens help
 nova-tokens version
 ```
@@ -597,6 +600,19 @@ printed and counted here too. Exits 0 whenever it ran. `sources` is a
 **report**; it exists so a person can see what a fold would count before it
 writes.
 
+### `profiles`, `session`, `fold-pool`
+
+`profiles --swarm-root <dir>` is a measurement over a swarm root: one
+`PROFILES MODEL` line per model (card count, median `tokens_out`, overshoot
+cards whose output exceeded their own card budget line) and one `PROFILES OK`
+line, exit 0 whenever it ran. `session --claude-session <jsonl>` prints one
+`SESSION` line (the weighted fresh-input equivalent and average context) and,
+with `--out`, folds the coordinator's turns into the day file as model
+`claude-fable-5-1/coordinator` beside retained rows. `fold-pool --pool <dir>
+--ledger <file>` folds a pool's `usage/*.tsv` into the monthly ledger and
+prints one `FOLD OK` line. Their lines are in the output grammar; a scanner
+that reads the grammar parses them (#363).
+
 ### `publish`
 
 Not shipped. The verb is struck from this draft: the binary has no `publish`
@@ -675,6 +691,12 @@ SOURCES UNPARSED label=<kind>:<name> note=<id> line=<n>: <text>
 SOURCES MORE kind=<source|unreadable|unparsed> shown=<n> total=<t> nova-tokens sources … --max 0
 SOURCES OK sources=<n> files=<n> messages=<n> unreadable=<n> unparsed=<n> rows=<n>
 SOURCES REFUSED: <reason>
+SESSION turns=<n> input=<n> cache_write=<n> cache_read=<n> output=<n> weighted=<n> avg_context=<n>
+PROFILES MODEL model=<model> cards=<n> median_out=<n|-> overshoot=<n>
+PROFILES OK models=<n> cards=<n> overshoot=<n>
+PROFILES REFUSED: <reason>
+FOLD OK rows=<n> tasks=<n> days=<n> ledger=<file>
+FOLD REFUSED: <reason>
 ```
 
 Every `label=` in the block is `<kind>:<name>`, the kind one of the five

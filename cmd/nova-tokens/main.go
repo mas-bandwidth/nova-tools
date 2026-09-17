@@ -55,6 +55,7 @@ usage:
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
   nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
+  nova-tokens fold-pool --pool <dir> --ledger <file> [--since <stamp>]
   nova-tokens version
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
