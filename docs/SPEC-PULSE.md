@@ -121,8 +121,8 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    to a stronger class. There is no `--model` flag on any verb: the table is the whole
    policy, in git, edited once. `cards.tsv` is four fields per line: `label`, `slot`, `model`,
    `card` (the card's path); `slot` is `-` until `launch` allocates. Admission is the card
-   form of `nova-swarm batch`, which takes the TSV whole and wants no file or token budget
-   (rule 10).
+   form of `nova-swarm batch`, which takes the TSV whole and carries the `[launch] files`
+   file budget (default 40, rule 10).
 8. **A slot is free when the swarm's slot lock files say so.** `launch` reads the swarm pool
    under `--root`: a slot is free when its slot lock file `<pool>/slots/<n>.json` is absent
    or `state=free` — the swarm's own lock files (issue #457), never a log age and never a
@@ -145,12 +145,16 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    refuses for being wider than the bench; the remainder queues, always.
  10. **Every card goes through `batch`'s card form, never a single `add`.** `launch` runs
      exactly one `nova-swarm batch --id <pulse> --cards <admitted.tsv> --deadline <s>
-     --runner <cmd> --root <root> --then "nova-pulse harvest --id <id> --root <root>"`, with
-     `<admitted.tsv>` the admitted cards written under `<root>/cards/<id>/cards.tsv` (the
-     cards that fit the free slots, never the queued remainder) and `<cmd>` the deployment's
-     native runner on PATH, `nova-native-runner.sh`. The card form is the only form that runs
-     a card: the swarm's pool form (`--pool --tasks --label`) wants `--files` and `--tokens`,
-     which no launch flag can supply (issue #630), so `launch` never calls it. The one
+     --runner <cmd> --root <root> --files <n> --then "nova-pulse harvest --id <id> --root
+     <root>"`, with `<admitted.tsv>` the admitted cards written under
+     `<root>/cards/<id>/cards.tsv` (the cards that fit the free slots, never the queued
+     remainder), `<cmd>` the deployment's native runner on PATH,
+     `nova-native-runner.sh`, and `<n>` the `[launch] files` file budget (default 40,
+     the shim's own number). `nova-swarm batch` refuses an admission that names no budget
+     ("--files is required and is at least 1, got 0"), so the launch always carries one
+     (issue #869). The card form is the only form that runs a card: the swarm's pool form
+     (`--pool --tasks --label`) wants `--tokens` as well, which no launch flag can supply
+     (issue #630), so `launch` never calls it. The one
      admission is recorded in `<root>/pulses/<id>.tsv` (`batch id`, `n`). The `--then` argv
      is `nova-swarm batch`'s (card 269): it runs when the batch's wait ends — every card
      ended or the deadline — and never earlier. A `BATCH REFUSED` line from the swarm is

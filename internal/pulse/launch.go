@@ -43,10 +43,11 @@ const sliceTimeout = 120 * time.Second
 const nativeRunner = "nova-native-runner.sh"
 
 // Launch allocates free slots, admits the cards that fit as one nova-swarm batch in its
-// CARD form (--id --cards --deadline --runner --root, the only form that runs a card; the
-// POOL form wants --files and --tokens, which no launch flag supplies, issue #630), and
-// queues the rest when --queue is set. It returns the process exit code: 0 when the pulse
-// was admitted, 2 when it could not be.
+// CARD form (--id --cards --deadline --runner --root --files, the only form that runs a
+// card; the POOL form wants --tokens as well, which no launch flag supplies, issue #630),
+// and queues the rest when --queue is set. The card form still carries the file budget
+// `nova-swarm batch` refuses an admission without (issue #869). It returns the process
+// exit code: 0 when the pulse was admitted, 2 when it could not be.
 func Launch(in LaunchInput) int {
 	cards, err := readCards(in.Cards)
 	if err != nil {
@@ -125,6 +126,14 @@ func Launch(in LaunchInput) int {
 // refusal as a PULSE REFUSED, queueing nothing.
 func runBatch(in LaunchInput, id, cardsPath string) bool {
 	then := fmt.Sprintf("nova-pulse harvest --id %s --root %s", id, in.Root)
+	// The file budget, because `nova-swarm batch` refuses an admission that names none
+	// ("--files is required and is at least 1, got 0") and a launch with no configured
+	// budget would otherwise send the zero the swarm reads as "refusing to guess". A
+	// LaunchInput carrying none still names the documented default (issue #869).
+	files := in.Files
+	if files < 1 {
+		files = DefaultLaunchFiles
+	}
 	var out, errb bytes.Buffer
 	cmd := exec.Command("nova-swarm", "batch",
 		"--id", id,
@@ -132,6 +141,7 @@ func runBatch(in LaunchInput, id, cardsPath string) bool {
 		"--deadline", in.Deadline,
 		"--runner", nativeRunner,
 		"--root", in.Root,
+		"--files", strconv.Itoa(files),
 		"--then", then)
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -175,6 +176,58 @@ func TestLaunchAdmitsThroughCardsForm(t *testing.T) {
 	}
 	if want := strings.TrimRight(string(src), "\n") + "\n"; string(got) != want {
 		t.Fatalf("--cards tsv does not carry the cards in order:\n%s", got)
+	}
+}
+
+// launch-carries-the-file-budget (issue #869): `nova-swarm batch` refuses an admission that
+// carries no file budget -- "--files is required and is at least 1, got 0" -- so the wired
+// launch names the configured budget on the batch argv. The mutation that matters: the flag
+// dropped, which is the refusal that stopped the first tick of the switch.
+func TestLaunchCarriesTheFileBudget(t *testing.T) {
+	root := t.TempDir()
+	argvLog := filepath.Join(root, "argv.log")
+	fakeSwarm(t, argvLog)
+	cards, _ := writeCards(t, root, 2)
+
+	code, _, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Slots: 4, Deadline: "120", Files: 12,
+		Now: func() time.Time { return time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC) },
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
+	}
+	raw, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(string(raw))
+	if !strings.Contains(line, "--files 12") {
+		t.Errorf("argv lacks the configured file budget --files 12: %s", line)
+	}
+}
+
+// A launch given no budget at all still names one: the documented default, never a zero the
+// swarm reads as "refusing to guess".
+func TestLaunchWithoutAConfiguredBudgetUsesTheDefault(t *testing.T) {
+	root := t.TempDir()
+	argvLog := filepath.Join(root, "argv.log")
+	fakeSwarm(t, argvLog)
+	cards, _ := writeCards(t, root, 1)
+
+	code, _, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Slots: 2, Deadline: "60",
+		Now: func() time.Time { return time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC) },
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
+	}
+	raw, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(string(raw))
+	if want := "--files " + strconv.Itoa(DefaultLaunchFiles); !strings.Contains(line, want) {
+		t.Errorf("argv lacks the default file budget %q: %s", want, line)
 	}
 }
 
