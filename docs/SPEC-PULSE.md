@@ -665,6 +665,80 @@ line binds the card it heads; the swarm records the same hash at admission and r
 after line 2. `<head>` is the repo's default-branch head at cut time, read once per repo per
 `cut` run; a candidate whose repo cannot be read is `skipped` with the reason, never cut blind.
 
+## Cut, from a validated template
+
+Glenn, 2026-09-17 (#1142): *"every script and hand step sketched on the bench becomes an
+official verb; fold every friend's scripts in"*. `cut` grows three inputs beside `--pool` —
+an issue (`--issue <repo>#<n>`, title and body verbatim), a table of rows (`--rows
+<file.tsv>`, one card per group), and an existing PR's exact head branch (`--branch-from
+<repo>#<n>`) — through a template with named slots, so the source a friend's script scraped
+by hand becomes a flag and the script retires. The verb line, as help will print it:
+
+```
+nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
+```
+
+**It reads one source and one template, and writes only cards.** `--issue` reads title and
+body verbatim through `gh issue view --json title,body`; `--rows` reads a tab-separated file,
+one group per line; `--branch-from` reads the PR's head ref through `gh pr view --json
+headRefName,headRefOid`. The template declares named slots — `<issue>`, `<title>`, `<body>`,
+`<branch>`, `<base>`, `<row>`, `<replay>` — and `cut` fills every one from that input; an
+unfilled slot is `CUT REFUSED check=slot slot=<name> (named slot with no value: fill it, or
+drop it from the template)`. It writes the cards under `--out` and their rows to `cards.tsv`,
+rule 7's four fields, and nothing else.
+
+**Before a byte is written it runs five checks in order and stops at the first that fails.**
+(1) the branch is derived, `rowan/issue-<n>-<slug>` from the issue number and the title slug
+(or `--branch-from`'s exact head ref) and does not exist on origin, read with a fixture `git
+ls-remote`, unless `--branch-from` names it. (2) every file path and every replay name a row
+names exists at the base revision, `git cat-file -e <base>:<path>` against the clone at cut
+time, never assumed. (3) `STEP 1` parses as one shell line, in-process, no shell run. (4) no
+row is a table separator (`|---|`) or a header row naming the columns. (5) the rendered
+`RESULT` line is one line. The checks are the contract: the network and the repo are fakes in
+tests, the parser is the tool's own.
+
+**One line of output, every field named.** `CUT OK cards=<n> from=<pool|issue|rows|branch-from>
+skipped=<n> out=<dir>` — `cards` the cards written, `from` the input read, `skipped` a
+bounded count of rows nothing cut (rule 18's `--max` bounds the cards, `0` lifts it), `out`
+the directory they landed in. Refusals are exit 2, one line each, remedy in parentheses, the
+first failing check named:
+
+```
+CUT OK cards=<n> from=<pool|issue|rows|branch-from> skipped=<n> out=<dir>
+CUT REFUSED check=branch branch=<name> (pass --branch-from <pr>, or rename the issue)
+CUT REFUSED check=base path=<p> not at <base> (fix the row, or add the file)
+CUT REFUSED check=step1 (STEP 1 is not one shell line: fix the template)
+CUT REFUSED check=row row=<n> is a separator or a header (drop it)
+CUT REFUSED check=result (the RESULT line is more than one line: fix the template)
+CUT REFUSED check=slot slot=<name> (named slot with no value: fill it, or drop it)
+```
+
+**The mistake it removes, one sentence.** Six broken cards in one night came out of `sed` and
+`awk` over pasted text — a glob that picked a pre-session branch, a header row leaked in as a
+fake replay, a doubled branch name, a docs card naming files that do not exist — and this verb
+refuses each of the four before a card exists.
+
+**Red tests, each written first, each with its fake.**
+
+1. `cut-issue-title-and-body-are-verbatim`: a fixture `gh` answering an issue whose title and
+   body carry tabs, backticks and a newline cuts a card carrying them byte for byte.
+2. `cut-rows-one-card-per-group`: a fixture `--rows` file with two groups cuts two cards and
+   no third.
+3. `cut-branch-derived-and-absent`: a fixture `git ls-remote` reporting `rowan/issue-<n>-<slug>`
+   absent passes, reporting it present is `CUT REFUSED check=branch`, and the same branch is
+   admitted when `--branch-from` names it.
+4. `cut-names-exist-at-base`: a fixture `git cat-file` passing one path and failing another
+   refuses the row naming the missing path, exit 2, no card written.
+5. `cut-step-one-is-one-shell-line`: a template whose `STEP 1` carries `&&` and a newline is
+   refused by the in-process parser (no shell is run, no clock is read); a one-line `STEP 1`
+   cuts.
+6. `cut-separator-and-header-are-not-cards`: a `--rows` file whose first row is a header and
+   whose second is `|---|` cuts no card for either and still cuts the rows below.
+7. `cut-result-is-one-line`: a template whose `<title>` slot renders two lines is `CUT REFUSED
+   check=result`; a one-line render cuts.
+8. `cut-refuses-the-first-failing-check`: a bad branch and a missing path at once name
+   `check=branch` and no path check runs — the order is the contract.
+
 ## The cost of a card (#855), 2026-09-16
 
 Measured 2026-09-16 over 1,068 jobs, all benches, from `usage.tsv`: input 62.1M, output
