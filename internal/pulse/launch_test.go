@@ -212,6 +212,47 @@ func TestLaunchCarriesTheFileBudget(t *testing.T) {
 	}
 }
 
+// launch-makes-the-pool-on-first-use (issue #878): the switch to nova-swarm batch was made
+// with the pool empty, so the launch path never ran once before the loop was trusted, and
+// every tick refused: `nova-swarm batch: --pool wants a directory that exists: stat
+// <root>/pool: no such file or directory`. The verb that makes one is nova-swarm quickstart;
+// the launch should make the pool itself on first use -- the nine directories quickstart
+// makes -- log one line, and attempt the batch. The mutation that matters: the pool made, or
+// the batch never attempted.
+func TestLaunchMakesThePoolOnFirstUse(t *testing.T) {
+	root := t.TempDir()
+	argvLog := filepath.Join(root, "argv.log")
+	fakeSwarm(t, argvLog)
+	cards, _ := writeCards(t, root, 1)
+
+	code, out, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Slots: 4, Deadline: "120",
+		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
+	}
+	if !strings.Contains(errb, "PULSE POOL MADE root="+root) {
+		t.Fatalf("no PULSE POOL MADE line on a root with no pool: %q", errb)
+	}
+	if !strings.Contains(out, "PULSE OK") {
+		t.Fatalf("no PULSE OK line: %q", out)
+	}
+	pool := filepath.Join(root, "pool")
+	for _, d := range []string{"pending", "running", "done", "failed", "aborted", "slots", "usage", "reports", "scratch"} {
+		if fi, err := os.Stat(filepath.Join(pool, d)); err != nil || !fi.IsDir() {
+			t.Fatalf("pool subdir %s is not a directory after the launch made the pool: %v", d, err)
+		}
+	}
+	raw, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(raw)); !strings.HasPrefix(got, "nova-swarm batch ") {
+		t.Fatalf("the batch was never attempted: %q", got)
+	}
+}
+
 // A launch given no budget at all still names one: the documented default, never a zero the
 // swarm reads as "refusing to guess".
 func TestLaunchWithoutAConfiguredBudgetUsesTheDefault(t *testing.T) {

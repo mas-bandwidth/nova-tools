@@ -122,7 +122,10 @@ func Launch(in LaunchInput) int {
 // PULSE REFUSED, queueing nothing.
 func runBatch(in LaunchInput, id, model, tasksDir string) bool {
 	then := fmt.Sprintf("nova-pulse harvest --id %s --root %s", id, in.Root)
-	pool := filepath.Join(in.Root, "pool")
+	pool, ok := ensurePool(in.Root, in.Stderr)
+	if !ok {
+		return false
+	}
 	// BOTH budgets, because `nova-swarm batch` requires both on the pool path and refuses to
 	// guess either: a launch without them is "--files is required and is at least 1, got 0",
 	// which is every launch on the first tick of the switch (issue #869).
@@ -154,6 +157,41 @@ func runBatch(in LaunchInput, id, model, tasksDir string) bool {
 		return false
 	}
 	return true
+}
+
+// poolDirs is the layout nova-swarm quickstart makes a pool with (internal/swarm,
+// OpenPool): every directory the batch path touches. launch makes it on first use, because a
+// root switched with the pool empty has no pool at all and `nova-swarm batch` refuses one
+// that is missing (issue #878).
+var poolDirs = []string{swarm.Pending, swarm.Running, swarm.Done, swarm.Failed, swarm.Aborted, swarm.Slots, swarm.Usage, swarm.Reports, swarm.Scratch}
+
+// ensurePool makes <root>/pool with the pool's layout when it is absent, logs one PULSE POOL
+// MADE line when it made it, and reports whether the pool stands. A pool that cannot be made
+// is a refusal naming the reason, once per tick: the caller stops the launch.
+func ensurePool(root string, stderr io.Writer) (string, bool) {
+	pool := filepath.Join(root, "pool")
+	if info, err := os.Stat(pool); err == nil {
+		if !info.IsDir() {
+			fmt.Fprintf(stderr, "PULSE REFUSED: %s is a file, and the pool wants a directory (nova-swarm quickstart makes one)\n", oneline.Field(pool))
+			return pool, false
+		}
+		return pool, true
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintf(stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+		return pool, false
+	}
+	if err := os.MkdirAll(pool, 0o755); err != nil {
+		fmt.Fprintf(stderr, "PULSE REFUSED: the pool could not be made: %s (nova-swarm quickstart makes one)\n", oneline.Err(err))
+		return pool, false
+	}
+	for _, d := range poolDirs {
+		if err := os.MkdirAll(filepath.Join(pool, d), 0o755); err != nil {
+			fmt.Fprintf(stderr, "PULSE REFUSED: the pool could not be made: %s (nova-swarm quickstart makes one)\n", oneline.Err(err))
+			return pool, false
+		}
+	}
+	fmt.Fprintf(stderr, "PULSE POOL MADE root=%s\n", oneline.Field(root))
+	return pool, true
 }
 
 // record appends one row to <root>/pulses/<id>.tsv naming the batch: its label, model and
