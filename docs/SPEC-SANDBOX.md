@@ -53,6 +53,7 @@ with the read set and the write set separate.**
 | OpenCode's `external_directory` is relative to the harness cwd, so a job directory that is not the cwd is "external" to itself | rule 13 |
 | a harness `permission` block set to `ask` hangs a headless job on a prompt nobody sees | rule 14 |
 | 64 workers each clone the repo over the network, each needing a credential | the swarm caller section: one dispatcher-owned reference checkout per batch |
+| 120 native cards each download the Go toolchain and every module into their own data home, up to 5 GB per slot, and the runners fill their disk (#1048) | rule 17: one shared cache root under the swarm root, a permitted write root |
 | the wall stands and the job's first `git status` dies on `~/.gitconfig`, which reads as a broken sandbox | rule 9: the caller sets `HOME` to the per-job data home, and a `HOME` outside both lists is a refusal |
 
 The fence is the `opencode.json` `permission` block; the wall is the kernel.
@@ -390,6 +391,21 @@ near the end.
     MORE line naming the remedy. A refusal names the flag and the form it
     wants, reports every independent problem at once, and never prints the
     contents of a file it was handed.
+17. **A shared cache root under the swarm root is a permitted write root.**
+    Rule 4 names its only two exceptions, and this is a third, stated here so
+    the caller's argv stays explicit: the dispatcher's caller section may name
+    **one shared cache directory** under the swarm root the jobs live under —
+    `<root>/cache`, holding the toolchain and module caches its jobs reuse
+    (issue #1048) — as a `--write` **beside** the job directory and the data
+    home, and the toolchain and modules are then downloaded once, not once per
+    slot. It is the caller's own path, named in its own argv exactly as the job
+    directory and the data home are, so rule 4's "never guessed" is kept: the
+    tool derives no write path from the task text and invents no default. The
+    cache root is write-set, so a job inside the wall may fill it; it is
+    **shared**, so one job's writes are visible to the next, which is the whole
+    point and is why it is never named as a `--read`. `nova-swarm` names it, and
+    points the child at it by `GOMODCACHE`, `GOCACHE` and `NPM_CONFIG_CACHE`;
+    `nova-sandbox` itself has no cache variable and no cache directory.
 
 ## The verbs
 

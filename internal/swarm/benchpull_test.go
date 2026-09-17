@@ -138,6 +138,11 @@ func TestPullWaitsForResult(t *testing.T) {
 		// command names paths, and a temp path can hold "-r" or a glob character, so a
 		// substring match on the line would refuse a copy of one file because of where
 		// the work directory happens to live.
+		//
+		// EACH ARGUMENT, not a substring of the whole line: the copy's paths are absolute
+		// and a temp directory whose name merely contains "-r" (for example one under
+		// ".../swarm-root/...") tripped the old whole-line check while naming a single
+		// file. The intent is unchanged: no argument is a filter or a glob.
 		for _, arg := range strings.Fields(l) {
 			if strings.HasPrefix(arg, "-") || strings.Contains(arg, "*") ||
 				arg == "--include" || arg == "--exclude" || arg == "-r" || strings.ContainsAny(arg, "*?[") {
