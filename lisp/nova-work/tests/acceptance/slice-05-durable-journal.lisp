@@ -3,11 +3,6 @@
 
 (in-package #:nova-work/tests)
 
-(deftest "branch-and-window-required" "docs/SPEC-WORK.md:1772-1784,5095"
-    "expected=missing-branch-or-window-refused-exit-2"
-  ;; NEEDS-KERNEL: query --ask --branch validation, --from/--to, exit 2 refusals.
-  (ok t "query branch/window validation is outside slice 1"))
-
 (deftest "merged-is-not-distributed" "docs/SPEC-WORK.md:1986-1997,5093"
     "expected=landed-sha-released-dash-while-release-open"
   (let* ((finding (make-finding "acme/sec/alex-2" :branch :c :disposition :done
@@ -439,10 +434,6 @@
 ;;;   silently holds open required work; counts and indexes are checked by the
 ;;;   reference fold after each step.
 
-;;; NEEDS-KERNEL: chat-and-file-render-are-byte-identical (SPEC-WORK.md:2950) —
-;;;   `render`: chat and file mode are byte-identical for one projection and
-;;;   revision, shared prerequisites and private-data filtering included.
-
 ;;; NEEDS-KERNEL: render-refuses-a-target-outside-its-roots (SPEC-WORK.md:2950)
 ;;;   — `render`: a projection target is resolved only within explicitly
 ;;;   configured permitted roots; a missing mapping or a conflicting change is
@@ -453,12 +444,6 @@
 ;;;   batch, request ids, byte length and hash verified; a corrupt or oversized
 ;;;   artifact is a bounded refusal and never partial Markdown; --check creates
 ;;;   no target, no receipt claiming a write, no commit and no push.
-
-;;; NEEDS-KERNEL: a-root-id-grants-nothing (SPEC-WORK.md:2977) — `render`: a
-;;;   stored permitted root with no --render-root mapping refuses file mode
-;;;   while --chat renders; an escaping path, a symlink escape and a target
-;;;   identity other than the mapping's are refused; the cooperative lock is
-;;;   exercised and its external-editor limit retained.
 
 ;;; NEEDS-KERNEL: priority-orders-only-the-eligible (SPEC-WORK.md:3015) — a
 ;;;   blocked rank-0 task stays blocked with its reason and resolver while a
@@ -605,12 +590,6 @@
 ;;   repository or house name. Every identity arrives as configuration.
 ;;   (Not a test of this document, which cites friends by name for provenance.)
 
-;;; 57. four-capability-groups-and-three-fields   docs/SPEC-WORK.md:5280
-;;;
-;; NEEDS-KERNEL: child-agents, swarms, local-models and one-shots as capability
-;;   groups, each with stable id/source/stamp/availability/constraints, and
-;;   declared support, verified runtime and free capacity as three fields.
-
 ;;; 58. dispatch-ack-and-ownership-are-three   docs/SPEC-WORK.md:5219
 ;;;
 ;; NEEDS-KERNEL: dispatch/delivery/acknowledgement and accepted-ownership as
@@ -623,24 +602,12 @@
 ;;   Unknown stays unknown; a friend's usual model never stands as proof of the
 ;;   executor of a delegated task.
 
-;;; 60. a-retry-does-not-overwrite-its-attempt   docs/SPEC-WORK.md:5222
-;;;
-;; NEEDS-KERNEL: concurrent attempts keeping separate attempt records.
-;;   A retry never overwrites the attempt before it; separate model and usage
-;;   attribution per attempt.
-
 ;;; 61. silence-is-a-ping-not-a-verdict   docs/SPEC-WORK.md:5225
 ;;;
 ;; NEEDS-KERNEL: --silence-ping threshold and the wake protocol.
 ;;   A configured threshold triggers one bounded ping; a configured answer
 ;;   window marks capacity unavailable with reason `unconfirmed`, never sleep
 ;;   nor exhausted credit.
-
-;;; 62. explicit-rest-is-not-pinged   docs/SPEC-WORK.md:5225
-;;;
-;; NEEDS-KERNEL: observed explicit-rest state and ping gating on it.
-;;   Explicit rest is respected: a resting friend is not pinged by a silence
-;;   threshold.
 
 ;;; 63. return-reconciles-before-dispatch   docs/SPEC-WORK.md:5226
 ;;;
@@ -653,17 +620,6 @@
 ;; NEEDS-KERNEL: config exchange answering UNCHANGED with the named identity.
 ;;   A request naming a friend and its last-known config hash/revision answers
 ;;   UNCHANGED with that identity in one bounded reply, no roster/prose repeated.
-
-;;; 65. an-invalid-delta-leaves-the-old-config   docs/SPEC-WORK.md:5284
-;;;
-;; NEEDS-KERNEL: bounded config deltas validated atomically against the named
-;;   base. An invalid delta is applied to no fragment and leaves the old config.
-
-;;; 66. a-partial-manifest-is-refused   docs/SPEC-WORK.md:5285
-;;;
-;; NEEDS-KERNEL: manifest part handling with a completeness hash.
-;;   A partial config is never admitted as a complete replacement; no secret in
-;;   a manifest.
 
 ;;; 67-71. The five fleet replays (fleet-is-static-config,
 ;;; no-machine-name-in-the-tool, one-profile-one-unit, no-credential-in-a-member,
@@ -678,14 +634,6 @@
 ;;; reconcile, and the fleet query — so each is kept in the file's
 ;;; deftest shape, marked, and counted as needs-kernel rather than run.
 ;;; ------------------------------------------------------------------
-
-;; NEEDS-KERNEL: fleet `query --for` writes no lease and leaves `who` unchanged.
-;; (deftest "fleet-for-is-a-recommendation-not-a-lease" "docs/SPEC-WORK.md:3377"
-;;     "expected=for-writes-no-lease;who-unchanged")
-
-;; NEEDS-KERNEL: fleet `query --for` over an excluding member is a refusal, not an empty answer.
-;; (deftest "an-excluded-choice-is-refused-not-empty" "docs/SPEC-WORK.md:3378"
-;;     "expected=excluded-kind-refused;never-empty-rows")
 
 ;; NEEDS-KERNEL: offer/acknowledge/decline verbs keep the four facts apart, infer none, launch none.
 ;; (deftest "four-facts-four-verbs" "docs/SPEC-WORK.md:3398"
@@ -767,24 +715,10 @@
 ;; asserted behaviour deliberately broken is not regression evidence; the specific criterion,
 ;; revision coverage and remaining uncertainty are preserved, not a green badge.
 
-;; NEEDS-KERNEL: manifest exchange and roster validation; no config manifest exists yet.
-;; a-partial-manifest-is-refused (SPEC-WORK.md:5285) --- the exchange bounded, validated and
-;; atomic, no roster, no prose repeated per poll, no secret in a manifest.
-
 ;; NEEDS-KERNEL: verifier/payload reader and staged admission; no verify verb exists yet.
 ;; a-receipt-needs-a-verifier (SPEC-WORK.md:5234) --- a copied note and an --as <recipient>
 ;; with no verifier result refused with no canonical write; a verifier returning after a
 ;; conflicting revision or failing validation writes no reservation, receipt, lease or W change.
-
-;; NEEDS-KERNEL: attempt/usage attribution records; no attempt model exists yet.
-;; a-retry-does-not-overwrite-its-attempt (SPEC-WORK.md:5222) --- unknown staying unknown,
-;; concurrent attempts keeping separate model and usage attribution, a friend's usual model
-;; never standing as proof of a delegated task's executor.
-
-;; NEEDS-KERNEL: render-root mapping and file renderer; no render verb exists yet.
-;; a-root-id-grants-nothing (SPEC-WORK.md:5402) --- a stored permitted root with no
-;; --render-root mapping refusing file mode while --chat renders; escaping/symlink/target-identity
-;; refusals; the cooperative lock and external-editor limit retained.
 
 ;; NEEDS-KERNEL: savepoint/checkpoint distinction; no savepoint exists yet.
 ;; a-savepoint-is-not-a-shared-backup (SPEC-WORK.md:5308) --- restore takes no ownership,
@@ -805,19 +739,6 @@
 ;; add-field-order-is-complete (SPEC-WORK.md:5337) --- a node add with every one of the twelve
 ;; fields, one with each absent, one with --links-empty and one with --clear-links, digested by
 ;; two serializers to four distinct values; a pre-fold-order fixture refused at load.
-
-;; NEEDS-KERNEL: configuration delta validation; no config exists yet.
-;; an-invalid-delta-leaves-the-old-config (SPEC-WORK.md:5284) --- the exchange bounded,
-;; validated and atomic; an invalid delta leaving the old config untouched.
-
-;; NEEDS-KERNEL: delegation notes and --max cap; no constraint-note verb exists yet.
-;; applicable-cap-never-hides-a-deny (SPEC-WORK.md:5498) --- N active notes, N > --max, the only
-;; :deny in the note that sorts last; the deny is never cut by --max and never printed as eligible.
-
-;; NEEDS-KERNEL: intake archive absorption; no import/adapter exists yet.
-;; archive-completeness (SPEC-WORK.md:5586) --- a missing attachment, an unavailable comment,
-;; unsupported fields, size truncation, a rate limit and a mid-page failure each remaining
-;; explicit gaps and prohibiting absorption.
 
 ;; NEEDS-KERNEL: state-as-of reconstruction over settle/revive chains; no as-of query exists yet.
 ;; as-of-reconstructs-settle-revive-settle (SPEC-WORK.md:5137) --- one id settled on day A,
@@ -860,11 +781,6 @@
 ;;; a deftest when its kernel code lands.
 ;;; ------------------------------------------------------------------
 
-;; (deftest "branch-and-window-required" "docs/SPEC-WORK.md:5095"
-;;     "expected=query-ask-without-branch-refused-exit-2;closed-without-from-to-refused;from-under-open-refused;who-stale-handoffs-refused-under-closed-and-root"
-;;   ;; NEEDS-KERNEL: query command and --branch/--window flag validation at exit 2
-;;   )
-
 ;; (deftest "busy-day-many-segments" "docs/SPEC-WORK.md:5115"
 ;;     "expected=many-segments-read-in-bounded-pages;max-caps-rows;more-names-after;day-never-read-whole"
 ;;   ;; NEEDS-KERNEL: closed-history index with day segments and paged reads
@@ -878,11 +794,6 @@
 ;; (deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5189"
 ;;     "expected=cancel-has-its-own-disposition;erases-no-mutation;uncertain-effect-reported-uncertain"
 ;;   ;; NEEDS-KERNEL: cancellation verb with final disposition, distinct from erasure
-;;   )
-
-;; (deftest "chat-and-file-render-are-byte-identical" "docs/SPEC-WORK.md:5304"
-;;     "expected=chat-and-marker-region-bytes-identical;other-bytes-preserved;missing-duplicate-reversed-marker-refused;target-outside-roots-refused"
-;;   ;; NEEDS-KERNEL: render with marker regions and permitted-roots boundary
 ;;   )
 
 ;; (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5327"
@@ -933,11 +844,6 @@
 ;; (deftest "cost-joins-include-the-coordinator" "docs/SPEC-WORK.md:5733"
 ;;     "expected=complete-cost-joins-include-coordinator-overhead-rework;elapsed-attributed;hypothesis-run-after-adoption"
 ;;   ;; NEEDS-KERNEL: operational cost joins with coordinator attribution
-;;   )
-
-;; (deftest "cow-root-partition" "docs/SPEC-WORK.md:5044"
-;;     "expected=id-in-c-or-o-never-both;open-plus-closed-equals-total;both-branches-is-rule-18-finding"
-;;   ;; NEEDS-KERNEL: rule 18 candidate-gate finding for an id in both branches
 ;;   )
 
 ;; (deftest "cursor-pinned-across-a-new-settle" "docs/SPEC-WORK.md:5141"
@@ -1015,15 +921,6 @@ asserts does not exist in slice 1."
     (check-equal nil (second-offer-admitted-p offer
                                               (dispatch-offer "req-2" "root/f/t1" "carol" 2))
                  "no shadow lease: a cross-holder offer is refused")))
-
-;; dry-run-writes-nothing: a dry run validates and projects without mutating;
-;; after a green preview at revision R the --request id is still new to the
-;; dedup index and events=/pending=/pushed= are unchanged; an accepted mutation
-;; moves to R+1; apply --expect R is refused stale; apply at R+1 newly validates.
-;; NEEDS-KERNEL: a --dry-run projection path and SESSION OK counters.
-(deftest-pending "dry-run-writes-nothing" "docs/SPEC-WORK.md:5196"
-    "expected=preview-mutates-nothing;dedup-still-new;events-pending-pushed-unchanged"
-  "no dry-run projection exists in slice 1")
 
 ;; edit-is-atomic-and-replayable: a bad one-of-five patch writes nothing; an
 ;; accepted mixed edit moves only its named fields and the category index; the
@@ -1184,42 +1081,6 @@ asserts does not exist in slice 1."
 ;; accounting provenance; derived caches rebuild to equivalent values.
 ;; NEEDS-KERNEL: an export/import path over a durable captured revision.
 
-;; goal-stale-update-refuses: A and B both show at r; A writes update, r+1; B's
-;; update --expect r is refused `GOAL FAIL ... expect=r current=r+1: stale`,
-;; snapshot unchanged; B's next show prints A's evidence row; A writes stop, r+2;
-;; B's update --expect r+1 refused stale; B's next show prints stop=requested;
-;; B's update --expect r+2 refused `stop requested`; a goal set to a closed
-;; branch node refused `disposition=done`.
-;; NEEDS-KERNEL: a goal CLI with stale --expect detection and a snapshot.
-(deftest-pending "goal-stale-update-refuses" "docs/SPEC-WORK.md:5466"
-    "expected=stale-named;snapshot-unchanged;stop-requested-stands;closed-refused"
-  "no goal CLI in slice 1")
-
-;; goal-stop-is-a-request-not-evidence: goal update --stop prints GOAL OK
-;; change=stop kind=transition rev=r+1 and the event is a :transition :to
-;; :cancel-requested carrying :reason and no :evidence; check has no finding;
-;; state --to doing --reason by id is admitted (the withdrawal); event --kind
-;; cancel --evidence <pointer> makes show print stop=cancelled, terminal, and
-;; goal set --goal G refused disposition=cancelled; --stop on :review and :done
-;; refused `no edge`.
-;; NEEDS-KERNEL: a goal verb, stop/cancel/withdrawal transitions and a check.
-(deftest-pending "goal-stop-is-a-request-not-evidence" "docs/SPEC-WORK.md:5475"
-    "expected=stop=request-not-evidence;cancel=terminal;done-refused-no-edge"
-  "no goal verb in slice 1")
-
-;; goal-update-writes-only-existing-kinds: every goal update form written, then
-;; the journal read: each event is a :transition or an :evidence with exactly
-;; the field list of its kind, on the goal node and no other node; --progress
-;; <text> alone on a :todo node writes :to :doing with the text as :reason, and
-;; on a :doing node refused `no edge`; --progress with the evidence triple on a
-;; :doing node writes the :evidence event; goal set and goal set --clear each
-;; write one :goal event; a retried set with the same --request id and payload
-;; returns the same event id once.
-;; NEEDS-KERNEL: goal update forms with kind-owned field lists.
-(deftest-pending "goal-update-writes-only-existing-kinds" "docs/SPEC-WORK.md:5484"
-    "expected=only-transition-or-evidence;exact-kind-fields;goal-node-only"
-  "no goal verb in slice 1")
-
 ;;; ------------------------------------------------------------------
 ;;; SPEC-WORK.md lines 3600-end, part 4 of 8: session/CLI-level replays.
 ;;; Slice 1 ships only the internal C/O transition kernel (value, event,
@@ -1275,17 +1136,6 @@ asserts does not exist in slice 1."
 ;;  ;; same hold and target identities with no duplicate launch.)
 
 ;; ------------------------------------------------------------------
-;; hostile-data   docs/SPEC-WORK.md:5602
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: hostile-data intake adapter (reader evaluation disabled;
-;; depth/byte/node limits; no command execution or authority change; quadratic
-;; copying avoided).
-;;(deftest "hostile-data" "docs/SPEC-WORK.md:5602"
-;;    "eval-disabled,limits=enforced,command-execution=0,authority=unchanged"
-;;  ;; reader evaluation disabled; pre-parse depth, byte and node limits
-;;  ;; enforced; imported prose cannot execute a command or alter authority.)
-
-;; ------------------------------------------------------------------
 ;; indivisible-record-refused-before-ack   docs/SPEC-WORK.md:5543
 ;; ------------------------------------------------------------------
 ;; NEEDS-KERNEL: paged index + admission gate (a single key whose one locator
@@ -1295,17 +1145,6 @@ asserts does not exist in slice 1."
 ;;    "indivisible=refused,nothing-journaled"
 ;;  ;; one key with its locator that no page under `--page-bytes` could hold
 ;;  ;; refused `indivisible` at exit 2 with nothing journaled.)
-
-;; ------------------------------------------------------------------
-;; inventory-expansion-and-contraction   docs/SPEC-WORK.md:5712
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: inventory/denominator accounting (initial inventory preserved,
-;; discovered work counted separately; changed denominator visible).
-;;(deftest "inventory-expansion-and-contraction" "docs/SPEC-WORK.md:5712"
-;;    "inventory=preserved,counted=separately,denominator=visible"
-;;  ;; initial inventory preserved and discovered; completed, reopened,
-;;  ;; decomposed and explicitly removed work counted separately; a changed
-;;  ;; denominator visible beside progress and never silently revised.)
 
 ;; ------------------------------------------------------------------
 ;; late-and-duplicate-receipts-are-retained   docs/SPEC-WORK.md:5243
@@ -1346,17 +1185,6 @@ asserts does not exist in slice 1."
 ;;    "selected=retired,recoverable=yes,task-cancelled=0"
 ;;  ;; `axis --remove` of a first-axis row and then of another axis's member:
 ;;  ;; only the selected coordinates retired and recoverable, no task cancelled.)
-
-;; ------------------------------------------------------------------
-;; merged-is-not-distributed   docs/SPEC-WORK.md:5093
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: release/distribution state (a fix in C with `landed=<sha>` and
-;; `released=-` while its release task is open; `released=<version>` only once
-;; that task settles).
-;;(deftest "merged-is-not-distributed" "docs/SPEC-WORK.md:5093"
-;;    "landed=set,released=-,released-set-only-when-task-settles"
-;;  ;; a fix in C with `landed=<sha>` and `released=-` while its release task is
-;;  ;; open, and `released=<version>` on the same row once that task settles.)
 
 ;; ------------------------------------------------------------------
 ;; metadata-patches-preserve-intent   docs/SPEC-WORK.md:5347
@@ -1431,17 +1259,6 @@ asserts does not exist in slice 1."
 ;;  ;; a row referenced by two roadmaps outside both parent chains and one
 ;;  ;; unrelated roadmap: both referencing scope revisions advance, the
 ;;  ;; unrelated one stays.)
-
-;; ------------------------------------------------------------------
-;; moving-source   docs/SPEC-WORK.md:5585
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: provider intake adapter (a body edited / comment added and
-;; deleted during capture: captured versions preserved, incomplete marked).
-;;(deftest "moving-source" "docs/SPEC-WORK.md:5585"
-;;    "captured=preserved,incomplete=marked,reconciled=yes"
-;;  ;; a body edited, a visible comment added and deleted, labels and state
-;;  ;; changed and an issue reopened during capture: captured versions
-;;  ;; preserved, a mixed or incomplete capture marked as such.)
 
 ;;;; ------------------------------------------------------------------
 ;;;; Draft-25..27 replays promised by docs/SPEC-WORK.md and absent here.

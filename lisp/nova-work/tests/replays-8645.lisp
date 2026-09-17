@@ -176,7 +176,7 @@ a closed node D, under the coordinator scope \"coord\"."
 ;;; goal-world-update-writes-only-existing-kinds           docs/SPEC-WORK.md:5966
 ;;; ------------------------------------------------------------------
 
-(deftest "goal-world-update-writes-only-existing-kinds" "docs/SPEC-WORK.md:5966"
+(deftest "goal-update-writes-only-existing-kinds" "docs/SPEC-WORK.md:5966"
     "expected=only-transition-or-evidence;exact-kind-fields;goal-node-only"
   (let ((w (goal-world-fixture)))
     ;; --progress <text> alone on a :todo node writes :to :doing with the text as :reason.
