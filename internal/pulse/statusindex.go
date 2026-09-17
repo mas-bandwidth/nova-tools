@@ -6,8 +6,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+// statusIndexReads counts the job files the index has opened. It is a test hook for
+// #1088: the fast suite asserts a warm tick reads the index and opens no job file.
+var statusIndexReads int64
 
 // statusIndexName is the per-root cache status reads instead of opening every job's
 // usage.tsv on every tick (#1088). It lives beside the root it describes, so
@@ -166,6 +171,7 @@ func indexRelative(root, path string) (string, bool) {
 // mtime. A file with no measured rows still gets an entry so the mtime is remembered and
 // the job is not re-opened every tick; the readers skip the rows they cannot use.
 func readIndexEntry(path string) indexEntry {
+	atomic.AddInt64(&statusIndexReads, 1)
 	e := indexEntry{}
 	fi, err := os.Stat(filepath.Dir(path))
 	if err != nil {
