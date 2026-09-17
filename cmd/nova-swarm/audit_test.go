@@ -56,6 +56,10 @@ var swarmAudit = audit.Config{
 		// oneline.Field inside itself. The path and step come from the card's own log and
 		// the branch from the clone, so nothing but escaped fields can come back.
 		"swarm.WallLine",
+		// stopSuffix (main.go, issue #1129) renders the NATIVE OK ` reason=` tail and puts
+		// the machinery's ending through oneline.Field inside itself before returning, so
+		// only the empty string and an oneline.Field-escaped reason can come back.
+		"stopSuffix",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
@@ -126,6 +130,10 @@ var swarmAudit = audit.Config{
 		// the key travelling only on the Authorization header and never printed.
 		`"math"`, `"sort"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// syscall (issue #1129): the native run kills the harness process group at the deadline.
+		`"syscall"`,
+		// os/signal (issue #1129): SIGTERM and SIGALRM end a native run like the deadline.
+		`"os/signal"`,
 	},
 	MinClassified: 40,
 }
