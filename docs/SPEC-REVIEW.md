@@ -592,11 +592,34 @@ the end. The date on a rule is the day it was learned.
     and a reader who wants to say more says it on the bus themselves. A tool
     that could comment could be made to argue (SPEC-MERGE, what it does not
     do).
+14. **A packet may carry one advisory decision, and it changes no verdict.**
+    `packet --decide [--floor 0.9] [--card <file>] [--key-env JEV_API_KEY]
+    [--base-url <url>]` sends the packet's public state — the PR title, the
+    diff `--stat` and the first 3000 characters of the diff — to the
+    typed-decision route (`internal/decide`) and appends exactly one `REVIEW
+    DECIDE risk=<s> scope=<p> second_reader=<p> conf=<c> evidence=pr#<n>` line
+    after the packet's **Not included** section. The questions are the review
+    candidates a reader weighs and nothing more: `risk` is a score over the
+    four levels *docs or tests only*, *small local change*, *touches a shared
+    package or a contract*, *touches CI, secrets, sandbox or permissions*;
+    `scope_matches_card` is a noul asked only when `--card <file>` names a
+    card, the statement that the diff does what the card's RESULT line promises
+    and nothing else; and `needs_second_reader` is a noul. `conf` is the
+    weakest answer's confidence, so one low-confidence question is never hidden
+    by two strong ones. The state is public only: the packet's repo must be
+    named in the package's public list or carry a `.public` marker, and a repo
+    that is neither is refused by name, exit 2, before any call; the key comes
+    only from the named environment variable and is never written. **The line
+    is a suggestion and never an authorization**: it is appended whether or not
+    any answer reaches the floor, it never becomes a verdict, it never moves a
+    range, and the caller keeps today's behaviour below the floor. (Stella,
+    2026-09-17: a confident decision beside a deterministic authority is two
+    authorities; the packet's reader answers, and the machinery decides.)
 
 ## The verbs
 
 ```
-nova-review packet  --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max <n>] [--diff-only] [--files <glob>]
+nova-review packet  --lane <nova-merge lane dir> (--pr <n>|--branch <name>) --who <name> --out <file, relative to the cwd or absolute under the cwd or the lane> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max <n>] [--diff-only] [--files <glob>] [--decide [--floor <f>] [--card <file>] [--key-env <name>] [--base-url <url>]]
 nova-review verdict --lane <dir> (--pr <n>|--branch <name>) --who <name> --model <id> --kind line|child|card [--of <line>] [--job <id>] --head <sha> [--base <sha>] --verdict approve|hold|abstain (--findings <file> | --reason <text>) [--note <text>] [--usage <file> --usage-source <id> --bench <name> | --receipt <id>] [--started <stamp>] [--max <n>] [--max-rows <n>] [--max-input-bytes <n>] [--max-line-bytes <n>]
 nova-review answer  --lane <dir> (--pr <n>|--branch <name>) --who <name> --finding <id> --head <sha> --as fixed|declined|dup [--of <id>] [--note <text>]
 nova-review policy  --lane <dir> (--pr <n>|--branch <name>) --who <name> --readers <name,...> --reserved <name,...> --deadline <stamp> --reason <text> --head <sha>
