@@ -262,7 +262,26 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+    ;; replays-8650 (nova-tools #362)
+    #:migrate-state-schema
+    #:declare-shared-prerequisite
+    #:own-shared-prerequisite
+    #:reference-shared-prerequisite
+    #:prerequisite-owner
+    #:prerequisite-cells
+    #:prerequisite-obligations
+    #:make-command-loop
+    #:command-loop-submit
+    #:command-loop-order
+    #:command-loop-sequence
+    #:mutate-outside-command-loop
+    #:inventory-record
+    #:record-resolved-p
+    #:record-unresolved-p
+    #:reconcile-inventory
+    #:cost-breakdown
+    #:subscription-covers-cash-p))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
