@@ -31,6 +31,12 @@ is available today.
 - **BLOCKED** — a worker's verdict, `RESULT.md` line 2 `BLOCKED <why>`; in
   nova-merge, an entry stopped with its reason while the lane moves on. Two
   senses. ([SPEC-SWARM.md, The RESULT.md template](SPEC-SWARM.md#the-resultmd-template) · [SPEC-MERGE.md, output grammar](SPEC-MERGE.md#output-grammar))
+- **board** — nova-board's owed-work layer: an append-only log of events from
+  which the open list is derived. It is retained as the **input adapter** that
+  folds GitHub and bus events into nova-work node events, and is retired only
+  after [nova-work](SPEC-WORK.md)'s `who` and `check` views and event adapter
+  replace it and are dogfooded.
+  ([SPEC-BOARD.md](SPEC-BOARD.md#status-the-input-adapter-not-yet-retired) · [SPEC-WORK.md](SPEC-WORK.md))
 - **bug node** — a nova-work node that stands for a bug, pooled by pulse when it
   is open, unleased and unblocked. ([SPEC-WORK.md, Bugs found while working](SPEC-WORK.md#bugs-found-while-working-rowan-on-glenns-word-of-2026-09-15-nova-tools463-additive-to-the-lock-at-231) · [SPEC-PULSE.md rule 1](SPEC-PULSE.md#the-rules-numbered))
 - **card** — a unit of work: in nova-pulse and nova-swarm, a file whose line 1
