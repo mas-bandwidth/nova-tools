@@ -179,10 +179,8 @@
 ;;; and dispatch surfaces). They are kept here, named, so the promised spec is
 ;;; not lost; each carries what it needs before it can turn green.
 
-(deftest "quiet-until-actionable" "docs/SPEC-WORK.md:4373"
-    "expected=zero-model-dispatch-for-unchanged;batching-bounded;urgent-bypass"
-  ;; NEEDS-KERNEL: model dispatch throttling/batching and urgent-correction bypass.
-  (ok t "pending; needs the model dispatch surface"))
+;; quiet-until-actionable and read-only-intake now run in
+;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 
 (deftest "rank-2-precedes-10" "docs/SPEC-WORK.md:5865"
     "expected=integer-rank-order;equal-and-default-by-id;restart-stable;unknown-only-first-unseen"

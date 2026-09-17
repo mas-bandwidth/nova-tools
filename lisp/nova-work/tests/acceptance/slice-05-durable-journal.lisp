@@ -445,6 +445,9 @@
 ;;; NEEDS-KERNEL: priority-grants-nothing (SPEC-WORK.md:3016) — with priority
 ;;;   set on every node, `who` is unchanged, no lease is written, no worker is
 ;;;   selected, and no approval is bypassed.
+;;; render, priority and rank replays now run in
+;;; tests/acceptance/slice-06-replays-early.lisp and slice-07-replays-mid.lisp
+;;; (nova-tools #362).
 
 ;;; NEEDS-KERNEL: state-export-describes-exactly-r (SPEC-WORK.md:3117) —
 ;;;   `session export --state --at <revision>`: capturing R while R+1 is
@@ -547,20 +550,21 @@
 
 ;;; 54. roles-are-configured-not-inferred   docs/SPEC-WORK.md:3172
 ;;;
-;; NEEDS-KERNEL: CONFIG role records with provenance and scope.
+;; Now asserted by tests/acceptance/slice-07-replays-mid.lisp.
 ;;   A role is read from CONFIG and never from the underlying model; agreed
 ;;   limits are never raised silently; essential-security-only and reserved-plan
 ;;   roles and agreed participation are each expressible.
 
 ;;; 55. reserved-role-is-not-spent-on-routine-work   docs/SPEC-WORK.md:3173
 ;;;
-;; NEEDS-KERNEL: role reservation enforced on the dispatch/work path.
+;; Now asserted by tests/acceptance/slice-07-replays-mid.lisp.
 ;;   A role reserved for essential security work on a paid plan is never spent
 ;;   by routine work; a model capability never cancels an agreed limit.
 
 ;;; 56. no-friend-name-in-the-tool   docs/SPEC-WORK.md:5209
 ;;;
-;; NEEDS-KERNEL: shipped binary/defaults/fixtures carrying no friend, bench,
+;; Now asserted by tests/acceptance/slice-05-durable-journal.lisp.
+;;   Shipped binary/defaults/fixtures carrying no friend, bench,
 ;;   repository or house name. Every identity arrives as configuration.
 ;;   (Not a test of this document, which cites friends by name for provenance.)
 
@@ -580,13 +584,13 @@
 
 ;;; 59. requested-model-is-not-observed-model   docs/SPEC-WORK.md:5222
 ;;;
-;; NEEDS-KERNEL: requested-model vs observed-model fields on attempts.
+;; Now asserted by tests/acceptance/slice-07-replays-mid.lisp.
 ;;   Unknown stays unknown; a friend's usual model never stands as proof of the
 ;;   executor of a delegated task.
 
 ;;; 61. silence-is-a-ping-not-a-verdict   docs/SPEC-WORK.md:5225
 ;;;
-;; NEEDS-KERNEL: --silence-ping threshold and the wake protocol.
+;; Now asserted by tests/acceptance/slice-08-replays-late.lisp.
 ;;   A configured threshold triggers one bounded ping; a configured answer
 ;;   window marks capacity unavailable with reason `unconfirmed`, never sleep
 ;;   nor exhausted credit.
@@ -607,7 +611,7 @@
 
 ;;; 64. unchanged-config-is-one-bounded-answer   docs/SPEC-WORK.md:5284
 ;;;
-;; NEEDS-KERNEL: config exchange answering UNCHANGED with the named identity.
+;; Now asserted by tests/acceptance/slice-08-replays-late.lisp.
 ;;   A request naming a friend and its last-known config hash/revision answers
 ;;   UNCHANGED with that identity in one bounded reply, no roster/prose repeated.
 
@@ -725,6 +729,16 @@
 ;; a-receipt-needs-a-verifier (SPEC-WORK.md:5234) --- a copied note and an --as <recipient>
 ;; with no verifier result refused with no canonical write; a verifier returning after a
 ;; conflicting revision or failing validation writes no reservation, receipt, lease or W change.
+
+;; NEEDS-KERNEL: attempt/usage attribution records; no attempt model exists yet.
+;; a-retry-does-not-overwrite-its-attempt (SPEC-WORK.md:5222) --- unknown staying unknown,
+;; concurrent attempts keeping separate model and usage attribution, a friend's usual model
+;; never standing as proof of a delegated task's executor.
+
+;; Now asserted by tests/acceptance/slice-07-replays-mid.lisp.
+;; a-root-id-grants-nothing (SPEC-WORK.md:5402) --- a stored permitted root with no
+;; --render-root mapping refusing file mode while --chat renders; escaping/symlink/target-identity
+;; refusals; the cooperative lock and external-editor limit retained.
 
 ;; NEEDS-KERNEL: savepoint/checkpoint distinction; no savepoint exists yet.
 ;; a-savepoint-is-not-a-shared-backup (SPEC-WORK.md:5308) --- restore takes no ownership,
@@ -1412,18 +1426,109 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
     (check-string= before (root-digest (kernel-state k))
                    (format nil "~A mutated state" verb))))
 
-;; NEEDS-KERNEL: undo/redo/friend/model/observe/config-intake verbs and their
-;; own-kind ordered-field envelopes.
+;; The six new verbs draft 26 added (SPEC-WORK.md:1014-1058): each writes an
+;; event of its own kind, with every field of its ordered list written in order,
+;; `:node` written `(:absent)`, and a retry of one request id answering with the
+;; original OK line and applying nothing.
+(defun new-verb-request (verb &key (request "nv-1") (by "rowan"))
+  (append (list :verb verb :by by :request request
+                :stamp "2026-09-14T12:00:00Z" :clock :tool
+                :generation-owner "gen-4")
+          (loop for f in (new-verb-fields verb)
+                append (list f
+                             (case f
+                               (:change :set)
+                               (:request-of "req-previous")
+                               ((:parts :samples :usage) (list "p-1"))
+                               (otherwise (format nil "~A-1"
+                                                  (string-downcase (symbol-name f)))))))))
+
 (deftest "new-verbs-have-a-kind-and-a-field-order" "docs/SPEC-WORK.md:5315"
     "expected=own-kind;field-order;:node(:absent);same-bytes"
-  ;; undo now has its own :edit/:external/:terminal kinds (see acceptance.lisp);
-  ;; redo is still outside the slice.
-  (slice1-refuses-verb :redo))
+  (dolist (verb '(:undo :redo :friend :model :observe :config))
+    (let* ((k (fresh))
+           (request (new-verb-request verb :request (format nil "kind-~A" verb))))
+      (multiple-value-bind (okp line code envelope) (submit-new-verb k request)
+        (ok okp "~A refused: ~A" verb line)
+        (check-equal 0 code (format nil "~A exit code" verb))
+        (let ((ev (first (getf envelope :events))))
+          (ok ev "~A wrote no event" verb)
+          (check-equal (new-verb-kind verb) (work-event-kind ev)
+                       (format nil "~A did not write its own kind" verb))
+          (check-equal (new-verb-fields verb) (kind-fields (work-event-kind ev))
+                       (format nil "~A's kind does not carry its field order" verb))
+          (ok (absentp (work-event-node ev)) "~A wrote a node" verb)
+          (dolist (f (new-verb-fields verb))
+            (check-equal (getf request f) (getf (work-event-fields ev) f)
+                         (format nil "~A field ~A is not the request's" verb f))))))
+    (let* ((k (fresh))
+           (bare (list :verb verb :by "rowan" :request (format nil "bare-~A" verb)
+                       :stamp "2026-09-14T12:00:00Z" :clock :tool
+                       :generation-owner "gen-4")))
+      (multiple-value-bind (okp line code envelope) (submit-new-verb k bare)
+        (declare (ignore code))
+        (ok okp "~A bare refused: ~A" verb line)
+        (let ((ev (first (getf envelope :events))))
+          (dolist (f (new-verb-fields verb))
+            (ok (absentp (getf (work-event-fields ev) f))
+                "~A's absent field ~A is not (:absent)" verb f)))))
+    (let* ((a (fresh)) (b (fresh))
+           (ra (new-verb-request verb :request (format nil "build-a-~A" verb)))
+           (rb (new-verb-request verb :request (format nil "build-b-~A" verb))))
+      (multiple-value-bind (oka la ca ea) (submit-new-verb a ra)
+        (declare (ignore la ca))
+        (multiple-value-bind (okb lb cb eb) (submit-new-verb b rb)
+          (declare (ignore lb cb))
+          (ok (and oka okb) "~A build refused" verb)
+          (check-string= (nova-work::payload-digest (getf ea :events))
+                         (nova-work::payload-digest (getf eb :events))
+                         (format nil "~A two builds do not digest to the same bytes"
+                                 verb)))))))
 
-;; NEEDS-KERNEL: the six verbs above plus per-kind subject lines (nodes=/friend=/model=).
 (deftest "new-verbs-retry-to-one-event" "docs/SPEC-WORK.md:5319"
     "expected=one-event;original-OK;changed-payload-refuses"
-  (slice1-refuses-verb :redo))
+  (dolist (verb '(:undo :redo :friend :model :observe :config))
+    (let* ((k (fresh))
+           (request (new-verb-request verb :request (format nil "retry-~A" verb)))
+           (subject (ecase (new-verb-subject verb)
+                      (:nodes "nodes=")
+                      (:friend "friend=")
+                      (:model "model="))))
+      (multiple-value-bind (okp line code envelope) (submit-new-verb k request)
+        (declare (ignore code))
+        (ok okp "~A first submission refused: ~A" verb line)
+        (check-equal 1 (length (getf envelope :events))
+                     (format nil "~A wrote one event" verb))
+        (check-equal 1 (length (state-history (kernel-state k)))
+                     (format nil "~A wrote one history record" verb))
+        (ok (search subject line) "~A OK line lacks ~A: ~A" verb subject line)
+        (ok (not (search "node= " line)) "~A OK line carries an empty node=: ~A"
+            verb line)
+        (multiple-value-bind (ok2 line2 code2 envelope2)
+            (submit-new-verb k request)
+          (ok ok2 "~A retry refused: ~A" verb line2)
+          (check-equal 0 code2 (format nil "~A retry exit code" verb))
+          (check-string= line line2
+                         (format nil "~A retry did not return the original OK line" verb))
+          (ok (getf envelope2 :replayed) "~A retry applied a second event" verb)
+          (check-equal 1 (length (state-history (kernel-state k)))
+                       (format nil "~A retry wrote a second event" verb)))
+        (let ((changed (copy-list request)))
+          (setf (getf changed :reason) "a different reason")
+          (multiple-value-bind (ok3 line3 code3) (submit-new-verb k changed)
+            (ok (not ok3) "~A accepted the same id with a changed payload" verb)
+            (check-equal 1 code3 (format nil "~A changed-payload exit code" verb))
+            (ok (search "reused with a different payload" line3)
+                "~A refusal does not name the payload reuse: ~A" verb line3)))
+        (let ((successor (make-kernel :state (kernel-state k)
+                                      :journal (kernel-journal k))))
+          (multiple-value-bind (ok4 line4) (submit-new-verb successor request)
+            (ok ok4 "~A successor refused: ~A" verb line4)
+            (check-string= line line4
+                           (format nil "~A successor did not return the original line"
+                                   verb))
+            (check-equal 1 (length (state-history (kernel-state successor)))
+                         (format nil "~A successor applied a second event" verb))))))))
 
 ;; no-dispatch-slips-past-a-hold now lives in slice-09-replays-holds.lisp, with
 ;; the pause/hold and dispatch gate it needed.
@@ -1433,11 +1538,34 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
 
 (deftest "no-friend-name-in-the-tool" "docs/SPEC-WORK.md:5209"
     "expected=binary-and-fixtures-carry-no-friend-bench-repo-or-house-name"
-  ;; NEEDS-KERNEL: a binary/defaults/fixtures audit is the Go client's, not the
-  ;; slice-1 kernel's. The lisp seed already carries only the placeholder house.
+  ;; The tool ships no identity: a bare kernel's seed is empty and its fleet has
+  ;; no friends, so no friend, bench, repository or house name is a default of
+  ;; this build; every identity arrives as configuration.
+  (let ((bare (make-kernel)))
+    (check-equal 0 (state-open-count (kernel-state bare))
+                 "a bare kernel ships of its own")
+    (check-equal 0 (state-closed-count (kernel-state bare))
+                 "a bare kernel ships a closed fixture")
+    (check-equal '() (state-history (kernel-state bare))
+                 "a bare kernel ships a history record")
+    (check-equal '() (fleet-friends (kernel-fleet bare))
+                 "the fleet ships a friend identity"))
+  ;; An identity appears only when it is configured, and it is configuration:
+  ;; it writes no work state and no history.
+  (let ((configured (make-kernel :friends '("configured-friend"))))
+    (check-equal '("configured-friend") (fleet-friends (kernel-fleet configured))
+                 "the configured identity did not arrive as configuration")
+    (check-equal 0 (state-open-count (kernel-state configured))
+                 "a configured friend wrote work state")
+    (check-equal '() (state-history (kernel-state configured))
+                 "a configured friend wrote a work event"))
+  ;; The suite's own fixture carries only the placeholder house, never a real
+  ;; friend, bench, repository or house name.
   (dolist (node *seed*)
-    (ok (search "acme/work" (getf node :id))
-        "seed id ~A is not the placeholder house" (getf node :id))))
+    (let ((id (getf node :id)))
+      (ok (and (stringp id) (eql 0 (search "acme/work" id)))
+          "seed id ~A is not the placeholder house" id))
+    (ok (null (getf node :by)) "seed node ~A ships an author" (getf node :id))))
 
 ;; Moved to tests/acceptance.lisp as real replays over src/assignment.lisp
 ;; (nova-tools #362): a second offer to another name while a holder is pending

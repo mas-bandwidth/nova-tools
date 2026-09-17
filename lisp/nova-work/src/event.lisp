@@ -29,7 +29,19 @@
     (:external   :effect :handle)                     ; SPEC-WORK.md:5652
     (:terminal   :disposition :reason)                ; cancel/remove, SPEC-WORK.md:5783
     (:goal       :change :scope :goal :reason)        ; SPEC-WORK.md:1060
-    (:evidence   :pointer :criterion :against :generation :attempt)) ; :996
+    (:evidence   :pointer :criterion :against :generation :attempt) ; :996
+    ;; The six new verbs draft 26 added (SPEC-WORK.md:1014-1043, replay
+    ;; new-verbs-have-a-kind-and-a-field-order): each writes an event of its own
+    ;; kind, with its ordered field list, and addresses no containment node.
+    (:undo       :request-of :reason)
+    (:redo       :request-of :reason)
+    (:friend     :change :friend :role :scope :participation :capability
+                 :group :limit :reason)
+    (:model      :change :model :provider :route :billing :pricing :effective
+                 :source :task-class :result :samples :reason)
+    (:observe    :change :friend :state :source :attempt :observed-model
+                 :bench :usage :reason)
+    (:config     :friend :base :revision :hash :parts :reason))
   "The ordered field list per kind. Slice 1 supports the four transition kinds;
 the goal and evidence rows are the goal verb's two event kinds, added by
 nova-tools #362 so a `goal update` writes a kind of its own field list.")

@@ -56,7 +56,8 @@
                (:file "src/replays-8660")
                (:file "src/replays-8661")
                (:file "src/replays-8663")
-                (:file "src/replays-8664")))
+                (:file "src/replays-8664")
+               (:file "src/new-verbs")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."

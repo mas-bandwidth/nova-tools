@@ -37,13 +37,9 @@
                     :key (lambda (e) (getf e :request)) :test #'equal)
               "the undo still stands after a fresh redo"))))))
 
-;; regression-and-recovery now runs in
-;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
-
-(deftest "regression-opens-repair-work" "docs/SPEC-WORK.md:5300"
-    "expected=confirmed-regression-creates-linked-open-repair-work"
-  ;; NEEDS-KERNEL: confirmed regression plus linked repair work creation.
-  (ok t "pending; needs regression detection"))
+;; regression-and-recovery and regression-opens-repair-work now run in
+;; lisp/nova-work/tests/replays-8647.lisp and tests/replays-8648.lisp
+;; (nova-tools #362).
 
 
 ;;; render: the stored target, its permitted roots and the one bounded artifact
@@ -254,15 +250,8 @@
       (check-equal :none action "only one bounded ping")
       (check-equal :already-pinged reason "the bound is named"))))
 
-(deftest "reuse-only-valid-review" "docs/SPEC-WORK.md:4374"
-    "expected=same-scope-reusable;changed-acceptance-deps-invalidate;friend-gates-not-replaced"
-  ;; NEEDS-KERNEL: review scope/acceptance invalidation rules.
-  (ok t "pending; needs review"))
-
-(deftest "review-cycles-stay-visible" "docs/SPEC-WORK.md:5722"
-    "expected=exact-revision-review-finding-ids-and-author-dispositions-recorded"
-  ;; NEEDS-KERNEL: review/finding record surface and its visibility.
-  (ok t "pending; needs review records"))
+;; reuse-only-valid-review and review-cycles-stay-visible now run in
+;; lisp/nova-work/tests/replays-8648.lisp (nova-tools #362).
 
 ;;; 3x. replays promised by docs/SPEC-WORK.md lines 3600-9999 (card #284):
 ;;;     each replay asserts exactly the sentence it is named from. Where the
