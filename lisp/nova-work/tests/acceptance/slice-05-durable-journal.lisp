@@ -213,39 +213,11 @@
       (ignore-errors (sb-posix:rmdir (concatenate 'string base "/d")))
       (ignore-errors (sb-posix:rmdir base)))))
 
-;;; wire-integers-are-strings  SPEC-WORK.md prose :2510 / table :5159
-;; (deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
-;;     "int>2^53-round-trips-as-string;json-number-frame-refused;null-and-absent-alike"
-;;   ;; an id, a revision, a counter and a token total each above 2^53 crossing
-;;   ;; the wire and returning unchanged; a frame carrying a JSON number refused;
-;;   ;; null and an absent key reading alike, an empty string and empty array as
-;;   ;; values.)
-;; NEEDS-KERNEL: the wire codec/transport (no JSON frame or wire exists here).
-
-;;; protocol-version-negotiated-or-refused  SPEC-WORK.md table :5162
-;; (deftest "protocol-version-negotiated-or-refused" "docs/SPEC-WORK.md:5162"
-;;     "unsupported-version-refused-with-list;no-request-before-handshake;oversized-frame-refused"
-;;   ;; a client offering an unsupported version refused with the supported list
-;;   ;; named and the connection closed; no request admitted before the handshake;
-;;   ;; an oversized frame refused with one framed error before the close.)
-;; NEEDS-KERNEL: the protocol handshake and connection admission (no transport).
-
-;;; pipeline-replies-are-correlated  SPEC-WORK.md prose :2529 / table :5165
-;; (deftest "pipeline-replies-are-correlated" "docs/SPEC-WORK.md:5165"
-;;     "every-response-reaches-only-its-request;operation-id-distinct;unknown-id-closes"
-;;   ;; pipeline two queries, a mutation and a long-operation acceptance, deliver
-;;   ;; response frames out of order and in fragments: every response matches only
-;;   ;; its request; unknown/duplicate/absent response ids close without falsely
-;;   ;; settling an outstanding request.)
-;; NEEDS-KERNEL: the pipelined transport with response-id correlation (no socket).
-
-;;; disconnect-is-not-a-rollback  SPEC-WORK.md prose :2540 / table :5173
-;; (deftest "disconnect-is-not-a-rollback" "docs/SPEC-WORK.md:5173"
-;;     "event-stands-after-kill;same-id-returns-recorded-disposition;different-args-refused;rev/pushed-distinct"
-;;   ;; a client killed after its mutation was journaled: the event stands, the same
-;;   ;; request id and body returns the recorded disposition, the same id with
-;;   ;; different arguments is refused, and rev= and pushed= are distinct.)
-;; NEEDS-KERNEL: socket disconnect + a pushed= counter (slice-1 receipt has pushed=-).
+;;; wire-integers-are-strings, protocol-version-negotiated-or-refused,
+;;; pipeline-replies-are-correlated and disconnect-is-not-a-rollback are the
+;;; executable replays in ../acceptance.lisp (nova-tools #362) over the wire
+;;; codec and protocol session in src/replays-wire-and-operations.lisp. The
+;;; NEEDS-KERNEL stubs are gone with them.
 
 ;;; no-effect-mutation-is-journaled  SPEC-WORK.md prose :2797 / table :5176
 ;; (deftest "no-effect-mutation-is-journaled" "docs/SPEC-WORK.md:5176"
@@ -976,14 +948,8 @@ asserts does not exist in slice 1."
 
 ;; default-window-opens-two-days is implemented in ../acceptance.lisp (card 8601).
 
-;; disconnect-is-not-a-rollback: a client killed after its mutation was
-;; journaled -- the event stands, the same request id and body returns the
-;; recorded disposition, the same id with different arguments is refused, and
-;; rev= and pushed= are distinct in every response.
-;; NEEDS-KERNEL: a session reply layer carrying rev= and pushed= per response.
-(deftest-pending "disconnect-is-not-a-rollback" "docs/SPEC-WORK.md:5173"
-    "expected=event-stands;same-id-same-disposition;changed-args-refused;rev!=pushed"
-  "kernel dedup disposes but the session reply packaging does not exist")
+;; disconnect-is-not-a-rollback is the executable replay in ../acceptance.lisp
+;; (nova-tools #362) over the disconnecting wire session.
 
 ;; dispatch-ack-and-ownership-are-three: dispatch, delivery, acknowledgement
 ;; and accepted ownership distinguished; a pending offer reserves only
@@ -1057,15 +1023,9 @@ asserts does not exist in slice 1."
     "expected=undo-restores-before;late-undo=conflict;both-events-stand"
   "no undo verb in slice 1")
 
-;; endpoint-is-local-and-private: the session's directory created 0700 and its
-;; socket 0600, both owned by the running account; a pre-existing directory or
-;; socket with wider modes refused rather than reused; the Windows named pipe
-;; created with FILE_FLAG_FIRST_PIPE_INSTANCE; no listener bound to a network
-;; address.
-;; NEEDS-KERNEL: a session socket/directory bootstrap and permission check.
-(deftest-pending "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5276"
-    "expected=dir-0700;socket-0600;wider-modes-refused;no-network-listener"
-  "no session endpoint exists in slice 1")
+;; endpoint-is-local-and-private is the executable replay earlier in this file
+;; (a real deftest over src/replays-slice-05.lisp), so the duplicate stub is
+;; deleted.
 
 ;; explicit-rest-is-not-pinged: the configured silence threshold triggers one
 ;; bounded ping; a nonresponsive capacity marked unavailable with reason

@@ -46,10 +46,11 @@
   (check-equal :unresolved-delivery (probe-outcome :failed)
                "a failed probe is unresolved delivery"))
 
-(deftest "single-writer" "docs/SPEC-WORK.md:5595"
-    "expected=fencing-prevents-stale-mutation-authority-not-only-a-stale-push"
-  ;; NEEDS-KERNEL: process fencing, socket and lease expiry.
-  (ok t "slice 1 carries no fencing: NEEDS-KERNEL single-writer fencing"))
+;; single-writer is the executable replay in ../replays-8650.lisp (and
+;; single-writer-kernel-total-order in ../replays-8661.lisp): one command loop's
+;; total order, the journal's sequence numbers in that order, and a mutation
+;; outside the loop refused as a defect. Process/socket fencing and lease expiry
+;; remain outside this slice.
 
 (deftest "source-inventory" "docs/SPEC-WORK.md:5582"
     "expected=every-source-record-maps-to-a-preserved-original-or-an-explicit-unresolved-entry"
