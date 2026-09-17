@@ -45,6 +45,9 @@ nova-pulse fleet   reboot --benches <file> --bench <name>[,<name>] [--ssh <path>
 nova-pulse fleet   secrets --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
+nova-pulse fleet hygiene --install [--root <dir>] [--timeout <s>] [--max <n>]
+nova-pulse fleet hygiene --dry-run [--root <dir>] [--timeout <s>] [--max <n>]
+nova-pulse fleet hygiene --status --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help

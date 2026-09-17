@@ -52,7 +52,7 @@ type fleetSurveyResult struct {
 
 func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " fleet", "a sub-verb is required (add, survey, suspend, wake, reboot, secrets)")
+		return refuse(stderr, " fleet", "a sub-verb is required (add, survey, suspend, wake, reboot, secrets, hygiene)")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -68,8 +68,10 @@ func cmdFleet(args []string, stdout, stderr io.Writer) int {
 		return cmdFleetReboot(rest, stdout, stderr)
 	case "secrets":
 		return cmdFleetSecrets(rest, stdout, stderr)
+	case "hygiene":
+		return cmdFleetHygiene(rest, stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are add, survey, suspend, wake, reboot, secrets; run: nova-pulse help)\n", sub)
+	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are add, survey, suspend, wake, reboot, secrets, hygiene; run: nova-pulse help)\n", sub)
 	return 2
 }
 
@@ -427,4 +429,53 @@ func readBenchStandard() (string, error) {
 		dir = parent
 	}
 	return "", fmt.Errorf("tools/bench-standard.sh not found above the working directory")
+}
+
+// cmdFleetHygiene is the fleet hygiene verb (SPEC-PULSE ## Fleet hygiene, #1139): one
+// mode per run, every path from a flag, the work in internal/pulse/hygiene.go.
+func cmdFleetHygiene(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		return refuse(stderr, " fleet hygiene", "a mode is required (--install, --dry-run or --status)")
+	}
+	mode, rest := args[0], args[1:]
+	switch mode {
+	case "--install", "--dry-run", "--status":
+	default:
+		fmt.Fprintf(stderr, "nova-pulse fleet hygiene: unknown mode %q (the modes are --install, --dry-run, --status; run: nova-pulse help)\n", mode)
+		return 2
+	}
+	f := newFlags("fleet hygiene " + mode)
+	root := f.fs.String("root", "", "")
+	benches := f.fs.String("benches", "", "")
+	ssh := f.fs.String("ssh", "ssh", "")
+	timeout := f.fs.Int("timeout", 120, "")
+	max := f.fs.Int("max", bounded.Default, "")
+	if !f.parse(rest, stderr) {
+		return 2
+	}
+	if mode == "--status" {
+		f.want(*benches, "benches", "the fleet file: name, ssh target, home, mac one per line")
+	}
+	if *timeout < 1 {
+		f.add(fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
+	}
+	if *max < 0 {
+		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	in := pulse.HygieneInput{
+		Root: *root, Benches: *benches, SSH: *ssh,
+		Timeout: time.Duration(*timeout) * time.Second, Max: *max,
+		Stdout: stdout, Stderr: stderr,
+	}
+	switch mode {
+	case "--install":
+		return pulse.HygieneInstall(in)
+	case "--dry-run":
+		return pulse.HygieneDryRun(in)
+	default:
+		return pulse.HygieneStatus(in)
+	}
 }
