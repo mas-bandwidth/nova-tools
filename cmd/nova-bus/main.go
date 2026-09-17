@@ -196,11 +196,9 @@ so the second wait is a real wait:
   nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
     --advance --remote origin --branch main
 
---quiet-beats makes a wait return on a change that is ONLY beats and cursors --
-a lane's BEAT or CURSOR moving, no note -- with one WAIT OK line and NO inbox
-frame, instead of sleeping through it: a line polling presence that way spends
-one line per beat rather than a whole INBOX listing. Without it a beat commit
-is not a note and keeps sleeping, exactly as before.
+--quiet-beats is accepted and changes nothing since 2026-09-17 (#328): a change
+that is only beats and cursors -- a lane's BEAT or CURSOR moving, no note --
+never wakes a wait; a beat is not news, exactly as before.
 
   nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
     --advance --remote origin --branch main
@@ -1394,8 +1392,9 @@ type inboxOpts struct {
 	maxBytes     int64
 	after        string
 	diagnostics  bool
-	// quietBeats makes `wait` return on a change that is ONLY beats and cursors — no note —
-	// printing one WAIT line and no INBOX frame, instead of sleeping through it. It is `wait`'s
+	// quietBeats records that the caller passed `wait --quiet-beats`. Since #328 a change
+	// that is only beats and cursors never wakes a wait, so the flag is accepted and
+	// changes nothing; it is kept so callers that pass it keep working. It is `wait`'s
 	// only; `inbox` leaves it false.
 	quietBeats bool
 	// me is the reader resolved against the roster, carried so `wait` can write their beat
@@ -1438,7 +1437,7 @@ type inboxReading struct {
 	// has already taken; `wait --advance` skips them rather than returning on them.
 	HeardNew int
 	// Changed is how many lane paths the incremental diff named. It is scope.Changed, held
-	// here so `wait --quiet-beats` can tell a beat/cursor-only change from no change at all.
+	// here for a caller that wants to tell a beat/cursor-only change from no change at all.
 	Changed int
 	// NoteChanges is how many of those changed paths were notes; see bus.InboxResult.
 	NoteChanges int
@@ -2526,13 +2525,6 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		// deadline. #352 blocked over the backlog instead and broke byte-identity with
 		// inbox, which is why it was reverted.
 		//
-		// #674, --quiet-beats: a change that is ONLY beats and cursors -- no note in the diff,
-		// and no switch-day line hiding the whole wait -- is not news to a default wait, which
-		// sleeps through it. Under --quiet-beats it is a wake worth one WAIT line: the bus
-		// moved, and the caller is owed that for one token rather than none.
-		quietOnly := func(r inboxReading) bool {
-			return o.quietBeats && r.New == 0 && r.Changed > 0 && r.NoteChanges == 0 && !hiddenWholeWait(r.Legacy, horizon)
-		}
 		// #328 (2026-09-17): a beat or a cursor is never news. A wait that woke on every
 		// line's presence beat (one a minute, six lines) was a poll with extra steps and cost the
 		// window a turn per beat; --quiet-beats is accepted and changes nothing (Johnny's read).
@@ -2583,9 +2575,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 				fmt.Fprintf(stdout, "WAIT NOTE %s\n", oneline.Escape(hiddenReason(r.Legacy, pollNow)))
 			}
 			fmt.Fprintf(stdout, "WAIT OK new=%d after=%s polls=%d\n", r.New, oneline.Field(elapsed.String()), polls)
-			if !quietOnly(r) {
-				fmt.Fprint(stdout, lines)
-			}
+			fmt.Fprint(stdout, lines)
 			fmt.Fprintf(stdout, "WAIT DONE reason=new rearm=required next=%s\n", next)
 			landBeat()
 			return 0
