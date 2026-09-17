@@ -115,33 +115,75 @@
 
 (deftest "restore-is-isolated-and-dispatches-nothing"
     "docs/SPEC-WORK.md:6285-6290,5790-5793"
-    "expected=read-only;owns-nothing;dispatches-nothing;replays-nothing;fenced-promotion-only"
-  (let ((session (make-restore-session :savepoint "sp-1")))
-    (ok (restore-session-read-only-p session) "a restore is read-only")
-    (check-equal nil (restore-session-ownership session)
-                 "a restore inherits no coordinator ownership")
-    (check-equal nil (restore-session-assignments session)
-                 "a restore reanimates no assignment")
-    (check-equal 0 (restore-session-dispatch-count session)
-                 "a restore dispatches nothing")
-    (check-equal nil (restore-session-replayed-messages session)
-                 "a restore replays no bus message")
-    (check-equal nil (restore-session-external-effects session)
-                 "a restore duplicates no external side effect")
-    ;; a dispatch through the isolated session is refused outright.
-    (multiple-value-bind (ok line code) (restore-dispatch session :node "acme/work/f1/t1")
-      (check-equal nil ok "the isolated restore refuses a dispatch")
-      (check-equal 2 code "the refusal is exit 2")
-      (ok (search "isolated" line) "the refusal names the isolation: ~A" line))
-    ;; a repair is promoted only through a fenced validated reconciliation.
-    (multiple-value-bind (ok line code) (promote-repair session :repair)
-      (check-equal nil ok "an unfenced promotion is refused")
-      (check-equal 2 code "the refusal is exit 2")
-      (ok (search "fenced" line) "the refusal names the fence: ~A" line))
-    (multiple-value-bind (ok line code)
-        (promote-repair session :repair :fenced t :validated t :reconciled t)
-      (ok ok "a fenced validated reconciliation promotes the repair: ~A" line)
-      (check-equal 0 code "a successful promotion is exit 0"))))
+    "expected=read-only;owns-nothing;dispatches-nothing;replays-nothing;fenced-promotion-only;records-after-cut-once;missing-reply-refused"
+  (let* ((records (list (list :seq 1 :request "r1" :reply '("OK r1") :payload-sha256 "p1" :events '(1))
+                        (list :seq 2 :request "r2" :reply '("OK r2") :payload-sha256 "p2" :events '(2 3))
+                        (list :seq 3 :request "r3" :reply '("OK r3") :payload-sha256 "p3" :events '(4))))
+         (journal (make-journal-chain
+                   :id "journal-abc"
+                   :segments (list (make-journal-segment :path "journal.1"
+                                                         :header '() :records '()))))
+         (store (savepoint-write (make-savepoint-store) "sp-1" 3 3 records :journal journal))
+         (sp (savepoint-store-verified store))
+         (image (savepoint-image-events 3 records))
+         (replies (savepoint-retained-replies records)))
+    ;; a real savepoint restores as one isolated recovery session.
+    (multiple-value-bind (session line code)
+        (savepoint-restore (make-savepoint-load :savepoint sp :journal journal
+                                                :image image :replies replies
+                                                :records records))
+      (ok session "a real savepoint restores: ~A" line)
+      (check-equal 0 code "a restore is exit 0")
+      (ok (restore-session-read-only-p session) "a restore is read-only")
+      (check-equal nil (restore-session-ownership session)
+                   "a restore inherits no coordinator ownership")
+      (check-equal nil (restore-session-assignments session)
+                   "a restore reanimates no assignment")
+      (check-equal 0 (restore-session-dispatch-count session)
+                   "a restore dispatches nothing")
+      (check-equal nil (restore-session-replayed-messages session)
+                   "a restore replays no bus message")
+      (check-equal nil (restore-session-external-effects session)
+                   "a restore duplicates no external side effect")
+      ;; the image and its retained replies are loaded, and only the complete
+      ;; records strictly after the cut replay once in sequence.
+      (check-equal image (restore-session-image session) "the image is loaded")
+      (check-equal replies (restore-session-replies session)
+                   "the retained replies are loaded")
+      (check-equal '(3)
+                   (mapcar (lambda (r) (getf r :seq))
+                           (restore-session-replayed-records session))
+                   "only the complete records strictly after the cut replay once")
+      ;; a dispatch through the isolated session is refused outright.
+      (multiple-value-bind (ok line code) (restore-dispatch session :node "acme/work/f1/t1")
+        (check-equal nil ok "the isolated restore refuses a dispatch")
+        (check-equal 2 code "the refusal is exit 2")
+        (ok (search "isolated" line) "the refusal names the isolation: ~A" line))
+      ;; a repair is promoted only through a fenced validated reconciliation.
+      (multiple-value-bind (ok line code) (promote-repair session :repair)
+        (check-equal nil ok "an unfenced promotion is refused")
+        (check-equal 2 code "the refusal is exit 2")
+        (ok (search "fenced" line) "the refusal names the fence: ~A" line))
+      (multiple-value-bind (ok line code)
+          (promote-repair session :repair :fenced t :validated t :reconciled t)
+        (ok ok "a fenced validated reconciliation promotes the repair: ~A" line)
+        (check-equal 0 code "a successful promotion is exit 0")))
+    ;; a savepoint-load whose disposition list lost a reply refuses the restore
+    ;; and exposes no session.
+    (let ((holed (mapcar (lambda (d) (if (equal "r2" (getf d :request))
+                                         (list :request "r2" :payload-sha256 "p2"
+                                               :sequence 2 :record-sha256 (getf d :record-sha256)
+                                               :reply nil)
+                                         d))
+                         replies)))
+      (multiple-value-bind (session line code)
+          (savepoint-restore (make-savepoint-load :savepoint sp :journal journal
+                                                  :image image :replies holed
+                                                  :records records))
+        (check-equal nil session "a restore missing a retained reply exposes nothing")
+        (check-equal 2 code "the refusal is exit 2")
+        (ok (search "recovery-gap kind=missing-reply" line)
+            "the missing reply is named by its kind: ~A" line)))))
 
 ;;; ------------------------------------------------------------------
 ;;; reuse-only-valid-review                 SPEC-WORK.md:4851

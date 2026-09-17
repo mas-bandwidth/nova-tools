@@ -1333,12 +1333,14 @@ reply is never deleted, invented or reconstructed from current state."
              (:constructor make-restore-session
                  (&key savepoint (read-only-p t) ownership assignments
                        (dispatch-count 0) replayed-messages external-effects
-                       (mode :isolated))))
+                       (mode :isolated) image replies replayed-records cut boundary)))
   "A restore opens a read-only, isolated, non-dispatching recovery session: it
 inherits no coordinator ownership, reanimates no assignment, replays no bus
-message and duplicates no external side effect."
+message and duplicates no external side effect. IMAGE and REPLIES are the
+validated immutable image and its retained dispositions; REPLAYED-RECORDS are
+the journal records strictly after the cut, each replayed once in sequence."
   savepoint read-only-p ownership assignments dispatch-count replayed-messages
-  external-effects mode)
+  external-effects mode image replies replayed-records cut boundary)
 
 (defun restore-dispatch (session &key node)
   "The isolated restore refuses to dispatch anything."

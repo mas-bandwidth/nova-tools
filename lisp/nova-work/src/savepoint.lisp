@@ -189,3 +189,128 @@ the shared checkpoint."
               (getf a :id) (getf a :rev)
               (string-downcase (symbol-name (getf a :verdict)))
               (getf a :stage)))))
+
+;;; ------------------------------------------------------------------
+;;; verify (docs/SPEC-WORK.md:2274, :6399-6401, :6446-6459)
+;;; ------------------------------------------------------------------
+
+(defstruct (savepoint-load
+             (:constructor make-savepoint-load
+                 (&key savepoint journal image replies (records '()) gap)))
+  "What one read of a savepoint's own root produced: the savepoint (its manifest
+and the content references the read used), the journal chain at hand, the image
+and the retained replies the references name, the records the read saw, and any
+gap the tail or a record itself is."
+  savepoint journal image replies records gap)
+
+(defun savepoint-cut-sequence (savepoint)
+  "The replay cut's record sequence, or 0 for an initial image's (:absent) cut."
+  (let ((cut (savepoint-replay-cut savepoint)))
+    (if (absentp cut) 0 (getf cut :sequence))))
+
+(defun savepoint-cut-by-sequence (savepoint records)
+  "The one complete record whose sequence the manifest's replay cut names, or
+NIL for an initial image (docs/SPEC-WORK.md:6413-6421)."
+  (let ((cut (savepoint-replay-cut savepoint)))
+    (unless (absentp cut)
+      (find (getf cut :sequence) records
+            :key (lambda (r) (getf r :seq)) :test #'eql))))
+
+(defun savepoint-content-ok-p (reference value)
+  "A content reference is verified by hashing the exact bytes it names: the
+SHA-256 and the size both (docs/SPEC-WORK.md:6459)."
+  (let ((bytes (canonical-string value)))
+    (and (equal (getf reference :sha256) (sha256-hex bytes))
+         (eql (getf reference :size) (length bytes)))))
+
+(defun savepoint-gap-line (kind)
+  "A recovery gap printed by its kind, never rounded to another and never a
+truncation (docs/SPEC-WORK.md:6454-6459)."
+  (format nil "SAVEPOINT FAIL: recovery-gap kind=~(~A~)" kind))
+
+(defun savepoint-verify (load)
+  "Verify what a savepoint newly wrote or a later read uses: the manifest's
+journal id against the journal at hand, the exact replay cut against one
+complete record's identity, the image and retained-reply content references by
+the bytes they name, and every retained disposition's reply. A torn tail is an
+interrupted append, told apart from a corrupt record, and both are kept; a
+missing or mismatched cut, a broken hash or sequence and an incomplete envelope
+are recovery gaps by their kind and never a truncation
+(docs/SPEC-WORK.md:2274, :6399-6401, :6446-6459). Returns (values verdict line
+kind): :verified, or :failed with the gap named."
+  (let* ((sp (savepoint-load-savepoint load))
+         (journal (savepoint-load-journal load))
+         (records (savepoint-load-records load))
+         (image (savepoint-load-image load))
+         (replies (savepoint-load-replies load))
+         (gap (savepoint-load-gap load))
+         (cut (and sp (savepoint-cut-sequence sp)))
+         (cut-rec (and sp (savepoint-cut-by-sequence sp records))))
+    (cond
+      ((null sp)
+       (values :failed (savepoint-gap-line "missing-manifest") :missing-manifest))
+      ((member gap '(:torn-tail :corrupt-record) :test #'eq)
+       (values :failed (savepoint-gap-line gap) gap))
+      ((and (journal-chain-p journal)
+            (plusp (length (or (savepoint-journal-id sp) "")))
+            (not (string= (journal-chain-id journal) (savepoint-journal-id sp))))
+       (values :failed "SAVEPOINT FAIL: journal mismatch" :journal-mismatch))
+      ((and (plusp cut) (null cut-rec))
+       (values :failed (savepoint-gap-line "missing-cut") :missing-cut))
+      ((and cut-rec
+            (not (string= (getf (savepoint-replay-cut sp) :sha256)
+                          (savepoint-record-hash cut-rec))))
+       (values :failed "SAVEPOINT FAIL: journal mismatch: replay cut" :journal-mismatch))
+      ((some (lambda (d) (null (getf d :reply))) replies)
+       (values :failed (savepoint-gap-line "missing-reply") :missing-reply))
+      ((not (savepoint-content-ok-p (savepoint-image sp) image))
+       (values :failed (savepoint-gap-line "corrupt-record") :corrupt-record))
+      ((not (savepoint-content-ok-p (savepoint-local-replies sp) replies))
+       (values :failed (savepoint-gap-line "corrupt-record") :corrupt-record))
+      (t (values :verified :verified nil)))))
+
+;;; ------------------------------------------------------------------
+;;; restore (docs/SPEC-WORK.md:2275, :6406-6411, :6447-6454)
+;;; ------------------------------------------------------------------
+
+(defun savepoint-complete-records-p (records)
+  "Every record is a complete envelope and the records replay once in sequence:
+strictly ascending sequence numbers with no gap or repeat."
+  (let ((seqs (mapcar (lambda (r) (getf r :seq)) records)))
+    (and (every (lambda (r) (and (getf r :events) (getf r :request))) records)
+         (or (null seqs)
+             (let ((sorted (sort (copy-list seqs) #'<)))
+               (and (equal sorted seqs)
+                    (= (length sorted) (length (remove-duplicates sorted)))))))))
+
+(defun savepoint-restore (load)
+  "Restore one savepoint as an isolated, read-only, non-dispatching recovery
+session in five steps: verify the manifest, the journal id and the exact cut;
+load the image and its retained replies; replay only the complete records
+strictly after the cut once in sequence; process boundary records; then finish
+the whole validation before anything is exposed. It inherits no coordinator
+ownership, reanimates no assignment, replays no bus message and duplicates no
+external side effect, and a restore missing a retained reply refuses
+(docs/SPEC-WORK.md:2275, :6406-6411, :6447-6454). Returns (values session line
+code)."
+  (multiple-value-bind (verdict line kind) (savepoint-verify load)
+    (if (not (eq verdict :verified))
+        (values nil line (if (eq kind :missing-manifest) 1 2))
+        (let* ((sp (savepoint-load-savepoint load))
+               (records (savepoint-load-records load))
+               (cut (savepoint-cut-sequence sp))
+               (after (remove-if-not (lambda (r) (> (getf r :seq) cut))
+                                     records)))
+          (if (not (savepoint-complete-records-p after))
+              (values nil (savepoint-gap-line "incomplete-envelope") 2)
+              (values (make-restore-session
+                       :savepoint sp
+                       :image (savepoint-load-image load)
+                       :replies (savepoint-load-replies load)
+                       :replayed-records after
+                       :cut (savepoint-replay-cut sp)
+                       :boundary (savepoint-boundary sp)
+                       :read-only-p t
+                       :mode :isolated)
+                      "RESTORE OK read-only isolated"
+                      0))))))

@@ -396,13 +396,26 @@ copy is verified nothing is pruned (SPEC-WORK.md:5791, :6280)."
 (defun restore-copy (copy)
   "A savepoint restore over a copied journal inspects in isolation: it takes no
 ownership and dispatches nothing, whatever the copy's journal id says
-(SPEC-WORK.md:6017)."
-  (list :journal-id (getf copy :journal-id)
-        :bench (getf copy :bench)
-        :isolation :read-only
-        :ownership nil
-        :dispatches 0
-        :side-effects 0))
+(SPEC-WORK.md:6017). The copy carries the savepoint and the records and bytes
+the read saw; the restore is the same isolated read-only session a local
+restore opens."
+  (multiple-value-bind (session line code)
+      (savepoint-restore (make-savepoint-load
+                          :savepoint (getf copy :savepoint)
+                          :journal (getf copy :journal)
+                          :image (getf copy :image)
+                          :replies (getf copy :replies)
+                          :records (getf copy :records)
+                          :gap (getf copy :gap)))
+    (list :journal-id (getf copy :journal-id)
+          :bench (getf copy :bench)
+          :isolation :read-only
+          :ownership (and session (restore-session-ownership session))
+          :dispatches (if session (or (restore-session-dispatch-count session) 0) 0)
+          :side-effects (if session (or (restore-session-external-effects session) 0) 0)
+          :session session
+          :line line
+          :code code)))
 
 (defun start-over-copy (copy)
   "A session start over a copied journal is refused by the fencing rules; the
