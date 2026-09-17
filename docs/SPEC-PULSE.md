@@ -471,6 +471,21 @@ Red tests, one card writes them first; each fakes what the test cannot have:
 11. `hygiene-refuses-studio`: any hygiene act with `studio` in `--benches` is `FLEET REFUSED bench=studio`, exit 2, and the fake ssh log is empty.
 12. `hygiene-status-without-benches-refuses`: `--status` with no `--benches` is `refusing to guess`, exit 2, and no bench is contacted.
 
+`fleet add <bench>` is the only door into the loop, and rule R (pit stop 4,
+2026-09-16: nothing enters the loop untested) is why. It reads the fleet-probe
+record — the `fleet-probe` job in `ci.yml` (#872), dispatched with
+`bench=<label> slots=<n>`, one job per runner slot, read back by `runner_name` —
+and refuses the bench unless every runner name on the record is green: the line
+is `FLEET REFUSED bench=<name> runner=<first-not-green> run=<id>:
+the fleet-probe is not all green (green=<n> of <n>)`, exit 2, and a record with
+no jobs is refused the same way because a probe that ran nothing is not a probe.
+A green record prints `FLEET ADD bench=<name> run=<id> runners=<n>` and writes
+two values that no other verb and no hand writes: `<queue>/PULSE_ROOTS`, the
+roots the loop holds, and `<queue>/runner-labels.tsv`, one admitted runner per
+line. The red test is `fleet-add-refuses-a-bench-with-a-failed-probe-job`: a
+fixture record with one failed job and one green job is refused with the failed
+runner name and the run id on the line.
+
 ## The verbs
 
 ```
