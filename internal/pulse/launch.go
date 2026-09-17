@@ -28,9 +28,15 @@ type LaunchInput struct {
 	Files    int    // the --files budget every card in the batch carries; 0 takes the default
 	Tokens   string // the --tokens budget; empty takes the default
 	QueueDir string // the queue directory STOP lives in; empty falls back to Root (admission.go)
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Now      func() time.Time
+	// Routes is the routes.tsv the typed decision reads to pick each card's worker. Empty
+	// means no routing: the cards group by their own model column, exactly as before.
+	Routes  string
+	Floor   float64 // answers below the floor keep the card's own model as the default worker
+	KeyEnv  string  // the environment variable the decision's key comes from
+	BaseURL string  // the decision provider endpoint
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Now     func() time.Time
 	// Log is where the structured JSON event line goes, beside the stdout line and never
 	// instead of it. nil writes no JSON line, which is how the tests that predate the
 	// slice keep their exact stdout and stderr; cmd/nova-pulse passes stderr, which on a
@@ -40,6 +46,10 @@ type LaunchInput struct {
 	// test injects a fixed one so it reads no /proc.
 	GUID func() string
 }
+
+// RoutesLogFile is the log rule 8 demands: one ROUTE line per card, beside the
+// card's label and the time, under the queue directory.
+const RoutesLogFile = "ROUTES.log"
 
 // sliceTimeout is rule 8's quiet window: a slot whose native.log was written within this
 // window still holds a live native and is not free.
@@ -66,6 +76,15 @@ func Launch(in LaunchInput) int {
 	if len(cards) == 0 {
 		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s holds no card; a pulse of no cards is a typo\n", oneline.Field(in.Cards))
 		return 2
+	}
+	// ROUTE (SPEC-DECIDE rule 8): with --routes, each card's worker is a typed decision, and
+	// the ROUTE line is logged beside the card and the time. Below the floor the card keeps
+	// its own model as the default worker and the line says so. Every card is routed, queued
+	// ones included, so ROUTES.log holds one row per card.
+	if strings.TrimSpace(in.Routes) != "" {
+		if code := routeCards(in, cards); code != 0 {
+			return code
+		}
 	}
 	// STOP admission (SPEC-PULSE class C): while the bench is red, only the cards whose
 	// line 1 names the red launch. No STOP is no filtering and no line -- the launch path
@@ -220,6 +239,54 @@ func queueRemainder(root string, cards []CardRow) error {
 		}
 	}
 	return nil
+}
+
+// routeCards picks each card's worker with the shared typed decision and rewrites the card's
+// model column to the chosen worker description, so the grouping below makes one batch per
+// worker. The default below the floor is the card's own model. Every ROUTE line is appended
+// to ROUTES.log beside the card's label and the time (SPEC-DECIDE rule 8). It returns the
+// process exit code: 0 when every card was routed, 2 when the decision could not run.
+func routeCards(in LaunchInput, cards []CardRow) int {
+	rows, err := swarm.ParseRoutes(in.Routes)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+	log, err := os.OpenFile(routesLogPath(in), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+	defer log.Close()
+	for i := range cards {
+		c := &cards[i]
+		raw, err := os.ReadFile(c.Card)
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+			return 2
+		}
+		res, err := swarm.RouteText(string(raw), in.BaseURL, in.KeyEnv, rows, in.Floor, c.Model)
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+			return 2
+		}
+		c.Model = res.Worker
+		stamp := time.Now().UTC()
+		if in.Now != nil {
+			stamp = in.Now().UTC()
+		}
+		fmt.Fprintf(log, "%s\t%s\t%s\n", stamp.Format(time.RFC3339), oneline.Field(c.Label), res.Line(c.Label, in.Floor))
+	}
+	return 0
+}
+
+// routesLogPath is <queue>/ROUTES.log: the queue directory when the caller named one, else
+// the pulse root, which is where a standalone launch keeps its state.
+func routesLogPath(in LaunchInput) string {
+	if d := strings.TrimSpace(in.QueueDir); d != "" {
+		return filepath.Join(d, RoutesLogFile)
+	}
+	return filepath.Join(in.Root, RoutesLogFile)
 }
 
 // freeSlots counts the free slots among the first `slots`, a slot free only when it holds no
