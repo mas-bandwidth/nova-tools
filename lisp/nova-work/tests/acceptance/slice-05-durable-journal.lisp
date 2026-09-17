@@ -747,6 +747,28 @@
 ;; (a real deftest over src/replays-slice-05.lisp), so the duplicate stub is
 ;; deleted.
 
+;; NEEDS-KERNEL: a render path and link validation with a counting endpoint.
+(deftest-pending "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
+    "expected=fetches=0;nul=bad-link;private-node-prints-no-value"
+  "no link render/fetch in slice 1")
+
+;; edit-undo-preserves-later-work: an edit undone restores :before; the same
+;; undo after an intervening edit is refused conflict, both events standing.
+;; NEEDS-KERNEL: an undo verb with a :before field and conflict detection.
+(deftest-pending "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
+    "expected=undo-restores-before;late-undo=conflict;both-events-stand"
+  "no undo verb in slice 1")
+
+;; endpoint-is-local-and-private: the session's directory created 0700 and its
+;; socket 0600, both owned by the running account; a pre-existing directory or
+;; socket with wider modes refused rather than reused; the Windows named pipe
+;; created with FILE_FLAG_FIRST_PIPE_INSTANCE; no listener bound to a network
+;; address.
+;; NEEDS-KERNEL: a session socket/directory bootstrap and permission check.
+(deftest-pending "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5276"
+    "expected=dir-0700;socket-0600;wider-modes-refused;no-network-listener"
+  "no session endpoint exists in slice 1")
+
 ;; explicit-rest-is-not-pinged: the configured silence threshold triggers one
 ;; bounded ping; a nonresponsive capacity marked unavailable with reason
 ;; `unconfirmed` and no claim of sleep or exhausted credit; a failed probe read
@@ -876,6 +898,42 @@
 ;; ACTIVE observations, model and rate records, O and C history, roadmaps and
 ;; accounting provenance; derived caches rebuild to equivalent values.
 ;; NEEDS-KERNEL: an export/import path over a durable captured revision.
+
+;; goal-stale-update-refuses: A and B both show at r; A writes update, r+1; B's
+;; update --expect r is refused `GOAL FAIL ... expect=r current=r+1: stale`,
+;; snapshot unchanged; B's next show prints A's evidence row; A writes stop, r+2;
+;; B's update --expect r+1 refused stale; B's next show prints stop=requested;
+;; B's update --expect r+2 refused `stop requested`; a goal set to a closed
+;; branch node refused `disposition=done`.
+;; NEEDS-KERNEL: a goal CLI with stale --expect detection and a snapshot.
+(deftest-pending "goal-stale-update-refuses" "docs/SPEC-WORK.md:5466"
+    "expected=stale-named;snapshot-unchanged;stop-requested-stands;closed-refused"
+  "no goal CLI in slice 1")
+
+;; goal-stop-is-a-request-not-evidence: goal update --stop prints GOAL OK
+;; change=stop kind=transition rev=r+1 and the event is a :transition :to
+;; :cancel-requested carrying :reason and no :evidence; check has no finding;
+;; state --to doing --reason by id is admitted (the withdrawal); event --kind
+;; cancel --evidence <pointer> makes show print stop=cancelled, terminal, and
+;; goal set --goal G refused disposition=cancelled; --stop on :review and :done
+;; refused `no edge`.
+;; NEEDS-KERNEL: a goal verb, stop/cancel/withdrawal transitions and a check.
+(deftest-pending "goal-stop-is-a-request-not-evidence" "docs/SPEC-WORK.md:5475"
+    "expected=stop=request-not-evidence;cancel=terminal;done-refused-no-edge"
+  "no goal verb in slice 1")
+
+;; goal-update-writes-only-existing-kinds: every goal update form written, then
+;; the journal read: each event is a :transition or an :evidence with exactly
+;; the field list of its kind, on the goal node and no other node; --progress
+;; <text> alone on a :todo node writes :to :doing with the text as :reason, and
+;; on a :doing node refused `no edge`; --progress with the evidence triple on a
+;; :doing node writes the :evidence event; goal set and goal set --clear each
+;; write one :goal event; a retried set with the same --request id and payload
+;; returns the same event id once.
+;; NEEDS-KERNEL: goal update forms with kind-owned field lists.
+(deftest-pending "goal-update-writes-only-existing-kinds" "docs/SPEC-WORK.md:5484"
+    "expected=only-transition-or-evidence;exact-kind-fields;goal-node-only"
+  "no goal verb in slice 1")
 
 ;;; ------------------------------------------------------------------
 ;;; SPEC-WORK.md lines 3600-end, part 4 of 8: session/CLI-level replays.
