@@ -19,6 +19,7 @@
                (:file "src/journal")
                (:file "src/kernel")
                (:file "src/state-export")
+               (:file "src/replays-fleet-allocation")
                (:file "src/replays-applicable-delegation")
                (:file "src/replays-config-and-availability")))
 
@@ -29,5 +30,6 @@
   :components ((:file "tests/harness")
                (:file "tests/acceptance")
                (:file "tests/replays-applicable-delegation")
+               (:file "tests/replays-8662")
                (:file "tests/replays-8681")
                (:file "tests/replays-8683")))

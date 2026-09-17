@@ -243,7 +243,64 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+    ;; fleet allocation replays (card 8662)
+    #:make-fleet-registry
+    #:fleet-registry-p
+    #:fleet-registry-allocators
+    #:fleet-registry-aliases
+    #:fleet-registry-events
+    #:fleet-allocator-p
+    #:fleet-allocator-machine-id
+    #:fleet-allocator-concurrent
+    #:fleet-allocator-cores
+    #:fleet-allocator-generation
+    #:fleet-allocator-allocations
+    #:fleet-allocator-observations
+    #:fleet-register-machine
+    #:fleet-open-allocator
+    #:fleet-resolve
+    #:fleet-allocator-of
+    #:fleet-take
+    #:fleet-heartbeat
+    #:fleet-release
+    #:fleet-list
+    #:fleet-probe
+    #:fleet-reduce-capacity
+    #:fleet-consumed
+    #:fleet-consumed-capacity
+    #:fleet-declared-facts
+    #:fleet-declared-limits
+    #:fleet-declared-connect
+    #:fleet-declared-roles
+    #:fleet-observations
+    #:fleet-live-allocations
+    #:allocation-record-p
+    #:allocation-record-allocation-id
+    #:allocation-record-machine
+    #:allocation-record-alias
+    #:allocation-record-slot
+    #:allocation-record-slots
+    #:allocation-record-node
+    #:allocation-record-batch
+    #:allocation-record-offer
+    #:allocation-record-attempt
+    #:allocation-record-machine-generation
+    #:allocation-record-allocation-generation
+    #:allocation-record-request
+    #:allocation-record-request-ref
+    #:allocation-record-holder
+    #:allocation-record-parent
+    #:allocation-record-deadline
+    #:allocation-record-state
+    #:allocation-record-line
+    #:allocation-record-admission-phase
+    #:allocation-record-core-pin
+    #:allocation-record-created
+    #:allocation-record-released
+    #:allocation-record-fenced
+    #:allocation-live-p
+    #:allocation-suspect-p))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
