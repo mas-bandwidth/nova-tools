@@ -636,32 +636,90 @@
       (ok (protocol-session-closed-p sess) "the connection is closed after it"))))
 
 (deftest "pipeline-replies-are-correlated" "docs/SPEC-WORK.md:5165"
-    "expected=every-response-reaches-only-its-request;operation-id-distinct;unknown-duplicate-absent-close;batches"
-  (let ((conn (make-wire-connection :supported '("1"))))
+    "expected=every-response-reaches-only-its-request;operation-id-distinct;same-id-in-flight-refused;unknown-duplicate-missing-close-and-reconcile;batches"
+  (let* ((kernel (fresh))
+         (sess (make-wire-session :kernel kernel :pushed "shared-7"))
+         (conn (make-wire-connection :supported '("1"))))
     (multiple-value-bind (version refusal) (protocol-hello (wire-connection-protocol conn) '("1"))
       (ok (and (stringp version) (null refusal)) "the handshake finishes first"))
-    ;; Pipeline two queries, a mutation and a long-operation acceptance.
-    (dolist (entry '(("q-1" . :query) ("q-2" . :query)
-                     ("m-1" . :mutation) ("op-1" . :operation)))
-      (check-equal (car entry) (wire-pipeline-request conn (car entry) (cdr entry))
+    ;; Pipeline two different queries, a mutation and a long-operation
+    ;; acceptance; each request frame carries its own id in its own JSON object.
+    (dolist (entry '(("query-size" . "q-1") ("query-size" . "q-2")
+                     ("state-to-doing" . "m-1") ("capture" . "op-1")))
+      (check-equal (cdr entry)
+                   (wire-pipeline-request conn
+                                          (wire-frame-request (car entry) (cdr entry)))
                    "the request is in flight"))
-    ;; A fragment dispatches nothing until its frame is complete, and frames
-    ;; delivered out of order still reach only their matching request.
-    (check-equal '() (wire-feed conn "q-2 ") "an incomplete frame dispatches nothing")
-    (check-equal '() (wire-feed conn "bo") "a second fragment still dispatches nothing")
-    (let ((frames (wire-feed conn (format nil "dy~%op-1 accept state=running~%")))
-          (seen '()))
-      (check-equal '("q-2 body" "op-1 accept state=running") frames "two complete frames")
-      (dolist (frame frames)
-        (multiple-value-bind (id body) (wire-dispatch conn frame)
-          (ok (stringp id) "a complete response is correlated to a request")
-          (ok (stringp body) "with its own body")
-          (push id seen)))
-      (check-equal '("q-2" "op-1") (reverse seen) "each response reached only its request"))
-    ;; The operation id remains distinct from the request id.
-    (check-equal '("q-1" "m-1") (mapcar #'car (wire-connection-outstanding conn))
-                 "the operation id is not the mutation request id")
-    ;; An independent batch stops at the first refusal and marks the rest.
+    ;; The mutation really enters the single writer; the long operation is
+    ;; really accepted with a durable id distinct from the request id.
+    (let* ((mline (multiple-value-bind (okp line)
+                      (wire-session-mutate
+                       sess
+                       (list :verb :state-to-doing :node "acme/work/f1/t2" :by "rowan"
+                             :reason "picked up" :evidence '("ev-1")
+                             :request "m-1" :stamp "2026-09-17T12:00:00Z"
+                             :clock :tool :generation-owner "gen-4"))
+                    (ok okp "the pipelined mutation is accepted: ~A" line)
+                    line))
+           (op-id (operation-accept (wire-session-operations sess)
+                                    :id "op-cap-1" :kind :capture :request "op-1"
+                                    :author "rowan" :stamp "2026-09-17T12:00:00Z"))
+           (q1 (multiple-value-bind (open unit scope line) (ask-size kernel)
+                 (declare (ignore open unit scope))
+                 (wire-frame-response "q-1" :lines (list line) :pushed "shared-7")))
+           (q2 (multiple-value-bind (open unit scope line) (ask-size kernel)
+                 (declare (ignore open unit scope))
+                 (wire-frame-response "q-2" :lines (list line) :pushed "shared-7")))
+           (op (wire-frame-response "op-1"
+                                    :lines (list (format nil
+                                                         "OPERATION OK id=~A op=capture state=running"
+                                                         op-id))
+                                    :operation op-id :pushed "shared-7")))
+      ;; The operation id is distinct from the request id that asked for it.
+      (ok (string/= "op-1" op-id) "the operation id is not the request id")
+      (ok (search "op-1" op) "the response still echoes the request id")
+      (ok (search op-id op) "and carries the durable operation id beside it")
+      ;; A fragment dispatches nothing until its frame is complete; the
+      ;; completing fragment releases q-2, and frames delivered out of order
+      ;; still reach only their matching request.
+      (let* ((half (floor (length q2) 2))
+             (frames (progn
+                       (check-equal '() (wire-feed conn (subseq q2 0 half))
+                                    "an incomplete frame dispatches nothing")
+                       (wire-feed conn (concatenate 'string
+                                                    (subseq q2 half)
+                                                    (format nil "~%~A~%" op)))))
+             (seen '()))
+        (check-equal 2 (length frames) "the completing fragment releases q-2 and op-1")
+        (dolist (frame frames)
+          (multiple-value-bind (id body) (wire-dispatch conn frame)
+            (ok (stringp id) "a complete response is correlated to a request")
+            (ok (stringp body) "with its own frame")
+            (push id seen)))
+        (check-equal '("q-2" "op-1") (reverse seen)
+                     "each response reached only its request, out of order"))
+      (let ((seen '()))
+        (dolist (frame (wire-feed conn (format nil "~A~%~A~%"
+                                               q1 (wire-frame-response "m-1"
+                                                                       :lines (list mline)
+                                                                       :pushed "shared-7"))))
+          (multiple-value-bind (id body) (wire-dispatch conn frame)
+            (ok (stringp id) "the later responses are correlated too")
+            (ok (stringp body) "with their own frame")
+            (push id seen)))
+        (check-equal '("q-1" "m-1") (reverse seen)
+                     "the delivery order is the reply order, not the request order"))
+      (check-equal '() (wire-reconcile-outstanding conn)
+                   "every pipelined request is settled"))
+    ;; The client does not put the same request id in flight twice.
+    (let ((conn-dup (make-wire-connection :supported '("1"))))
+      (protocol-hello (wire-connection-protocol conn-dup) '("1"))
+      (wire-pipeline-request conn-dup (wire-frame-request "query-size" "dup-1"))
+      (ok (null (wire-pipeline-request conn-dup
+                                       (wire-frame-request "query-size" "dup-1")))
+          "the same request id in flight twice is refused")
+      (ok (wire-connection-closed-p conn-dup) "and is a protocol error"))
+    ;; An independent batch names every entry's request id and marks the rest.
     (let ((out (independent-batch-results
                 '(("b-1" . :applied) ("b-2") ("b-3" . :applied)))))
       (check-equal '("b-1" :applied) (first out) "the first entry is applied")
@@ -675,30 +733,50 @@
     (multiple-value-bind (all-ok failed) (atomic-batch-validate '(("a-1" . t) ("a-2" . t)))
       (ok all-ok "a valid atomic batch is admitted")
       (ok (null failed) "with no failing entry")))
-  ;; An unknown response id closes the connection without settling anything.
+  ;; An unknown response id closes the connection without settling anything,
+  ;; and the outstanding mutation ids are reconciled rather than guessed.
   (let ((conn (make-wire-connection :supported '("1"))))
     (protocol-hello (wire-connection-protocol conn) '("1"))
-    (wire-pipeline-request conn "q-1" :query)
-    (multiple-value-bind (id why) (wire-dispatch conn "nope body")
+    (wire-pipeline-request conn (wire-frame-request "state-to-doing" "mq-1"))
+    (wire-pipeline-request conn (wire-frame-request "query-size" "qq-1"))
+    (multiple-value-bind (id why) (wire-dispatch conn (wire-frame-response "nope"))
       (ok (null id) "an unknown response id settles no outstanding request")
       (ok (stringp why) "and is a protocol error")
-      (ok (wire-connection-closed-p conn) "the connection closes")))
+      (ok (wire-connection-closed-p conn) "the connection closes")
+      (check-equal '("mq-1" "qq-1") (wire-reconcile-outstanding conn)
+                   "the outstanding mutation ids are reconciled, not guessed")))
   ;; A duplicate response id closes the connection too.
   (let ((conn (make-wire-connection :supported '("1"))))
     (protocol-hello (wire-connection-protocol conn) '("1"))
-    (wire-pipeline-request conn "q-1" :query)
-    (wire-dispatch conn "q-1 first")
-    (multiple-value-bind (id why) (wire-dispatch conn "q-1 second")
+    (wire-pipeline-request conn (wire-frame-request "query-size" "dq-1"))
+    (wire-dispatch conn (wire-frame-response "dq-1"))
+    (multiple-value-bind (id why) (wire-dispatch conn (wire-frame-response "dq-1"))
       (ok (null id) "a duplicate response id settles no second request")
       (ok (stringp why) "and is a protocol error")
       (ok (wire-connection-closed-p conn) "the connection closes")))
-  ;; A frame with no decodable id gets a null-id refusal and admits nothing.
+  ;; A frame missing its request id gets a null-id refusal and admits nothing.
   (let ((conn (make-wire-connection :supported '("1"))))
     (protocol-hello (wire-connection-protocol conn) '("1"))
-    (wire-pipeline-request conn "q-9" :query)
-    (multiple-value-bind (id why) (wire-dispatch conn "null oops")
+    (wire-pipeline-request conn (wire-frame-request "query-size" "xz-1"))
+    (multiple-value-bind (id why) (wire-dispatch conn "{\"ok\": \"true\"}")
+      (ok (null id) "a response missing its request id settles nothing")
+      (ok (search "request=null" why) "the refusal carries a null id")
+      (ok (wire-connection-closed-p conn) "the connection closes")))
+  ;; An explicit JSON null request id is the same refusal.
+  (let ((conn (make-wire-connection :supported '("1"))))
+    (protocol-hello (wire-connection-protocol conn) '("1"))
+    (wire-pipeline-request conn (wire-frame-request "query-size" "nz-1"))
+    (multiple-value-bind (id why) (wire-dispatch conn "{\"request\": null}")
       (ok (null id) "a null response id acknowledges no queued request")
       (ok (search "request=null" why) "the refusal carries a null id")
+      (ok (wire-connection-closed-p conn) "the connection closes")))
+  ;; Malformed input with no decodable id receives a null-id refusal.
+  (let ((conn (make-wire-connection :supported '("1"))))
+    (protocol-hello (wire-connection-protocol conn) '("1"))
+    (wire-pipeline-request conn (wire-frame-request "query-size" "mf-1"))
+    (multiple-value-bind (id why) (wire-dispatch conn "null oops")
+      (ok (null id) "malformed input settles no outstanding request")
+      (ok (search "request=null" why) "and receives a null-id refusal")
       (ok (wire-connection-closed-p conn) "the connection closes")))
   ;; Reconnect after a lost mutation response: same-id reconciliation applies
   ;; no second event.

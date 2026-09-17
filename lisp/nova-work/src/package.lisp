@@ -583,6 +583,14 @@
    #:cli-client-send
    #:cli-client-receive
    #:cli-client-run
+   #:wire-request-id
+   #:wire-request-op
+   #:wire-object-field
+   #:wire-reconcile-outstanding
+   #:wire-json-string
+   #:wire-json-lines
+   #:wire-frame-request
+   #:wire-frame-response
    #:independent-batch-results
    #:atomic-batch-validate
    #:make-wire-session
@@ -590,6 +598,7 @@
    #:wire-session-kernel
    #:wire-session-pushed
    #:wire-session-client-alive-p
+   #:wire-session-operations
    #:wire-session-mutate
    ;; the framed length-prefixed JSON wire codec (nova-tools card 9132):
    ;; a 4-byte big-endian unsigned length, then that many UTF-8 JSON bytes.
