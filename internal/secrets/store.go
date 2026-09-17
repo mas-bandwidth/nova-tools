@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -81,7 +82,11 @@ func ParseSopsConfig(storeDir string) (*SopsConfig, error) {
 		return nil, fmt.Errorf(".sops.yaml is absent or unreadable: %w", err)
 	}
 	defer f.Close()
+	return parseSopsConfig(f)
+}
 
+// parseSopsConfig parses creation rules from any reader: a store file or a git blob.
+func parseSopsConfig(f io.Reader) (*SopsConfig, error) {
 	var cfg SopsConfig
 	scanner := bufio.NewScanner(f)
 	var currentRule *CreationRule
