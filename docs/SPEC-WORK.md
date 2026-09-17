@@ -4231,14 +4231,25 @@ printed as `wait=` on the rows above. It is one of `hook`, `plugin`, `scheduled`
 `none`, and this table is the current reading per harness, each row a fact to be corrected by the
 line that runs it rather than a promise:
 
-| harness | what holds the wait | survives compaction | survives restart | `:wait-source` |
-|---|---|---|---|---|
-| Claude Code | a session-start and per-turn hook that runs `nova-bus wait`, in `settings.json` | yes, the hook is config and not context | yes | `hook` |
-| OpenCode | a plugin holding the poll outside the turn | yes | yes | `plugin` |
-| Codex | a scheduled command re-entering the session on a note | yes | yes, while the schedule lives | `scheduled` |
-| Antigravity | its own always-loading file naming the wait as the first act of every load | yes | yes | `hook` |
-| Grok | an OS process outside the turn holds the poll and writes the beat (Johnny's `johnny_bus_heartbeat`, 2026-09-15) | yes | no, a 10 h session cap | `plugin` (SPEC-WAKE's third shape) |
-| a bare API loop | the loop program itself, outside any session | not applicable | yes | `plugin` |
+| harness | what holds the wait | survives compaction | survives restart | `:wait-source` | process alive | beat written | delivery handled | parent woke |
+|---|---|---|---|---|---|---|---|---|
+| Claude Code | a session-start and per-turn hook that runs `nova-bus wait`, in `settings.json` | yes, the hook is config and not context | yes | `hook` | unproven | unproven | unproven | unproven |
+| OpenCode | a plugin holding the poll outside the turn | yes | yes | `plugin` | unproven | unproven | unproven | unproven |
+| Codex | a scheduled command re-entering the session on a note | yes | yes, while the schedule lives | `scheduled` | unproven | unproven | unproven | unproven |
+| Antigravity | its own always-loading file naming the wait as the first act of every load | yes | yes | `hook` | unproven | unproven | unproven | unproven |
+| Grok | an OS process outside the turn holds the poll and writes the beat (Johnny's `johnny_bus_heartbeat`, 2026-09-15) | yes | no, a 10 h session cap | `plugin` (SPEC-WAKE's third shape) | unproven | unproven | unproven | unproven |
+| a bare API loop | the loop program itself, outside any session | not applicable | yes | `plugin` | unproven | unproven | unproven | unproven |
+
+**The last four columns are the presence facts of rule 3 of the duty-tier amendment (#500), and a
+harness's row is proved by that line's own nova-wake drill** (SPEC-WAKE, replay
+`wake-drill-note-after-turn-wakes-parent`): **process alive**; **beat written**; **delivery
+handled**; **parent woke**. Each is `proven`, `unproven` or `cannot`, the drill's vocabulary; a
+fact not yet measured is `unproven`, and a fact defaults to unproven rather than to a promise. **A
+harness whose `parent woke` is `unproven` or `cannot` holds no resident session — only a duty
+session driven by notes**, because the resident session is a coordinator's line and a coordinator
+whose parent cannot be woken is the sleeping-coordinator case named above. The `:wait-source`
+reading says what could hold the wait; these four say what has been shown to hold it, and the drill
+is what moves the reading.
 
 **Where the harness cannot hold it**, `:wait-source` is `manual` or `none` and nothing is pretended:
 the line simply stops beating when its turn ends, the reading shows it `asleep` within 300 s, its
