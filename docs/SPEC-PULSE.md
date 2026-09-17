@@ -218,6 +218,28 @@ The loop ends only when the pool and the queue are both empty, and then it says 
 
 ## Fleet
 
+The fleet is the benches named in one file, kept in git. `--benches <file>`
+is a tab-separated file, one bench per line: `name`, `ssh target`, `home`,
+`mac` (the wake address; `-` when the bench never sleeps). A missing
+`--benches` is `refusing to guess`, exit 2.
+
+The fleet rule: every fleet verb prints one `FLEET <name>` line per bench,
+runs the benches in parallel under `--timeout <s>` (default 120), exits
+0/2/3 (0 ok, 2 drift-or-refused, 3 unreachable), takes ssh from `--ssh` so
+tests fake it with a fixture on `PATH` and no test makes a network call to
+any provider, and refuses `studio` for any admin act (`FLEET REFUSED
+bench=studio`, exit 2) — the studio bench is never rebooted, suspended, or
+secret-checked by this tool.
+
+Verbs, one line each: `fleet survey` runs `tools/bench-standard.sh` on each
+bench and folds the `STANDARD OK`/`DRIFT` lines; `fleet reboot` reboots each
+bench and waits for the runners to listen again; `fleet secrets` runs the
+seat check per bench (`nova-secrets check` passing, never a value printed);
+`fleet suspend` sleeps the idle benches (solar: an idle bench sleeps instead
+of burning the afternoon); `fleet wake` wakes by magic packet to the bench's
+`mac`; `fleet standard` is the standard itself, run locally or over ssh,
+whose checks are the contract below.
+
 `tools/bench-standard.sh` is the one admin entry for a Linux bench: it checks
 the bench against the standard and prints `STANDARD OK ...`, or one
 `DRIFT <what>` line per finding followed by `STANDARD DRIFT (see lines
@@ -233,7 +255,29 @@ under `$HOME/.config/nova-secrets` with `nova-secrets check` passing for it,
 and that no plaintext key file (`$HOME/.local/share/opencode/auth.json`,
 `$HOME/.config/deepseek/env`) and no literal `apiKey": "sk-` in
 `$HOME/.config/opencode/*.json` survives; `--apply` kills stray runner
-listeners not under their unit, nothing else destructive.
+listeners not under their unit, nothing else destructive. The network probe
+runs inside the real sandbox, never from the host, so what it reports is what
+a card would see.
+
+The hurts, one line each: tonight's 97 ssh turns in the window is the cost
+this section exists to remove; the bins drift Stella found is what `fleet
+survey` catches before a card does; the resolver defect a host probe missed
+is why the probe runs inside the real sandbox; the runner listener duplicates
+are what one-listener-per-dir under its unit forbids.
+
+Red tests, one per verb: `fleet-survey-folds-standard-lines` (a `DRIFT`
+bench is exit 2 with its `FLEET <name>` line); `fleet-reboot-waits-for-runners`
+(no `FLEET OK` before the listeners answer); `fleet-secrets-never-prints-a-value`
+(the seat check passes and no key bytes appear on either stream);
+`fleet-suspend-sleeps-only-idle` (a busy bench is `FLEET <name> busy`, never
+suspended); `fleet-wake-sends-magic-packet` (the fixture ssh log shows one
+magic packet to the bench's `mac`); `fleet-standard-lists-the-checks` (one
+listener per runner dir under its unit, unit `PATH`/`KillMode`/
+`TimeoutStopSec`, `go`/`sbcl`/harness, 16 bins at `NOVA_WANT`, one seat key
+that opens, no plaintext keys, the sandbox network probe — remove one and the
+test is red); `fleet-refuses-studio` (any admin verb with `studio` in
+`--benches` is `FLEET REFUSED bench=studio`, exit 2, and the fixture ssh log
+is empty).
 
 ## The verbs
 
