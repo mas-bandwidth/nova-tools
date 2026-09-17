@@ -369,50 +369,14 @@
 ;;;   numbers unwritten; a kill around acceptance and during clip exposes
 ;;;   neither two parents nor none.
 
-;;; NEEDS-KERNEL: chat-and-file-render-are-byte-identical (SPEC-WORK.md:2950) —
-;;;   `render`: chat and file mode are byte-identical for one projection and
-;;;   revision, shared prerequisites and private-data filtering included.
-
-;;; NEEDS-KERNEL: render-refuses-a-target-outside-its-roots (SPEC-WORK.md:2950)
-;;;   — `render`: a projection target is resolved only within explicitly
-;;;   configured permitted roots; a missing mapping or a conflicting change is
-;;;   an explicit refusal and never a guessed destination.
-
-;;; NEEDS-KERNEL: render-artifact-is-bounded (SPEC-WORK.md:2977) — `render`:
-;;;   ordinary replies and a --chat artifact interleaved in one correlated
-;;;   batch, request ids, byte length and hash verified; a corrupt or oversized
-;;;   artifact is a bounded refusal and never partial Markdown; --check creates
-;;;   no target, no receipt claiming a write, no commit and no push.
-
-;;; NEEDS-KERNEL: priority-orders-only-the-eligible (SPEC-WORK.md:3015) — a
-;;;   blocked rank-0 task stays blocked with its reason and resolver while a
-;;;   rank-9 ready sibling is first among the eligible; --order priority under
-;;;   done exits 2; capacity loss, approval withdrawal, a dependency change or
-;;;   a hold is rechecked before ranking and starts or interrupts nothing.
-
-;;; NEEDS-KERNEL: priority-inherits-and-clears (SPEC-WORK.md:3015) — a root
-;;;   :subtree rank changes ready order with no lease, attempt, state, O, C, W,
-;;;   counter, baseline or roadmap moved; a child's :self overrides it; a clear
-;;;   reveals the parent; settle and reopen keep the slots; a move re-reads
-;;;   inheritance with no cloned event.
-
-;;; NEEDS-KERNEL: rank-2-precedes-10 (SPEC-WORK.md:3015) — ranks are compared
-;;;   as integers, and equal and default rows are ordered by id across a
-;;;   restart, a handoff, a cursor continuation and skewed clocks; a first
-;;;   unseen filter is O(k log k), later pages come from the pinned order, and
-;;;   a subtree invalidation touches no unrelated scope and no C.
-
-;;; NEEDS-KERNEL: priority-undo-is-history-not-value (SPEC-WORK.md:3016) — a
-;;;   same-value set and a clear of an absent slot are each the no-effect
-;;;   receipt; set 2, set 9, set 2, then undo of the first is refused although
-;;;   the value matches.
-
-;;; NEEDS-KERNEL: priority-grants-nothing (SPEC-WORK.md:3016) — with priority
-;;;   set on every node, `who` is unchanged, no lease is written, no worker is
-;;;   selected, and no approval is bypassed.
-;;; render, priority and rank replays now run in
-;;; tests/acceptance/slice-06-replays-early.lisp and slice-07-replays-mid.lisp
-;;; (nova-tools #362).
+;;; The render, priority and rank replays now run as real deftests:
+;;; render-refuses-a-target-outside-its-roots and render-artifact-is-bounded in
+;;; tests/acceptance/slice-07-replays-mid.lisp; chat-and-file-render-are-byte-identical
+;;; in tests/acceptance/slice-09-replays-roadmap.lisp; priority-orders-only-the-eligible,
+;;; priority-inherits-and-clears, priority-undo-is-history-not-value, rank-2-precedes-10
+;;; and priority-grants-nothing in tests/acceptance/slice-06-replays-early.lisp, over
+;;; src/replays-render-priority.lisp and src/replays-priority-and-export.lisp
+;;; (nova-tools #362). No parked stub remains for this group.
 
 ;;; The state-export/load replays of SPEC-WORK.md:3197-3225 now run against
 ;;; src/state-export.lisp: state-export-describes-exactly-r and
@@ -750,10 +714,9 @@
 ;;; tests/acceptance/slice-08-replays-late.lisp:298 (nova-tools #362); this
 ;;; duplicate parked copy is removed.
 
-;; (deftest "chat-and-file-render-are-byte-identical" "docs/SPEC-WORK.md:5304"
-;;     "expected=chat-and-marker-region-bytes-identical;other-bytes-preserved;missing-duplicate-reversed-marker-refused;target-outside-roots-refused"
-;;   ;; NEEDS-KERNEL: render with marker regions and permitted-roots boundary
-;;   )
+;;; chat-and-file-render-are-byte-identical: the real replay lives in
+;;; tests/acceptance/slice-09-replays-roadmap.lisp:163 (nova-tools #362); this
+;;; duplicate parked copy is removed.
 
 ;;; clip-is-one-long-operation: the real replay lives in
 ;;; tests/acceptance/slice-08-replays-late.lisp:335 (nova-tools #362); this
