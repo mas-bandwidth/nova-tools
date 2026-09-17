@@ -54,6 +54,12 @@ type nativeRunConfig struct {
 	// the key, taken from the environment and passed through by name, with no auth file
 	// ever written. nil means native keeps --model and --auth as today.
 	worker *swarm.Worker
+	// CAPS (issue #917): the caps registry `--caps <file>` names, and the 8-hex fingerprint
+	// of the key value the worker's secret delivered. When the registry is non-nil a route
+	// with no row is refused by name before the child starts, and one at its cap is refused.
+	caps       *swarm.Caps
+	keyFP      string
+	slotsStore string
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -157,6 +163,26 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 				refuseNative(errOut, oneline.Escape(err.Error()))
 				return nativeRunResult{}, 2
 			}
+		}
+	}
+
+	// (2c) THE CAPS REGISTRY (issue #917). When --caps names one, a route with no row is
+	// refused BY NAME before any directory is made and before any child starts; a route
+	// whose in-flight count (the slot store's leases when one is named) is at its cap is
+	// refused rather than launched. The fingerprint is the key's sha256 prefix, never the
+	// key.
+	if cfg.caps != nil {
+		modelID := cfg.model[len(provider)+1:]
+		capN, found := cfg.caps.Lookup(provider, modelID, cfg.keyFP)
+		if !found {
+			refuseNative(errOut, fmt.Sprintf("no_cap route=%s/%s", oneline.Field(provider), oneline.Field(modelID)))
+			return nativeRunResult{}, 2
+		}
+		inflight := swarm.SlotStoreInflightKey(cfg.slotsStore, provider+"/"+modelID, cfg.keyFP)
+		if inflight >= capN {
+			refuseNative(errOut, fmt.Sprintf("cap route=%s/%s key=%s inflight=%d cap=%d",
+				oneline.Field(provider), oneline.Field(modelID), oneline.Field(cfg.keyFP), inflight, capN))
+			return nativeRunResult{}, 2
 		}
 	}
 
