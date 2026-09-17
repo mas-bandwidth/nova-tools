@@ -25,7 +25,11 @@
   ;; SPEC-WORK.md:1222 -- the newest row of an id carries revived=<rev|-> and
   ;; settles=<n>. Both are kept on the node and moved on write, like every
   ;; other counter here, so a row is written and never computed by a scan.
-  settles revived)
+  settles revived
+  ;; SPEC-WORK.md:4651 -- every node carries an estimate (units, hours, tokens,
+  ;; usd; who estimated, when). It is read, never derived, and a node without
+  ;; one holds +ABSENT+ so an estimate of zero stays a value.
+  estimate)
 
 (defstruct (wstate (:conc-name wstate-))
   seed       ; the seed forest, verbatim, so a reconstruction starts where this did
@@ -92,7 +96,8 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :dependents '()
                           :needs-broken nil
                           :settles 0
-                          :revived "-"))))
+                          :revived "-"
+                          :estimate (getf spec :estimate +absent+)))))
     (setf order (nreverse order))
     ;; Containment edges, in seed order.
     (dolist (id order)
@@ -307,6 +312,33 @@ flag where every need is terminal again) or was reverted (false, raise it)."
                   (not (every (lambda (dep) (%need-terminal-p state dep))
                               (wnode-deps d)))
                   t))))))
+(defun node-estimate (state id)
+  "The node's estimate record, or +ABSENT+ when it carries none. A node with an
+estimate of zero is not a node without one."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (wnode-estimate n)))
+
+(defun forecast (state)
+  "The remaining-work forecast (SPEC-WORK.md:4651): a read over the open set
+that sums the estimates every open node carries and derives the per-unit and
+per-million-token rates from those sums. It computes nothing from the evidence
+records and keeps no history; a zero denominator leaves the rate undefined
+rather than zero. A view: it never writes, and a closed node is not in it."
+  (let ((nodes 0) (units 0) (hours 0) (tokens 0) (usd 0))
+    (dolist (id (wstate-order state))
+      (let* ((n (%node-quiet state id))
+             (e (and n (wnode-estimate n))))
+        (when (and n (eq :o (wnode-branch n)) (not (absentp e)))
+          (incf nodes)
+          (incf units (getf e :units 0))
+          (incf hours (getf e :hours 0))
+          (incf tokens (getf e :tokens 0))
+          (incf usd (getf e :usd 0)))))
+    (list :nodes nodes :units units :hours hours :tokens tokens :usd usd
+          :usd-per-unit (if (plusp units) (/ usd units) +absent+)
+          :hours-per-unit (if (plusp units) (/ hours units) +absent+)
+          :usd-per-mtok (if (plusp tokens) (/ usd (/ tokens 1000000)) +absent+))))
 
 ;;; The root, as bytes.
 

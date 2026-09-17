@@ -4675,6 +4675,22 @@ refresh is a meaningful config change with its source and effective time and nev
 a historical receipt** (replays `pricing-is-pinned-by-revision`, `unknown-price-is-not-zero`,
 `subscription-is-not-free-reference-cost`, `local-tokens-cost-zero-api`).
 
+**Every node carries an estimate, and the remaining-work forecast is a view over the open set.**
+Each node's estimate holds its work units, hours, tokens and usd, and names who estimated it and
+when; **a node without an estimate is absent and is never a zero**, while an estimate of zero stays a
+value. The machinery folds each node's actual (model, tokens in and out, usd, wall and bench minutes
+per attempt; replays or tests landed) from the evidence records, so the estimate and the actual stand
+side by side on the same node and their ratio history is what the forecast learns from. **The
+forecast computes remaining hours and dollars from the trailing rate per unit** — per slice, per
+model and per friend — by reading the estimates of the nodes still in O, and **a closed node leaves
+the forecast rather than being deleted**, since the completed work remains in the table. **A cost
+view answers, over the same records, the total tokens and dollars to build, the dollars per million
+tokens by model, the dollars and hours per work unit, and the same for the coordinator turns (turns
+times context) where nova-tokens can see them**, with **an unknown or zero denominator left
+undefined and never reported as zero**. *(replays `node-carries-its-estimate`,
+`forecast-reads-remaining-over-o`; the evidence-record fold and the full cost view are not yet
+implemented.)*
+
 **The daily report is a blended virtual cost per token, and routing lives inside it.** The day's
 **blended virtual cost per token** is the sum of the configured weighted costs divided by the
 corresponding **non-overlapping counted tokens**, and the report states its token categories, its
