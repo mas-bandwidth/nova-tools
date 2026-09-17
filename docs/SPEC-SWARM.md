@@ -278,6 +278,21 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `PROMPT-DEFECT task=<id> reason=budget cache_read=<n> max=<m> turns=<t>`.
     (2026-09-17: one Flash card ran 16 minutes and 3.2M cache-read tokens for
     one fix; the average card is 1.6M cache-read for 40-60k of prompt.)
+13c. **A card budget below the harness's measured startup cost is refused at
+    load, never applied.** A cap is only a budget if it is above what the
+    harness spends before the card's first turn: a known-answer probe writes
+    the measurement to `<root>/startup-cost.tsv`, a header and one row of
+    `harness_sha256`, `first_usage_cache_read` and `first_usage_turns`, and
+    `run` and `native` read it whenever a worker description sets
+    `max_cache_read` or `max_turns`. A `max_cache_read` below twice
+    `first_usage_cache_read`, or a `max_turns` below `first_usage_turns+2`, is
+    refused at exit 2 before any launch, naming both numbers:
+    `BUDGET REFUSED max_cache_read=<m> startup=<s> (want >= 2x)`. No
+    measurement accepts the budget -- the first run has nothing to compare
+    against -- and the first finished task writes the file, so the next run has
+    a fact rather than a guess. (Stella, 2026-09-17: her 2k cap was smaller
+    than the harness's own first context, so every card would have died at
+    once.)
 14. **The coordinator spends one command to spin a swarm up and one line to
     read it down.** Spinning up is `add --task <file>` per job from a
     template, or `batch --tasks <dir>` for many; the coordinator writes no

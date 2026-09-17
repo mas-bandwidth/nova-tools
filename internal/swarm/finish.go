@@ -148,6 +148,16 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 			}
 		}
 	}
+	// CARD-8349: the first finished task leaves the next run a fact -- the
+	// harness's measured startup cost -- when no measurement is there yet, so
+	// the next run can refuse a card budget below it at load.
+	if in.Worker.HasCardBudget() {
+		if usage, err := ReadProviderUsage(in.Worker.Usage, in.Worker.DataHome(sc.Slot, sc.ID)); err == nil {
+			cacheRead, _ := CardCacheRead(usage)
+			_ = RecordStartupCostIfAbsent(in.Pool.Dir, HarnessSHA256(in.Worker.Harness), cacheRead, CountCardTurns(r.jobDir, usage))
+		}
+	}
+
 	dest := destinationFor(end, report.Class, rec.RC)
 	sc.Class, sc.End, sc.RC, sc.Ended, sc.Notes = report.Class, end, rec.RC, Stamp(now), notesSent
 	// THE PROVIDER'S OWN WORDS OUTLIVE THE JOB DIRECTORY, in the record `triage` reads:
