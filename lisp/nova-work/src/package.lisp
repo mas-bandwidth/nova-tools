@@ -1558,7 +1558,54 @@
     #:replay-index-closed-p
     #:replay-index-ancestor-p
     #:holder-open-ids
-    #:index-mismatches))
+    #:index-mismatches
+    ;; the `verify` verb and the verification cache
+    #:verification-unreachable
+    #:verification-resolver
+    #:make-verification-resolver
+    #:verification-resolver-scheme
+    #:verification-resolver-command
+    #:verification-resolver-function
+    #:verification-fact
+    #:make-verification-fact
+    #:verification-fact-pointer
+    #:verification-fact-subject
+    #:verification-fact-resolver
+    #:verification-fact-fact
+    #:verification-fact-stamp
+    #:verification-cache
+    #:make-verification-cache
+    #:verification-cache-p
+    #:verification-cache-facts
+    #:verification-cache-resolvers
+    #:verification-cache-key
+    #:verification-cache-store
+    #:verification-cache-lookup
+    #:verification-cache-size
+    #:verification-session
+    #:make-verification-session
+    #:verification-session-p
+    #:verification-session-cache
+    #:verification-session-resolvers
+    #:verification-session-offline
+    #:verification-session-max-fetch
+    #:verification-session-fetch-timeout
+    #:verification-session-source-revision
+    #:verify-evidence
+    #:make-verify-evidence
+    #:verify-evidence-event-id
+    #:verify-evidence-pointer
+    #:verify-evidence-criterion
+    #:verify-evidence-subject
+    #:verify-evidence-against
+    #:verify-evidence-generation
+    #:verify-evidence-attestation
+    #:verify-evidence-node
+    #:pointer-scheme
+    #:pointer-revision
+    #:fetch-resolver-fact
+    #:verify-qualifies-p
+    #:verify))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
