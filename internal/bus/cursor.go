@@ -767,7 +767,7 @@ func IndexEntryFor(c *Config, n Note) IndexEntry {
 // ReadLaneIndex reads one lane's INDEX. A lane with no INDEX has none, which is a bus
 // that predates this file and is exactly what `check --full --rebuild-index` is for.
 func ReadLaneIndex(root, lane string) ([]IndexEntry, error) {
-	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(IndexPath(lane))))
+	raw, err := readLaneFile(root, filepath.Join(root, filepath.FromSlash(IndexPath(lane))))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

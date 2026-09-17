@@ -46,7 +46,11 @@ it, and a tool that pretended to would be the most dangerous thing in the pool.
 **A job's records are regular files: a `RESULT.md`, `harness.log`, `exit.json`
 or `note` that is a symlink or a FIFO is no record at all — read as `no-result`
 and never followed or waited on — and every record this tool writes into a job
-directory goes through a temporary whose name the worker cannot predict.**
+directory goes through a temporary whose name the worker cannot predict.** The
+batch gather makes that refusal explicit rather than folding it into a missing
+result: a `RESULT.md` that is not a regular file scores `ABSTAIN reason=refused`,
+with the one refusal line naming the path and the kind (`symlink`, `fifo`) after
+the token, so a coordinator reads the planted path off the packet (issue #233).
 
 ## Freddy's swarm is frozen production, and this tool does not touch it
 
@@ -1035,6 +1039,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 |-------|----------|
 | `line1-mismatch` | published a result whose line 1 is not its contract line |
 | `no-result` | ended with rc 0 and published no `RESULT.md`, at the job root or below it |
+| `refused` | published a `RESULT.md` that is not a regular file — a symlink or a FIFO — so it is no result at all; the refusal line naming the path and the kind follows (issue #233) |
 | `fence` | was stopped by the HARNESS'S OWN permission fence: it auto-rejected a path and the model stopped there, so the card never got to publish (issue #644). The path follows as `path=<p>` |
 | `harness-silent` | its harness wrote nothing at all — no word in the run's capture and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
 | `runner-refused` | its RUNNER exited before the harness started — no `NATIVE` line and no `harness-output.log` — so the non-zero exit code is the runner's, not the harness's; the runner's last line follows as `last=<line>` (issue #618) |
@@ -1060,7 +1065,8 @@ token off the line rather than guessing from files a batch creates itself.
 
 **The order:** the result is read first, and a matching result decides — `done`,
 or `result-after-deadline` at the deadline — before `card-abstain` (line 1 or
-line 2 beginning `ABSTAIN`) and `line1-mismatch`. With no matching result: the
+line 2 beginning `ABSTAIN`) and `line1-mismatch`. A path that is not a regular
+file is `refused` ahead of all of those, because it is never opened at all. With no matching result: the
 kill classes the machinery watched itself — `idle=<s>`, `input-limit` — and
 `admission`, then `fence`, then `harness-silent`, then `deadline`, then the pair `no-result`
 (ended clean) and `rc=<n>` (ended non-zero), which are one slot split by the exit
@@ -1107,7 +1113,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -1431,7 +1437,7 @@ BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n>
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [watched=<path>|job=<dir>|path=<p>|last=<line>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
