@@ -605,21 +605,36 @@
     #:render-session-p
     #:render-session-permissions
     #:render-session-mappings
+    #:render-session-files
     #:make-render-projection
     #:render-projection-p
+    #:render-projection-id
     #:render-projection-repo
     #:render-projection-root
-    #:render-projection-target
+    #:render-projection-path
+    #:render-projection-start
+    #:render-projection-end
+    #:render-projection-policy
+    #:render-projection-row-axis
+    #:render-projection-column-axis
+    #:render-projection-fixed
     #:render-result-p
     #:render-result-ok
     #:render-result-reason
     #:render-result-line
     #:render-result-artifact
     #:render-result-wrote
+    #:render-result-receipt
     #:path-within-p
+    #:path-absolute-p
+    #:path-has-parent-segment-p
     #:render-symlink-escape-p
-    #:marker-refusal
+    #:render-target-read
+    #:render-target-write
+    #:render-marker-offsets
+    #:render-replace-region
     #:render-file
+    #:render-check
     #:render-chat
     #:*render-frame-bound*
     #:artifact-bytes-ok-p

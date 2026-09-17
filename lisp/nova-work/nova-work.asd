@@ -26,6 +26,7 @@
                (:file "src/fleet")
                (:file "src/closed-history")
                (:file "src/node-verbs")
+               (:file "src/render")
                (:file "src/edit-undo")
                (:file "src/undo")
                (:file "src/pricing")
