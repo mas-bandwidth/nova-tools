@@ -46,8 +46,35 @@
 
 (deftest "reserved-role-is-not-spent-on-routine-work" "docs/SPEC-WORK.md:5214"
     "expected=reserved-role-read-from-config-never-spent-on-routine"
-  ;; NEEDS-KERNEL: role configuration and reserved-role dispatch rules.
-  (ok t "pending; needs role configuration"))
+  (let ((config (make-role-config
+                 :roles (list
+                         (make-role-record :id :security :scope "estate"
+                                           :source "CONFIG"
+                                           :reserved-for :essential-security
+                                           :essential-security-only-p t
+                                           :limit 3)
+                         (make-role-record :id :contributor :scope "estate"
+                                           :source "CONFIG"
+                                           :participation-p t
+                                           :limit 10)))))
+    ;; An essential-security-only role reserved for essential security is never
+    ;; spent on routine work; the refusal names the reservation.
+    (multiple-value-bind (okp reason) (spend-role config :security :routine)
+      (ok (not okp) "the essential-security role was spent on routine work")
+      (ok (search "essential-security" reason)
+          "the refusal does not name the reserved class: ~A" reason))
+    ;; It is spent on the work it is reserved for.
+    (multiple-value-bind (okp reason) (spend-role config :security :essential-security)
+      (ok okp "the essential-security role was refused its own reserved work: ~A" reason))
+    ;; An agreed participation is not reserved, so routine work is permitted.
+    (multiple-value-bind (okp reason) (spend-role config :contributor :routine)
+      (ok okp "an agreed participation was wrongly reserved: ~A" reason))
+    ;; An agreed limit comes from CONFIG; a model capability never cancels or
+    ;; raises it, and never confers the role that would spend it.
+    (check-equal 3 (agreed-limit-for config :security :model-claims-unlimited)
+                 "a model capability raised the agreed limit")
+    (ok (not (role-inferred-from-model-p :security))
+        "a model capability cancelled the agreed limit by conferring the role")))
 
 (deftest "restore-is-isolated-and-dispatches-nothing" "docs/SPEC-WORK.md:5308"
     "expected=restore-read-only-isolated-no-ownership-no-replay-no-dispatch"
@@ -94,5 +121,41 @@
 
 (deftest "roles-are-configured-not-inferred" "docs/SPEC-WORK.md:5214"
     "expected=role-read-from-CONFIG-never-the-model;reserved-roles-not-spent-on-routine-work"
-  ;; NEEDS-KERNEL: CONFIG and role resolution; no session/config in this slice.
-  (ok t "slice 1 carries no roles: NEEDS-KERNEL CONFIG + role resolution"))
+  (let ((config (make-role-config
+                 :roles (list
+                         (make-role-record :id :security :scope "estate"
+                                           :source "CONFIG"
+                                           :reserved-for :essential-security
+                                           :essential-security-only-p t)
+                         (make-role-record :id :reviewer :scope "estate"
+                                           :source "CONFIG"
+                                           :reserved-for :plan
+                                           :different-perspective-p t)
+                         (make-role-record :id :contributor :scope "estate"
+                                           :source "CONFIG"
+                                           :participation-p t)))))
+    ;; A role is read from CONFIG...
+    (ok (role-from-config config :security) "the security role is not read from CONFIG")
+    (check-equal "CONFIG" (role-record-source (role-from-config config :security))
+                 "the security role did not come from CONFIG")
+    ;; ...and never inferred from the underlying model.
+    (ok (not (role-from-config config :some-model-capability))
+        "a model capability was read as a configured role")
+    (ok (not (role-inferred-from-model-p :security))
+        "the security role was inferred from the model")
+    ;; Each kind is expressible: the essential-security-only reserved role, the
+    ;; specialised different-perspective reserved-plan role, and an agreed
+    ;; participation.
+    (ok (role-record-essential-security-only-p (role-from-config config :security))
+        "essential-security-only is not expressible")
+    (ok (role-record-different-perspective-p (role-from-config config :reviewer))
+        "the reserved-plan different-perspective role is not expressible")
+    (ok (role-record-participation-p (role-from-config config :contributor))
+        "agreed participation is not expressible")
+    ;; The reserved ones are not spent on routine work.
+    (multiple-value-bind (okp reason) (spend-role config :security :routine)
+      (ok (not okp) "a reserved role was spent on routine work")
+      (ok (search "reserved" reason) "the refusal does not name the reservation: ~A" reason))
+    (multiple-value-bind (okp reason) (spend-role config :reviewer :routine)
+      (ok (not okp) "the reserved-plan role was spent on routine work")
+      (ok (search "reserved" reason) "the refusal does not name the reservation: ~A" reason))))
