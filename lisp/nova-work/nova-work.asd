@@ -16,6 +16,7 @@
                (:file "src/value")
                (:file "src/event")
                (:file "src/state")
+               (:file "src/dependencies")
                (:file "src/journal")
                (:file "src/kernel")
                (:file "src/state-export")
