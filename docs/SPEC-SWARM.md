@@ -1796,6 +1796,8 @@ takes a lease per card before it runs and releases it after. The seven rules:
 - an expired lease with a live pid is DRIFT and stays;
 - a launch without a lease is refused by the launcher.
 
+A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+`k` stays within its share and the total held+`k` stays within `capacity` minus `reserve`, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all]` frees them, and `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease.
+
 **The store is the authority.** A launcher reads it before it runs and releases
 its lease after; the broker is the only writer. No owner keeps a private count
 that could drift from the leases on disk, and a card found running with no lease
