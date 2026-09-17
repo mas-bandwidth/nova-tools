@@ -120,7 +120,10 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    `CUT ROUTE` line, `class` the cost class. A retry after an abstain (rule 14) moves the pick
    one capability class up (`read` → `text` → `code` → `replay`), so a rewritten card routes
    to a stronger class. There is no `--model` flag on any verb: the table is the whole
-   policy, in git, edited once. `cards.tsv` is four fields per line: `label`, `slot`, `model`,
+   policy, in git, edited once. Until that cost table ships, the shipped `cut` reads
+   `models.tsv` beside `--templates`, one line `flash <id>` and/or one line `pro <id>`; a
+   table that names only one holds every card to that model, so `flash <id>` alone is the
+   spend rule "flash only tonight" (issue #635). `cards.tsv` is four fields per line: `label`, `slot`, `model`,
    `card` (the card's path); `slot` is `-` until `launch` allocates. Admission is the card
    form of `nova-swarm batch`, which takes the TSV whole and carries the `[launch] files`
    file budget (default 40, rule 10).
