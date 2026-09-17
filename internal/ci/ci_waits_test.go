@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -257,5 +258,49 @@ func TestNoFixedWaitsOnTheCIPath(t *testing.T) {
 	}
 	for _, f := range res.Stale {
 		t.Error(f.Render())
+	}
+}
+
+// TestWaitsAllowlistSurvivesShiftedLines: a row allows one offender of its kind in its
+// file wherever that offender now stands. On 2026-09-17 a merge shifted the lines of a
+// listed file and the line-keyed list turned dev red for every group behind it. The
+// budget still holds: a second offender of the same kind in the file has no row and is
+// refused, and a row with no offender left is still stale.
+func TestWaitsAllowlistSurvivesShiftedLines(t *testing.T) {
+	root := waitFixtureTree(t, "sleep.go.txt")
+	first, err := CheckWaits(root, "")
+	if err != nil || len(first.Findings) != 1 {
+		t.Fatalf("fixture must hold one fixed sleep: %v %+v", err, first.Findings)
+	}
+	f := first.Findings[0]
+	allow := filepath.Join(t.TempDir(), "fixed-waits-allowlist.txt")
+	row := fmt.Sprintf("%s:%d sleep 2026-09-17 written when the offender stood elsewhere\n", f.File, f.Line+40)
+	if err := os.WriteFile(allow, []byte(row), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := CheckWaits(root, allow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Refused() != 0 || res.Allowlisted != 1 {
+		t.Fatalf("a row must allow its offender after the lines shift: refused=%d allowlisted=%d stale=%+v", res.Refused(), res.Allowlisted, res.Stale)
+	}
+
+	// A second fixed sleep in the same file has no row: the budget is one.
+	path := filepath.Join(root, filepath.FromSlash(f.File))
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	more := string(src) + "\nfunc TestSecondSleeper(t *testing.T) { time.Sleep(250 * time.Millisecond) }\n"
+	if err := os.WriteFile(path, []byte(more), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err = CheckWaits(root, allow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 1 || res.Allowlisted != 1 {
+		t.Fatalf("one row allows one offender; the second must be refused: findings=%d allowlisted=%d", len(res.Findings), res.Allowlisted)
 	}
 }
