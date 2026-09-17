@@ -1799,7 +1799,35 @@
     #:pointer-revision
     #:fetch-resolver-fact
     #:verify-qualifies-p
-    #:verify))
+    #:verify
+    ;; the kernel `decide` protocol and its one in-process fake (SPEC-DECIDE)
+    #:decision
+    #:make-decision
+    #:decision-question-hash
+    #:decision-question-kind
+    #:decision-answer
+    #:decision-proposed
+    #:decision-confidence
+    #:decision-floor
+    #:decision-suggestion-p
+    #:decision-source
+    #:decision-evidence
+    #:normalize-question
+    #:question-hash
+    #:decision-request
+    #:decision-event
+    #:event->decision
+    #:journal-decision
+    #:journaled-decision-event
+    #:recorded-decision
+    #:fake-decider
+    #:make-fake-decider
+    #:fake-decider-answer
+    #:fake-decider-confidence
+    #:fake-decider-calls
+    #:decide-consult
+    #:kernel-default-answer
+    #:decide))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
