@@ -364,41 +364,15 @@
 ;;   ;; refusal on a private node printing no value.)
 ;; NEEDS-KERNEL: node edit + link handling (no link/network model in slice 1).
 
-;;; move-keeps-every-count  SPEC-WORK.md prose :2889 / table :5360
-;; (deftest "move-keeps-every-count" "docs/SPEC-WORK.md:5360"
-;;     "source+destination-counts-move-by-subtree;ancestor-net-stable;no-whole-set-scan"
-;;   ;; a required subtree moved between two features: the source's and destination's
-;;   ;; required sets and open counts move by the subtree, the common ancestor's net
-;;   ;; count is stable, |O|/|C|/W and every task state unchanged, and no whole-set
-;;   ;; scan (visits asserted).)
-;; NEEDS-KERNEL: the node move verb and its counters (no move in slice 1).
-
-;;; move-same-parent-is-a-receipt  SPEC-WORK.md prose :2890 / table :5364
-;; (deftest "move-same-parent-is-a-receipt" "docs/SPEC-WORK.md:5364"
-;;     "same-parent=structure-event-only;changed=0;sibling-order-unchanged;lost-reply-one-envelope"
-;;   ;; --from equal to --under and true: the structure event alone, changed=0,
-;;   ;; sibling order unchanged; a lost reply retried yields one envelope; a
-;;   ;; different payload under the id refused; every refusal leaves both parents
-;;   ;; unchanged.)
-;; NEEDS-KERNEL: the node move verb (no move in slice 1).
+;;; The node-move replays (move-keeps-every-count, move-keeps-the-lease,
+;;; move-refuses-by-name, move-same-parent-is-a-receipt and
+;;; move-undo-refuses-a-reorder) are real deftests in the move section at the
+;;; end of this file; move-keeps-every-count also stands in tests/acceptance.lisp.
 ;;; Replays promised by docs/SPEC-WORK.md:2400-3600 but whose verb/kernel
 ;;; machinery (move, roadmap/axis, render, priority, state-export) does
 ;;; not yet exist in this slice-1 kernel. Each is kept, marked
 ;;; NEEDS-KERNEL, and counted but not yet run.
 ;;; ------------------------------------------------------------------
-
-;;; NEEDS-KERNEL: move-refuses-by-name (SPEC-WORK.md:2890) — the `move` verb:
-;;;   a wrong --from, a destination inside the subtree, a root container, a
-;;;   repository root, a shared container, another repository, or a roadmap as
-;;;   either parent are each refused with its named reason and the identity,
-;;;   and nothing is written.
-
-;;; NEEDS-KERNEL: move-keeps-the-lease (SPEC-WORK.md:2890) — the `move` verb:
-;;;   a working subtree moved with its effective :responsible unchanged keeps
-;;;   the same lease, attempt and usage; a move that would change it over an
-;;;   unreconciled attempt is refused "active context change" naming the ids;
-;;;   a move under a public parent from a private one is refused "privacy
-;;;   reduction", the reverse admitted and the public render losing the rows.
 
 ;;; NEEDS-KERNEL: move-updates-every-roadmap-scope (SPEC-WORK.md:2891) — the
 ;;;   `move` verb: a row referenced by two roadmaps outside both parent chains
@@ -406,13 +380,6 @@
 ;;;   the envelope, leaves the unrelated one, a failed acceptance moves none,
 ;;;   historical renders keep the old captured scope, and an intervening
 ;;;   affected-roadmap mutation makes undo conflict.
-
-;;; NEEDS-KERNEL: move-undo-refuses-a-reorder (SPEC-WORK.md:2891) — undo after
-;;;   a sibling reorder, a further reparent or a privacy change is refused
-;;;   conflict and guesses no position; undo otherwise restores the exact
-;;;   before order and required sets with fresh scope revisions, the old
-;;;   numbers unwritten; a kill around acceptance and during clip exposes
-;;;   neither two parents nor none.
 
 ;;; NEEDS-KERNEL: axisless-history (SPEC-WORK.md:2948) — `roadmap row`/axis:
 ;;;   two ordered rows added, one finished, the state exported and loaded, the
@@ -1370,56 +1337,184 @@ asserts does not exist in slice 1."
 ;;  ;; and digest distinctly.)
 
 ;; ------------------------------------------------------------------
-;; move-keeps-every-count   docs/SPEC-WORK.md:5360
+;; node move   docs/SPEC-WORK.md:3027-3070, :5360-5379
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: node move verb (a required subtree moved keeps all counts
-;; consistent; no whole-set scan).
-;;(deftest "move-keeps-every-count" "docs/SPEC-WORK.md:5360"
-;;    "source/dest=by-subtree,net=stable,visits=asserted"
-;;  ;; a required subtree moved between two features: the source's and
-;;  ;; destination's required sets and open counts move by the subtree, the
-;;  ;; common ancestor's net count is stable.)
+;; move-keeps-every-count lives in tests/acceptance.lisp, where the card that
+;; implemented the counters put it. The remaining move replays are real here.
 
-;; ------------------------------------------------------------------
-;; move-keeps-the-lease   docs/SPEC-WORK.md:5370
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: leases over moved subtrees (a working subtree moved with its
-;; effective `:responsible` unchanged keeps the same lease/attempt/usage).
-;;(deftest "move-keeps-the-lease" "docs/SPEC-WORK.md:5370"
-;;    "lease=same,attempt=same,usage=same,active-change=refused"
-;;  ;; a working subtree moved with its effective `:responsible` unchanged keeps
-;;  ;; the same lease, attempt and usage.)
+(defun move-request (id from under &key (reason "redistribute")
+                                        (request "mv-1")
+                                        (stamp "2026-09-17T00:00:00Z"))
+  (list :id id :from from :under under :reason reason :request request :stamp stamp))
 
-;; ------------------------------------------------------------------
-;; move-refuses-by-name   docs/SPEC-WORK.md:5367
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: node move verb refusals (a wrong `--from`, destination inside
-;; the subtree, a root container, etc. each refused with its named reason).
-;;(deftest "move-refuses-by-name" "docs/SPEC-WORK.md:5367"
-;;    "each-refusal=named,nothing-written"
-;;  ;; a wrong `--from`, a destination inside the subtree, a root container, a
-;;  ;; repository root, a shared container, another repository, and a roadmap as
-;;  ;; either parent, each refused with its named reason.)
+(deftest "move-keeps-the-lease" "docs/SPEC-WORK.md:5370"
+    "lease=same,attempt=same,usage=same,active-change=refused,privacy-reduction=refused"
+  (let* ((seed '((:id "root"    :type :work-set :parent nil       :state :unknown)
+                 (:id "root/resp-a" :type :feature :parent "root" :state :unknown)
+                 (:id "root/resp-b" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f1" :type :feature  :parent "root"    :state :unknown
+                  :coordinator "root/resp-a")
+                 (:id "root/f2" :type :feature  :parent "root"    :state :unknown
+                  :coordinator "root/resp-a")
+                 (:id "root/f3" :type :feature  :parent "root"    :state :unknown
+                  :coordinator "root/resp-b")
+                 (:id "root/f4" :type :feature  :parent "root"    :state :unknown
+                  :private :true)
+                 (:id "root/f1/t1" :type :task :parent "root/f1" :state :doing
+                  :holder "carol")
+                 (:id "root/f1/t2" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f1/t3" :type :task :parent "root/f1" :state :doing
+                  :private :true)
+                 (:id "root/f1/t4" :type :task :parent "root/f1" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    ;; A live, unreconciled attempt on t2, and a lease on t1.
+    (record-attempt k "root/f1/t2" "att-2")
+    (check-equal "carol" (node-holder (kernel-state k) "root/f1/t1") "t1 holds a lease")
+    ;; Same effective :responsible: admitted, and the lease/attempt do not move.
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t1" "root/f1" "root/f2"
+                                           :request "lease-1"))
+      (ok okp "a same-responsible move refused: ~A" line))
+    (check-equal "carol" (node-holder (kernel-state k) "root/f1/t1") "the lease is kept")
+    (check-equal '("att-2") (live-attempt-ids k "root/f1/t2") "the attempt is kept")
+    ;; A move that would change the effective :responsible over a live attempt
+    ;; refuses `active context change`, naming the affected ids, and writes nothing.
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t2" "root/f1" "root/f3"
+                                           :request "lease-2"))
+      (ok (not okp) "a context-changing move must refuse")
+      (ok (search "active context change" line) "names the guard: ~A" line)
+      (ok (search "root/f1/t2" line) "names the affected id: ~A" line))
+    (check-equal "root/f1" (node-parent (kernel-state k) "root/f1/t2")
+                 "the refused move wrote nothing")
+    ;; Lowering privacy is refused; raising it is admitted.
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t3" "root/f1" "root/f2"
+                                           :request "lease-3"))
+      (ok (not okp) "a privacy-lowering move must refuse")
+      (ok (search "privacy reduction" line) "names the guard: ~A" line))
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t4" "root/f1" "root/f4"
+                                           :request "lease-4"))
+      (ok okp "raising privacy admitted: ~A" line))
+    (check-equal "root/f4" (node-parent (kernel-state k) "root/f1/t4")
+                 "the privacy-raising move is applied")))
 
-;; ------------------------------------------------------------------
-;; move-same-parent-is-a-receipt   docs/SPEC-WORK.md:5364
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: node move verb receipts (`--from` equal to `--under`: structure
-;; event alone, `changed=0`, sibling order unchanged).
-;;(deftest "move-same-parent-is-a-receipt" "docs/SPEC-WORK.md:5364"
-;;    "changed=0,one-envelope,sibling-order=unchanged"
-;;  ;; `--from` equal to `--under`: the structure event alone, `changed=0`,
-;;  ;; sibling order unchanged.)
+(deftest "move-refuses-by-name" "docs/SPEC-WORK.md:5367"
+    "each-refusal=named,nothing-written"
+  (let* ((seed '((:id "root"    :type :work-set :parent nil    :state :unknown
+                  :repo "acme/work")
+                 (:id "root/f1" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f1/t1" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f1/t1/s1" :type :task :parent "root/f1/t1" :state :doing)
+                 (:id "root/f2" :type :feature :parent "root"  :state :unknown)
+                 (:id "other"   :type :work-set :parent nil    :state :unknown
+                  :repo "acme/y")
+                 (:id "other/f" :type :feature :parent "other" :state :unknown)))
+         (k (make-kernel :state (make-seed-state seed)))
+         (f1 (node-children (kernel-state k) "root/f1"))
+         (f2 (node-children (kernel-state k) "root/f2")))
+    (ok (roadmap-create k :id "root/rm" :parent "root" :title "R" :axes '()
+                        :members '() :reason "new" :request "rm-1"
+                        :stamp "2026-09-17T00:00:00Z")
+        "roadmap create refused")
+    (flet ((refuses (reason args)
+             (multiple-value-bind (okp line)
+                 (apply #'node-move k args)
+               (ok (not okp) "~A must refuse: ~A" reason (or line ""))
+               (ok (search reason line) "~A names the reason: ~A" reason line))))
+      ;; a wrong --from is a `parent conflict`
+      (refuses "parent conflict"
+               (move-request "root/f1/t1" "root/f2" "root/f2" :request "r1"))
+      ;; a destination inside the subtree is a `cycle`
+      (refuses "cycle"
+               (move-request "root/f1/t1" "root/f1" "root/f1/t1/s1" :request "r2"))
+      ;; a root container is `not movable`
+      (refuses "not movable"
+               (move-request "root" nil "root/f1" :request "r3"))
+      ;; a destination under another repository is a `repository change`
+      (refuses "repository change"
+               (move-request "root/f1/t1" "root/f1" "other/f" :request "r4"))
+      ;; a roadmap as the destination is `roadmap operation required`
+      (refuses "roadmap operation required"
+               (move-request "root/f1/t1" "root/f1" "root/rm" :request "r5"))
+      ;; a way is found through the named reason and both parents are unchanged
+      (check-equal f1 (node-children (kernel-state k) "root/f1") "source unchanged")
+      (check-equal f2 (node-children (kernel-state k) "root/f2") "destination unchanged")
+      (check-equal "root/f1" (node-parent (kernel-state k) "root/f1/t1")
+                   "the node never moved"))))
 
-;; ------------------------------------------------------------------
-;; move-undo-refuses-a-reorder   docs/SPEC-WORK.md:5379
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: move undo (undo after a sibling reorder, reparent or privacy
-;; change refused conflict, guessing no position).
-;;(deftest "move-undo-refuses-a-reorder" "docs/SPEC-WORK.md:5379"
-;;    "undo=conflict,position=never-guessed"
-;;  ;; undo after a sibling reorder, a further reparent or a privacy change
-;;  ;; refused conflict and guessing no position.)
+(deftest "move-same-parent-is-a-receipt" "docs/SPEC-WORK.md:5364"
+    "changed=0,one-envelope,sibling-order=unchanged"
+  (let* ((seed '((:id "root"    :type :work-set :parent nil    :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f1/t1" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f1/t2" :type :task :parent "root/f1" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed)))
+         (before (node-children (kernel-state k) "root/f1")))
+    (multiple-value-bind (okp line code)
+        (apply #'node-move k (move-request "root/f1/t1" "root/f1" "root/f1"
+                                           :request "same-1"))
+      (ok okp "a same-parent move refused: ~A" line)
+      (check-equal 0 code "same-parent exit")
+      (ok (search "changed=0" line) "the no-effect receipt: ~A" line)
+      ;; a lost reply retried yields the original line and one envelope
+      (multiple-value-bind (okp2 line2 code2)
+          (apply #'node-move k (move-request "root/f1/t1" "root/f1" "root/f1"
+                                             :request "same-1"))
+        (ok okp2 "the retry refused")
+        (check-equal 0 code2 "retry exit")
+        (check-string= line line2 "the retry replays the original line")))
+    (check-equal before (node-children (kernel-state k) "root/f1")
+                 "the receipt and its retry leave the sibling order unchanged")
+    ;; a different payload under the id refuses and still writes nothing
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t2" "root/f1" "root/f1"
+                                           :request "same-1"))
+      (ok (not okp) "a changed payload under the id must refuse")
+      (ok (search "different payload" line) "names the payload conflict: ~A" line))
+    (check-equal before (node-children (kernel-state k) "root/f1")
+                 "the refusal leaves both parents unchanged")))
+
+(deftest "move-undo-refuses-a-reorder" "docs/SPEC-WORK.md:5379"
+    "undo=conflict,position=never-guessed,restore=exact"
+  ;; Without an intervening change the undo restores the exact before order.
+  (let* ((seed '((:id "root"    :type :work-set :parent nil    :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f2" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f1/t1" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f1/t2" :type :task :parent "root/f1" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (multiple-value-bind (okp line)
+        (apply #'node-move k (move-request "root/f1/t1" "root/f1" "root/f2"
+                                           :request "mv-ok"))
+      (ok okp "move refused: ~A" line))
+    (multiple-value-bind (okp line)
+        (submit k (undo-verb-request "mv-ok" "undo-ok"))
+      (ok okp "the undo refused: ~A" line))
+    (check-equal '("root/f1/t1" "root/f1/t2") (node-children (kernel-state k) "root/f1")
+                 "the exact before order is restored")
+    (check-equal '() (node-children (kernel-state k) "root/f2")
+                 "the destination returns to its before set"))
+  ;; An intervening reparent makes the undo conflict and guess no position.
+  (let* ((seed '((:id "root"    :type :work-set :parent nil    :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f2" :type :feature :parent "root"  :state :unknown)
+                 (:id "root/f1/t1" :type :task :parent "root/f1" :state :doing)
+                 (:id "root/f1/t2" :type :task :parent "root/f1" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (apply #'node-move k (move-request "root/f1/t1" "root/f1" "root/f2"
+                                       :request "reorder-1"))
+    (apply #'node-move k (move-request "root/f1/t2" "root/f1" "root/f2"
+                                       :request "reorder-2"))
+    (let ((after (node-children (kernel-state k) "root/f2")))
+      (multiple-value-bind (okp line code)
+          (submit k (undo-verb-request "reorder-1" "undo-reorder-1"))
+        (ok (not okp) "the undo must refuse after a sibling reparent")
+        (check-equal 1 code "the undo conflict exit")
+        (ok (search "conflict" line) "names the conflict: ~A" line))
+      (check-equal after (node-children (kernel-state k) "root/f2")
+                   "the refused undo guessed no position"))))
 
 ;; ------------------------------------------------------------------
 ;; move-updates-every-roadmap-scope   docs/SPEC-WORK.md:5375

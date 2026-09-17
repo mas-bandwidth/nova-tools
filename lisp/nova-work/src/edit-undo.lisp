@@ -290,6 +290,8 @@ REFUSAL is a string when the request is not one of the five-field shape."
                 (line (format nil "UNDO OK id=~A request=~A of=~A node=~A rev=~D pushed=-"
                               (event-id event) rid of node (work-event-rev event))))
            (%undo-submit kernel rid digest line (list event))))
+        ((eq verb :node-move)
+         (node-move-undo kernel entry rid))
         ((member verb '(:state-to-doing :state-to-done :event-reopen))
          (let* ((events (%undo-compensating-events entry by stamp clock owner rid
                                                    (kernel-next-rev kernel)))
