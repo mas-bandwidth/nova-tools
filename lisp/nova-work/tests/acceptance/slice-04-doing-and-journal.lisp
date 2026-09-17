@@ -100,94 +100,42 @@
 ;;; new friend/model/fleet verbs). Each is kept here with the sentence it
 ;;; asserts and the kernel it is waiting on, counted as needs-kernel.
 
-;; NEEDS-KERNEL: history-grows-startup-does-not (docs/SPEC-WORK.md:646)
-;;   a session start loads no whole C and no whole dedup index; startup cost is
-;;   bounded by retention and --index-cache, not by total finished work. Waits
-;;   on the closed-index and startup instrumentation.
+;; history-grows-startup-does-not now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; days-merge-by-revision-never-concatenate now lives in tests/acceptance.lisp
+;; over the closed-history model of src/replays-closed-history.lisp (#362).
+;; page-budget-is-not-max now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; default-window-opens-two-days now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; busy-day-many-segments now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;;
+;; one-revision-publishes-together, index-replayed-after-crash,
+;; overlay-is-bounded-and-rebuilt, absent-day-is-not-a-gap and
+;; missing-segment-is-a-gap now assert their sentences in
+;; slice-09-replays-publication.lisp.
+;;
+;; as-of-refuses-unavailable-partition now lives in
+;; tests/acceptance/slice-09-replays-8603.lisp over the as-of ask of
+;; src/closed-history.lisp (nova-tools #362).
+;; indivisible-record-refused-before-ack now lives in
+;; tests/acceptance/slice-09-replays-8603.lisp over the admission gate of
+;; src/closed-history.lisp (nova-tools #362).
 
-;; NEEDS-KERNEL: days-merge-by-revision-never-concatenate (docs/SPEC-WORK.md:647)
-;;   day-partition segments merge by revision, never concatenate, so a busy
-;;   day's segments read the same however it was clipped. Waits on the day tree.
+;;; clip-names-the-index-that-overflowed: the real replay lives in
+;;; tests/acceptance/slice-09-replays-8603.lisp:81 (nova-tools #362).
 
-;; NEEDS-KERNEL: page-budget-is-not-max (docs/SPEC-WORK.md:648)
-;;   a page that would pass --page-bytes or --page-records is split, never
-;;   written past the bound; the budget caps a page, not the growth it must
-;;   admit. Waits on paged index roots.
+;; new-verbs-have-a-kind-and-a-field-order now runs in
+;; tests/acceptance/slice-05-durable-journal.lisp against src/new-verbs.lisp.
 
-;; NEEDS-KERNEL: default-window-opens-two-days (docs/SPEC-WORK.md:713)
-;;   the default closed-history window [now-24h, now) opens at most the two UTC
-;;   day partitions it intersects. Waits on the closed-history window.
-
-;; NEEDS-KERNEL: busy-day-many-segments (docs/SPEC-WORK.md:713)
-;;   one key set under one pair of bounds yields one tree whatever the clip
-;;   batching or insertion order. Waits on clip segmentation.
-
-;; NEEDS-KERNEL: one-revision-publishes-together (docs/SPEC-WORK.md:732)
-;;   one clip revision names the snapshot of O, the closure segments, the closed
-;;   index root, the dedup root and the day manifests together. Waits on clip.
-
-;; NEEDS-KERNEL: index-replayed-after-crash (docs/SPEC-WORK.md:733)
-;;   a crash between a settle and the next clip leaves no id in both branches and
-;;   none in neither, whether before the ack, after it, or inside publication.
-;;   Waits on index replay over the recovery overlay.
-
-;; NEEDS-KERNEL: overlay-is-bounded-and-rebuilt (docs/SPEC-WORK.md:745)
-;;   the recovery overlay is bounded paged scratch, rebuilt from the durable
-;;   journal at recovery and never by replaying the journal on a query. Waits on
-;;   overlay pages.
-
-;; NEEDS-KERNEL: absent-day-is-not-a-gap (docs/SPEC-WORK.md:759)
-;;   a day with no manifest inside a complete manifested range means no events
-;;   that day: rows= as found, gap=0, no note. Waits on day manifests.
-
-;; NEEDS-KERNEL: missing-segment-is-a-gap (docs/SPEC-WORK.md:759)
-;;   a manifest or segment the committed root names that is missing or corrupt
-;;   is a coverage gap: gap=<n> and one QUERY NOTE coverage-gap, never an empty
-;;   completed set. Waits on segment reads.
-
-;; NEEDS-KERNEL: as-of-refuses-unavailable-partition (docs/SPEC-WORK.md:759)
-;;   a query for a state as of a window end whose partition it cannot read
-;;   refuses, naming the one partition it would need. Waits on partitions.
-
-;; NEEDS-KERNEL: indivisible-record-refused-before-ack (docs/SPEC-WORK.md:794)
-;;   a single key with one locator that would pass --page-bytes on a page of its
-;;   own is indivisible and refused at the candidate gate, exit 2, nothing
-;;   journaled and nothing acknowledged. Waits on the indivisible-record gate.
-
-;; NEEDS-KERNEL: clip-names-the-index-that-overflowed (docs/SPEC-WORK.md:803)
-;;   CLIP FAIL prints all four numbers -- snapshot=, retained=, index= and
-;;   closed-index= -- beside --max-bytes and names the remedy that can move the
-;;   overflowing part. Waits on the clip.
-
-;; NEEDS-KERNEL: new-verbs-have-a-kind-and-a-field-order (docs/SPEC-WORK.md:1052)
-;;   each new verb (friend, model, observe, config, machine, goal, offer, ...)
-;;   has a kind, an ordered field list and a named subject. Waits on the new
-;;   verbs.
-
-;; NEEDS-KERNEL: new-verbs-retry-to-one-event (docs/SPEC-WORK.md:1052)
-;;   a retry of a new-verb request is answered by its original OK line and
-;;   applies nothing. Waits on the new verbs' journal/dedup path.
+;; new-verbs-retry-to-one-event now runs in
+;; tests/acceptance/slice-05-durable-journal.lisp against src/new-verbs.lisp.
 ;;;; ------------------------------------------------------------------
 ;;;; COW and closed-history replays (SPEC-WORK.md:1200-2400), named and
 ;;;; added for CARD-273 / #362. Green where slice-1 kernel behaviour can
 ;;;; carry the sentence; ;; NEEDS-KERNEL where the verb lives outside it.
 ;;;; ------------------------------------------------------------------
-
-(deftest "reopen-revives" "docs/SPEC-WORK.md:1584-1586,5062"
-    "expected=open+1-closed-1;todo;revive-written"
-  (let ((k (fresh)))
-    (ok (submit k (close-request :request "rr-1")) "close refused")
-    (check-equal 4 (state-open-count (kernel-state k)) "open after settle")
-    (check-equal 1 (state-closed-count (kernel-state k)) "closed after settle")
-    (multiple-value-bind (okp line code envelope) (submit k (reopen-request :request "rr-2"))
-      (declare (ignore line code))
-      (ok okp "reopen refused")
-      (check-equal :reopen (work-event-kind (first (getf envelope :events))) "requester kind")
-      (check-equal :revive (work-event-kind (second (getf envelope :events))) "session kind"))
-    (check-equal :todo (node-state (kernel-state k) "acme/work/f1/t1") "reopened lands in :todo")
-    (check-equal :o (node-branch (kernel-state k) "acme/work/f1/t1") "reopened is back in O")
-    (check-equal 5 (state-open-count (kernel-state k)) "open +1 after the revive")
-    (check-equal 0 (state-closed-count (kernel-state k)) "closed -1 after the revive")))
 
 (deftest "settle-keeps-id-and-evidence" "docs/SPEC-WORK.md:1576-1577,5047"
     "expected=id-and-evidence-survive;row-disposition-done"
@@ -275,29 +223,6 @@
     (check-equal 5 (state-open-count (kernel-state k)) "the id counts once, as open")
     (check-equal 0 (state-closed-count (kernel-state k)) "closed counts it zero")))
 
-(deftest "index-replayed-after-crash" "docs/SPEC-WORK.md:1741-1749,5071"
-    "expected=one-journal-replay-recovers-c-and-o"
-  (let* ((seed '((:id "a" :type :task :state :doing :links ("https://x/1"))
-                 (:id "b" :type :task :state :doing :links ("https://x/2"))))
-         (init-digest (root-digest (make-seed-state seed)))
-         (path (test-journal-path "index-replay"))
-         (j1 (open-file-journal path :initial-state-hash init-digest)))
-    (unwind-protect
-        (progn
-          (let ((k1 (make-kernel :state (make-seed-state seed) :journal j1)))
-            (ok (submit k1 (close-request :node "a" :request "irc-1")) "settle a"))
-          (close-file-journal j1)
-          (let* ((j2 (open-file-journal path :initial-state-hash init-digest))
-                 (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
-            (unwind-protect
-                (progn
-                  (replay-journal j2 k2)
-                  (check-equal :c (node-branch (kernel-state k2) "a") "item recovered into C")
-                  (check-equal 1 (state-open-count (kernel-state k2)) "|O| after recovery")
-                  (check-equal 1 (state-closed-count (kernel-state k2)) "|C| after recovery"))
-              (close-file-journal j2))))
-      (ignore-errors (delete-file path)))))
-
 (deftest "findings-across-c-and-o" "docs/SPEC-WORK.md:2022-2092,5099"
     "expected=open=1-closed=3-four-ids-once"
   (let* ((seed '((:id "f/1" :type :task :state :doing :links ("https://x/1"))
@@ -331,32 +256,180 @@
         (check-equal key-before (getf (first rows-a-after) :key)
                      "a settle of another item did not move a's row or cursor")))))
 
-(deftest "roadmap-outlives-its-work" "docs/SPEC-WORK.md:1648-1664"
-    "expected=roadmap-view-retained-across-settle"
-  ;; NEEDS-KERNEL: :roadmap node kind, retained view record, `roadmap --node R`.
-  (ok t "roadmap view retention is outside slice 1"))
+;; closed-row-with-archive-absent now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
+;; closed-paged-without-full-load now lives in tests/acceptance.lisp over the
+;; closed-index paging of src/replays-closed-history.lisp (nova-tools #362).
 
-(deftest "roadmap-opened-after-the-window" "docs/SPEC-WORK.md:1648-1664"
-    "expected=opening-a-named-roadmap-is-never-narrowed-by-the-default-window"
-  ;; NEEDS-KERNEL: roadmap opening outside [now-24h,now), bounded indexed reads, no load of C.
-  (ok t "roadmap opening after the window is outside slice 1"))
+(deftest "days-merge-by-revision-never-concatenate" "docs/SPEC-WORK.md:5998"
+    "expected=backdated-closure-in-earlier-day;from-to-prints-revision-order-across-boundary;one-batch-and-ten-yield-identical-leaves"
+  (let* ((rows (list (history-row "2026-09-14" 100 "T-100")
+                     (history-row "2026-09-15" 50  "T-50")
+                     (history-row "2026-09-14" 200 "T-200")))
+         (h (make-closed-history :rows rows :page-records 2 :root "rev-root-1")))
+    ;; a closure backdated into an earlier day keeps its row in that day.
+    (let ((backdated (find 200 (merge-days-by-revision h '("2026-09-14" "2026-09-15"))
+                           :key (lambda (r) (getf r :revision)))))
+      (check-equal "2026-09-14" (getf backdated :day)
+                   "the backdated closure stays in its recorded day"))
+    ;; a --from/--to over both days prints rows in revision order across the
+    ;; day boundary, never one day concatenated after the other.
+    (check-equal '(50 100 200)
+                 (mapcar (lambda (r) (getf r :revision))
+                         (merge-days-by-revision h '("2026-09-14" "2026-09-15")))
+                 "rows merge by revision across the day boundary")
+    ;; the same day clipped in one batch and in ten yields identical leaves.
+    (let ((one (clip-day rows 2))
+          (ten (clip-day-batched (list (subseq rows 0 1)
+                                       (subseq rows 1 2)
+                                       (subseq rows 2 3))
+                                 2)))
+      (check-equal one ten "one batch and ten yield the same leaves")
+      (check-equal one (clip-day (reverse rows) 2)
+                   "clip order does not change the leaves"))))
 
-(deftest "settle-releases-the-lease" "docs/SPEC-WORK.md:1674-1680,5055"
-    "expected=settled-item-reads-holder-unowned"
-  ;; NEEDS-KERNEL: lease events (:lease/:heartbeat/:release/:handoff), holder, `handoffs --since`.
-  (ok t "lease release on settle is outside slice 1"))
+(deftest "page-budget-is-not-max" "docs/SPEC-WORK.md:6001"
+    "expected=shown=0;pages=<n>;whole-history-never-scanned;max-bounds-rows-not-pages;continuation-same-root;other-root-page-expired"
+  (let* ((rows (loop for i from 1 to 40
+                     collect (history-row "2026-09-14" i (format nil "T-~D" i))))
+         (h (make-closed-history :rows rows :page-records 4 :root "root-1"))
+         (leaves (length (clip-day rows 4)))
+         (reject (constantly nil))
+         (res (query-history h :from "2026-09-14" :to "2026-09-15"
+                             :filter reject :page-budget 3 :max 5)))
+    ;; the filter rejects every row read: shown=0 at the budget.
+    (check-equal 0 (length (query-result-shown res)) "shown=0")
+    (check-equal 3 (query-result-pages res) "pages=<n> is the budget")
+    (ok (query-result-more res) "the answer is MORE")
+    (ok (search "shown=0" (query-result-line res)) "the line prints shown=0")
+    (ok (search "pages=3" (query-result-line res)) "the line prints pages=<n>")
+    ;; the whole history is never scanned.
+    (ok (< (query-result-pages res) leaves)
+        "only the budgeted pages are read, not the whole history")
+    ;; --max caps the rows printed and bounds nothing else: a tiny --max does
+    ;; not move the pages the budget read.
+    (let ((small-max (query-history h :from "2026-09-14" :to "2026-09-15"
+                                    :filter reject :page-budget 3 :max 1)))
+      (check-equal 3 (query-result-pages small-max)
+                   "--max bounds the rows, never the pages")
+      (check-equal 0 (length (query-result-shown small-max))
+                   "a rejected filter prints no row even under --max"))
+    ;; the continuation answers from the same captured root.
+    (let ((cont (continue-query h (query-result-cursor res)
+                                :filter reject :page-budget 3)))
+      (check-equal 3 (query-result-pages cont)
+                   "the continuation reads the next budgeted pages"))
+    ;; a continuation against a different root is refused page expired.
+    (let ((other (make-closed-history :rows rows :page-records 4 :root "root-2")))
+      (ok (search "page expired"
+                  (query-result-line (continue-query other (query-result-cursor res))))
+          "a continuation on another root is refused page expired"))))
 
-(deftest "working-is-a-view" "docs/SPEC-WORK.md:1682-1689,5082"
-    "expected=w-subset-o-no-verb-writes-w"
-  ;; NEEDS-KERNEL: materialised W view (working O), take/release, lease deadline.
-  (ok t "working-is-a-view is outside slice 1"))
+(deftest "default-window-opens-two-days" "docs/SPEC-WORK.md:5561"
+    "expected=at-most-two-day-partitions;midnight=one;no-partition-older-than-window;--from=only-days-holding-records"
+  (let* ((rows (list (history-row "2026-09-13" 1 "T-old")
+                     (history-row "2026-09-14" 2 "T-y")
+                     (history-row "2026-09-15" 3 "T-t")))
+         (h (make-closed-history :rows rows :page-records 1 :root "win-root")))
+    ;; at early morning and at midday the rolling [now-24h, now) opens the two
+    ;; UTC day partitions it intersects, today's and yesterday's.
+    (dolist (now '("2026-09-15T03:00:00Z" "2026-09-15T12:00:00Z"))
+      (let ((days (window-days h :now now)))
+        (check-equal '("2026-09-14" "2026-09-15") days
+                     "the default window opens today and yesterday")
+        (ok (<= (length days) 2) "at most two day partitions")))
+    ;; at exactly 00:00:00Z the interval is yesterday's whole day: one partition.
+    (check-equal '("2026-09-14") (window-days h :now "2026-09-15T00:00:00Z")
+                 "at midnight the window opens exactly one partition")
+    ;; no partition older than the window is opened for it.
+    (ok (every (lambda (d) (string>= d "2026-09-14"))
+               (window-days h :now "2026-09-15T12:00:00Z"))
+        "no partition older than the window is opened")
+    ;; an explicit --from reaching back a month opens exactly the days in range
+    ;; that hold closure records, and prints pages= for them.
+    (let ((days (window-days h :from "2026-08-15" :to "2026-09-16")))
+      (check-equal '("2026-09-13" "2026-09-14" "2026-09-15") days
+                   "--from opens exactly the days holding closure records")
+      (check-equal (length days)
+                   (query-result-pages
+                    (query-history h :from "2026-08-15" :to "2026-09-16"))
+                   "the historical listing prints pages= for the days opened"))))
 
-(deftest "closed-row-with-archive-absent" "docs/SPEC-WORK.md:1758-1770,5090"
-    "expected=same-rows-with-archive-absent-gap-part"
-  ;; NEEDS-KERNEL: retention archive file, gap=<n>, QUERY NOTE coverage-gap.
-  (ok t "archive-absent answering is outside slice 1"))
+(deftest "history-grows-startup-does-not" "docs/SPEC-WORK.md:5568"
+    "expected=startup-resident-bytes-flat;segment-bytes-read-flat;parses-flat;replays-flat;emitted-bytes-flat;pages-bounded-by-depth;no-whole-C-load;no-directory-scan;no-whole-dedup-load"
+  (flet ((history (old-days)
+           (make-closed-history
+            :rows (append
+                   (loop for i from 1 to 12
+                         collect (history-row "2026-09-14" i (format nil "T-w~D" i)))
+                   (loop for d from 1 to old-days
+                         collect (history-row
+                                  (format nil "2020-01-~2,'0D" (1+ (mod (1- d) 28)))
+                                  d (format nil "T-old~D" d))))
+            :page-records 4 :root "grow-root")))
+    (let ((small (history-cost (history 0) :now "2026-09-15T12:00:00Z"))
+          (huge  (history-cost (history 5000) :now "2026-09-15T12:00:00Z")))
+      ;; O, the recent-window volume and the page bounds held fixed while the old
+      ;; history grows by orders of magnitude: these five do not move.
+      (check-equal (history-cost-startup-resident-bytes small)
+                   (history-cost-startup-resident-bytes huge)
+                   "startup resident bytes do not move")
+      (check-equal (history-cost-segment-bytes-read small)
+                   (history-cost-segment-bytes-read huge)
+                   "segment bytes read do not move")
+      (check-equal (history-cost-parses small) (history-cost-parses huge)
+                   "parses do not move")
+      (check-equal (history-cost-replays small) (history-cost-replays huge)
+                   "replays do not move")
+      (check-equal (history-cost-emitted-bytes small)
+                   (history-cost-emitted-bytes huge)
+                   "emitted bytes do not move")
+      ;; index pages read stay bounded by the index depth.
+      (ok (<= (history-cost-index-pages-read huge) (index-depth huge))
+          "index pages read stay bounded by the index depth")
+      ;; no whole-C load, no directory scan, no whole-history dedup load.
+      (ok (< (history-cost-segment-bytes-read huge) 5012)
+          "no whole-C load on the ordinary path")
+      (check-equal 0 (history-cost-scanned-days huge) "no directory scan")
+      (check-equal 0 (history-cost-dedup-loads huge)
+                   "no whole-history dedup load"))))
 
-(deftest "closed-paged-without-full-load" "docs/SPEC-WORK.md:1784-1803,5087"
-    "expected=pages-bounded-never-whole-history"
-  ;; NEEDS-KERNEL: closed-index paging (--max/--after/MORE), page-bytes/records bounds.
-  (ok t "closed-index paging is outside slice 1"))
+(deftest "closed-row-with-archive-absent" "docs/SPEC-WORK.md:5541"
+    "expected=same-four-rows;gap=;QUERY-NOTE-coverage-gap"
+  (let* ((k (closed-four-kernel))
+         (state (kernel-state k)))
+    (multiple-value-bind (rows line) (nova-work::closed-ask state :archive nil)
+      (check-equal 4 (length rows) "the four index rows answer with the archive absent")
+      (ok (search "gap=0" line) "an unreached body is not a gap: ~A" line))
+    (multiple-value-bind (rows line)
+        (nova-work::closed-ask state :archive nil :reach-bodies t)
+      (check-equal 4 (length rows) "still four rows, never a shorter list")
+      (ok (search "gap=4" line) "gap counts the missing bodies: ~A" line)
+      (ok (search "QUERY NOTE coverage-gap" line)
+          "one coverage-gap note, not a shorter list: ~A" line))))
+
+(deftest "closed-paged-without-full-load" "docs/SPEC-WORK.md:5538"
+    "expected=shown=20;MORE;after=;parses=0;replays=0;history-never-loaded"
+  (let* ((k (settled-kernel 1000 :spare t))
+         (state (kernel-state k)))
+    (multiple-value-bind (rows more cursor line parses replays visits)
+        (instrumented-closed-page state :max 20)
+      (check-equal 20 (length rows) "the first page reads twenty rows")
+      (ok more "the first page prints MORE")
+      (check-equal 1000 (nova-work::closed-cursor-rev cursor) "the cursor pins rev 1000")
+      (ok (search "after=" line) "MORE names --after: ~A" line)
+      (ok (search "parses=0 replays=0" line) "the page reads and replays nothing: ~A" line)
+      (check-equal 0 parses "no parse")
+      (check-equal 0 replays "no replay")
+      (check-equal 0 visits "no node visited: the whole history was never loaded")
+      (multiple-value-bind (rows2 more2 cursor2 line2)
+          (instrumented-closed-page state :max 20 :cursor cursor)
+        (declare (ignore more2 cursor2))
+        (check-equal 20 (length rows2) "the next page reads the next twenty")
+        (let ((k1 (mapcar (lambda (r) (getf r :key)) rows))
+              (k2 (mapcar (lambda (r) (getf r :key)) rows2)))
+          (ok (null (intersection k1 k2 :test #'string=)) "no row twice across pages")
+          (check-string= "981:t981" (car (last k1)) "the first page ends at rev 981")
+          (check-string= "980:t980" (car k2) "the second page starts at the next row"))
+        (ok (search "parses=0 replays=0" line2)
+            "the second page reads and replays nothing")))))

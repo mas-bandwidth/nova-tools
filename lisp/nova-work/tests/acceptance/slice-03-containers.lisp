@@ -619,3 +619,43 @@
                       (check-equal '() (getf env :events) "the retry applied new events")))
                (close-file-journal j2))))
       (ignore-errors (delete-file path)))))
+
+(deftest "roadmap-outlives-its-work" "docs/SPEC-WORK.md:1648-1664"
+    "expected=roadmap-view-retained-across-settle"
+  (let* ((seed '((:id "r"       :type :roadmap :parent nil   :state :unknown)
+                 (:id "r/f"     :type :feature :parent "r"   :state :unknown)
+                 (:id "r/f/t"   :type :task    :parent "r/f" :state :doing
+                  :links ("https://github.com/acme/work/issues/31"))))
+         (k (make-kernel :state (make-seed-state seed))))
+    ;; The roadmap settles with its members, like any container.
+    (ok (submit k (close-request :node "r/f/t" :request "rol-1")) "close refused")
+    (check-equal :c (node-branch (kernel-state k) "r/f/t") "the task settled")
+    (check-equal :c (node-branch (kernel-state k) "r/f") "the feature settled with its member")
+    (check-equal :c (node-branch (kernel-state k) "r") "the roadmap settled with its feature")
+    ;; Its named view record is retained whatever branch the roadmap is in.
+    (check-equal '("r/f") (roadmap-members (kernel-state k) "r")
+                 "the roadmap keeps its row")
+    (let ((view (roadmap-open k "r")))
+      (check-equal "r" (getf view :id) "the view names the roadmap")
+      (check-equal '("r/f") (getf view :members) "the retained row is returned")
+      (ok (find "r/f/t" (getf view :rows) :key (lambda (r) (getf r :node)) :test #'equal)
+          "the closed member's row is read from the retained record"))))
+
+(deftest "roadmap-opened-after-the-window" "docs/SPEC-WORK.md:1648-1664"
+    "expected=opening-a-named-roadmap-is-never-narrowed-by-the-default-window"
+  (let* ((seed '((:id "r"     :type :roadmap :parent nil :state :unknown)
+                 (:id "r/f"   :type :feature :parent "r"   :state :unknown)
+                 (:id "r/f/t" :type :task    :parent "r/f" :state :doing
+                  :links ("https://github.com/acme/work/issues/41"))))
+         (k (make-kernel :state (make-seed-state seed))))
+    (ok (submit k (close-request :node "r/f/t" :request "roatw-1")) "close refused")
+    ;; The settle stamp is 2026-09-14; a read whose window ended long before it
+    ;; still opens the named view with the member's row, because the default
+    ;; [now - 24h, now) window bounds a closed-activity listing and not a named
+    ;; view (read: the kernel carries no clock, so the window is inert and the
+    ;; view is never narrowed by it).
+    (let ((unwindowed (roadmap-open k "r"))
+          (early (roadmap-open k "r" :window "2000-01-01T00:00:00Z")))
+      (check-equal unwindowed early "the window did not narrow the named view")
+      (ok (find "r/f/t" (getf early :rows) :key (lambda (r) (getf r :node)) :test #'equal)
+          "the historical row is still in the table"))))
