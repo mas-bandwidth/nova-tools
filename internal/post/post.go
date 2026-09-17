@@ -1,31 +1,30 @@
-// Package post prepares, renders and releases the outward payloads of nova-post.
+// Package post is the outbound engine behind nova-post: it renders one payload
+// per channel deterministically, stores it under the drafts directory, and
+// releases it only through the approve gate documented in docs/SPEC-OUTBOUND.md.
 //
-// It is the gate the specification draws: a draft is rendered once by a fixed
-// deterministic function and stored verbatim, show writes those exact bytes to stdout,
-// and send transmits the STORED payload and nothing freshly rendered. Release is never a
-// decision of this package: send refuses unless a bus receipt, received under 24 hours
-// ago and sent by Glenn, names the draft's own hash.
-//
-// Tests drive it against fakes only: the endpoint is caller-supplied, the clock is
-// caller-supplied, and the approval is a throwaway bus note. Nothing here opens a socket
-// on its own, reads a credential file, or prints any byte of a provider's transcript.
+// Nothing here reaches the network at draft time. A credential arrives only
+// through the environment (nova-secrets exec), is read by name at send time,
+// and is never printed, quoted or measured.
 package post
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
-	"path/filepath"
-	"sort"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// Channel is one of the four outward interfaces the spec names.
+// Channel is one of the four outward channels this tool speaks.
 type Channel string
 
 const (
@@ -35,389 +34,295 @@ const (
 	Discord Channel = "discord"
 )
 
-// ParseChannel reads the --channel token.
-func ParseChannel(s string) (Channel, error) {
-	switch Channel(s) {
-	case Ghost, Bsky, Email, Discord:
-		return Channel(s), nil
-	}
-	return "", &RefusalError{Code: 2, Reason: "bad-channel", Detail: fmt.Sprintf("unknown channel %q; the channels are ghost, bsky, email, discord", oneline.Field(s))}
+// Mailer delivers one email payload. It is an interface so tests can record the
+// exact bytes without opening a socket.
+type Mailer interface {
+	Send(to string, payload []byte) error
 }
 
-// Request is the whole input of one render. The caller reads the files; Render is pure
-// over their bytes so two renders of the same request are byte-for-byte equal.
-type Request struct {
-	Channel    Channel
-	Target     string
-	Body       string
-	Title      string
-	Link       string
-	DigestDate string // YYYY-MM-DD; empty means an ordinary body
-	CairnData  []byte
-	FleetData  []byte
+// Transport carries the seams a test replaces: the HTTP client, the per-channel
+// base URLs, and the mailer. The zero value plus DefaultTransport is production.
+type Transport struct {
+	HTTP      *http.Client
+	GhostBase string
+	BskyBase  string
+	Mail      Mailer
 }
 
-// Draft is the rendered payload and what identifies it.
-type Draft struct {
-	Hash    string
-	Channel Channel
-	Target  string
-	Title   string
-	Link    string
-	Created time.Time
-	Bytes   []byte
+// DefaultTransport is the production transport.
+func DefaultTransport() Transport {
+	return Transport{HTTP: &http.Client{Timeout: 30 * time.Second}}
 }
 
-// meta is the one-line <hash>.meta: exactly channel, target, title, link, created, bytes.
-type meta struct {
-	Channel Channel `json:"channel"`
-	Target  string  `json:"target"`
-	Title   string  `json:"title"`
-	Link    string  `json:"link"`
-	Created string  `json:"created"`
-	Bytes   int     `json:"bytes"`
+// Options is one verb's whole input. Every path comes from a flag.
+type Options struct {
+	Channel   Channel
+	Target    string
+	Draft     string
+	Drafts    string
+	Allowlist string
+	Bus       string
+	Approval  string
+	File      string
+	Title     string
+	Link      string
+	Digest    string
+	Cairn     string
+	Fleet     string
+	Now       time.Time
+	Transport Transport
 }
 
-// Render turns one request into the payload for its channel. It performs no network call
-// and reads no credential; it is deterministic given the request and the clock.
-func Render(req Request, now time.Time) (Draft, error) {
-	ch, err := ParseChannel(string(req.Channel))
-	if err != nil {
-		return Draft{}, err
-	}
-	req.Channel = ch
-	if strings.TrimSpace(req.Target) == "" {
-		return Draft{}, &RefusalError{Code: 2, Reason: "no-target", Detail: "--target is required; refusing to guess the address"}
-	}
-	if ch == Discord && req.Target != "fleet" && req.Target != "friends" {
-		return Draft{}, &RefusalError{Code: 2, Reason: "bad-target", Detail: fmt.Sprintf("discord --target is fleet or friends, got %q", oneline.Field(req.Target))}
-	}
-	body := req.Body
-	if req.DigestDate != "" {
-		if ch != Email {
-			return Draft{}, &RefusalError{Code: 2, Reason: "digest-not-email", Detail: "--digest is email-only"}
-		}
-		if strings.TrimSpace(req.Body) != "" {
-			return Draft{}, &RefusalError{Code: 2, Reason: "digest-and-file", Detail: "--digest and --file are mutually exclusive; name one body"}
-		}
-		if len(req.CairnData) == 0 {
-			return Draft{}, &RefusalError{Code: 2, Reason: "digest-no-cairn", Detail: "--digest requires --cairn"}
-		}
-		if len(req.FleetData) == 0 {
-			return Draft{}, &RefusalError{Code: 2, Reason: "digest-no-fleet", Detail: "--digest requires --fleet"}
-		}
-		rendered, err := RenderDigest(req.DigestDate, req.CairnData, req.FleetData)
-		if err != nil {
-			return Draft{}, err
-		}
-		body = rendered
-	} else if strings.TrimSpace(req.Body) == "" {
-		return Draft{}, &RefusalError{Code: 2, Reason: "no-body", Detail: "--file is required (or --digest for an email digest)"}
-	}
-	if line, shape, ok := SecretInBody(body); ok {
-		return Draft{}, &RefusalError{Code: 2, Reason: "body-names-a-secret",
-			Detail: fmt.Sprintf("line %d holds a %s; remove it before drafting (the matched text is not printed)", line, shape)}
-	}
-	payload, err := renderPayload(req, body, now)
-	if err != nil {
-		return Draft{}, err
-	}
-	sum := sha256.Sum256(payload)
-	return Draft{
-		Hash:    hex.EncodeToString(sum[:]),
-		Channel: req.Channel,
-		Target:  req.Target,
-		Title:   req.Title,
-		Link:    req.Link,
-		Created: now.UTC(),
-		Bytes:   payload,
-	}, nil
+// Meta is the one-line sidecar written beside each payload.
+type Meta struct {
+	Channel string `json:"channel"`
+	Target  string `json:"target"`
+	Title   string `json:"title"`
+	Link    string `json:"link"`
+	Created string `json:"created"`
+	Bytes   int    `json:"bytes"`
 }
 
-// renderPayload is the fixed function per channel. The shape is the provider's, not the
-// body's: a draft is exactly what will be transmitted.
-func renderPayload(req Request, body string, now time.Time) ([]byte, error) {
-	switch req.Channel {
-	case Ghost:
-		return json.Marshal(ghostDoc{Posts: []ghostPost{{Title: req.Title, HTML: body, Status: "published"}}})
-	case Bsky:
-		record := map[string]any{
-			"$type":     "app.bsky.feed.post",
-			"text":      body,
-			"createdAt": now.UTC().Format(time.RFC3339),
-		}
-		if req.Link != "" {
-			record["embed"] = map[string]any{
-				"$type": "app.bsky.embed.external",
-				"external": map[string]any{
-					"uri":         req.Link,
-					"title":       req.Title,
-					"description": firstLine(body),
-				},
-			}
-		}
-		return json.Marshal(bskyDoc{Repo: req.Target, Collection: "app.bsky.feed.post", Record: record})
-	case Email:
-		return json.Marshal(emailDoc{To: req.Target, Subject: req.Title, Body: body})
-	case Discord:
-		if req.Title != "" || req.Link != "" {
-			return nil, &RefusalError{Code: 2, Reason: "discord-prose", Detail: "--title and --link are not accepted on discord"}
-		}
-		return json.Marshal(discordDoc{Content: body})
-	}
-	return nil, &RefusalError{Code: 2, Reason: "bad-channel", Detail: "unknown channel"}
-}
-
-type ghostPost struct {
-	Title  string `json:"title,omitempty"`
-	HTML   string `json:"html"`
-	Status string `json:"status"`
-}
-
-type ghostDoc struct {
-	Posts []ghostPost `json:"posts"`
-}
-
-type bskyDoc struct {
-	Repo       string         `json:"repo"`
-	Collection string         `json:"collection"`
-	Record     map[string]any `json:"record"`
-}
-
-type emailDoc struct {
-	To      string `json:"to"`
-	Subject string `json:"subject"`
-	Body    string `json:"body"`
-}
-
-type discordDoc struct {
-	Content string `json:"content"`
-}
-
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	return strings.TrimSpace(s)
-}
-
-// RenderDigest renders the day's cairn beats and the fleet numbers as the email body.
-func RenderDigest(date string, cairn, fleet []byte) (string, error) {
-	if _, err := time.Parse("2006-01-02", date); err != nil {
-		return "", &RefusalError{Code: 2, Reason: "bad-digest", Detail: fmt.Sprintf("--digest wants YYYY-MM-DD, got %q", oneline.Field(date))}
-	}
-	beats := beatsFor(string(cairn), date)
-	if len(beats) == 0 {
-		return "", &RefusalError{Code: 2, Reason: "no-beat", Detail: fmt.Sprintf("the cairn holds no beat for %s", date)}
-	}
-	fleetLines, err := fleetNumbers(fleet)
-	if err != nil {
-		return "", err
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "Nova digest %s\n", date)
-	b.WriteString("beats:\n")
-	for _, line := range beats {
-		fmt.Fprintf(&b, "- %s\n", line)
-	}
-	b.WriteString("fleet:\n")
-	for _, line := range fleetLines {
-		fmt.Fprintf(&b, "- %s\n", line)
-	}
-	return b.String(), nil
-}
-
-// beatsFor collects every `## <stamp> <title>` section whose day matches date, condensing
-// each section's fact lines into one line.
-func beatsFor(cairn, date string) []string {
-	var out []string
-	var stamp, title string
-	var fields []string
-	flush := func() {
-		if stamp == "" || !strings.HasPrefix(stamp, date) {
-			return
-		}
-		line := stamp
-		if title != "" {
-			line += " " + title
-		}
-		if len(fields) > 0 {
-			line += ": " + strings.Join(fields, " ")
-		}
-		out = append(out, line)
-	}
-	for _, raw := range strings.Split(cairn, "\n") {
-		line := strings.TrimSpace(raw)
-		if strings.HasPrefix(line, "## ") {
-			flush()
-			rest := strings.TrimSpace(strings.TrimPrefix(line, "## "))
-			stamp, title = rest, ""
-			if i := strings.IndexByte(rest, ' '); i >= 0 {
-				stamp, title = rest[:i], strings.TrimSpace(rest[i+1:])
-			}
-			fields = nil
-			continue
-		}
-		if line == "" || stamp == "" {
-			continue
-		}
-		fields = append(fields, line)
-	}
-	flush()
-	return out
-}
-
-// fleetNumbers reads one `name<TAB>number` per line and renders `name=number`.
-func fleetNumbers(fleet []byte) ([]string, error) {
-	var out []string
-	for i, raw := range strings.Split(string(fleet), "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		name, number, ok := strings.Cut(line, "\t")
-		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(number) == "" {
-			return nil, &RefusalError{Code: 2, Reason: "bad-fleet", Detail: fmt.Sprintf("--fleet line %d wants name<TAB>number", i+1)}
-		}
-		out = append(out, strings.TrimSpace(name)+"="+strings.TrimSpace(number))
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
-// SecretError is the body-names-a-secret refusal: the line and the shape, never the text.
-type SecretError struct {
-	Line  int
-	Shape string
-}
-
-func (e *SecretError) Error() string {
-	return fmt.Sprintf("line %d holds a %s", e.Line, e.Shape)
-}
-
-// SecretInBody scans the body for the four denied shapes and returns the 1-based line and
-// the shape name. It never returns the matched text, so a refusal cannot quote a secret
-// back into a log.
-func SecretInBody(body string) (int, string, bool) {
-	for i, raw := range strings.Split(body, "\n") {
-		if shape, ok := secretShape(raw); ok {
-			return i + 1, shape, true
-		}
-	}
-	return 0, "", false
-}
-
-var credentialNames = []string{"GHOST_ADMIN_KEY", "SMTP_PASSWORD", "BSKY_APP_PASSWORD", "DISCORD_BOT_TOKEN"}
-
-func secretShape(line string) (string, bool) {
-	for _, name := range credentialNames {
-		if strings.Contains(line, name) {
-			return "credential-name", true
-		}
-	}
-	if strings.Contains(line, "DISCORD_") && strings.Contains(line, "_WEBHOOK") {
-		return "credential-name", true
-	}
-	for _, field := range strings.FieldsFunc(line, func(r rune) bool {
-		switch r {
-		case ' ', '\t', '"', '\'', '`', ',', ')', '(', ';', '<', '>', ']', '[':
-			return true
-		}
-		return false
-	}) {
-		switch {
-		case strings.HasSuffix(field, ".key"):
-			return "key-file", true
-		case strings.HasSuffix(field, "recovery.pub"):
-			return "recovery-key", true
-		case strings.Contains(field, "secrets/"):
-			return "secrets-store-path", true
-		}
-	}
-	return "", false
-}
-
-// RefusalError is one refusal: the exit code, the one-word reason and the remedy sentence.
-type RefusalError struct {
-	Code   int
+// Refusal is a one-line refusal with its remedy and exit code: 2 when the
+// invocation could not run, 1 when the gate or a provider said NO.
+type Refusal struct {
 	Reason string
-	Detail string
+	Remedy string
+	Exit   int
 }
 
-func (e *RefusalError) Error() string { return e.Detail }
+func (r *Refusal) Error() string { return r.Reason + "; " + r.Remedy }
 
-// Save writes <hash>.post (the payload verbatim) and <hash>.meta (one JSON line) under dir.
-func Save(dir string, d Draft) error {
-	if err := os.WriteFile(filepath.Join(dir, d.Hash+".post"), d.Bytes, 0o644); err != nil {
-		return &RefusalError{Code: 2, Reason: "draft-write", Detail: "cannot write the payload: " + oneline.Err(err)}
-	}
-	raw, err := json.Marshal(meta{Channel: d.Channel, Target: d.Target, Title: d.Title, Link: d.Link, Created: d.Created.UTC().Format(time.RFC3339), Bytes: len(d.Bytes)})
-	if err != nil {
-		return &RefusalError{Code: 2, Reason: "draft-write", Detail: "cannot encode the meta line: " + oneline.Err(err)}
-	}
-	if err := os.WriteFile(filepath.Join(dir, d.Hash+".meta"), append(raw, '\n'), 0o644); err != nil {
-		return &RefusalError{Code: 2, Reason: "draft-write", Detail: "cannot write the meta line: " + oneline.Err(err)}
-	}
-	return nil
+// Refuse builds a refusal.
+func Refuse(reason, remedy string, exit int) error {
+	return &Refusal{Reason: reason, Remedy: remedy, Exit: exit}
 }
 
-// Load reads a stored draft and re-checks that the bytes still hash to the name it is
-// stored under. A draft whose bytes changed under it is refused, not sent.
-func Load(dir, hash string) (Draft, error) {
-	if !validHash(hash) {
-		return Draft{}, &RefusalError{Code: 2, Reason: "bad-hash", Detail: fmt.Sprintf("--draft wants a lower-case sha256, got %q", oneline.Field(hash))}
+// ExitCode is the exit a caller owes an error: 2 for a refusal that does not
+// name one, which is the "could not run" default.
+func ExitCode(err error) int {
+	var r *Refusal
+	if errors.As(err, &r) {
+		return r.Exit
 	}
-	body, err := os.ReadFile(filepath.Join(dir, hash+".post"))
-	if err != nil {
-		return Draft{}, &RefusalError{Code: 2, Reason: "no-draft", Detail: "cannot read the draft payload: " + oneline.Err(err)}
-	}
-	sum := sha256.Sum256(body)
-	if hex.EncodeToString(sum[:]) != hash {
-		return Draft{}, &RefusalError{Code: 2, Reason: "draft-changed", Detail: "the stored payload no longer hashes to " + hash + "; re-draft it"}
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, hash+".meta"))
-	if err != nil {
-		return Draft{}, &RefusalError{Code: 2, Reason: "no-draft", Detail: "cannot read the draft meta: " + oneline.Err(err)}
-	}
-	var m meta
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return Draft{}, &RefusalError{Code: 2, Reason: "bad-draft", Detail: "the meta line will not parse: " + oneline.Err(err)}
-	}
-	created, _ := time.Parse(time.RFC3339, m.Created)
-	return Draft{Hash: hash, Channel: m.Channel, Target: m.Target, Title: m.Title, Link: m.Link, Created: created, Bytes: body}, nil
+	return 2
 }
 
-func validHash(s string) bool {
-	if len(s) != 64 {
+// ParseChannel validates the --channel value.
+func ParseChannel(s string) (Channel, error) {
+	c := Channel(s)
+	switch c {
+	case Ghost, Bsky, Email, Discord:
+		return c, nil
+	}
+	return "", Refuse("bad-channel", fmt.Sprintf("--channel %q is not ghost, bsky, email or discord; give one of the four", oneline.Field(s)), 2)
+}
+
+// CredentialName is the environment variable a channel needs, by name only.
+func CredentialName(c Channel, target string) (string, error) {
+	switch c {
+	case Ghost:
+		return "GHOST_ADMIN_KEY", nil
+	case Bsky:
+		return "BSKY_APP_PASSWORD", nil
+	case Email:
+		return "SMTP_PASSWORD", nil
+	case Discord:
+		switch target {
+		case "fleet":
+			return "DISCORD_FLEET_WEBHOOK", nil
+		case "friends":
+			return "DISCORD_FRIENDS_WEBHOOK", nil
+		}
+		return "", Refuse("bad-target", fmt.Sprintf("--target %q for discord is not fleet or friends; give one of the two", oneline.Field(target)), 2)
+	}
+	return "", Refuse("bad-channel", "give --channel ghost, bsky, email or discord", 2)
+}
+
+// DraftResult is what draft wrote.
+type DraftResult struct {
+	Hash    string
+	Meta    Meta
+	Payload []byte
+}
+
+// ShowResult is what show read.
+type ShowResult struct {
+	Payload []byte
+	Meta    Meta
+}
+
+// SendResult is the one line send printed.
+type SendResult struct {
+	Line string
+}
+
+// validHash is the payload hash's shape: sixty-four lower-case hex digits,
+// which also keeps a caller-supplied draft name from reaching outside the store.
+func validHash(h string) bool {
+	if len(h) != 64 {
 		return false
 	}
-	for _, r := range s {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
+	for _, r := range h {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
 		}
+		return false
 	}
 	return true
 }
 
-// Allowed reports whether the allowlist names channel and target. A missing file is an
-// error, because a finite set that cannot be read is not a finite set.
-func Allowed(path string, ch Channel, target string) (bool, error) {
+// EnsureDrafts refuses a --drafts that is missing or is not a directory: the
+// tool creates no directory and guesses none.
+func EnsureDrafts(dir string) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return Refuse("bad-drafts", fmt.Sprintf("--drafts %s is not a directory; create it first, refusing to guess a store", oneline.Escape(dir)), 2)
+	}
+	if !info.IsDir() {
+		return Refuse("bad-drafts", fmt.Sprintf("--drafts %s is not a directory; create it first, refusing to guess a store", oneline.Escape(dir)), 2)
+	}
+	return nil
+}
+
+// RequireAllowlisted refuses a target the allowlist does not name. It is exit 1:
+// the gate said NO, and no socket is opened before it passes.
+func RequireAllowlisted(path string, c Channel, target string) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return false, &RefusalError{Code: 1, Reason: "no-allowlist", Detail: "cannot read --allowlist " + oneline.Field(path) + ": " + oneline.Err(err)}
+		return Refuse("allowlist-absent", fmt.Sprintf("--allowlist %s is unreadable; create it with a `%s<TAB>%s` line", oneline.Escape(path), c, oneline.Field(target)), 1)
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
-		t := strings.TrimSpace(line)
-		if t == "" || strings.HasPrefix(t, "#") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		parts := strings.Split(t, "\t")
-		if len(parts) < 2 {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
 			continue
 		}
-		if strings.TrimSpace(parts[0]) == string(ch) && strings.TrimSpace(parts[1]) == target {
-			return true, nil
+		if strings.TrimSpace(parts[0]) == string(c) && strings.TrimSpace(parts[1]) == target {
+			return nil
 		}
 	}
-	return false, nil
+	return Refuse("target-not-allowlisted", fmt.Sprintf("add `%s<TAB>%s` to %s; the allowlist is the finite set this tool may address", c, oneline.Field(target), oneline.Escape(path)), 1)
+}
+
+// The shapes a body may not carry. A matched secret is named only by its shape
+// and line, never quoted back.
+var (
+	keyFileRe   = regexp.MustCompile(`[A-Za-z0-9_./-]+\.key`)
+	credNames   = []string{"GHOST_ADMIN_KEY", "SMTP_PASSWORD", "SMTP_PASSWORD_BACKUP", "BSKY_APP_PASSWORD", "DISCORD_FLEET_WEBHOOK", "DISCORD_FRIENDS_WEBHOOK", "DISCORD_BOT_TOKEN"}
+	secretShape = func(line string) string {
+		switch {
+		case strings.Contains(line, "recovery.pub"):
+			return "recovery-pub"
+		case strings.Contains(line, "/secrets/") || strings.Contains(line, "secrets/"):
+			return "secret-store-path"
+		case keyFileRe.MatchString(line):
+			return "key-file"
+		}
+		for _, name := range credNames {
+			if strings.Contains(line, name) {
+				return "credential-name"
+			}
+		}
+		return ""
+	}
+)
+
+// ScanBody refuses a body that names a secret, printing the line number and the
+// shape, never the matched text.
+func ScanBody(body string) error {
+	for i, line := range strings.Split(body, "\n") {
+		if shape := secretShape(line); shape != "" {
+			return Refuse("body-names-secret", fmt.Sprintf("line=%d shape=%s; remove the secret from the body, a credential reaches this tool only through nova-secrets exec", i+1, oneline.Field(shape)), 2)
+		}
+	}
+	return nil
+}
+
+// hashOf is the lower-case SHA-256 of the payload bytes.
+func hashOf(payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
+// bskyAltRe matches a markdown image: the alt text is capture 1.
+var bskyAltRe = regexp.MustCompile(`!\[([^\]]*)\]\([^)]*\)`)
+
+// requireBskyAlt refuses an image with empty alt text for bsky.
+func requireBskyAlt(body string) error {
+	for _, m := range bskyAltRe.FindAllStringSubmatch(body, -1) {
+		if strings.TrimSpace(m[1]) == "" {
+			return Refuse("empty-image-alt", "an image in the body has empty alt text; give it alt text, the alt field is how a reader who cannot see the image gets the post", 2)
+		}
+	}
+	return nil
+}
+
+// ghostToken builds the Ghost Admin API JWT from an `id:secret` key. The key is
+// used and never printed.
+func ghostToken(key string, now time.Time) (string, error) {
+	id, secret, ok := strings.Cut(key, ":")
+	if !ok || id == "" || secret == "" {
+		return "", Refuse("bad-credential", "GHOST_ADMIN_KEY is not the Admin API key shape `id:secret`; fix the secret, refusing to guess", 2)
+	}
+	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+	header := b64([]byte(`{"alg":"HS256","typ":"JWT","kid":"` + id + `"}`))
+	claims, err := json.Marshal(map[string]any{
+		"iat": now.Unix(),
+		"exp": now.Add(5 * time.Minute).Unix(),
+		"aud": "/admin/",
+	})
+	if err != nil {
+		return "", err
+	}
+	signing := b64([]byte(header)) + "." + b64(claims)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(signing))
+	return signing + "." + b64(mac.Sum(nil)), nil
+}
+
+// trimSlash removes a trailing slash from a base URL.
+func trimSlash(s string) string { return strings.TrimRight(s, "/") }
+
+// ghostBase is the site the ghost post goes to.
+func ghostBase(t Transport, target string) string {
+	if t.GhostBase != "" {
+		return trimSlash(t.GhostBase)
+	}
+	if strings.Contains(target, "://") {
+		return trimSlash(target)
+	}
+	return "https://" + trimSlash(target)
+}
+
+// bskyBase is the PDS base URL.
+func bskyBase(t Transport) string {
+	if t.BskyBase != "" {
+		return trimSlash(t.BskyBase)
+	}
+	return "https://bsky.social"
+}
+
+// firstLine is the body's first non-empty line, trimmed, for a link card.
+func firstLine(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// heading is the body's first markdown heading, or its first line.
+func heading(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "#") {
+			return strings.TrimSpace(strings.TrimLeft(t, "#"))
+		}
+	}
+	return firstLine(body)
 }
