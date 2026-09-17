@@ -195,3 +195,67 @@ verb end to end:
 5. The slowest list is sorted and capped at three.
 6. More than one package over budget prints one line each, worst first, an order
    that does not depend on map iteration.
+## The CI class test against a real network host on the CI path
+
+**The help line.** The class test is entered in the CI check roster and in help
+as the verb `net`:
+
+```
+net     read every _test.go on the CI path; refuse a real network host or host:port
+```
+
+It runs as `go test ./internal/ci -run TestNoRealNetworkHostsOnTheCIPath`, and
+it is Glenn's hard rule of 2026-09-17 — *unit tests test LOGIC, not the network*
+— made an official verb: every endpoint is mocked locally, and only the soak,
+fuzz and nightly suites may reach the real network.
+
+**What it reads and what it writes.** It reads, as text, every `_test.go` under
+`internal/` and `cmd/` that the two-minute CL path runs, parses each as Go, and
+refuses a string literal that names a real network host: an `http://` or
+`https://` URL whose host is not a local endpoint, and a bare `host:port` whose
+host is not one. A local endpoint is `localhost`, `127.0.0.1`, `::1`, or one of
+the RFC 2606 / RFC 6761 reserved test domains `example.*`, `*.invalid` and
+`*.test`; those can never reach a real service. A file whose header carries a
+`//go:build nightly` or `//go:build soak` constraint is skipped whole, because
+those are the suites where the real network is allowed. It writes nothing. Its
+only input besides the tree is `testdata/net-allowlist.txt`: the existing
+offenders, each with a reason and the date it was written, and that file may
+only shrink — a new entry is a refusal, not a place to park a host. Like the
+fixed-waits list it is matched by **file and kind, never by line**, so a merge
+that shifts lines in a listed file does not turn dev red.
+
+**Its one-line output.** On a clean tree it prints one line,
+`CI-NET OK tests=<n> allowlisted=<n> refused=0`, where `tests=` is the
+`_test.go` files read, `allowlisted=` the entries still on the allowlist, and
+`refused=` the real hosts found (always `0` on `OK`). On a refusal it prints
+one line per offender, `CI-NET file=<path> line=<n> host=<h>
+remedy="<the one thing to do>"`, then closes with `CI-NET FAIL tests=<n>
+allowlisted=<n> refused=<k>`; the count is the truth about the CI path whether
+or not the lines printed.
+
+**Its refusals (exit 2, one remedy line each).** An `http(s)` URL or bare
+`host:port` whose host is not local, reserved or exempt —
+`remedy="mock the endpoint with httptest or a local fake"`. A new line in the
+allowlist — `remedy="fix the host; the allowlist only shrinks"`. A refusal names
+the file, the line and the host, so the queue's PR comment is the whole
+diagnosis.
+
+**The mistake it removes.** A unit test that dials a real host passes on a
+developer's laptop and fails, slowly, on the walled CI path — or worse, passes
+because it reached a service the lane may not use, which is how a flake and a
+secret leak look the same in the log.
+
+**Red tests.**
+
+1. A test carrying `https://api.acme.com` is refused with its file, line and
+   host, and the remedy names httptest or a local fake.
+2. A test whose only hosts are `localhost`, the loopback IPs and the reserved
+   `example.*` / `*.invalid` / `*.test` names is allowed.
+3. A file carrying `//go:build nightly` with a real host is exempt.
+4. A file carrying `//go:build soak` with a real host is exempt.
+5. A bare `host:port` with a real host is refused; one on a local or reserved
+   host is allowed.
+6. Adding an entry to `testdata/net-allowlist.txt` is refused, and removing one
+   is allowed.
+7. A row allows one offender of its kind in its file wherever the offender now
+   stands; a second offender of the same kind in the file is refused.

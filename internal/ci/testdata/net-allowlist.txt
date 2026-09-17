@@ -1,0 +1,48 @@
+# net-allowlist.txt -- existing offenders of the `net` class test in
+# docs/SPEC-CI.md. One row: file:line kind date reason.
+#
+# The file only shrinks. An entry that names no offender on the tree is refused
+# (`fix the host; the allowlist only shrinks`), so fixing a test means deleting
+# its row in the same change, and a new row parks nothing. A row allows ONE
+# offender of its kind in its file and is matched by file and kind, never by
+# line, so a merge that shifts lines in a listed file does not turn dev red.
+#
+# These predate the checker. Each is a GitHub URL carried in a fixture, a fake
+# gh stub, a fake git remote or a card template -- text handed to a fake, not a
+# live unit-test endpoint. The allowed shape is httptest or a local fake.
+cmd/nova-merge/footguns_test.go:96 url 2026-09-17 an api.github.com URL in a fake gh error string, not a live call; predates the checker
+cmd/nova-merge/hostedred_test.go:66 url 2026-09-17 a github-style URL in a remote-rewrite fixture, not a live call; predates the checker
+cmd/nova-merge/hostedred_test.go:67 url 2026-09-17 a github-style URL in a remote-rewrite fixture, not a live call; predates the checker
+cmd/nova-merge/hostedred_test.go:68 url 2026-09-17 a github-style URL in a remote-rewrite fixture, not a live call; predates the checker
+cmd/nova-pulse/main_test.go:335 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-pulse/main_test.go:357 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-pulse/main_test.go:360 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-review/friendsequence_test.go:86 url 2026-09-17 a github.com insteadOf rewrite in a fake git config, not a live call; predates the checker
+cmd/nova-review/main_test.go:867 url 2026-09-17 a github.com insteadOf rewrite in a fake git config, not a live call; predates the checker
+cmd/nova-review/main_test.go:931 url 2026-09-17 a github.com insteadOf rewrite in a fake git config, not a live call; predates the checker
+cmd/nova-review/main_test.go:1126 url 2026-09-17 a github.com insteadOf rewrite in a fake git config, not a live call; predates the checker
+cmd/nova-swarm/lint_test.go:21 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-swarm/lint_test.go:61 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-swarm/lint_test.go:86 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+cmd/nova-swarm/profile_test.go:93 url 2026-09-17 a github.com clone line in a log fixture, not a live call; predates the checker
+cmd/nova-wake/events_test.go:204 url 2026-09-17 a forge URL in a JSON event fixture, not a live call; predates the checker
+internal/merge/blocked_test.go:37 url 2026-09-17 a github.com clone URL in a fake git remote fixture, not a live call; predates the checker
+internal/merge/blocked_test.go:38 url 2026-09-17 a github.com clone URL in a fake git remote fixture, not a live call; predates the checker
+internal/merge/blocked_test.go:39 url 2026-09-17 a github.com clone URL in a fake git remote fixture, not a live call; predates the checker
+internal/merge/blocked_test.go:43 url 2026-09-17 a github-style URL in a fake git remote fixture, not a live call; predates the checker
+internal/merge/blocked_test.go:96 url 2026-09-17 a github.com clone URL in a fake git remote fixture, not a live call; predates the checker
+internal/pulse/cut_test.go:34 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+internal/pulse/cut_test.go:42 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+internal/pulse/cut_test.go:150 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+internal/pulse/cut_test.go:307 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+internal/pulse/harvest_bare_test.go:18 url 2026-09-17 a github.com PR URL handed to a fake gh, not a live call; predates the checker
+internal/pulse/harvest_pool_test.go:52 url 2026-09-17 a github.com PR URL handed to a fake gh, not a live call; predates the checker
+internal/pulse/harvest_test.go:100 url 2026-09-17 a github.com PR URL handed to a fake gh, not a live call; predates the checker
+internal/pulse/harvest_test.go:156 url 2026-09-17 a github.com PR URL handed to a fake gh, not a live call; predates the checker
+internal/pulse/harvest_test.go:197 url 2026-09-17 a github.com PR URL handed to a fake gh, not a live call; predates the checker
+internal/pulse/harvest_test.go:261 url 2026-09-17 a github.com PR URL handed to a fake gh, not a live call; predates the checker
+internal/pulse/harvest_test.go:291 url 2026-09-17 a github.com PR URL handed to a fake gh, not a live call; predates the checker
+internal/pulse/manager_test.go:71 url 2026-09-17 a github.com PR URL handed to a fake gh, not a live call; predates the checker
+internal/pulse/pool_work_test.go:77 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
+internal/secrets/seal_test.go:89 url 2026-09-17 a github.com PR URL printed by a fake gh script, not a live call; predates the checker
+internal/swarm/admitrepo_test.go:122 url 2026-09-17 a github.com URL in a card RESULT fixture, not a live call; predates the checker
