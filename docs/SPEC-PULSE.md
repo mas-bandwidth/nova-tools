@@ -284,6 +284,15 @@ of burning the afternoon); `fleet wake` wakes by magic packet to the bench's
 `mac`; `fleet standard` is the standard itself, run locally or over ssh,
 whose checks are the contract below.
 
+`fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]` reads
+the benches file, copies `tools/bench-standard.sh` over each bench's
+`ssh <target> bash -s` stdin in parallel under `--timeout` (default 120), and
+prints one `FLEET <name>` line per bench: every `DRIFT` line the standard emitted,
+then its last line, both prefixed. It exits 0 when every bench says
+`STANDARD OK`, 2 when any says `DRIFT`, and 3 when a bench is unreachable
+(`FLEET <name> UNREACHABLE <error>`); `--max` caps the lines (0 lifts the cap)
+and `--ssh` defaults to `ssh` on `PATH`, so the tests point it at a fake.
+
 `fleet suspend` sleeps the idle benches: a bench holding a running card
 (a lease or a job directory with a live pid under `~/rowan-swarm-root` or
 `~/stella-swarm-root`) or a busy runner (a `Runner.Worker` process) is

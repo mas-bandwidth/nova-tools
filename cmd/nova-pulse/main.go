@@ -32,6 +32,7 @@ nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hour
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
+nova-pulse fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   reboot --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
@@ -131,6 +132,17 @@ deadline, slot locks whose pid is dead, launched cards whose job directory is go
 
 example:
   nova-pulse reap --roots ./swarm-root,./swarm-root-space --queue ./queue --deadline 1800 --dry-run
+
+fleet survey runs tools/bench-standard.sh on every bench named in --benches
+(name, ssh target and home per tab-separated line) over the ssh command
+"ssh <target> bash -s", in parallel under --timeout, and prints one line per
+bench: the standard's DRIFT lines and its last line prefixed FLEET <name>. Exit
+0 when every bench says
+STANDARD OK, 2 on any DRIFT, 3 when a bench is unreachable (FLEET <name>
+UNREACHABLE <error>). --max caps the lines; 0 means all.
+
+example:
+  nova-pulse fleet survey --benches ./fleet.tsv
 `
 
 // refuse is what an unusable invocation costs: one line naming what was wrong and the door

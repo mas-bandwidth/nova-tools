@@ -3,23 +3,56 @@ package main
 // The fleet verb and its sub-verbs (SPEC-PULSE ## Fleet, issue #880 items 14, 16 and 17).
 // The work is internal/pulse/fleet.go; ssh comes from --ssh so a test puts a fake on PATH and
 // no test reaches a machine.
+//
+// Issue #880 item 13: the benches live in one tab-separated file kept in git, and
+// `fleet survey` runs tools/bench-standard.sh on every bench over ssh and folds the
+// answers into one FLEET <name> line per bench. The coordinator surveyed the fleet by
+// hand in 97 ssh turns; this is the machinery that retires that.
+//
+// The ssh child is `ssh <target> bash -s` with the standard script on its stdin, so a
+// test fakes ssh on PATH and no test reaches the network. The benches run in parallel
+// under --timeout, then print in file order so the one-line-per-bench reading is stable.
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
+// fleetBench is one line of the benches file: name, ssh target, home, and the optional
+// mac that keeps the file's four-column shape (accepted and unused by survey).
+type fleetBench struct {
+	Name   string
+	Target string
+	Home   string
+}
+
+// fleetSurveyResult is one bench's fold: the lines to print and the exit it votes for
+// (0 ok, 2 drift, 3 unreachable).
+type fleetSurveyResult struct {
+	lines  []string
+	status int
+}
+
 func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " fleet", "a sub-verb is required (suspend, wake, reboot, secrets)")
+		return refuse(stderr, " fleet", "a sub-verb is required (survey, suspend, wake, reboot, secrets)")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
+	case "survey":
+		return cmdFleetSurvey(rest, stdout, stderr)
 	case "suspend":
 		return cmdFleetSuspend(rest, stdout, stderr)
 	case "wake":
@@ -29,7 +62,7 @@ func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	case "secrets":
 		return cmdFleetSecrets(rest, stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are suspend, wake, reboot, secrets; run: nova-pulse help)\n", sub)
+	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are survey, suspend, wake, reboot, secrets; run: nova-pulse help)\n", sub)
 	return 2
 }
 
@@ -170,4 +203,193 @@ func fleetNames(s string) []string {
 		}
 	}
 	return out
+}
+
+func cmdFleetSurvey(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("fleet survey")
+	benches := f.fs.String("benches", "", "")
+	ssh := f.fs.String("ssh", "ssh", "")
+	timeout := f.fs.Int("timeout", 120, "")
+	max := f.fs.Int("max", bounded.Default, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*benches, "benches", "the fleet file: name, ssh target, home, tab separated")
+	if *timeout < 1 {
+		f.add(fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
+	}
+	if *max < 0 {
+		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+
+	list, err := readFleetBenches(*benches)
+	if err != nil {
+		fmt.Fprintf(stderr, "FLEET REFUSED: --benches %s: %s\n", oneline.Field(*benches), oneline.Err(err))
+		return 2
+	}
+	script, err := readBenchStandard()
+	if err != nil {
+		fmt.Fprintf(stderr, "FLEET REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+
+	bound := time.Duration(*timeout) * time.Second
+	results := make([]fleetSurveyResult, len(list))
+	var wg sync.WaitGroup
+	for i, bench := range list {
+		wg.Add(1)
+		go func(i int, bench fleetBench) {
+			defer wg.Done()
+			results[i] = surveyOneBench(*ssh, script, bench, bound)
+		}(i, bench)
+	}
+	wg.Wait()
+
+	code := 0
+	shown := 0
+	for _, r := range results {
+		switch r.status {
+		case 3:
+			code = 3
+		case 2:
+			if code != 3 {
+				code = 2
+			}
+		}
+		for _, line := range r.lines {
+			if *max > 0 && shown >= *max {
+				return code
+			}
+			fmt.Fprintln(stdout, line)
+			shown++
+		}
+	}
+	return code
+}
+
+// surveyOneBench runs the standard on one bench over ssh and folds the script's DRIFT
+// lines and its last line into FLEET lines. An ssh failure that is not a drift script's
+// own exit 1 is an unreachable bench.
+func surveyOneBench(ssh, script string, bench fleetBench, timeout time.Duration) fleetSurveyResult {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, ssh, bench.Target, "bash -s")
+	cmd.Stdin = bytes.NewReader([]byte(script))
+	out, err := cmd.CombinedOutput()
+
+	text := string(out)
+	drifting := isDriftOutput(text)
+	answered := strings.Contains(text, "STANDARD OK")
+	if !drifting && !answered {
+		reason := oneline.Err(err)
+		if msg := firstNonemptyLine(text); msg != "" {
+			reason = oneline.Escape(msg)
+		}
+		return fleetSurveyResult{lines: []string{"FLEET " + bench.Name + " UNREACHABLE " + reason}, status: 3}
+	}
+	status := 0
+	if drifting {
+		status = 2
+	}
+	return fleetSurveyResult{lines: foldBenchStandard(bench.Name, text), status: status}
+}
+
+// foldBenchStandard prints every DRIFT line of the script and its last line, each
+// prefixed FLEET <name>.
+func foldBenchStandard(name, out string) []string {
+	var drifts []string
+	last := ""
+	for _, raw := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		line := strings.TrimRight(raw, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		last = line
+		if line == "DRIFT" || strings.HasPrefix(line, "DRIFT ") {
+			drifts = append(drifts, "FLEET "+name+" "+line)
+		}
+	}
+	if last != "" {
+		drifts = append(drifts, "FLEET "+name+" "+last)
+	}
+	return drifts
+}
+
+func isDriftOutput(out string) bool {
+	if strings.Contains(out, "STANDARD DRIFT") {
+		return true
+	}
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		if line == "DRIFT" || strings.HasPrefix(line, "DRIFT ") {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonemptyLine(out string) string {
+	for _, raw := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		if line := strings.TrimSpace(raw); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// readFleetBenches reads the tab-separated fleet file. The card's three columns are name,
+// ssh target and home; the spec's fourth (mac) is accepted and ignored here.
+func readFleetBenches(path string) ([]fleetBench, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var list []fleetBench
+	for n, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 3 {
+			return nil, fmt.Errorf("line %d wants at least 3 tab-separated fields name, ssh target, home, got %d", n+1, len(fields))
+		}
+		bench := fleetBench{Name: strings.TrimSpace(fields[0]), Target: strings.TrimSpace(fields[1]), Home: strings.TrimSpace(fields[2])}
+		if bench.Name == "" || bench.Target == "" {
+			return nil, fmt.Errorf("line %d wants a name and an ssh target", n+1)
+		}
+		list = append(list, bench)
+	}
+	if len(list) == 0 {
+		return nil, fmt.Errorf("no benches; refusing to guess")
+	}
+	return list, nil
+}
+
+// readBenchStandard finds tools/bench-standard.sh above the working directory, so the
+// verb runs from anywhere inside the clone.
+func readBenchStandard() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for i := 0; i < 16; i++ {
+		candidate := filepath.Join(dir, "tools", "bench-standard.sh")
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			raw, err := os.ReadFile(candidate)
+			if err != nil {
+				return "", err
+			}
+			return string(raw), nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "", fmt.Errorf("tools/bench-standard.sh not found above the working directory")
 }
