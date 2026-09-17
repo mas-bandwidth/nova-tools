@@ -369,10 +369,6 @@
 ;;;   numbers unwritten; a kill around acceptance and during clip exposes
 ;;;   neither two parents nor none.
 
-;;; NEEDS-KERNEL: chat-and-file-render-are-byte-identical (SPEC-WORK.md:2950) —
-;;;   `render`: chat and file mode are byte-identical for one projection and
-;;;   revision, shared prerequisites and private-data filtering included.
-
 ;;; NEEDS-KERNEL: render-refuses-a-target-outside-its-roots (SPEC-WORK.md:2950)
 ;;;   — `render`: a projection target is resolved only within explicitly
 ;;;   configured permitted roots; a missing mapping or a conflicting change is
