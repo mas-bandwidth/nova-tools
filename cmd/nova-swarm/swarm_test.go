@@ -919,6 +919,70 @@ func TestAWorkerDescriptionWithoutTheModelIsRefused(t *testing.T) {
 	}
 }
 
+// ISSUE #881: a worker description may carry "secret": "<ENV NAME>" instead of key_file,
+// and the value is delivered by nova-secrets exec into run's own environment, never a
+// file on disk (docs/SPEC-SWARM.md, the worker description; docs/SPEC-SECRETS.md, the
+// second caller). run and supervise require that variable present and non-empty there,
+// pass it to the harness by name, and the value is never written to any file, never
+// printed, and never in a RUN or SUPERVISE line.
+func TestARunWithASecretWorkerUsesTheEnvironmentAndLeaksNothing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one runs a worker pool")
+	}
+	b := newBench(t)
+	b.rewriteWorker(func(d map[string]any) {
+		delete(d, "key_file")
+		d["secret"] = "FAKE_SECRET"
+	})
+	id := b.add("a worker under a secret-delivered key\nFAKE-FINDINGS 1\nFAKE-USAGE 100 50 - - -\n")
+	b.extraEnv = append(b.extraEnv, "FAKE_SECRET="+fakeKey)
+
+	exit, stdout, stderr := b.run("--no-sandbox")
+	if exit != 0 {
+		t.Fatalf("run exited %d, want 0: the variable was present, so admission accepted it\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN START id="+id)
+	mustContain(t, "the run", stdout, "dest=done")
+	// The harness received the value by environment; the fake proves it by length, never
+	// by value.
+	mustContain(t, "the harness log", harnessLog(t, b, id), "the key is present, length")
+	// The value is in no event line and in no file under the pool or the slot, and the
+	// config the tool writes carries the variable's NAME, never the value.
+	if strings.Contains(stdout+stderr, fakeKey) {
+		t.Error("the key reached an event line")
+	}
+	if found := grepTree(t, b.pool, fakeKey); found != "" {
+		t.Errorf("the key is at rest in a file under the pool: %s", found)
+	}
+	if found := grepTree(t, filepath.Join(b.dir, "worker-home-1"), fakeKey); found != "" {
+		t.Errorf("the key is at rest in a file under the slot: %s", found)
+	}
+	cfg, err := os.ReadFile(filepath.Join(b.dir, "worker-home-1", "opencode.json"))
+	if err != nil {
+		t.Fatalf("the harness config was not written: %v", err)
+	}
+	mustContain(t, "the harness config", string(cfg), "{env:FAKE_KEY}")
+
+	// The variable ABSENT from run's environment is refused, naming the variable and the
+	// remedy, before any worker starts.
+	b2 := newBench(t)
+	b2.rewriteWorker(func(d map[string]any) {
+		delete(d, "key_file")
+		d["secret"] = "FAKE_SECRET"
+	})
+	b2.add("a worker whose secret was not delivered\nFAKE-FINDINGS 1\n")
+	b2.extraEnv = append(b2.extraEnv, "FAKE_SECRET=")
+	exit, stdout, stderr = b2.run("--no-sandbox")
+	if exit != 2 {
+		t.Fatalf("a secret absent from the environment exits %d, want 2:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "FAKE_SECRET")
+	mustContain(t, "the refusal", stderr, "nova-secrets exec")
+	if strings.Contains(stdout, "RUN START") {
+		t.Errorf("the refusal comes before any worker starts:\n%s", stdout)
+	}
+}
+
 // jobFile reads one file the child wrote under its job directory, found by the job id.
 func (b *bench) jobFile(id, name string) string {
 	b.t.Helper()

@@ -565,13 +565,15 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		return 2
 	}
-	key, err := swarm.ReadKey(w.KeyFile, w.EnvVar)
+	key, err := swarm.ReadKeyOrSecret(w)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-swarm run: %s\n", oneline.Err(err))
 		return 2
 	}
-	if mode, loose := swarm.KeyFileMode(w.KeyFile); loose {
-		fmt.Fprintf(stdout, "RUN NOTE the key file is mode %04o and readable beyond its owner: chmod 600 %s\n", mode, oneline.Escape(w.KeyFile))
+	if w.KeyFile != "" {
+		if mode, loose := swarm.KeyFileMode(w.KeyFile); loose {
+			fmt.Fprintf(stdout, "RUN NOTE the key file is mode %04o and readable beyond its owner: chmod 600 %s\n", mode, oneline.Escape(w.KeyFile))
+		}
 	}
 	if _, err := exec.LookPath(w.Harness); err != nil {
 		fmt.Fprintf(stderr, "nova-swarm run: the harness %s is not on PATH, so nothing could start; install it or name another in %s\n",
@@ -681,7 +683,7 @@ func cmdSupervise(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		return 2
 	}
-	key, err := swarm.ReadKey(w.KeyFile, w.EnvVar)
+	key, err := swarm.ReadKeyOrSecret(w)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-swarm supervise: %s\n", oneline.Err(err))
 		return 2

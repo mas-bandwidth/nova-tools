@@ -199,7 +199,14 @@ func SandboxGate(sandboxPath, poolDir, secret string, notes io.Writer) (reason, 
 	// The probe itself: five checks under the REAL policy for this platform, run once
 	// before the first task. HOME is the probe's own write set, because rule 9 refuses a
 	// run whose HOME is outside it -- and the dispatcher's own HOME is.
-	probe := exec.Command(sandboxPath, "probe", "--write", probeDir, "--secret", absPath(secret))
+	probe := exec.Command(sandboxPath, "probe", "--write", probeDir)
+	// A `--secret` is passed only where the description names a key FILE (issue #881). A
+	// description that names a `secret` -- the key delivered by nova-secrets exec into
+	// the environment -- has no key file on disk, so the probe has no secret file to
+	// prove it cannot read, and the probe runs its other checks without one.
+	if secret != "" {
+		probe.Args = append(probe.Args, "--secret", absPath(secret))
+	}
 	probe.Env = append(environWithout(os.Environ(), "HOME"), "HOME="+probeDir)
 	probeOut, err := probe.CombinedOutput()
 	if err == nil {
