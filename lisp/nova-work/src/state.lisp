@@ -22,6 +22,13 @@
   deps dependents
   ;; The flag a revert of a need raises on its dependents (SPEC-WORK.md:2110).
   needs-broken
+  ;; SPEC-WORK.md:3001 -- `node edit` owns exactly these five metadata fields.
+  ;; They live on the node like every other value and move on write. :repo is
+  ;; the `--repo` a root work-set may hold (SPEC-WORK.md:2846); :view is the
+  ;; roadmap's view record, written with its node by the one creator. :meta-log
+  ;; is the engine's append-only edit history, newest first, the :before/after
+  ;; pair `node edit` keeps outside the payload digest for its undo.
+  title category private version repo view meta-log
   ;; SPEC-WORK.md:1222 -- the newest row of an id carries revived=<rev|-> and
   ;; settles=<n>. Both are kept on the node and moved on write, like every
   ;; other counter here, so a row is written and never computed by a scan.
@@ -91,6 +98,13 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :deps (copy-list (getf spec :deps))
                           :dependents '()
                           :needs-broken nil
+                          :title (getf spec :title)
+                          :category (getf spec :category)
+                          :private (getf spec :private)
+                          :version (getf spec :version)
+                          :repo (getf spec :repo)
+                          :view nil
+                          :meta-log '()
                           :settles 0
                           :revived "-"))))
     (setf order (nreverse order))
