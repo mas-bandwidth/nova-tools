@@ -1309,3 +1309,73 @@ lines=<n>`, where `<n>` is the cairn's line count, and then the line a fresh win
 from: `RESTART: exit this window; the next window boots from <cairn>`. Replays:
 `beat-appends-the-queue-section`, `beat-appends-a-second-section`,
 `beat-without-git-still-says-ok`.
+
+## Watch
+
+Glenn, 2026-09-17 (#1142): every script and hand step sketched on the bench becomes an
+official verb, and every friend's scripts fold in. The verb line, as it will appear in help:
+
+```
+nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
+```
+
+**One process, three waits.** `watch` waits on the merge queue (`--queue`: entry rows, the
+`MERGED` line and removal rows), the bus (`--bus`: a new `To:` note from anyone but the caller —
+the caller is the name on the queue's `OWNER` row, and a note whose `From:` is that name is
+skipped), and the job roots (`--jobs`: a `RESULT.md` appearing under any
+`<root>/<slot>/jobs/<label>/`). It reads those three directories and the caller's clock, writes
+no state of its own, holds its last snapshot in memory and starts from the state of its first
+poll — it reports changes, never a backlog. `--until '<event>'` names the event that ends it —
+`pr=<n> merged`, `note-from=<name>`, or `job=<label> done` — and `--cap <duration>` is the wall
+it never runs past. It is not the daemon **What this draft does not do** forbids: it is bounded
+by its cap and exits, and it adds no tick to the loop.
+
+**One line per change, with a stable prefix, and silence when nothing changed.** Every change
+prints exactly one line: `QUEUE <change> pr=<n> at=<utc>` where `<change>` is `enqueued`, `merged`
+or `removed`; `NOTE from=<name> to=<name> id=<id>` for a new addressed note; and `JOB
+label=<label> state=<done|abstain|blocked> path=<path>` for a `RESULT.md` that appeared since the
+last poll, the state being its line 2 verdict. It polls no faster than every 30 s and prints no
+change line on a poll that found none. A named `--until` event ends it at the poll that sees it,
+before the cap, and then it prints `WATCH OK` and exits 0; the cap prints `WATCH CAP` and exits 3.
+
+```
+QUEUE <change> pr=<n> at=<utc>
+NOTE from=<name> to=<name> id=<id>
+JOB label=<label> state=<done|abstain|blocked> path=<path>
+WATCH OK until=<event> changes=<n> polls=<n> wall=<s>
+WATCH CAP until=<event> changes=<n> polls=<n> cap=<duration>
+WATCH REFUSED: <reason> (<remedy>)
+```
+
+**Every refusal is exit 2 with one remedy in parentheses.** A missing `--queue`, `--bus`,
+`--jobs`, `--until` or `--cap` is `WATCH REFUSED: refusing to guess (<flag> is required)`. An
+`--until` that is not one of the three events is `WATCH REFUSED until=<event> (name one of
+pr=<n> merged, note-from=<name>, job=<label> done)`. A `--cap` below the 30 s poll floor is
+`WATCH REFUSED cap=<duration> (the cap is at least the 30s poll floor)`. A `--bus` that is not a
+nova-bus checkout or a `--jobs` root that is not readable is one `WATCH REFUSED <flag>=<path>`
+naming a readable one.
+
+**The mistake it removes:** a coordinator spending most of its turns polling, with a dozen
+hand-written waiters in one night.
+
+Red tests, one per rule, each with a fake where the real thing is a network, a bench or a clock:
+
+1. `watch-prints-one-line-per-queue-change`: a fake queue dir whose entry, merge and removal each
+   appear between two polls yields exactly one `QUEUE` line each and no other line.
+2. `watch-prints-a-new-note-once`: a fake bus checkout holding one `To:` note from a friend
+   yields one `NOTE` line on the next poll and none after; a note `From:` the `OWNER` name is
+   skipped.
+3. `watch-prints-a-result-md-appearance`: a fake job root where a `RESULT.md` appears yields one
+   `JOB` line carrying the label and its line 2 verdict.
+4. `watch-polls-no-faster-than-30s`: a fake clock logs every poll, and no two polls are closer
+   than 30 s.
+5. `watch-prints-nothing-when-nothing-changes`: a fake queue, bus and job root unchanged across
+   three ticks yields no change line at all.
+6. `watch-exits-0-on-the-until-event`: `--until 'pr=7 merged'` against a fake queue that records
+   the merge returns `WATCH OK` and exit 0 at the poll that sees it.
+7. `watch-exits-3-at-the-cap`: a fake clock driven past `--cap` with no event returns `WATCH CAP`
+   and exit 3.
+8. `watch-refuses-a-bad-until-or-cap`: an unknown `--until` and a `--cap` below 30 s are each one
+   `WATCH REFUSED` with a remedy, exit 2, and no poll is made.
+9. `watch-refuses-missing-paths`: a missing `--bus` and a missing `--jobs` are each one `WATCH
+   REFUSED` with a remedy, exit 2.
