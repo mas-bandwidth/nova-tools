@@ -28,12 +28,6 @@ const orderQuestion = "land"
 // (or could not be asked): the middle, so the existing order stands among ties.
 const orderFallbackScore = 0.5
 
-// Decider is the one typed-decision call the scorer makes. *decide.Client
-// satisfies it, and a test hands in a fake, so no test reaches the network.
-type Decider interface {
-	Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error)
-}
-
 // Scorer asks one typed score in [0,1] for a PR's likelihood to land clean.
 // A nil Scorer on SweepInput leaves the sweep's enqueue order alone.
 type Scorer interface {
