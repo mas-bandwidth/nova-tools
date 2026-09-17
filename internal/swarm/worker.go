@@ -62,8 +62,15 @@ type Worker struct {
 	// assistant turns and max_cache_read caps the observed cache_read, and run
 	// stops the card at either with end=budget and a PROMPT-DEFECT line. Zero
 	// is unset; negative is refused at load.
-	MaxTurns     int `json:"max_turns,omitempty"`
-	MaxCacheRead int `json:"max_cache_read,omitempty"`
+	//
+	// CLASS (worker check): `class` is the one word public or paid, an OPTIONAL
+	// field a description may carry and the launcher never requires. `nova-swarm
+	// worker check` validates it when it is present; no other verb reads it, so a
+	// description without it is exactly the description this tool ran before it
+	// existed. The two budgets above are the same fields worker check validates.
+	Class        string `json:"class,omitempty"`
+	MaxTurns     int    `json:"max_turns,omitempty"`
+	MaxCacheRead int    `json:"max_cache_read,omitempty"`
 
 	// PROVIDER PHRASES: the second optional field, and it is the TRIAGE LINE'S (#103). A
 	// job that dies because the request did not fit is its own failure class, and the only
@@ -109,7 +116,7 @@ func LoadWorker(path string) (Worker, []error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&w); err != nil {
-		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, input_limit_phrases, launch_grace", path, err)}
+		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, class, input_limit_phrases, launch_grace", path, err)}
 	}
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
