@@ -204,7 +204,32 @@
     #:role-from-config
     #:role-inferred-from-model-p
     #:agreed-limit-for
-    #:spend-role))
+    #:spend-role
+    ;; assignment/execution-control replays (Go card 8630)
+    #:make-leasebook
+    #:leasebook-nodes
+    #:leasebook-w
+    #:leasebook-leases
+    #:leasebook-holders
+    #:leasebook-pending
+    #:leasebook-reservations
+    #:leasebook-evidence
+    #:leasebook-completion
+    #:leasebook-receipts
+    #:leasebook-requests
+    #:leasebook-generation
+    #:leasebook-observed-models
+    #:leasebook-effects
+    #:leasebook-bindings
+    #:leasebook-index-node
+    #:leasebook-index-friend
+    #:leasebook-offer
+    #:leasebook-received
+    #:leasebook-accepted
+    #:leasebook-decline
+    #:lease-until
+    #:leasebook-expire
+    #:leasebook-receipt))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

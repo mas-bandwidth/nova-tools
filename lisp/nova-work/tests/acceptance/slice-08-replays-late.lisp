@@ -117,9 +117,8 @@
   "a changed source or criterion preserving the historic tick at its pinned revision while unrelated receipts stay untouched"
   "RECEIPT-LOOKUP")
 
-(needs-kernel "until-is-overdue-not-released" "docs/SPEC-WORK.md:5243"
-  "at --until and lease expiry no duplicate launch and no stopped or completed claim, the reservation retained until reconciled"
-  "LEASE-UNTIL")
+;; Moved to tests/acceptance.lisp as a real replay over src/assignment.lisp
+;; (nova-tools #362): "until-is-overdue-not-released".
 
 (needs-kernel "working-is-a-view" "docs/SPEC-WORK.md:5082"
   "|W| <= |O| over a set where every item is leased then released, and no verb writes W"

@@ -1379,15 +1379,11 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
     (ok (search "acme/work" (getf node :id))
         "seed id ~A is not the placeholder house" (getf node :id))))
 
-;; NEEDS-KERNEL: offer/accept/lease verbs and the cross-holder lease rule.
-(deftest "no-shadow-lease-across-holders" "docs/SPEC-WORK.md:5238"
-    "expected=cross-holder-reply-creates-no-lease"
-  (slice1-refuses-verb :accept))
-
-;; NEEDS-KERNEL: the offer verb writing :dispatched plus a reservation index entry.
-(deftest "offer-writes-intent-and-a-reservation" "docs/SPEC-WORK.md:5229"
-    "expected=:dispatched;pending-offer;reservation;nothing-else"
-  (slice1-refuses-verb :offer))
+;; Moved to tests/acceptance.lisp as real replays over src/assignment.lisp
+;; (nova-tools #362): a second offer to another name while a holder is pending
+;; or accepted is refused -- "no-shadow-lease-across-holders"; an admitted offer
+;; writes :effect :dispatched, a pending-offer index entry and a reservation --
+;; "offer-writes-intent-and-a-reservation".
 
 ;; NEEDS-KERNEL: archive export/reload and a recent-only export never labelled full.
 
