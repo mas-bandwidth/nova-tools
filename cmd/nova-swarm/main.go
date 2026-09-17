@@ -454,12 +454,16 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	benches := f.fs.String("benches", "", "")
 	bench := f.fs.String("bench", "", "")
 	then := f.fs.String("then", "", "")
+	// The card form's own three: the harness a runnerless batch runs native with (#636),
+	// its auth file, and the slot range it allocates from (#618).
+	harness := f.fs.String("harness", "", "")
+	auth := f.fs.String("auth", "", "")
 	slots := f.fs.String("slots", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	if *cards != "" {
-		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, *slots, stdout, stderr)
+		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *benches, *bench, *then, *harness, *auth, *slots, stdout, stderr)
 	}
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	f.want(*tasks, "tasks", "a directory holding one task file per job")
@@ -530,12 +534,14 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 // TSV. It has no pool and no admission queue: it starts one runner process per card, waits
 // until they all end or the batch's deadline, and folds every card's RESULT.md into one
 // bounded packet.
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench string, then string, slots string, stdout, stderr io.Writer) int {
+func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int, benches, bench, then, harness, auth, slots string, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
 	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
 	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
-	if bench == "" {
-		f.want(runner, "runner", "the command to start once per card, given label slot model card-path root as arguments")
+	// #636: --runner is one of two ways to run a local card; --harness (or a `local` row in
+	// --benches) runs it through this binary's own `native`, so neither alone is required.
+	if bench == "" && runner == "" && harness == "" && benches == "" {
+		f.add("--runner or --harness is required: --runner <cmd> starts once per card with label slot model card-path root, and --harness <path> runs each card through this binary's own `nova-swarm native`; refusing to guess")
 	}
 	if bench != "" {
 		f.want(benches, "benches", "a table of one bench per row: name host root cores harness auth wall")
@@ -560,8 +566,8 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle int
 		ID: id, Deadline: time.Duration(seconds) * time.Second,
 		Idle:  time.Duration(idle) * time.Second,
 		Cards: cards, Root: root, Runner: runner,
-		Slots:   slots,
 		Benches: benches, Bench: bench, Then: then,
+		Harness: harness, Auth: auth, Slots: slots,
 		Stdout: stdout, Stderr: stderr,
 	})
 }

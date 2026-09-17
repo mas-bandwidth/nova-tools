@@ -54,7 +54,16 @@ type BatchInput struct {
 	Idle     time.Duration // per-card idle timeout: a card's log not growing this long is killed
 	Cards    string        // path to the TSV: label \t slot \t model \t card-path
 	Root     string        // the root a card's RESULT.md hangs under
-	Runner   string        // the command, one process per card
+	Runner   string        // the command, one process per card; "" runs `nova-swarm native` in this binary
+	// Harness and Auth are the native path's own configuration, read only when Runner is
+	// empty: with no runner script a local card runs through this binary's own `native`
+	// verb (issue #636), the way a bench row's card already does.
+	Harness string
+	Auth    string
+	// Self is the nova-swarm binary a runnerless batch runs `native` from. Empty resolves
+	// this process's own executable, and then "nova-swarm" on PATH: a test driving Batch
+	// directly is not nova-swarm, and a batch that ran the test binary ran nothing.
+	Self string
 	// Slots is the slot range this batch allocates from: "<lo>-<hi>", or "<n>" for 1-<n>.
 	// Empty keeps the old behaviour -- allocation from 1 with no ceiling. The cards.tsv
 	// slot column is optional in either case; a hand slot outside the range is that card's
@@ -147,9 +156,22 @@ func Batch(in BatchInput) int {
 		fmt.Fprintf(in.Stderr, "BATCH REFUSED: %s holds no card; a batch of no cards is a typo\n", oneline.Field(in.Cards))
 		return 1
 	}
+	// #636: a local card with no --runner runs through this binary's own `native` verb, so
+	// a caller needs a runner script only for a runner of its own. The harness is the one
+	// thing native cannot derive: it comes from --harness, else from the benches table's
+	// `local` row.
 	if in.Runner == "" && in.Bench == "" && !anyCardNamesBench(cards) {
-		fmt.Fprintln(in.Stderr, "nova-swarm batch: --runner is required; it wants the command one process per card runs")
-		return 2
+		if in.Harness == "" {
+			in.Harness = localHarness(in.Benches, &in.Auth)
+		}
+		if in.Harness == "" {
+			fmt.Fprintln(in.Stderr, "nova-swarm batch: --runner or --harness is required; with --harness <path> each card runs through this binary's own `nova-swarm native`, and a `local` row in --benches names one too; refusing to guess")
+			return 2
+		}
+		if _, err := os.Stat(in.Harness); err != nil {
+			fmt.Fprintf(in.Stderr, "nova-swarm batch: --harness %s: %s\n", oneline.Field(in.Harness), oneline.Err(err))
+			return 2
+		}
 	}
 	// Admission is per card: every refusal is said once, by name, and the card is scored
 	// ABSTAIN reason=admission on the packet rather than taking the batch down with it.
@@ -243,6 +265,14 @@ func Batch(in BatchInput) int {
 			// On a remote bench the batch builds the native command itself: ssh <host>
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
 			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), logFile)
+			if err != nil {
+				_ = logFile.Close()
+				fmt.Fprintln(in.Stderr, err)
+				return 2
+			}
+		} else if in.Runner == "" {
+			// #636: no runner script, so this binary runs the card through its own `native`.
+			cmd, err = selfNative(c, in, logFile)
 			if err != nil {
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
@@ -1237,6 +1267,73 @@ func ParseSlotRange(s string) (lo, hi int, err error) {
 		return 0, 0, fmt.Errorf("--slots wants a slot count or a <lo>-<hi> range, got %q", s)
 	}
 	return 1, n, nil
+}
+
+// localHarness reads the benches table's `local` row for the harness (and, when the caller
+// named none, the auth) a runnerless batch runs native with. It returns "" when there is no
+// table or no local row: the caller's refusal says so.
+func localHarness(benchesPath string, auth *string) string {
+	if strings.TrimSpace(benchesPath) == "" {
+		return ""
+	}
+	table, err := LoadBenchTable(benchesPath)
+	if err != nil {
+		return ""
+	}
+	for _, b := range table {
+		if b.Name != "local" {
+			continue
+		}
+		if auth != nil && *auth == "" {
+			*auth = b.Auth
+		}
+		return b.Harness
+	}
+	return ""
+}
+
+// swarmSelf resolves the nova-swarm binary a runnerless batch runs native from: the caller's
+// own choice, else this process when it is nova-swarm itself, else nova-swarm on PATH.
+func swarmSelf(named string) (string, error) {
+	if strings.TrimSpace(named) != "" {
+		return named, nil
+	}
+	if exe, err := os.Executable(); err == nil && strings.HasPrefix(filepath.Base(exe), "nova-swarm") && !strings.HasSuffix(exe, ".test") {
+		return exe, nil
+	}
+	if path, err := exec.LookPath("nova-swarm"); err == nil {
+		return path, nil
+	}
+	return "", fmt.Errorf("nova-swarm batch: no nova-swarm binary to run `native` from; pass --runner <cmd>, or put nova-swarm on PATH")
+}
+
+// selfNative builds the command a local card runs when the caller named no runner: this
+// binary's own `native` verb, with the same arguments bin/nova-native-runner.sh passed by
+// hand (issue #636). The slot argument is the SLOT directory, not the job directory: native
+// makes <slot>/jobs/<label> itself.
+func selfNative(c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error) {
+	self, err := swarmSelf(in.Self)
+	if err != nil {
+		return nil, err
+	}
+	argv := []string{"native",
+		"--harness", in.Harness,
+		"--model", c.model,
+		"--label", c.label,
+		"--card", c.cardPath,
+		"--slot", filepath.Join(in.Root, strconv.Itoa(c.slot)),
+		"--root", in.Root,
+		"--deadline", strconv.Itoa(int(in.Deadline.Seconds())) + "s",
+	}
+	if in.Auth != "" {
+		argv = append(argv, "--auth", in.Auth)
+	}
+	cmd := exec.Command(self, argv...)
+	cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	ownGroup(cmd)
+	return cmd, nil
 }
 
 // batchLockPath is the lock a batch writes on a slot it takes: <root>/<slot>/BATCH, one line
