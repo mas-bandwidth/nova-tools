@@ -1136,7 +1136,60 @@
     #:assignment-control-blocker
     #:automatic-assignment-allowed-p
     #:regression-recover
-    #:assign-automatic))
+    #:assign-automatic
+    ;; replays-8648: regression, retained replies, isolated restore,
+    ;; review reuse and review cycles
+    #:make-verification-summary
+    #:verification-summary-node
+    #:verification-summary-pinned-revision
+    #:verification-summary-current-revision
+    #:verification-summary-state
+    #:verification-summary-history
+    #:invalidate-verification
+    #:recheck-needed-p
+    #:confirm-regression
+    #:repair-work-id
+    #:repair-work-node
+    #:repair-work-state
+    #:make-retained-disposition
+    #:retained-disposition-request
+    #:retained-disposition-payload-digest
+    #:retained-disposition-sequence
+    #:retained-disposition-record-hash
+    #:retained-disposition-reply
+    #:retained-disposition-boundary
+    #:make-coverage
+    #:coverage-verified-p
+    #:retire-reply
+    #:make-restore-session
+    #:restore-session-read-only-p
+    #:restore-session-ownership
+    #:restore-session-assignments
+    #:restore-session-dispatch-count
+    #:restore-session-replayed-messages
+    #:restore-session-external-effects
+    #:restore-dispatch
+    #:promote-repair
+    #:make-scope-review
+    #:scope-review-friend
+    #:scope-review-head
+    #:scope-review-verdict
+    #:scope-review-reusable-p
+    #:make-review-cycle
+    #:review-cycle-friend
+    #:review-cycle-revision
+    #:review-cycle-finding-ids
+    #:review-cycle-dispositions
+    #:review-cycle-clearance
+    #:review-cycle-evidence-reused-p
+    #:review-cycle-reread-delta
+    #:review-cycle-cost
+    #:make-review-ledger
+    #:review-ledger-cycles
+    #:record-review-cycle
+    #:review-ledger-covers-friends-p
+    #:review-ledger-cycle-count
+    #:review-ledger-total-cost))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
