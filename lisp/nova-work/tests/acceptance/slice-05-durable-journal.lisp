@@ -708,6 +708,15 @@
                                               (dispatch-offer "req-2" "root/f/t1" "carol" 2))
                  "no shadow lease: a cross-holder offer is refused")))
 
+;; dry-run-writes-nothing: a dry run validates and projects without mutating;
+;; after a green preview at revision R the --request id is still new to the
+;; dedup index and events=/pending=/pushed= are unchanged; an accepted mutation
+;; moves to R+1; apply --expect R is refused stale; apply at R+1 newly validates.
+;; NEEDS-KERNEL: a --dry-run projection path and SESSION OK counters.
+(deftest-pending "dry-run-writes-nothing" "docs/SPEC-WORK.md:5196"
+    "expected=preview-mutates-nothing;dedup-still-new;events-pending-pushed-unchanged"
+  "no dry-run projection exists in slice 1")
+
 ;; edit-is-atomic-and-replayable now lives in tests/acceptance.lisp over the
 ;; node-edit verb of src/node-verbs.lisp (nova-tools #362).
 ;; edit-is-atomic-and-replayable: a bad one-of-five patch writes nothing; an
@@ -841,8 +850,32 @@
     (check-equal "att-2" (attempt-id (second attempts))
                  "the retry keeps its own identity")))
 
+;; a-retry-does-not-overwrite-its-attempt: a retry never overwrites the attempt
+;; before it; concurrent attempts keep separate model and usage attribution.
+(deftest "a-retry-does-not-overwrite-its-attempt" "docs/SPEC-WORK.md:5222"
+    "expected=unknown-stays-unknown;attempts-separate-attribution;never-overwrite"
+  (let* ((first (make-attempt :id "att-1" :node "root/f/t1"
+                              :requested-model "astra" :observed nil :usage 10))
+         (retry (make-attempt :id "att-2" :node "root/f/t1"
+                              :requested-model "astra" :observed "beta" :usage 7))
+         (attempts (append-attempt (list first) retry)))
+    (check-equal 2 (length attempts) "the retry is a second attempt")
+    (check-equal t (equal first (first attempts))
+                 "the attempt before the retry is not overwritten")
+    (check-equal :unknown (attempt-observed-model (first attempts))
+                 "the first attempt's unknown observation survives the retry")
+    (check-equal 10 (attempt-usage (first attempts)) "the first attempt's usage is intact")
+    (check-equal "att-2" (attempt-id (second attempts))
+                 "the retry keeps its own identity")))
+
 ;; full-round-trip is the real deftest earlier in this file, over
 ;; state-canonical-form and reconstruct-state (nova-tools #362).
+;; full-round-trip: export a captured revision, load it in a fresh isolated
+;; engine, export again, and compare every semantic field, stable ids, Unicode
+;; and literal text, order where meaningful, links, evidence, roles, CONFIG,
+;; ACTIVE observations, model and rate records, O and C history, roadmaps and
+;; accounting provenance; derived caches rebuild to equivalent values.
+;; NEEDS-KERNEL: an export/import path over a durable captured revision.
 
 ;;; ------------------------------------------------------------------
 ;;; SPEC-WORK.md lines 3600-end, part 4 of 8: session/CLI-level replays.
