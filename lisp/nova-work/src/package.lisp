@@ -1189,7 +1189,48 @@
     #:record-review-cycle
     #:review-ledger-covers-friends-p
     #:review-ledger-cycle-count
-    #:review-ledger-total-cost))
+    #:review-ledger-total-cost
+    ;; replays of card 8649: roadmap proof, journal rotation, rule 2's
+    ;; unavailable partition, savepoint cut and write failure
+    #:make-roadmap-row
+    #:roadmap-row-id
+    #:roadmap-row-axis
+    #:roadmap-row-kind
+    #:roadmap-row-state
+    #:roadmap-row-evidence
+    #:roadmap-row-status
+    #:make-roadmap
+    #:roadmap-id
+    #:roadmap-axes
+    #:roadmap-rows
+    #:roadmap-shared-prerequisites
+    #:roadmap-discovered
+    #:roadmap-closed
+    #:roadmap-render
+    #:roadmap-edit-marker
+    #:make-journal-record
+    #:journal-record-seq
+    #:journal-record-events
+    #:journal-record-hash
+    #:make-journal-segment
+    #:journal-segment-path
+    #:journal-segment-header
+    #:journal-segment-records
+    #:make-journal-chain
+    #:journal-chain-id
+    #:journal-chain-segments
+    #:rotate-journal
+    #:journal-append-record
+    #:savepoint-cut-reachable-p
+    #:export-journal-bundle
+    #:rule-2-check
+    #:validate-report
+    #:make-savepoint-store
+    #:savepoint-store-verified
+    #:savepoint-store-published
+    #:savepoint-store-attempts
+    #:savepoint-write
+    #:savepoint-list))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
