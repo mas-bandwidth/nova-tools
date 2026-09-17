@@ -54,10 +54,11 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    nova-bus checkout — open notes whose body has a `slices:` block, one candidate per slice),
    `roadmap` (a lisp file under `docs/roadmaps/` — every cell whose `:card` names a template),
    `prs` (`owner/repo` — open, non-draft pull requests, one read candidate per PR),
-   `work` (a nova-work checkout — bug nodes and item nodes that are open, unleased and
-   unblocked, one candidate per node). A `work` node is unleased when no `launch` currently
-   holds it and unblocked when it is not waiting on a merge; the node id rides on the card's
-   line 1 (rule 5) so `harvest` can record the attempt on the node (rule 11).
+   SPEC-AHEAD: #466 — `work` (a nova-work checkout — bug nodes and item nodes that are
+   open, unleased and unblocked, one candidate per node). A `work` node is unleased when no
+   `launch` currently holds it and unblocked when it is not waiting on a merge; the node id
+   rides on the card's line 1 (rule 5) so `harvest` can record the attempt on the node
+   (rule 11).
    A `work` checkout carries its poolable nodes in `<root>/nodes.tsv`, one tab-separated
    row per node — `id`, `type` (`bug` or `item`), `state`, `lease` (empty when unleased),
    `blocked-by` (empty when unblocked), `title`, and an optional template override — and
@@ -745,10 +746,11 @@ handoff (rule **The manager tier**).
     value is one token; `--max 0` prints all; `--max -1` is exit 2.
 22. `every-refusal-names-its-remedy`: every refusal in the package lives in one table the
     test walks; each ends in a parenthesised remedy, and removing one turns the test red.
-23. `pool-reads-work-nodes`: a `work` source with one open, unleased, unblocked bug node and
-    one open, unleased, unblocked item node yields `work=2`, two `pool.tsv` rows whose `id` is
-    the node id, and `candidates=2`; a node that is leased or blocked is nowhere; the id is
-    carried on the card's line 1 so `harvest` records the attempt on the node.
+23. SPEC-AHEAD: #466 — `pool-reads-work-nodes`: a `work` source with one open, unleased,
+    unblocked bug node and one open, unleased, unblocked item node yields `work=2`, two
+    `pool.tsv` rows whose `id` is the node id, and `candidates=2`; a node that is leased or
+    blocked is nowhere; the id is carried on the card's line 1 so `harvest` records the
+    attempt on the node.
 24. `cut-picks-cheapest-capable-route`: a benches table with a zero-cost local, a flat Go and
     a metered Zen, and one card per capability class, yields `route=<model> reason=<class>`
     on `CUT ROUTE` for the cheapest capable model — the mutation that matters: a pick that
