@@ -155,7 +155,7 @@ func CheckWaits(root, allowlistPath string) (WaitsResult, error) {
 
 	var remaining []WaitFinding
 	for _, f := range res.Findings {
-		if i := matchWaitAllow(entries, f); i >= 0 {
+		if i := matchWaitAllow(entries, matched, f); i >= 0 {
 			matched[i] = true
 			res.Allowlisted++
 			continue
@@ -219,14 +219,30 @@ func readWaitAllowlist(path string) ([]waitAllow, error) {
 	return out, sc.Err()
 }
 
-// matchWaitAllow returns the index of the entry naming this finding, or -1.
-func matchWaitAllow(entries []waitAllow, f WaitFinding) int {
+// matchWaitAllow returns the index of an unused entry that allows this finding, or -1.
+//
+// A row allows ONE offender of its kind in its file. The line in the row is where the
+// offender stood when the row was written, for a reader; it is not matched on. Matching
+// on the line turned dev red the moment any merge shifted lines in a listed file
+// (2026-09-17: #1073 moved cmd/nova-swarm/native_test.go and every group after it
+// failed). The count per file and kind is what the list holds still: a new fixed wait
+// in a listed file exceeds its rows and is refused, a fixed one leaves a row unused
+// and the stale rule makes the list shrink. An exact line match is preferred so the
+// stale row reported is the one a reader expects.
+func matchWaitAllow(entries []waitAllow, used []bool, f WaitFinding) int {
+	loose := -1
 	for i, e := range entries {
-		if e.file == f.File && e.line == f.Line && e.kind == f.Kind {
+		if used[i] || e.file != f.File || e.kind != f.Kind {
+			continue
+		}
+		if e.line == f.Line {
 			return i
 		}
+		if loose < 0 {
+			loose = i
+		}
 	}
-	return -1
+	return loose
 }
 
 // scanWaitFile parses one _test.go and returns its fixed-wait findings. The
