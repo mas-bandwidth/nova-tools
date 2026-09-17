@@ -201,3 +201,58 @@
                            (format nil "~A~%A~%~A~%"
                                    "<!-- ROADMAP:END -->" "<!-- ROADMAP:START -->"))))
         "a reversed marker pair rendered instead of refusing")))
+
+;;; ------------------------------------------------------------------
+;;; move-updates-every-roadmap-scope         docs/SPEC-WORK.md:5978
+;;; ------------------------------------------------------------------
+
+(deftest "move-updates-every-roadmap-scope" "docs/SPEC-WORK.md:5978"
+    "expected=referencing-scopes-advance;unrelated-stays;refusal-moves-none;captured-render-keeps-scope;intervening-mutation-conflicts-undo"
+  (let* ((ra (make-scope-roadmap :id "ra" :revision 3 :rows '("row-1" "ra-x")))
+         (rb (make-scope-roadmap :id "rb" :revision 1 :rows '("row-1")))
+         (rc (make-scope-roadmap :id "rc" :revision 7 :rows '("rc-x")))
+         (scopes (list ra rb rc)))
+    ;; A row referenced by two roadmaps outside both parent chains (they sit in
+    ;; neither the old nor the new chain) advances both referencing scopes in
+    ;; the one move envelope.
+    (multiple-value-bind (moved events ok) (scopes-on-move scopes "row-1")
+      (ok ok "the move was accepted")
+      (check-equal 2 (length events) "both referencing scope revisions advanced")
+      (check-equal 3 (length moved) "an unrelated scope disappeared")
+      (check-equal 4 (scope-roadmap-revision
+                      (find "ra" moved :key #'scope-roadmap-id :test #'string=))
+                   "the first referencing scope did not advance")
+      (check-equal 2 (scope-roadmap-revision
+                      (find "rb" moved :key #'scope-roadmap-id :test #'string=))
+                   "the second referencing scope did not advance")
+      ;; The unrelated roadmap stays.
+      (check-equal 7 (scope-roadmap-revision
+                      (find "rc" moved :key #'scope-roadmap-id :test #'string=))
+                   "the unrelated scope advanced")
+      ;; A render captured before the move keeps its captured scope.
+      (let ((captured (scope-capture scopes)))
+        (check-equal 3 (scope-roadmap-revision
+                        (find "ra" captured :key #'scope-roadmap-id :test #'string=))
+                     "the captured render moved with the row"))
+      ;; A failed acceptance moves none.
+      (multiple-value-bind (refused revents rok)
+          (scopes-on-move scopes "row-1" :accept nil)
+        (check-equal nil rok "a failed acceptance reported success")
+        (check-equal '() revents "a failed acceptance wrote an envelope")
+        (check-equal scopes refused "a failed acceptance moved a scope"))
+      ;; An intervening affected-roadmap mutation makes the undo conflict.
+      (let* ((mutated (mapcar (lambda (s)
+                                (if (string= "ra" (scope-roadmap-id s))
+                                    (scope-mutate s)
+                                    s))
+                              moved))
+             (touched '("ra" "rb"))
+             (guards '(4 2)))
+        (multiple-value-bind (restored line) (scopes-undo moved touched guards scopes)
+          (check-equal 3 (scope-roadmap-revision
+                          (find "ra" restored :key #'scope-roadmap-id :test #'string=))
+                       "undo with matching guards did not restore the preimage")
+          (check-equal nil line "undo with matching guards reported a conflict"))
+        (multiple-value-bind (restored line) (scopes-undo mutated touched guards scopes)
+          (check-equal nil restored "an intervening mutation did not refuse undo")
+          (ok (search "conflict" line) "the undo conflict was not named: ~A" line))))))

@@ -325,14 +325,6 @@
 ;;   ;; node edit and node move unable to change it.)
 ;; NEEDS-KERNEL: node add/edit/move and the --repo field (no node verbs in slice).
 
-;;; roadmap-has-one-creator  SPEC-WORK.md prose :2846 / table :5344
-;; (deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:5344"
-;;     "add-roadmap-exits-2-naming-create;create-writes-node+view-in-one-envelope;crash-all-or-none"
-;;   ;; `node add --type roadmap` exit 2 naming `roadmap create`; `roadmap create`
-;;   ;; writing one node and one view in one envelope, a crash between them
-;;   ;; replaying all-or-none; no second alias.)
-;; NEEDS-KERNEL: the roadmap verbs (no roadmap in slice 1).
-
 ;;; metadata-patches-preserve-intent  SPEC-WORK.md prose :2844 / table :5347
 ;; (deftest "metadata-patches-preserve-intent" "docs/SPEC-WORK.md:5347"
 ;;     "keep/clear/set-empty/set-false/set-value-distinct;all-keep/malformed/wrong-type-refused;version-on-feature-refused"
@@ -400,44 +392,12 @@
 ;;;   a move under a public parent from a private one is refused "privacy
 ;;;   reduction", the reverse admitted and the public render losing the rows.
 
-;;; NEEDS-KERNEL: move-updates-every-roadmap-scope (SPEC-WORK.md:2891) — the
-;;;   `move` verb: a row referenced by two roadmaps outside both parent chains
-;;;   and one unrelated roadmap advances both referencing scope revisions in
-;;;   the envelope, leaves the unrelated one, a failed acceptance moves none,
-;;;   historical renders keep the old captured scope, and an intervening
-;;;   affected-roadmap mutation makes undo conflict.
-
 ;;; NEEDS-KERNEL: move-undo-refuses-a-reorder (SPEC-WORK.md:2891) — undo after
 ;;;   a sibling reorder, a further reparent or a privacy change is refused
 ;;;   conflict and guesses no position; undo otherwise restores the exact
 ;;;   before order and required sets with fresh scope revisions, the old
 ;;;   numbers unwritten; a kill around acceptance and during clip exposes
 ;;;   neither two parents nor none.
-
-;;; NEEDS-KERNEL: axisless-history (SPEC-WORK.md:2948) — `roadmap row`/axis:
-;;;   two ordered rows added, one finished, the state exported and loaded, the
-;;;   view reopened past the default window: both rows and their evidence
-;;;   present, the denominator not reduced by completion; a row retired records
-;;;   a scope movement, keeps its node, and the prior view reconstructs at its
-;;;   captured revision.
-
-;;; NEEDS-KERNEL: matrix-retirement (SPEC-WORK.md:2948) — `axis --remove`: of a
-;;;   first-axis row then of another axis's member, only the selected
-;;;   coordinates retired and recoverable, no task cancelled, an unknown member
-;;;   refused, a layout change on a populated roadmap refused "layout
-;;;   populated" with no partial write, and a matrix never flattened without
-;;;   explicit selections.
-
-;;; NEEDS-KERNEL: configure-no-effect-and-undo-conflict (SPEC-WORK.md:2949) —
-;;;   `roadmap configure`: an equal-value configure, its reply lost, a later
-;;;   edit, then the retry: the original receipt returned and the later value
-;;;   kept; undo restores an ordered preimage only while its guards match.
-
-;;; NEEDS-KERNEL: completed-view-mutation (SPEC-WORK.md:2949) — metadata,
-;;;   projection and render on a settled roadmap revive nothing; an outstanding
-;;;   member added applies the atomic revival rule so no settled container
-;;;   silently holds open required work; counts and indexes are checked by the
-;;;   reference fold after each step.
 
 ;;; NEEDS-KERNEL: chat-and-file-render-are-byte-identical (SPEC-WORK.md:2950) —
 ;;;   `render`: chat and file mode are byte-identical for one projection and
@@ -832,10 +792,6 @@
 ;; async-operations (SPEC-WORK.md:5593) --- status, wait and cancel under a busy import, export
 ;; and clip; no double launch, no false cancellation success, no control plane stalled behind I/O.
 
-;; NEEDS-KERNEL: roadmap row ordering and completion; no roadmap verb exists yet.
-;; axisless-history (SPEC-WORK.md:5383) --- two ordered rows, one finished, exported/loaded and
-;; reopened past the window: both rows and evidence present, denominator not reduced by completion.
-
 ;; NEEDS-KERNEL: correct/execution-correct barrier; no correct verb exists yet.
 ;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) --- the bare correct refused by name
 ;; while an attempt is live and admitted once none is.
@@ -913,16 +869,6 @@
 ;; (deftest "complete-cost-lineage" "docs/SPEC-WORK.md:4375"
 ;;     "expected=parent-child-retry-join-once;failed-count;cache-subsets-no-double-count;impl-cost-separate;gaps-unknown"
 ;;   ;; NEEDS-KERNEL: cost lineage joins over receipt records
-;;   )
-
-;; (deftest "completed-view-mutation" "docs/SPEC-WORK.md:5394"
-;;     "expected=metadata-projection-render-on-settled-roadmap-revive-nothing;member-add-applies-atomic-revival;counts-indexes-checked"
-;;   ;; NEEDS-KERNEL: roadmap view mutation and atomic revival rule
-;;   )
-
-;; (deftest "configure-no-effect-and-undo-conflict" "docs/SPEC-WORK.md:5391"
-;;     "expected=equal-configure-original-receipt-and-later-value-kept;undo-restores-preimage-only-while-guards-match"
-;;   ;; NEEDS-KERNEL: configure + undo retry/guard machinery
 ;;   )
 
 ;; (deftest "copied-journal-grants-nothing" "docs/SPEC-WORK.md:5535"
@@ -1338,16 +1284,6 @@ asserts does not exist in slice 1."
 ;;  ;; unrelated nodes, scan neither O nor C.)
 
 ;; ------------------------------------------------------------------
-;; matrix-retirement   docs/SPEC-WORK.md:5387
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: roadmap axes (only selected coordinates retired and
-;; recoverable; no task cancelled; layout change on populated roadmap refused).
-;;(deftest "matrix-retirement" "docs/SPEC-WORK.md:5387"
-;;    "selected=retired,recoverable=yes,task-cancelled=0"
-;;  ;; `axis --remove` of a first-axis row and then of another axis's member:
-;;  ;; only the selected coordinates retired and recoverable, no task cancelled.)
-
-;; ------------------------------------------------------------------
 ;; merged-is-not-distributed   docs/SPEC-WORK.md:5093
 ;; ------------------------------------------------------------------
 ;; NEEDS-KERNEL: release/distribution state (a fix in C with `landed=<sha>` and
@@ -1420,17 +1356,6 @@ asserts does not exist in slice 1."
 ;;    "undo=conflict,position=never-guessed"
 ;;  ;; undo after a sibling reorder, a further reparent or a privacy change
 ;;  ;; refused conflict and guessing no position.)
-
-;; ------------------------------------------------------------------
-;; move-updates-every-roadmap-scope   docs/SPEC-WORK.md:5375
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: roadmap scope revisions (a row referenced by two roadmaps
-;; advances both referencing scopes, unrelated scope stays).
-;;(deftest "move-updates-every-roadmap-scope" "docs/SPEC-WORK.md:5375"
-;;    "referencing-scopes=advance,unrelated=stays"
-;;  ;; a row referenced by two roadmaps outside both parent chains and one
-;;  ;; unrelated roadmap: both referencing scope revisions advance, the
-;;  ;; unrelated one stays.)
 
 ;; ------------------------------------------------------------------
 ;; moving-source   docs/SPEC-WORK.md:5585
