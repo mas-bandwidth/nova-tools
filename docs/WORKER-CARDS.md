@@ -345,6 +345,21 @@ scored `no-result`. **Not measured:** a card that set its own `TMPDIR` outside t
 **Expires** when the `STEP 1` template loses the export and #553's pre-clone lands. **Rollback:** the
 `STEP 1` export. **Held by:** Rowan.
 
+## 26. One amendment, one section file
+
+A spec amendment or a replay amendment edits one section file, never the whole
+monolith: one file under `docs/spec-pulse/` per `## ` section of SPEC-PULSE.md
+(included by the top file, checked by `internal/pulse/layout560_test.go`), and
+one file under `lisp/nova-work/tests/acceptance/` per replay slice (loaded by
+`lisp/nova-work/tests/acceptance.lisp`). Every replay PR used to append to one
+`acceptance.lisp` and every SPEC-PULSE amendment edited one file, and all of
+them conflicted (nova-tools #560). Parallel PRs that touch different sections
+now touch different files and merge clean.
+**Measured:** nothing yet; this practice licenses the layout, and the first two
+parallel amendment PRs that merge without conflict are its evidence.
+**Expires** when the layout changes. **Rollback:** the single-file specs.
+**Held by:** Rowan.
+
 ## Open
 
 - **The DeepSeek key route is a human's.** Unauthorized is verified for that credential
