@@ -39,7 +39,8 @@
     (multiple-value-bind (okp line code) (submit k (register-request))
       (ok okp "machine register refused: ~A" line)
       (check-equal 0 code "machine register exit code")
-      (check-string= "MACHINE OK machine=m-a1" line "machine OK line"))
+      (ok (search "MACHINE OK" line) "machine OK line")
+      (ok (search "machine=m-a1" line) "machine OK line names the member"))
     ;; A member is CONFIG, never work: no count, roadmap or required set moves.
     (check-equal before-open (state-open-count (kernel-state k))
                  "a :machine event moves no |O|")

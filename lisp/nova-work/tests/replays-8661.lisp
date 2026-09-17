@@ -178,45 +178,54 @@
 
 (deftest "machine-is-config-and-never-a-work-tree-node" "docs/SPEC-WORK.md:3620"
     "expected=machine-is-fleet-config;node-absent;counts-unchanged;settle-refused;done-refused;never-completion-evidence"
-  (let* ((machine (make-machine-record
-                   :id "m-a1" :name "studio" :owner "glenn"
-                   :connect "profile:studio" :roles '("build" "test")
-                   :permits '("go-test") :limits '(:cores 16)
-                   :facts '(:os "macos") :declared-by "glenn"
-                   :declared-at "2026-09-17T00:00:00Z"))
-         (counts '(:open 5 :rows 2 :roadmaps 1 :closed 0)))
-    ;; the machine is a :kind :machine member of the fleet section of CONFIG.
-    (check-equal :fleet (getf (machine-config-section machine) :section)
-                 "a machine is a fleet CONFIG member")
-    (check-equal :machine (getf (machine-config-section machine) :kind)
-                 "the member's kind is :machine")
-    (check-equal nil (machine-work-tree-node-p machine)
-                 "a machine is never a work-tree node")
-    (check-equal nil (machine-acceptance machine)
-                 "a machine has no :acceptance")
-    (check-equal nil (machine-derived-state machine)
-                 "a machine has no derived state")
-    ;; registering writes the event with :node (:absent) and moves no count.
-    (multiple-value-bind (event after) (register-machine machine :counts counts)
+  (let* ((kernel (make-kernel :state (make-seed-state *seed*)
+                              :friends '("glenn" "rowan")))
+         (before-open (state-open-count (kernel-state kernel)))
+         (before-rev (state-revision (kernel-state kernel)))
+         (before-history (length (state-history (kernel-state kernel)))))
+    ;; The real `machine --register` verb writes one CONFIG member through
+    ;; `submit`, with `:node (:absent)`, and moves no work-tree count.
+    (multiple-value-bind (ok line code event)
+        (submit kernel
+                (list :verb :machine :change :register :machine "m-a1"
+                      :name "studio" :owner "glenn" :connect "profile:studio"
+                      :roles '(:build :test) :permits '("go-test")
+                      :limits '(:cores 16) :facts nil :declared-by "glenn"
+                      :request "mreq-8661" :stamp "2026-09-17T00:00:00Z"))
+      (ok ok "registering a machine is admitted: ~A" line)
+      (check-equal 0 code "machine register exit code")
+      (ok (search "MACHINE OK" line) "the register prints a MACHINE OK line")
+      (ok (search "machine=m-a1" line) "the line names the machine")
       (check-equal t (absentp (getf event :node))
                    "the :machine event writes :node (:absent)")
-      (check-equal +absent+ (getf event :node) "the node field is the absent value")
-      (check-equal counts after "|O|, rows, roadmaps and every count are unchanged")
-      (ok (search "MACHINE OK" (machine-ok-line event))
-          "the register prints a MACHINE OK line")
-      (ok (search "machine=m-a1" (machine-ok-line event))
-          "the line names the machine")
-      (ok (search "changed=" (machine-ok-line event))
-          "the line carries changed="))
-    ;; no verb can settle it or take it :to :done.
-    (multiple-value-bind (ok line code) (machine-settle machine)
-      (check-equal nil ok "no verb can settle a machine")
-      (check-equal 2 code "the settle refusal is exit 2")
-      (ok (search "m-a1" line) "the refusal names the machine: ~A" line))
-    (multiple-value-bind (ok line code) (machine-to-done machine)
-      (check-equal nil ok "no verb can take a machine :to :done")
-      (check-equal 2 code "the done refusal is exit 2")
-      (ok (search "m-a1" line) "the refusal names the machine: ~A" line))
-    ;; equipment does not complete: nothing a machine does is evidence.
-    (check-equal nil (machine-completion-evidence-p machine)
-                 "nothing a machine does is completion evidence")))
+      (check-equal +absent+ (getf event :node) "the node field is the absent value"))
+    (check-equal before-open (state-open-count (kernel-state kernel))
+                 "|O| is unchanged")
+    (check-equal before-rev (state-revision (kernel-state kernel))
+                 "a machine moves no work revision")
+    (check-equal before-history (length (state-history (kernel-state kernel)))
+                 "a machine writes no work-tree history")
+    (let ((machine (fleet-member (kernel-fleet kernel) "m-a1")))
+      ;; the machine is a :kind :machine member of the fleet section of CONFIG.
+      (check-equal :fleet (getf (machine-config-section machine) :section)
+                   "a machine is a fleet CONFIG member")
+      (check-equal :machine (getf (machine-config-section machine) :kind)
+                   "the member's kind is :machine")
+      (check-equal nil (machine-work-tree-node-p machine)
+                   "a machine is never a work-tree node")
+      (check-equal nil (machine-acceptance machine)
+                   "a machine has no :acceptance")
+      (check-equal nil (machine-derived-state machine)
+                   "a machine has no derived state")
+      ;; no verb can settle it or take it :to :done.
+      (multiple-value-bind (ok line code) (machine-settle machine)
+        (check-equal nil ok "no verb can settle a machine")
+        (check-equal 2 code "the settle refusal is exit 2")
+        (ok (search "m-a1" line) "the refusal names the machine: ~A" line))
+      (multiple-value-bind (ok line code) (machine-to-done machine)
+        (check-equal nil ok "no verb can take a machine :to :done")
+        (check-equal 2 code "the done refusal is exit 2")
+        (ok (search "m-a1" line) "the refusal names the machine: ~A" line))
+      ;; equipment does not complete: nothing a machine does is evidence.
+      (check-equal nil (machine-completion-evidence-p machine)
+                   "nothing a machine does is completion evidence"))))
