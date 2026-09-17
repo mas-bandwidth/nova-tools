@@ -243,7 +243,31 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+    ;; replays card 8664: fleet allocation capacity and counters-and-indexes
+    #:make-replay-machine
+    #:machine-cores
+    #:machine-concurrent
+    #:machine-allocations
+    #:machine-live-slots
+    #:find-allocation
+    #:alloc-state
+    #:alloc-holder
+    #:take-slot
+    #:preparation-interrupted
+    #:reconcile-allocation
+    #:make-replay-index
+    #:rindex-open-count
+    #:rindex-closed-count
+    #:replay-index-close
+    #:replay-index-reopen
+    #:replay-index-reparent
+    #:replay-index-assign
+    #:replay-index-open-p
+    #:replay-index-closed-p
+    #:replay-index-ancestor-p
+    #:holder-open-ids
+    #:index-mismatches))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
