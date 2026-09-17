@@ -138,6 +138,25 @@ func Status(in StatusInput) int {
 			w.name, cut, done, opened, merged, filed, closed, verdict, in.ExpandingHours)
 	}
 
+	// STREAM, one per stream, and the two-hour EXPANDING alarm. The ratio is cards
+	// opened / cards closed over the rolling tick window in <queue>/CONVERGENCE.tsv.
+	windows := convergence(in.Queue, now)
+	expanding := false
+	streams := bounded.Capped(out, in.Max, "STATUS", "stream", "--max 0 to show every stream")
+	for _, sw := range windows {
+		streams.Line(fmt.Sprintf("STATUS STREAM %s opened=%d closed=%d ratio=%s",
+			oneline.Field(sw.stream), sw.opened, sw.closed, sw.ratio))
+		if sw.twoHour {
+			expanding = true
+		}
+	}
+	streams.More()
+	for _, sw := range windows {
+		if sw.twoHour {
+			fmt.Fprintf(out, "STATUS EXPANDING stream=%s hours=%d\n", oneline.Field(sw.stream), sw.hours)
+		}
+	}
+
 	// ADOPTION, one per friend (coordinator included), capped.
 	friends := adoptions(roots, in.Queue)
 	adopt := bounded.Capped(out, in.Max, "STATUS", "friend", "--max 0 to show every friend")
@@ -158,6 +177,11 @@ func Status(in StatusInput) int {
 	merged, toolNames := mergedTools(prs, dayStart, now)
 	fmt.Fprintf(out, "STATUS TOOLS merged_since_adoption=%d %s\n", merged, strings.Join(toolNames, ", "))
 
+	if expanding {
+		// The alarm is a state the coordinator must act on: it exits like a refusal,
+		// the same way PULSE UNDER-WIDTH does (SPEC-PULSE, exit codes).
+		return 2
+	}
 	return 0
 }
 
