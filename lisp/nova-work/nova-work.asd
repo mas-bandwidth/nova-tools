@@ -26,4 +26,5 @@
   :serial t
   :components ((:file "tests/harness")
                (:file "tests/acceptance")
-               (:file "tests/replays-applicable-delegation")))
+               (:file "tests/replays-applicable-delegation")
+               (:file "tests/replays-8681")))
