@@ -31,6 +31,7 @@ var secretsAudit = audit.Config{
 		"main.go|runPlaceCLI|okLine":      "formatted OK line from internal/secrets.RunPlace",
 		"main.go|runPlacedCLI|okLine":     "formatted OK line from internal/secrets.RunPlaced",
 		"main.go|runPlacedCLI|l":          "formatted ITEM line from internal/secrets.RunPlaced",
+		"main.go|runSealCLI|line":         "formatted SEAL OK line from internal/secrets.RunSeal",
 	},
 	Imports: []string{
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
