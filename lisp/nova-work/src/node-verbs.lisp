@@ -270,10 +270,24 @@ and only once per collection; a roadmap is refused, naming its one creator."
 (defun node-view (state id) (wnode-view (%node-or-nil state id)))
 
 (defun %roadmap-axis-ids-p (axes)
-  "AXES is an ordered list of distinct non-empty axis id strings."
+  "AXES is an ordered list of distinct non-empty axis id strings, or of
+ (id . members) pairs whose ids are distinct non-empty strings. Both the bare
+ id list the configure and projection verbs use and the member-carrying list
+ the `cell` verb reads are admitted."
   (and (listp axes)
-       (every (lambda (a) (and (stringp a) (plusp (length a)))) axes)
-       (= (length axes) (length (remove-duplicates axes :test #'string=)))))
+       (every (lambda (a)
+                (let ((id (if (consp a) (car a) a)))
+                  (and (stringp id) (plusp (length id))
+                       (or (not (consp a))
+                           (and (listp (cdr a))
+                                (every (lambda (m)
+                                         (and (stringp m) (plusp (length m))))
+                                       (cdr a)))))))
+              axes)
+       (= (length axes)
+          (length (remove-duplicates
+                   (mapcar (lambda (a) (if (consp a) (car a) a)) axes)
+                   :test #'string=)))))
 
 (defun roadmap-create (kernel &key id parent title (row-kind :feature)
                                     (aggregation :required-members)

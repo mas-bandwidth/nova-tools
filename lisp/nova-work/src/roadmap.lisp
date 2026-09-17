@@ -1221,3 +1221,219 @@ at exit 2; zero applicable rows print `green=0 applicable=0` with no percentage.
                             id (or axis "-") (roadmap-name row-kind)
                             rows baseline cell-rows))
                 0)))))
+
+;;; ------------------------------------------------------------------
+;;; `cell` -- a roadmap coordinate's reference and scope mark
+;;; (docs/SPEC-WORK.md:2329, :991, :1146, :1183-1186, :5599-5600)
+;;; ------------------------------------------------------------------
+;;;
+;;; `cell --roadmap <id> --coord <member,member> (--ref <id|-> | --out-of-scope
+;;; | --in-scope) --reason <text>` owns the roadmap view's `:cells`, mapping a
+;;; coordinate to a `:ref` and marking it out of or back into scope. **A cell
+;;; is a reference and moves no required set** (:1183-1186): mapping,
+;;; re-pointing or clearing a coordinate changes the roadmap's projection and
+;;; never its denominator or `rows=`, so a `--ref` writes the `cell` structure
+;;; event and no scope event. `--out-of-scope` and `--in-scope` write the
+;;; `:scope` event the delta table gives `cell` alone (:1146), move the view's
+;;; scope revision, and move that axis member's applicable rows and never the
+;;; set. An unknown axis member and a duplicate coordinate are refusals; a
+;;; missing cell is not (:903-904).
+
+(defun %roadmap-cell-axes (view)
+  "The roadmap view's axes as an ordered alist (axis-id . members). A view whose
+`:axes` is a bare list of ids declares no members, so no coordinate can name
+one."
+  (let ((axes (getf view :axes)))
+    (if (and (consp axes) (consp (car axes)))
+        axes
+        (mapcar (lambda (a) (cons a '())) axes))))
+
+(defun %roadmap-cell-valid-coord (view coord)
+  "Answer (values CLEAN-COORD REFUSAL) for COORD against VIEW's ordered axes. A
+coordinate names one member of each declared axis in order; a repeated member
+is a duplicate coordinate and a member its axis does not hold is an unknown
+axis member (:903-904)."
+  (cond
+    ((not (and (listp coord) (>= (length coord) 2) (every #'stringp coord)))
+     (values nil "bad coordinate"))
+    ((> (length coord) (length (%roadmap-cell-axes view)))
+     (values nil "unknown member"))
+    ((/= (length coord) (length (remove-duplicates coord :test #'string=)))
+     (values nil "duplicate coordinate"))
+    (t
+     (let ((bad nil))
+       (loop for m in coord
+             for axis in (%roadmap-cell-axes view)
+             do (unless (member m (cdr axis) :test #'string=) (setf bad t)))
+       (if bad
+           (values nil "unknown member")
+           (values (copy-list coord) nil))))))
+
+(defun roadmap-view-cells (state id)
+  "The roadmap ID's cell map: an alist of coordinate -> (:<ref|:out-of-scope>).
+A missing cell is not an error (:904)."
+  (getf (node-view state id) :cells))
+
+(defun %roadmap-cell-entry (view coord)
+  (assoc coord (getf view :cells) :test #'equal))
+
+(defun %roadmap-cell-ensure (view coord)
+  "The cell entry for COORD, created and stored on first use."
+  (or (%roadmap-cell-entry view coord)
+      (let ((entry (cons (copy-list coord) '())))
+        (push entry (getf view :cells))
+        entry)))
+
+(defun roadmap-cell-ref (kernel roadmap coord)
+  "The node COORD references, or NIL when the cell is missing or cleared
+(:1183-1185)."
+  (let* ((view (node-view (kernel-state kernel) roadmap))
+         (entry (and view (%roadmap-cell-entry view coord)))
+         (ref (getf (cdr entry) :ref)))
+    (and (stringp ref) ref)))
+
+(defun roadmap-cell-out-of-scope-p (kernel roadmap coord)
+  "True when COORD is a recorded out-of-scope cell (:905-906)."
+  (let* ((view (node-view (kernel-state kernel) roadmap))
+         (entry (and view (%roadmap-cell-entry view coord))))
+    (and entry (getf (cdr entry) :out-of-scope) t)))
+
+(defun %roadmap-first-axis-members (view)
+  (cdr (car (%roadmap-cell-axes view))))
+
+(defun %roadmap-row-live-p (state member)
+  "A row is live while its node stands in O: not removed, cancelled or
+superseded (:1156-1157)."
+  (let ((n (%node-quiet state member)))
+    (and n (eq :o (wnode-branch n)))))
+
+(defun roadmap-rows-count (kernel roadmap)
+  "The cardinality of the roadmap's required set, its live first-axis members
+(:1156, :1174). `cell` moves it not (:1183-1186, :5599)."
+  (let ((state (kernel-state kernel)))
+    (count-if (lambda (m) (%roadmap-row-live-p state m))
+              (%roadmap-first-axis-members (node-view state roadmap)))))
+
+(defun roadmap-applicable-rows (kernel roadmap axis-member)
+  "The live ordered rows for AXIS-MEMBER: the live first-axis members less those
+with a recorded out-of-scope cell that names AXIS-MEMBER (:1176, :5590-5593)."
+  (let* ((state (kernel-state kernel))
+         (view (node-view state roadmap))
+         (rows (remove-if-not (lambda (m) (%roadmap-row-live-p state m))
+                              (%roadmap-first-axis-members view)))
+         (out (loop for (coord . props) in (getf view :cells)
+                    when (and (getf props :out-of-scope)
+                              (member axis-member coord :test #'string=))
+                      collect coord)))
+    (remove-if (lambda (r) (some (lambda (c) (member r c :test #'string=)) out))
+               rows)))
+
+(defun roadmap-applicable-count (kernel roadmap axis-member)
+  (length (roadmap-applicable-rows kernel roadmap axis-member)))
+
+(defun %roadmap-cell-payload (roadmap coord ref out-of-scope in-scope reason)
+  (list :verb :cell :roadmap roadmap :coord coord :ref ref
+        :out-of-scope out-of-scope :in-scope in-scope :reason reason))
+
+(defun roadmap-cell (kernel &key roadmap coord ref out-of-scope in-scope reason request)
+  "The `cell` verb (:2329, :991, :1146, :1183-1186). `--ref` maps, re-points or,
+with `-`, clears COORD's reference and writes the `cell` structure event with no
+scope event; `--out-of-scope` and `--in-scope` write the `:scope` event and
+advance the view's scope revision. Answers (values OK-P LINE EXIT-CODE)."
+  (let* ((state (kernel-state kernel))
+         (node (and (stringp roadmap) (%node-or-nil state roadmap)))
+         (view (and node (wnode-view node))))
+    (unless view
+      (return-from roadmap-cell
+        (values nil (format nil "ROADMAP FAIL node=~A: no roadmap view" roadmap) 1)))
+    ;; The `cell` map and scope revision are view fields a roadmap created
+    ;; before this slice may not carry; add them once so every later write is
+    ;; in place on the retained record.
+    (unless (getf view :cells) (setf (getf view :cells) '()))
+    (unless (getf view :revision) (setf (getf view :revision) 0))
+    (setf (wnode-view node) view)
+    (when (and out-of-scope in-scope)
+      (return-from roadmap-cell
+        (values nil (format nil "ROADMAP FAIL node=~A: bad request" roadmap) 2)))
+    (multiple-value-bind (clean refusal) (%roadmap-cell-valid-coord view coord)
+      (when refusal
+        (return-from roadmap-cell
+          (values nil (format nil "ROADMAP FAIL node=~A: ~A" roadmap refusal) 2)))
+      (setf coord clean)
+      (let ((entry (%roadmap-cell-ensure view coord)))
+        (cond
+          (out-of-scope
+           (if (getf (cdr entry) :out-of-scope)
+               (values t
+                       (format nil "ROADMAP OK id=~A request=~A change=cell changed=0"
+                               roadmap request)
+                       0)
+               (progn
+                 (setf (getf (cdr entry) :out-of-scope) t)
+                 (setf (getf view :revision) (1+ (or (getf view :revision) 0)))
+                 (push (list :op :cell :change :scope :coord coord :in-scope nil
+                             :reason (or reason +absent+))
+                       (getf view :log))
+                 (values t
+                         (format nil "ROADMAP OK id=~A request=~A change=cell changed=1 rev=~D"
+                                 roadmap request (getf view :revision))
+                         0))))
+          (in-scope
+           (if (not (getf (cdr entry) :out-of-scope))
+               (values t
+                       (format nil "ROADMAP OK id=~A request=~A change=cell changed=0"
+                               roadmap request)
+                       0)
+               (progn
+                 (setf (getf (cdr entry) :out-of-scope) nil)
+                 (setf (getf view :revision) (1+ (or (getf view :revision) 0)))
+                 (push (list :op :cell :change :scope :coord coord :in-scope t
+                             :reason (or reason +absent+))
+                       (getf view :log))
+                 (values t
+                         (format nil "ROADMAP OK id=~A request=~A change=cell changed=1 rev=~D"
+                                 roadmap request (getf view :revision))
+                         0))))
+          (t
+           (let ((clear (or (null ref) (eq ref :clear)
+                            (and (stringp ref) (string= ref "-")))))
+             (cond
+               (clear
+                (if (null (getf (cdr entry) :ref))
+                    (values t
+                            (format nil "ROADMAP OK id=~A request=~A change=cell changed=0"
+                                    roadmap request)
+                            0)
+                    (progn
+                      (setf (getf (cdr entry) :ref) nil)
+                      (push (list :op :cell :change :structure :verb :cell
+                                  :roadmap roadmap :coord coord :ref +absent+
+                                  :out-of-scope +absent+ :in-scope +absent+
+                                  :reason (or reason +absent+))
+                            (getf view :log))
+                      (values t
+                              (format nil "ROADMAP OK id=~A request=~A change=cell changed=1 rev=~D"
+                                      roadmap request (or (getf view :revision) 0))
+                              0))))
+               (t
+                (unless (and (stringp ref) (%node-quiet state ref))
+                  (return-from roadmap-cell
+                    (values nil (format nil "ROADMAP FAIL node=~A: no such node ~A"
+                                        roadmap ref)
+                            2)))
+                (if (equal ref (getf (cdr entry) :ref))
+                    (values t
+                            (format nil "ROADMAP OK id=~A request=~A change=cell changed=0"
+                                    roadmap request)
+                            0)
+                    (progn
+                      (setf (getf (cdr entry) :ref) ref)
+                      (push (list :op :cell :change :structure :verb :cell
+                                  :roadmap roadmap :coord coord :ref ref
+                                  :out-of-scope +absent+ :in-scope +absent+
+                                  :reason (or reason +absent+))
+                            (getf view :log))
+                      (values t
+                              (format nil "ROADMAP OK id=~A request=~A change=cell changed=1 rev=~D"
+                                      roadmap request (or (getf view :revision) 0))
+                              0))))))))))))
