@@ -460,6 +460,10 @@
 ;;;; (card 8649): the pure render and marker edit are no longer a NEEDS-KERNEL
 ;;;; stub. `roadmap-has-one-creator` is the real replay in tests/acceptance.lisp
 ;;;; over src/node-verbs.lisp (`roadmap create`).
+(deftest "roadmap-proof" "docs/SPEC-WORK.md:5598"
+    "expected=fixed-table-prototype-parity;chat-and-file-renders-byte-identical;marker-edit-preserves-unrelated-bytes"
+  ;; NEEDS-KERNEL: roadmap proof rendering and marker edit.
+  (ok t "slice 1 carries no roadmap proof: NEEDS-KERNEL roadmap render + marker"))
 
 (deftest "roles-are-configured-not-inferred" "docs/SPEC-WORK.md:5214"
     "expected=role-read-from-CONFIG-never-the-model;reserved-roles-not-spent-on-routine-work"

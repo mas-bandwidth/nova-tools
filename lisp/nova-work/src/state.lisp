@@ -35,6 +35,7 @@
   ;; is the engine's append-only edit history, newest first, the :before/after
   ;; pair `node edit` keeps outside the payload digest for its undo.
   repo view meta-log
+  title category private version repo view meta-log
   ;; SPEC-WORK.md:1222 -- the newest row of an id carries revived=<rev|-> and
   ;; settles=<n>. Both are kept on the node and moved on write, like every
   ;; other counter here, so a row is written and never computed by a scan.
@@ -192,6 +193,10 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                           :category (getf spec :category +absent+)
                           :private (getf spec :private +absent+)
                           :version (getf spec :version +absent+)
+                          :title (getf spec :title)
+                          :category (getf spec :category)
+                          :private (getf spec :private)
+                          :version (getf spec :version)
                           :repo (getf spec :repo)
                           :view nil
                           :meta-log '()
