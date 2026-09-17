@@ -155,16 +155,38 @@
 ;;; in this file or in the slice file named beside it.
 ;;; ------------------------------------------------------------------
 
+(defun short-socket-base (prefix)
+  "Create and answer a directory short enough to hold an AF_UNIX socket path.
+The kernel bounds a Unix-domain socket path (108 bytes on Linux), which a long
+TMPDIR can exceed, so try short roots first and create the first that works."
+  (flet ((try-root (root)
+           (when root
+             (let* ((trimmed (string-right-trim "/" (namestring (pathname root))))
+                    (base (concatenate 'string trimmed "/" prefix)))
+               (when (< (+ (length base) 4) 108)
+                 (when (or (probe-file base)
+                           (ignore-errors (sb-posix:mkdir base #o700) t))
+                   base))))))
+    (or (some #'try-root
+              (list "/dev/shm"
+                    (format nil "/run/user/~D" (sb-posix:getuid))
+                    "/var/tmp"
+                    (uiop:getenv "TMPDIR")
+                    ;; the parent of TMPDIR is still short when TMPDIR itself
+                    ;; is not (the sandbox's sits under the job's working dir).
+                    (uiop:pathname-parent-directory-pathname
+                     (uiop:temporary-directory))))
+        (concatenate 'string
+                     (string-right-trim "/" (namestring (uiop:temporary-directory)))
+                     "/" prefix))))
+
 ;;; endpoint-is-local-and-private  SPEC-WORK.md prose :2646-2653 / table :5727
 (deftest "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5727"
     "session-dir=0700;socket=0600;wider-mode-refused;no-network-bind"
   ;; the session's directory created 0700 and its socket 0600, both owned
   ;; by the running account; a pre-existing directory or socket with wider
   ;; modes refused rather than reused; no listener on any network address.
-  (let* ((tmp (namestring (uiop:temporary-directory)))
-         (base (if (< (length tmp) 80)
-                   (concatenate 'string tmp (format nil "n~D" (random 99999)))
-                   (format nil "n~D" (random 99999))))
+  (let* ((base (short-socket-base (format nil "nw-~D" (random 1000000))))
          (dir (concatenate 'string base "/s"))
          (sock (concatenate 'string dir "/w")))
     (unwind-protect

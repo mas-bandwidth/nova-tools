@@ -217,8 +217,7 @@
 
 (deftest "session-server-daemon-and-session-start" "docs/SPEC-WORK.md:268-310,2256-2267"
     "expected=launcher-returns-session-ok-while-daemon-stays-up;status-served-over-the-local-socket;foreground-is-the-process;stop-shuts-the-listener"
-  (let* ((base (concatenate 'string (namestring (uiop:temporary-directory))
-                            (format nil "nw-daemon-~D" (random 1000000))))
+  (let* ((base (short-socket-base (format nil "nwd-~D" (random 1000000))))
          (dir (concatenate 'string base "/s"))
          (sock (concatenate 'string dir "/w"))
          (fdir (concatenate 'string base "/f"))

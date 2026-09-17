@@ -39,8 +39,7 @@
                (:file "src/control")
                (:file "src/roadmap")
                (:file "src/savepoint")
-               (:file "src/new-verbs")
-               (:file "src/transport")))
+               (:file "src/new-verbs")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
