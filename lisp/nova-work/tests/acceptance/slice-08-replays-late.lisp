@@ -119,16 +119,8 @@
 
 ;;;; ------------------------------------------------------------------
 ;;;; Replays promised by docs/SPEC-WORK.md lines 3600-end, part 8 of 8.
-;;;; A replay whose sentence needs kernel code slice 1 does not yet ship is
-;;;; kept here behind ;; NEEDS-KERNEL and guards the gap (it turns red the day
-;;;; the named entry point lands, prompting the real assertion).
+;;;; Each is a real deftest.
 ;;;; ------------------------------------------------------------------
-
-(defmacro needs-kernel (name spec need what)
-  `(deftest ,name ,spec ,(format nil "NEEDS-KERNEL:~A" what)
-     ;; NEEDS-KERNEL: ,need
-     (ok (null (find-symbol ,what :nova-work))
-         ,(format nil "~A entry point is not yet shipped" what))))
 
 (deftest "status-answers-while-io-runs" "docs/SPEC-WORK.md:5637-5639"
     "expected=status-and-cancel-within-bound;queues-staged-retained-bounded;restart-reconciles-pending"
