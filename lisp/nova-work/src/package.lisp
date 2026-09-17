@@ -286,7 +286,50 @@
    #:unsupported-outcome
    #:correct-segment
    #:execution-correct
-   #:bare-correct))
+   #:bare-correct
+    ;; closed-history replays (Go card 8601)
+    #:make-closed-history
+    #:closed-history-rows
+    #:closed-history-page-records
+    #:closed-history-page-bytes
+    #:closed-history-root
+    #:default-window-days
+    #:window-days
+    #:day-before
+    #:stamp-day
+    #:stamp-midnight-p
+    #:merge-days-by-revision
+    #:clip-day
+    #:clip-day-batched
+    #:query-history
+    #:continue-query
+    #:make-query-cursor
+    #:query-cursor-root
+    #:query-cursor-index
+    #:query-cursor-days
+    #:query-cursor-from
+    #:query-cursor-to
+    #:make-query-result
+    #:query-result-shown
+    #:query-result-pages
+    #:query-result-more
+    #:query-result-cursor
+    #:query-result-days
+    #:query-result-root
+    #:query-result-read
+    #:query-result-line
+    #:query-result-expired
+    #:index-depth
+    #:make-history-cost
+    #:history-cost
+    #:history-cost-startup-resident-bytes
+    #:history-cost-segment-bytes-read
+    #:history-cost-parses
+    #:history-cost-replays
+    #:history-cost-emitted-bytes
+    #:history-cost-index-pages-read
+    #:history-cost-scanned-days
+    #:history-cost-dedup-loads))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

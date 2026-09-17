@@ -18,10 +18,7 @@
   ;; NEEDS-KERNEL: `ready --node X` view, deps/blocked-by/resolver derivation.
   (ok t "ready-names-the-blocker-and-the-resolver is outside slice 1"))
 
-(deftest "history-grows-startup-does-not" "docs/SPEC-WORK.md:2084-2092,5117"
-    "expected=resident-bytes-flat-as-history-grows"
-  ;; NEEDS-KERNEL: startup resident-byte accounting, index depth vs volume bound.
-  (ok t "history-grows-startup-does-not is outside slice 1"))
+;; history-grows-startup-does-not is implemented in ../acceptance.lisp (card 8601).
 
 (deftest "remove-settles-only-open-items" "docs/SPEC-WORK.md:2305,5075"
     "expected=closed-leaf-untouched-already-closed-named"
@@ -848,14 +845,7 @@ It is registered and counted, but never added to *tests*: the kernel it
 asserts does not exist in slice 1."
   `(push (list ,name ,spec-line ,expected ,need) *needs-kernel*))
 
-;; default-window-opens-two-days: a default closed-history listing at early
-;; morning, midday and exactly 00:00:00Z opens at most two UTC day partitions
-;; and one at midnight; no partition older than the window; --from reaching
-;; back a month opens exactly the days holding closure records.
-;; NEEDS-KERNEL: session closed-history windowing (query --ask --branch closed).
-(deftest-pending "default-window-opens-two-days" "docs/SPEC-WORK.md:5110"
-    "expected=at-most-two-day-partitions;midnight=one;--from=only-days-holding-records"
-  "closed-history window listing is not a slice-1 kernel primitive")
+;; default-window-opens-two-days is implemented in ../acceptance.lisp (card 8601).
 
 ;; disconnect-is-not-a-rollback: a client killed after its mutation was
 ;; journaled -- the event stands, the same request id and body returns the
