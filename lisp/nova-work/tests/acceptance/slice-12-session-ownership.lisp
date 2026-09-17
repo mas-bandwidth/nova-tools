@@ -162,3 +162,78 @@
       (close-file-journal j)
       (ignore-errors (delete-file path))
       (ignore-errors (delete-file (concatenate 'string path ".lock"))))))
+
+;;; ------------------------------------------------------------------
+;;; session-server-daemon-and-session-start (SPEC-WORK.md:268-310,
+;;; :2256-2267). The row the spec does not name a replay for gets its own
+;;; deftest, named by the paragraph.
+;;; ------------------------------------------------------------------
+
+(defun daemon-serve-status (socket-path)
+  "Connect to SOCKET-PATH, ask `status`, and answer the reply line."
+  (let ((conn (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
+    (unwind-protect
+         (progn
+           (sb-bsd-sockets:socket-connect conn socket-path)
+           (let ((stream (sb-bsd-sockets:socket-make-stream
+                          conn :input t :output t
+                          :element-type 'character :external-format :utf-8)))
+             (write-line "status" stream)
+             (finish-output stream)
+             (read-line stream nil :eof)))
+      (ignore-errors (sb-bsd-sockets:socket-close conn)))))
+
+(deftest "session-server-daemon-and-session-start" "docs/SPEC-WORK.md:268-310,2256-2267"
+    "expected=launcher-returns-session-ok-while-daemon-stays-up;status-served-over-the-local-socket;foreground-is-the-process;stop-shuts-the-listener"
+  (let* ((base (concatenate 'string (namestring (uiop:temporary-directory))
+                            (format nil "nw-daemon-~D" (random 1000000))))
+         (dir (concatenate 'string base "/s"))
+         (sock (concatenate 'string dir "/w"))
+         (fdir (concatenate 'string base "/f"))
+         (fsock (concatenate 'string fdir "/w"))
+         (seed '((:id "acme/work" :type :work-set :state :unknown))))
+    (unless (probe-file base) (sb-posix:mkdir base #o700))
+    (unwind-protect
+         (progn
+           ;; The launcher starts the session process, gets its SESSION OK line
+           ;; and returns while the daemon it started stays up and serves.
+           (multiple-value-bind (server line code)
+               (session-start :owner "emma" :state-seed seed :serve t
+                              :socket-path sock :foreground nil)
+             (ok server "the launcher returns the running session daemon")
+             (check-equal 0 code "a green load exits 0")
+             (ok (and (stringp line) (search "SESSION OK" line))
+                 "the launcher prints SESSION OK: ~S" line)
+             (ok (session-server-running-p server)
+                 "the process the launcher started stays up")
+             (ok (listener-open-p (session-server-listener server))
+                 "the session is listening at the endpoint it created")
+             ;; A thin client sends `status` to the session listening at that
+             ;; path and prints its one-line answer; the daemon serves reads.
+             (let ((reply (daemon-serve-status sock)))
+               (ok (and (stringp reply) (search "SESSION OK" reply))
+                   "session status is answered over the local socket: ~S" reply)
+               (ok (search "max-bytes=" reply) "the identity line carries the bounds")
+               (ok (search "every=" reply) "the identity line carries the clip cadence"))
+             (ok (session-server-stop server) "stop is explicit")
+             (ok (not (session-server-running-p server)) "the daemon is stopped")
+             (ok (not (listener-open-p (session-server-listener server)))
+                 "the listener is closed"))
+           ;; --foreground: the caller is the session process, prints the same
+           ;; line on its own stdout and then serves.
+           (multiple-value-bind (server line code)
+               (session-start :owner "emma" :state-seed seed :serve t
+                              :socket-path fsock :foreground t)
+             (check-equal 0 code "the foreground session exits 0 when stopped")
+             (check-equal t (session-server-foreground server)
+                          "the session process is the caller under --foreground")
+             (ok (and (stringp line) (search "SESSION OK" line))
+                 "the session process prints its own SESSION OK line: ~S" line)
+             (ok (listener-open-p (session-server-listener server))
+                 "the foreground session serves at its endpoint")
+             (session-server-stop server)))
+      (dolist (s (list sock fsock))
+        (ignore-errors (sb-posix:unlink s)))
+      (dolist (d (list dir fdir))
+        (ignore-errors (sb-posix:rmdir d)))
+      (ignore-errors (sb-posix:rmdir base)))))

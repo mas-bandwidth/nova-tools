@@ -536,6 +536,32 @@
     #:endpoint-network-listener-p
     #:local-socket-family
     #:current-account-uid
+    ;; the local listener and the resident session server daemon
+    ;; (SPEC-WORK.md:2642-2655, :268-310)
+    #:make-local-listener
+    #:local-listener
+    #:local-listener-p
+    #:local-listener-endpoint
+    #:local-listener-socket
+    #:local-listener-open-p
+    #:listener-open-p
+    #:listener-socket-family
+    #:listener-accept
+    #:listener-close
+    #:session-server
+    #:session-server-p
+    #:session-server-session
+    #:session-server-listener
+    #:session-server-thread
+    #:session-server-running-p
+    #:session-server-path
+    #:session-server-owner
+    #:session-server-foreground
+    #:start-session-server
+    #:session-server-stop
+    #:serve-session-request
+    #:default-session-request-handler
+    #:session-identity-line
    ;; wire codec, protocol handshake, pipelined correlation, disconnect
    ;; reconciliation and the long-operation registry (nova-tools card 8608)
    #:wire-encode-integer

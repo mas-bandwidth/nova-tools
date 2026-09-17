@@ -328,8 +328,12 @@ Checks completion before until, tip == base, and OWNER generation/token."
 (defun session-start (&key path (owner "emma") (state-seed nil) (journal nil)
                            (base "tip") (every "30s") (skew "5s") (token nil)
                            (journal-token nil) (owner-record nil) (now nil)
-                           (my-bench "") (lock-held t))
-  "Start or resume a session."
+                           (my-bench "") (lock-held t)
+                           (socket-path nil) (serve nil) (foreground t))
+  "Start or resume a session. With SERVE the session becomes the resident
+process: it binds the local listener at SOCKET-PATH and serves reads, and with
+FOREGROUND NIL the caller is the launcher, which gets the SESSION OK line and
+returns while the daemon stays up (SPEC-WORK.md:268-310, :2256-2267)."
   (multiple-value-bind (action record line exit-code)
       (evaluate-ownership-claim owner-record owner
                                :now (or now (format-rfc3339 (get-universal-time)))
@@ -355,4 +359,8 @@ Checks completion before until, tip == base, and OWNER generation/token."
                                    :base base
                                    :every every
                                    :skew skew)))
-          (values sess line 0)))))
+          (if serve
+              (start-session-server sess
+                                    :socket-path (or socket-path path)
+                                    :foreground foreground)
+              (values sess line 0))))))
