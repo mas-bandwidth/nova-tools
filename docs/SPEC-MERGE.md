@@ -448,7 +448,7 @@ nova-merge add        --lane <dir> --pr <n> [--needs-read]
 nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
 nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>]
 nova-merge gate       --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base-sha <sha> --merge <sha> --verdict green|red --summary <path>
-nova-merge run        --lane <dir> (--once | --loop <duration> --hours <h>) [--planned-red <text>] [--max <n>]
+nova-merge run        --lane <dir> (--once | --loop <duration> --hours <h>) [--planned-red <text>] [--admin] [--max <n>]
 nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
 nova-merge stop       --lane <dir>
 nova-merge dry-run    --lane <dir> [--max <n>]
@@ -1037,6 +1037,19 @@ Each is a refusal with its reason and the rule's date attached, at exit 1, and
 each is pinned by a test that asserts **the exit code and the text**, per this
 repository's CI doctrine: a check that cannot tell a failure from a refusal is
 not checking the contract it claims to.
+
+**Rule S (pit stop 4, 2026-09-16): the admin merge is refused unless it is a
+revert, and never over an open HOLD.** `run --admin` declares that this pass is
+a coordinator's hands reaching a protected base, and it grants nothing: for every
+entry it would merge, the pass refuses unless the pull request's title or body
+names a revert, and refuses whenever an open HOLD stands on the entry's own head
+or on a pull request its body carries (`carries #n`). #858 landed by `--admin`
+carrying #843/#848/#849 while Johnny's and Stella's HOLDs were open and its full
+Windows leg had never run; dev went red and #871 reverted it. The refusal is one
+sentence naming the hold or the missing revert, at exit 1, and the check stands in
+the one function that publishes, so it is the loop's merge step too: the loop
+reaches a merge only through `nova-merge run`, and no admin path exists outside
+this refusal.
 
 ## The races, taken out
 
