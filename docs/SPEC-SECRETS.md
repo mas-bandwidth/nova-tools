@@ -18,13 +18,15 @@ and a README carrying the protocol — and, owed in **the store's own repair** b
 `recovery.pub` declaring the recovery key. **That repository is the store. This tool never
 becomes one.**
 
-Four verbs at the **credential layer**, measured against one sentence:
+Five verbs: four at the **credential layer**, measured against one sentence:
 
 > **An AI runs with its own API keys, and nothing else can read them.**
 
 `exec` makes it *run*; `check` makes *nothing else can read them* a fact somebody proved this
 morning rather than a belief; `keygen` exists because a new bench cannot use either until it
-has a keypair; `names` answers *what is in my file* **with no key at all**. Everything else a
+has a keypair; `names` answers *what is in my file* **with no key at all**; and `gate`, the
+fifth, stands at the **review layer** — the store's `seat-rule-gate.sh` as a verb, so the
+workflow calls this tool rather than a shell script living in the store it is guarding. Everything else a
 person wants to do to a secret is `sops`, `git` or the provider's console, and this tool
 refuses it **by name, with where it lives**. In one paragraph: it reads one sealed yaml out
 of a git working copy by running `sops` at a path the caller named, keeps the plaintext in its
@@ -115,6 +117,7 @@ nova-secrets version
 nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
 nova-secrets names  --store <dir> --as <name> [--max <n>]
 nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+nova-secrets gate   --store <dir> --base <git ref> --head <git ref>
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
 nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
 nova-secrets help
@@ -332,6 +335,34 @@ It does **not** check git history (a value ever committed in the clear is there 
 that is **Rotation**, which is revocation and not deletion), the values themselves (no
 network call), the other AIs' keys (every AI runs `check` for itself, because a store
 proven by one line is a store proven for one line), or who has cloned the store.
+
+### `gate`
+
+```
+nova-secrets gate --store <dir> --base <git ref> --head <git ref>
+GATE APPROVE files=<n>
+GATE REFUSE rule=<n> file=<f>: <why>
+```
+
+**The store's own gate, as a verb.** What the store repo runs as
+`.github/seat-rule-gate.sh` is here in the tool, so the workflow calls this tool and the rule
+text lives beside the rules it measures. It diffs `--base..--head` with **git, and asks GitHub
+nothing**: a store already cloned, two refs already present, no network socket. `--base` and
+`--head` are required; a missing one is a refusal at exit 2.
+
+**It refuses, at exit 2, unless every changed `.sops.yaml` rule has exactly two age
+recipients, one of which is the key `recovery.pub` declares at the head, and its
+`path_regex` names exactly one seat file; unless every changed seat file `<seat>.yaml` is
+encrypted — `sops:` metadata present, and no line matching `^[A-Z][A-Z0-9_]*: ` whose value
+does not begin `ENC[` and is not permitted in the clear by the rule's `unencrypted_regex`,
+`NAME: sk-` included — and its rule exists; and unless no other file changes except
+`README.md`.** A rule is numbered by its position in `creation_rules`, 1-based, and that
+number is what `rule=<n>` prints; a changed file outside the three kinds names no rule and
+prints `rule=0`. The `file=` field names the file the refusal is about; a plain value is
+named by its key and **never quoted**, exactly as `check` invariant 3. On success it prints
+`GATE APPROVE files=<n>`, `files=` counting every changed path. The gate measures a **diff
+before review** and `check` measures the **working copy after**; each is the other's witness,
+and neither substitutes for the other.
 
 ### `keygen`
 

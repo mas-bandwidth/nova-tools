@@ -25,6 +25,7 @@ var secretsAudit = audit.Config{
 		"main.go|runCheckCLI|l":           "formatted FAIL line from internal/secrets.RunCheck",
 		"main.go|runCheckCLI|m":           "formatted MORE line from internal/secrets.RunCheck",
 		"main.go|runCheckCLI|summaryLine": "formatted summary line from internal/secrets.RunCheck",
+		"main.go|runGateCLI|line":         "formatted GATE line from internal/secrets.RunGate",
 		"main.go|runKeygenCLI|okLine":     "formatted OK line from internal/secrets.RunKeygen",
 		"main.go|runKeygenCLI|l":          "formatted RULE line from internal/secrets.RunKeygen",
 		"main.go|runKeygenCLI|noteLine":   "formatted NOTE line from internal/secrets.RunKeygen",

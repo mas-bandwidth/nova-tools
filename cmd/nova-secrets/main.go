@@ -19,6 +19,7 @@ usage:
   nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
   nova-secrets names  --store <dir> --as <name> [--max <n>]
   nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
+  nova-secrets gate   --store <dir> --base <git ref> --head <git ref>
   nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
   nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>]
   nova-secrets placed --machine <name> [--receipts <dir>]
@@ -122,6 +123,9 @@ func main() {
 
 	case "check":
 		runCheckCLI(os.Args[2:])
+
+	case "gate":
+		runGateCLI(os.Args[2:])
 
 	case "keygen":
 		runKeygenCLI(os.Args[2:])
@@ -276,6 +280,29 @@ func runCheckCLI(args []string) {
 		fmt.Fprintln(os.Stderr, m)
 	}
 	fmt.Fprintln(os.Stderr, summaryLine)
+	os.Exit(code)
+}
+
+func runGateCLI(args []string) {
+	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	storeFlag := fs.String("store", "", "store dir")
+	baseFlag := fs.String("base", "", "base git ref")
+	headFlag := fs.String("head", "", "head git ref")
+
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		os.Exit(2)
+	}
+
+	if len(fs.Args()) > 0 {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		os.Exit(2)
+	}
+
+	line, code := secrets.RunGate(*storeFlag, *baseFlag, *headFlag)
+	fmt.Println(line)
 	os.Exit(code)
 }
 
