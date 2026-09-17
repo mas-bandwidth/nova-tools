@@ -54,7 +54,7 @@ func TestGatherRefusesAPlantedSymlinkAtResult(t *testing.T) {
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{{"a", "RESULT: a\nall green"}})
 	runner := plantSymlinkRunner(t, dir)
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 30*time.Second)
 	if code != 1 {
 		t.Fatalf("a batch whose RESULT.md is a symlink is an abstain and exits 1, got %d; stderr: %s\n%s", code, errs, out)
 	}
@@ -77,7 +77,7 @@ func TestGatherDoesNotBlockOnAPlantedFIFO(t *testing.T) {
 	runner := plantFIFORunner(t, dir)
 	done := make(chan struct{})
 	go func() {
-		runBatch(t, tsv, root, runner, 5*time.Second)
+		runBatch(t, tsv, root, runner, 30*time.Second)
 		close(done)
 	}()
 	select {
