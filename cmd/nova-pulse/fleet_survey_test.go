@@ -118,7 +118,7 @@ func TestFleetSurveyTwoOKBenchesExitZero(t *testing.T) {
 		{"beta", "fake-beta", ""},
 	})
 	var out, errb bytes.Buffer
-	code := run([]string{"fleet", "survey", "--benches", benches, "--ssh", ssh}, &out, &errb, time.Now().UTC())
+	code := run([]string{"fleet", "survey", "--benches", benches, "--ssh", ssh, "--timeout", "1"}, &out, &errb, time.Now().UTC())
 	if code != 0 {
 		t.Fatalf("fleet survey exit = %d, want 0; stderr=%q out=%q", code, errb.String(), out.String())
 	}
@@ -138,7 +138,7 @@ func TestFleetSurveyDriftBenchNamesItExitTwo(t *testing.T) {
 		{"beta", "fake-beta", "nova-bus"},
 	})
 	var out, errb bytes.Buffer
-	code := run([]string{"fleet", "survey", "--benches", benches, "--ssh", ssh}, &out, &errb, time.Now().UTC())
+	code := run([]string{"fleet", "survey", "--benches", benches, "--ssh", ssh, "--timeout", "1"}, &out, &errb, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("fleet survey drift exit = %d, want 2; stderr=%q out=%q", code, errb.String(), out.String())
 	}
@@ -164,7 +164,7 @@ func TestFleetSurveyUnreachableBenchNamesItExitThree(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	code := run([]string{"fleet", "survey", "--benches", benches, "--ssh", ssh}, &out, &errb, time.Now().UTC())
+	code := run([]string{"fleet", "survey", "--benches", benches, "--ssh", ssh, "--timeout", "1"}, &out, &errb, time.Now().UTC())
 	if code != 3 {
 		t.Fatalf("fleet survey unreachable exit = %d, want 3; stderr=%q out=%q", code, errb.String(), out.String())
 	}
@@ -185,7 +185,7 @@ func TestFleetSurveyMaxCapsLines(t *testing.T) {
 		{"beta", "fake-beta", "nova-bus"},
 	})
 	var out, errb bytes.Buffer
-	run([]string{"fleet", "survey", "--benches", benches, "--ssh", ssh, "--max", "1"}, &out, &errb, time.Now().UTC())
+	run([]string{"fleet", "survey", "--benches", benches, "--ssh", ssh, "--timeout", "1", "--max", "1"}, &out, &errb, time.Now().UTC())
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
 	if len(lines) != 1 || !strings.HasPrefix(lines[0], "FLEET ") {
 		t.Fatalf("--max 1 printed %d lines, want 1 FLEET line:\n%s", len(lines), out.String())
