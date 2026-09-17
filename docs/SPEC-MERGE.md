@@ -1361,6 +1361,89 @@ it:
     red.** Here the newest record for `(entry, head, base)` decides whatever its
     colour (rule 18).
 
+## The efficiency card (#83), 2026-09-12
+
+The card is a measurement, taken on **2026-09-12** against the live lane
+`/Users/glenn/rowan-working/merge-lane` (`lane.json`: repo
+`mas-bandwidth/schema`, base `fixed-table-form`, 26 entries) and against the
+repository over `gh`. This section is the part of it that binds `nova-merge`;
+the cross-tool half lives in the other tool's spec and nothing here restates
+it.
+
+### One snapshot per pass
+
+Per entry a pass makes two `gh` calls and one head fetch: `gh pr view`
+(`internal/merge/host.go`) at **0.49 s** each, `gh api
+repos/<repo>/commits/<oid>/check-runs` at **0.59 s**, and `git fetch <remote>
+<head>` (`internal/merge/classify.go`) at **0.98 s**. One pass also fetches the
+base once (`internal/merge/pass.go`). Measured against the real repository,
+**26 entries** x (0.49 + 0.59) = **28.1 s** of `gh` per pass before any fetch;
+with a head fetch per entry that is about **54 s**. Against the **two-minute
+rule** one pass is inside the bar, but two entries added to the lane put the
+`gh` half alone past 30 s, and `run --loop <duration> --hours <h>` repeats that
+whole set every tick.
+
+The rule is **one snapshot per pass**: a pass asks the host each question it
+needs exactly once and **never re-derives in one pass what it already read**.
+The base is read and its check-runs read once; an entry's head is read once;
+the check-runs for one `(repo, sha)` are read once however many entries name
+it. A second pass takes a new snapshot, because the base can move between
+passes. This is **not a cache of verdicts**: a read verdict is a person's, per
+sha (rule 19), and is never memoized; the snapshot is the host's own answer,
+taken again every pass. A repeated `git fetch` of one ref in one pass is the
+same defect as a repeated `gh` call.
+
+### The coordinator read is capped and counted, and a foreign lane is refused
+
+`status`, `dry-run`, `packet` and `run` all print through `bounded.Capped`
+(`internal/merge/pass.go`): one `RUN ENTRY` / `STATUS` line per entry, `--max`
+default 20, one MORE line naming `--max 0`, then one closing counts line
+(`RUN OK lane=<n> merged=<n> dropped=<n> blocked=<n> waiting=<n>`, "**ONE PLACE
+COUNTS**"). At the live lane's 26 entries that is **20 lines plus 2** — the
+counts are the truth about the lane, never about the number of times the code
+said so.
+
+The measurement could not be taken against the live lane, and that is the
+finding: `nova-merge status --lane /Users/glenn/rowan-working/merge-lane`
+answers `rc=2`, one line, 178 B, 0.18 s, `refusing to guess`:
+
+```
+nova-merge status: refusing to guess: this is not a lane; nova-merge init --lane ... --repo <owner>/<name> --base <branch> --lane-branch <name>
+```
+
+The lane the bench is actually running is `bin/merge-lane.sh`'s (`lane.json`,
+26 PRs, `status` / `last` / `reads` fields), not nova-merge's `state.json`.
+Rule 20 makes that a refusal, never a guess: the tool reads a lane it created,
+and a foreign state file is said so by name and left untouched. The numbers
+above are therefore `gh` and `git` timings against the repository, never a
+reading of the bench lane.
+
+### Wait on its own clock, and on the host's checks
+
+`run --loop <duration> --hours <h>` is the lane's clock and `--hours` is its
+deadline: a loop with no deadline is a lane that is stuck, and the pass waits
+on nothing but its own clock and the host's checks, read through the same
+`Host.PR` and `Host.Checks` reader that every verb uses (no second client).
+`--timeout` (default 120 s) bounds every `gh` and `git` call, so a host that
+does not answer is said so rather than waited on. `wait` polls that same
+reader and no other, prints one line, and spends a coordinator one turn per
+merge instead of one per `gh` call. The measured 54 s per pass is why the bar
+is the two-minute rule and not a longer one: at 26 entries the pass is inside
+it, and the `gh` half is the part that moves first when the lane grows.
+
+### Red tests
+
+The card earns the same red-first bar as every rule here: seen red before it
+is trusted.
+
+- a pass that classifies, builds and publishes one entry asks the host for
+  that entry's metadata and for the check-runs of one `(repo, sha)` once, and
+  fetches its head once per action that needs it, never twice for one action;
+- the coordinator listing at 26 entries is 20 entry lines, one MORE line and
+  exactly one counts line, and `--max 0` lists all 26;
+- `status` on `bin/merge-lane.sh`'s `lane.json` is exit 2 with `refusing to
+  guess` and the `init` command, and writes nothing.
+
 ## Tests this spec demands
 
 One line per rule in **the rules, numbered**. Each is a test the work list
