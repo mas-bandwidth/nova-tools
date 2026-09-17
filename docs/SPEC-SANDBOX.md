@@ -458,6 +458,83 @@ beside the swarm's.
 The binary is `nova-sandbox`, and that is its only name (Glenn: "I like
 nova-sandbox").
 
+## The worktree verb
+
+```
+nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
+nova-sandbox worktree --repo <dir> --scratch <dir> --prune
+```
+
+`worktree` is not a wrapper and builds no wall: it uses SPEC.md's exit grammar
+unchanged — **0** the verb ran, **1** `--prune` ran and removed nothing, **2**
+could not run — so one review pass materialises a pull request's exact head in
+a scratch tree of its own instead of every friend keeping a hand-rolled script.
+`--repo <dir>` names the repository and `--scratch <dir>` the existing parent
+under which the tool creates its own guid directory; both are required and
+neither is guessed, because the tool names its own directory only inside a path
+the caller gave. It reads the repository through `git` on `PATH` and the pull
+request's head sha, merged-or-closed state and base branch through a **forge
+client seam**; a token arrives by environment and is printed nowhere. It writes
+`<scratch>/<guid>/`, the linked worktree inside it, and one record file
+`<scratch>/<id>.pr` naming that guid so the next call finds the tree again.
+
+`WORKTREE OK path=<dir> head=<sha>` is the one line an action prints. `path=`
+is the worktree's absolute resolved directory and `head=` the full 40-hex sha
+the pull request's head resolved to at this call. A second call for the same
+`--pr` reads the record, fetches the head, and reuses the tree when it is
+still there and clean — **same path, same line, no second `git worktree add`,
+so no collision on the worktree lock**; only a tree that is gone, dirty, or at
+a different head is rebuilt, and the rebuild is still one line. `--base
+<branch>` is the branch compared against and written on the record; omitted,
+the forge's own reported base for the pull request is used.
+
+`--prune` removes each worktree this tool made whose pull request the forge
+reports merged or closed, and each whose guid directory a fake-injectable clock
+says is older than a day and a fake-injectable process probe says is in use by
+no process, one line per removal, `WORKTREE REMOVED path=<dir>
+reason=<pr_merged|pr_closed|stale>`, then one `WORKTREE OK removed=<n> kept=<n>`
+and exit 0; it removes only trees named by its own record files, so a `git
+worktree` the friends made by hand and a tree whose PR state is unknown are
+kept, never deleted.
+
+Every refusal is exit 2 with **one remedy line** and creates nothing. A missing,
+non-numeric or zero `--pr`, or `--pr` together with `--prune`, is `WORKTREE
+REFUSED reason=bad_pr: --pr wants one pull-request number and one mode`; a
+`--repo` that is missing, relative, or not a git work tree is `reason=bad_repo:
+--repo wants an existing repository`; a `--scratch` that is missing or not a
+directory is `reason=bad_scratch: --scratch wants an existing directory and is
+not created`; each of the three carries the remedy `run: nova-sandbox worktree
+--repo <dir> --scratch <dir> --pr <id>`. A pull request the forge does not know
+is `reason=no_pr` and an unreachable forge is `reason=no_forge`, each with the
+one remedy naming the flag and saying to retry once the forge answers. The
+mistake it removes is abandoned scratch worktrees and git lock collisions across
+review passes.
+
+**Tests a card writes first.** Each runs in `t.TempDir()` with a fake in place
+of every network, bench and clock, and no real forge or network is touched.
+
+1. A fake forge answering head `<sha>` makes the verb print exactly `WORKTREE
+   OK path=<tmp>/<guid> head=<sha>`, and the tree and its `.git` file exist.
+2. A second call for the same `--pr`, with the fake forge and fake clock,
+   reuses the first path, prints the same line, and adds no second entry to the
+   fake `git worktree` call log.
+3. A record whose tree the test deletes is rebuilt on the next call with
+   exactly one `git worktree add`.
+4. `--prune` with a fake forge reporting one PR merged and one closed prints
+   one `WORKTREE REMOVED reason=pr_merged` and one `reason=pr_closed`, removes
+   both trees, and leaves a third open PR's tree standing.
+5. `--prune` with a fake clock one day and one minute past a tree's guid mtime
+   removes it as `reason=stale` while one minute under a day is kept, and a
+   stale tree the fake process probe reports in use is kept with no line.
+6. `--prune` over a fake `git worktree list` holding a hand-made worktree no
+   record names leaves it byte-identical and prints `removed=0 kept=<n>`.
+7. No `--repo`, no `--scratch`, `--repo <tmp>/not-a-repo`, `--scratch
+   <tmp>/absent`, `--pr 0`, `--pr abc` and `--pr --prune` are each exit 2 with
+   one remedy line, and the test asserts the absent scratch dir still does not
+   exist.
+8. A fake forge token in the environment appears on no line, scanned over every
+   byte the verb wrote.
+
 ## Exit codes
 
 The exec verb cannot use SPEC.md's 0/1/2 grammar, because its exit status
