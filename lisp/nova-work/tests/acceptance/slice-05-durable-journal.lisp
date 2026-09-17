@@ -798,10 +798,8 @@
 ;;   ;; NEEDS-KERNEL: closed-history index with day segments and paged reads
 ;;   )
 
-;; (deftest "cache-aware-context-choice" "docs/SPEC-WORK.md:4377"
-;;     "expected=cache-read-write-tier-threshold-priced-separately;reset-costs-refused-when-separate;lower-hit-can-win-on-cost"
-;;   ;; NEEDS-KERNEL: cache tier pricing and context-choice cost model
-;;   )
+;; cache-aware-context-choice now runs in
+;; lisp/nova-work/tests/replays-8642.lisp (nova-tools #362).
 
 ;;; cancel-is-a-request-not-an-erasure: the real replay lives in
 ;;; tests/acceptance/slice-08-replays-late.lisp:298 (nova-tools #362); this
@@ -839,10 +837,8 @@
 ;;   ;; NEEDS-KERNEL: compaction over savepoints preserves the last copy
 ;;   )
 
-;; (deftest "complete-cost-lineage" "docs/SPEC-WORK.md:4375"
-;;     "expected=parent-child-retry-join-once;failed-count;cache-subsets-no-double-count;impl-cost-separate;gaps-unknown"
-;;   ;; NEEDS-KERNEL: cost lineage joins over receipt records
-;;   )
+;; complete-cost-lineage now runs in
+;; lisp/nova-work/tests/replays-8643.lisp (nova-tools #362).
 
 ;; (deftest "completed-view-mutation" "docs/SPEC-WORK.md:5394"
 ;;     "expected=metadata-projection-render-on-settled-roadmap-revive-nothing;member-add-applies-atomic-revival;counts-indexes-checked"
@@ -859,10 +855,8 @@
 ;;   ;; NEEDS-KERNEL: savepoint restore fencing and bench identity rules
 ;;   )
 
-;; (deftest "cost-joins-include-the-coordinator" "docs/SPEC-WORK.md:5733"
-;;     "expected=complete-cost-joins-include-coordinator-overhead-rework;elapsed-attributed;hypothesis-run-after-adoption"
-;;   ;; NEEDS-KERNEL: operational cost joins with coordinator attribution
-;;   )
+;; cost-joins-include-the-coordinator now runs in
+;; lisp/nova-work/tests/replays-8643.lisp (nova-tools #362).
 
 ;; (deftest "cursor-pinned-across-a-new-settle" "docs/SPEC-WORK.md:5141"
 ;;     "expected=no-missing-no-duplicate-row;pinned-revision-honoured;unservable-pin-refused-page-expired"
@@ -1173,11 +1167,8 @@ asserts does not exist in slice 1."
 ;; ------------------------------------------------------------------
 ;; local-tokens-cost-zero-api   docs/SPEC-WORK.md:5288
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: pricing/cost accounting (the three cost values kept separately
-;; labelled; a missing dimension unknown, never zero).
-;;(deftest "local-tokens-cost-zero-api" "docs/SPEC-WORK.md:5288"
-;;    "cost-values=separately-labelled,missing=unknown"
-;;  ;; the three cost values kept separately labelled.)
+;; local-tokens-cost-zero-api now runs in
+;; lisp/nova-work/tests/replays-8646.lisp (nova-tools #362).
 
 ;; ------------------------------------------------------------------
 ;; materialized-working-set   docs/SPEC-WORK.md:5597
