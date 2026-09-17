@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -121,4 +123,28 @@ func TestFoldPoolDashUsd(t *testing.T) {
 	if want := "2026-09-11\tdeepseek\tm1\tr1\t2\t300\t150\t30\t60\t15\t-\tpool"; line != want {
 		t.Errorf("dash-usd row is %q, want %q -- any unknown usd input prints -", line, want)
 	}
+}
+
+// An unreadable pool is refused by name. The refusal must not blame --since: a VALID
+// stamp supplied alongside it is not the reason the run could not proceed.
+func TestFoldPoolUnreadablePoolRefusal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mode 000 does not make a directory unreadable on windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 directory, so a refused read cannot be produced here")
+	}
+	dir := t.TempDir()
+	usage := mkdir(t, filepath.Join(dir, "pool", "usage"))
+	ledger := filepath.Join(dir, "ledger.tsv")
+	if err := os.Chmod(usage, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(usage, 0o755) })
+
+	r := invoke(t, "fold-pool", "--pool", filepath.Join(dir, "pool"), "--ledger", ledger, "--since", "2026-09-11T00:00:00Z")
+	wantExit(t, r, 2)
+	wantContains(t, r.stderr, "FOLD REFUSED:")
+	wantContains(t, r.stderr, "--pool")
+	wantNotContains(t, r.stderr, "is not a stamp")
 }
