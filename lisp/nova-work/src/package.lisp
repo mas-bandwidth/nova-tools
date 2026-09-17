@@ -518,7 +518,22 @@
     #:*reversible-verbs*
     #:undo-request
     #:moved-preconditions
-    #:redo-request))
+    #:redo-request
+    ;; roadmap replays (card 8621)
+    #:r8621-row-add #:r8621-row-finish #:r8621-row-retire
+    #:r8621-row-active-count #:r8621-rows-export #:r8621-rows-load
+    #:r8621-view-reopen
+    #:r8621-matrix-make #:r8621-matrix-axis #:r8621-matrix-member-p
+    #:r8621-matrix-retired-p #:r8621-matrix-remove #:r8621-matrix-restore
+    #:r8621-matrix-add-axis #:r8621-matrix-flatten
+    #:r8621-cfg-make #:r8621-cfg-value #:r8621-cfg-rev #:r8621-cfg-configure
+    #:r8621-cfg-retry #:r8621-cfg-undo
+    #:r8621-roadmap-make #:r8621-roadmap-settled-p #:r8621-roadmap-open-required
+    #:r8621-roadmap-fold-count #:r8621-roadmap-metadata #:r8621-roadmap-project
+    #:r8621-roadmap-render #:r8621-roadmap-add-member
+    #:+r8621-marker-start+ #:+r8621-marker-end+
+    #:r8621-render-body #:r8621-render-chat #:r8621-marker-region
+    #:r8621-render-file))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
