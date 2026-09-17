@@ -29,7 +29,7 @@ nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeo
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--max <n>]
-nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>]
+nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
@@ -101,7 +101,10 @@ triage cuts the decision packet for one undecided case to a card for the text
 route: the RESULT lines, the refusal line and the candidate rows of
 <queue>/RULES.tsv, under 5000 bytes, demanding one line back --
 TRIAGE <case> <verdict> <rule-row-or-NEW>. The seven cases are signature, scope,
-docs-only, nosha, orphan, fence and hold-line.
+docs-only, nosha, orphan, fence and hold-line. With --decide the bounded packet
+is also put to one typed verdict question behind --floor, and the answer is
+printed as one advisory TRIAGE DECIDE line carrying the evidence pointer; below
+the floor the suggestion is '?' with its confidence and the packet is unchanged.
 
 example:
   nova-pulse triage --case nosha --queue ./queue --out ./cards/triage-nosha.md --ref card-892
