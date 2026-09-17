@@ -40,6 +40,11 @@ const templateReadPR = `read-pr — read one pull request against the rules
    Never report a finding to have something to report.
 6. If a board was supplied, check it before reporting: a card that already names
    this is a ` + "`dup:`" + `. Do not search for an unspecified board.
+7. A SEVERITY FLOOR: emit only findings at or above ` + "`HIGH`" + `. A finding below the
+   floor is not emitted at all. State the floor in RESULT.md's ` + "`## Head`" + `
+   paragraph as ` + "`floor: HIGH`" + `, and mark each emitted finding with its
+   severity. The floor decides which findings are emitted, not how they are
+   written: every emitted finding still quotes its rule verbatim with ` + "`file:line`" + `.
 
 Keep RESULT.md concise: omit progress narration, praise, repeated task text, and a
 separate summary. Each finding keeps its proof in compact form: severity, ` + "`file:line`" + `,

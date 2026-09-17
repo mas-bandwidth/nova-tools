@@ -314,6 +314,29 @@ func TestTemplatesCarryTheirConditions(t *testing.T) {
 	}
 }
 
+// ISSUE #65: the read-pr template carries a severity floor. The reader states the
+// floor in its own output and a finding below it is not emitted, which cuts reader
+// output directly. The floor decides which findings are emitted, not how they are
+// written, so the verbatim-quote condition stays.
+func TestReadPRTemplateCarriesASeverityFloor(t *testing.T) {
+	wrapped, err := WrapTemplate("read-pr", 12, []byte("read PR #65"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(wrapped)
+	for _, want := range []string{"SEVERITY FLOOR", "HIGH", "not emitted", "floor: HIGH"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the wrapped read-pr task does not carry the severity floor: missing %q", want)
+		}
+	}
+	if !strings.Contains(got, "QUOTE EVERY RULE VERBATIM") {
+		t.Error("the severity floor must not replace the verbatim-quote condition")
+	}
+	if !strings.Contains(got, "7.") {
+		t.Error("the wrapped read-pr task lost the floor's own rule number")
+	}
+}
+
 // A worker description is decoded STRICTLY: an unknown field is a refusal, because a
 // misspelled field in a file that names a key's location is a silent default.
 func TestAnUnknownFieldInAWorkerDescriptionIsARefusal(t *testing.T) {
