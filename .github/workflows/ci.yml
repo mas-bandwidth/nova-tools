@@ -152,7 +152,9 @@ jobs:
     # and at 02:48Z 2026-09-16 its legs waited forty minutes for a runner while
     # the space legs took two, so weight moved off it — 8/4 with eight space runners since 03:10Z, not 8/8. A
     # package that builds on both platforms runs once per OS; the darwin-only
-    # packages run on the studio only.
+    # packages run on the studio only. On pull_request and merge_group it
+    # selects only the packages the change touches and their in-module
+    # importers; the push to dev and the nightly run keep the whole tree.
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
@@ -216,61 +218,52 @@ jobs:
             return 1
           }
 
+          # THE FAN-OUT TESTS WHAT THE CHANGE TOUCHED. Measured 15:56Z
+          # 2026-09-16: eight PRs opened in twelve minutes, each fanning 16
+          # studio shards over the whole tree onto 8 studio runners, put 128
+          # studio legs in the queue and held the merge group's own run behind
+          # them; a run that needs no runner time of its own waited sixteen
+          # minutes (35117977336). So on pull_request and merge_group the
+          # shards carry only the Go packages whose files the change touched
+          # plus every in-repo package that imports them, read from the diff
+          # against the event's own base by .github/scripts/select-packages.sh
+          # (a go.mod or go.sum change selects the whole tree). A change that
+          # touches no Go package — docs or lisp only — selects nothing and
+          # collapses to ONE leg that prints "nothing to test for this change"
+          # and exits 0, instead of the whole tree on every runner. The push to
+          # dev and the nightly schedule keep the whole tree: the full matrix
+          # is still the evidence, it is just no longer the default feedback
+          # path.
           all=()
-          while read -r pkg; do
-            [ -n "$pkg" ] || continue
-            all+=("./${pkg#github.com/mas-bandwidth/nova-tools/}")
-          done < <(go list ./cmd/... ./internal/...)
-
-          [ "${#all[@]}" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
-
-          # A PULL REQUEST TESTS WHAT IT TOUCHED. Measured 15:56Z 2026-09-16: eight
-          # PRs opened in twelve minutes, each fanning 16 studio shards onto 8
-          # studio runners, put 128 studio legs in the queue and held the merge
-          # group's own run behind them; a run that needs no runner time of its
-          # own waited sixteen minutes (35117977336). The full matrix is the
-          # merge gate: it runs on merge_group (the queue's group commit) and on
-          # push to dev and main, so nothing merges without the whole tree
-          # green. On pull_request the shards carry only the Go packages whose
-          # files the PR changed and every in-repo package that imports them;
-          # a PR that changes no Go package (docs, lisp, workflow) tests
-          # ./internal/ci, the package that holds this file's own law, so the
-          # fan-out is never empty and never green by default.
-          # THE MERGE GROUP RUNS THE TREE ON SPACE. Measured 17:09-18:00Z 2026-09-16: ten
-          # group runs queued fifty minutes behind 16 studio shards each on a Studio at
-          # load 96-104; two groups were cancelled on the 6-minute cap (380-391 s) and
-          # nothing merged for an hour. The queue gate is linux, the whole tree, on the
-          # eight space runners, plus the darwin-only packages on two studio shards; the
-          # push run after each merge keeps the full 8+16 matrix as macOS evidence.
-          if [ "${{ github.event_name }}" = "merge_group" ]; then
-            STUDIO_SHARDS=2
-          fi
+          base=""
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
-            git fetch -q --depth=1 origin "$base" 2>/dev/null || true
-            changed_dirs=$(git diff --name-only "$base" HEAD -- '*.go' 'go.mod' 'go.sum' | xargs -r -n1 dirname | sort -u)
-            if git diff --name-only "$base" HEAD | grep -q -E '^(go\.mod|go\.sum)$'; then
-              changed_pkgs=("${all[@]}")
-            else
-              want=""
-              for d in $changed_dirs; do want="$want ./$d"; done
-              # dependents: every package in the tree that imports a changed one
-              while read -r pkg deps; do
-                p="./${pkg#github.com/mas-bandwidth/nova-tools/}"
-                for dep in $deps; do
-                  case "$dep" in github.com/mas-bandwidth/nova-tools/*) ;; *) continue ;; esac
-                  dp="./${dep#github.com/mas-bandwidth/nova-tools/}"
-                  case " $want " in *" $dp "*) want="$want $p"; break ;; esac
-                done
-              done < <(go list -f '{{.ImportPath}}{{range .Deps}} {{.}}{{end}}' ./cmd/... ./internal/...)
-              changed_pkgs=()
-              for pkg in "${all[@]}"; do case " $want " in *" $pkg "*) changed_pkgs+=("$pkg") ;; esac; done
-            fi
-            [ "${#changed_pkgs[@]}" -gt 0 ] || changed_pkgs=("./internal/ci")
-            echo "pull_request: ${#changed_pkgs[@]} of ${#all[@]} packages (changed and their dependents): ${changed_pkgs[*]}"
-            all=("${changed_pkgs[@]}")
             SPACE_SHARDS=4
             STUDIO_SHARDS=4
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
+            base="${{ github.event.merge_group.base_sha }}"
+            STUDIO_SHARDS=2
+          fi
+          if [ -n "$base" ]; then
+            while IFS= read -r pkg; do
+              [ -n "$pkg" ] || continue
+              all+=("$pkg")
+            done < <(bash .github/scripts/select-packages.sh "$base")
+            echo "${{ github.event_name }}: ${#all[@]} package(s) touched: ${all[*]:-none}"
+          else
+            while IFS= read -r pkg; do
+              [ -n "$pkg" ] || continue
+              all+=("$pkg")
+            done < <(bash .github/scripts/select-packages.sh --all)
+            [ "${#all[@]}" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
+          fi
+
+          if [ "${#all[@]}" -eq 0 ]; then
+            echo "nothing to test for this change"
+            packages='[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"space"}]'
+            echo "$packages"
+            echo "packages=$packages" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           declare -a space_grp studio_grp
@@ -316,7 +309,10 @@ jobs:
     # leg does not cancel its siblings. Each leg vets and tests only its own
     # shard. Measured green end to end in run 35021822106: sixteen legs from
     # 14 s to 251 s, whole run 5 m 57 s. The whole-tree `-race` run is the
-    # certification tier's `test` job.
+    # certification tier's `test` job. On pull_request and merge_group the legs
+    # carry the packages the change touched, not the whole tree; a change that
+    # touched no Go package gets one leg with an empty package list that prints
+    # and exits 0.
     name: test (${{ matrix.entry.name }})
     needs: test-packages
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -348,7 +344,18 @@ jobs:
     # the cap stays 6 by the two-minute law (internal/ci); the shards got smaller instead.
     timeout-minutes: 6
     steps:
+      - name: nothing to test for this change
+        # test-packages emits one leg with an empty package list when the change
+        # touches no Go package (docs or lisp only). It prints this and exits 0
+        # in seconds; every real step below is gated off, so the leg never
+        # checks out or compiles anything and a docs-only change costs one
+        # runner instead of the whole fan-out.
+        if: matrix.entry.packages == ''
+        shell: bash
+        run: echo "nothing to test for this change"
+
       - name: remove stale build dirs from the shared runner
+        if: matrix.entry.packages != ''
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
         shell: bash
@@ -356,8 +363,10 @@ jobs:
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: matrix.entry.packages != ''
 
       - name: use the installed Go toolchain
+        if: matrix.entry.packages != ''
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
         # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
         shell: bash
@@ -372,6 +381,7 @@ jobs:
           go version
 
       - name: take a quarter of the machine, not all of it
+        if: matrix.entry.packages != ''
         # FOUR runners share each of these machines, and `go test` defaults
         # GOMAXPROCS to every core it can see -- so four concurrent legs ask for
         # four times the machine and spend the difference context-switching.
@@ -404,9 +414,11 @@ jobs:
       # what they are given, so building first was a third compile of the same
       # packages. The whole-tree `go build ./...` still runs once, in lint.
       - name: vet
+        if: matrix.entry.packages != ''
         run: go vet ${{ matrix.entry.packages }}
 
       - name: test
+        if: matrix.entry.packages != ''
         run: go test -count=1 ${{ matrix.entry.packages }}
 
   test-hosted:
