@@ -289,6 +289,33 @@ and only once per collection; a roadmap is refused, naming its one creator."
                    (mapcar (lambda (a) (if (consp a) (car a) a)) axes)
                    :test #'string=)))))
 
+(defun %roadmap-axis-spec-p (entry)
+  "An axis declaration is a bare non-empty id string or the record
+`(<id> . (<member> ...))` (:3078-3084)."
+  (or (and (stringp entry) (plusp (length entry)))
+      (and (consp entry)
+           (stringp (car entry)) (plusp (length (car entry)))
+           (listp (cdr entry))
+           (every (lambda (m) (and (stringp m) (plusp (length m)))) (cdr entry)))))
+
+(defun %roadmap-normalize-axes (axes)
+  "Normalize an ordered axis declaration list into the view record's two
+fields: the bare ordered id list and the `(id . members)` alist. Answers
+(values IDS MEMBERS REFUSAL); a malformed entry or a duplicate axis id is a
+refusal (:3078, :3084)."
+  (if (not (and (listp axes) (every #'%roadmap-axis-spec-p axes)))
+      (values nil nil "axes must be distinct non-empty ids")
+      (let ((ids (mapcar (lambda (a) (if (consp a) (car a) a)) axes)))
+        (if (/= (length ids) (length (remove-duplicates ids :test #'string=)))
+            (values nil nil "axes must be distinct non-empty ids")
+            (values ids
+                    (mapcar (lambda (a)
+                              (if (consp a)
+                                  (cons (car a) (copy-list (cdr a)))
+                                  (cons a '())))
+                            axes)
+                    nil)))))
+
 (defun roadmap-create (kernel &key id parent title (row-kind :feature)
                                     (aggregation :required-members)
                                     (completion-policy :all-required-features)
@@ -325,54 +352,56 @@ the view carries `:members`, `:permitted-roots` and `:projections`."
       (unless (member completion-policy *roadmap-completion-policies*)
         (refuse (format nil "bad completion policy ~A"
                         (string-downcase (princ-to-string completion-policy)))))
-      (unless (%roadmap-axis-ids-p axes)
-        (refuse "axes must be distinct non-empty ids"))
-      (unless (and (listp permitted-roots)
-                   (every (lambda (r) (and (stringp r) (plusp (length r))))
-                          permitted-roots))
-        (refuse "bad permitted root"))
-      ;; Every create starts with `:members ()`.
-      (unless (null members)
-        (refuse "members start empty"))
-      (let* ((rev (kernel-next-rev kernel))
-             (view (list :members '()
-                         :retired '()
-                         :revive-events '()
-                         :axes (copy-list axes)
-                         :row-kind row-kind
-                         :aggregation aggregation
-                         :completion-policy completion-policy
-                         :permitted-roots (copy-list permitted-roots)
-                         :projections '()
-                         :cells '()
-                         :revision 0
-                         :log '()))
-             (node (make-wnode :id id :type :roadmap :parent parent :children '()
-                               :required t :required-count 0 :required-open 0
-                               :state :unknown :branch :o :open-count 0 :links +absent+
-                               :title (or title +absent+) :category +absent+
-                               :private +absent+ :version +absent+
-                               :repo nil :view view :meta-log '()
-                               :settles 0 :revived "-")))
-        (%install-open-node state node)
-        ;; The one `:roadmap-create` `:structure` event, in the node's
-        ;; append-only structure history. It is not a work transition, so it is
-        ;; not the replay path of seed and history.
-        (push (list :op :structure :kind :structure :verb :roadmap-create
-                    :node id :node-type :roadmap :title (or title +absent+)
-                    :under (list :node parent)
-                    :row-kind row-kind :aggregation aggregation
-                    :completion-policy completion-policy
-                    :axes (copy-list axes) :members '()
-                    :permitted-roots (copy-list permitted-roots)
-                    :reason (or reason +absent+) :rev rev)
-              (wnode-meta-log node))
-        (setf (wstate-revision state) (max (wstate-revision state) rev))
-        (setf (kernel-next-rev kernel) (1+ rev))
-        (values t
-                (format nil "ROADMAP OK id=~A request=~A change=create changed=1 rev=~D"
-                        id request rev)
-                0)))))
+      (multiple-value-bind (axis-ids axis-members why)
+          (%roadmap-normalize-axes axes)
+        (when why (refuse why))
+        (unless (and (listp permitted-roots)
+                     (every (lambda (r) (and (stringp r) (plusp (length r))))
+                            permitted-roots))
+          (refuse "bad permitted root"))
+        ;; Every create starts with `:members ()`.
+        (unless (null members)
+          (refuse "members start empty"))
+        (let* ((rev (kernel-next-rev kernel))
+               (view (list :members '()
+                           :retired '()
+                           :revive-events '()
+                           :axes axis-ids
+                           :axis-members axis-members
+                           :row-kind row-kind
+                           :aggregation aggregation
+                           :completion-policy completion-policy
+                           :permitted-roots (copy-list permitted-roots)
+                           :projections '()
+                           :cells '()
+                           :revision 0
+                           :log '()))
+               (node (make-wnode :id id :type :roadmap :parent parent :children '()
+                                 :required t :required-count 0 :required-open 0
+                                 :state :unknown :branch :o :open-count 0 :links +absent+
+                                 :title (or title +absent+) :category +absent+
+                                 :private +absent+ :version +absent+
+                                 :repo nil :view view :meta-log '()
+                                 :settles 0 :revived "-")))
+          (%install-open-node state node)
+          ;; The one `:roadmap-create` `:structure` event, in the node's
+          ;; append-only structure history. It is not a work transition, so it is
+          ;; not the replay path of seed and history.
+          (push (list :op :structure :kind :structure :verb :roadmap-create
+                      :node id :node-type :roadmap :title (or title +absent+)
+                      :under (list :node parent)
+                      :row-kind row-kind :aggregation aggregation
+                      :completion-policy completion-policy
+                      :axes axis-ids :members '()
+                      :permitted-roots (copy-list permitted-roots)
+                      :reason (or reason +absent+) :rev rev)
+                (wnode-meta-log node))
+          (setf (wstate-revision state) (max (wstate-revision state) rev))
+          (setf (kernel-next-rev kernel) (1+ rev))
+          (values t
+                  (format nil "ROADMAP OK id=~A request=~A change=create changed=1 rev=~D"
+                          id request rev)
+                  0))))))
 
 ;;; ------------------------------------------------------------------
 ;;; `node move` (:3025-3068, :5360, :5364, :5367, :5370, :5379).

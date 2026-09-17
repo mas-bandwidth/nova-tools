@@ -839,6 +839,18 @@
     #:roadmap-view-open
     #:export-roadmap-view
     #:load-roadmap-view
+    ;; the roadmap verbs (E04 slice 3: axis / cell, src/roadmap.lisp)
+    #:axis
+    #:axis-add
+    #:axis-remove
+    #:roadmap-axis-members
+    #:roadmap-cell
+    #:roadmap-view-cells
+    #:roadmap-cell-ref
+    #:roadmap-cell-out-of-scope-p
+    #:roadmap-rows-count
+    #:roadmap-applicable-rows
+    #:roadmap-applicable-count
     ;; the roadmap verbs (E04 row 8: percent --axis on a matrix, src/roadmap.lisp)
     #:roadmap-percent
     #:roadmap-cell-verified-p

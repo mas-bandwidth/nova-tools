@@ -140,9 +140,10 @@
       (check-equal 0 code "an explicit flatten refused")
       (ok (getf flat :flattened) "an explicit flatten recorded no selection")))
   ;; The same retirement contract over the real kernel view record
-  ;; (docs/SPEC-WORK.md:3072-3129, :5438): `axis --add|--remove` mutates a
-  ;; roadmap's stored axes and cells, moves the first axis's required set,
-  ;; leaves the member's node and state standing, and refuses an absent member.
+  ;; (docs/SPEC-WORK.md:3072-3129, :3103-3117, :5438): `axis --add|--remove`
+  ;; mutates a roadmap's stored axes and cells, moves the first axis's required
+  ;; set, removes the member's cell coordinates, leaves the member's node and
+  ;; state standing, and refuses an absent member.
   (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
                  (:id "root/f1" :type :feature :parent "root" :state :unknown)
                  (:id "root/f2" :type :feature :parent "root" :state :unknown)))
@@ -159,7 +160,8 @@
       (axis k :roadmap "root/rm" :axis "col" :member "root/f2" :add t :request "ax-add-2")
       (axis k :roadmap "root/rm" :axis "row" :member "root/f1" :add t :request "ax-add-3")
       ;; Only the first axis holds the ordered rows; a second-axis member moves
-      ;; the revision and neither the set nor rows= (docs/SPEC-WORK.md:5597-5598).
+      ;; the revision and neither the set nor rows= (docs/SPEC-WORK.md:1152,
+      ;; :5597-5598).
       (check-equal '("root/f1" "root/f2") (getf (view) :members)
                    "the first axis did not hold the ordered rows")
       (let ((rev (getf (view) :scope-revision)))
