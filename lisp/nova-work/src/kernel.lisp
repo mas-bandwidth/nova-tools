@@ -21,7 +21,7 @@
 (in-package #:nova-work)
 
 (defstruct (kernel (:constructor %make-kernel))
-  state journal next-rev fleet routes
+  state journal next-rev fleet routes allocations
   ;; The single-writer kernel (SPEC-WORK.md:2603-2616): one command thread owns O
   ;; and C and applies mutations in order; readers never touch it. The queue
   ;; holds accepted commands, Q-LOCK/Q-CVAR guard the mailbox, THREAD is the
@@ -67,6 +67,10 @@ below the state's revision is refused rather than silently reissued."
                            ;; The model route registry is CONFIG supplied/held by
                            ;; the session beside the fleet; see src/routes.lisp.
                            :routes (make-route-registry)
+                           ;; The fleet's ACTIVE half: one authoritative allocator
+                           ;; per physical machine and the allocations it holds,
+                           ;; never CONFIG; see src/fleet.lisp.
+                           :allocations (make-fleet-registry)
                            :controls (make-ctl)
                            :queue '()
                            :q-lock (sb-thread:make-mutex)
@@ -347,6 +351,18 @@ command loop is a defect)."
     ;; fleet and never touches the root, its counters or its history.
     (when (eq verb :route)
       (return-from %submit (route-submit kernel request)))
+    ;; The fleet's ACTIVE half (SPEC-WORK.md:3592-3731): `take`, `heartbeat`,
+    ;; `release` and `probe` are verbs over the one allocator per machine. They
+    ;; write ACTIVE allocation records and observations, never CONFIG members
+    ;; and never the work tree.
+    (when (eq verb :take)
+      (return-from %submit (fleet-take-submit kernel request)))
+    (when (eq verb :heartbeat)
+      (return-from %submit (fleet-heartbeat-submit kernel request)))
+    (when (eq verb :release)
+      (return-from %submit (fleet-release-submit kernel request)))
+    (when (eq verb :probe)
+      (return-from %submit (fleet-probe-submit kernel request)))
     (unless (member verb '(:state-to-done :state-to-doing :event-reopen))
       (error 'unsupported-input
              :what (format nil "unsupported: verb ~A is not in slice 1"

@@ -209,6 +209,7 @@
     #:make-fleet
     #:kernel-fleet
     #:kernel-routes
+    #:kernel-allocations
     #:fleet-friends
     #:fleet-machines
     #:fleet-order
