@@ -846,16 +846,16 @@ scoped exception is retained and the packet dispatches."
 
 (defstruct (operation
              (:constructor make-operation
-                 (&key id op request (state :queued) result
+                 (&key id op request (state :queued) result spec
                        (staged-bytes 0) (retained-results 0))))
-  id op request state result staged-bytes retained-results)
+  id op request state result spec staged-bytes retained-results)
 
 (defstruct (work-session
              (:constructor make-work-session
                  (&key (operations nil) (events nil) (receipts nil)
-                       (cancellations nil)
+                       (cancellations nil) (path "<session>") base
                        (limits *operation-limits*) (git-timeout 30))))
-  operations events receipts cancellations limits git-timeout)
+  operations events receipts cancellations path base limits git-timeout)
 
 (defun session-operation (session id)
   "The operation record itself, found in the bounded operation list."
@@ -866,6 +866,8 @@ scoped exception is retained and the packet dispatches."
                      :events (work-session-events session)
                      :receipts (work-session-receipts session)
                      :cancellations (work-session-cancellations session)
+                     :path (work-session-path session)
+                     :base (work-session-base session)
                      :limits (work-session-limits session)
                      :git-timeout (work-session-git-timeout session)))
 
@@ -923,42 +925,148 @@ claims an uncertain external effect was cancelled (SPEC-WORK.md:2734-2738)."
     (push (cons request disposition) (work-session-cancellations session))
     (values session disposition)))
 
+;;; ------------------------------------------------------------------
+;;; The clip transport as one long operation (SPEC-WORK.md:2740-2745,
+;;; :5355-5357, :5916-5920).
+;;;
+;;; A clip names a local event boundary, fetches the upstream tip, refuses
+;;; `CLIP RACED` when the tip is not the base, validates the resident O, writes
+;;; one deterministic snapshot and commits and pushes it. The remote is a
+;;; protocol (a seam): the real implementation is the owned Git branch; the
+;;; in-process implementation below is what the kernel's replay drives.
+;;; ------------------------------------------------------------------
+
+(defclass in-process-clip-remote ()
+  ((tip :initarg :tip :accessor in-process-clip-remote-tip)
+   (pushes :initform '() :accessor in-process-clip-remote-pushes)))
+
+(defun make-clip-remote (&key (tip "genesis"))
+  "The in-process implementation of the clip-remote seam (seam: clip-remote),
+standing in for the Git branch a coordinator owns and pushes."
+  (make-instance 'in-process-clip-remote :tip tip))
+
+(defgeneric clip-remote-tip (remote)
+  (:documentation "The upstream tip the transport fetched, a commit sha."))
+
+(defgeneric clip-remote-push (remote base commit)
+  (:documentation "A compare-and-swap push: move the remote tip to COMMIT only
+when it still equals BASE. Answer T when the push landed and NIL when the base
+predicate refused; a refused push is reported `CLIP RACED` and never retried
+blindly (SPEC-WORK.md:2740-2743)."))
+
+(defmethod clip-remote-tip ((remote in-process-clip-remote))
+  (in-process-clip-remote-tip remote))
+
+(defmethod clip-remote-push ((remote in-process-clip-remote) base commit)
+  (if (equal base (in-process-clip-remote-tip remote))
+      (progn (setf (in-process-clip-remote-tip remote) commit)
+             (push commit (in-process-clip-remote-pushes remote))
+             t)
+      nil))
+
+(defun clip-remote-pushes (remote)
+  "The commits this remote has accepted, newest first, for the replay."
+  (in-process-clip-remote-pushes remote))
+
+(defun clip-boundary (events)
+  "The request id of the last accepted event: the local event boundary a clip
+names. NIL when there is no accepted event to clip."
+  (let ((last (car (last events))))
+    (and last (or (getf last :request) (getf last :id)))))
+
+(defun clip-snapshot (events revision)
+  "The deterministic snapshot a clip writes: the retained event history and the
+revision it was taken at, in one canonical serialization, so two builds commit
+the same bytes (SPEC-WORK.md:2749-2754, :3980)."
+  (canonical-string (list :events events :revision revision)))
+
+(defun clip-commit (events revision)
+  "The commit sha of the snapshot: a real content digest, not an invented id."
+  (sha256-hex (clip-snapshot events revision)))
+
+(defun clip-sha12 (sha)
+  "The twelve-hex abbreviation `expected=` and `found=` print."
+  (if (and (stringp sha) (>= (length sha) 12)) (subseq sha 0 12) (or sha "-")))
+
 (defun clip-request (session &key (id "op-clip-1") (request "req-clip-1")
-                                (staged-bytes 0))
-  "`clip` prints OPERATION OK id=<id> op=clip state=queued at once and exits;
-the transport continues. A full queue refuses rather than growing unbounded
-(SPEC-WORK.md:2738-2745, :2753)."
+                                (staged-bytes 0) remote base attempts
+                                (events (work-session-events session))
+                                (revision (length events)) path)
+  "`clip` prints OPERATION OK id=<id> op=clip state=<queued|running> at once and
+exits; the transport continues. The boundary, revision and snapshot are pinned
+now, so a write admitted while the clip runs is pending for the next one. A full
+queue refuses rather than growing unbounded (SPEC-WORK.md:2740-2745, :2753)."
   (let ((limits (work-session-limits session)))
     (when (>= (length (work-session-operations session)) (getf limits :queue))
       (return-from clip-request
         (values session nil "OPERATION FAIL: queue full")))
-    (let ((op (make-operation :id id :op :clip :request request
-                              :state :queued :staged-bytes staged-bytes)))
+    (let* ((base (or base (work-session-base session)
+                     (and remote (clip-remote-tip remote))))
+           (op (make-operation
+                :id id :op :clip :request request :state :queued
+                :staged-bytes staged-bytes
+                :spec (list :remote remote :base base
+                            :boundary (clip-boundary events)
+                            :events events :revision revision
+                            :commit (clip-commit events revision)
+                            :attempts (or attempts 25)
+                            :git-timeout (or (work-session-git-timeout session) 30)
+                            :path (or path (work-session-path session))))))
       (values (session-add-operation session op) op
               (format nil "OPERATION OK id=~A op=clip state=queued" id)))))
 
 (defun operation-wait (session id &key race)
-  "`operation wait --id` prints the CLIP OK line when the transport settles, or
-CLIP RACED when the base predicate refused the push. Either way it is the same
-wait (SPEC-WORK.md:2740-2742)."
+  "`operation wait --id` is a bounded block over the operation's own result.
+When the transport settles it prints the CLIP OK line carrying operation=<id>
+and its pushed=; a base predicate that refused prints CLIP RACED. The wait is
+idempotent: a settled operation answers its recorded line
+(SPEC-WORK.md:2740-2745, :5930-5934)."
   (let ((op (session-operation session id)))
     (cond
       ((null op)
        (values session
                (format nil "OPERATION FAIL id=~A op=- state=-: no such operation" id)))
-      (race
-       (setf (operation-state op) :raced)
-       (values session
-               (format nil "CLIP RACED session=<path> operation=~A generation=1 expected=deadbeef found=cafef00d" id)))
+      ((eq :done (operation-state op))
+       (values session (operation-result op)))
       (t
-       (setf (operation-state op) :done)
-       (values session
-               (format nil "CLIP OK session=<path> operation=~A boundary=req-clip-1 events=3 base=deadbeef commit=cafef00d pushed=7 attempts=1" id))))))
+       (let* ((spec (operation-spec op))
+              (remote (getf spec :remote))
+              (base (getf spec :base))
+              (tip (and remote (clip-remote-tip remote)))
+              (path (getf spec :path))
+              (boundary (getf spec :boundary))
+              (events (getf spec :events)))
+         (cond
+           ((or race (and remote (not (equal tip base))))
+            (setf (operation-state op) :raced
+                  (operation-result op) nil)
+            (values session
+                    (format nil "CLIP RACED session=~A operation=~A boundary=~A generation=1 expected=~A found=~A"
+                            path id boundary (clip-sha12 base) (clip-sha12 tip))))
+           ((and events (null boundary))
+            (setf (operation-state op) :failed)
+            (values session
+                    (format nil "CLIP FAIL session=~A operation=~A boundary=- events=~D base=~A pushed=- attempts=0: resident O invalid"
+                            path id (length events) base)))
+           (t
+            (let ((commit (getf spec :commit))
+                  (pushed (getf spec :revision)))
+              (unless (and remote (clip-remote-push remote base commit))
+                (setf (operation-state op) :failed)
+                (return-from operation-wait
+                  (values session
+                          (format nil "CLIP FAIL session=~A operation=~A boundary=~A events=~D base=~A pushed=- attempts=1: push refused"
+                                  path id boundary (length events) base))))
+              (setf (operation-state op) :done
+                    (operation-result op)
+                    (format nil "CLIP OK session=~A operation=~A boundary=~A events=~D base=~A commit=~A pushed=~D attempts=1 emitted=0"
+                            path id boundary (length events) base commit pushed))
+              (values session (operation-result op))))))))))
 
 (defun session-stop (session &key race)
   "`session stop` is the one caller that waits for its own clip, by the same
 `operation wait` inside its --git-timeout; it prints the CLIP OK first and then
-the SESSION OK (SPEC-WORK.md:2742-2745)."
+the SESSION OK (SPEC-WORK.md:2742-2745, :5480-5490)."
   (let* ((clip (find :clip (work-session-operations session) :key #'operation-op))
          (clip-line
            (when clip
@@ -967,8 +1075,10 @@ the SESSION OK (SPEC-WORK.md:2742-2745)."
                (declare (ignore settled))
                line)))
          (session-line
-           (format nil "SESSION OK session=<path> owner=rowan generation=1 state=live events=~D pending=0 pushed=7"
-                   (length (work-session-events session)))))
+           (format nil "SESSION OK session=~A owner=rowan generation=1 state=live events=~D pending=0 pushed=~D"
+                   (work-session-path session)
+                   (length (work-session-events session))
+                   (if clip (getf (operation-spec clip) :revision) 0))))
     (if clip-line (list clip-line session-line) (list session-line))))
 
 (defun reconcile-operations (session)

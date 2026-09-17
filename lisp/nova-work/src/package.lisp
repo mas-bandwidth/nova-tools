@@ -591,6 +591,7 @@
     #:operation-id
     #:operation-op
     #:operation-request
+    #:operation-spec
     #:operation-staged-bytes
     #:operation-retained-results
     #:make-work-session
@@ -598,6 +599,8 @@
     #:work-session-operations
     #:work-session-events
     #:work-session-receipts
+    #:work-session-path
+    #:work-session-base
     #:work-session-limits
     #:work-session-git-timeout
     #:session-operation
@@ -606,6 +609,16 @@
     #:operation-pending-p
     #:session-bounded-p
     #:operation-cancel
+    ;; the clip transport as one long operation (SPEC-WORK.md:2740-2745):
+    ;; the pinned snapshot, the boundary it names, and the remote seam.
+    #:make-clip-remote
+    #:clip-remote-tip
+    #:clip-remote-push
+    #:clip-remote-pushes
+    #:clip-boundary
+    #:clip-snapshot
+    #:clip-commit
+    #:clip-sha12
     #:clip-request
     #:session-stop
     #:reconcile-operations
