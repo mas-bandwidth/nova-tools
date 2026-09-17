@@ -485,13 +485,30 @@ jobs:
     # the hosted legs FULL — no -short — for the packages the group changes,
     # package-selected to stay inside the two-minute budget. test-hosted still
     # runs the whole tree on push and nightly; this is the one hosted leg the
-    # merge group runs, and it runs only on the group's own commit.
+    # merge group runs, and it runs only on the group's own commit. The darwin
+    # leg is the Studio (the same darwin arm64 as macos-latest, without the
+    # hosted concurrency wait): one hosted macOS job serialized every merge
+    # group while the sixteen Studio runners sat idle. Only the runner changes;
+    # the steps, timeout and package selection are the hosted ones.
+    name: test-hosted-merge (${{ matrix.leg.name }})
     if: github.event_name == 'merge_group'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        leg:
+          - name: linux
+            runner: ubuntu-latest
+          - name: darwin
+            # A label array, carried as a JSON string: a runs-on expression must
+            # resolve to a single string, so the job parses this one with fromJSON.
+            labels: '["self-hosted","macOS","ARM64","studio"]'
+          - name: windows
+            runner: windows-latest
+    # A runs-on expression must resolve to one value, so the darwin leg's label
+    # array is carried as a JSON string and parsed with fromJSON; the hosted legs
+    # carry their runner image as a plain string and are quoted as a JSON string
+    # in the same expression. Same steps, timeout and package selection below.
+    runs-on: ${{ fromJSON(matrix.leg.labels || format('"{0}"', matrix.leg.runner)) }}
     # TWO, the two-minute law for a job on the CL path. The full suite does not
     # fit over the whole tree; scoping to the group's changed packages is what
     # fits it, and the CI budget test (internal/ci) holds this cap.
