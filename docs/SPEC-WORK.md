@@ -4639,6 +4639,86 @@ model, and the replacement's kind inherited on `supersede`.
 These items are epic E11 of the roadmap. They add no verified completion until implementation
 and failure replays pass.
 
+## Recursive coordination nodes *(nova-work v2, nova-tools#321; a draft for review)*
+
+Glenn's v2 frame is *"As above, so below."*: a **node** is the unit of coordination, and every
+node uses the same coordination contract, whatever its composition or depth (nova-tools#321,
+5671991172). This section states that contract. It is the v2 boundary the Delegation section
+above says it plans inside; **nothing here is built, it changes no v1 completion count**, and its
+roadmap rows are `V2-F01` and `V2-F02` of *Future Plans (v2)*.
+
+**Composition prescribes no rank.** A node may be a human with AI friends, AI friends without a
+human in that node, or a human alone; its **coordinator** may likewise be a human, an AI, or a
+human/AI team. Composition, model, bench and transport backing are separate fields, and none of
+them selects a rank or a mandatory level of the tree. The parties are the friend and model records
+of *Friends, CONFIG and ACTIVE* and *The fleet*; this section adds no second registry.
+
+**Every node has the same three abilities.** A non-root node **accepts work from its coordinating
+parent**, **performs work itself**, and **passes work down to child nodes**; it may combine local
+execution with delegation in one task. Child nodes have exactly the same abilities, so delegation
+continues through an arbitrary finite tree. A root may originate work; a leaf may finish work
+locally without creating children. This is the offer, acceptance, local work, delegation and
+evidence return of *Delegation* above, read at every depth.
+
+**The common lifecycle, the same at every level.** (1) **Receive** a work offer with stable
+identity, scope, acceptance criteria, constraints and resources, and record acceptance, deferral
+or refusal. (2) **Decide** which portions to do locally and which to delegate, preserving explicit
+links, dependencies and responsibility for delegated work. (3) **Integrate** results and evidence
+from children with local work, and validate the whole against the node's accepted task. (4)
+**Return** results, evidence, remaining work and attributable usage to the coordinating parent.
+
+**A child's completed task never automatically completes its parent's integrating task.** Partial
+results, failed attempts, independent reviews and unresolved outcomes are preserved; the parent
+moves only after its own verification, and one child done while another is refused, blocked or
+asleep leaves the parent open with `outstanding=<n>` (`partial-child-never-closes-parent`). Pause,
+cancellation, correction and reopening are the ones *The verbs*, *Assignment and execution
+control* and the transition table already specify, applied at every depth; this section adds no
+second spelling of them.
+
+**Three distinct structures, never conflated.** The **coordination tree** describes nodes and
+their coordinating relationships: every node has a stable ID and one direct coordinating parent,
+except the root. The **work containment tree/forest** describes the decomposition of work, with
+canonical work IDs and explicit ownership: a node may handle several work items, and several nodes
+may contribute to one item (the containment forest of *The data*). **Dependency and reference
+edges** cross branches: a sibling collaboration or a roadmap reference creates no second
+coordinating parent, and duplicates neither work nor spend.
+
+**Identities stay distinct.** The six identities are node, actor, work, operation, attempt and
+engine/session, where the actor is the friend, model, bench or human executing and an operation
+is an offer, assignment or control; each has its own record, an actor's rename changes no node
+and no work, and an attempt's result books to that attempt and to no sibling. Usage returns
+through every parent mapping, counting local work, descendants, retry, integration, review and
+rescue once, with missing usage unknown and never zero (*Cost*).
+
+**No fixed taxonomy and no prescribed depth.** There is no company/team/person or
+repository/epic/feature grammar: the layer names of *Recursive structure within a repository* are
+examples, and *Reusable recursion* already refuses a mandatory combinator. Any operational size
+or depth bound is explicit data and **refuses or defers visibly**; it never truncates the tree,
+silently drops a result, or masquerades as a rank restriction.
+
+**Membership, coordinating-parent and work-ownership changes are explicit records**, never
+inferred from a title or a transport: a re-parent, a membership change and a transfer each write
+their own event under the one atomic envelope, naming the before and after identities, and none
+of them duplicates work or spend. A GitHub assignee is not a receiving node; an Issue or
+Discussion mapping is a reference, not a second coordinating parent. Repository-backed virtual
+nodes and mapped GitHub completion returns are #321's `V2-F03` and `V2-F04` and are not built
+here.
+
+### Required replays
+
+| Replay | Required outcome |
+| --- | --- |
+| v2-composition-prescribes-no-rank | A human-alone, an AI-only and a mixed node, each root or leaf at any depth, run the same accept/perform/delegate contract; no composition field selects a level or a rank. |
+| v2-same-contract-at-every-depth | A root originates work and a leaf finishes locally without children; every intermediate node accepts, performs, delegates and returns by the same lifecycle; a grandchild's result integrates one hop at a time. |
+| v2-child-done-never-closes-parent | One child done and one refused, blocked or asleep leaves the parent open with `outstanding=<n>`, preserving the failed attempt, the independent review and the unresolved outcome. |
+| v2-three-structures-are-distinct | A sibling collaboration and a roadmap reference add reference edges only: no second coordinating parent, no duplicated work, no second spend; the coordination tree, the containment forest and the reference graph answer separately for one node. |
+| v2-six-identities-stay-distinct | Node, actor, work, operation, attempt and engine/session identities are separately addressable; an actor rename moves none of the others; usage books to the attempt once through every parent mapping. |
+| v2-bounds-refuse-not-truncate | A node past an explicit size or depth bound is refused or deferred by name at exit 2; the tree is not truncated and no child result is dropped. |
+| v2-membership-change-is-explicit | A membership, coordinating-parent or work-ownership change writes its own event with before and after identities; an inferred change from a title or a GitHub assignee is refused. |
+
+These items are #321's `V2-F01` and `V2-F02`, plus the identity rule `V2-F03-02` names. They add
+no verified completion until implementation and failure replays pass.
+
 ## Models, prices and what they are evidence of *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
 
 **A shared `models` section is keyed by stable model and version identity, with provider route and
