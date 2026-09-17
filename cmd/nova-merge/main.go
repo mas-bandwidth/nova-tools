@@ -54,6 +54,7 @@ usage:
   nova-merge stop       --lane <dir>
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
+  nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
 
@@ -162,8 +163,13 @@ type Deps struct {
 	// separate verb with a separate host interface, and the test that sweeps a fake
 	// queue must not have to stand up a lane's host to do it.
 	NewSweepHost func(repo, branch string, timeout time.Duration) merge.SweepHost
-	Runner       merge.Runner
-	BuildID      func() string
+	// NewRebaseList is the gh seam the rebase verb reads the open list through; the
+	// production one is the same GH the merge pass uses, which implements both edges.
+	NewRebaseList func(repo string, timeout time.Duration) merge.RebaseList
+	// Launcher starts one rebase card on a bench. The tests inject a fake.
+	Launcher merge.Launcher
+	Runner   merge.Runner
+	BuildID  func() string
 }
 
 func production() Deps {
@@ -177,7 +183,11 @@ func production() Deps {
 		NewSweepHost: func(repo, branch string, timeout time.Duration) merge.SweepHost {
 			return merge.NewGHSweep(repo, branch, timeout, nil)
 		},
-		BuildID: buildID,
+		NewRebaseList: func(repo string, timeout time.Duration) merge.RebaseList {
+			return merge.NewGH(repo, timeout, nil)
+		},
+		Launcher: merge.BenchLauncher{},
+		BuildID:  buildID,
 	}
 }
 
@@ -252,6 +262,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdWait(rest, stdout, stderr, deps)
 	case "sweep":
 		return cmdSweep(rest, stdout, stderr, deps)
+	case "rebase":
+		return cmdRebase(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -272,15 +284,18 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 	// repository's merge queue, so both name the repository outright like `init`
 	// does; every other verb reads the lane's.
 	watch := verb == "wait" || verb == "sweep"
+	// `rebase` is not a lane verb at all: it reads the open list from a repository and
+	// cuts cards into a directory, so it names its own --repo and its own --base.
+	rebase := verb == "rebase"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
-		if name == "repo" && watch {
+		if name == "repo" && (watch || rebase) {
 			continue
 		}
 		if !creation && has(name) {
 			return refuse(stderr, " "+verb, fmt.Sprintf("--%s belongs to `init`, which writes it into the lane once; every other verb reads it from the lane's state", name)), true
 		}
 	}
-	if !creation && has("base") {
+	if !creation && has("base") && !rebase {
 		if verb == "gate" {
 			return refuse(stderr, " gate", "--base is the lane's branch and belongs to `init`; the base SHA a gate was taken against is --base-sha, a different word on purpose"), true
 		}

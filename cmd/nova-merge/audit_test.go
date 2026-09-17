@@ -69,6 +69,13 @@ var mergeAudit = audit.Config{
 		// oneline.Escape or oneline.Err before printing. It cannot write past the
 		// escape.
 		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
+		// bytes is a Buffer and not a stream: CutKind's one line is captured into it and
+		// parsed for the card's name, never handed to stdout as it stands.
+		`"bytes"`,
+		// pulse's cut kind writes a card FILE and prints its one line into the Buffer
+		// above; its stderr is this binary's own stderr, so no line of its reaches the
+		// one line this verb prints.
+		`"github.com/mas-bandwidth/nova-tools/internal/pulse"`,
 	},
 	MinClassified: 60,
 }

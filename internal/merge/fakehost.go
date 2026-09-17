@@ -35,6 +35,8 @@ type FakeHost struct {
 	// base really moved -- so that the read-back of rule 21 is exercised rather than
 	// skipped. A nil Do records the call and moves nothing.
 	Do func(n int, headOID, baseSHA, mergeSHA string) error
+	// Open is the open pull request list OpenPRs answers: the rebase cutter's whole input.
+	Open []RebasePR
 }
 
 // NewFakeHost returns an empty one.
@@ -57,6 +59,15 @@ func (f *FakeHost) PR(n int) (PR, error) {
 		return PR{}, fmt.Errorf("this fake host has no pull request %d", n)
 	}
 	return pr, nil
+}
+
+// OpenPRs answers the list a test set, or this fake's error, the way the real host answers
+// gh's one call.
+func (f *FakeHost) OpenPRs() ([]RebasePR, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	return f.Open, nil
 }
 
 func (f *FakeHost) BranchOID(branch string) (string, error) {

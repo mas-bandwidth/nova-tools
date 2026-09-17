@@ -9,12 +9,13 @@ package pulse
 // number comes only from the state file under the lock (number.go), and there is no
 // `--number` flag to pass one in.
 //
-// Four kinds, four line-1 shapes, and line 1 is the contract the harvest matches:
+// Five kinds, five line-1 shapes, and line 1 is the contract the harvest matches:
 //
-//   read    RESULT: CARD-<n> read of <repo> PR<pr> at <head> (<title>)
-//   fix     RESULT: CARD-<n> <repo> #<issue> fixed with its red test first: <title>
-//   replay  RESULT: CARD-<n> <repo> replays <names> named at spec lines <lines>, red first
-//   spec    RESULT: CARD-<n> <repo> spec: <title>
+//	read    RESULT: CARD-<n> read of <repo> PR<pr> at <head> (<title>)
+//	fix     RESULT: CARD-<n> <repo> #<issue> fixed with its red test first: <title>
+//	replay  RESULT: CARD-<n> <repo> replays <names> named at spec lines <lines>, red first
+//	spec    RESULT: CARD-<n> <repo> spec: <title>
+//	rebase  RESULT: CARD-<n> <repo> PR #<pr> rebased onto <base> with its conflicts resolved and its tests green: <title>
 //
 // `cut` without `--kind` is the pool-driven cutter in cut.go and is untouched by any of this.
 
@@ -28,17 +29,19 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// CutKinds are the four kinds this cutter knows, in the order help prints them.
-var CutKinds = []string{"read", "fix", "replay", "spec"}
+// CutKinds are the kinds this cutter knows, in the order help prints them.
+var CutKinds = []string{"read", "fix", "replay", "spec", "rebase"}
 
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {
 	Kind      string
 	Repo      string // owner/name; line 1 names the repo for every kind
-	PR        int    // read
+	PR        int    // read, rebase
 	Head      string // read
 	Issue     int    // fix
-	Title     string // fix, spec, and the parenthesised title of a read
+	Title     string // fix, spec, rebase, and the parenthesised title of a read
+	Branch    string // rebase: the branch rebased onto the base
+	Base      string // rebase: the branch it is rebased onto
 	BodyFile  string // fix, spec: the numbered steps this card carries
 	Prior     string // fix: what a prior attempt did, so the worker never repeats it
 	Names     string // replay: the replay names, comma separated
@@ -122,6 +125,17 @@ func cutKindProblem(in CutKindInput) string {
 		if strings.TrimSpace(in.Title) == "" {
 			return "--title is required for a spec card (pass the amendment's one-line subject)"
 		}
+	case "rebase":
+		switch {
+		case in.PR <= 0:
+			return "--pr is required for a rebase card (pass the pull request number)"
+		case strings.TrimSpace(in.Branch) == "":
+			return "--branch is required for a rebase card; the card must name the branch it checks out (pass --branch <name>)"
+		case strings.TrimSpace(in.Base) == "":
+			return "--base is required for a rebase card; the card names the branch it is rebased onto (pass --base <branch>)"
+		case strings.TrimSpace(in.Title) == "":
+			return "--title is required for a rebase card (pass the pull request's own title)"
+		}
 	}
 	return ""
 }
@@ -153,6 +167,10 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 	case "spec":
 		fmt.Fprintf(&b, "RESULT: CARD-%d %s spec: %s\n", n, repo, oneline.Escape(in.Title))
 		fmt.Fprintf(&b, "SOURCE: %s spec\n", in.Repo)
+	case "rebase":
+		fmt.Fprintf(&b, "RESULT: CARD-%d %s PR #%d rebased onto %s with its conflicts resolved and its tests green: %s\n",
+			n, repo, in.PR, oneline.Field(in.Base), oneline.Escape(in.Title))
+		fmt.Fprintf(&b, "SOURCE: %s %s#%d\n", in.Repo, in.Repo, in.PR)
 	}
 	if p := strings.TrimSpace(in.Prior); p != "" {
 		fmt.Fprintf(&b, "Prior attempts: %s\n", oneline.Escape(p))
@@ -183,6 +201,10 @@ Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN 
 The names are %s and the spec lines they are named at are %s.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN <why>, then BRANCH <name> and REPO %s.
 `, in.Names, in.SpecLines, in.Repo)
+	case "rebase":
+		return fmt.Sprintf(rebaseSteps,
+			rebasePreamble, in.Base, in.Branch, in.Branch, in.Branch, in.Base,
+			in.Base, in.Base, in.Base, in.Base, in.Branch, in.Base)
 	default:
 		return fmt.Sprintf(`Amend the spec: numbered rules, each with the test that makes it red, and no rule softened to match code.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN <why>, then BRANCH <name> and REPO %s.
@@ -197,3 +219,19 @@ func repoShort(repo string) string {
 	}
 	return repo
 }
+
+// rebasePreamble is the one paragraph every rebase card opens with: no push, no PR, no
+// GitHub calls; the harvester pushes the branch from ./repo. It is the hand loop's own
+// words, kept because a worker already reads them.
+const rebasePreamble = "You are a Go engineer resolving a rebase. Your working directory is the one printed by pwd at STEP 1; write everything under it: the clone at ./repo, notes at <working directory>/scratch/ using that absolute path. No push, no PR, no GitHub calls; the branch is pushed by the harvester from ./repo. Finish within 15 minutes."
+
+// rebaseSteps is the rebase card's steps, with the branch and the base filled in. The
+// conflict rule is the whole point: BOTH sides survive, no rule and no test is dropped,
+// and a red test is fixed in the branch's own files rather than by deleting the base's.
+const rebaseSteps = `%s
+STEP 1. pwd && mkdir -p scratch && { [ -d repo ] || git clone -q https://github.com/mas-bandwidth/nova-tools.git repo; } && cd repo && git fetch -q origin %s %s && git checkout -q -b %s origin/%s && git log --oneline -1 | cat && git rebase origin/%s 2>&1 | tail -3
+STEP 2. Resolve every conflict so that BOTH survive: %s's text (other PRs that landed) and this branch's additions; in a spec or a Lisp test file keep both in document order and never drop a rule or a deftest; in Go keep both changes and make it compile. After each file: git add <file>; then GIT_EDITOR=true git rebase --continue. Repeat until the rebase finishes. Record the conflicted files in scratch/conflicts.txt (absolute path).
+STEP 3. If Go files changed: test -z "$(gofmt -l .)" && go vet ./... 2>&1 | tail -3 && go test $(git diff --name-only origin/%s -- "*.go" | xargs -n1 dirname | sort -u | sed "s|^|./|" | tr "\n" " ") 2>&1 | tail -6. If lisp/nova-work changed: (cd lisp/nova-work && ./run-tests.sh 2>&1 | tail -4). A red test in a touched package is fixed in this branch's own files, never by deleting %s's tests.
+STEP 4. git log --oneline origin/%s..HEAD | cat && git status --short | head -5
+STEP 5. Write RESULT.md (cd back to your working directory first): line 1 the RESULT line above; BRANCH: %s at <sha> in ./repo; REBASED: onto <%s sha>; conflicts: <files>; green: <the test tail, one line>. Nothing else.
+`
