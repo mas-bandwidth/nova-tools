@@ -596,16 +596,62 @@ jobs:
       - name: friend sequences
         run: go test -count=1 -run TestFriendSequence ./cmd/...
 
+  lisp-changes:
+    # THE PATH FILTER for the lisp tier, and it exists because the lisp job must
+    # not occupy a self-hosted runner — let alone one on each platform — for a
+    # change that cannot move nova-work. Only lisp/ and docs/SPEC-WORK.md
+    # (docs/SPEC-WORK.md:290 fixes the language) can do that, so this job answers
+    # "did either move?" and the lisp job reads the answer and skips otherwise.
+    # On a change that touches neither, the lisp job is skipped and ci-ok counts
+    # that as a pass. It runs on one Linux runner; it is a gate, not a check.
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    outputs:
+      changed: ${{ steps.filter.outputs.changed }}
+    steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        shell: bash
+        run: |
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            changed:
+              - 'lisp/**'
+              - 'docs/SPEC-WORK.md'
+
   lisp:
     # THE LISP TIER, and it is one job because it is one system. `lisp/nova-work`
     # is the engine's own tree (docs/SPEC-WORK.md:290 fixes the language); its
     # acceptance suite runs under SBCL non-interactively and exits non-zero on
     # any failing case, so the exit code is the product here. It is in the CL
     # tier because it finishes in seconds, well inside the two-minute budget.
-    # On a pull_request it is a self-hosted Linux job, guarded as every
-    # self-hosted job is.
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, linux, x64, space]
+    # It runs on BOTH self-hosted platforms — the Linux space runners and the
+    # macOS studio runners — because a failure that is really about SBCL or the
+    # platform (journal fsync differs between Darwin and Linux) must be caught
+    # on each. It only starts when the path filter above saw lisp/ or
+    # docs/SPEC-WORK.md move, so a Go-only change never waits on the SBCL
+    # runners, and it is fork-guarded transitively: the filter job above is the
+    # guarded entry point, so a fork never reaches the SBCL machines.
+    needs: lisp-changes
+    if: needs.lisp-changes.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        entry:
+          - {os: linux, arch: x64, group: space}
+          - {os: macos, arch: arm64, group: studio}
+    name: lisp (${{ matrix.entry.group }})
+    # Labels are carried per entry as single-string variables: runs-on expressions
+    # must resolve to a string, not to an array.
+    runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
     timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
@@ -629,8 +675,18 @@ jobs:
           fi
           sbcl --version
 
+      - name: sbcl version
+        # The runners carry SBCL already (2.2.9 on Linux, 2.6.8 on macOS); the
+        # suite is written to the older of the two, so nothing newer than 2.2.9
+        # is used. No install step: apt-get does not exist on macOS.
+        run: sbcl --version
+
       - name: nova-work acceptance
-        run: ./lisp/nova-work/run-tests.sh
+        # Loads the system from the checkout with the ASDF SBCL bundles — no
+        # quicklisp, no download — and runs every acceptance case; the script
+        # exits non-zero on any failure. The 120 s budget is the job's
+        # timeout-minutes above.
+        run: ./tools/ci/lisp-test.sh
 
   # fleet-probe: prove a bench's runners BEFORE the loop trusts them (Glenn, 2026-09-16:
   # "run some tests to make sure that hulk and vision actually work, before trusting them";
@@ -720,6 +776,10 @@ jobs:
             # test-hosted-pr is skipped on a fork PR (the head-repo guard) and
             # on a manual run; its test step is skipped when the diff matches no
             # platform path. A skip is ok — the check is that it is not red.
+            # lisp is gated on the path filter and is skipped when lisp/ and
+            # docs/SPEC-WORK.md did not move; a skipped lisp is a pass. A red
+            # lisp still blocks the merge.
+            if [ "$job" = "lisp" ] && [ "$result" = "skipped" ]; then continue; fi
             [ "$result" = "success" ] || { [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ]; } || bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
@@ -738,6 +798,10 @@ jobs:
           do
             job="${pair%:*}"; result="${pair##*:}"
             echo "$result	$job"
+            # lisp is gated on the path filter and is skipped when lisp/ and
+            # docs/SPEC-WORK.md did not move; a skipped lisp is a pass. A red
+            # lisp still blocks the merge.
+            if [ "$job" = "lisp" ] && [ "$result" = "skipped" ]; then continue; fi
             [ "$result" = "success" ] || bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
