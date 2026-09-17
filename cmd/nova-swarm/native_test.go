@@ -1642,3 +1642,39 @@ func nativeWorkerDescription(t *testing.T, model, keyShape string) string {
 	}
 	return path
 }
+
+// TestNativeWalledJobPathWithSpace: a walled native run whose root, slot and job directory
+// all sit under a path holding a space must finish like any other -- the NATIVE OK line is
+// printed and RESULT.md is written under the job directory. The wall names the cwd it
+// applied on its SANDBOX OK line, and the only field a reader may trust is the machine
+// receipt of the raw path bytes: the readable cwd=<dir> field is oneline.Field, which
+// renders the space as \x20, and comparing that escaped spelling to the real job directory
+// refused a run whose child had already finished (#624).
+func TestNativeWalledJobPathWithSpace(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root := filepath.Join(t.TempDir(), "My Bench")
+	slot := filepath.Join(root, "slot-1")
+	if err := os.MkdirAll(slot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cardPath := filepath.Join(root, "card.md")
+	if err := os.WriteFile(cardPath, []byte("FAKE-PWD\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		"--label", "space-label", "--card", cardPath, "--slot", slot, "--root", root,
+		"--deadline", "30s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
+	if rc != 0 {
+		t.Fatalf("a walled run under a root with a space exits 0, got %d:\nstdout: %s\nstderr: %s", rc, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "NATIVE OK ") {
+		t.Fatalf("the NATIVE OK line is printed for a root with a space:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(slot, "jobs", "space-label", "RESULT.md")); err != nil {
+		t.Fatalf("RESULT.md is written under a job path with a space: %v", err)
+	}
+}

@@ -18,6 +18,14 @@
 //	           repo allow rule (network to github.com), so the native run builds --repo
 //	           rules instead of refusing
 //
+// The exec verb's SANDBOX OK line writes the cwd the way the real wall does -- a readable
+// cwd=<dir> field through oneline.Field and the machine-readable cwdb64=<base64url>
+// receipt of the raw path bytes. NOVA_SWARM_FAKE_RECEIPT makes the exec verb corrupt that
+// receipt on purpose, so the native refusal path is testable:
+//
+//	wrong      the receipt decodes to a path that is not the applied --cwd
+//	malformed  the receipt is not valid base64url at all
+//
 // It writes the argv it was handed into `<--cwd>/sandbox-argv`, which is how a test reads
 // the argv the dispatcher built for a worker. The file goes in the job directory rather
 // than a path from the environment, because the supervisor BUILDS the child's environment
@@ -26,11 +34,14 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 func main() {
@@ -91,8 +102,20 @@ func main() {
 	cmd := exec.Command(args[i+1], args[i+2:]...)
 	cmd.Dir = cwd
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	fmt.Fprintf(os.Stderr, "SANDBOX OK backend=fake-wall abi=- read=%d write=%d net=nopromise cwd=%s cmd=%s\n",
-		count(args[:i], "--read"), count(args[:i], "--write"), cwd, args[i+1])
+	// cwd is rendered exactly as the real wall renders it (cmd/nova-sandbox main.go): a
+	// readable cwd=<dir> field through oneline.Field and the cwdb64=<base64url> receipt of
+	// the raw path bytes, which is the field a reader must decode -- never the readable
+	// one, whose escape is not injective. NOVA_SWARM_FAKE_RECEIPT corrupts the receipt for
+	// the refusal tests.
+	receipt := base64.RawURLEncoding.EncodeToString([]byte(cwd))
+	switch os.Getenv("NOVA_SWARM_FAKE_RECEIPT") {
+	case "wrong":
+		receipt = base64.RawURLEncoding.EncodeToString([]byte(filepath.Join(cwd, "elsewhere")))
+	case "malformed":
+		receipt = "not-a-receipt###"
+	}
+	fmt.Fprintf(os.Stderr, "SANDBOX OK backend=fake-wall abi=- read=%d write=%d net=nopromise cwd=%s cwdb64=%s cmd=%s\n",
+		count(args[:i], "--read"), count(args[:i], "--write"), oneline.Field(cwd), receipt, args[i+1])
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			os.Exit(ee.ExitCode())
