@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
@@ -23,7 +24,7 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> [--bench <name>]... [--once]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
+nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
@@ -329,6 +330,10 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	templates := f.fs.String("templates", "", "")
 	maxBodyBytes := f.fs.Int("max-body-bytes", 4096, "")
 	max := f.fs.Int("max", 20, "")
+	decideOn := f.fs.Bool("decide", false, "")
+	floor := f.fs.Float64("floor", 0.9, "")
+	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
+	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -341,10 +346,13 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	if *max < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
 	}
+	if *decideOn && (*floor < 0 || *floor > 1) {
+		f.add(fmt.Sprintf("--floor is between 0 and 1, got %g", *floor))
+	}
 	if f.refused(stderr) {
 		return 2
 	}
-	return pulse.Harvest(pulse.HarvestInput{
+	in := pulse.HarvestInput{
 		ID:           *id,
 		Root:         *root,
 		Sources:      *sources,
@@ -353,7 +361,15 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 		Max:          *max,
 		Stdout:       stdout,
 		Stderr:       stderr,
-	})
+	}
+	if *decideOn {
+		client, err := decide.New(*baseURL, *keyEnv)
+		if err != nil {
+			return refuse(stderr, " harvest", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		in.Decide, in.Floor, in.Decider = true, *floor, client
+	}
+	return pulse.Harvest(in)
 }
 
 func cmdBeat(args []string, stdout, stderr io.Writer, now time.Time) int {

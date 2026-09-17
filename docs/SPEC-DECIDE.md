@@ -143,6 +143,18 @@ the floor the note stays unclassified and today's reader handles it.
 Gate a failing pulse as flaky or real before paging. Below the floor the gate
 answers real: a flaky test re-run is cheap, a missed page is not.
 
+### nova-pulse harvest class
+
+Classify each finished job's `RESULT.md` before any push: one choice named
+`class` over {fixed, already-fixed, no-change, failed, off-branch}, asked over
+the bounded public state of the `RESULT.md` first line, its `BRANCH` line, the
+commits the branch carries past its base and its `files` line. Above the floor
+`fixed` and `failed` push as today; `no-change` and `already-fixed` push nothing
+and mark the job harvested, the `already-fixed` line naming the test the
+`RESULT.md` `red:` line carries for the closer; `off-branch` pushes nothing and
+prints the remedy. Below the floor the class is `unknown` (the line reads
+`below=class`) and harvest runs the path that ran before the call.
+
 ### the space game intent layer
 
 Classify a player's intent (ships danger, collision, maneuver) into the
