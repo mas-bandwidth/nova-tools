@@ -36,9 +36,17 @@ type LaunchInput struct {
 // window still holds a live native and is not free.
 const sliceTimeout = 120 * time.Second
 
-// Launch allocates free slots, admits the cards that fit as nova-swarm batch (one per model
-// route, with --then nova-pulse harvest), and queues the rest when --queue is set. It
-// returns the process exit code: 0 when the pulse was admitted, 2 when it could not be.
+// nativeRunner is the command nova-swarm batch starts once per card, given label, slot,
+// model, card path and root. It is the runner the deployment keeps on PATH -- the same one
+// the run-batch.sh shim execs -- and launch has no flag of its own for one, so this name is
+// the whole answer to the batch admission's runner.
+const nativeRunner = "nova-native-runner.sh"
+
+// Launch allocates free slots, admits the cards that fit as one nova-swarm batch in its
+// CARD form (--id --cards --deadline --runner --root, the only form that runs a card; the
+// POOL form wants --files and --tokens, which no launch flag supplies, issue #630), and
+// queues the rest when --queue is set. It returns the process exit code: 0 when the pulse
+// was admitted, 2 when it could not be.
 func Launch(in LaunchInput) int {
 	cards, err := readCards(in.Cards)
 	if err != nil {
@@ -77,33 +85,28 @@ func Launch(in LaunchInput) int {
 		queued = n - free
 	}
 
-	benches := groupByModel(goCards)
-	if err := os.MkdirAll(filepath.Join(in.Root, "pulses"), 0o755); err != nil {
-		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
-		return 2
-	}
-
-	for _, b := range benches {
-		tasksDir := filepath.Join(in.Root, "cards", id, swarm.Slug(b.Model))
-		if err := os.MkdirAll(tasksDir, 0o755); err != nil {
+	batches := 0
+	if len(goCards) > 0 {
+		if err := os.MkdirAll(filepath.Join(in.Root, "cards", id), 0o755); err != nil {
 			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
 			return 2
 		}
-		for i, c := range b.Cards {
-			raw, err := os.ReadFile(c.Card)
-			if err != nil {
-				fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
-				return 2
-			}
-			if err := os.WriteFile(filepath.Join(tasksDir, strconv.Itoa(i)), raw, 0o644); err != nil {
-				fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
-				return 2
-			}
-		}
-		if !runBatch(in, id, b.Model, tasksDir) {
+		// The admitted cards become their own cards.tsv, so the batch runs exactly the
+		// cards that fit the free slots and never the queued remainder.
+		admitted := filepath.Join(in.Root, "cards", id, "cards.tsv")
+		if err := writeCardsTSV(admitted, goCards); err != nil {
+			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
 			return 2
 		}
-		record(in.Root, id, b.Model, len(b.Cards))
+		if err := os.MkdirAll(filepath.Join(in.Root, "pulses"), 0o755); err != nil {
+			fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+			return 2
+		}
+		if !runBatch(in, id, admitted) {
+			return 2
+		}
+		record(in.Root, id, len(goCards))
+		batches = 1
 	}
 
 	if queued > 0 {
@@ -114,37 +117,21 @@ func Launch(in LaunchInput) int {
 	}
 
 	fmt.Fprintf(in.Stdout, "PULSE OK id=%s n=%d free-before=%d queued=%d batches=%d deadline=%s\n",
-		oneline.Field(id), n, free, queued, len(benches), oneline.Field(in.Deadline))
+		oneline.Field(id), n, free, queued, batches, oneline.Field(in.Deadline))
 	return 0
 }
 
-// runBatch admits one model route as one nova-swarm batch and relays a swarm refusal as a
-// PULSE REFUSED, queueing nothing.
-func runBatch(in LaunchInput, id, model, tasksDir string) bool {
+// runBatch admits one batch as the swarm's CARD form of nova-swarm batch and relays a swarm
+// refusal as a PULSE REFUSED, queueing nothing.
+func runBatch(in LaunchInput, id, cardsPath string) bool {
 	then := fmt.Sprintf("nova-pulse harvest --id %s --root %s", id, in.Root)
-	pool, ok := ensurePool(in.Root, in.Stderr)
-	if !ok {
-		return false
-	}
-	// BOTH budgets, because `nova-swarm batch` requires both on the pool path and refuses to
-	// guess either: a launch without them is "--files is required and is at least 1, got 0",
-	// which is every launch on the first tick of the switch (issue #869).
-	files := in.Files
-	if files < 1 {
-		files = DefaultLaunchFiles
-	}
-	tokens := strings.TrimSpace(in.Tokens)
-	if tokens == "" {
-		tokens = DefaultLaunchTokens
-	}
 	var out, errb bytes.Buffer
 	cmd := exec.Command("nova-swarm", "batch",
-		"--pool", pool,
-		"--tasks", tasksDir,
-		"--label", "pulse-"+id,
+		"--id", id,
+		"--cards", cardsPath,
 		"--deadline", in.Deadline,
-		"--files", strconv.Itoa(files),
-		"--tokens", tokens,
+		"--runner", nativeRunner,
+		"--root", in.Root,
 		"--then", then)
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
@@ -159,50 +146,14 @@ func runBatch(in LaunchInput, id, model, tasksDir string) bool {
 	return true
 }
 
-// poolDirs is the layout nova-swarm quickstart makes a pool with (internal/swarm,
-// OpenPool): every directory the batch path touches. launch makes it on first use, because a
-// root switched with the pool empty has no pool at all and `nova-swarm batch` refuses one
-// that is missing (issue #878).
-var poolDirs = []string{swarm.Pending, swarm.Running, swarm.Done, swarm.Failed, swarm.Aborted, swarm.Slots, swarm.Usage, swarm.Reports, swarm.Scratch}
-
-// ensurePool makes <root>/pool with the pool's layout when it is absent, logs one PULSE POOL
-// MADE line when it made it, and reports whether the pool stands. A pool that cannot be made
-// is a refusal naming the reason, once per tick: the caller stops the launch.
-func ensurePool(root string, stderr io.Writer) (string, bool) {
-	pool := filepath.Join(root, "pool")
-	if info, err := os.Stat(pool); err == nil {
-		if !info.IsDir() {
-			fmt.Fprintf(stderr, "PULSE REFUSED: %s is a file, and the pool wants a directory (nova-swarm quickstart makes one)\n", oneline.Field(pool))
-			return pool, false
-		}
-		return pool, true
-	} else if !os.IsNotExist(err) {
-		fmt.Fprintf(stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
-		return pool, false
-	}
-	if err := os.MkdirAll(pool, 0o755); err != nil {
-		fmt.Fprintf(stderr, "PULSE REFUSED: the pool could not be made: %s (nova-swarm quickstart makes one)\n", oneline.Err(err))
-		return pool, false
-	}
-	for _, d := range poolDirs {
-		if err := os.MkdirAll(filepath.Join(pool, d), 0o755); err != nil {
-			fmt.Fprintf(stderr, "PULSE REFUSED: the pool could not be made: %s (nova-swarm quickstart makes one)\n", oneline.Err(err))
-			return pool, false
-		}
-	}
-	fmt.Fprintf(stderr, "PULSE POOL MADE root=%s\n", oneline.Field(root))
-	return pool, true
-}
-
-// record appends one row to <root>/pulses/<id>.tsv naming the batch: its label, model and
-// card count.
-func record(root, id, model string, n int) {
+// record appends one row to <root>/pulses/<id>.tsv naming the batch: its id and card count.
+func record(root, id string, n int) {
 	f, err := os.OpenFile(filepath.Join(root, "pulses", id+".tsv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "pulse-%s\t%s\t%d\n", id, model, n)
+	fmt.Fprintf(f, "pulse-%s\t%d\n", id, n)
 }
 
 // queueRemainder appends each overflow card to <root>/queue.tsv, one row per card.
@@ -218,23 +169,6 @@ func queueRemainder(root string, cards []CardRow) error {
 		}
 	}
 	return nil
-}
-
-// groupByModel folds the cards into benches in cards.tsv order, one bench per distinct model
-// in the order the models first appear.
-func groupByModel(cards []CardRow) []BenchRow {
-	var benches []BenchRow
-	seen := map[string]int{}
-	for _, c := range cards {
-		idx, ok := seen[c.Model]
-		if !ok {
-			idx = len(benches)
-			seen[c.Model] = idx
-			benches = append(benches, BenchRow{Model: c.Model})
-		}
-		benches[idx].Cards = append(benches[idx].Cards, c)
-	}
-	return benches
 }
 
 // freeSlots counts the free slots among the first `slots`, a slot free only when it holds no

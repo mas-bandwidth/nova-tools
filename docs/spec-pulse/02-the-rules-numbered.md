@@ -65,9 +65,10 @@
    `CUT ROUTE` line, `class` the cost class. A retry after an abstain (rule 14) moves the pick
    one capability class up (`read` → `text` → `code` → `replay`), so a rewritten card routes
    to a stronger class. There is no `--model` flag on any verb: the table is the whole
-   policy, in git, edited once. `cards.tsv` is five fields per line: `label`, `slot`, `model`,
-   `tokens`, `card` (the card's path); `slot` is `-` until `launch` allocates, and `tokens` is
-   the card's admission token bound, which rule 10 sums for the batch's `--tokens`.
+   policy, in git, edited once. `cards.tsv` is four fields per line: `label`, `slot`, `model`,
+   `card` (the card's path); `slot` is `-` until `launch` allocates. Admission is the card
+   form of `nova-swarm batch`, which takes the TSV whole and wants no file or token budget
+   (rule 10).
 8. **A slot is free when the swarm's slot lock files say so.** `launch` reads the swarm pool
    under `--root`: a slot is free when its slot lock file `<pool>/slots/<n>.json` is absent
    or `state=free` — the swarm's own lock files (issue #457), never a log age and never a
@@ -88,21 +89,18 @@
    from gated work (rule 16). An admission refusal is not a failed run: `launch` fills the
    slots it can and exits 0. There is no `UNDER-SLOTS` refusal any more — a pulse never
    refuses for being wider than the bench; the remainder queues, always.
-10. **Every card goes through `batch`, never a single `add`.** `launch` runs exactly one
-    `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>
-    --files <n> --tokens <n> --then "nova-pulse harvest --id <id> --root <root>"` per model
-    route present, so at most two admissions, both under one pulse id recorded in
-    `<root>/pulses/<id>.tsv` (`batch id`, `model`, `n`). `<n>` on `--files` and `--tokens` is
-    that route's card count and summed token bound taken from its `cards.tsv` columns, so the
-    admission is bounded exactly as the cards say. Where `cards.tsv` carries no budget column,
-    the budgets come from the configuration -- `[launch] files` (default 40) and
-    `[launch] tokens` (default the explicit word `unmetered`, which is what a native runner
-    with no live token accounting has always meant). Neither is ever omitted: `nova-swarm
-    batch` requires both and refuses to guess, so a launch that names none is refused before
-    a card starts (issue #869). The `--then` argv is `nova-swarm batch`'s
-    (card 269): it runs when the batch's wait ends — every card ended or the deadline — and
-    never earlier. A `BATCH REFUSED` line from the swarm is relayed as `PULSE REFUSED` with
-    the swarm's reason and nothing is queued.
+ 10. **Every card goes through `batch`'s card form, never a single `add`.** `launch` runs
+     exactly one `nova-swarm batch --id <pulse> --cards <admitted.tsv> --deadline <s>
+     --runner <cmd> --root <root> --then "nova-pulse harvest --id <id> --root <root>"`, with
+     `<admitted.tsv>` the admitted cards written under `<root>/cards/<id>/cards.tsv` (the
+     cards that fit the free slots, never the queued remainder) and `<cmd>` the deployment's
+     native runner on PATH, `nova-native-runner.sh`. The card form is the only form that runs
+     a card: the swarm's pool form (`--pool --tasks --label`) wants `--files` and `--tokens`,
+     which no launch flag can supply (issue #630), so `launch` never calls it. The one
+     admission is recorded in `<root>/pulses/<id>.tsv` (`batch id`, `n`). The `--then` argv
+     is `nova-swarm batch`'s (card 269): it runs when the batch's wait ends — every card
+     ended or the deadline — and never earlier. A `BATCH REFUSED` line from the swarm is
+     relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued.
 11. **`--then` is gated on the verdict, never on mergeability.** `harvest` disposes a card by
     its own two lines — line 1 the contract, line 2 the verdict — and by the `BRANCH` line.
     It never asks `nova-merge` whether the PR can merge, never reads a hosted check, never

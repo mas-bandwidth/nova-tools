@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +93,91 @@ func TestLaunchRefusesUnderSlots(t *testing.T) {
 	}
 }
 
+// Red for issue #630: launch admits the cards.tsv through the CARD form of nova-swarm
+// batch -- `--id <pulse> --cards <tsv> --deadline <s> --runner <cmd> --root <dir>` -- and
+// prints a PULSE line. The POOL form it used to call (`--pool --tasks --label`) wants
+// --files and --tokens, which no launch flag supplies, and the swarm refuses it with the
+// two lines the issue quotes. The fake below answers the pool form with exactly those
+// lines on stderr (matching the real binary's own wantCount/tokens refusals) and the
+// cards form with exit 0.
+func TestLaunchAdmitsThroughCardsForm(t *testing.T) {
+	root := t.TempDir()
+	argvLog := filepath.Join(root, "argv.log")
+	specs := fakePATH(t)
+	fakeTool(t, specs, "nova-swarm", fakeSpec{
+		Log: argvLog,
+		Rules: []fakeRule{
+			{
+				Arg:    2,
+				Equals: "--pool",
+				Stderr: "nova-swarm batch: --files is required and is at least 1, got 0; it wants the file budget every job in this batch carries; refusing to guess\n" +
+					"nova-swarm batch: --tokens is required; it wants a token budget for this job, or the word `unmetered` when this provider has no live accounting and the deadline is the only stop; refusing to guess",
+				Exit: 2,
+			},
+		},
+		Default: fakeRule{Exit: 0},
+	})
+	cards, _ := writeCards(t, root, 6)
+
+	code, out, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Slots: 6, Deadline: "600",
+		Now: func() time.Time { return time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC) },
+	})
+
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
+	}
+	id := pulseID(t, out)
+	if !strings.Contains(out, "PULSE OK id="+id+" n=6 free-before=6 queued=0 batches=1 deadline=600") {
+		t.Fatalf("PULSE line wrong: %q", out)
+	}
+	raw, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(string(raw))
+	argv := strings.Fields(line)
+	if argv[0] != "nova-swarm" || argv[1] != "batch" {
+		t.Fatalf("the fake nova-swarm recorded %q; want it to lead `nova-swarm batch`", line)
+	}
+	if !strings.Contains(line, "--id "+id) {
+		t.Fatalf("argv lacks --id %s: %q", id, line)
+	}
+	if !strings.Contains(line, "--cards ") {
+		t.Fatalf("argv lacks --cards: %q", line)
+	}
+	if !strings.Contains(line, "--deadline 600") {
+		t.Fatalf("argv lacks --deadline 600: %q", line)
+	}
+	if !strings.Contains(line, "--runner "+nativeRunner) {
+		t.Fatalf("argv lacks --runner %s: %q", nativeRunner, line)
+	}
+	if !strings.Contains(line, "--root "+root) {
+		t.Fatalf("argv lacks --root %s: %q", root, line)
+	}
+	// The --cards file is the admitted cards as their own TSV: all six rows, in order.
+	cardsTSV := ""
+	for i, a := range argv {
+		if a == "--cards" && i+1 < len(argv) {
+			cardsTSV = argv[i+1]
+		}
+	}
+	if cardsTSV == "" {
+		t.Fatalf("no --cards tsv in argv: %q", line)
+	}
+	got, err := os.ReadFile(cardsTSV)
+	if err != nil {
+		t.Fatalf("--cards %s unreadable: %v", cardsTSV, err)
+	}
+	src, err := os.ReadFile(cards)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.TrimRight(string(src), "\n") + "\n"; string(got) != want {
+		t.Fatalf("--cards tsv does not carry the cards in order:\n%s", got)
+	}
+}
+
 func TestLaunchQueuesRemainder(t *testing.T) {
 	root := t.TempDir()
 	argvLog := filepath.Join(root, "argv.log")
@@ -113,7 +197,8 @@ func TestLaunchQueuesRemainder(t *testing.T) {
 		t.Fatalf("PULSE OK line wrong: %q", out)
 	}
 
-	// One batch run, holding exactly the first four cards in cards.tsv order.
+	// One batch run in the CARD form, holding exactly the first four cards in cards.tsv
+	// order: the admitted cards become their own cards.tsv under <root>/cards/<id>/.
 	raw, err := os.ReadFile(argvLog)
 	if err != nil {
 		t.Fatal(err)
@@ -126,35 +211,44 @@ func TestLaunchQueuesRemainder(t *testing.T) {
 	if argv[0] != "nova-swarm" || argv[1] != "batch" {
 		t.Fatalf("the fake nova-swarm recorded %q; want it to lead `nova-swarm batch`", lines[0])
 	}
-	tasksDir := ""
-	for i, a := range argv {
-		if a == "--tasks" && i+1 < len(argv) {
-			tasksDir = argv[i+1]
-		}
+	if !strings.Contains(lines[0], "--id "+id) {
+		t.Fatalf("argv lacks --id %s: %q", id, lines[0])
 	}
-	if tasksDir == "" {
-		t.Fatalf("no --tasks dir in argv: %q", lines[0])
+	if !strings.Contains(lines[0], "--deadline 120") {
+		t.Fatalf("argv lacks --deadline 120: %q", lines[0])
 	}
-	var names []string
-	entries, _ := os.ReadDir(tasksDir)
-	for _, e := range entries {
-		names = append(names, e.Name())
+	if !strings.Contains(lines[0], "--runner "+nativeRunner) {
+		t.Fatalf("argv lacks --runner %s: %q", nativeRunner, lines[0])
 	}
-	if len(names) != 4 {
-		t.Fatalf("--tasks dir holds %d files, want 4: %v", len(names), names)
-	}
-	for i, p := range paths[:4] {
-		want, _ := os.ReadFile(p)
-		got, err := os.ReadFile(filepath.Join(tasksDir, names[i]))
-		if err != nil || !bytes.Equal(want, got) {
-			t.Fatalf("task %d does not carry card %d", i, i)
-		}
-	}
-	if !strings.Contains(lines[0], "--label pulse-"+id) {
-		t.Fatalf("argv lacks --label pulse-%s: %q", id, lines[0])
+	if !strings.Contains(lines[0], "--root "+root) {
+		t.Fatalf("argv lacks --root %s: %q", root, lines[0])
 	}
 	if !strings.Contains(lines[0], "--then nova-pulse harvest --id "+id+" --root "+root) {
 		t.Fatalf("argv lacks --then harvest: %q", lines[0])
+	}
+	cardsTSV := ""
+	for i, a := range argv {
+		if a == "--cards" && i+1 < len(argv) {
+			cardsTSV = argv[i+1]
+		}
+	}
+	if cardsTSV == "" {
+		t.Fatalf("no --cards tsv in argv: %q", lines[0])
+	}
+	got, err := os.ReadFile(cardsTSV)
+	if err != nil {
+		t.Fatalf("--cards %s unreadable: %v", cardsTSV, err)
+	}
+	src, err := os.ReadFile(cards)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcLines := strings.Split(strings.TrimRight(string(src), "\n"), "\n")
+	if len(srcLines) != 8 {
+		t.Fatalf("source cards.tsv holds %d rows, want 8", len(srcLines))
+	}
+	if want := strings.Join(srcLines[:4], "\n") + "\n"; string(got) != want {
+		t.Fatalf("--cards tsv does not hold the first four cards in order:\n%s", got)
 	}
 
 	// queue.tsv holds the other four cards.
@@ -177,99 +271,7 @@ func TestLaunchQueuesRemainder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(pulses), "pulse-"+id+"\tpro\t4") {
+	if !strings.Contains(string(pulses), "pulse-"+id+"\t4") {
 		t.Fatalf("pulses/%s.tsv does not name the batch: %q", id, pulses)
-	}
-}
-
-// launch-carries-the-file-budget (issue #869): `nova-swarm batch` refuses a pool admission
-// that carries no budget -- "--files is required and is at least 1, got 0" -- so the wired
-// launch names both budgets the verb requires, the file budget from the configuration and the
-// explicit `unmetered` the shim's native runner has always meant. The mutation that matters:
-// the flag dropped, which is the refusal that stopped the first tick of the switch.
-func TestLaunchCarriesTheFileBudget(t *testing.T) {
-	root := t.TempDir()
-	argvLog := filepath.Join(root, "argv.log")
-	fakeSwarm(t, argvLog)
-	cards, _ := writeCards(t, root, 2)
-
-	code, _, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 4, Deadline: "120", Files: 40,
-		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
-	})
-	if code != 0 {
-		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
-	}
-	raw, err := os.ReadFile(argvLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	line := strings.TrimSpace(string(raw))
-	for _, want := range []string{"--files 40", "--tokens unmetered", "--pool ", "--tasks ", "--label pulse-", "--deadline 120", "--then nova-pulse harvest"} {
-		if !strings.Contains(line, want) {
-			t.Errorf("argv lacks %q: %s", want, line)
-		}
-	}
-}
-
-// launch-makes-the-pool-on-first-use (issue #878): the switch to nova-swarm batch was made
-// with the pool empty, so the launch path never ran once before the loop was trusted, and
-// every tick refused: `nova-swarm batch: --pool wants a directory that exists: stat
-// <root>/pool: no such file or directory`. The verb that makes one is nova-swarm quickstart;
-// the launch should make the pool itself on first use -- the nine directories quickstart
-// makes -- log one line, and attempt the batch. The mutation that matters: the pool made, or
-// the batch never attempted.
-func TestLaunchMakesThePoolOnFirstUse(t *testing.T) {
-	root := t.TempDir()
-	argvLog := filepath.Join(root, "argv.log")
-	fakeSwarm(t, argvLog)
-	cards, _ := writeCards(t, root, 1)
-
-	code, out, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 4, Deadline: "120",
-		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
-	})
-	if code != 0 {
-		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
-	}
-	if !strings.Contains(errb, "PULSE POOL MADE root="+root) {
-		t.Fatalf("no PULSE POOL MADE line on a root with no pool: %q", errb)
-	}
-	if !strings.Contains(out, "PULSE OK") {
-		t.Fatalf("no PULSE OK line: %q", out)
-	}
-	pool := filepath.Join(root, "pool")
-	for _, d := range []string{"pending", "running", "done", "failed", "aborted", "slots", "usage", "reports", "scratch"} {
-		if fi, err := os.Stat(filepath.Join(pool, d)); err != nil || !fi.IsDir() {
-			t.Fatalf("pool subdir %s is not a directory after the launch made the pool: %v", d, err)
-		}
-	}
-	raw, err := os.ReadFile(argvLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.TrimSpace(string(raw)); !strings.HasPrefix(got, "nova-swarm batch ") {
-		t.Fatalf("the batch was never attempted: %q", got)
-	}
-}
-
-// A launch given no budget at all still names one: the documented default, never a zero the
-// swarm reads as "refusing to guess".
-func TestLaunchWithoutAConfiguredBudgetUsesTheDefault(t *testing.T) {
-	root := t.TempDir()
-	argvLog := filepath.Join(root, "argv.log")
-	fakeSwarm(t, argvLog)
-	cards, _ := writeCards(t, root, 1)
-
-	code, _, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 2, Deadline: "60",
-		Now: func() time.Time { return time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC) },
-	})
-	if code != 0 {
-		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
-	}
-	raw, _ := os.ReadFile(argvLog)
-	if want := "--files " + strconv.Itoa(DefaultLaunchFiles); !strings.Contains(string(raw), want) {
-		t.Fatalf("argv lacks %q: %s", want, raw)
 	}
 }

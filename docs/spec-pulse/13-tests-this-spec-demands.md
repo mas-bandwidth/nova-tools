@@ -38,19 +38,18 @@ handoff (rule **The manager tier**).
    four — every free slot filled, none left idle, exit 0 and no `UNDER-SLOTS` anywhere in
    either stream; the mutation that matters: a launch that refuses instead of filling.
 10. `launch-queues-remainder`: the same run queues the rest with no flag asked for:
-    `nova-swarm batch` runs with a
-    `--tasks` dir holding exactly the first four cards in `cards.tsv` order, `queued=4`,
+    `nova-swarm batch` runs once, in the card form, with a `--cards` TSV holding exactly the
+    first four cards in `cards.tsv` order, `queued=4`,
     `queue.tsv` holding the other four, `pulses/<id>.tsv` naming the batch.
 11. `launch-slot-free-from-lock-files`: a slot whose lock file is `state=free` is free, one
     `state=busy` is not, a missing lock file is free; `free-before` counts the free ones and
     no `native.log` age or 120 s rule appears anywhere — the mutation that matters: a slot
     freed by a log age instead of the swarm's lock file.
-12. `launch-every-card-through-batch`: two model routes present run exactly two `nova-swarm
-    batch` invocations and zero `nova-swarm add`, each with `--label pulse-<id>`, a `--files`
-    equal to that route's card count, a `--tokens` equal to the sum of that route's `tokens`
-    column in `cards.tsv`, and a
-    `--then` whose argv begins `nova-pulse harvest --id <id>`; a `BATCH REFUSED` fixture
-    reply is `PULSE REFUSED` with that reason, `queue.tsv` unchanged.
+12. `launch-every-card-through-batch`: any admitted cards run exactly one `nova-swarm
+     batch` invocation and zero `nova-swarm add`, in the card form — `--id <pulse>`, a
+     `--cards` TSV holding exactly the admitted cards in order, `--deadline`, a `--runner`,
+     `--root`, and a `--then` whose argv begins `nova-pulse harvest --id <id>`; a `BATCH
+     REFUSED` fixture reply is `PULSE REFUSED` with that reason, `queue.tsv` unchanged.
 13. `harvest-pushes-only-on-line1-match`: three done cards — line 1 equal, line 1 differing
     by one byte, line 1 equal with `BRANCH main` — push exactly one, by `git push <https>
     <branch>:<branch>`, open exactly one draft PR whose body is the `RESULT.md` lines, and
@@ -65,7 +64,7 @@ handoff (rule **The manager tier**).
     template `read` (or `tone` for a seed page), carrying the bench cost table's cheapest
     model that can hold it, and the next `pool` counts it in `next=<n>` after `queue.tsv`.
 16. `harvest-relaunches-queue-first`: `queue.tsv` with three rows, `next.tsv` with one, a
-    source with two new items, five free slots: the next batch's `--tasks` dir holds the
+    source with two new items, five free slots: the next batch's `--cards` TSV holds the
     three queued cards first, then the read card, then one source card; `queued=1`; the
     `HARVEST OK` line precedes the `PULSE OK` line and both are printed.
 17. `harvest-usd-is-the-batch-line`: `usd=` on `HARVEST OK` equals the swarm packet's

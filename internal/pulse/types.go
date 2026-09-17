@@ -23,10 +23,3 @@ type Candidate struct {
 // PoolRow is a candidate as pool.tsv holds it: pool.tsv, queue.tsv and next.tsv share the
 // Candidate shape, and pool names it for the file it lives in.
 type PoolRow = Candidate
-
-// BenchRow is one model route: the cards launch admits under one nova-swarm batch, in
-// cards.tsv order.
-type BenchRow struct {
-	Model string
-	Cards []CardRow
-}
