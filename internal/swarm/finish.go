@@ -213,8 +213,13 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	// treated two ways by the same run. It is retired for the rest of the pass instead, on
 	// the same grounds as a surviving child: what this dispatcher could not read, it cannot
 	// say is free. A file that is GONE is an answer, not a collision, and is freed as before.
+	// BUT exit.json IS an answer: when the supervisor's own completion evidence carries this
+	// launch's nonce and attestation, the job's end is confirmed and the slot is free (run
+	// 34698330796, `TestANumericBudgetWithNoUsageSourceIsRefused`, the Windows flake where a
+	// slot collision retired a green job and made the run exit 1 over nothing).
+	exitConfirmed := rec.Nonce != "" && ExitAttestOK(rec.Attest, attest)
 	unreadableSlot := slotErr != nil && !missing(slotErr)
-	if survivors > 0 || unreadableSlot {
+	if survivors > 0 || (unreadableSlot && !exitConfirmed) {
 		// RULE 11 QUARANTINES THE RESULT (SPEC-SWARM.md:154), and rule 17's QUARANTINE is
 		// about a slot FILE. What this does to the slot is neither: it RETIRES it for the
 		// rest of the run, because a data home that may still have a writer in it is not
