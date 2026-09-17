@@ -1271,7 +1271,36 @@
     #:receipt-id
     #:receipt-scope
     #:change-within-scope-p
-    #:unrelated-receipts-stay-reusable))
+    #:unrelated-receipts-stay-reusable
+    ;; replays-8660: the pure duty-tier model (Go card 8660)
+    #:make-policy-rule
+    #:policy-rule-id
+    #:policy-rule-by
+    #:policy-rule-task-class
+    #:policy-rule-models
+    #:duty-policy-version
+    #:duty-policy-rules
+    #:load-policy
+    #:author-policy
+    #:policy-rule-for
+    #:cheapest-qualified
+    #:execute-policy
+    #:make-escalation-row
+    #:escalation-row-rule
+    #:escalation-row-default
+    #:escalation-row-age
+    #:stale-pass
+    #:*wait-presence-columns*
+    #:make-wait-row
+    #:wait-row-harness
+    #:wait-presence
+    #:wait-holds-resident-p
+    #:wait-holds-duty-p
+    #:pulse-result-model-calls
+    #:pulse-result-notes
+    #:pulse-result-published
+    #:pulse-result-cost
+    #:quiet-pulse))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
