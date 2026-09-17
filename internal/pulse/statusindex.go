@@ -285,6 +285,12 @@ func readStatusIndex(root string) (map[string]indexEntry, bool) {
 		for i := 4; i+4 < len(f); i += 5 {
 			e.rows = append(e.rows, indexRow{started: f[i], ended: f[i+1], rc: f[i+2], usd: f[i+3], tokens: f[i+4]})
 		}
+		if e.class == "" {
+			// A reader that could not touch the store leaves the row's numbers unknown,
+			// never the class: an index line always names a class, so a missing sqlite3
+			// yields the usage row's own verdict rather than an empty field.
+			e.class = entrySummaryClass(e.rows)
+		}
 		entries[f[0]] = e
 	}
 	return entries, true

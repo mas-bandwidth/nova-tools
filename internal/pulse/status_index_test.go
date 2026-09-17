@@ -18,10 +18,22 @@ import (
 	"time"
 )
 
+// requireSqlite skips the calling test BY NAME when the sqlite3 CLI is not on PATH, so a
+// host without the store reader never runs a fixture that needs it; the msg is one bounded
+// line and the remedy names the binary, as SPEC-SWARM's readers already do.
+func requireSqlite(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skipf("sqlite3 is not on PATH: the fixture needs the harness store data/opencode/opencode.db; install sqlite3 to run this test here")
+	}
+}
+
 // fixtureDBSeed builds one real sqlite store with the sqlite3 CLI and returns its bytes,
 // so every fixture job carries the data home a real job carries
-// (data/opencode/opencode.db) without one sqlite3 process per job. When sqlite3 is not on
-// PATH the db part is skipped and said so, as SPEC-SWARM's readers already do.
+// (data/opencode/opencode.db) without one sqlite3 process per job. A caller that asserts on
+// the store calls requireSqlite first; a caller that reads only files (the class comes from
+// RESULT.md, not the database) runs everywhere, and the seed is absent and said so in one
+// bounded line.
 func fixtureDBSeed(t *testing.T) []byte {
 	t.Helper()
 	if _, err := exec.LookPath("sqlite3"); err != nil {
@@ -237,6 +249,7 @@ func indexLine(raw, job string) string {
 // zero usage reads: no sqlite3, no log read. The index used to key on the job directory's
 // mtime, so any move re-opened the job and shelled out per job on a real root.
 func TestStatusIndexNeverReopensAFinishedJob(t *testing.T) {
+	requireSqlite(t)
 	const day = "2026-09-16"
 	root := bigStatusRoot(t, day)
 	queue := bigStatusQueue(t)
@@ -268,13 +281,44 @@ func TestStatusIndexNeverReopensAFinishedJob(t *testing.T) {
 	if !strings.Contains(out, "spend=2.0000") {
 		t.Errorf("the index must still answer the day's spend:\n%s", out)
 	}
+}
 
-	// The cached class is RESULT.md's, not the usage row's: a job that wrote ABSTAIN answers
-	// abstain, and RESULT.md moving is what refreshes it.
+// classStatusRoot writes the two files the index's class is read from -- usage.tsv and
+// RESULT.md -- and no harness store, because the class is RESULT.md's verdict and not the
+// database's. Its fixture needs no sqlite3, so the class claim holds on every platform.
+func classStatusRoot(t *testing.T, day string) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "bench")
+	dir := filepath.Join(root, "0", "jobs", "card-0-0")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	base := fixtureBase
+	writeAt(t, filepath.Join(dir, "RESULT.md"),
+		"RESULT: card-0-0 done\nDONE\nBRANCH rowan/card-0-0\nREPO mas-bandwidth/nova-tools\n", base.Add(2*time.Second))
+	writeAt(t, filepath.Join(dir, "usage.tsv"),
+		"job\tattempt\tstarted\tended\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\n"+
+			"card-0-0\t1\t"+day+"T09:00:00Z\t"+day+"T09:10:00Z\t0\t-\tgo\t-\t-\t-\t-\t-\t0.0010\n", base)
+	return root
+}
+
+// TestStatusIndexCarriesResultClass is the class half of the reopen test with a fixture that
+// needs no database: the index's class is RESULT.md's verdict, so it holds everywhere -- the
+// reopen half, whose fixture carries a real store, skips by name where sqlite3 is not on PATH.
+func TestStatusIndexCarriesResultClass(t *testing.T) {
+	const day = "2026-09-16"
+	root := classStatusRoot(t, day)
+	queue := t.TempDir()
+
+	if _, code := runOnelineStatus(queue, root, day); code != 0 {
+		t.Fatalf("cold status exit = %d", code)
+	}
+
+	// A job that wrote ABSTAIN answers abstain, and RESULT.md moving is what refreshes it.
+	dir := filepath.Join(root, "0", "jobs", "card-0-0")
 	future := fixtureBase.Add(72 * time.Hour)
 	writeAt(t, filepath.Join(dir, "RESULT.md"),
 		"RESULT: card-0-0 done\nABSTAIN the fixture changed its mind\nBRANCH rowan/card-0-0\n", future)
-	atomic.StoreInt64(&statusIndexReads, 0)
 	if _, code := runOnelineStatus(queue, root, day); code != 0 {
 		t.Fatalf("status exit = %d after RESULT.md moved", code)
 	}
@@ -282,7 +326,8 @@ func TestStatusIndexNeverReopensAFinishedJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row := indexLine(string(raw), "0/jobs/card-0-0/usage.tsv"); !strings.Contains(row, "\tabstain\t") {
+	job := filepath.Join("0", "jobs", "card-0-0", "usage.tsv")
+	if row := indexLine(string(raw), job); !strings.Contains(row, "\tabstain\t") {
 		t.Errorf("the index must carry RESULT.md's class per job, got %q", row)
 	}
 }
