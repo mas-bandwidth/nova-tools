@@ -1088,6 +1088,62 @@ compute it. The prototype read 2,497 files in about ten seconds; the
 two-minute rule holds with room, and it is a count that is pinned, not a
 time (lesson 167).
 
+## The efficiency card (#85), nova-tokens
+
+The card is a measurement, taken on the bench on **2026-09-12**, of what
+`nova-tokens` pays once and what it pays again. This section is the part of it
+that binds this tool: the transcript walk, the coordinator read, and what a run
+waits on. It states the contract, not a bench recipe.
+
+### One walk of the sources per run (`REPEATS`)
+
+The measured bench held **1,397 `.jsonl` files** and **1,699 MB** of Claude Code
+transcripts, and one fold parsed **57,239 messages**. `internal/tokens/claude.go:98`
+walks the transcript directory and parses every message; the fold then folds
+every day the sources name (`cmd/nova-tokens/main.go:587`, `folder.Days()`). One
+walk covers all ten days in **3.27 s** (`--all`), so folding day by day repeats
+the same walk once per day: ten days that way is about **35 s**, and a fold run
+twice in a day parses the 1.7 GB twice to write one day's delta. There is no
+per-file cache and no cursor. `dup=49765` of `messages=57239` is **87 %** of the
+parsed messages discarded as already-counted.
+
+The contract is **one walk of the sources per run**: `--all` pays for the tree
+once and folds every day from that one stream, so a day-at-a-time fold is a
+debugging convenience and not the retained-accounting route. A cursor or a
+per-file cache that lets a second run read only the delta is the tool's, and it
+does not change the day file's shape.
+
+### The coordinator read is bounded (`COORDINATOR READ`)
+
+`fold --day` prints 5 lines and 984 B; `fold --all` prints 14 lines and 2,297 B
+for 10 days. One `TOKENS SOURCE` per source, one `TOKENS DAY` per day, one
+`TOKENS OK`; the day line carries that day's shares of turns and tokens, so the
+whole ledger is read from the day lines. `check` is one line per finding, capped
+by `--max` (default 20), and on the live ledger it printed 33 lines because
+every one of the nine day files was a finding: 9 bad, 36 missing, 2 stray.
+`check` is the gate, never a table.
+
+### What a run waits on (`WAITS ON`)
+
+There is no clock in this tool. `--timeout` (default **120 s**) is how long it
+waits on one source and not a deadline on the run. What a fold or a check
+actually waits on is a person running it, and on the measured bench it was not
+being run: `check` printed
+`CHECK FAIL files=9 rows=0 first=2026-07-29 last=2026-09-11 bad=9 missing=36 stray=2`,
+and `sum --month 2026-09` refused because the first line of a day file was not
+the version line, with `fold --day <d>` as the repair. Nine of nine day files
+were bad. A stale ledger is repaired by `fold --day <d>` before `check` is
+trusted.
+
+### Red tests
+
+The card earns the same red-first bar as every rule here: seen red before it is
+trusted.
+
+- one `--all` fold walks each transcript file once and folds every day from that stream, so a day-at-a-time fold is not the retained-accounting route;
+- the coordinator read is one `TOKENS SOURCE` per source, one `TOKENS DAY` per day and one `TOKENS OK`, and `check` is one line per finding bounded by `--max`;
+- `--timeout` bounds one source and not the run, and a stale ledger is repaired by `fold --day <d>` before `check` is trusted.
+
 ## Publishing to the git ledger
 
 Glenn, live, 2026-09-12: "nova-tokens can and should provide an easy way to
