@@ -1737,7 +1737,7 @@
     #:replay-index-ancestor-p
     #:holder-open-ids
     #:index-mismatches
-    ;; the `verify` verb and the verification cache
+    ;; E03 row 3: the `verify` verb and the verification cache
     #:verification-unreachable
     #:verification-resolver
     #:make-verification-resolver

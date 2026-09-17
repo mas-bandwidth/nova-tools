@@ -1,5 +1,7 @@
 ;;;; verifier.lisp --- the operator-configured verifier and staged admission
-;;;; (docs/SPEC-WORK.md:3848-3861, 5837-5840).
+;;;; (docs/SPEC-WORK.md:3848-3861, 5837-5840), and the `verify` verb and the
+;;;; verification cache (SPEC-WORK.md:1242-1338, :2302, :5368-5371, :5490-5491,
+;;;; :5650-5653).
 ;;;;
 ;;;; A receipt needs a verifier result before the coordinator admits it. The
 ;;;; operator-configured verifier reads the provenance body outside the
@@ -10,6 +12,17 @@
 ;;;; tuple, the profile and the capacity at the expected revision. A stale or
 ;;;; failed stage writes no reservation, no lease, no W entry and no receipt,
 ;;;; and `status` answers while the stage runs (SPEC-WORK.md:3853-3859).
+;;;;
+;;;; The `verify` verb and the verification cache carry the pure model: a
+;;;; resolver registry keyed by the command string the operator named, a cache
+;;;; of raw resolutions keyed by the pointer, the subject and the resolver's
+;;;; identity, and the derived per-evidence verdicts the verb prints. Nothing
+;;;; here starts a session, a socket or a subprocess; see README.md for the
+;;;; boundary.
+;;;;
+;;;; The cache holds raw resolutions, never verdicts (SPEC-WORK.md:1294). One
+;;;; raw fact answers two criteria with two verdicts, and a `correct` or an
+;;;; `accept` edit changes a verdict with no fetch at all (:1326-1338).
 
 (in-package #:nova-work)
 
