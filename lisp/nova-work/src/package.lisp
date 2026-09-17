@@ -372,7 +372,47 @@
     #:ask-state-as-of
     #:admit-record
     #:clip
-    #:split-index-page))
+    #:split-index-page
+    ;; replays-slice-05: merged-is-not-distributed
+    #:make-release-task
+    #:release-task-id
+    #:release-task-version
+    #:release-task-deps
+    #:release-task-branch
+    #:release-task-settle-stamp
+    #:make-finding
+    #:finding-id
+    #:finding-branch
+    #:finding-disposition
+    #:finding-evidence
+    #:finding-landed
+    #:finding-released
+    #:disposition-row
+    ;; replays-slice-05: ready-names-the-blocker-and-the-resolver
+    #:make-ready-item
+    #:ready-item-id
+    #:ready-item-branch
+    #:ready-item-deps
+    #:ready-item-holder
+    #:ready-item-responsible
+    #:ready-row-id
+    #:ready-row-ready
+    #:ready-row-reason
+    #:ready-row-resolver
+    #:ready-rows
+    ;; replays-slice-05: remove-settles-only-open-items
+    #:node-remove
+    ;; replays-slice-05: endpoint-is-local-and-private
+    #:make-session-endpoint
+    #:session-endpoint-directory
+    #:session-endpoint-socket-path
+    #:session-endpoint-directory-mode
+    #:session-endpoint-socket-mode
+    #:session-endpoint-owner
+    #:session-endpoint-socket-family
+    #:endpoint-network-listener-p
+    #:local-socket-family
+    #:current-account-uid))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

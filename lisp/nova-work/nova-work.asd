@@ -22,6 +22,7 @@
                (:file "src/fleet")
                (:file "src/replays-8605")
                (:file "src/closed-history")
+               (:file "src/replays-slice-05")
                (:file "src/replays-applicable-delegation")
                (:file "src/replays-config-and-availability")
                (:file "src/replays-8640")
