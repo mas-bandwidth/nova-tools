@@ -684,6 +684,146 @@ Replays: `manager-never-expands-policy`, `manager-quiet-time-makes-no-call`,
 `manager-requeues-once-then-escalates`, `manager-refuses-fix-pr-without-test`,
 `manager-hands-merge-to-lane`.
 
+## The loop as a tool (pit stop 3)
+
+Pit stop 3 (#828, Glenn 2026-09-16 17:00Z: *"It still feels like there are a lot of bugs in
+your process ... stop, analyze the bugs, and then create new tools and fix existing tools so
+these bug classes go away"*). Thirteen bugs inside seventy minutes of one afternoon, seven
+classes, one rule each. The coordination loop around the swarm and the merge queue was a
+263-line bash prototype — `pulse-loop.sh`, `harvest.sh`, `refill.sh`, `mk-read-card.sh`,
+`run-batch*.sh` — patched by hand while it ran, and nova-pulse never absorbed what it learned.
+These seven rules are that absorption: each one quotes the row it retires, names the verb or
+the file that holds it, and names the test that proves it. The bash shims retire verb by verb
+as each lands, each retirement a receipt line in `queue/POLICY.md`.
+
+Two things this section does not do. It names `run`, `gate`, `sweep`, `reap`, `cut --kind` and
+`launch --card <n>` — verbs the shipped tool does not offer yet — and deliberately does not add
+them to **The verbs** block, so `nova-pulse help` stays byte for byte what that block says
+(replay 36) until each one lands. And `run` is a loop with a tick, which amends **What this
+draft does not do**'s *"No clock of its own"* exactly as far as the manager tier's cycle
+already did and no further: the law that does not move is rule 17, no verb calls a model.
+
+1. **A. State in env vars and restarts.** Row 2: *"Loop restarted for a headroom change forgot
+   `PULSE_STUDIO_SLOTS=8`; the Studio launched 11 cards at load 26"*. Row 3: *"The loop must be
+   restarted to take any change and loses its counters (`gt`) each time; a running bash script
+   edited in place is undefined"*. Row 11: *"Space's launch gate (load-based, k=2.5) held 45
+   free slots idle while the load was CI compiles and the cards wait on APIs"* — tuning in an
+   env var is tuning nobody can change without killing the loop.
+   **The rule:** the loop's configuration is ONE file in the queue directory, `<queue>/pulse.toml`
+   — slots per bench, headroom per bench, tick, refill cadence, integration branches, runner
+   count per machine — and its counters are one state file beside it, `<queue>/state.tsv`,
+   tab-separated like every other file rule 19 names. A restart reads both. Changing a value
+   never needs a restart: `run` re-reads the config each tick and prints one `CONFIG` line
+   naming what changed. No verb reads a `PULSE_*` environment variable for a value the config
+   holds.
+   **Held by:** `nova-pulse run`, `<queue>/pulse.toml`, `<queue>/state.tsv`.
+   **Proved by:** `config-change-needs-no-restart`, `counters-survive-a-restart`.
+
+2. **B. One fact written twice.** Row 8: *"dev inherited main's cancellation bug: concurrency
+   keyed dev on the ref, the next merge cancelled dev's run, the gate read cancelled as red and
+   froze the bench"*. Row 9: *"Fair-share divisor stayed 4 when runners went to 8 per machine;
+   Space load 39 on 15 cores from CI alone"*. Row 1: *"Replay cards hand-numbered 8130-8134
+   collided with five launched cards of the same numbers"*. Row 5: *"The sweep then enqueued
+   seven red-test PRs the policy holds; dequeued by hand"*. Row 13: *"PR CI ran the full
+   24-shard matrix per PR; a burst of 8 PRs queued 128 studio legs and held the merge group
+   16 min"*.
+   **The rule:** integration branches are one list, read by every rule that treats those
+   branches differently and by the tier rule that decides how wide a PR's matrix is; runners per
+   machine is one number the runner service exports (`NOVA_RUNNERS_PER_MACHINE`) and the
+   workflow reads, never a divisor written into a workflow; card numbers come only from the
+   state file under the lock, so `nova-pulse cut` is the only cutter and a hand-numbered card
+   does not exist; holds — red-test PRs, drafts, `AFTER:` gates — are labels or lines the code
+   reads, never prose in `queue/POLICY.md` that only a person can apply.
+   **Held by:** `.github/workflows/ci.yml` (the one `fromJSON` list of integration refs, and
+   the fair-share step reading `NOVA_RUNNERS_PER_MACHINE`), `internal/ci`, `nova-pulse cut`
+   under `<queue>/state.tsv`'s lock, and the hold labels `sweep` reads (rule 4 below).
+   **Proved by:** `integration-branches-are-one-list`, `runners-per-machine-is-one-number`,
+   `cut-is-the-only-cutter-of-card-numbers`, `holds-are-labels-the-code-reads`.
+
+3. **C. All-or-nothing STOP.** Row 6: *"STOP halts launches, so the red's own fix card could not
+   launch; launched by hand, wrong runner path then a held slot, third try landed"*. A stop that
+   also stops the fix is a stop that has to be worked around by hand, three times.
+   **The rule:** STOP is a state with an admission list. While red, `run` launches only cards
+   whose line 1 names the red's issue or test — the name `gate` wrote into the STOP file when it
+   went red — harvests everything, and enqueues nothing. RESUME is written by the gate alone: the
+   gate's STOP is lifted by the gate, never by a hand, and no other card slips past one.
+   **Held by:** `nova-pulse gate` (writes the STOP naming the red, and writes RESUME),
+   `nova-pulse run` and `launch` (admit against it), the STOP file under the root.
+   **Proved by:** `stop-admits-only-the-reds-own-fix-card`, `resume-is-the-gates-alone`.
+
+4. **D. Point-in-time verdicts.** Row 4: *"Enqueue only on APPROVE **and** green at that
+   instant; 51 approved PRs with checks still queued were logged `(not merged)` and never
+   revisited"*. Fifty-one decisions taken once, each correct at the instant it was taken, none
+   of them true ten minutes later.
+   **The rule:** an approval is a ledger row — PR, head, card, verdict, time — and every tick
+   `sweep` walks the open rows: green and not draft and not held → enqueue once; head moved →
+   a new read card; merged or closed → the row is closed. Nothing is decided once and forgotten,
+   and nothing is enqueued twice.
+   **Held by:** `nova-pulse sweep`, `<queue>/approvals.tsv`.
+   **Proved by:** `sweep-revisits-every-open-approval-row`,
+   `sweep-cuts-a-read-card-when-the-head-moves`.
+
+5. **E. No reaper.** Row 10: *"Six `nova-swarm-swarmtest supervise` processes leaked by
+   TestTheLaunchIsATransaction lived up to 14 h on Space; a 23-hour-old card ran on the Studio;
+   three stale cards sat in launched/"*. Row 7, classed B + E: *"refill's dedup treated
+   done/failed cards as a block; 22 admitted issues sat uncut"* — a finished card that nothing
+   sweeps is a card that still counts.
+   **The rule:** a `reap` step every tick. Processes under a swarm root older than the batch
+   deadline are killed and logged; a launched card whose job directory is gone is requeued once
+   and then failed; a batch lock whose pid is dead is removed; test binaries under
+   `/tmp/*swarmtest*` older than 30 minutes die. The counts ride on the `PULSE WIDTH` line, so a
+   leak is visible in the one line the coordinator already reads.
+   **Held by:** `nova-pulse reap`, called by `run` each tick; `PULSE WIDTH`.
+   **Proved by:** `reap-kills-past-the-batch-deadline`,
+   `reap-requeues-a-launched-card-whose-job-dir-is-gone`.
+
+6. **F. The coordinator's hands.** Row 12: *"The coordinator's own shell: zsh globs aborting
+   probes (`no matches found`), a wrong runner path, a held slot, `pkill` killing its own ssh"*.
+   Row 1 again — hand-numbered cards — and row 6 again: the hand launch that took three tries.
+   **The rule:** every coordinator action has a verb — `nova-pulse cut`, `launch --card <n>`,
+   `gate`, `sweep`, `reap`, `status` — each printing one bounded line, and the loop calls the
+   same verbs a hand does. A hand launch is `nova-pulse launch --card <n>` and nothing else.
+   `bash -c` for any glob the coordinator types is not a rule; it is the reason the verbs exist.
+   **Held by:** the verbs themselves, and `nova-pulse run`, which composes them and adds no path
+   of its own.
+   **Proved by:** `hand-launch-is-launch-card-n`, `the-loop-calls-the-same-verbs-a-hand-does`.
+
+7. **G. The coordinator's own tokens.** Glenn, 2026-09-16 17:40Z: *"This seems like a lot. How
+   can we make the coordinator more efficient? How can we make the manager more efficient?"*
+   Measured that session: *"4,800 turns, average context 551k, cache reads 2,630M, cache writes
+   14.8M, output 5.6M"* — about 310M fresh-input-equivalent tokens weighted, against 55M tokens
+   at $238 for the whole swarm's day. The coordinator is five to six swarms, and *"85% of it is
+   context × turns, most turns being polls (log tails, run lists, width lines)"*. The manager
+   tier that answers it: routine is not an LLM (G1), triage is a packet on the cheapest route
+   (G2, about $0.003 a decision), and the coordinator is reached only when the rule table has no
+   row — and each such case becomes a row.
+   - **G1. One turn per decision, never per tick.** `nova-pulse run` holds the loop — gate,
+     harvest, sweep, reap, refill, launch, each tick — with zero model calls, and writes ONE bus
+     note when a rule cannot decide. The coordinator's turns are the decisions, not the ticks.
+     **Held by:** `nova-pulse run`. **Proved by:**
+     `run-a-simulated-day-writes-under-twenty-notes`.
+   - **G2. Triage is a fresh bounded packet on the cheapest model.** When `run` cannot decide —
+     a REFUSED reason, a HOLD line, a failed card's cause, a read that quotes a line — it cuts a
+     triage card: the decision packet (the `RESULT` lines and the rule table's candidate rows,
+     under 5k tokens) to the text route. The verdict is one line,
+     `TRIAGE <case> <verdict> <rule-row-or-NEW>`, and a `NEW` verdict becomes a rule row the
+     same day. **Held by:** `nova-pulse run` cutting through `cut --kind`, and the rule table in
+     `queue/POLICY.md`. **Proved by:** `triage-packet-decides-every-refusal-kind`.
+   - **G3. Bounded output is the coordinator's rule too.** Every verb prints one line by
+     default; a list above five items is a count with `--max` to widen; the coordinator's tool
+     results are what the verbs print, never a `tail -40`. This is rule 18 aimed at the window
+     instead of at the log. **Held by:** every verb, `internal/oneline`, `internal/bounded`.
+     **Proved by:** `every-verb-prints-at-most-three-lines-by-default`.
+   - **G4. State lives in files, the window restarts at beats.** `nova-pulse status`
+     reconstructs the day from the `queue/` files in one line, so a fresh window needs `status`
+     and `POLICY` and not the transcript. **Held by:** `nova-pulse status`, `<queue>/` files.
+     **Proved by:** `status-reconstructs-the-day-in-one-line`.
+   - **G5. Measure it.** `nova-tokens` folds the coordinator's own session — the Claude Code
+     jsonl: input, cache write, cache read, output per turn — into the daily ledger as its own
+     model line with the weighted equivalent, and the ledger prints tokens per decision and per
+     merged PR. A cost nobody measures is the one that grows. **Held by:** `nova-tokens`, the
+     daily ledger. **Proved by:** `tokens-folds-the-coordinator-session`.
+
 ## Tests this spec demands
 
 Acceptance replays, one per rule that can be made red, each proven able to fail by a mutation
@@ -873,6 +1013,85 @@ handoff (rule **The manager tier**).
     a run of one — print `EXPANDING` on the hour line and on the day line alike, the day line
     carrying its own counts and the same sustained verdict; `--expanding-hours 3` names
     `window=3h` on both lines, and `--expanding-hours 0` is refused at exit 2.
+52. `config-change-needs-no-restart`: a `<queue>/pulse.toml` whose `headroom` is edited between
+    two ticks is read by the second tick — one `CONFIG` line naming the key, the new value used
+    in that tick's admission — with no restart and no `PULSE_*` environment variable anywhere in
+    the argv log; the mutation that matters: a config read once at startup (rule A, rows 2, 3
+    and 11).
+53. `counters-survive-a-restart`: a `run` killed mid-shift and started again on the same
+    `<queue>` continues its counters from `<queue>/state.tsv` — cards cut, launched, done and
+    the card numbers — and cuts no number it cut before; a fresh directory starts at the file's
+    initial row and never at a number a hand chose.
+54. `integration-branches-are-one-list` (internal/ci, `TestIntegrationBranchesAreOneList`): the
+    integration refs are named once in `.github/workflows/ci.yml`; any `refs/heads/main` or
+    `refs/heads/dev` literal outside that one list is red, `cancel-in-progress` names no branch,
+    and the push triggers of ci.yml and certification.yml — which take no expression, so they
+    cannot read it — are held to the list (row 8, the bug that froze the bench).
+55. `runners-per-machine-is-one-number` (internal/ci, `TestRunnersPerMachineIsOneNumber`): the
+    fair-share step divides the core count by `${NOVA_RUNNERS_PER_MACHINE:-8}`, the runner
+    service's own fact, prints the count it used, and carries no literal divisor — the mutation
+    that matters: the divisor written back into the workflow, which is row 9 exactly.
+56. `cut-is-the-only-cutter-of-card-numbers`: two `cut` runs against one `<queue>` under
+    concurrent load take their numbers from `<queue>/state.tsv` under its lock and collide on
+    none; a card whose number was written by anything else has no state row, and `launch --card`
+    refuses it naming the remedy (row 1: five hand-numbered replay cards overwrote five launched
+    ones).
+57. `holds-are-labels-the-code-reads`: a red-test PR, a draft and a card carrying
+    `AFTER: PR<n> merged` are each held by a label or a line the code reads, so `sweep` enqueues
+    none of them with no prose consulted; the mutation that matters: a hold that exists only as
+    a sentence in `queue/POLICY.md` and is enforced by whoever remembers it (row 5: seven
+    red-test PRs enqueued, dequeued by hand).
+58. `stop-admits-only-the-reds-own-fix-card`: with a STOP naming an issue and a test, `run`
+    launches the card whose line 1 names either, launches no other card, harvests every job that
+    finished, and enqueues nothing; exit 0 — the mutation that matters: a STOP that also stops
+    the fix, which is row 6 and three hand launches.
+59. `resume-is-the-gates-alone`: RESUME written by `gate` when the red clears lifts the
+    admission list; a RESUME written by anything else is refused with the remedy and the STOP
+    stands, and no verb clears a STOP as a side effect.
+60. `sweep-revisits-every-open-approval-row`: an `approvals.tsv` of fifty-one rows approved
+    while their checks were `QUEUED` is walked every tick, each row enqueued exactly once when
+    its checks go green and it is neither draft nor held, and closed when the PR merges or
+    closes; the mutation that matters: a verdict taken at the instant of approval and never
+    revisited, logged `(not merged)` — row 4, all fifty-one of them.
+61. `sweep-cuts-a-read-card-when-the-head-moves`: an open row whose PR head changed yields one
+    new read card in `next.tsv` and no enqueue, and the row carries the new head; the old card is
+    not re-sent and the row is not closed.
+62. `reap-kills-past-the-batch-deadline`: on a day-sized fixture, a supervise process under a
+    swarm root older than its batch deadline, a batch lock whose pid is dead and a
+    `/tmp/*swarmtest*` binary older than 30 minutes are killed, removed and deleted, each logged
+    one line, with the counts on the `PULSE WIDTH` line — the mutation that matters: a loop with
+    no reaper, which is fourteen hours of leaked supervisors and a 23-hour-old card (row 10).
+63. `reap-requeues-a-launched-card-whose-job-dir-is-gone`: a card in `launched/` whose job
+    directory has vanished is requeued exactly once and failed on the second reap, its state row
+    written both times, and a done or failed card never blocks the next `refill` from cutting its
+    item (row 7: 22 admitted issues sat uncut).
+64. `hand-launch-is-launch-card-n`: `nova-pulse launch --card <n>` launches that one card and
+    prints one bounded line; the same card launched twice is refused by its state row naming the
+    remedy; no verb in the package shells out through `bash -c`, no verb globs a path, and
+    `pkill` appears nowhere — row 12, the coordinator's own shell.
+65. `the-loop-calls-the-same-verbs-a-hand-does`: `run`'s tick appears in the argv log as `gate`,
+    `harvest`, `sweep`, `reap`, `refill`, `launch` and nothing else — no inline path, no second
+    implementation of a verb's rule — so a fix to a verb is a fix to the loop.
+66. `run-a-simulated-day-writes-under-twenty-notes`: a full simulated day — the day-sized
+    fixture, 200 cards, 40 PRs, two reds and one flake — runs every tick with zero model calls in
+    any argv log and writes fewer than 20 bus notes, one per undecidable rule; the mutation that
+    matters: a note, a poll or a model call per tick, which is 4,800 turns (rule G1).
+67. `triage-packet-decides-every-refusal-kind`: each of the day's refusal kinds — signature,
+    scope, docs-only, NOSHA, orphan, fence — is decided by one triage card whose packet is under
+    5k tokens and whose verdict is one `TRIAGE <case> <verdict> <rule-row-or-NEW>` line, with no
+    coordinator turn in the trace; a `NEW` verdict writes a rule row the same day (rule G2).
+68. `every-verb-prints-at-most-three-lines-by-default`: on the day-sized fixture every verb's
+    default output is three lines or fewer, a list above five items is a count with `--max` to
+    widen, and every value is one `internal/oneline` token — rule 18 aimed at the window (rule
+    G3).
+69. `status-reconstructs-the-day-in-one-line`: `status` on the day-sized fixture answers width,
+    pool, reds, merges and spend in one line under 400 bytes, read from the `queue/` files
+    alone — no transcript, no report body — so a fresh window needs `status` and `POLICY` and
+    nothing else (rule G4).
+70. `tokens-folds-the-coordinator-session`: `nova-tokens` folding a fixture Claude Code jsonl —
+    input, cache write, cache read and output per turn — adds one model line for the coordinator
+    to the daily ledger whose numbers match a hand count exactly, with the weighted equivalent,
+    and the ledger prints tokens per decision and per merged PR (rule G5).
 
 ## Open questions — each with a default, and the default stands unless Glenn says otherwise
 
