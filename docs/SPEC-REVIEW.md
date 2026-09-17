@@ -1000,6 +1000,76 @@ the findings list **as of `built=`**, which is why `verdict` re-reads the fold
 and why a stale open-findings table can only cost a reader a `dup` they did not
 need to write — never a closure, a cell or a ratification.
 
+## nova-review port --table <section>
+
+`nova-review port` certifies a porting pull request against this house's porting
+contract. Its synopsis, as `help` prints it:
+
+```
+nova-review port --lane <dir> --table <section> --pr <n> [--head <sha>] [--out <file>] [--max <n>] [--timeout <seconds>]
+```
+
+1. **The contract.** `--table <section>` names one section of `docs/PORTING.md`,
+   read at the PR's head, and that section states the two witnesses a port must
+   carry: the **positive witness**, the test or case that shows the ported
+   behaviour runs in the target language, and the **negative witness**, the
+   control that fails when the gate the port adds is removed. `nova-review port
+   --table <section> --pr <n>` verifies that the diff `<base>...<head>` of PR
+   `<n>` carries both, at the head, and records where; it never runs a test and
+   never forms an opinion about code. A missing or empty `--table`, `--pr` or
+   `--lane` is `refusing to guess`, exit 2.
+2. **What it reads and what it writes.** It reads the PR's head and base from
+   the GitHub remote the lane names, never the lane's local rehearsal; the named
+   section of `docs/PORTING.md` at the head; and the target-language tree at the
+   head. It writes one **read packet** at `--out`, through the same unique
+   `O_EXCL` temporary and rename `packet` uses, whose `## Witnesses` section
+   lists every witness with its `file:line` and the porting rule that requires
+   it, capped by `--max` with a `PORT MORE` line. It writes no lane record and
+   no verdict: a port is evidence a reader weighs, never a ratification.
+3. **An empty `+0 -0` PR is refused, and the line names the gate the target
+   already carried.** When the diff adds and removes nothing, the target
+   language already holds the gate the section asks to port, so there is nothing
+   to port; the refusal prints `existing_gate=<path>:<line>` naming the gate
+   found in the tree at the head, exit 2, and no packet is written. An empty PR
+   is never a port.
+
+**The one-line output.** `PORT OK` is exit 0; `positive=` and `negative=` are
+the required witnesses' `file:line`, `witnesses=` counts every witness the
+packet lists, `existing_gate=-` on success, and `out=` names the packet.
+
+```
+PORT OK table=<section> pr=<n> head=<sha12> base=<name>@<sha8> positive=<path>:<line> negative=<path>:<line> witnesses=<n> files=<n> bytes=<n> out=<path>
+PORT REFUSED table=<section> pr=<n> head=<sha12> reason=<word> existing_gate=<path>:<line>|-: <remedy>
+```
+
+4. **The refusals, each exit 2 with one remedy line.** A missing `--table`,
+   `--pr` or `--lane`: `refusing to guess; pass --table <section> --pr <n>`. A
+   `<section>` that is not a heading of `docs/PORTING.md` at the head: the remedy
+   names the headings the file does hold. A diff carrying no positive witness:
+   the remedy names the porting rule that requires it. A diff carrying no
+   negative witness: the remedy names the rule and the unverified-negative-control
+   mistake. A witness naming a `file:line` the diff does not add or the head does
+   not hold: the remedy prints that `file:line`. An empty `+0 -0` diff:
+   `existing_gate=` and the remedy names the gate to report instead. An `--out`
+   that escapes the current directory and the lane: the remedy is a path under
+   one of them.
+5. **The mistake it removes.** Empty `+0 -0` porting PRs landed because the
+   target language already carried the gate (schema #1029, card 8937), and
+   negative controls landed unverified; this verb refuses both at the door.
+
+**Red tests**, each written and seen red before it is trusted, each faking the
+host, the clock or the tree where the real thing is the network, a bench or a
+clock:
+
+1. A fake host serves a PR whose diff carries both witnesses; `PORT OK` names `positive=` and `negative=` at their `file:line`, the read packet's `## Witnesses` lists both with their rules, exit 0.
+2. A fake host serves a `+0 -0` diff over a fixture tree that already holds the gate; `PORT REFUSED … existing_gate=<path>:<line>`, exit 2, and no packet.
+3. A fake host serves a diff with the positive witness only; the refusal's remedy names the rule that requires the negative control.
+4. A fake host serves a `docs/PORTING.md` with no such `<section>`; the refusal's remedy names the headings it does hold.
+5. A fake host serves a witness whose `file:line` the head does not hold; refused, the remedy printing that `file:line`.
+6. `--table` and `--pr` each missing are `refusing to guess`, exit 2, with a fake host that records zero calls.
+7. A fake clock and a fake packet writer: a killed run leaves no `--out`, and two concurrent runs to one `--out` leave one whole packet and no shared `.tmp`.
+8. A source test finds no network call outside the injected host fake and no wall-clock literal under ten seconds.
+
 ## The findings file
 
 `verdict --findings <file>` is a UTF-8 text file the reader writes, one row
