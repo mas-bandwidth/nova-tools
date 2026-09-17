@@ -156,7 +156,23 @@
     #:machinery-receipt-result
     #:book-receipt
     #:review-binds-p
-    #:review-reusable-p))
+    #:review-reusable-p
+    ;; CONFIG roles (SPEC-WORK.md:5214)
+    #:make-role-record
+    #:role-record-id
+    #:role-record-scope
+    #:role-record-source
+    #:role-record-reserved-for
+    #:role-record-essential-security-only-p
+    #:role-record-different-perspective-p
+    #:role-record-participation-p
+    #:role-record-limit
+    #:make-role-config
+    #:role-config-roles
+    #:role-from-config
+    #:role-inferred-from-model-p
+    #:agreed-limit-for
+    #:spend-role))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

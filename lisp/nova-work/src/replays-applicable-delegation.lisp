@@ -292,3 +292,56 @@ against, by no model call (rule 4)."
 content and its dependencies are unchanged; never across a changed head or an
 unchecked rebase (rule 5)."
   (and (review-binds-p verdict head) rebase-checked-p content-unchanged-p))
+
+;;; ------------------------------------------------------------------
+;;; CONFIG roles (SPEC-WORK.md:5214)
+;;;
+;;; A role is a CONFIG record. It is read from CONFIG and never inferred from
+;;; the underlying model: no function lets a model capability confer a role. A
+;;; reserved role is spent only on the work class it was reserved for; routine
+;;; work is refused by name, and a model capability never cancels or raises an
+;;; agreed limit.
+;;; ------------------------------------------------------------------
+
+(defstruct (role-record
+             (:constructor make-role-record
+                 (&key id scope source reserved-for essential-security-only-p
+                       different-perspective-p participation-p limit)))
+  id scope source reserved-for essential-security-only-p
+  different-perspective-p participation-p limit)
+
+(defstruct (role-config (:constructor make-role-config (&key (roles '()))))
+  roles)
+
+(defun role-from-config (config role-id)
+  "Read ROLE-ID from CONFIG, or NIL. The model is never consulted."
+  (find role-id (role-config-roles config)
+        :key #'role-record-id :test #'equal))
+
+(defun role-inferred-from-model-p (role-id)
+  "A model capability never confers a role, so no role is ever inferred."
+  (declare (ignore role-id))
+  nil)
+
+(defun agreed-limit-for (config role-id model-capability)
+  "The limit CONFIG agrees for ROLE-ID. A model capability never cancels or
+raises it, so it does not enter the answer."
+  (declare (ignore model-capability))
+  (let ((record (role-from-config config role-id)))
+    (and record (role-record-limit record))))
+
+(defun spend-role (config role-id work-class)
+  "Spend ROLE-ID on WORK-CLASS. A role CONFIG does not hold is refused; an
+unreserved role is spent freely; a reserved role is spent only on the class it
+was reserved for. Returns (VALUES T NIL) or (VALUES NIL REASON)."
+  (let ((record (role-from-config config role-id)))
+    (cond
+      ((null record)
+       (values nil (format nil "no role ~(~A~) in CONFIG" role-id)))
+      ((null (role-record-reserved-for record))
+       (values t nil))
+      ((eq work-class (role-record-reserved-for record))
+       (values t nil))
+      (t
+       (values nil (format nil "role ~(~A~) is reserved for ~(~A~), not ~(~A~)"
+                           role-id (role-record-reserved-for record) work-class))))))
