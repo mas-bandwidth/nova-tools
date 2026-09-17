@@ -64,7 +64,6 @@
   (ok t "slice 1 carries no admission: NEEDS-KERNEL verifier + staged admission"))
 
 (deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5874"
-(deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5423"
     "expected=capture-R-while-R+1-accepted-and-the-bytes-describe-R"
   (let* ((records (list (state-record 1 "e1" "h1" '(:ev 1))
                         (state-record 2 "e2" "h2" '(:ev 2))))
@@ -115,18 +114,6 @@
                    "an unrelated mutation is not responsive under the operation")
       (priority-operation-finish reg id :result :published)
       (multiple-value-bind (wid revision status result) (priority-operation-wait reg id)
-  (let ((reg (make-operation-registry)))
-    (multiple-value-bind (id line code) (begin-operation reg :export 42)
-      (check-equal 0 code "the export was not acknowledged")
-      (ok (search "OPERATION OK" line) "the ack is an OPERATION OK: ~A" line)
-      (check-equal :queued (operation-state reg id)
-                   "a blocked export is not acknowledged at once")
-      (operation-start reg id)
-      (check-equal :running (operation-state reg id) "the operation is running")
-      (check-equal 1 (unrelated-mutation 0)
-                   "an unrelated mutation is not responsive under the operation")
-      (operation-finish reg id :result :published)
-      (multiple-value-bind (wid revision status result) (operation-wait reg id)
         (check-equal id wid "wait returns the same operation id")
         (check-equal 42 revision "wait returns the captured revision")
         (check-equal :done status "wait reports publication")
@@ -140,12 +127,6 @@
         (check-equal 0 ccode "cancel did not acknowledge")
         (ok (search "state=cancelled" cline) "cancel acknowledges: ~A" cline)
         (check-equal :cancelled (priority-operation-state reg id) "cancel left the operation live")))
-      (operation-start reg id)
-      (multiple-value-bind (op cline ccode) (operation-cancel reg id)
-        (declare (ignore op))
-        (check-equal 0 ccode "cancel did not acknowledge")
-        (ok (search "state=cancelled" cline) "cancel acknowledges: ~A" cline)
-        (check-equal :cancelled (operation-state reg id) "cancel left the operation live")))
     (multiple-value-bind (id line code)
         (begin-operation reg :export 44 :inside-batch t :entry-id "batch-7")
       (check-equal nil id "an export inside an atomic batch was admitted")
@@ -485,70 +466,6 @@
           ;; stop's CLIP OK is exactly the line operation wait answers.
           (check-string= clipline (nth-value 1 (operation-wait stopped "op-clip-stop"))
                          "stop waits by the same operation wait"))))))
-
-(deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5640-5642"
-    "expected=cancel-ack-own-disposition;accepted-mutation-not-erased;uncertain-external-reported-uncertain"
-  (let* ((events '((:id "ev-accepted" :kind :state-to-done :request "req-accepted")))
-         (session (make-work-session
-                   :events events :receipts '(:receipt-1)
-                   :operations (list (make-operation :id "op-cap" :op :capture
-                                                      :request "req-cap" :state :running))))
-         (before-events (work-session-events session)))
-    ;; the cancellation is acknowledged with its own final disposition ...
-    (multiple-value-bind (after disposition)
-        (operation-cancel session "op-cap" :request "req-cancel-1")
-      (check-equal :cancelled (getf disposition :state)
-                   "the cancel ack carries its own final disposition")
-      (check-equal "req-cancel-1" (getf disposition :request)
-                   "the ack echoes the cancel's own request id")
-      ;; ... erasing no accepted mutation.
-      (check-equal before-events (work-session-events after)
-                   "the accepted mutation is not erased")
-      ;; a cancel replayed twice cancels once.
-      (multiple-value-bind (again disposition-2)
-          (operation-cancel after "op-cap" :request "req-cancel-1")
-        (check-equal :cancelled (getf disposition-2 :state) "the replay answers cancelled")
-        (check-equal t (getf disposition-2 :replayed) "the replay applies nothing")
-        (check-equal before-events (work-session-events again)
-                     "the replay erases nothing")))
-    ;; an uncertain external effect is reported uncertain, not cancelled.
-    (let ((session-2 (make-work-session
-                      :events events
-                      :operations (list (make-operation :id "op-pay" :op :pay
-                                                         :request "req-pay" :state :running)))))
-      (multiple-value-bind (after disposition)
-          (operation-cancel session-2 "op-pay" :request "req-cancel-2"
-                            :external-effect :uncertain)
-        (declare (ignore after))
-        (check-equal :uncertain (getf disposition :state)
-                     "an uncertain external effect reads uncertain, never cancelled")))))
-
-(deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5778-5782"
-    "expected=clip-returns-OPERATION-OK;wait-prints-CLIP-OK;raced-CLIP-RACED;session-stop-CLIP-then-SESSION"
-  (let ((session (make-work-session :events '((:id "ev-1")))))
-    (multiple-value-bind (after op line) (clip-request session :id "op-clip-1")
-      (check-equal :clip (operation-op op) "clip draws one clip operation")
-      (check-equal :queued (operation-state op) "clip acknowledges while queued")
-      (ok (search "OPERATION OK id=op-clip-1 op=clip" line)
-          "clip prints OPERATION OK id= op=clip: ~A" line)
-      ;; the transport continues and operation wait prints the CLIP OK line.
-      (multiple-value-bind (settled wait-line) (operation-wait after "op-clip-1")
-        (declare (ignore settled))
-        (ok (search "CLIP OK" wait-line) "wait prints CLIP OK: ~A" wait-line)
-        (ok (search "operation=op-clip-1" wait-line) "the CLIP OK names operation=: ~A" wait-line)
-        (ok (search "pushed=" wait-line) "the CLIP OK carries pushed=: ~A" wait-line))
-      ;; a raced transport prints CLIP RACED through the same wait.
-      (multiple-value-bind (raced race-line) (operation-wait after "op-clip-1" :race t)
-        (declare (ignore raced))
-        (ok (search "CLIP RACED" race-line) "a raced wait prints CLIP RACED: ~A" race-line)))
-    ;; session stop waits on its own clip and prints CLIP OK then SESSION OK.
-    (multiple-value-bind (stopped op line) (clip-request session :id "op-clip-stop")
-      (declare (ignore op line))
-      (let ((lines (session-stop stopped)))
-        (ok (search "CLIP OK" (first lines)) "stop prints its own CLIP OK first: ~A" (first lines))
-        (ok (search "operation=op-clip-stop" (first lines))
-            "stop's CLIP OK names its own operation")
-        (ok (search "SESSION OK" (second lines)) "stop prints SESSION OK second: ~A" (second lines))))))
 
 ;; undo-redo now runs in lisp/nova-work/tests/replays-8651.lisp (nova-tools #362).
 

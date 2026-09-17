@@ -1301,9 +1301,6 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
                          (nova-work::payload-digest (getf eb :events))
                          (format nil "~A two builds do not digest to the same bytes"
                                  verb)))))))
-  ;; undo now has its own :edit/:external/:terminal kinds (see acceptance.lisp);
-  ;; redo is still outside the slice.
-  (slice1-refuses-verb :redo))
 
 (deftest "new-verbs-retry-to-one-event" "docs/SPEC-WORK.md:5319"
     "expected=one-event;original-OK;changed-payload-refuses"

@@ -11,6 +11,19 @@
 (defmacro deftest (name spec-line expected &body body)
   `(push (list ,name ,spec-line ,expected (lambda () ,@body)) *tests*))
 
+(defvar *needs-kernel* '()
+  "Replays parked as NEEDS-KERNEL. Registered and counted, never run.")
+
+(defmacro deftest-pending (name spec-line expected need)
+  "Park a replay NAME asserting EXPECTED (from SPEC-LINE) blocked on NEED."
+  (declare (ignore spec-line expected need))
+  `(push (list ,name) *needs-kernel*))
+
+(defmacro needs-kernel (name spec-line need what)
+  "Park a replay NAME blocked on the kernel feature WHAT (SPEC-LINE)."
+  (declare (ignore spec-line need what))
+  `(push (list ,name) *needs-kernel*))
+
 (define-condition check-failed (error)
   ((detail :initarg :detail :reader check-failed-detail))
   (:report (lambda (c s) (write-string (check-failed-detail c) s))))
