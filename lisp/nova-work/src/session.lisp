@@ -232,7 +232,20 @@ rather than resumed."
   (page-bytes 4096 :type integer)
   (page-records 128 :type integer)
   (closed-window "14d")
-  (clip-cadence "5m"))
+  (clip-cadence "5m")
+  ;; The remaining SESSION OK fields of the output grammar
+  ;; (SPEC-WORK.md:5346): the clip cadence, the retention window and the
+  ;; counters the resident session reads rather than remembers.
+  (clip-every "5m")
+  (clip-after 0 :type integer)
+  (retain "14d")
+  (pushed "-")
+  (boundary 0 :type integer)
+  (pending 0 :type integer)
+  (findings 0 :type integer)
+  (parses 0 :type integer)
+  (replays 0 :type integer)
+  (emitted 0 :type integer))
 
 (defun session-check-admission (sess verb &key now)
   "Check admission for a request on SESS with VERB at timestamp NOW.

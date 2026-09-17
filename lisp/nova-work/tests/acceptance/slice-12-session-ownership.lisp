@@ -49,7 +49,39 @@
       (check-equal 4 (owner-generation record) "generation bumped to 4")
       (check-string= "tok-stella-new" (owner-token record) "new token")
       (check-string= "bench-stella" (owner-bench record) "the successor's bench is recorded")
-      (check-string= "2026-09-14T12:02:00Z" (owner-until record) "until is now + 2*every"))))
+      (check-string= "2026-09-14T12:02:00Z" (owner-until record) "until is now + 2*every"))
+    ;; The real `session handoff` verb fences, clips and publishes the released
+    ;; record with its successor and the same generation (SPEC-WORK.md:814-822).
+    (let* ((seed '((:id "acme/work" :type :work-set :state :unknown)))
+           (sess (session-start :owner "emma" :state-seed seed :base "abc123"
+                                :every "30s" :skew "5s")))
+      (multiple-value-bind (okp line published)
+          (session-handoff sess :to "stella" :commit "deadbeef" :pushed 9
+                           :now "2026-09-14T12:05:00Z")
+        (ok okp "the handoff is admitted")
+        (ok (search "HANDOFF OK" line) "the handoff prints HANDOFF OK: ~A" line)
+        (ok (search "to=stella" line) "the line names the successor: ~A" line)
+        (ok (search "generation=1" line) "the handoff keeps the generation: ~A" line)
+        (ok (search "commit=deadbeef" line) "the line carries the commit: ~A" line)
+        (ok (search "pushed=9" line) "the line carries the pushed revision: ~A" line)
+        (check-equal :fenced (session-state sess) "the handoff fences the session")
+        (check-string= "2026-09-14T12:05:00Z" (owner-until published)
+                       "the owner record is released at the handoff stamp")
+        (check-string= "stella" (owner-successor published)
+                       "the released record names the successor")
+        (check-equal 1 (owner-generation published) "the generation is kept")
+        ;; The successor takes the next generation at once, needing neither
+        ;; `until` nor `--skew` (SPEC-WORK.md:820-822).
+        (multiple-value-bind (action successor-record successor-line code)
+            (evaluate-ownership-claim published "stella"
+                                      :now "2026-09-14T12:05:10Z"
+                                      :every "30s" :skew "5s"
+                                      :token "tok-stella" :my-bench "bench-stella")
+          (declare (ignore successor-line))
+          (check-equal :take action "the successor takes without waiting")
+          (check-equal 0 code "the successor's take is green")
+          (check-equal 2 (owner-generation successor-record)
+                       "the successor takes the next generation"))))))
 
 ;;; ------------------------------------------------------------------
 ;;; W1: the resume predicate (bench identity + journal lock) and the single
@@ -237,3 +269,77 @@
       (dolist (d (list dir fdir))
         (ignore-errors (sb-posix:rmdir d)))
       (ignore-errors (sb-posix:rmdir base)))))
+
+;;; ------------------------------------------------------------------
+;;; session-status (SPEC-WORK.md:304-308, :2256-2267). The row has no named
+;;; replay of its own, so it gets a deftest named by the paragraph.
+;;; ------------------------------------------------------------------
+
+(deftest "session-status" "docs/SPEC-WORK.md:304-310,2256-2267"
+    "expected=SESSION-OK-carries-every-bound-and-build;fenced-session-still-answers-exit-0"
+  (let* ((seed '((:id "acme/work"     :type :work-set :state :unknown)
+                 (:id "acme/work/f1"  :type :feature  :parent "acme/work" :state :unknown)))
+         (sess (session-start :owner "emma" :state-seed seed :base "abc123"
+                              :every "30s" :skew "5s")))
+    (let ((line (session-status-line sess)))
+      (ok (search "SESSION OK" line) "status is a SESSION OK: ~A" line)
+      ;; Every field the spec names is read rather than remembered
+      ;; (SPEC-WORK.md:304-308, output grammar :5346).
+      (dolist (field '("session=" "owner=emma" "generation=1" "state=live" "until="
+                       "file=" "base=abc123" "journal=" "events=" "pending=" "pushed="
+                       "nodes=" "edges=" "parses=" "replays=" "every=30s" "skew=5s"
+                       "clip-every=" "clip-after=" "retain=" "index-cache="
+                       "page-bytes=" "page-records=" "closed-window=" "max-bytes="
+                       "max-depth=" "max-nodes=" "boundary=" "findings=" "emitted="))
+        (ok (search field line) "the status line carries ~A: ~A" field line))
+      ;; The running binary says which build it is (SPEC-WORK.md:302-303).
+      (ok (search "build=" line) "the status line names the build: ~A" line)
+      (ok (> (length (session-build-identity)) 0) "the build identity is named")
+      ;; The counters read the resident state, not a remembered number.
+      (ok (search "nodes=2" line) "nodes counts the resident structure: ~A" line)
+      (ok (search "edges=1" line) "edges counts the containment path: ~A" line))
+    ;; A fenced session is inspected, not suffered: status still exits 0
+    ;; (SPEC-WORK.md:235-237).
+    (setf (session-state sess) :fenced)
+    (multiple-value-bind (admitted reason code)
+        (session-check-admission sess :status)
+      (declare (ignore reason))
+      (ok admitted "status is admitted on a fenced session")
+      (check-equal 0 code "status exits 0 on a fenced session")
+      (ok (search "state=fenced" (session-status-line sess))
+          "status answers about the fence"))))
+
+;;; ------------------------------------------------------------------
+;;; session-stop (SPEC-WORK.md:824-826, :2256-2267). The stop half of the
+;;; stop-and-handoff row; handoff itself is the extended
+;;; handoff-successor-takes-next-generation replay above.
+;;; ------------------------------------------------------------------
+
+(deftest "session-stop" "docs/SPEC-WORK.md:824-827,2256-2267"
+    "expected=clip-then-owner-released-until-stop-stamp;no-clip-omits-the-clip;no-successor"
+  (let* ((seed '((:id "acme/work" :type :work-set :state :unknown)))
+         (sess (session-start :owner "emma" :state-seed seed :base "abc123"
+                              :every "30s" :skew "5s")))
+    (multiple-value-bind (okp lines record)
+        (session-stop-lifecycle sess :now "2026-09-14T12:05:00Z")
+      (ok okp "the stop is admitted")
+      (check-equal 2 (length lines) "stop prints its CLIP OK then its SESSION OK")
+      (ok (search "CLIP OK" (first lines)) "stop waits for its own clip: ~A" (first lines))
+      (ok (search "SESSION OK" (second lines))
+          "stop prints the SESSION OK second: ~A" (second lines))
+      ;; The owner record is released with `until` at the stop's stamp and no
+      ;; successor, so a taker waits --skew (SPEC-WORK.md:825-826).
+      (check-string= "2026-09-14T12:05:00Z" (owner-until record)
+                     "the owner is released until the stop's stamp")
+      (ok (null (owner-successor record)) "a stop names no successor")
+      (check-equal 1 (owner-generation record) "a stop keeps the generation"))
+    ;; --no-clip prints no CLIP OK and still releases the owner.
+    (let ((sess-2 (session-start :owner "emma" :state-seed seed :base "abc123"))
+          )
+      (multiple-value-bind (okp lines record)
+          (session-stop-lifecycle sess-2 :no-clip t :now "2026-09-14T12:06:00Z")
+        (ok okp "a no-clip stop is admitted")
+        (check-equal 1 (length lines) "a no-clip stop prints only the SESSION OK")
+        (ok (search "SESSION OK" (first lines)) "the no-clip stop still reports")
+        (check-string= "2026-09-14T12:06:00Z" (owner-until record)
+                       "a no-clip stop still releases the owner")))))

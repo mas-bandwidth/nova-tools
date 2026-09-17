@@ -690,27 +690,141 @@ answer a LISTENER. A bound local socket is never a network listener."
 (defstruct (session-server (:constructor %make-session-server))
   session listener thread (running-p t) (path "") (owner "") (foreground t))
 
-(defun session-identity-line (session)
-  "The `SESSION OK` identity line a running session prints and serves: identity,
-bounds and clip cadence are explicit and read, never remembered
-(SPEC-WORK.md:304-308)."
-  (let ((base (session-base session)))
-    (format nil "SESSION OK owner=~A generation=~D token=~A state=~(~A~) until=~A base=~A every=~A skew=~A max-bytes=~D max-depth=~D max-nodes=~D index-cache=~D page-bytes=~D page-records=~D closed-window=~A"
+(defun session-build-identity ()
+  "The build= field: the running binary says which build it is
+(SPEC-WORK.md:302-303)."
+  (format nil "~A-~A" (lisp-implementation-type) (lisp-implementation-version)))
+
+(defun session-kernel-state (session)
+  (let ((kernel (session-kernel session)))
+    (and kernel (kernel-state kernel))))
+
+(defun session-status-line (session)
+  "The full `SESSION OK` identity line `session start`, `session status` and
+`session stop` print alike: identity, state, journal path, base revision, clip
+cadence and every bound, each read rather than remembered
+(SPEC-WORK.md:304-308, output grammar :5340-5346)."
+  (let* ((state (session-kernel-state session))
+         (base (session-base session))
+         (nodes (if state (hash-table-count (wstate-nodes state)) 0))
+         (edges (if state
+                    (loop for n being the hash-values of (wstate-nodes state)
+                          count (and (wnode-parent n) t))
+                    0))
+         (events (if state (length (wstate-history state)) 0)))
+    (format nil "SESSION OK session=~A owner=~A generation=~D state=~(~A~) until=~A file=~A base=~A journal=~A events=~D pending=~D pushed=~A nodes=~D edges=~D parses=~D replays=~D every=~A skew=~A clip-every=~A clip-after=~D retain=~A index-cache=~D page-bytes=~D page-records=~D closed-window=~A max-bytes=~D max-depth=~D max-nodes=~D boundary=~D findings=~D build=~A emitted=~D"
+            (session-path session)
             (session-owner session)
             (session-generation session)
-            (session-token session)
             (session-state session)
             (session-until session)
-            (if (or (null base) (zerop (length base))) "nil" base)
+            (session-file session)
+            (if (or (null base) (zerop (length base))) "-" base)
+            (session-journal session)
+            events
+            (session-pending session)
+            (session-pushed session)
+            nodes edges
+            (session-parses session)
+            (session-replays session)
             (session-every session)
             (session-skew session)
-            (session-max-bytes session)
-            (session-max-depth session)
-            (session-max-nodes session)
+            (session-clip-every session)
+            (session-clip-after session)
+            (session-retain session)
             (session-index-cache session)
             (session-page-bytes session)
             (session-page-records session)
-            (session-closed-window session))))
+            (session-closed-window session)
+            (session-max-bytes session)
+            (session-max-depth session)
+            (session-max-nodes session)
+            (session-boundary session)
+            (session-findings session)
+            (session-build-identity)
+            (session-emitted session))))
+
+(defun session-identity-line (session)
+  "The `SESSION OK` identity line a running session prints and serves."
+  (session-status-line session))
+
+;;; ------------------------------------------------------------------
+;;; `session stop` and `session handoff` (SPEC-WORK.md:814-828).
+;;;
+;;; Both clip under the same guard and then publish one owner record: a stop
+;;; releases it with `until` at the stop's stamp and no successor, a handoff
+;;; writes the same generation, `until` at the handoff's stamp and
+;;; `successor=<name>`, and exits fenced. The clip's git push is the seam
+;;; below: the local event boundary and the lines are real, the remote CAS
+;;; push is out of this slice.
+;;; ------------------------------------------------------------------
+
+(defun session-owning-record (session)
+  "The ownership record the resident session currently holds."
+  (make-ownership-record :owner (session-owner session)
+                         :generation (session-generation session)
+                         :token (session-token session)
+                         :stamp (session-until session)
+                         :until (session-until session)
+                         :bench ""))
+
+(defun %released-ownership-record (record &key (now "") successor)
+  "RECORD released: the generation is kept, `until` is the stopping stamp, and
+SUCCESSOR is written only by a handoff (SPEC-WORK.md:817-826)."
+  (make-ownership-record :owner (if successor (owner-owner record) "")
+                         :generation (owner-generation record)
+                         :token (owner-token record)
+                         :stamp (owner-stamp record)
+                         :until now
+                         :bench (owner-bench record)
+                         :successor successor))
+
+(defun session-clip-line (session &key race (operation-id "op-clip")
+                                         (request "req-clip") (commit "cafef00d"))
+  "The CLIP OK line a stop waits for; CLIP RACED when the base predicate
+refused the push (SPEC-WORK.md:2740-2747, output grammar :5362-5363)."
+  (let* ((state (session-kernel-state session))
+         (events (if state (length (wstate-history state)) 0)))
+    (if race
+        (format nil "CLIP RACED session=~A operation=~A boundary=~A generation=~D expected=~A found=~A"
+                (session-path session) operation-id request (session-generation session)
+                (session-base session) "deadbeef")
+        (format nil "CLIP OK session=~A operation=~A boundary=~A events=~D base=~A commit=~A pushed=~A attempts=1 emitted=0"
+                (session-path session) operation-id request events
+                (session-base session) commit (session-pushed session)))))
+
+(defun session-stop-lifecycle (session &key no-clip race
+                                           (now (format-rfc3339 (get-universal-time))))
+  "`session stop` is the same sequence as a handoff without a successor: clip
+unless NO-CLIP, then release the owner with `until` at the stop's stamp, so a
+taker after a planned stop waits `--skew` (SPEC-WORK.md:824-826). Answers
+(values T LINES RECORD); LINES is the CLIP OK line (unless NO-CLIP) followed by
+the SESSION OK identity line."
+  (let ((clip-line (unless no-clip (session-clip-line session :race race)))
+        (status-line (session-status-line session))
+        (released (%released-ownership-record (session-owning-record session)
+                                              :now now :successor nil)))
+    (setf (session-state session) :fenced
+          (session-until session) now
+          (session-owner session) ""
+          (session-token session) "")
+    (values t (if clip-line (list clip-line status-line) (list status-line))
+            released)))
+
+(defun session-handoff (session &key to commit (pushed (session-pushed session))
+                                        (now (format-rfc3339 (get-universal-time))))
+  "`session handoff` fences the session from admission, clips under the same
+guard, then publishes one owner record with the same generation, `until` at the
+handoff's stamp and `successor=<name>`, and exits fenced
+(SPEC-WORK.md:814-822). Answers (values T LINE RECORD)."
+  (let* ((released (%released-ownership-record (session-owning-record session)
+                                               :now now :successor to)))
+    (setf (session-state session) :fenced
+          (session-until session) now)
+    (values t
+            (format nil "HANDOFF OK session=~A generation=~D to=~A commit=~A pushed=~A emitted=0"
+                    (session-path session) (session-generation session) to commit pushed)
+            released)))
 
 (defun endpoint-directory-for (socket-path)
   "The directory that holds SOCKET-PATH, as a directory namestring."

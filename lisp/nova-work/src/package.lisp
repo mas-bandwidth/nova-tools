@@ -562,6 +562,13 @@
     #:serve-session-request
     #:default-session-request-handler
     #:session-identity-line
+    ;; session status, stop and handoff (SPEC-WORK.md:304-308, :814-828)
+    #:session-status-line
+    #:session-build-identity
+    #:session-owning-record
+    #:session-clip-line
+    #:session-stop-lifecycle
+    #:session-handoff
    ;; wire codec, protocol handshake, pipelined correlation, disconnect
    ;; reconciliation and the long-operation registry (nova-tools card 8608)
    #:wire-encode-integer
