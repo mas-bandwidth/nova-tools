@@ -667,6 +667,25 @@ jobs:
           command -v go >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no Go on PATH"; exit 1; }
           command -v sbcl >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no sbcl on PATH"; exit 1; }
           go version; sbcl --version
+      - name: the network probe, inside nova-sandbox
+        # rule R: nothing enters the loop untested, and the probe itself is no
+        # exception. #893 is the cost of forgetting it — a probe on the host
+        # passed while every sandboxed card died. Prove the bench the way a card
+        # sees it: build the sandbox from this checkout and fetch inside it, so a
+        # bench enters the loop only after the SANDBOXED probe is green. Linux
+        # only, because the fleet-probe job runs on the Linux benches (the
+        # sandbox backend is landlock there, seatbelt on the studio).
+        if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          go build ./cmd/nova-sandbox
+          mkdir -p "$RUNNER_TEMP/np/home"
+          code="$(HOME="$RUNNER_TEMP/np/home" ./nova-sandbox --read "$PWD" --write "$RUNNER_TEMP/np" --cwd "$RUNNER_TEMP/np" -- curl -s -o /dev/null -w '%{http_code}' https://models.opencode.ai/api.json)"
+          if [ "$code" != "200" ]; then
+            echo "PROBE FAIL runner=$RUNNER_NAME slot=${{ matrix.slot }} sandboxed-net=$code"
+            exit 1
+          fi
+          echo "PROBE OK runner=$RUNNER_NAME slot=${{ matrix.slot }} sandboxed-net=$code"
       - name: build, one real package, write beside the repo
         if: steps.want.outputs.run == 'yes'
         run: |

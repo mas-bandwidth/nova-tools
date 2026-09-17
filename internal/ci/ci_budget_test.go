@@ -129,6 +129,57 @@ func TestEveryActionIsPinnedBySHA(t *testing.T) {
 	}
 }
 
+// TestFleetProbeRunsTheNetworkProbeInsideNovaSandbox is rule R for the probe:
+// nothing enters the loop untested, and #893 is the cost of forgetting it — a
+// probe on the host passed while every sandboxed card died. So the fleet-probe
+// job, which proves a bench before the loop trusts it, must build nova-sandbox
+// from the checkout and run the same network probe INSIDE it, on Linux runners
+// only, and still fit the two-minute CL budget. Read as text, like the rest of
+// this file: the step's shape is the contract, so the assertion is on the words
+// a reviewer would look for.
+func TestFleetProbeRunsTheNetworkProbeInsideNovaSandbox(t *testing.T) {
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	job := jobBody(src, "fleet-probe")
+	if job == "" {
+		t.Fatal("no fleet-probe job in ci.yml; the bench would enter the loop with no probe at all")
+	}
+	if !strings.Contains(job, "go build ./cmd/nova-sandbox") {
+		t.Errorf("the fleet-probe job does not build nova-sandbox from the checkout; a probe that does not run in the sandbox is the host probe #893 killed")
+	}
+	if !strings.Contains(job, "nova-sandbox --read") || !strings.Contains(job, "curl -s") {
+		t.Errorf("the fleet-probe job does not run the network probe inside nova-sandbox (need `nova-sandbox --read` and `curl -s` in one step); a bench enters the loop only after the sandboxed probe is green")
+	}
+	if !strings.Contains(job, "runner.os == 'Linux'") {
+		t.Errorf("the sandboxed network probe is not guarded to Linux runners only")
+	}
+	if mins, ok := jobTimeouts(src)["fleet-probe"]; !ok || mins > defaultCLCeiling {
+		t.Errorf("fleet-probe timeout-minutes = %d (declared=%v), want a cap <= %d; the probe must fit the two-minute CL budget", mins, ok, defaultCLCeiling)
+	}
+}
+
+// jobBody returns the source text of one job, from its two-space key to the
+// next job key, so a test can assert about one job and not the whole file.
+func jobBody(src, name string) string {
+	lines := strings.Split(src, "\n")
+	start := -1
+	for i, line := range lines {
+		if start < 0 {
+			if line == "  "+name+":" {
+				start = i
+			}
+			continue
+		}
+		if jobKeyRe.MatchString(line) {
+			return strings.Join(lines[start:i], "\n")
+		}
+	}
+	if start >= 0 {
+		return strings.Join(lines[start:], "\n")
+	}
+	return ""
+}
+
 // TestNoTestAssertsAWallClockBoundUnderTenSeconds is the wall-clock law for
 // tests, read off the test files as text. A wall-clock bound in a test asserts
 // the machine's load, not the code: two tests failed under load and passed

@@ -15,4 +15,14 @@ under `$HOME/.config/nova-secrets` with `nova-secrets check` passing for it,
 and that no plaintext key file (`$HOME/.local/share/opencode/auth.json`,
 `$HOME/.config/deepseek/env`) and no literal `apiKey": "sk-` in
 `$HOME/.config/opencode/*.json` survives; `--apply` kills stray runner
-listeners not under their unit, nothing else destructive.
+listeners not under their unit, nothing else destructive. The network probe
+runs inside the real sandbox, never from the host, so what it reports is what
+a card would see.
+
+The same probe is the gate that admits a bench to the loop at all, and it is
+the CI job that runs it: `fleet-probe` in `ci.yml`, dispatched with `bench` and
+`slots`, one job per requested runner slot on that bench's Linux runners. It
+builds `nova-sandbox` from the checkout and runs the network fetch inside it,
+failing unless the fetch answers 200, so a bench enters the loop only after the
+SANDBOXED probe is green. A host probe is never the evidence: #893 is the night
+one passed while every sandboxed card died.
