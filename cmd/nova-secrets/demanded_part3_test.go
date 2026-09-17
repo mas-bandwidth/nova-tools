@@ -13,6 +13,7 @@ import (
 
 // Test 11: TestAKeyNameThatIsNotAnEnvVarIsRefused
 func TestAKeyNameThatIsNotAnEnvVarIsRefused(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -59,6 +60,7 @@ func TestAKeyNameThatIsNotAnEnvVarIsRefused(t *testing.T) {
 
 // Test 12: TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount
 func TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -125,6 +127,7 @@ func TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount(t *testing.T) {
 
 // Test 13: TestCheckFailsClosedOnEverythingItCannotRead
 func TestCheckFailsClosedOnEverythingItCannotRead(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -172,6 +175,7 @@ func TestCheckFailsClosedOnEverythingItCannotRead(t *testing.T) {
 
 // Test 14: TestKeygenNeverOverwritesAndNeverTouchesTheStore
 func TestKeygenNeverOverwritesAndNeverTouchesTheStore(t *testing.T) {
+	t.Parallel()
 	ageKeygen := findAgeKeygen(t)
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
@@ -282,6 +286,7 @@ func TestKeygenNeverOverwritesAndNeverTouchesTheStore(t *testing.T) {
 
 // Test 15: TestTheLauncherOrderWorksWithTheStoreFullyDenied
 func TestTheLauncherOrderWorksWithTheStoreFullyDenied(t *testing.T) {
+	t.Parallel()
 	// Nova-sandbox integration test. Skips with stated reason if nova-sandbox is not built
 	sandboxBin, err := exec.LookPath("nova-sandbox")
 	if err != nil {

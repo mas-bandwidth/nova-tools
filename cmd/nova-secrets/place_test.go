@@ -108,6 +108,7 @@ func (f placeFixture) placedArgs(machine string) []string {
 }
 
 func TestPlaceThenPlacedShowsNameAndHash(t *testing.T) {
+	t.Parallel()
 	f := newPlaceFixture(t)
 	stdout, stderr, code := runNovaSecrets(f.bin, f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath)...)
 	if code != 0 {
@@ -159,6 +160,7 @@ func TestPlaceThenPlacedShowsNameAndHash(t *testing.T) {
 }
 
 func TestPlaceNeverPrintsTheValue(t *testing.T) {
+	t.Parallel()
 	f := newPlaceFixture(t)
 	stdout, stderr, code := runNovaSecrets(f.bin, f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath)...)
 	if code != 0 {
@@ -177,6 +179,7 @@ func TestPlaceNeverPrintsTheValue(t *testing.T) {
 }
 
 func TestPlaceRefusesMissingMachineWithRemedy(t *testing.T) {
+	t.Parallel()
 	f := newPlaceFixture(t)
 	_, stderr, code := runNovaSecrets(f.bin, f.placeArgs("nowhere", "DEEPSEEK_API_KEY", f.remotePath)...)
 	if code != 2 {
@@ -188,6 +191,7 @@ func TestPlaceRefusesMissingMachineWithRemedy(t *testing.T) {
 }
 
 func TestPlaceRefusesMissingStoreWithRemedy(t *testing.T) {
+	t.Parallel()
 	f := newPlaceFixture(t)
 	args := f.placeArgs("mini", "DEEPSEEK_API_KEY", f.remotePath)
 	for i, a := range args {

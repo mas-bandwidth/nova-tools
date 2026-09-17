@@ -7,10 +7,12 @@ import (
 )
 
 func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
+	t.Parallel()
 	audit.PrintedArguments(t, secretsAudit)
 }
 
 func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
+	t.Parallel()
 	audit.Bypasses(t, secretsAudit)
 }
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -123,25 +124,50 @@ func sealFileWithSops(t *testing.T, sopsPath string, filePath string, ageKeys []
 	}
 }
 
+// The tool is built once per test run, not once per test. Thirty-two tests each ran
+// their own `go build` (about 3.5 s apiece), which put this package at two minutes:
+// the whole budget of the two-minute law spent compiling the same binary (Glenn
+// 2026-09-17). No test writes to the binary, so one shared copy is safe.
+var (
+	buildOnce sync.Once
+	builtDir  string
+	builtBin  string
+	buildErr  error
+	buildOut  []byte
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if builtDir != "" {
+		os.RemoveAll(builtDir)
+	}
+	os.Exit(code)
+}
+
 func buildNovaSecrets(t *testing.T) string {
 	t.Helper()
-	binPath := filepath.Join(t.TempDir(), "nova-secrets")
-	if runtime.GOOS == "windows" {
-		// `go build -o <file>` writes EXACTLY the name it is handed, and
-		// os/exec resolves a path whose extension is not in PATHEXT through
-		// lookPathExts, which only ever tries <path>.exe, <path>.bat and the
-		// rest. Without this suffix the build succeeds and the binary then
-		// never starts, and because the failure is an *exec.Error and not an
-		// *exec.ExitError it arrived at the caller as exit 1 with two empty
-		// streams -- indistinguishable from a tool that refused without a word.
-		binPath += ".exe"
+	buildOnce.Do(func() {
+		builtDir, buildErr = os.MkdirTemp("", "nova-secrets-testbin-*")
+		if buildErr != nil {
+			return
+		}
+		builtBin = filepath.Join(builtDir, "nova-secrets")
+		if runtime.GOOS == "windows" {
+			// `go build -o <file>` writes EXACTLY the name it is handed, and
+			// os/exec resolves a path whose extension is not in PATHEXT through
+			// lookPathExts, which only ever tries <path>.exe, <path>.bat and the
+			// rest. Without this suffix the build succeeds and the binary then
+			// never starts, and because the failure is an *exec.Error and not an
+			// *exec.ExitError it arrived at the caller as exit 1 with two empty
+			// streams -- indistinguishable from a tool that refused without a word.
+			builtBin += ".exe"
+		}
+		buildOut, buildErr = exec.Command("go", "build", "-o", builtBin, ".").CombinedOutput()
+	})
+	if buildErr != nil {
+		t.Fatalf("failed to build nova-secrets: %v, out: %s", buildErr, string(buildOut))
 	}
-	cmd := exec.Command("go", "build", "-o", binPath, ".")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("failed to build nova-secrets: %v, out: %s", err, string(out))
-	}
-	return binPath
+	return builtBin
 }
 
 func runNovaSecrets(bin string, args ...string) (stdout string, stderr string, exitCode int) {

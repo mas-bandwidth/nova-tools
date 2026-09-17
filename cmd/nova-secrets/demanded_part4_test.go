@@ -14,6 +14,7 @@ import (
 
 // Test 16: TestNoKeychainAndNoCryptoDependency
 func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
+	t.Parallel()
 	pkgs := []string{"cmd/nova-secrets", "internal/secrets"}
 	fset := token.NewFileSet()
 
@@ -71,6 +72,7 @@ func TestNoKeychainAndNoCryptoDependency(t *testing.T) {
 
 // Test 17: TestREADMEFirstRunMatchesWhatTheToolPrints
 func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
 	ageKeygen := findAgeKeygen(t)
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
@@ -139,6 +141,7 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 
 // Test 18: TestOutputSizeAtTheLargestPlausibleState
 func TestOutputSizeAtTheLargestPlausibleState(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -189,6 +192,7 @@ func TestOutputSizeAtTheLargestPlausibleState(t *testing.T) {
 
 // Test 19: TestNoFileContentOrCallerArgumentCanForgeALine
 func TestNoFileContentOrCallerArgumentCanForgeALine(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -225,6 +229,7 @@ func TestNoFileContentOrCallerArgumentCanForgeALine(t *testing.T) {
 
 // Test 20: TestAStaleWorkingCopyIsRefused
 func TestAStaleWorkingCopyIsRefused(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -296,6 +301,7 @@ func TestAStaleWorkingCopyIsRefused(t *testing.T) {
 
 // Test 21: TestADecryptedFileLeftInTheStoreIsRed
 func TestADecryptedFileLeftInTheStoreIsRed(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -349,6 +355,7 @@ func TestADecryptedFileLeftInTheStoreIsRed(t *testing.T) {
 }
 
 func TestChildEnvironmentCollisionsAreDropped(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -387,6 +394,7 @@ func TestChildEnvironmentCollisionsAreDropped(t *testing.T) {
 }
 
 func TestExecLookPathFailureDoesNotPrintOK(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -419,6 +427,7 @@ func TestExecLookPathFailureDoesNotPrintOK(t *testing.T) {
 }
 
 func TestAsPathTraversalRefused(t *testing.T) {
+	t.Parallel()
 	bin := buildNovaSecrets(t)
 	_, stderr, code := runNovaSecrets(bin, "names", "--store", "/any/path", "--as", "../outside")
 	if code != 2 {
@@ -430,6 +439,7 @@ func TestAsPathTraversalRefused(t *testing.T) {
 }
 
 func TestExecRejectsUncommittedModificationAgainstHEADTree(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -476,6 +486,7 @@ func TestExecRejectsUncommittedModificationAgainstHEADTree(t *testing.T) {
 }
 
 func TestCheckFailsClosedOnUnreadableIndex(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -509,6 +520,7 @@ func TestCheckFailsClosedOnUnreadableIndex(t *testing.T) {
 }
 
 func TestExecFailsOnUntrackedSealedYAML(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -541,6 +553,7 @@ func TestExecFailsOnUntrackedSealedYAML(t *testing.T) {
 }
 
 func TestChildEnvironmentDropsOmittedStoreSecrets(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
