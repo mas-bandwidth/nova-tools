@@ -545,6 +545,7 @@ nova-swarm finalize --pool <dir> --task <id>
 nova-swarm version
 nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
+nova-swarm lint      --card <file> [--max <n>]
 nova-swarm quickstart --pool <dir>
 nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
 nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
@@ -623,6 +624,26 @@ because a worker that may open no file is a worker asked for a plan.
 `verdict` records a reader's counts for one task: how many of its findings
 were accurate and how many wrong, by name, into the task's sidecar. It is the
 only way `accurate` and `wrong` reach a batch line, and it is a person's act.
+
+`lint --card <file>` checks one card's mechanical shape **before any spend**,
+with no model and no probe: it reads the one file it was handed and names every
+defect by check, line and excerpt. The checks are the shape tonight's card
+deaths cost: line 1 starts with `RESULT: `; `STEP 1` clones or enters the repo
+with `cd`; the `STEP` lines are numbered `1, 2, 3, …` in order; the card names
+a reproducing test, or says `probe`/`read` when it only reads; it names a test
+command (`go test`, `pytest`, …) or states `no tests`; it carries a deadline or
+the words `finish within`; it names a file or a package; scratch is named
+absolutely, never as a bare relative path; no `../` path appears anywhere,
+because the wall refuses a path above the job; it never invokes `nova-sandbox`;
+its final step writes `RESULT.md` with the `RESULT: ` line first; and the card
+is under 12000 bytes. A card that satisfies all of them prints one line,
+`LINT OK card=<name> checks=<n>`, and exits 0; a card that drifts prints
+`LINT DRIFT card=<name> <check>: <line>: <excerpt>` for each finding and exits
+2, so a caller can refuse to admit it. `--max`, default 20 and 0 for all, bounds
+the printed findings and adds one `LINT MORE` line naming the remedy; it never
+changes the verdict. The verb is the practice-17/18/23/25 shape made mechanical:
+it is a check, not a judgment, and a card that passes it is admitted to the wall
+rather than proven.
 
 The binary is `nova-swarm`, and that is its only name.
 
