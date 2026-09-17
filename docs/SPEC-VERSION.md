@@ -43,23 +43,30 @@ nova-update apply --sha <sha> --repo <dir> --bin <dir> [--timeout <d>]
    revision, build host, go version, time — in the manifest; on any failure it performs one
    verified rollback to the prior set. `--sha` given with `--file` is a refusal naming both
    flags.
-6. **`apply --sha` prints one line, every field named.** `APPLY SHA sha=<sha> bin=<dir>
+6. **Every stamp verification also verifies source metadata.** Every place this spec reads
+   a binary's version stamp — `apply --sha`'s postflight, the snapshot, and `moved`'s
+   per-revision readback — also reads that binary's source metadata (repository, revision,
+   dirty flag, build host) and verifies it against the manifest that recorded the build; a
+   binary whose source metadata is missing or disagrees is refused, exit 2, naming that
+   binary and the field. A build from the wrong checkout that carries the requested linker
+   stamp cannot pass the gate.
+7. **`apply --sha` prints one line, every field named.** `APPLY SHA sha=<sha> bin=<dir>
    stamp=<stamp> built=<n> took=<d>`; `built=` is the number of binaries installed and
    `stamp=` the identity every one of them reports.
-7. **`apply --sha` refuses a mixed set, naming the pair.** Two binaries at different
+8. **`apply --sha` refuses a mixed set, naming the pair.** Two binaries at different
    stamps — a lost linker symbol answers `devel` while the rest answer the revision — are
    refused, exit 2, naming both binaries and both stamps, and nothing is installed; the
    staged build is discarded, so `--bin` is never left mixed.
-8. **The rest of the `apply --sha` refusals.** A missing `--sha`, `--repo` or `--bin` is
+9. **The rest of the `apply --sha` refusals.** A missing `--sha`, `--repo` or `--bin` is
    *refusing to guess*, naming it; an unresolved revision names it and the fetch; a
    `cmd/*` that does not build names the package and the revision.
-9. **The mistake `moved` removes, in one sentence.** The ADOPT EVERYTHING note named four
-   `--decide` flags still on open PRs (#1141), and `moved` cannot, because every flag it
-   announces was read off the binary's own help.
-10. **The mistake `apply --sha` removes, in one sentence.** Friends' bins were mixed
+10. **The mistake `moved` removes, in one sentence.** The ADOPT EVERYTHING note named four
+    `--decide` flags still on open PRs (#1141), and `moved` cannot, because every flag it
+    announces was read off the binary's own help.
+11. **The mistake `apply --sha` removes, in one sentence.** Friends' bins were mixed
     across stamps, and one `apply --sha` builds the whole set under one stamp and refuses
     a directory that is already mixed.
-11. **Both are bounded and clockless.** Each prints one line, caps every child through
+12. **Both are bounded and clockless.** Each prints one line, caps every child through
     `internal/bounded`, takes its clock from the injected seam, and touches the network
     only for the `git fetch` a named missing revision asks for.
 
@@ -78,3 +85,4 @@ network or a clock; `git`, `go` and every built binary are fakes on `PATH`.
 8. `TestApplyShaIsBoundedByTheClock`: an injected clock and a fake build sleeping past `--timeout` is exit 2 with the timeout named and no partial `--bin` directory.
 9. `TestMovedNeverInfersARename`: a tool present only at `--from` and a differently named tool present only at `--to` whose helps are identical yield `deleted=1 added=1 renamed=0`, and the same pair with the rename stated by the commit message or a `MOVED` file yields `renamed=1` — help text alone never makes a rename.
 10. `TestApplyShaPublishesTheWholeSetAtomically`: a fake `--bin` link to a prior set and a fake build whose last binary fails verification is a non-zero exit with the prior set still linked and untouched, and a successful run swaps the link once and writes repository, revision, build host, go version and time into the manifest.
+11. `TestStampCheckAlsoVerifiesSourceMetadata`: a fixture whose binaries all answer the same version stamp but one carries source metadata that is missing or disagrees with the manifest — another repository, revision, dirty flag or build host — is exit 2 naming that binary, and installs nothing.
