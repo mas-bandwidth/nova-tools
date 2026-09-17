@@ -13,6 +13,18 @@ import (
 // max_cache_read) and nova-swarm run stops a card at the budget with
 // end=budget and a PROMPT-DEFECT line.
 
+// workerDescription renders a worker description that carries a card budget.
+// Every path is quoted with strconv.Quote: a filesystem path interpolated raw
+// into a JSON string literal is a description Windows cannot read, because a
+// backslash there begins an escape the JSON grammar does not have (the #901
+// class, which bounced the hosted Windows leg of the merge queue).
+func workerDescription(keyFile, workerDir string) string {
+	return `{"name":"w","provider":"p","model":"m","env_var":"FAKE_KEY","key_file":` +
+		strconv.Quote(keyFile) +
+		`,"usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` +
+		strconv.Quote(workerDir) + `,"deadline":"5m","max_turns":30,"max_cache_read":1000}`
+}
+
 // The description carries the budget.
 func TestCardBudgetLoadsFromWorkerDescription(t *testing.T) {
 	dir := t.TempDir()
@@ -20,22 +32,32 @@ func TestCardBudgetLoadsFromWorkerDescription(t *testing.T) {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "w.json")
-	body := `{"name":"w","provider":"p","model":"m","env_var":"FAKE_KEY","key_file":"` + filepath.Join(dir, "key") +
-		`","usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` +
-		strconv.Quote(home) + `,"deadline":"5m","max_turns":30,"max_cache_read":1000}`
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name    string
+		keyFile string
+		home    string
+	}{
+		{"the platform's own path", filepath.Join(dir, "key"), home},
+		{"a Windows path with backslashes", `C:\Users\RUNN\keys\key`, `C:\Users\RUNN\worker`},
 	}
-	w, problems := LoadWorker(path)
-	if len(problems) != 0 {
-		t.Fatalf("a description with a card budget is accepted, got %v", problems)
-	}
-	if w.MaxTurns != 30 || w.MaxCacheRead != 1000 {
-		t.Fatalf("the card budget wants max_turns=30 max_cache_read=1000, got %+v", w)
-	}
-	if !w.HasCardBudget() {
-		t.Fatal("a description with a budget has one")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, "w.json")
+			body := workerDescription(tc.keyFile, tc.home)
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			w, problems := LoadWorker(path)
+			if len(problems) != 0 {
+				t.Fatalf("a description with a card budget is accepted, got %v", problems)
+			}
+			if w.MaxTurns != 30 || w.MaxCacheRead != 1000 {
+				t.Fatalf("the card budget wants max_turns=30 max_cache_read=1000, got %+v", w)
+			}
+			if !w.HasCardBudget() {
+				t.Fatal("a description with a budget has one")
+			}
+		})
 	}
 }
 
