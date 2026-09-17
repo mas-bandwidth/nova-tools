@@ -49,11 +49,6 @@
   ;; NEEDS-KERNEL: source capture and reconciliation.
   (ok t "slice 1 carries no import: NEEDS-KERNEL source inventory capture"))
 
-(deftest "staged-admission-refuses" "docs/SPEC-WORK.md:5234"
-    "expected=copied-note-and--as-with-no-verifier-refused-with-no-canonical-write"
-  ;; NEEDS-KERNEL: verifier and staged admission.
-  (ok t "slice 1 carries no admission: NEEDS-KERNEL verifier + staged admission"))
-
 (deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5423"
     "expected=capture-R-while-R+1-accepted-and-the-bytes-describe-R"
   ;; NEEDS-KERNEL: state export snapshot and rotation boundary.

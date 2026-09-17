@@ -262,7 +262,60 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+    ;; fleet recommendation and the four assignment facts (Go card 8629)
+    #:make-machine
+    #:machine-id
+    #:machine-name
+    #:machine-owner
+    #:machine-roles
+    #:machine-permits
+    #:machine-excludes
+    #:machine-limits
+    #:machine-facts
+    #:machine-connect
+    #:machine-excludes-p
+    #:machine-admits-p
+    #:make-fleet-session
+    #:fleet-session-who
+    #:fleet-session-leases
+    #:make-fleet-ask
+    #:fleet-ask-kind
+    #:fleet-ask-rows
+    #:fleet-ask-fail
+    #:fleet-ask-lease
+    #:fleet-ask-exit-code
+    #:fleet-row
+    #:fleet-for
+    #:make-assignment-state
+    #:assignment-state-who
+    #:assignment-state-offers
+    #:assignment-state-deliveries
+    #:assignment-state-acceptances
+    #:assignment-state-declines
+    #:assignment-state-reservations
+    #:assignment-state-leases
+    #:assignment-state-attempts
+    #:assignment-state-evidence
+    #:assignment-state-completed
+    #:assignment-state-node-state
+    #:assignment-state-w
+    #:assignment-state-responsible
+    #:assignment-state-free-slots
+    #:assignment-state-launches
+    #:*session-written-fields*
+    #:make-staged-input
+    #:staged-input-bytes
+    #:staged-input-result
+    #:staged-input-valid-p
+    #:staged-input-rev
+    #:staged-input-reason
+    #:stage-provenance
+    #:session-written-field
+    #:assignment-offer
+    #:assignment-acknowledge
+    #:assignment-decline
+    #:session-status))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
