@@ -962,10 +962,34 @@ asserts does not exist in slice 1."
 ;; bounded ping; a nonresponsive capacity marked unavailable with reason
 ;; `unconfirmed` and no claim of sleep or exhausted credit; a failed probe read
 ;; as unresolved delivery; explicit rest respected.
-;; NEEDS-KERNEL: capacity availability and silence-threshold ping logic.
-(deftest-pending "explicit-rest-is-not-pinged" "docs/SPEC-WORK.md:5225"
+(deftest "explicit-rest-is-not-pinged" "docs/SPEC-WORK.md:5225"
     "expected=one-bounded-ping;unavailable=unconfirmed;rest=respected"
-  "capacity/rest logic is not in slice 1")
+  (let ((resting (make-availability :state :resting :last-contact 0
+                                    :silence-threshold 60))
+        (active (make-availability :state :active :last-contact 0
+                                   :silence-threshold 60))
+        (reserved (make-availability :state :active :last-contact 0
+                                     :silence-threshold 60 :reserved t)))
+    ;; explicit rest past the threshold is respected: no ping.
+    (multiple-value-bind (action reason) (silence-ping resting 1000)
+      (check-equal :none action "a resting friend is not pinged")
+      (check-equal :explicit-rest reason "the reason names the explicit rest"))
+    ;; a reserved friend is not woken by routine silence either.
+    (multiple-value-bind (action reason) (silence-ping reserved 1000)
+      (check-equal :none action "a reserved friend is not pinged")
+      (check-equal :reserved reason "the reason names the reservation"))
+    ;; an active friend past the threshold is pinged exactly once.
+    (multiple-value-bind (action reason) (silence-ping active 1000)
+      (check-equal :ping action "an active friend past the threshold is pinged")
+      (check-equal :silence-threshold reason "the reason names the threshold"))
+    (mark-pinged active)
+    (multiple-value-bind (action reason) (silence-ping active 1000)
+      (check-equal :none action "the ping is bounded to one")
+      (check-equal :already-pinged reason "the second ask names the bound"))
+    ;; a nonresponse is unavailable-unconfirmed, never sleep nor exhausted credit.
+    (mark-unconfirmed active)
+    (check-equal :unconfirmed (availability-state active)
+                 "a nonresponse reads unconfirmed")))
 
 ;; fenced-export-can-finish: in a fenced session an export started, its status
 ;; and terminal line read by id; an unfinished one cancelled with publication

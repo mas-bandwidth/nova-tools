@@ -88,8 +88,34 @@
 
 (deftest "return-reconciles-before-dispatch" "docs/SPEC-WORK.md:5226"
     "expected=return-reconciles-before-new-dispatch;one-bounded-ping-at-threshold"
-  ;; NEEDS-KERNEL: silence threshold and return reconciliation before dispatch.
-  (ok t "pending; needs dispatch"))
+  ;; before the return, a new dispatch is refused by name.
+  (multiple-value-bind (admitted line code) (dispatch-gate nil)
+    (check-equal nil admitted "a dispatch before reconciliation is refused")
+    (check-equal 2 code "the refusal is exit 2")
+    (ok (search "return" line) "the refusal names the outstanding return"))
+  ;; the return reconciles its assignments and observed capacity ...
+  (let ((r (reconcile-return :assignments '("a1" "a2")
+                             :capacity '((:friend "bob" :free 3)))))
+    (check-equal t (return-done-p r) "the return is reconciled")
+    (check-equal '("a1" "a2") (return-reconciliation-assignments r)
+                 "outstanding assignments are reconciled")
+    (check-equal '((:friend "bob" :free 3)) (return-reconciliation-capacity r)
+                 "observed capacity is reconciled")
+    ;; ... and only then is a new dispatch admitted.
+    (multiple-value-bind (admitted line code) (dispatch-gate r)
+      (check-equal t admitted "dispatch is admitted after reconciliation")
+      (check-equal 0 code "admission is exit 0")
+      (check-string= "DISPATCH OK" line "the admission line")))
+  ;; the silence threshold still fires one bounded ping, and only one.
+  (let ((active (make-availability :state :active :last-contact 0
+                                   :silence-threshold 60)))
+    (multiple-value-bind (action reason) (silence-ping active 1000)
+      (check-equal :ping action "one ping at the threshold")
+      (check-equal :silence-threshold reason "the threshold reason"))
+    (mark-pinged active)
+    (multiple-value-bind (action reason) (silence-ping active 1000)
+      (check-equal :none action "only one bounded ping")
+      (check-equal :already-pinged reason "the bound is named"))))
 
 (deftest "reuse-only-valid-review" "docs/SPEC-WORK.md:4374"
     "expected=same-scope-reusable;changed-acceptance-deps-invalidate;friend-gates-not-replaced"
