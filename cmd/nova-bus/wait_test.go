@@ -657,12 +657,12 @@ func TestWaitBeatPushBounded(t *testing.T) {
 	}
 }
 
-// A beat commit from another line is not a note, so a default wait sleeps through it. Under
-// --quiet-beats a wait that would otherwise sit out its whole timeout beside a bus moving
-// without it instead returns the moment a change that is ONLY beats and cursors lands --
-// and prints one WAIT line and nothing else: no INBOX SCOPE, no INBOX OPEN, no INBOX OK.
-// That is the token saving: a presence beat costs one line, not the whole inbox frame.
-func TestWaitQuietBeatsPrintsOneWAITLineForABeatCommit(t *testing.T) {
+// A beat commit from another line is not a note, so a wait sleeps through it -- with or
+// without --quiet-beats. Until #328 (2026-09-17) the flag made a beat a wake worth one WAIT
+// line; with six lines beating once a minute that was a poll with extra steps, and every
+// wake cost the waiting window a turn. A wake is a note addressed to the reader, nothing
+// else; the flag stays accepted so callers that pass it keep working.
+func TestWaitQuietBeatsSleepsThroughABeatCommit(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
@@ -679,13 +679,9 @@ func TestWaitQuietBeatsPrintsOneWAITLineForABeatCommit(t *testing.T) {
 
 	r := invoke(t, "", waitFlags(checkout, "Ada", "2s", "--quiet-beats")...).mustCode(t, 0)
 
-	r.mustContain(t, "stdout", "WAIT OK new=0").
-		mustContain(t, "stdout", "WAIT DONE reason=new")
-	if strings.Contains(r.stdout, "INBOX ") {
-		t.Fatalf("a beat-only wake printed an INBOX frame:\n%s", r.stdout)
-	}
-	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
-		t.Fatalf("the wait slept through a --quiet-beats beat change:\n%s", r.stdout)
+	r.mustContain(t, "stdout", "WAIT DONE reason=timeout")
+	if strings.Contains(r.stdout, "WAIT OK") || strings.Contains(r.stdout, "reason=new") {
+		t.Fatalf("a beat-only change woke the wait; a beat is not news:\n%s", r.stdout)
 	}
 }
 

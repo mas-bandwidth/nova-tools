@@ -4235,17 +4235,14 @@ the instant it would take instead — and **returns at once** rather than waitin
  on a line that can hide nothing else. A line in the future that covers only part
 of the wait gets the same sentence and the wait goes on.
 
-**`--quiet-beats` turns a beat into a cheap presence wake.** A change that moves
-only a lane's state files — a `BEAT` or `CURSOR` advancing, nothing a reader has
-to answer — is not a note, so a default wait sleeps through it. But a poller
-beside a bus whose only way to prove it is still running is to wake the session
-spends a whole `INBOX` frame per wake, ~200 tokens, most of them a frame that
-tells the session nothing. Under `--quiet-beats`, a wait wakes the moment a
-change that is only beats and cursors lands and prints one `WAIT OK new=0 …`
-line and nothing else — no `INBOX SCOPE`, no `INBOX OPEN`, no `INBOX OK` — so a
-presence beat costs one line rather than the frame. A change that carries a note
-is reported exactly as before, frame and all: `--quiet-beats` only widens what
-counts as a wake, it never hides a note.
+**A beat is never a wake.** A change that moves only a lane's state files — a
+`BEAT` or `CURSOR` advancing, nothing a reader has to answer — is not a note, and a
+wait sleeps through it, with or without `--quiet-beats`. Until 2026-09-17 (#328,
+second instance) the flag made such a change a wake worth one `WAIT OK new=0` line;
+with six lines beating once a minute that was a poll with extra steps, and every
+wake cost the waiting window a turn. A wake is a note addressed to the reader, from
+another line, and nothing else. `--quiet-beats` stays accepted so callers that pass
+it keep working; it changes nothing.
 
 Exit codes are `inbox`'s: **0** with notes and **0** on a timeout, **1** for the
 refusals `inbox` already has — a cursor that is no longer on this history, a
