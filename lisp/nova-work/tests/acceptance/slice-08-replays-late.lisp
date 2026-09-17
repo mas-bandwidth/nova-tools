@@ -404,9 +404,6 @@
       (handler-case (read-restricted json-number)
         (restricted-data-violation () (setf refused t)))
        (ok refused "a wire frame carrying the JSON number ~A is refused" json-number))))
-(needs-kernel "working-is-a-view" "docs/SPEC-WORK.md:5082"
-  "|W| <= |O| over a set where every item is leased then released, and no verb writes W"
-  "WORKING-SET")
 
 ;; wire-integers-are-strings is now the executable replay in
 ;; ../acceptance.lisp (card 8608); it uses the wire codec, not the store's
