@@ -526,7 +526,7 @@ Every line below goes to **stderr** except the body of `policy`,
 which is the thing asked for and goes to stdout.
 
 ```
-SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> write=<n> net=<denied|nopromise> cwd=<dir> ancestors=<n> cmd=<name> gpu=<none|metal>
+SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
 PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
@@ -542,6 +542,16 @@ SANDBOX VERSION tool=nova-sandbox version=<n> backend=<name> platform=<os>
 crash still says what the wall was. It names `cmd=<name>` — the base name of
 the executable — and never the arguments, because arguments carry task text and
 task text carries quoted rules.
+
+**`SANDBOX OK` names the cwd twice.** `cwd=<dir>` is the readable rendering of
+the working directory through `oneline.Field`, for the operator;
+`cwdb64=<base64url>` is the machine-readable receipt, a strict base64url
+encoding (RFC 4648 §5, no padding) of the raw path bytes the wall applied. A
+reader that must match the cwd decodes `cwdb64=` and never the readable field:
+oneline's escape is not injective (a literal backslash is not escaped), so the
+readable spelling cannot be reversed to the bytes. A reader that finds `cwdb64=`
+absent or not valid base64url treats the wall as one that cannot name its own
+containment.
 
 Every `SANDBOX NOTE` is printed **before** the command starts, for the reason
 `SANDBOX OK` is: on linux the tool is inside the wall from the moment it is
