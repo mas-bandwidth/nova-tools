@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -124,6 +125,69 @@ func TestEveryActionIsPinnedBySHA(t *testing.T) {
 			if usesRe.FindStringSubmatch(line) == nil {
 				t.Errorf("%s:%d: uses: is not owner/action@40-hex-sha: %q", file, i+1, strings.TrimSpace(line))
 			}
+		}
+	}
+}
+
+// TestNoTestAssertsAWallClockBoundUnderTenSeconds is the wall-clock law for
+// tests, read off the test files as text. A wall-clock bound in a test asserts
+// the machine's load, not the code: two tests failed under load and passed
+// alone because a version probe timed out at five seconds and a stall assertion
+// sat on a five-second deadline. So no _test.go line may carry a literal
+// duration under ten seconds where the test leans on the wall clock: a context
+// deadline (a WithTimeout or WithDeadline call, a time.After or NewTimer
+// watchdog) or an elapsed-time assertion (time.Since, elapsed, took, waited).
+// Duration inputs to fake-driven code (a runner deadline, a flag table, a
+// parsed retry-after) are not assertions about the machine and are out of
+// scope; only the shapes above are read. Thirty seconds or more is the generous
+// bound; a fake that must stay short carries an allowlist comment
+// holding a reason, and the check reads the code before any comment on the
+// line, so prose about the rule cannot trip it.
+func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
+	root := repoRoot(t)
+	sub10Re := regexp.MustCompile(`(^|[^0-9])([1-9])\s*[\*]\s*time[.]Second\b`)
+	anySecRe := regexp.MustCompile(`time[.]Second\b`)
+	bigSecRe := regexp.MustCompile(`[0-9]{2,}\s*[\*]\s*time[.]Second\b`)
+	trigRe := regexp.MustCompile(`WithTimeout|WithDeadline|time[.]After|NewTimer|time[.]Since|elapsed|took|waited`)
+	for _, dir := range []string{"internal", "cmd"} {
+		base := filepath.Join(root, dir)
+		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Errorf("cannot read %s: %v", path, err)
+				return nil
+			}
+			rel, _ := filepath.Rel(root, path)
+			for i, line := range strings.Split(string(raw), "\n") {
+				if strings.Contains(line, "// wall-ok:") {
+					continue
+				}
+				code := line
+				if j := strings.Index(code, "//"); j >= 0 && (j == 0 || code[j-1] == ' ' || code[j-1] == '\t') {
+					code = code[:j]
+				}
+				if !trigRe.MatchString(code) {
+					continue
+				}
+				if !anySecRe.MatchString(code) {
+					continue
+				}
+				if bigSecRe.MatchString(code) && !sub10Re.MatchString(code) {
+					continue
+				}
+				// A bare duration with no multiplier on the line is one second.
+				t.Errorf("%s:%d: wall-clock bound under ten seconds in a test assertion or context deadline (use thirty seconds or more, or a fake with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 }

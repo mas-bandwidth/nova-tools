@@ -229,6 +229,16 @@ The shape is one implementation, `internal/bounded`, used by every binary, so
 that the promise is made in one place and met in the same way — as the escape
 is.
 
+**No test asserts a literal wall-clock bound under ten seconds.** A wall-clock
+bound in a test asserts the machine's load, not the code: two tests failed
+under load and passed alone because a version probe timed out at five seconds
+and a stall assertion sat on a five-second deadline. Tests that lean on the
+wall clock — a context deadline or an elapsed-time assertion — use an injected
+clock or a fake probe where the code has a seam, else a deadline of thirty
+seconds or more; the CI budget test refuses any `_test.go` line carrying such
+a literal under ten seconds, except a fake documented with
+`// wall-ok: <reason>`.
+
 **Every binary says which build it is.** `<tool> version` (and `--version`)
 prints ONE line, four tokens, exit 0, on stdout:
 

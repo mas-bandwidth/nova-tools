@@ -199,7 +199,7 @@ func TestAWedgedProcessIsKilledByTheWholeReadBound(t *testing.T) {
 		MaxItems: 300, MaxBytes: 1 << 20, Wall: time.Millisecond, Whole: 5 * time.Millisecond}
 	started := time.Now()
 	res := r.Run(context.Background(), "-")
-	if d := time.Since(started); d > 5*time.Second {
+	if d := time.Since(started); d > 30*time.Second {
 		t.Errorf("the read ran %s past a 5ms whole-read bound", d)
 	}
 	if res.Complete {

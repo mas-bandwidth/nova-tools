@@ -166,7 +166,7 @@ func TestWithFetchedReportTipKeepsConcurrentPinsThroughGC(t *testing.T) {
 	for range 2 {
 		select {
 		case <-arrived:
-		case <-time.After(5 * time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatal("concurrent report acquisition did not reach both pinned callbacks")
 		}
 	}

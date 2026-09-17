@@ -70,8 +70,8 @@ func TestAncestorsTerminatesOnAWindowsPath(t *testing.T) {
 				t.Fatalf("the volume root %q is in the ancestor list; the root is granted above, not as an ancestor", d)
 			}
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("ancestors did not return in 5s on a windows path: the walk up the tree has no stop above the volume root")
+	case <-time.After(30 * time.Second):
+		t.Fatal("ancestors did not return in 30s on a windows path: the walk up the tree has no stop above the volume root")
 	}
 }
 

@@ -132,8 +132,8 @@ func TestReadFileSteadyDoesNotBlockOnAFIFO(t *testing.T) {
 		if missing(err) {
 			t.Fatal("a FIFO must not read as a record that is simply gone")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("STILL BLOCKED after 5s reading a FIFO at RESULT.md: the dispatcher is wedged")
+	case <-time.After(30 * time.Second):
+		t.Fatal("STILL BLOCKED after 30s reading a FIFO at RESULT.md: the dispatcher is wedged")
 	}
 }
 
@@ -154,8 +154,8 @@ func TestReadJSONDoesNotBlockOnAFIFO(t *testing.T) {
 		if err == nil {
 			t.Fatal("a FIFO read as an exit record")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("STILL BLOCKED after 5s reading a FIFO at exit.json: the recovery pass is wedged")
+	case <-time.After(30 * time.Second):
+		t.Fatal("STILL BLOCKED after 30s reading a FIFO at exit.json: the recovery pass is wedged")
 	}
 }
 
@@ -178,8 +178,8 @@ func TestCountRefusalsDoesNotBlockOnAFIFO(t *testing.T) {
 		if n != 0 {
 			t.Fatalf("a FIFO counted %d refusals", n)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("STILL BLOCKED after 5s counting refusals in a FIFO at harness.log: the dispatcher is wedged")
+	case <-time.After(30 * time.Second):
+		t.Fatal("STILL BLOCKED after 30s counting refusals in a FIFO at harness.log: the dispatcher is wedged")
 	}
 }
 

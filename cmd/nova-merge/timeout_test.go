@@ -34,7 +34,7 @@ func TestTheStateLockWaitsTheVerbsOwnTimeout(t *testing.T) {
 	}
 	contains(t, stderr, "pid=")
 	// One second, not ten. The slack is generous; the constant is not within it.
-	if waited > 5*time.Second {
+	if waited > 5*time.Second { // wall-ok: the bound is the assertion -- it distinguishes the verb's own 1s timeout from the 10s package constant, and any generous bound would be blind to the regression; short-skipped, self-hosted legs only
 		t.Errorf("--timeout 1 waited %s for the state lock; the wait is the verb's own --timeout and not a package constant", waited.Round(time.Millisecond))
 	}
 }
