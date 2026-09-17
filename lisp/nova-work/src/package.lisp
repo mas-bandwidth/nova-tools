@@ -262,7 +262,37 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+    ;; replays-8642: bounds-are-not-prompts
+    #:launcher #:make-launcher
+    #:launcher-input-bound #:launcher-output-bound
+    #:launcher-deadline #:launcher-attempt-limit
+    #:missing-hard-limits #:auto-dispatch-allowed-p
+    #:deadline-handle #:admit-execution
+    ;; replays-8642: batch-with-bounds-and-urgency
+    #:batch-config #:make-batch-config
+    #:batch-config-max-bytes #:batch-config-max-records #:batch-config-max-delay-ms
+    #:packet-fragment #:make-packet-fragment
+    #:packet-fragment-id #:packet-fragment-bytes #:packet-fragment-kind
+    #:packet-fragment-dependencies #:packet-fragment-retry-of
+    #:packet #:make-packet #:packet-manifest #:packet-fragments
+    #:exhausted-bound #:within-bounds-p #:batch-unchanged-p #:validate-packet
+    #:delay-applies-p #:dependencies-of #:retry-identity-of
+    ;; replays-8642: async-operations
+    #:operation-launch #:operation-cancel
+    ;; replays-8642: batches-and-pipelines
+    #:apply-atomic-batch #:apply-independent-batch
+    ;; replays-8642: cache-aware-context-choice
+    #:cache-price #:make-cache-price
+    #:cache-price-input-rate #:cache-price-cache-read-rate #:cache-price-cache-write-rate
+    #:cache-cost #:tiered-input-cost
+    #:context-plan #:make-context-plan
+    #:context-plan-hit-rate #:context-plan-retention-tokens
+    #:context-plan-new-prefix-tokens #:context-plan-rebuild-tokens
+    #:plan-cost
+    #:refresh-admission #:make-refresh-admission
+    #:refresh-admission-decision #:refresh-admission-adapter #:refresh-admission-evidence
+    #:refresh-refusal #:refresh-allowed-p #:choose-context-plan))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
