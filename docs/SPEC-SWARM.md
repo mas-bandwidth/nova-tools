@@ -529,7 +529,7 @@ nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetere
 nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
 nova-swarm bench    probe --benches <file> --bench <name>
 nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
-nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>]
+nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--worker <file>]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
@@ -546,7 +546,7 @@ nova-swarm version
 nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
 nova-swarm quickstart --pool <dir>
-nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>]
+nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
 nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
 nova-swarm help
 ```
@@ -674,6 +674,21 @@ model with the same wall, card contract and RESULT rules; admission refuses with
 one line `ADMIT REFUSED benchmark window open until <stamp>` when the file named
 by `NOVA_BENCH_WINDOW` (or `~/.config/nova/bench-window`, a single RFC 3339
 stamp) is in the future, so a local job never runs beside a benchmark.
+
+**`native --worker <file>` makes the description the source of the model and of
+the key** (issue #881): a key is authorized for one model only, the description
+pins that one, and a `--model` whose model half differs is refused on one line
+naming **both** models, exit 2, before any directory is made. Without `--worker`,
+`native` keeps `--model` as today. A description that names `"secret": "<NAME>"`
+(above) takes the key from this process's own environment — `nova-secrets exec`
+set it around the run — so `native` passes NAME through to the harness's
+environment by name and writes **no auth file** under the job; the harness config
+it writes carries the description's own provider declaration, `{env:NAME}`, never
+the value, and `--auth` and `--config` are refused with such a description. A
+description whose key is a `key_file` is the legacy shape, and there `--auth`
+still copies the provider's secret into the job's data home on disk — printing
+one `NATIVE NOTE` line that it does — because the legacy shape is the one that
+names a file.
 
 **`native` owns `TMPDIR`, and it is outside every repository** (issue #460,
 landed in #558). The job directory is a git repository — admission wants one — so a
