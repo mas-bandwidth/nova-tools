@@ -674,20 +674,28 @@ func keepNativeSecretName(name string) bool {
 
 // wallNamed reads the SANDBOX OK line out of the wall's captured stderr and returns the
 // backend it named and the cwd it applied. The cwd is read from the cwdb64=<base64url>
-// field ALONE -- the machine-readable receipt, a strict base64url encoding of the raw path
-// bytes the wall applied, so a path holding a space, a literal backslash, or a non-ASCII
-// name survives the line exactly. The cwd=<dir> field beside it is the readable rendering
-// of the same path and is never decoded for the comparison: oneline.Field is not injective,
-// so its escapes cannot be reversed to the bytes. A wall that printed no SANDBOX OK line,
-// or one whose receipt is absent or not valid base64url, is a run this tool cannot trust to
-// name its own containment, and the reason is returned (SPEC-SANDBOX rules 1 and 11: never
-// silently degraded, and a wall that cannot say what it is is no wall).
+// field WHEN THE WALL PRINTS IT -- the machine-readable receipt, a strict base64url encoding
+// of the raw path bytes the wall applied, so a path holding a space, a literal backslash, or
+// a non-ASCII name survives the line exactly. When no receipt is present the readable
+// cwd=<dir> field beside it is decoded instead (decodeField, issue #572): THE cwd TOKEN IS A
+// PRODUCER'S ONE-LINE FIELD, and a job directory whose path holds a space -- the configured
+// root under `stella 2` -- reaches this side as `stella\x202`, one token with the space
+// escaped. Taking that token literally made sameDir compare the escaped spelling with the
+// real path: the two differed, the refusal formatter escaped both spellings again so they
+// DISPLAYED identically, and a job that had already completed and written its RESULT and its
+// usage row was refused as a pre-launch failure. Decoding the field back to the path the
+// producer held restores the comparison without weakening it: a cwd that is not the job
+// directory still refuses. A wall that printed no SANDBOX OK line, or one whose receipt is
+// present but not valid base64url, or one that names no cwd at all, is a run this tool
+// cannot trust to name its own containment, and the reason is returned (SPEC-SANDBOX rules
+// 1 and 11: never silently degraded, and a wall that cannot say what it is is no wall).
 func wallNamed(out string) (backend, cwd, reason string) {
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.HasPrefix(line, "SANDBOX OK ") {
 			continue
 		}
 		receipt := false
+		readable := ""
 		for _, tok := range strings.Fields(line) {
 			switch {
 			case strings.HasPrefix(tok, "backend="):
@@ -699,16 +707,57 @@ func wallNamed(out string) (backend, cwd, reason string) {
 				}
 				cwd = string(raw)
 				receipt = true
+			case strings.HasPrefix(tok, "cwd="):
+				readable = decodeField(strings.TrimPrefix(tok, "cwd="))
 			}
 		}
 		if backend != "" {
 			if !receipt {
-				return backend, "", "printed a SANDBOX OK line with no cwdb64 receipt"
+				if readable == "" {
+					return backend, "", "printed a SANDBOX OK line with no cwdb64 receipt"
+				}
+				cwd = readable
 			}
 			return backend, cwd, ""
 		}
 	}
 	return "", "", "ran without a SANDBOX OK line naming its backend"
+}
+
+// decodeField inverts the one-line field encoding of internal/oneline for a token read
+// back out of a producer's record (issue #572). `\xNN` decodes to the byte it spells and
+// `\uNNNN` to the code point; every other byte is copied through. The encoding is NOT
+// injective (a literal backslash is not escaped), so a path that literally spells an
+// escape sequence cannot be told from the character it encodes; that limit is SPEC.md's
+// and this inverse does not change it. It exists only to put a producer's own field back
+// the way the producer held it before the value is compared or printed.
+func decodeField(s string) string {
+	buf := make([]byte, 0, len(s))
+	for i := 0; i < len(s); {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 'x':
+				if i+3 < len(s) {
+					if v, err := strconv.ParseUint(s[i+2:i+4], 16, 8); err == nil {
+						buf = append(buf, byte(v))
+						i += 4
+						continue
+					}
+				}
+			case 'u':
+				if i+5 < len(s) {
+					if v, err := strconv.ParseUint(s[i+2:i+6], 16, 32); err == nil {
+						buf = append(buf, string(rune(v))...)
+						i += 6
+						continue
+					}
+				}
+			}
+		}
+		buf = append(buf, s[i])
+		i++
+	}
+	return string(buf)
 }
 
 // sameDir asks whether two paths name the same directory once symlinks are resolved, so a

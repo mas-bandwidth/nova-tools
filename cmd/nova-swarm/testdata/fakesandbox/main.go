@@ -104,9 +104,11 @@ func main() {
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	// cwd is rendered exactly as the real wall renders it (cmd/nova-sandbox main.go): a
 	// readable cwd=<dir> field through oneline.Field and the cwdb64=<base64url> receipt of
-	// the raw path bytes, which is the field a reader must decode -- never the readable
-	// one, whose escape is not injective. NOVA_SWARM_FAKE_RECEIPT corrupts the receipt for
-	// the refusal tests.
+	// the raw path bytes, which is the field a reader must decode -- the readable one, whose
+	// escape is not injective, is only the fallback a producer that prints no receipt leaves.
+	// The cmd= field is rendered through oneline.Field too (issue #572), so a command holding
+	// a space reaches the consumer as one escaped token rather than splitting the line.
+	// NOVA_SWARM_FAKE_RECEIPT corrupts the receipt for the refusal tests.
 	receipt := base64.RawURLEncoding.EncodeToString([]byte(cwd))
 	switch os.Getenv("NOVA_SWARM_FAKE_RECEIPT") {
 	case "wrong":
@@ -115,7 +117,7 @@ func main() {
 		receipt = "not-a-receipt###"
 	}
 	fmt.Fprintf(os.Stderr, "SANDBOX OK backend=fake-wall abi=- read=%d write=%d net=nopromise cwd=%s cwdb64=%s cmd=%s\n",
-		count(args[:i], "--read"), count(args[:i], "--write"), oneline.Field(cwd), receipt, args[i+1])
+		count(args[:i], "--read"), count(args[:i], "--write"), oneline.Field(cwd), receipt, oneline.Field(args[i+1]))
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			os.Exit(ee.ExitCode())

@@ -541,7 +541,10 @@ SANDBOX VERSION tool=nova-sandbox version=<n> backend=<name> platform=<os>
 `SANDBOX OK` is printed **before** the command starts, so a log that ends in a
 crash still says what the wall was. It names `cmd=<name>` — the base name of
 the executable — and never the arguments, because arguments carry task text and
-task text carries quoted rules.
+task text carries quoted rules. The `cwd=<dir>` slot is a one-line field
+rendered through `internal/oneline` like every other path, so a directory whose
+path holds a space reaches a reader escaped; a consumer that compares it with a
+path it holds decodes that field first (issue #572).
 
 **`SANDBOX OK` names the cwd twice.** `cwd=<dir>` is the readable rendering of
 the working directory through `oneline.Field`, for the operator;
