@@ -65,6 +65,12 @@
    #:node-state
    #:node-required-count
    #:node-required-open
+   #:node-title
+   #:node-category
+   #:node-links
+   #:node-private
+   #:node-version
+   #:metadata-digest
    #:root-digest
    #:state-canonical-form
    #:reconstruct-state

@@ -60,7 +60,8 @@
 ;; NEEDS-KERNEL: priority undo treated as history, not value.
 (deftest "priority-undo-is-history-not-value" "docs/SPEC-WORK.md:5418"
     "expected=same-value-set-and-clear-of-absent-slot-are-no-effect"
-  (slice1-refuses-verb :undo))
+  ;; undo is now implemented; redo is still outside the slice.
+  (slice1-refuses-verb :redo))
 
 ;; NEEDS-KERNEL: the wire handshake refusing an unsupported version before admission.
 (deftest "protocol-version-negotiated-or-refused" "docs/SPEC-WORK.md:5162"

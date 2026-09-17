@@ -97,14 +97,6 @@
   "an undo appending a typed compensating envelope with its lineage while the original event and every receipt stay where they are"
   "UNDO")
 
-(needs-kernel "undo-names-its-reversible-set" "docs/SPEC-WORK.md:5332"
-  "every row of the reversible-verb table: each reversible verb undone by the envelope the table names, each refused verb refused not-reversible naming itself"
-  "UNDO")
-
-(needs-kernel "undo-refuses-an-external-effect" "docs/SPEC-WORK.md:5201"
-  "an undo over a sent message, a paid execution, a publication and a source deletion refused and reported as an external effect"
-  "UNDO")
-
 (needs-kernel "undo-redo" "docs/SPEC-WORK.md:5599"
   "reversible edits reversed, history preserved, redo only against valid preconditions; a conflict explicit and mutating nothing"
   "REDO")
