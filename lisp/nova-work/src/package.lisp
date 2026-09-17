@@ -359,7 +359,12 @@
     #:man-name
     #:man-refs
     #:manifest-for-day
-    #:closed-day-selection))
+    #:closed-day-selection
+    ;; closed-history / clip / new-verb replays (card 8603)
+    #:ask-state-as-of
+    #:admit-record
+    #:clip
+    #:split-index-page))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

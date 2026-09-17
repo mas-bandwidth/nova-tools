@@ -74,6 +74,7 @@ is compared against; it is never the path `query --ask size` takes."
     "slice-08-replays-late.lisp"
     "slice-09-replays-publication.lisp"
     "slice-09-state-export-replays.lisp"
+    "slice-09-replays-8603.lisp"
     "slice-10-fleet.lisp"))
 
 (dolist (f *acceptance-slices*)
