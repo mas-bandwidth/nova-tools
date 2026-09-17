@@ -343,6 +343,18 @@ line per bench, never more than `--max`, runs the benches in parallel under
 `--timeout`, and takes ssh from `--ssh` so a test puts a fake on `PATH` and no
 test reaches a machine.
 
+`nova-pulse fleet secrets --benches <file> [--ssh <path>] [--timeout <s>]` runs the seat
+check on every bench and prints one `FLEET <name>` line per bench: `FLEET <name> SEAT
+<seat> check=OK head=<sha8> names=<n>`, `FLEET <name> SEAT <seat> check=REFUSED <reason>`
+or `FLEET <name> NO-SEAT (found <n> keys)`. On a bench it runs `git -C
+<home>/nova-bench/secrets pull --ff-only`, requires exactly one
+`<home>/.config/nova-secrets/*.key`, and runs `nova-secrets check --store
+<home>/nova-bench/secrets --as <seat> --key <path> --sops <home>/.local/bin/sops` for the
+seat the key names. It never prints a value. The benches run in parallel under
+`--timeout` (default 120); the verb exits 0 when every seat checked, 2 when any refused
+or found no seat, and 3 when any bench was unreachable. ssh comes from `--ssh` (default
+`ssh`), so a test fakes it and no test reaches a machine.
+
 ## The verbs
 
 ```
