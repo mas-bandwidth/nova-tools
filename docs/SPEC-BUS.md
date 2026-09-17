@@ -15,7 +15,7 @@ nova-bus receipt --bus <dir> --as <name> --verdict APPROVE|HOLD|ADOPTED --re <id
 
 **What each reads and writes.** `wait --on-note` reads the bus from `--bus`, fetches
 `--remote`/`--branch` on `--interval`, and reads the notes addressed to the caller
-by To: only (addr=to is the default; --cc opts in to Cc: notes, which are data, not a wake); it writes nothing unless `--advance` is given, when it moves and
+by To: or Cc:, the wake being To: only (addr=to is the default; --cc opts in to Cc: notes, which are data, not a wake); it writes nothing unless `--advance` is given, when it moves and
 pushes the caller's cursor as `inbox --advance` does. `receipt --verdict` reads the
 bus and roster, resolves `--re` against the open list, and writes one receipt note
 into the caller's lane — `Verdict: <APPROVE|HOLD|ADOPTED>`, `Re: <id>`, the `--text`
@@ -107,3 +107,65 @@ distinct from the wait's, so `pkill -f` on the wait never kills a send.
 10. `TestWaitOnNoteBoundsBodyAndBatch`: a body over `--max-bytes` prints the `INBOX BODY OVERSIZE` gap and no partial frame, and 21 notes under the default `--max-notes` print 20 with `complete=false`.
 11. `TestWaitOnNoteContinuationReturnsTheRest`: the `next=<token>` passed back as `--after` returns exactly the remainder once and ends with `next=-`.
 12. `TestWaitOnNoteCursorAdvancesOnlyPastAcknowledged`: a crash mid-batch leaves the cursor at the last fully delivered and acknowledged batch, the next run redelivers from there, and a run without `--advance` moves no cursor.
+
+## `send --file` preflight and `reply`
+
+**The verb lines, as help prints them.**
+
+```
+nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push] [--dry-run] [--git-timeout <seconds>]
+nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run] [--attempts <n>] [--git-timeout <seconds>]
+```
+
+**What `send --file` reads and preflights.** `send` reads the draft from `--file` (or
+`--stdin`) and the bus and roster from `--bus`, and it preflights the shaped note before
+any commit, so a draft it refuses leaves the bus, the index and the working tree exactly
+as it found them; it refuses a hand-written `Id:` header because the tool mints the id,
+and refuses a `Re:` line naming more than one id because a `Re` line names one thread. A
+`Date:` header is not a refusal: the tool replaces it and prints one `SEND NOTE` line
+saying so, the same notice a heading or a bold `**Key**:` already earns.
+
+**What `send --dry-run` prints.** `--dry-run` stops after the preflight and the shaping,
+commits nothing and pushes nothing, and prints the shaped note it would send as one
+`SEND DRAFT id=<id> path=<path> to=<n> cc=<n> re=<id|none> subject=<text> date=<RFC3339> bytes=<n>`
+line naming every field, then the `<n>` bytes of the note verbatim between one
+`SEND DRAFT id=<id>` line and one `SEND DRAFT END id=<id>` line, so the count frames the
+body and a caller can pipe the note to a file.
+
+**What `reply` reads and writes.** `reply` reads the bus and roster from `--bus`,
+resolves `--re` against the notes in the checkout after fetching `--remote`/`--branch`,
+and reads the body from `--file`; it writes one reply note into the caller's lane whose
+`From` is `--as`, whose `To` is the original note's `From`, and whose `Re` and `Subject`
+are taken from the original, so a reply is never hand-shaped. Without `--advance` it
+writes nothing else; with `--advance` it moves and pushes the caller's cursor in the
+same commit as the reply.
+
+**What `reply` prints.** One line:
+
+```
+REPLY OK id=<id> re=<id> path=<path> to=<name> subject=<text> commit=<commit> pushed=<bool> advanced=<bool> attempts=<n>
+```
+
+**The refusals.** Each is exit 2 with one remedy line.
+- a hand-written `Id:` header: `nova-bus send: the tool mints the Id; delete the Id: header from <draft>`.
+- more than one id in `Re:`: `nova-bus send: Re: names one thread; name one id in <draft>`.
+- `--dry-run` with `--prepared`: `nova-bus send: --dry-run shapes an ordinary draft; drop --prepared or drop --dry-run`.
+- `reply` without `--re`: `nova-bus reply: --re is required; name the note being answered`.
+- `reply --re` naming no note: `nova-bus reply: --re <id> names no note; run nova-bus inbox --open and name one`.
+- `reply` draft carrying a header it fills: `nova-bus reply: reply fills From, To, Re and Subject; delete the <Key>: line from <draft>`.
+- `reply --advance` with `--dry-run`: `nova-bus reply: --advance moves the cursor and --dry-run writes nothing; drop one`.
+
+**The mistake it removes.** The mistake it removes is hand-crafted `Id:` headers in
+drafts, comma-separated ids in `Re:`, a date warning on every send, and the hand-shaped
+reply header.
+
+**Red tests, written first.** Each uses a fake where the real thing is the network, a bench or a clock.
+1. `TestSendRefusesAHandWrittenId`: a fake checkout and a draft with an `Id:` header; exit 2, one remedy line, and no new commit.
+2. `TestSendRefusesTwoIdsInRe`: a fake checkout and a `Re:` line naming two comma-separated ids; exit 2 and one remedy line.
+3. `TestSendWarnsOnceOnADateItReplaces`: a fake clock and a draft with a `Date:` header; one `SEND NOTE` line and the committed note carries the fake clock's date.
+4. `TestSendDryRunPrintsTheShapedNoteAndWritesNothing`: a fake checkout; stdout is the `SEND DRAFT` line and its framed note, and the checkout is unchanged.
+5. `TestReplyFillsFromToReSubjectFromTheOriginal`: a fake bus holding one note; the committed reply's four headers come from the original, not from the draft.
+6. `TestReplyRefusesAnUnknownRe`: a fake bus; exit 2 and one remedy line naming `inbox --open`, and nothing is written.
+7. `TestReplyRefusesAHandShapedHeader`: a fake bus and a draft carrying a `To:` line; exit 2 and one remedy line.
+8. `TestReplyAdvanceMovesTheCursorInTheReplyCommit`: a fake checkout; one commit holds both the reply note and the caller's advanced `CURSOR`.
+9. `TestReplyAdvanceWithDryRunIsRefused`: a fake checkout; exit 2 and one remedy line, and neither cursor nor note moves.
