@@ -586,6 +586,23 @@ is refused by the kernel's dedup predicate."
 ;;;; the session process; the process it starts is a supervised, long-lived
 ;;;; session that serves reads against its resident objects while a fresh CLI
 ;;;; process is never a fresh parse.
+;;;; transport.lisp --- the request bundle: the bus between two owners.
+;;;;
+;;;; SPEC-WORK.md:423-440 and :2210-2240: a fenced session's accepted events
+;;;; since its base are written as a request bundle -- each request with its
+;;;; request id, its required `--expect` (the one clipped revision) and its
+;;;; payload -- which the owning coordinator applies with `session replay
+;;;; --from`, one request at a time, validated fresh against the live O.
+;;;;
+;;;; The offline form `session export --journal` reads the journal alone, under
+;;;; the caller's bounds and the journal's own lock: each request's required
+;;;; `--expect` and the bundle's `base=` come from the journal's newest clip
+;;;; boundary record, it starts no session, takes no ownership, reads no
+;;;; repository and validates nothing -- a bundle is requests, and `session
+;;;; replay` is where they are validated (SPEC-WORK.md:430-440). A journal
+;;;; whose lock is held is refused `journal held`.
+;;;;
+;;;; This is the one bus: no second transport is invented (SPEC-WORK.md:2240).
 
 (in-package #:nova-work)
 
@@ -1329,6 +1346,10 @@ moved independently refuses the request `stale` and applies nothing. Answers
     (dolist (request requests)
       (let ((rid (getf request :request))
             (expect (getf request :expect)))
+        ;; The replay path's expectation is the clipped revision, required;
+        ;; checked against the revision the target started at, never the
+        ;; revision this bundle's own earlier requests moved (SPEC-WORK.md:2214-
+        ;; 2238). A value that is not the current value of its kind is stale.
         (if (/= (or expect clipped) start)
             (push (format nil "REPLAY FAIL request=~A expect=~D current=~D: stale"
                           rid (or expect clipped) start)
