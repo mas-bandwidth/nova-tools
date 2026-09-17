@@ -136,10 +136,8 @@
 ;;   own is indivisible and refused at the candidate gate, exit 2, nothing
 ;;   journaled and nothing acknowledged. Waits on the indivisible-record gate.
 
-;; NEEDS-KERNEL: clip-names-the-index-that-overflowed (docs/SPEC-WORK.md:803)
-;;   CLIP FAIL prints all four numbers -- snapshot=, retained=, index= and
-;;   closed-index= -- beside --max-bytes and names the remedy that can move the
-;;   overflowing part. Waits on the clip.
+;;; clip-names-the-index-that-overflowed: the real replay lives in
+;;; tests/acceptance/slice-09-replays-8603.lisp:81 (nova-tools #362).
 
 ;; NEEDS-KERNEL: new-verbs-have-a-kind-and-a-field-order (docs/SPEC-WORK.md:1052)
 ;;   each new verb (friend, model, observe, config, machine, goal, offer, ...)
