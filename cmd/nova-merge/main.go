@@ -56,6 +56,9 @@ usage:
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
 
+  nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
+  nova-merge classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
+
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
 
 simulate is the exception to the exit codes below: it exits 2 when it FINDS a poison
@@ -259,6 +262,10 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdPacket(rest, stdout, stderr, deps)
 	case "stop":
 		return cmdStop(rest, stdout, stderr, deps)
+	case "queue":
+		return cmdQueue(rest, stdout, stderr, deps)
+	case "classify":
+		return cmdClassify(rest, stdout, stderr, deps)
 	case "wait":
 		return cmdWait(rest, stdout, stderr, deps)
 	case "sweep":

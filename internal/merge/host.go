@@ -183,6 +183,9 @@ type PR struct {
 	Merged   bool
 	Closed   bool
 	MergeSHA string
+	// UpdatedAt is when the host last saw the pull request move, for the queue sweep's
+	// session window. Empty means the host did not report one.
+	UpdatedAt string
 }
 
 // Host is the edge between this tool and the forge. It is an interface for two reasons:

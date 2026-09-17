@@ -989,6 +989,10 @@ func (s *State) Apply(f *Folded) {
 const GitIgnore = `# nova-merge: the tracked files are the records and nothing else (rule 22).
 /state.json
 /state.json.tmp
+/queue.json
+/queue.json.tmp
+/hold
+/hold.tmp
 /log
 /repo/
 /outbox/

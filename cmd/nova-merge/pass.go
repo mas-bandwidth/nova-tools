@@ -112,6 +112,9 @@ func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr i
 		Admin: admin, Build: build, Now: deps.Now(), Stdout: stdout, Stderr: stderr,
 		Problems: problems, Pulled: pulled,
 	}
+	if q, err := merge.LoadQueue(lane, st); err == nil {
+		p.Order = q.WalkOrder(st)
+	}
 	if code := discoverDefault("RUN", p, stderr); code != 0 {
 		return code
 	}
@@ -131,6 +134,18 @@ func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr i
 		// pass printing MERGE OK and the lane's own file still holding the state before
 		// it -- the next pass would re-decide from a state that never saw this one.
 		return stateWriteRefused("RUN", stderr, err)
+	}
+	// A landed entry leaves the queue with the lane: the queue is the order `run` walks,
+	// and an entry that is gone from the lane is gone from the order.
+	if len(res.DroppedIDs) > 0 {
+		if _, err := merge.UpdateQueue(lane, st, f.dur(), func(q *merge.Queue) error {
+			for _, pr := range res.DroppedIDs {
+				q.Queued = merge.QueueRemove(q.Queued, pr)
+			}
+			return nil
+		}); err != nil {
+			merge.Appendf(lane, deps.Now(), "QUEUE NOTE the landed entries could not be retired from queue.json: %v", err)
+		}
 	}
 	return res.Exit()
 }

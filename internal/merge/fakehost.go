@@ -35,7 +35,32 @@ type FakeHost struct {
 	// base really moved -- so that the read-back of rule 21 is exercised rather than
 	// skipped. A nil Do records the call and moves nothing.
 	Do func(n int, headOID, baseSHA, mergeSHA string) error
+	// Open is the open pull requests the queue sweep lists. Failures, Changed and Issues
+	// are the poison detector's data: the tests that failed, the packages the pull
+	// request changed, and the issue a park names.
+	Open     []PR
+	Failures map[int][]Failure
+	Changed  map[int][]string
+	Issues   map[int]string
 }
+
+// OpenPRs lists the open pull requests this fake reports, for the queue sweep. It is the
+// QueueHost seam.
+func (f *FakeHost) OpenPRs() ([]PR, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	return f.Open, nil
+}
+
+// PoisonFailures is the detector's view of a pull request's own run.
+func (f *FakeHost) PoisonFailures(pr int) []Failure { return f.Failures[pr] }
+
+// ChangedPackages is the packages the pull request changed.
+func (f *FakeHost) ChangedPackages(pr int) []string { return f.Changed[pr] }
+
+// IssueFor is the issue a park names, or "".
+func (f *FakeHost) IssueFor(pr int) string { return f.Issues[pr] }
 
 // NewFakeHost returns an empty one.
 func NewFakeHost() *FakeHost {
@@ -145,4 +170,15 @@ func (f *FakeHost) SetCheckDetails(oid string, details ...CheckDetail) {
 // and a test uses this to prove the wait verb ignores it (nova-tools #1014).
 func (f *FakeHost) SetCheckResult(sha, name, conclusion string) {
 	f.CheckResults = append(f.CheckResults, CheckDetail{Name: name, Conclusion: conclusion, SHA: sha})
+}
+
+// SetCheckRuns sets one commit's checks from details that carry their own sha, so a test
+// can put a green run, a current red and a stale red on the same rollup and see which
+// bucket each lands in.
+func (f *FakeHost) SetCheckRuns(oid string, details ...CheckDetail) {
+	var c Checks
+	for _, d := range details {
+		c.AddRun(d.Name, d.Conclusion, d.SHA)
+	}
+	f.ChecksBy[oid] = c
 }
