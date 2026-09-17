@@ -179,8 +179,17 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 	stallAfter := in.Worker.StallAfterDuration()
 	stall := time.NewTicker(stallPoll(interval, stallAfter))
 	defer stall.Stop()
+	// A HARNESS IS SILENT ONLY AFTER IT HAS SPOKEN (darwin, card 8509). The supervisor
+	// creates the log empty before the harness execs, so at the first tick the file is
+	// already there at size 0 and counts as "not growing". On darwin a cold harness can
+	// take longer than stall_after to reach its first write -- page-in and the platform's
+	// first-exec scan happen after Start returns -- and the detector would reap a job that
+	// had not started, naming `last=-`. Until the log has held a byte, the launch grace is
+	// the clock; a harness that never speaks is still reaped, but only after it has had its
+	// whole launch. Once the log has grown, the stall ceiling is the only clock again.
 	var lastSize int64 = -1
 	lastGrowth := in.Now()
+	launchGrace := LaunchGrace(in.Worker)
 
 	dataHome := in.Worker.DataHome(in.Slot, in.Task)
 	failures := 0
@@ -311,6 +320,9 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 				continue
 			}
 			if in.Now().Sub(lastGrowth) < stallAfter {
+				continue
+			}
+			if lastSize <= 0 && in.Now().Sub(started) < launchGrace {
 				continue
 			}
 			// SILENT PAST THE CEILING: end it and name the last thing it said. The reap
