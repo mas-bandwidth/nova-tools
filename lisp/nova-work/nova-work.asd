@@ -19,7 +19,8 @@
                (:file "src/journal")
                (:file "src/kernel")
                (:file "src/state-export")
-               (:file "src/replays-applicable-delegation")))
+               (:file "src/replays-applicable-delegation")
+               (:file "src/replays-8661")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -27,4 +28,5 @@
   :serial t
   :components ((:file "tests/harness")
                (:file "tests/acceptance")
-               (:file "tests/replays-applicable-delegation")))
+               (:file "tests/replays-applicable-delegation")
+               (:file "tests/replays-8661")))
