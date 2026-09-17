@@ -627,6 +627,64 @@ spec forbids**.
    same way. (2026-09-11: a person stamped notes two hours ahead of the clock,
    and every list that ordered by the typed time put them in the future.)
 
+## The efficiency card (#84), nova-board
+
+The card is a measurement, taken on the bench on **2026-09-12**, of what one
+verb costs. It is the price the spec's existing choices were bought for — the
+whole-log read, the counts-not-lists view, the explicit `--gh-timeout` — set
+down as numbers a later change is measured against. Nothing here adds a verb or
+a daemon; it fixes the costs.
+
+### One read and one append per verb, and no clock of its own
+
+`internal/board/backend.go:8` states the read rule verbatim — **"THE READ IS
+THE WHOLE LOG. There is no window."** — and `internal/board/issue.go:112` is
+where it is paid: one
+`gh api --paginate repos/<owner>/<repo>/issues/<n>/comments`, one round trip,
+measured at **0.44 s** for a seven-comment thread. A board thread of **300
+comments** is three pages and about **1.3 s per verb**, which is about **2.6 s
+per filing** under the two-verb `check`/`add` idiom in `nova-board help`;
+`take` and `close` pay a third and a fourth read.
+
+The rule the price makes: **one read and one append per verb, and no loop and
+no interval.** Every `--issue` verb requires `--gh-timeout` with no default
+("There is no default duration"), so the one `gh` round trip a verb waits on is
+a budget the caller set and not a clock the tool chose. The directory backend
+re-reads the directory per verb and reaches no network; at the bench's size
+that is **0.03 s** and not measurable. The tool starts no daemon and sleeps for
+nothing: an invocation ends when its one read and its one append end.
+
+### The coordinator read is counts, not cards
+
+At eight cards the default `list` is **3 lines / 378 B**: one `BOARD LINE` per
+owner of an open card, exactly one `BOARD NEXT`, and one `BOARD OK`. `--list`
+and `--open` are what widen it, to 10 lines / 3,312 B here — about **330 B per
+card** — so a 500-card board asked for `--list --open --max 0` would return
+about **165 KB**. `--max` defaults to 20 and caps the cards; the counting is
+never capped (rule 7). The default view therefore never grows with the number
+of cards, only with the owners and legs that are owed.
+
+### `check` is the cheap gate
+
+`check` returns **2 lines / 233 B** and exits 1 when it matched, so the dedup
+the board exists to serve costs a reader no listing at all: one `CHECK HIT` per
+card under `--max`, one `CHECK OK` with the uncapped `matched=`, and the
+verdict is the shell guard's exit code. The filing idiom's first verb is the
+cheap one, and a filer who runs it before every `add` pays **0.44 s** and not a
+second listing.
+
+### Red tests
+
+The card earns the same red-first bar as every rule here: seen red before it is
+trusted.
+
+- `list` on a board of many cards prints no `BOARD CARD` line and the same
+  three lines the eight-card bench printed; `--list --open` is the only thing
+  that widens it, `--max` caps the cards, and `BOARD OK` counts the whole
+  board;
+- every `--issue` verb fetches the thread once per invocation and the directory
+  backend reaches no network, with no loop and no interval in either.
+
 ## Tests this spec demands
 
 One test per rule above, named for the rule, beside the tests the work list names.
