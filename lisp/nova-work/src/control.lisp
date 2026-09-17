@@ -633,13 +633,14 @@ badge for a test that passes when its asserted behaviour is broken
 (defstruct (savepoint
              (:constructor make-savepoint
                  (&key id schema local-revision journal-id replay-cut boundary
-                       manifest image local-replies age failed-backup)))
+                       manifest manifest-sha image local-replies age failed-backup)))
   "One validated atomic local savepoint: its schema, journal id, the local
 revision of its image, the replay cut and boundary records, its own manifest and
-content references, its age, and whether a replacement backup failed. The
-periodic clip supplies the separately observable shared checkpoint."
+content references, the `manifest=<sha>` hash of that manifest's complete
+canonical bytes, its age, and whether a replacement backup failed. The periodic
+clip supplies the separately observable shared checkpoint."
   id schema local-revision journal-id replay-cut boundary
-  manifest image local-replies age failed-backup)
+  manifest manifest-sha image local-replies age failed-backup)
 
 (defstruct (checkpoint
              (:constructor make-checkpoint (&key id shared-revision source)))

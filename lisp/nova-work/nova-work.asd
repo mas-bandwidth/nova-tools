@@ -32,6 +32,7 @@
                (:file "src/assignment")
                (:file "src/control")
                (:file "src/roadmap")
+               (:file "src/savepoint")
                (:file "src/new-verbs")))
 
 (defsystem "nova-work/tests"
