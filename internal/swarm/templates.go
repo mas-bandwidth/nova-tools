@@ -371,7 +371,6 @@ func WrapTemplate(name string, files int, text []byte) ([]byte, error) {
 	if pulseNames[name] {
 		return nil, fmt.Errorf("--template wants a task template (read-pr, probe-row, fix-card); `%s` is a nova-pulse card template, printed by `template --name %s`, not a task template", name, name)
 	}
-	}
 	body = strings.ReplaceAll(body, "<n> files", fmt.Sprintf("%d files", files))
 	var b strings.Builder
 	b.WriteString("## The conditions (they are worth more than the model)\n\n")
