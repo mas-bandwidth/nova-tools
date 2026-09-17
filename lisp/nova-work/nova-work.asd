@@ -24,6 +24,7 @@
                (:file "src/session")
                (:file "src/state-export")
                (:file "src/fleet")
+               (:file "src/routes")
                (:file "src/closed-history")
                (:file "src/node-verbs")
                (:file "src/edit-undo")
