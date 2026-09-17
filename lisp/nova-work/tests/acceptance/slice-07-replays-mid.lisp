@@ -140,6 +140,8 @@
 ;; regression-and-recovery and regression-opens-repair-work now run in
 ;; lisp/nova-work/tests/replays-8647.lisp and tests/replays-8648.lisp
 ;; (nova-tools #362).
+;; regression-and-recovery now runs in
+;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 
 
 ;;; render: the stored target, its permitted roots and the one bounded artifact

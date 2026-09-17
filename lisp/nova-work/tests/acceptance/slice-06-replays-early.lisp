@@ -31,15 +31,8 @@
 ;; pipeline-replies-are-correlated is now the executable replay in
 ;; ../acceptance.lisp (card 8608).
 
-;; NEEDS-KERNEL: policy/trial manifests surviving export/import/restart/replay.
-(deftest "policy-round-trip-and-replay" "docs/SPEC-WORK.md:4370"
-    "expected=survives-round-trip;malformed-intake-no-partial-effect"
-  (slice1-refuses-verb :config))
-
-;; NEEDS-KERNEL: estimate pinning by revision and unknown-price!=0.
-(deftest "pricing-is-pinned-by-revision" "docs/SPEC-WORK.md:5287"
-    "expected=old-estimate-reproducible;missing-dimension-unknown"
-  (slice1-refuses-verb :estimate))
+;; policy-round-trip-and-replay and pricing-is-pinned-by-revision now run in
+;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 
 (deftest "priority-grants-nothing" "docs/SPEC-WORK.md:5872"
     "expected=who-unchanged;no-lease;no-bypass"
@@ -216,6 +209,7 @@
 ;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 
 (deftest "rank-2-precedes-10" "docs/SPEC-WORK.md:5865"
+(deftest "rank-2-precedes-10" "docs/SPEC-WORK.md:5414"
     "expected=integer-rank-order;equal-and-default-by-id;restart-stable;unknown-only-first-unseen"
   (let* ((table (make-priority-table))
          (rows (list (list :id "two" :ready t)
