@@ -44,6 +44,8 @@ usage:
   nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
                [-- <command> <args...>]
   nova-sandbox check [--max <n>]
+  nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
+  nova-sandbox worktree --repo <dir> --scratch <dir> --prune
   nova-sandbox version
   nova-sandbox help
 
@@ -118,6 +120,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return 0
 	case "check":
 		return checkVerb(stdout)
+	case "worktree":
+		return worktreeVerb(args[1:], stdout, stderr, env)
 	case "policy":
 		return policyVerb(args[1:], stdout, stderr, env)
 	case "probe":
