@@ -91,6 +91,13 @@ var swarmAudit = audit.Config{
 		// column it occupies: Itoa of an int cannot hold a control character, and it
 		// holds no writer of its own.
 		`"strconv"`,
+		// runtime (authmode.go, issue #915) reads GOOS and nothing else. It holds no
+		// writer, and the one value selects which permission-bit rule the auth copy asks:
+		// NTFS reports 0666 for every readable file, so the unix looseness check refused
+		// every auth file on windows-latest. It is the same platform question
+		// executable.go asks of PATHEXT, made a parameter so linux can hold the windows
+		// answer to its contract.
+		`"runtime"`,
 	},
 	MinClassified: 40,
 }
