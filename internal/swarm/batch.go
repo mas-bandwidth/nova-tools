@@ -1439,6 +1439,9 @@ func cardShapeFailure(model, raw string) string {
 	if mentionsLauncher(lines) {
 		return "'launcher' in the contract lines (lines 1-3) (" + step + ")"
 	}
+	if reason := cardPipelineFailure(raw); reason != "" {
+		return reason
+	}
 	return ""
 }
 

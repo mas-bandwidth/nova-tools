@@ -547,6 +547,80 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     2026-09-12). Nothing here ends a job by hangup: a job ends at its deadline,
     at its budget, at the runner's group kill, or by `stop`.
 
+## The card is a pipeline, not a loop (issue #856)
+
+Glenn, 2026-09-16, on why every tool call re-sent the context: *"The idea is for
+it to have no memory between calls Rowan. The idea is to just do work."* In this
+repository a card is a pipeline of stateless model calls, not an agent loop.
+Each rule below carries the hurt that made it, and **Red tests for this
+section** lists the red test for each rule: one per rule, seen red first,
+against the fake harness and the fixture card, with no network.
+
+P1. **One model call per step, and its input is exactly what the card names.**
+    Each STEP that needs the model is one call whose input is exactly the named
+    inputs -- a file or a line range, the rule, the previous step's output -- and
+    whose output is one artifact: a test file, a patch, a RESULT line. Cost is
+    the sum of the steps' inputs and the sum of nothing else. (Hurt: #855 ran
+    1,068 cards, 62M input and 1,435M cache-read, because the harness carried a
+    growing transcript so the model could decide a next step the card already
+    named; the transcript was pure cost.)
+
+P2. **The harness runs the tools, with no model call.** In the pipeline, the
+    harness runs the tools, with no model call: clone, checkout, test run,
+    commit and the RESULT copy are the machinery's, never a model turn, and the
+    harness log shows each call's input size so the cost is a fact. (Hurt: the
+    same #855 cards paid a model turn to decide to run the test the card had
+    already named.)
+
+P3. **No memory between calls.** A step never sees a transcript, a prior turn or
+    a running agent; it sees the named inputs and nothing else. (Hurt: the
+    growing transcript was the cost, and recollection was the only thing the
+    loop used it for.)
+
+P4. **`MODE: explore` is the one place the loop stays.** A read that must find
+    where a rule lives may say `MODE: explore` on its own line; only then is the
+    agentic loop admitted, because a search the card cannot name in advance is
+    the one step whose next input is not known when the card is written. A card
+    that does not say it is a pipeline. (Hurt: a rule that let every card loop
+    is the 62M-input day.)
+
+P5. **A fourth call without `MODE: explore` is refused, with the remedy line.**
+    A pipeline card names at most three model calls. A card that asks for a
+    fourth without the mode word is refused at admission, before any worker
+    starts, and the refusal names the keyword, `MODE: explore`, and the rule it
+    serves, because a refusal a caller cannot act on is a refusal wasted.
+    (Hurt: the fix card that paid thirty turns of 66k for three steps.)
+
+P6. **A `MODE: explore` card carries a turn budget the harness enforces.** The
+    card names its budget on a `TURNS: <n>` line; the harness stops the card at
+    that turn count and the partial RESULT names the budget, so an explore read
+    that wanders ends on a number the card chose rather than on the deadline it
+    was given. (Hurt: an explore read with no budget is the runaway the deadline
+    could only end, and a deadline names no defect.)
+
+P7. **The fix-card shape is three calls, not thirty turns.** Step 1 (model):
+    inputs are the issue text plus the named test file and the named source
+    file; output is the red test as a patch. The harness applies it, runs the
+    test and captures the failing lines. Step 2 (model): inputs are the failing
+    lines and the source file; output is the fix as a patch. The harness applies
+    it and runs the package tests. Step 3 (model, tiny): inputs are the two
+    patches' stat and the test tail; output is the RESULT lines. The harness
+    commits and writes `RESULT.md`. Three calls of 10-60k tokens each instead of
+    30 turns x 66k. (Hurt: the shape of #855's worst card, measured.)
+
+**Red tests for this section.** One line per rule, seen red first:
+
+- P1, P2, P3, P7: `TestTheFixCardRunsInThreeModelCalls` -- the fixture fix card
+  runs in exactly three model calls and the harness log shows their input sizes;
+  the fix-card shape is three calls, not thirty turns, and no memory between
+  calls and the harness runs the tools, with no model call are the assertions
+  the fixture makes on the log.
+- P4, P5: `TestAdmissionRefusesAFourthCallWithoutExplore` -- a fourth call without `MODE: explore` is refused, with the remedy line, and the same card with `MODE: explore` is admitted.
+- P6: `TestExploreOverTurnBudgetIsStoppedWithTheBudgetNamed` -- a `MODE: explore` card carries a turn budget the harness enforces: over its turn budget it is stopped and the partial RESULT names the budget.
+
+This is the same shape as the pulse child (created, one job, exit) and the
+meaning of "pull the intelligence up, push down to machinery."
+
 ## The verbs
 
 ```
