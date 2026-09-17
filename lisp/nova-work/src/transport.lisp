@@ -912,3 +912,154 @@ thread. The session is stopped explicitly and inspectably (SPEC-WORK.md:308)."
       (when thread
         (ignore-errors (sb-thread:join-thread thread :timeout 5 :default nil)))))
   t)
+;;;; transport.lisp --- the read bundle, the independent batch and the atomic
+;;;; mutation batch (docs/SPEC-WORK.md:2762-2814, the B2/B3/B4/B5 paragraphs).
+;;;;
+;;;; The three batch modes ride the accepted mutation envelope and the framed
+;;;; protocol the wire codec of src/operations.lisp already defines. Here they
+;;;; are made real over the kernel: the read bundle captures one revision and
+;;;; one lease-time watermark and answers the asks it names from that snapshot;
+;;;; an independent batch enters each entry through the kernel's one writer and
+;;;; stops at the first refusal by default; an atomic batch validates every
+;;;; entry against the expected revision before one of them is published.
+;;;;
+;;;; The one thing the slice-1 kernel cannot do is commit several entries as a
+;;;; single journal envelope; the atomic batch therefore validates the whole
+;;;; batch on a private reconstruction and only then applies the entries through
+;;;; the one writer. That is noted in RESULT.md.
+
+(in-package #:nova-work)
+
+;;; ------------------------------------------------------------------
+;;; B2 -- a read bundle is one revision and one watermark.
+;;; ------------------------------------------------------------------
+
+(defstruct (read-bundle (:conc-name read-bundle-)
+                        (:constructor %make-read-bundle))
+  "A captured revision and its lease-time watermark. Every ask is evaluated
+against REVISION, so a mutation after the capture cannot move what the bundle
+answers; the work set is never read."
+  revision watermark state)
+
+(defun make-read-bundle (kernel &key (watermark 0))
+  "Capture the kernel's current revision and the lease-time watermark in force
+when the bundle was opened. One bundle is one snapshot identity."
+  (%make-read-bundle :revision (state-revision (kernel-state kernel))
+                     :watermark watermark
+                     :state (kernel-state kernel)))
+
+(defun read-bundle-ask (bundle ask)
+  "Evaluate one bounded ask against the bundle's captured revision and answer
+the fields and aggregates the ask names. `:size` reads the |O| and |C| counters
+the bundle's own revision maintains; `:watermark` reads the lease-time
+watermark. The work set (W) is never read."
+  (ecase ask
+    (:size (list :open (state-open-count (read-bundle-state bundle))
+                 :closed (state-closed-count (read-bundle-state bundle))))
+    (:watermark (read-bundle-watermark bundle))))
+
+(defun read-bundle-page (bundle floor &key (ask :size))
+  "A later page keeps the bundle's snapshot identity; asked at or above FLOOR
+the snapshot has expired and the page refuses `page expired`, the cursor rule of
+Retention rather than a second one. Answers (values FIELDS LINE)."
+  (if (< (read-bundle-revision bundle) floor)
+      (values nil (format nil "BUNDLE FAIL page expired rev=~D floor=~D"
+                          (read-bundle-revision bundle) floor))
+      (values (read-bundle-ask bundle ask)
+              (format nil "BUNDLE OK rev=~D watermark=~D"
+                      (read-bundle-revision bundle)
+                      (read-bundle-watermark bundle)))))
+
+;;; ------------------------------------------------------------------
+;;; B3/B4 -- the two batch modes over the kernel.
+;;; ------------------------------------------------------------------
+
+(defparameter *long-operation-verbs* '(:capture :import :export :clip)
+  "The verbs whose acceptance returns a durable operation id. An atomic
+mutation batch runs no external I/O inside it, so an entry naming one of these
+is refused by its own entry id before anything is staged (SPEC-WORK.md:2791-2797).")
+
+(defun independent-batch-run (kernel entries &key continue (batch "batch-1"))
+  "An independent batch is ordered entries with outcomes of their own. Submit
+each entry through the kernel's one writer, in order; other requests may
+interleave because the writer is shared. The default is to stop at the first
+refusal and mark every remaining entry `:not-attempted`; a continuation past a
+refusal is the explicit CONTINUE flag and never the default. The mode promises
+no rollback and no single shared revision. An entry that accepts a long
+operation answers with an operation id and no completed result, so a later entry
+cannot read it as one. Answers (values RESULTS APPLIED REFUSED NOT-ATTEMPTED
+REGISTRY), each result an (id request state rev/line) plist."
+  (declare (ignore batch))
+  (let ((results '()) (applied 0) (refused 0) (not-attempted 0)
+        (stopped nil) (registry nil))
+    (dolist (entry entries)
+      (let ((id (getf entry :id))
+            (request (getf entry :request)))
+        (cond
+          ((and stopped (not continue))
+           (incf not-attempted)
+           (push (list :id id :request request :state :not-attempted) results))
+          ((getf entry :op)
+           ;; A long operation: acceptance is durable and answers an operation
+           ;; id at once; it is never a completed result.
+           (unless registry (setf registry (make-operation-registry)))
+           (let ((opid (operation-accept registry
+                                         :id (format nil "op-~A" id)
+                                         :kind (getf entry :op)
+                                         :request request
+                                         :author (getf request :by)
+                                         :stamp (getf request :stamp))))
+             (incf applied)
+             (push (list :id id :request request :state :operation
+                         :operation-id opid :result nil)
+                   results)))
+          (t
+           (multiple-value-bind (okp line code envelope)
+               (submit kernel request)
+             (declare (ignore code envelope))
+             (if okp
+                 (progn
+                   (incf applied)
+                   (push (list :id id :request request :state :applied
+                               :rev (state-revision (kernel-state kernel))
+                               :line line)
+                         results))
+                 (progn
+                   (incf refused)
+                   (setf stopped t)
+                   (push (list :id id :request request :state :refused
+                               :line line)
+                         results))))))))
+    (values (nreverse results) applied refused not-attempted registry)))
+
+(defun atomic-batch-run (kernel entries &key expect)
+  "An atomic mutation batch is one envelope, all or none. Every entry is
+validated against EXPECT (defaulting to the kernel's current revision) before
+anything is published. An entry that would accept a long operation is refused
+by its own entry id before anything is staged; any entry the verb grammar
+refuses fails the whole batch and nothing is written. Only once every entry has
+validated is each applied through the kernel's one writer. Answers (values OK-P
+FAILING-ID APPLIED REV); FAILING-ID is the entry id to name, or :expect when the
+batch was taken at a stale revision."
+  (let ((rev (state-revision (kernel-state kernel))))
+    (let ((long (find-if (lambda (e) (member (getf e :op) *long-operation-verbs*))
+                         entries)))
+      (when long
+        (return-from atomic-batch-run (values nil (getf long :id) 0 rev))))
+    (when (and expect (not (equal expect rev)))
+      (return-from atomic-batch-run (values nil :expect 0 rev)))
+    ;; Validate the batch whole on a private reconstruction of the state; a
+    ;; single refusal publishes nothing and names its entry id.
+    (let* ((state (kernel-state kernel))
+           (clone (make-kernel
+                   :state (reconstruct-state
+                           (canonical-string (state-canonical-form state))))))
+      (dolist (entry entries)
+        (multiple-value-bind (okp line code) (submit clone (getf entry :request))
+          (declare (ignore line code))
+          (unless okp
+            (return-from atomic-batch-run (values nil (getf entry :id) 0 rev))))))
+    ;; Every entry validated; publish them through the one writer.
+    (dolist (entry entries)
+      (submit kernel (getf entry :request)))
+    (values t nil (length entries) (state-revision (kernel-state kernel)))))
