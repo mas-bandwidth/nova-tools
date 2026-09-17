@@ -196,8 +196,9 @@ type flags struct {
 	ghTimeout  int
 	problems   []string
 
-	// makeDir is quickstart's alone: the first run makes the board directory it is
-	// pointed at, and created says whether this run is the one that made it.
+	// makeDir is quickstart's and add's: the first run of either makes the board
+	// directory it is pointed at, and created says whether this run is the one that
+	// made it. list, check, take and close never set it and still refuse.
 	makeDir, created bool
 }
 
@@ -259,8 +260,12 @@ func (f *flags) backend() (board.Backend, string, string) {
 	case f.issue != "" && f.dir != "":
 		f.want(twoBackends)
 	case f.dir != "":
-		// QUICKSTART MAKES THE DIRECTORY; every other verb refuses one that is not
-		// there and names the mkdir -p that fixes it (internal/board/dir.go).
+		// QUICKSTART AND ADD MAKE THE DIRECTORY ON FIRST USE; list, check, take
+		// and close refuse one that is not there and name the mkdir -p that fixes
+		// it (internal/board/dir.go). Add makes it because a board is an
+		// append-only log and an empty directory is a valid empty ledger: the
+		// first card is the first event, and a filer with nowhere to write yet
+		// has the one verb that is a filing.
 		if f.makeDir {
 			// A REFUSED RUN MAKES NOTHING. The caller judges every other flag
 			// BEFORE it asks for the backend, and this is the second lock on the
@@ -405,6 +410,11 @@ func cmdList(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reader) int {
 	f := newFlags("add")
+	// A BOARD IS AN APPEND-ONLY LOG AND AN EMPTY DIRECTORY IS A VALID EMPTY LEDGER, so
+	// the first add into a directory that is not there makes it. Stella, dogfooding
+	// (nova-tools #625): `add --dir <not-yet-created>` was refused with "directory
+	// missing", and a filer who has nowhere to write yet is exactly who add is for.
+	f.makeDir = true
 	var as, text, by, deflt, owner, thing, leg, evidence, id string
 	f.fs.StringVar(&as, "as", "", "")
 	f.fs.StringVar(&text, "text", "", "")
@@ -418,7 +428,6 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	backend, kind, source := f.backend()
 	f.need(as, asHint)
 	f.need(text, textHint)
 	f.need(by, byHint)
@@ -438,6 +447,12 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 	if strings.TrimSpace(text) != "" && strings.TrimSpace(tail) == "" {
 		f.want("--text is empty once its control characters are escaped; a card a person cannot read is not a card")
 	}
+	// THE BACKEND IS ASKED FOR LAST, because add's backend MAKES a missing --dir
+	// (flags.backend, makeDir) and that is a side effect on the filesystem. Every
+	// flag is judged first: a first add that fat-fingers a flag is exactly the run
+	// with no board yet, and making the directory for a line that is about to be
+	// refused would answer a typo with an empty board.
+	backend, kind, source := f.backend()
 	if len(f.problems) > 0 {
 		return f.refused(stderr)
 	}
