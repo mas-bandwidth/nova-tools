@@ -25,3 +25,9 @@ tending/
 
 # Test scratch: internal/bus's TestMain writes throwaway hermetic gitconfigs under TMPDIR.
 /.tmp/
+
+# Terraform: init writes the downloaded providers here, and a provider binary is
+# a supply-chain surface with no provenance this repository can identify. The
+# lock file IS committed, because it pins the provider selections.
+/infra/terraform/.terraform/
+/infra/terraform/modules/*/.terraform/

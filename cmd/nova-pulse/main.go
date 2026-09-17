@@ -39,6 +39,7 @@ nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
 nova-pulse fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   plan --module <dir> --bench <name> [--ssh <path>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   reboot --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
@@ -154,6 +155,19 @@ UNREACHABLE <error>). --max caps the lines; 0 means all.
 
 example:
   nova-pulse fleet survey --benches ./fleet.tsv
+
+fleet plan is the read-each-plan witness of SPEC-FLEET-KUBE Part 1: for every
+file the bench module declares in <module>/files.json, it reads the host over
+ssh (ssh <bench> sha256sum <path>) and compares the observed hash with the
+declared one. A witnessed file drifts the moment the two differ, a hand edit
+nobody declared included; a file with only a null_resource trigger is never read
+and never drifts. Print one line per bench: FLEET <name> PLAN CLEAN files=<n>,
+or FLEET <name> DRIFT <resource> path=<p> declared=<sha> observed=<sha>, or
+FLEET <name> UNREACHABLE <error>. Exit 0 clean, 2 on any drift, 3 when the bench
+cannot be reached.
+
+example:
+  nova-pulse fleet plan --module ./infra/terraform/modules/bench --bench space
 
 wake and sleep are the Mac benches' power verbs (Glenn 2026-09-17: each iMac Pro
 draws 100 W and the fleet runs on solar). --registry is one name,mac,lan-bench

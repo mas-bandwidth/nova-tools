@@ -52,7 +52,7 @@ type fleetSurveyResult struct {
 
 func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " fleet", "a sub-verb is required (add, survey, suspend, wake, reboot, secrets)")
+		return refuse(stderr, " fleet", "a sub-verb is required (add, survey, plan, suspend, wake, reboot, secrets)")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -60,6 +60,8 @@ func cmdFleet(args []string, stdout, stderr io.Writer) int {
 		return cmdFleetAdd(rest, stdout, stderr)
 	case "survey":
 		return cmdFleetSurvey(rest, stdout, stderr)
+	case "plan":
+		return cmdFleetPlan(rest, stdout, stderr)
 	case "suspend":
 		return cmdFleetSuspend(rest, stdout, stderr)
 	case "wake":
@@ -69,7 +71,7 @@ func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	case "secrets":
 		return cmdFleetSecrets(rest, stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are add, survey, suspend, wake, reboot, secrets; run: nova-pulse help)\n", sub)
+	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are add, survey, plan, suspend, wake, reboot, secrets; run: nova-pulse help)\n", sub)
 	return 2
 }
 

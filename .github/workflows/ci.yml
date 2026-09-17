@@ -1032,6 +1032,55 @@ jobs:
           t="$(dirname "$GITHUB_WORKSPACE")/fleet-probe-$RUNNER_NAME.txt"; echo ok > "$t" && rm -f "$t"
           echo "PROBE OK runner=$RUNNER_NAME slot=${{ matrix.slot }}"
 
+  terraform-validate:
+    # THE TERRAFORM TIER (SPEC-FLEET-KUBE, Part 1): fmt and validate the fleet
+    # module so a declaration that does not parse never reaches an apply. No
+    # apply runs in this card: the module is additive to a spare bench and the
+    # only thing this job proves is that the declaration is well-formed. It runs
+    # on the Linux space runners like the other CL-tier jobs; terraform is
+    # installed from the pinned release if the machine does not carry it, so no
+    # action needs to be trusted and the two-minute budget holds.
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        shell: bash
+        run: |
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: terraform, from the pinned release when the machine has none
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v terraform >/dev/null 2>&1; then
+            ver=1.9.8
+            tmp="$(mktemp -d)"
+            curl -fsSL "https://releases.hashicorp.com/terraform/${ver}/terraform_${ver}_linux_amd64.zip" -o "$tmp/terraform.zip"
+            unzip -o -q "$tmp/terraform.zip" -d "$tmp/bin"
+            echo "$tmp/bin" >> "$GITHUB_PATH"
+            export PATH="$tmp/bin:$PATH"
+          fi
+          terraform version
+
+      - name: fmt
+        # gofmt's shape, for HCL: fmt -check prints the files that would change
+        # and exits non-zero, so a misformatted declaration is red here and never
+        # a review comment.
+        run: terraform -chdir=infra/terraform fmt -check -recursive
+
+      - name: validate
+        # init -backend=false downloads the providers validate needs and touches
+        # no state backend; validate then checks the root module and the bench
+        # module it instantiates for space.
+        run: |
+          terraform -chdir=infra/terraform init -backend=false -input=false
+          terraform -chdir=infra/terraform validate
+
   ci-ok:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
     # in a branch ruleset. It aggregates EXACTLY the jobs of this file and nothing else —
@@ -1051,7 +1100,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, e2e, lisp, test-hosted, test-hosted-pr, test-hosted-merge]
+    needs: [lint, test, e2e, lisp, test-hosted, test-hosted-pr, test-hosted-merge, terraform-validate]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -1071,6 +1120,7 @@ jobs:
             "test:${{ needs.test.result }}" \
             "lisp:${{ needs.lisp.result }}" \
             "e2e:${{ needs.e2e.result }}" \
+            "terraform-validate:${{ needs.terraform-validate.result }}" \
             "test-hosted-pr:${{ needs.test-hosted-pr.result }}" \
             "test-hosted-merge:${{ needs.test-hosted-merge.result }}"
           do
