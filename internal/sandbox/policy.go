@@ -68,6 +68,7 @@ type Input struct {
 	Name          string // windows container name; accepted and ignored elsewhere
 	NetDeny       bool
 	NetListen     bool
+	GPU           string   // --gpu none|metal; empty means none (issue #230)
 	NoSystemReads bool     // --no-system-reads: omit the linux system read roots (issue #893)
 	Argv          []string // the command and its arguments, everything after --
 	Home          string   // the caller's HOME as the child will see it (rule 9)
@@ -87,6 +88,7 @@ type Policy struct {
 	Name      string
 	NetDeny   bool
 	NetListen bool
+	GPUMode   GPUMode
 	Command   string   // the resolved absolute path of the executable
 	Argv      []string // Command followed by its arguments, verbatim
 
@@ -457,6 +459,15 @@ func ResolveCallerFile(flag, raw string) (string, *Refusal) {
 func Build(in Input) (*Policy, []Refusal) {
 	var bad []Refusal
 	p := &Policy{NetDeny: in.NetDeny, NetListen: in.NetListen, Name: in.Name}
+
+	// Issue #230: the local GPU capability is explicit and bounded. The default
+	// is none; metal records intent without widening mach-lookup or granting
+	// blanket device access, whose minimum mechanisms are still unmeasured.
+	if mode, r := ParseGPUMode(in.GPU); r != nil {
+		bad = append(bad, *r)
+	} else {
+		p.GPUMode = mode
+	}
 
 	// --net-deny and --net-listen ask for opposite things, and a tool that picked one
 	// would be deciding which of the two the caller meant.
