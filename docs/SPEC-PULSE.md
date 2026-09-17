@@ -116,9 +116,10 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    `CUT ROUTE` line, `class` the cost class. A retry after an abstain (rule 14) moves the pick
    one capability class up (`read` → `text` → `code` → `replay`), so a rewritten card routes
    to a stronger class. There is no `--model` flag on any verb: the table is the whole
-   policy, in git, edited once. `cards.tsv` is five fields per line: `label`, `slot`, `model`,
-   `tokens`, `card` (the card's path); `slot` is `-` until `launch` allocates, and `tokens` is
-   the card's admission token bound, which rule 10 sums for the batch's `--tokens`.
+   policy, in git, edited once. `cards.tsv` is four fields per line: `label`, `slot`, `model`,
+   `card` (the card's path); `slot` is `-` until `launch` allocates. Admission is the card
+   form of `nova-swarm batch`, which takes the TSV whole and wants no file or token budget
+   (rule 10).
 8. **A slot is free when the swarm's slot lock files say so.** `launch` reads the swarm pool
    under `--root`: a slot is free when its slot lock file `<pool>/slots/<n>.json` is absent
    or `state=free` — the swarm's own lock files (issue #457), never a log age and never a
@@ -139,21 +140,18 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    from gated work (rule 16). An admission refusal is not a failed run: `launch` fills the
    slots it can and exits 0. There is no `UNDER-SLOTS` refusal any more — a pulse never
    refuses for being wider than the bench; the remainder queues, always.
-10. **Every card goes through `batch`, never a single `add`.** `launch` runs exactly one
-    `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>
-    --files <n> --tokens <n> --then "nova-pulse harvest --id <id> --root <root>"` per model
-    route present, so at most two admissions, both under one pulse id recorded in
-    `<root>/pulses/<id>.tsv` (`batch id`, `model`, `n`). `<n>` on `--files` and `--tokens` is
-    that route's card count and summed token bound taken from its `cards.tsv` columns, so the
-    admission is bounded exactly as the cards say. Where `cards.tsv` carries no budget column,
-    the budgets come from the configuration -- `[launch] files` (default 40) and
-    `[launch] tokens` (default the explicit word `unmetered`, which is what a native runner
-    with no live token accounting has always meant). Neither is ever omitted: `nova-swarm
-    batch` requires both and refuses to guess, so a launch that names none is refused before
-    a card starts (issue #869). The `--then` argv is `nova-swarm batch`'s
-    (card 269): it runs when the batch's wait ends — every card ended or the deadline — and
-    never earlier. A `BATCH REFUSED` line from the swarm is relayed as `PULSE REFUSED` with
-    the swarm's reason and nothing is queued.
+ 10. **Every card goes through `batch`'s card form, never a single `add`.** `launch` runs
+     exactly one `nova-swarm batch --id <pulse> --cards <admitted.tsv> --deadline <s>
+     --runner <cmd> --root <root> --then "nova-pulse harvest --id <id> --root <root>"`, with
+     `<admitted.tsv>` the admitted cards written under `<root>/cards/<id>/cards.tsv` (the
+     cards that fit the free slots, never the queued remainder) and `<cmd>` the deployment's
+     native runner on PATH, `nova-native-runner.sh`. The card form is the only form that runs
+     a card: the swarm's pool form (`--pool --tasks --label`) wants `--files` and `--tokens`,
+     which no launch flag can supply (issue #630), so `launch` never calls it. The one
+     admission is recorded in `<root>/pulses/<id>.tsv` (`batch id`, `n`). The `--then` argv
+     is `nova-swarm batch`'s (card 269): it runs when the batch's wait ends — every card
+     ended or the deadline — and never earlier. A `BATCH REFUSED` line from the swarm is
+     relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued.
 11. **`--then` is gated on the verdict, never on mergeability.** `harvest` disposes a card by
     its own two lines — line 1 the contract, line 2 the verdict — and by the `BRANCH` line.
     It never asks `nova-merge` whether the PR can merge, never reads a hosted check, never
@@ -676,19 +674,18 @@ handoff (rule **The manager tier**).
    four — every free slot filled, none left idle, exit 0 and no `UNDER-SLOTS` anywhere in
    either stream; the mutation that matters: a launch that refuses instead of filling.
 10. `launch-queues-remainder`: the same run queues the rest with no flag asked for:
-    `nova-swarm batch` runs with a
-    `--tasks` dir holding exactly the first four cards in `cards.tsv` order, `queued=4`,
+    `nova-swarm batch` runs once, in the card form, with a `--cards` TSV holding exactly the
+    first four cards in `cards.tsv` order, `queued=4`,
     `queue.tsv` holding the other four, `pulses/<id>.tsv` naming the batch.
 11. `launch-slot-free-from-lock-files`: a slot whose lock file is `state=free` is free, one
     `state=busy` is not, a missing lock file is free; `free-before` counts the free ones and
     no `native.log` age or 120 s rule appears anywhere — the mutation that matters: a slot
     freed by a log age instead of the swarm's lock file.
-12. `launch-every-card-through-batch`: two model routes present run exactly two `nova-swarm
-    batch` invocations and zero `nova-swarm add`, each with `--label pulse-<id>`, a `--files`
-    equal to that route's card count, a `--tokens` equal to the sum of that route's `tokens`
-    column in `cards.tsv`, and a
-    `--then` whose argv begins `nova-pulse harvest --id <id>`; a `BATCH REFUSED` fixture
-    reply is `PULSE REFUSED` with that reason, `queue.tsv` unchanged.
+12. `launch-every-card-through-batch`: any admitted cards run exactly one `nova-swarm
+     batch` invocation and zero `nova-swarm add`, in the card form — `--id <pulse>`, a
+     `--cards` TSV holding exactly the admitted cards in order, `--deadline`, a `--runner`,
+     `--root`, and a `--then` whose argv begins `nova-pulse harvest --id <id>`; a `BATCH
+     REFUSED` fixture reply is `PULSE REFUSED` with that reason, `queue.tsv` unchanged.
 13. `harvest-pushes-only-on-line1-match`: three done cards — line 1 equal, line 1 differing
     by one byte, line 1 equal with `BRANCH main` — push exactly one, by `git push <https>
     <branch>:<branch>`, open exactly one draft PR whose body is the `RESULT.md` lines, and
@@ -703,7 +700,7 @@ handoff (rule **The manager tier**).
     template `read` (or `tone` for a seed page), carrying the bench cost table's cheapest
     model that can hold it, and the next `pool` counts it in `next=<n>` after `queue.tsv`.
 16. `harvest-relaunches-queue-first`: `queue.tsv` with three rows, `next.tsv` with one, a
-    source with two new items, five free slots: the next batch's `--tasks` dir holds the
+    source with two new items, five free slots: the next batch's `--cards` TSV holds the
     three queued cards first, then the read card, then one source card; `queued=1`; the
     `HARVEST OK` line precedes the `PULSE OK` line and both are printed.
 17. `harvest-usd-is-the-batch-line`: `usd=` on `HARVEST OK` equals the swarm packet's
@@ -834,17 +831,17 @@ handoff (rule **The manager tier**).
 3. **The dogfood issue shape without the label.** Default: pooled, template `fix`, because
    the shape is the contract (tool, command, verbatim output, expected, smallest fix) and a
    label is a hand's afterthought. Rejected: label only, which loses first-run stumbles.
-4. **This spec needs `nova-swarm batch --then` (card 269) first.** Until it lands, `launch`
-   admits and prints its line, and `harvest` is run by a person after `nova-swarm wait`;
-   nothing else in this draft depends on it.
+4. **`--then` rides the card form.** `launch` passes `--then "nova-pulse harvest --id <id>
+   --root <root>"` to `nova-swarm batch`'s card form, which runs it when every card is done
+   and never earlier (rule 10); the pool form's `--then` (card 269) is no longer on launch's
+   path. Nothing else in this draft depends on it.
 5. **What the shipped tool is behind on, named rather than assumed.** This is a draft, and
    `## Tests this spec demands` says so: the replays are demanded of the implementation, not
    read off it. Three deltas are open against `internal/pulse` at this draft's head, each one
    card's work: `pulseVerbs` lacks `--work` on `pool`, the `handoff`, `takeover` and `status`
    lines, and this draft's `--benches` and `--timeout`; `cut.go` prints `flash=<n> pro=<n>` on
-   `CUT OK` where rule 7's cost table gives `zero=<n> flat=<n> metered=<n>`, and writes
-   `cards.tsv` with four fields where rule 7 gives five; and `TestCutModelByKind` pins the
-   routing replay 8 replaces. A fourth is rule 9's: `internal/pulse/launch.go` still writes
+   `CUT OK` where rule 7's cost table gives `zero=<n> flat=<n> metered=<n>`; and
+   `TestCutModelByKind` pins the routing replay 8 replaces. A fourth is rule 9's: `internal/pulse/launch.go` still writes
    `PULSE REFUSED UNDER-SLOTS` and `launch_test.go` pins it, `pulseVerbs` still offers
    `[--queue]` and carries none of the three gate flags — one card retires the refusal, turns
    that test into replay 9, drops `[--queue]` and adds the gates, in that order, so the red is

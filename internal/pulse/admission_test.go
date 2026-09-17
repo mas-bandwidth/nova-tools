@@ -162,12 +162,12 @@ func TestLaunchAdmitsTheCardThatNamesTheRed(t *testing.T) {
 		t.Fatalf("nova-swarm argv = %q (err=%v), want one batch", raw, err)
 	}
 	id := pulseID(t, out)
-	tasks, err := os.ReadDir(filepath.Join(root, "cards", id, "pro"))
+	admitted, err := os.ReadFile(filepath.Join(root, "cards", id, "cards.tsv"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tasks) != 1 {
-		t.Fatalf("the batch carried %d cards, want the red's own alone", len(tasks))
+	if rows := nonEmptyLines(string(admitted)); len(rows) != 1 || !strings.Contains(rows[0], "card-8140") {
+		t.Fatalf("the batch carried %d cards, want the red's own alone: %q", len(rows), admitted)
 	}
 }
 

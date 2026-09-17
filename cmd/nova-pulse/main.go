@@ -36,10 +36,12 @@ nova-pulse version
 nova-pulse help
 
 launch reads a cards.tsv of label<TAB>slot<TAB>model<TAB>card, counts the free
-slots in <root>/pool, and hands the cards that fit one model at a time to nova-swarm
-batch, queueing the rest only when --queue is set. --slots is the ceiling on the
-free slots it may use, and --deadline is the whole pulse's one deadline in whole
-seconds. It makes no model call itself: nova-swarm must be on your PATH.
+slots in <root>/pool, and hands the cards that fit -- the whole admitted set as
+one cards.tsv -- to nova-swarm batch's card form (--id --cards --deadline
+--runner --root), queueing the rest only when --queue is set. --slots is the
+ceiling on the free slots it may use, and --deadline is the whole pulse's one
+deadline in whole seconds. It makes no model call itself: nova-swarm must be on
+your PATH.
 
 example:
   nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
