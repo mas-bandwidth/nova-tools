@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -132,21 +131,16 @@ func newSizer(row *swarm.Bench) (*sizer, error) {
 // reads the one-minute load afterwards.
 func (s *sizer) measure(w int) swarm.SizeRound {
 	start := time.Now()
-	var wg sync.WaitGroup
-	var mu sync.Mutex
+	done := make(chan error, w)
+	for i := 0; i < w; i++ {
+		go func() { done <- s.runCard() }()
+	}
 	abstain := 0
 	for i := 0; i < w; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := s.runCard(); err != nil {
-				mu.Lock()
-				abstain++
-				mu.Unlock()
-			}
-		}()
+		if err := <-done; err != nil {
+			abstain++
+		}
 	}
-	wg.Wait()
 	elapsed := time.Since(start)
 	cpm := 0.0
 	if elapsed > 0 {
