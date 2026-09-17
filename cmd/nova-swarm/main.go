@@ -1335,6 +1335,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	workerFile := f.fs.String("worker", "", "")
 	sandbox := f.fs.String("sandbox", "", "")
 	noWall := f.fs.Bool("no-wall", false, "")
+	noSharedCaches := f.fs.Bool("no-shared-caches", false, "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1412,19 +1413,20 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		effectiveModel = w.Provider + "/" + w.Model
 	}
 	cfg := nativeRunConfig{
-		binary:     *harness,
-		model:      effectiveModel,
-		label:      lbl,
-		card:       cardRaw,
-		slotDir:    *slot,
-		root:       *root,
-		authFile:   *auth,
-		configFile: *config,
-		deadline:   d,
-		repos:      repos,
-		recipients: recipients,
-		sandbox:    *sandbox,
-		noWall:     *noWall,
+		binary:         *harness,
+		model:          effectiveModel,
+		label:          lbl,
+		card:           cardRaw,
+		slotDir:        *slot,
+		root:           *root,
+		authFile:       *auth,
+		configFile:     *config,
+		deadline:       d,
+		repos:          repos,
+		recipients:     recipients,
+		sandbox:        *sandbox,
+		noWall:         *noWall,
+		noSharedCaches: *noSharedCaches,
 	}
 	if workerGiven {
 		cfg.worker = &w

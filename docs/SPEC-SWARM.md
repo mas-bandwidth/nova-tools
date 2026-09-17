@@ -798,6 +798,21 @@ not make. `native` exports `TMPDIR=<slot>/tmp/<label>` into the harness
 environment — the slot directory is never a repository — and prints
 `tmp=<path>` on `NATIVE OK`; a card sets no `TMPDIR` of its own.
 
+**The Go module and build caches are shared by the whole bench, not one per card** (card
+8963). Go derives `GOMODCACHE` and `GOCACHE` from `HOME`, and a native run makes the child's
+`HOME` its data home, so every slot downloaded its own module cache — and a toolchain — and
+grew to five to seven gigabytes, almost all of it `data/go/pkg/mod` and
+`data/.cache/go-build`, where a Lisp slot is 330 MB. Instead `native` makes
+`<root>/cache/go-mod` and `<root>/cache/go-build` (mode 0755) before the child starts, hands
+the harness `GOMODCACHE`, `GOCACHE` and `GOTOOLCHAIN=local`, and adds `<root>/cache` to the
+wall's write set, so every card of the bench shares one cache and a card's data home holds
+only harness state. The sharing is safe: Go's caches are concurrency-safe by design and the
+module cache is read-mostly — a card extracts a module it needs and Go's own lock serializes
+the write — and `GOTOOLCHAIN=local` keeps a card from fetching a toolchain the bench did not
+pin. `--no-shared-caches` restores the old behaviour exactly, with no names set and the
+caches under `HOME`, for a bench that wants one slot's caches isolated; the slot's data home
+layout is otherwise untouched.
+
 **The harness's own fence is configured by the run, never left to its
 defaults** (issue #644). OpenCode asks before a tool touches a path it calls
 external, and a `run` with no terminal answers every such question by rejecting

@@ -135,6 +135,25 @@ func main() {
 				[]byte(fmt.Sprintf("mode=%04o\n%s", st.Mode().Perm(), string(body))), 0o644)
 		}
 	}
+	// FAKE-RECORD-CACHES records the Go cache environment a card's harness is handed and
+	// whether the two cache directories already existed when the child started, so a test
+	// can prove the bench-shared caches (card 8963) are in place BEFORE the run and are one
+	// copy for the whole bench rather than one per data home. The path and mode are recorded,
+	// never the contents of a module.
+	if _, ok := directive(prompt, "FAKE-RECORD-CACHES"); ok && job != "" {
+		var b strings.Builder
+		for _, name := range []string{"GOMODCACHE", "GOCACHE", "GOTOOLCHAIN"} {
+			fmt.Fprintf(&b, "%s=%s\n", name, os.Getenv(name))
+		}
+		for _, name := range []string{"GOMODCACHE", "GOCACHE"} {
+			if st, err := os.Stat(os.Getenv(name)); err != nil {
+				fmt.Fprintf(&b, "stat %s: err=%v\n", name, err)
+			} else {
+				fmt.Fprintf(&b, "stat %s: mode=%04o dir=%v\n", name, st.Mode().Perm(), st.IsDir())
+			}
+		}
+		writeRecorded(filepath.Join(job, "cache-record"), []byte(b.String()), 0o644)
+	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
 			fmt.Printf("fake harness: read of /etc/somewhere: permission denied (refused)\n")
