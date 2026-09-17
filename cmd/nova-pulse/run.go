@@ -27,6 +27,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	deadline := f.fs.Int("deadline", int(pulse.DefaultCardDeadline/time.Second), "")
 	timeout := f.fs.Int("timeout", 120, "")
 	tempGlob := f.fs.String("temp-glob", "", "")
+	tempRoot := f.fs.String("temp-root", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 
 	if !f.parse(args, stderr) {
@@ -75,6 +76,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Timeout:  time.Duration(*timeout) * time.Second,
 		Max:      *max,
 		TempGlob: *tempGlob,
+		TempRoot: *tempRoot,
 		Now:      func() time.Time { return time.Now().UTC() },
 		Config:   func() pulse.Config { return cfg },
 	}))

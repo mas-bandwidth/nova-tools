@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -65,6 +66,7 @@ type ReapInput struct {
 	DryRun   bool
 	Procs    ProcessTable
 	TempGlob string        // default "/tmp/*swarmtest*"; a test points it at its own directory
+	TempRoot string        // the directory the temp glob must sit under; empty derives it from the glob's literal prefix
 	TempAge  time.Duration // default 30 minutes
 
 	// Rule E2 (runners.go): a runner busy with no in-progress run on Repo for longer than
@@ -250,11 +252,24 @@ func moveCard(in ReapInput, from, to string) {
 	}
 }
 
-// reapTempDirs removes the swarm test directories older than the temp age.
+// reapTempDirs removes the swarm test directories older than the temp age. The glob
+// comes from a flag, so it is the one match the reaper cannot trust to name a path
+// under anything: the root the matches must sit under is named by --temp-root, or
+// derived from the glob's own literal prefix, and a glob whose prefix escapes that root
+// is refused whole. Each match is removed through safepath.RemoveUnder, which refuses a
+// path that is the root, outside it, or a symlink.
 func reapTempDirs(in ReapInput, glob string, age time.Duration, now time.Time) int {
 	matches, err := filepath.Glob(glob)
 	if err != nil {
 		fmt.Fprintf(in.Stderr, "REAP NOTE the temp glob %s does not parse: %s\n", oneline.Field(glob), oneline.Err(err))
+		return 0
+	}
+	root := in.TempRoot
+	if strings.TrimSpace(root) == "" {
+		root = globRoot(glob)
+	} else if !dirUnder(root, globRoot(glob)) {
+		fmt.Fprintf(in.Stderr, "REAP REFUSED the temp glob %s is not under its root %s; pass --temp-root naming the directory the glob must sit under\n",
+			oneline.Field(glob), oneline.Field(root))
 		return 0
 	}
 	removed := 0
@@ -267,11 +282,43 @@ func reapTempDirs(in ReapInput, glob string, age time.Duration, now time.Time) i
 		if in.DryRun {
 			continue
 		}
-		if err := os.RemoveAll(path); err != nil {
+		if err := safepath.RemoveUnder(root, path); err != nil {
 			fmt.Fprintf(in.Stderr, "REAP NOTE %s could not be removed: %s\n", oneline.Field(path), oneline.Err(err))
 		}
 	}
 	return removed
+}
+
+// globRoot is the directory a glob's matches must sit under: the literal text before the
+// first metacharacter, with a trailing partial element removed. `/tmp/*swarmtest*` roots
+// at `/tmp`; `/*` roots at `/`, which RemoveUnder then refuses.
+func globRoot(pattern string) string {
+	cut := strings.IndexAny(pattern, "*?[")
+	if cut < 0 {
+		return filepath.Dir(pattern)
+	}
+	lit := pattern[:cut]
+	if lit == "" {
+		return "."
+	}
+	if strings.HasSuffix(lit, string(os.PathSeparator)) {
+		return filepath.Clean(lit)
+	}
+	return filepath.Dir(lit)
+}
+
+// dirUnder reports whether dir is root or strictly below it.
+func dirUnder(root, dir string) bool {
+	r, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	d, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	r, d = filepath.Clean(r), filepath.Clean(d)
+	return d == r || strings.HasPrefix(d, r+string(os.PathSeparator))
 }
 
 func underAnyRoot(args string, roots []string) bool {
