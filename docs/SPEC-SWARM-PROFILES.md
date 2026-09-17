@@ -834,6 +834,75 @@ ledger or silently filling gaps.
 | `missing` | `-` | the source was expected to report it but omitted it; liability stays unknown |
 | `unsupported` | `-` | this adapter cannot provide it; no budget or cost claim is made |
 
+## Explicit reasoning effort and variant selection
+
+Provider-supported thinking controls are a cost lever, not a quality
+substitute. This section extends the per-job profile and the shared accounting
+contract; it does not add a provider-specific tool, a second dispatcher or a
+mutable price table. A route that cannot express the setting reports it
+unsupported rather than silently dropping it.
+
+1. **Typed selection.** A trusted profile may declare a typed `reasoning effort`
+   or a `variant` for a listed model. The selection is a closed,
+   provider-supported name from the admitted model's own option schema, never
+   arbitrary JSON, `Record<string, Any>`, a numeric coercion, a substring of a
+   display name or a credential-bearing blob. `variant` follows the native model
+   companion's closed object and the effort is one typed member of
+   `model_options`; the two may not both own the same effective key.
+2. **Requested and resolved provenance.** The immutable admission and attempt
+   receipt preserve the `requested` setting and the `resolved` effective setting
+   separately, with `provenance`: which layer (profile default, explicit override
+   or adapter default) chose it. Neither value is observed provider identity. A
+   coordinator correction or retry that changes only the effort is a new linked
+   attempt, never an edit of a retained receipt.
+3. **Model defaults are deliberate.** Omitted and explicit `default` are
+   different records. An omitted effort means the resolved model defaults
+   applied and is retained with `provenance=adapter_default`; an explicit
+   provider `default` is a chosen setting and is retained as requested. Neither
+   is written as `disabled`.
+4. **Refuse before provider activity.** An unsupported or contradictory
+   selection must refuse before any reservation, credential-gate invocation,
+   provider request or worker start, with no route fallback and no silent coercion. A contradiction includes two owners for one option key, an effort
+   the selected model's closed schema does not admit, a variant that conflicts
+   with the resolved model, and a tool requested where the model cannot call
+   tools.
+5. **Three-valued vocabulary.** `unsupported` (this adapter cannot express the
+   setting), `unknown` (no observation) and `disabled` (a deliberate off value)
+   are distinct. `unsupported` and `unknown` are `-`; `disabled` is a recorded
+   setting. None is folded into the others or into zero. The same vocabulary is
+   shared with `nova-local` and direct one-shot paths when their route supports
+   the setting.
+6. **No secret and no endpoint in options.** Effort and variant trees carry no
+   credential, endpoint, fetch callback or package selector; those keep their
+   existing owners. Config substitutions such as `{env:` and `${` must not
+   survive into generated configuration.
+7. **Synthetic fixtures.** Unit fixtures capture the generated request and config
+   shape with synthetic credentials only, and prove that a contradictory
+   selection makes zero provider calls. No fixture reaches a live provider.
+8. **Budget overshoot is accounted, not hidden.** `reasoning` remains a
+   separately attributable token kind and is never added twice to a parent
+   input/output total. When a bounded job exceeds its accounting budget before
+   the next observable checkpoint, the budget overshoot is retained against the
+   same attempt, never silently dropped or moved to a later checkpoint.
+9. **Measurement after adoption.** Use equivalent real accepted-work packets with
+   the same harness, model, source and report contract and comparable cache
+   conditions. Compare default/high against supported low or non-thinking modes
+   for routine bounded tasks, with independent assessment of missed defects,
+   false positives and coordinator correction/retry tokens. Preserve raw native counters and price applicability, and compare total operational tokens and
+   cost at equal quality, with implementation sunk cost excluded.
+10. **Do not lower effort for delicate work.** Security, credential and delicate
+    state-machine tasks keep their required effort even when a lower setting is
+    cheaper. Adopt a task-class default only after repeated evidence, because
+    one report is insufficient and a single measurement is not adoption.
+
+### Red tests
+
+- `an effort the model has no variant for refuses before any provider call`, with zero reservations and no gate invocation.
+- `requested and resolved settings are both retained`, with provenance, in the admission and attempt receipt.
+- omitted, explicit `default`, `disabled`, `unsupported` and `unknown` are five distinct retained records.
+- a contradictory effort/variant pair refuses exit 2, and a lower-effort default is never chosen for a security or delicate state-machine task class.
+- one report does not change a task-class default.
+
 ## Security and lifecycle invariants
 
 The following remain machinery invariants and cannot be weakened by a profile
