@@ -344,9 +344,7 @@
             "stop's CLIP OK names its own operation")
         (ok (search "SESSION OK" (second lines)) "stop prints SESSION OK second: ~A" (second lines))))))
 
-(needs-kernel "undo-redo" "docs/SPEC-WORK.md:5599"
-  "reversible edits reversed, history preserved, redo only against valid preconditions; a conflict explicit and mutating nothing"
-  "REDO")
+;; undo-redo now runs in lisp/nova-work/tests/replays-8651.lisp (nova-tools #362).
 
 ;; unknown-price-is-not-zero now runs in
 ;; lisp/nova-work/tests/replays-8651.lisp (nova-tools #362).

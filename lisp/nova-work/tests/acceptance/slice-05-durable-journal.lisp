@@ -318,6 +318,30 @@
 ;;; NEEDS-KERNEL, and counted but not yet run.
 ;;; ------------------------------------------------------------------
 
+;;; The roadmap replays promised by SPEC-WORK.md prose :2891 / :2948 / :2949 —
+;;; move-updates-every-roadmap-scope, axisless-history, matrix-retirement,
+;;; configure-no-effect-and-undo-conflict and completed-view-mutation — are
+;;; real deftests in tests/acceptance/slice-09-replays-roadmap.lisp over
+;;; src/replays-8621.lisp and src/roadmap.lisp (nova-tools #362).
+;;; NEEDS-KERNEL: move-refuses-by-name (SPEC-WORK.md:2890) — the `move` verb:
+;;;   a wrong --from, a destination inside the subtree, a root container, a
+;;;   repository root, a shared container, another repository, or a roadmap as
+;;;   either parent are each refused with its named reason and the identity,
+;;;   and nothing is written.
+
+;;; NEEDS-KERNEL: move-keeps-the-lease (SPEC-WORK.md:2890) — the `move` verb:
+;;;   a working subtree moved with its effective :responsible unchanged keeps
+;;;   the same lease, attempt and usage; a move that would change it over an
+;;;   unreconciled attempt is refused "active context change" naming the ids;
+;;;   a move under a public parent from a private one is refused "privacy
+;;;   reduction", the reverse admitted and the public render losing the rows.
+
+;;; NEEDS-KERNEL: move-undo-refuses-a-reorder (SPEC-WORK.md:2891) — undo after
+;;;   a sibling reorder, a further reparent or a privacy change is refused
+;;;   conflict and guesses no position; undo otherwise restores the exact
+;;;   before order and required sets with fresh scope revisions, the old
+;;;   numbers unwritten; a kill around acceptance and during clip exposes
+;;;   neither two parents nor none.
 ;;; NEEDS-KERNEL: move-updates-every-roadmap-scope (SPEC-WORK.md:2891) — the
 ;;;   `move` verb: a row referenced by two roadmaps outside both parent chains
 ;;;   and one unrelated roadmap advances both referencing scope revisions in
@@ -349,29 +373,9 @@
 ;;;   member added applies the atomic revival rule so no settled container
 ;;;   silently holds open required work; counts and indexes are checked by the
 ;;;   reference fold after each step.
-;;; NEEDS-KERNEL: move-refuses-by-name (SPEC-WORK.md:2890) — the `move` verb:
-;;;   a wrong --from, a destination inside the subtree, a root container, a
-;;;   repository root, a shared container, another repository, or a roadmap as
-;;;   either parent are each refused with its named reason and the identity,
-;;;   and nothing is written.
-
-;;; NEEDS-KERNEL: move-keeps-the-lease (SPEC-WORK.md:2890) — the `move` verb:
-;;;   a working subtree moved with its effective :responsible unchanged keeps
-;;;   the same lease, attempt and usage; a move that would change it over an
-;;;   unreconciled attempt is refused "active context change" naming the ids;
-;;;   a move under a public parent from a private one is refused "privacy
-;;;   reduction", the reverse admitted and the public render losing the rows.
-
-;;; NEEDS-KERNEL: move-undo-refuses-a-reorder (SPEC-WORK.md:2891) — undo after
-;;;   a sibling reorder, a further reparent or a privacy change is refused
-;;;   conflict and guesses no position; undo otherwise restores the exact
-;;;   before order and required sets with fresh scope revisions, the old
-;;;   numbers unwritten; a kill around acceptance and during clip exposes
-;;;   neither two parents nor none.
-
-;;; NEEDS-KERNEL: chat-and-file-render-are-byte-identical (SPEC-WORK.md:2950) —
-;;;   `render`: chat and file mode are byte-identical for one projection and
-;;;   revision, shared prerequisites and private-data filtering included.
+;;; The `move` replays — move-refuses-by-name, move-keeps-the-lease and
+;;; move-undo-refuses-a-reorder — are real deftests in the node-move section
+;;; at the end of this file (nova-tools #362).
 
 ;;; NEEDS-KERNEL: render-refuses-a-target-outside-its-roots (SPEC-WORK.md:2950)
 ;;;   — `render`: a projection target is resolved only within explicitly
@@ -413,6 +417,14 @@
 ;;; render, priority and rank replays now run in
 ;;; tests/acceptance/slice-06-replays-early.lisp and slice-07-replays-mid.lisp
 ;;; (nova-tools #362).
+;;; The render, priority and rank replays now run as real deftests:
+;;; render-refuses-a-target-outside-its-roots and render-artifact-is-bounded in
+;;; tests/acceptance/slice-07-replays-mid.lisp; chat-and-file-render-are-byte-identical
+;;; in tests/acceptance/slice-09-replays-roadmap.lisp; priority-orders-only-the-eligible,
+;;; priority-inherits-and-clears, priority-undo-is-history-not-value, rank-2-precedes-10
+;;; and priority-grants-nothing in tests/acceptance/slice-06-replays-early.lisp, over
+;;; src/replays-render-priority.lisp and src/replays-priority-and-export.lisp
+;;; (nova-tools #362). No parked stub remains for this group.
 
 ;;; The state-export/load replays of SPEC-WORK.md:3197-3225 now run against
 ;;; src/state-export.lisp: state-export-describes-exactly-r and
@@ -506,12 +518,6 @@
 ;;   repository or house name. Every identity arrives as configuration.
 ;;   (Not a test of this document, which cites friends by name for provenance.)
 
-;;; 57. four-capability-groups-and-three-fields   docs/SPEC-WORK.md:5280
-;;;
-;; NEEDS-KERNEL: child-agents, swarms, local-models and one-shots as capability
-;;   groups, each with stable id/source/stamp/availability/constraints, and
-;;   declared support, verified runtime and free capacity as three fields.
-
 ;;; 58. dispatch-ack-and-ownership-are-three (SPEC-WORK.md:5219) now runs as
 ;;; the real deftest below, over the four-fact dispatch records.
 ;;; 58. dispatch-ack-and-ownership-are-three   docs/SPEC-WORK.md:5219
@@ -532,12 +538,6 @@
 ;;   A configured threshold triggers one bounded ping; a configured answer
 ;;   window marks capacity unavailable with reason `unconfirmed`, never sleep
 ;;   nor exhausted credit.
-
-;;; 62. explicit-rest-is-not-pinged   docs/SPEC-WORK.md:5225
-;;;
-;; NEEDS-KERNEL: observed explicit-rest state and ping gating on it.
-;;   Explicit rest is respected: a resting friend is not pinged by a silence
-;;   threshold.
 
 ;;; 63. return-reconciles-before-dispatch (SPEC-WORK.md:5226) now runs as the
 ;;; real deftest in slice-07-replays-mid.lisp.
@@ -567,27 +567,14 @@
 ;;; deftest shape, marked, and counted as needs-kernel rather than run.
 ;;; ------------------------------------------------------------------
 
-;; NEEDS-KERNEL: fleet `query --for` writes no lease and leaves `who` unchanged.
-;; (deftest "fleet-for-is-a-recommendation-not-a-lease" "docs/SPEC-WORK.md:3377"
-;;     "expected=for-writes-no-lease;who-unchanged")
-
-;; NEEDS-KERNEL: fleet `query --for` over an excluding member is a refusal, not an empty answer.
-;; (deftest "an-excluded-choice-is-refused-not-empty" "docs/SPEC-WORK.md:3378"
-;;     "expected=excluded-kind-refused;never-empty-rows")
-
 ;; four-facts-four-verbs (SPEC-WORK.md:3398) now runs as the real deftest in
 ;; tests/acceptance/slice-09-fleet-assignment.lisp.
 ;; NEEDS-KERNEL: offer/acknowledge/decline verbs keep the four facts apart, infer none, launch none.
 ;; (deftest "four-facts-four-verbs" "docs/SPEC-WORK.md:3398"
 ;;     "expected=dispatch-delivery-accepted-ownership-stay-apart;nothing-inferred;nothing-launched")
 
-;; NEEDS-KERNEL: acknowledge/decline admit only behind an operator-configured verifier.
-;; (deftest "a-receipt-needs-a-verifier" "docs/SPEC-WORK.md:3413"
-;;     "expected=unverified-provenance-refused;state-unchanged;no-bus-body-authority")
-
-;; NEEDS-KERNEL: staged verifier/provenance/payload inputs run outside the mutation loop; stale/failed stage writes nothing.
-;; (deftest "staged-admission-refuses" "docs/SPEC-WORK.md:3414"
-;;     "expected=stale-or-failed-stage-writes-nothing")
+;; a-receipt-needs-a-verifier and staged-admission-refuses now run as the real
+;; deftests in tests/acceptance/slice-09-fleet-assignment.lisp (nova-tools #362).
 
 ;; offer-writes-intent-and-a-reservation (SPEC-WORK.md:5229) now runs as the
 ;; real deftest in tests/acceptance.lisp.
@@ -665,11 +652,6 @@
 ;; a-broken-assertion-must-fail (SPEC-WORK.md:6371) now runs as the real deftest
 ;; in tests/replays-8641.lisp.
 
-;; NEEDS-KERNEL: attempt/usage attribution records; no attempt model exists yet.
-;; a-retry-does-not-overwrite-its-attempt (SPEC-WORK.md:5222) --- unknown staying unknown,
-;; concurrent attempts keeping separate model and usage attribution, a friend's usual model
-;; never standing as proof of a delegated task's executor.
-
 ;; Now asserted by tests/acceptance/slice-07-replays-mid.lisp.
 ;; a-root-id-grants-nothing (SPEC-WORK.md:5402) --- a stored permitted root with no
 ;; --render-root mapping refusing file mode while --chat renders; escaping/symlink/target-identity
@@ -703,15 +685,23 @@
 ;;; (nova-tools #362) --- launch/cancel dispositions with no double launch and no
 ;;; false cancellation success.
 
-;; NEEDS-KERNEL: roadmap row ordering and completion; no roadmap verb exists yet.
-;; axisless-history (SPEC-WORK.md:5383) --- two ordered rows, one finished, exported/loaded and
-;; reopened past the window: both rows and evidence present, denominator not reduced by completion.
+;; axisless-history now lives in tests/acceptance/slice-09-replays-roadmap.lisp
+;; (nova-tools #362).
 
 ;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) now runs as the
 ;; real deftest in tests/replays-8640.lisp.
 ;; NEEDS-KERNEL: correct/execution-correct barrier; no correct verb exists yet.
 ;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) --- the bare correct refused by name
 ;; while an attempt is live and admitted once none is.
+
+;;; batch-with-bounds-and-urgency: the real replay lives in
+;;; tests/replays-8642.lisp:60 (nova-tools #362) --- byte/record bounds,
+;;; unchanged batches causing no call, unreferenced padding refused, urgent
+;;; corrections bypassing delay, dependencies and retry identities surviving.
+
+;;; batches-and-pipelines: the real replay lives in tests/replays-8642.lisp:145
+;;; (nova-tools #362) --- atomic batches all-or-none, independent batches
+;;; preserving their exact accepted prefix and marking the remainder not attempted.
 
 ;;; batch-with-bounds-and-urgency: the real replay lives in
 ;;; tests/replays-8642.lisp:60 (nova-tools #362) --- byte/record bounds,
@@ -735,6 +725,7 @@
 ;;     "expected=many-segments-read-in-bounded-pages;max-caps-rows;more-names-after;day-never-read-whole"
 ;;   ;; NEEDS-KERNEL: closed-history index with day segments and paged reads
 ;;   )
+;; branch-and-window-required (SPEC-WORK.md:5095) is still parked.
 ;; (deftest "branch-and-window-required" "docs/SPEC-WORK.md:5095"
 ;;     "expected=query-ask-without-branch-refused-exit-2;closed-without-from-to-refused;from-under-open-refused;who-stale-handoffs-refused-under-closed-and-root"
 ;;   ;; NEEDS-KERNEL: query command and --branch/--window flag validation at exit 2
@@ -750,18 +741,13 @@
 ;;; tests/acceptance/slice-08-replays-late.lisp:298 (nova-tools #362); this
 ;;; duplicate parked copy is removed.
 
-;; (deftest "chat-and-file-render-are-byte-identical" "docs/SPEC-WORK.md:5304"
-;;     "expected=chat-and-marker-region-bytes-identical;other-bytes-preserved;missing-duplicate-reversed-marker-refused;target-outside-roots-refused"
-;;   ;; NEEDS-KERNEL: render with marker regions and permitted-roots boundary
-;;   )
+;;; chat-and-file-render-are-byte-identical: the real replay lives in
+;;; tests/acceptance/slice-09-replays-roadmap.lisp:163 (nova-tools #362); this
+;;; duplicate parked copy is removed.
 
 ;;; clip-is-one-long-operation: the real replay lives in
 ;;; tests/acceptance/slice-08-replays-late.lisp:335 (nova-tools #362); this
 ;;; duplicate parked copy is removed.
-;; (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5327"
-;;     "expected=clip-operation-ok-op-pushed;wait-prints-clip-ok-operation;raced-prints-clip-raced;session-stop-prints-clip-ok-then-session-ok"
-;;   ;; NEEDS-KERNEL: clip long-operation protocol and operation wait id
-;;   )
 
 ;;; clip-names-the-index-that-overflowed: the real replay lives in
 ;;; tests/acceptance/slice-09-replays-8603.lisp:81 (nova-tools #362); this
@@ -854,35 +840,18 @@ asserts does not exist in slice 1."
                                               (dispatch-offer "req-2" "root/f/t1" "carol" 2))
                  "no shadow lease: a cross-holder offer is refused")))
 
-;; dry-run-writes-nothing: a dry run validates and projects without mutating;
-;; after a green preview at revision R the --request id is still new to the
-;; dedup index and events=/pending=/pushed= are unchanged; an accepted mutation
-;; moves to R+1; apply --expect R is refused stale; apply at R+1 newly validates.
-;; NEEDS-KERNEL: a --dry-run projection path and SESSION OK counters.
-(deftest-pending "dry-run-writes-nothing" "docs/SPEC-WORK.md:5196"
-    "expected=preview-mutates-nothing;dedup-still-new;events-pending-pushed-unchanged"
-  "no dry-run projection exists in slice 1")
-
 ;; edit-is-atomic-and-replayable now lives in tests/acceptance.lisp over the
 ;; node-edit verb of src/node-verbs.lisp (nova-tools #362).
 ;; edit-is-atomic-and-replayable: a bad one-of-five patch writes nothing; an
 ;; accepted mixed edit moves only its named fields and the category index; the
 ;; same request id retried answers NODE OK; a changed payload refuses; an
 ;; equal-value edit is the no-effect receipt, changed=0, rev up by one.
-;; NEEDS-KERNEL: an edit patch verb and category index.
-(deftest-pending "edit-is-atomic-and-replayable" "docs/SPEC-WORK.md:5351"
-    "expected=one-of-five-writes-nothing;changed-payload-refused;equal-value=changed-0"
-  "no edit verb in slice 1")
 
 ;; efficiency-lessons-gate (SPEC-WORK.md:4916) now runs as the real deftest in
 ;; tests/replays-8644.lisp, with the dispatch/effort/ceiling gates it named.
 ;; edit-never-fetches-a-link: a live URL to a counting endpoint added, edited
 ;; and rendered with zero requests; a link holding NUL refused `bad link`; a
 ;; refusal on a private node prints no value.
-;; NEEDS-KERNEL: a render path and link validation with a counting endpoint.
-(deftest-pending "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
-    "expected=fetches=0;nul=bad-link;private-node-prints-no-value"
-  "no link render/fetch in slice 1")
 ;; efficiency-lessons-gate: prime projection respects --max-bytes; unpoured
 ;; checklist items never count in |O|; tripped nodes require --reason; delegate
 ;; mode refuses edits below the model; packets lacking :effort are refused;
@@ -891,6 +860,8 @@ asserts does not exist in slice 1."
 (deftest-pending "efficiency-lessons-gate" "docs/SPEC-WORK.md:4439"
     "expected=max-bytes-respected;unpoured!=O;tripped=reason;no-effort=refused;ceiling=refused"
   "dispatch/effort/ceiling enforcement is not in slice 1")
+;; efficiency-lessons-gate (SPEC-WORK.md:4439) now runs as the real deftest in
+;; tests/replays-8644.lisp, with the prime/effort/ceiling gates it named.
 ;; edit-never-fetches-a-link now lives in tests/acceptance.lisp over the
 ;; node-edit link validation and renderer of src/node-verbs.lisp (nova-tools #362).
 
@@ -1077,6 +1048,8 @@ asserts does not exist in slice 1."
 ;;    "selected=retired,recoverable=yes,task-cancelled=0"
 ;;  ;; `axis --remove` of a first-axis row and then of another axis's member:
 ;;  ;; only the selected coordinates retired and recoverable, no task cancelled.)
+;; matrix-retirement now lives in tests/acceptance/slice-09-replays-roadmap.lisp
+;; (nova-tools #362).
 ;; merged-is-not-distributed   docs/SPEC-WORK.md:5093
 ;; ------------------------------------------------------------------
 ;; NEEDS-KERNEL: release/distribution state (a fix in C with `landed=<sha>` and
@@ -1286,6 +1259,8 @@ asserts does not exist in slice 1."
 ;;  ;; a row referenced by two roadmaps outside both parent chains and one
 ;;  ;; unrelated roadmap: both referencing scope revisions advance, the
 ;;  ;; unrelated one stays.)
+;; move-updates-every-roadmap-scope now lives in
+;; tests/acceptance/slice-09-replays-roadmap.lisp (nova-tools #362).
 ;; moving-source   docs/SPEC-WORK.md:5585
 ;; ------------------------------------------------------------------
 ;; NEEDS-KERNEL: provider intake adapter (a body edited / comment added and
