@@ -50,7 +50,7 @@ func TestSumSwarmRootIsIdempotent(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("ledger has %d lines, want header + one day row:\n%s", len(lines), after)
 	}
-	if !strings.Contains(lines[1], "\tdeepseek-v4\t1300\t350\t0.0140\t2") {
+	if !strings.Contains(lines[1], "\tdeepseek-v4\tunattributed\t1300\t350\t0.0140\t2\t2\t0.007000\t0,0,0,0") {
 		t.Errorf("day row is wrong: %q", lines[1])
 	}
 	if strings.Contains(after, "other-model") {
@@ -77,9 +77,9 @@ func TestSumRefusesOutDirectory(t *testing.T) {
 // TestSumSwarmAllUnknownModelIsDashNeverZero is #495's other face: a model whose only
 // card reported none of the three kept fields — a dash in, an empty out, a malformed usd —
 // lands `-`, `-`, `-` with a dashes count of 1,1,1, never the 0, 0, 0.0000 that reads as
-// a free route, while a fully reported model on the same day keeps its numbers and a
-// dashes count of 0,0,0. The header is pinned byte for byte to the eight columns the
-// binary writes and refuses a ledger for, `dashes` last.
+// a free route, while a fully reported model on the same day keeps its numbers, completes
+// its card (rc=0) and carries a dashes count of 0,0,0,0. The header is pinned byte for byte
+// to the ten columns the binary writes and refuses a ledger for, `dashes` last.
 func TestSumSwarmAllUnknownModelIsDashNeverZero(t *testing.T) {
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
@@ -98,13 +98,13 @@ func TestSumSwarmAllUnknownModelIsDashNeverZero(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("ledger has %d lines, want header + one row per model:\n%s", len(lines), read(t, ledger))
 	}
-	if want := "day\tmodel\ttokens_in\ttokens_out\tusd\tcards\tdashes"; lines[0] != want {
+	if want := "day\tmodel\trepo\ttokens_in\ttokens_out\tusd\tcards\tcompleted\tusd_per_task\tdashes"; lines[0] != want {
 		t.Errorf("ledger header is %q, want %q", lines[0], want)
 	}
-	if want := "2026-09-11\tdeepseek-v3\t-\t-\t-\t1\t1,1,1"; lines[1] != want {
+	if want := "2026-09-11\tdeepseek-v3\tunattributed\t-\t-\t-\t1\t1\t-\t1,1,1,0"; lines[1] != want {
 		t.Errorf("the all-unknown model's row is %q, want %q -- a kept field no card reported is -, never a 0 that reads as a free route", lines[1], want)
 	}
-	if want := "2026-09-11\tdeepseek-v4\t1000\t200\t0.0100\t1\t0,0,0"; lines[2] != want {
+	if want := "2026-09-11\tdeepseek-v4\tunattributed\t1000\t200\t0.0100\t1\t1\t0.010000\t0,0,0,0"; lines[2] != want {
 		t.Errorf("the fully reported model's row is %q, want %q", lines[2], want)
 	}
 }
@@ -161,7 +161,7 @@ func TestSumSwarmMixedKnownUnknownDailyAggregate(t *testing.T) {
 	}
 	// The known card's numbers survive, and the unknown card is the explicit dashes count
 	// 1,1,1 — not a zero in any kept field that would make the model look free.
-	if !strings.Contains(lines[1], "\tdeepseek-v4\t1000\t200\t0.0100\t2\t1,1,1") {
+	if !strings.Contains(lines[1], "\tdeepseek-v4\tunattributed\t1000\t200\t0.0100\t2\t2\t0.005000\t1,1,1,0") {
 		t.Errorf("day row does not carry the known numbers plus an explicit unknown count: %q", lines[1])
 	}
 }
