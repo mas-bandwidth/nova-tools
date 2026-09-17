@@ -114,6 +114,11 @@ jobs:
           go version
 
       - name: cache go build and module cache
+        if: runner.environment == 'github-hosted'
+        # Only on GitHub-hosted runners. A self-hosted runner is PERSISTENT: its Go build cache is
+        # already on disk, and this step's save phase tars the whole multi-GB cache on every job,
+        # outlives the job's timeout, and is orphaned still compressing (82 of them put the Studio
+        # at load 147 on 2026-09-17). internal/ci holds the class test.
         # go.mod carries no dependencies today, so the module cache is nearly
         # empty; the build cache is what pays for itself across the shards
         # below, which compile the same tree.
@@ -454,6 +459,11 @@ jobs:
           cache: false
 
       - name: cache go build and module cache
+        if: runner.environment == 'github-hosted'
+        # Only on GitHub-hosted runners. A self-hosted runner is PERSISTENT: its Go build cache is
+        # already on disk, and this step's save phase tars the whole multi-GB cache on every job,
+        # outlives the job's timeout, and is orphaned still compressing (82 of them put the Studio
+        # at load 147 on 2026-09-17). internal/ci holds the class test.
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -550,6 +560,11 @@ jobs:
           cache: false
 
       - name: cache go build and module cache
+        if: runner.environment == 'github-hosted'
+        # Only on GitHub-hosted runners. A self-hosted runner is PERSISTENT: its Go build cache is
+        # already on disk, and this step's save phase tars the whole multi-GB cache on every job,
+        # outlives the job's timeout, and is orphaned still compressing (82 of them put the Studio
+        # at load 147 on 2026-09-17). internal/ci holds the class test.
         # A GitHub-hosted runner is a fresh machine, so the cache pays for itself
         # exactly as it does in test-hosted.
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -694,7 +709,11 @@ jobs:
           cache: false
 
       - name: cache go build and module cache
-        if: steps.filter.outputs.changed == 'true'
+        if: runner.environment == 'github-hosted' && (steps.filter.outputs.changed == 'true')
+        # Only on GitHub-hosted runners. A self-hosted runner is PERSISTENT: its Go build cache is
+        # already on disk, and this step's save phase tars the whole multi-GB cache on every job,
+        # outlives the job's timeout, and is orphaned still compressing (82 of them put the Studio
+        # at load 147 on 2026-09-17). internal/ci holds the class test.
         # A GitHub-hosted runner is a fresh machine, so the cache pays for itself
         # here exactly as it does in test-hosted.
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
