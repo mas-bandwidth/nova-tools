@@ -97,8 +97,10 @@ no mutation."
                 1 nil)))
     (when (eq (getf entry :verb) :external-effect)
       (return-from undo-plan
-        (values nil (format nil "UNDO PLAN FAIL request-of=~A effect=external kind=~A handle=~A: not reversible here"
+        (values nil (format nil "UNDO PLAN FAIL request-of=~A effect=external kind=~A owner=~A state=~A handle=~A: not reversible here"
                             of (string-downcase (symbol-name (getf entry :effect)))
+                            (string-downcase (symbol-name (or (getf entry :owner) :operation)))
+                            (string-downcase (symbol-name (or (getf entry :state) :known)))
                             (getf entry :handle))
                 1 nil)))
     (when (member (getf entry :verb) '(:node-remove :event-cancel))

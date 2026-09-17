@@ -92,7 +92,7 @@ below the state's revision is refused rather than silently reissued."
     (:undo-plan :verb :of :by :request :stamp :clock :generation-owner)
     (:redo :verb :of :at-rev :by :request :stamp :clock :generation-owner)
     (:redo-plan :verb :of :by :request :stamp :clock :generation-owner)
-    (:external-effect :verb :node :by :effect :handle
+    (:external-effect :verb :node :by :effect :handle :owner :state
                       :request :stamp :clock :generation-owner)
     (:node-remove :verb :node :by :reason :request :stamp :clock :generation-owner)
     (:event-cancel :verb :node :by :reason :request :stamp :clock :generation-owner)))
