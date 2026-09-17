@@ -528,13 +528,14 @@ and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 
 `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` is the one form that
 writes: it walks every card's `usage.tsv` under `<dir>/*/jobs/*/`, keeps the
-rows whose `started` stamp is on `--day`, and appends one row per model to the
-ledger in the ledger's own column order — `day`, `model`, `tokens_in`,
-`tokens_out`, `usd`, `cards`, `dashes` — reading the header and refusing (exit 2) when it
+rows whose `started` stamp is on `--day`, and appends one row per `(model, repo)`
+pair to the ledger in the ledger's own column order — `day`, `model`, `repo`,
+`tokens_in`, `tokens_out`, `usd`, `cards`, `completed`, `usd_per_task`, `dashes` —
+reading the header and refusing (exit 2) when it
 differs, so a ledger filled by hand and one filled by this verb agree. A second
 run for the same day replaces that day's rows, never doubling, so the ledger can
 be filled again and again; a kept field a card did not report is `-` in the ledger, never 0,
-and the trailing `dashes` column counts how many cards left each of input, output and usd unknown.
+and the trailing `dashes` column counts how many cards left each of input, output, usd and rc unknown.
 
 A receipt that carries a `tool` column names the nova tool whose work the card
 is, and `sum --swarm-root` counts those receipts per tool and prints one `TOOLS`
@@ -575,12 +576,14 @@ The column order is `day`, `model`, `repo`, `tokens_in`, `tokens_out`, `usd`,
 `(model, repo)` pair, as `sum` prints one `SUM PAIR` line per pair. `cards` is
 unchanged
 — the count of every card that reported — and `completed` is its own column,
-not `cards` minus anything. Until the receipts land, `repo` is `unattributed`
-and `completed` and `usd_per_task` are `-` on every row, and the header is
-already the order above, so a ledger filled before and a ledger filled after
-the counts agree at the header and never rewrite a row. A receipt whose `rc`
-is `-` or empty names no completion, counts in `cards` and in the `dashes`
-column, and never in `completed`: it is read as neither failed nor finished.
+not `cards` minus anything. A receipt that names no `repo` counts under
+`unattributed`, so a repo the swarm has not yet written is visible rather than
+guessed, and the header is the order above, so a ledger filled before the
+columns carried completions still agrees at the header and never rewrites a
+row. A receipt whose `rc`
+is `-` or empty names no completion, counts in `cards` and as the fourth count
+of the `dashes` column, and never in `completed`: it is read as neither failed
+nor finished.
 A `completed` of zero is a valid row, never a refusal; the one refusal this
 shape adds is the header mismatch, which names the wanted order, the order
 above. MODELS.md carries `usd_per_task` per model row once it can be
