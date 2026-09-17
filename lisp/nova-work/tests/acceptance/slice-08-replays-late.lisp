@@ -448,6 +448,70 @@
           (check-string= clipline (nth-value 1 (operation-wait stopped "op-clip-stop"))
                          "stop waits by the same operation wait"))))))
 
+(deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5640-5642"
+    "expected=cancel-ack-own-disposition;accepted-mutation-not-erased;uncertain-external-reported-uncertain"
+  (let* ((events '((:id "ev-accepted" :kind :state-to-done :request "req-accepted")))
+         (session (make-work-session
+                   :events events :receipts '(:receipt-1)
+                   :operations (list (make-operation :id "op-cap" :op :capture
+                                                      :request "req-cap" :state :running))))
+         (before-events (work-session-events session)))
+    ;; the cancellation is acknowledged with its own final disposition ...
+    (multiple-value-bind (after disposition)
+        (operation-cancel session "op-cap" :request "req-cancel-1")
+      (check-equal :cancelled (getf disposition :state)
+                   "the cancel ack carries its own final disposition")
+      (check-equal "req-cancel-1" (getf disposition :request)
+                   "the ack echoes the cancel's own request id")
+      ;; ... erasing no accepted mutation.
+      (check-equal before-events (work-session-events after)
+                   "the accepted mutation is not erased")
+      ;; a cancel replayed twice cancels once.
+      (multiple-value-bind (again disposition-2)
+          (operation-cancel after "op-cap" :request "req-cancel-1")
+        (check-equal :cancelled (getf disposition-2 :state) "the replay answers cancelled")
+        (check-equal t (getf disposition-2 :replayed) "the replay applies nothing")
+        (check-equal before-events (work-session-events again)
+                     "the replay erases nothing")))
+    ;; an uncertain external effect is reported uncertain, not cancelled.
+    (let ((session-2 (make-work-session
+                      :events events
+                      :operations (list (make-operation :id "op-pay" :op :pay
+                                                         :request "req-pay" :state :running)))))
+      (multiple-value-bind (after disposition)
+          (operation-cancel session-2 "op-pay" :request "req-cancel-2"
+                            :external-effect :uncertain)
+        (declare (ignore after))
+        (check-equal :uncertain (getf disposition :state)
+                     "an uncertain external effect reads uncertain, never cancelled")))))
+
+(deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5778-5782"
+    "expected=clip-returns-OPERATION-OK;wait-prints-CLIP-OK;raced-CLIP-RACED;session-stop-CLIP-then-SESSION"
+  (let ((session (make-work-session :events '((:id "ev-1")))))
+    (multiple-value-bind (after op line) (clip-request session :id "op-clip-1")
+      (check-equal :clip (operation-op op) "clip draws one clip operation")
+      (check-equal :queued (operation-state op) "clip acknowledges while queued")
+      (ok (search "OPERATION OK id=op-clip-1 op=clip" line)
+          "clip prints OPERATION OK id= op=clip: ~A" line)
+      ;; the transport continues and operation wait prints the CLIP OK line.
+      (multiple-value-bind (settled wait-line) (operation-wait after "op-clip-1")
+        (declare (ignore settled))
+        (ok (search "CLIP OK" wait-line) "wait prints CLIP OK: ~A" wait-line)
+        (ok (search "operation=op-clip-1" wait-line) "the CLIP OK names operation=: ~A" wait-line)
+        (ok (search "pushed=" wait-line) "the CLIP OK carries pushed=: ~A" wait-line))
+      ;; a raced transport prints CLIP RACED through the same wait.
+      (multiple-value-bind (raced race-line) (operation-wait after "op-clip-1" :race t)
+        (declare (ignore raced))
+        (ok (search "CLIP RACED" race-line) "a raced wait prints CLIP RACED: ~A" race-line)))
+    ;; session stop waits on its own clip and prints CLIP OK then SESSION OK.
+    (multiple-value-bind (stopped op line) (clip-request session :id "op-clip-stop")
+      (declare (ignore op line))
+      (let ((lines (session-stop stopped)))
+        (ok (search "CLIP OK" (first lines)) "stop prints its own CLIP OK first: ~A" (first lines))
+        (ok (search "operation=op-clip-stop" (first lines))
+            "stop's CLIP OK names its own operation")
+        (ok (search "SESSION OK" (second lines)) "stop prints SESSION OK second: ~A" (second lines))))))
+
 ;; undo-redo now runs in lisp/nova-work/tests/replays-8651.lisp (nova-tools #362).
 
 ;; unknown-price-is-not-zero now runs in
