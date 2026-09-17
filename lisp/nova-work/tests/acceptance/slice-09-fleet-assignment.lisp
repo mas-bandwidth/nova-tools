@@ -47,7 +47,27 @@ receipt id and the digest of the received bytes. Test-only stand-in."
     (let* ((row (first (fleet-ask-rows ask)))
            (fact (first (getf row :facts))))
       (check-equal "2026-09-01T04:00Z" (getf fact :declared-at)
-                   "each row carries the declared facts and their dates"))))
+                   "each row carries the declared facts and their dates"))
+    ;; The real `query --ask fleet` over the configured fleet section reads
+    ;; the kernel's CONFIG, answers the recommendation and writes no lease.
+    (let* ((k (machine-kernel :friends '("glenn" "rowan")))
+           (before (state-open-count (kernel-state k))))
+      (multiple-value-bind (okp line code)
+          (submit k (register-request :id "m-astra" :owner "glenn"
+                                      :roles '(:build :test) :permits '("coding")
+                                      :excludes '("think") :limits '(:concurrent 2)
+                                      :facts nil :request "mreq-for"))
+        (ok okp "configuring the member is admitted: ~A" line)
+        (check-equal 0 code "register exit code"))
+      (let ((real (query-fleet k :for "coding")))
+        (check-equal '("m-astra")
+                     (mapcar (lambda (row) (getf row :id)) (fleet-ask-rows real))
+                     "the configured member is the recommendation")
+        (check-equal nil (fleet-ask-lease real) "the real ask is never a lease")
+        (ok (search "QUERY ROW m-astra kind=machine" (getf (first (fleet-ask-rows real)) :line))
+            "the row is the real QUERY ROW line"))
+      (check-equal before (state-open-count (kernel-state k))
+                   "the ask writes no count"))))
 
 ;;; ------------------------------------------------------------------
 ;;; an-excluded-choice-is-refused-not-empty         SPEC-WORK.md:3588

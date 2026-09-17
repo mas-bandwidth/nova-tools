@@ -224,6 +224,57 @@
     #:machine-excludes
     #:machine-limits
     #:machine-facts
+    ;; the fleet views: the listing, the recommendation and the model routes
+    ;; (SPEC-WORK.md:2311-2312, 3557-3575, 3732-3799; E09)
+    #:fleet-row-line
+    #:fleet-query-list
+    #:query-fleet
+    #:route
+    #:make-route
+    #:route-id
+    #:route-provider
+    #:route-endpoint
+    #:route-key-location
+    #:route-plan
+    #:route-cost-per-mtok
+    #:route-capabilities
+    #:route-owner
+    #:route-registry
+    #:make-route-registry
+    #:route-registry-p
+    #:route-member
+    #:route-members
+    #:route-member-count
+    #:route-register
+    #:route-key-location-p
+    #:route-key-location-line
+    #:route-config-section
+    #:route-node-field
+    #:route-probe
+    #:route-probes
+    #:route-newest-probe
+    #:route-consecutive-abstains
+    #:route-passing-p
+    #:route-benched-until
+    #:route-benched-p
+    #:route-projection
+    #:route-class-add
+    #:route-class-routes
+    #:build-route-card
+    #:route-row-line
+    #:routes-ask
+    #:make-routes-ask
+    #:routes-ask-class
+    #:routes-ask-rows
+    #:routes-ask-fail
+    #:routes-ask-exit-code
+    #:routes-ask-scope-revision
+    #:query-routes
+    #:route-plan-rank
+    #:route-lessp
+    #:*route-plans*
+    #:*route-capability-keys*
+    #:*route-capability-values*
     ;; node verbs (nova-tools #362 replays)
     #:node-metadata
     #:node-edit

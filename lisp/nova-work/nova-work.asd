@@ -25,6 +25,7 @@
                (:file "src/state-export")
                (:file "src/verifier")
                (:file "src/fleet")
+               (:file "src/routes")
                (:file "src/closed-history")
                (:file "src/node-verbs")
                (:file "src/render")

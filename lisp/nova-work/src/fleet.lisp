@@ -1317,7 +1317,8 @@ with their dates so the asker sees how old the declaration is."
         :admits kind
         :facts (machine-facts machine)
         :declared-at (mapcar (lambda (fact) (getf fact :declared-at))
-                             (machine-facts machine))))
+                             (machine-facts machine))
+        :line (fleet-row-line machine kind)))
 
 (defun fleet-for (session machines kind &key node)
   "Answer which machines admit KIND, in their configured order: their declared
@@ -1544,3 +1545,73 @@ touches none of the staged input (SPEC-WORK.md:3856)."
     (values t (format nil "SESSION OK who=~A events=~D pending=~D"
                       (assignment-state-who state) events
                       (length (assignment-state-offers state))))))
+
+
+;;; ------------------------------------------------------------------
+;;; `query --ask fleet`: the listing and the recommendation (E09 row 1)
+;;; (SPEC-WORK.md:2311, 3557-3575, the replays at :3585-3590)
+;;; ------------------------------------------------------------------
+;;;
+;;; The fleet section of CONFIG is read, never written: the ask reserves
+;;; nothing, dispatches nothing, probes nothing, leases nothing and leaves
+;;; `who` unchanged. A `--for` asks which configured members admit a workload
+;;; kind; `--node` names one member and refuses rather than answering empty when
+;;; that member excludes the kind. Without `--for` the whole live fleet is
+;;; listed. The listing reads the declared facts, never a probe.
+
+(defun %machine-fact (facts key)
+  "One declared fact from FACTS, which is either a plist (`:arch \"arm64\"`) or a
+list of plists (`((:value \"/opt\" :declared-by ...))`)."
+  (cond
+    ((null facts) nil)
+    ((keywordp (car facts)) (getf facts key))
+    (t (getf (first facts) key))))
+
+(defun %machine-roles-line (roles)
+  (if roles
+      (format nil "~{~A~^,~}"
+              (mapcar (lambda (r) (string-downcase (princ-to-string r))) roles))
+      "-"))
+
+(defun fleet-row-line (machine kind)
+  "The `QUERY ROW` line of SPEC-WORK.md:3574: the machine id, its owner, roles,
+limits and declared facts with their dates, and the kind (or `-`) it admits."
+  (format nil "QUERY ROW ~A kind=machine name=~A owner=~A roles=~A admits=~A concurrent=~A arch=~A os=~A declared-by=~A declared-at=~A"
+          (machine-id machine)
+          (or (machine-name machine) "-")
+          (or (machine-owner machine) "-")
+          (%machine-roles-line (machine-roles machine))
+          (if kind (string-downcase (princ-to-string kind)) "-")
+          (or (getf (machine-limits machine) :concurrent) "-")
+          (or (%machine-fact (machine-facts machine) :arch) "-")
+          (or (%machine-fact (machine-facts machine) :os) "-")
+          (or (%machine-fact (machine-facts machine) :declared-by) "-")
+          (or (%machine-fact (machine-facts machine) :declared-at) "-")))
+
+(defun fleet-query-list (machines)
+  "Every live member, one row each, in configured order. This is the bare
+`query --ask fleet` listing; it admits no workload kind and writes nothing."
+  (make-fleet-ask :kind :fleet
+                  :rows (mapcar (lambda (machine) (fleet-row machine nil))
+                                machines)))
+
+(defun query-fleet (kernel &key for node)
+  "`query --ask fleet` over the configured fleet section: without `--for`, list
+every live member; with `--for`, the members whose declared `:roles` and
+`:permits` admit the kind and whose `:excludes` do not; `--node` narrows either
+ask to one member and an excluded choice is a refusal, never an empty answer
+(SPEC-WORK.md:3557-3575)."
+  (let ((machines (fleet-members (kernel-fleet kernel))))
+    (if for
+        (fleet-for nil machines for :node node)
+        (let ((ask (if node
+                       (let ((machine (find node machines
+                                            :key #'machine-id :test #'equal)))
+                         (if machine
+                             (fleet-query-list (list machine))
+                             (make-fleet-ask
+                              :kind :fleet :rows '()
+                              :fail (format nil "QUERY FAIL ask=fleet rows=0 shown=0: no such member ~A" node)
+                              :exit-code 1)))
+                       (fleet-query-list machines))))
+          ask))))
