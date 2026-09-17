@@ -168,6 +168,8 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
    (fail-partial-write-on :initarg :fail-partial-write-on :initform nil :accessor journal-fail-partial-write-on)
    (fail-creation-sync-on :initarg :fail-creation-sync-on :initform nil :accessor journal-fail-creation-sync-on)
    (seq :initform 0 :accessor journal-seq)
+   (bench :initarg :bench :initform nil :accessor journal-bench)
+   (lock :initform nil :accessor journal-lock)
    (uncertain-p :initform nil :accessor journal-uncertain-p)))
 
 (defun make-file-journal (path &key (capacity 64) initial-state-hash reject-on fail-sync-on
@@ -182,12 +184,13 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                  :fail-partial-write-on fail-partial-write-on
                  :fail-creation-sync-on fail-creation-sync-on))
 
-(defun write-header (stream initial-state-hash capacity stamp path)
+(defun write-header (stream initial-state-hash capacity stamp path bench)
   (let* ((header (list :journal-header
                        :magic "nova-work/journal"
                        :version 1
                        :initial-state (or initial-state-hash "")
                        :capacity capacity
+                       :bench (or bench (bench-identity :path path))
                        :created-at (or stamp "2026-09-14T00:00:00Z")))
          (header-str (canonical-string header)))
     (write-string header-str stream)
@@ -254,7 +257,8 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
              frame)))))))
 
 (defun open-file-journal (path &key (capacity 64) initial-state-hash reject-on fail-sync-on
-                                fail-pre-write-on fail-partial-write-on fail-creation-sync-on stamp)
+                                fail-pre-write-on fail-partial-write-on fail-creation-sync-on stamp
+                                (take-lock t) (bench nil))
   (let* ((journal (make-instance 'file-journal
                                  :path (namestring (merge-pathnames path))
                                  :capacity capacity
@@ -266,6 +270,16 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                                  :fail-creation-sync-on fail-creation-sync-on))
          (full-path (journal-path journal))
          (exists (probe-file full-path)))
+    ;; The OS-held lock is taken before the file is opened or created, so a
+    ;; second holder is refused up front and never reads a journal out from
+    ;; under a live owner (SPEC-WORK.md:162-183). The lock is keyed by the
+    ;; journal's canonical spelling (realpath).
+    (when take-lock
+      (let ((lock (take-journal-lock full-path)))
+        (if lock
+            (setf (journal-lock journal) lock)
+            (error 'journal-held :path full-path))))
+    (setf (journal-bench journal) (or bench (bench-identity :path full-path)))
     (if exists
         (let ((seq 0))
           ;; 1. Read and validate entire file read-only. Failure leaves file untouched.
@@ -274,7 +288,9 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                    (hplist (rest header)))
               (setf (journal-initial-state-hash journal) (getf hplist :initial-state))
               (when (getf hplist :capacity)
-                (setf (slot-value journal 'capacity) (getf hplist :capacity))))
+                (setf (slot-value journal 'capacity) (getf hplist :capacity)))
+              (when (getf hplist :bench)
+                (setf (journal-bench journal) (getf hplist :bench))))
             (loop
               (let ((frame (read-record-frame in full-path (1+ seq))))
                 (unless frame (return))
@@ -315,7 +331,7 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                 ;; Synchronize parent directory to guarantee the new directory entry is durable
                 (let ((parent-dir (directory-namestring (merge-pathnames full-path))))
                   (sync-directory parent-dir))
-                (write-header out initial-state-hash capacity stamp full-path))
+                (write-header out initial-state-hash capacity stamp full-path (journal-bench journal)))
             (error (c)
               ;; CRITICAL: Close the already-open stream so file descriptor is not leaked,
               ;; while preserving the created file on disk for explicit recovery.
@@ -330,6 +346,9 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
          (sync-stream (journal-stream journal) :path (journal-path journal))
       (close (journal-stream journal))
       (setf (journal-stream journal) nil)))
+  (when (journal-lock journal)
+    (release-journal-lock (journal-lock journal))
+    (setf (journal-lock journal) nil))
   t)
 
 (defmacro with-file-journal ((var path &rest args) &body body)
