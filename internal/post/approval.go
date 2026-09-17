@@ -27,33 +27,33 @@ type Approval struct {
 // time can forge freshness, so only code in a test ever chooses it.
 func ReadApproval(busDir, receiptID, wantHash string, now time.Time) (Approval, error) {
 	if strings.TrimSpace(receiptID) == "" {
-		return Approval{}, &RefusalError{Code: 1, Reason: "no-approval",
-			Detail: "--approval is required; have Glenn send APPROVE nova-post sha256=" + onelineField(wantHash) + " to the bus, then pass that receipt id"}
+		return Approval{}, Refuse("no-approval",
+			"--approval is required; have Glenn send APPROVE nova-post sha256="+onelineField(wantHash)+" to the bus, then pass that receipt id", 1)
 	}
 	note, ok := findNote(busDir, receiptID)
 	if !ok {
-		return Approval{}, &RefusalError{Code: 1, Reason: "no-approval",
-			Detail: "the bus holds no receipt " + onelineField(receiptID) + "; have Glenn send APPROVE nova-post sha256=" + onelineField(wantHash) + " and pass its receipt id"}
+		return Approval{}, Refuse("no-approval",
+			"the bus holds no receipt "+onelineField(receiptID)+"; have Glenn send APPROVE nova-post sha256="+onelineField(wantHash)+" and pass its receipt id", 1)
 	}
 	app := Approval{ID: note.Header.ID, Sender: strings.TrimSpace(note.Header.From), Stamp: note.When()}
 	body := strings.TrimSpace(bus.NormalizeBody(note.Body))
 	line := firstLine(body)
 	if !strings.HasPrefix(line, approvalPrefix) {
-		return app, &RefusalError{Code: 1, Reason: "not-an-approval",
-			Detail: "receipt " + onelineField(receiptID) + " does not carry the line APPROVE nova-post sha256=<hash>"}
+		return app, Refuse("not-an-approval",
+			"receipt "+onelineField(receiptID)+" does not carry the line APPROVE nova-post sha256=<hash>", 1)
 	}
 	app.Hash = strings.TrimSpace(strings.TrimPrefix(line, approvalPrefix))
 	if app.Sender != "Glenn" {
-		return app, &RefusalError{Code: 1, Reason: "approval-sender",
-			Detail: "receipt " + onelineField(receiptID) + " is from " + onelineField(app.Sender) + ", not Glenn; only Glenn releases a draft"}
+		return app, Refuse("approval-sender",
+			"receipt "+onelineField(receiptID)+" is from "+onelineField(app.Sender)+", not Glenn; only Glenn releases a draft", 1)
 	}
 	if app.Hash != wantHash {
-		return app, &RefusalError{Code: 1, Reason: "approval-hash",
-			Detail: "receipt " + onelineField(receiptID) + " names another hash; have Glenn approve " + onelineField(wantHash)}
+		return app, Refuse("approval-hash",
+			"receipt "+onelineField(receiptID)+" names another hash; have Glenn approve "+onelineField(wantHash), 1)
 	}
 	if !app.Stamp.IsZero() && !now.Before(app.Stamp.Add(24*time.Hour)) {
-		return app, &RefusalError{Code: 1, Reason: "approval-stale",
-			Detail: "receipt " + onelineField(receiptID) + " was received " + app.Stamp.UTC().Format(time.RFC3339) + ", 24 hours or more ago; have Glenn approve it again"}
+		return app, Refuse("approval-stale",
+			"receipt "+onelineField(receiptID)+" was received "+app.Stamp.UTC().Format(time.RFC3339)+", 24 hours or more ago; have Glenn approve it again", 1)
 	}
 	return app, nil
 }

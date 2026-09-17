@@ -583,6 +583,12 @@ receipt exists in `--bus`, is Glenn's, names this hash and is under 24 hours old
 it transmits the stored bytes only. The examples below name throwaway drafts, an
 allowlist and a body of your own; a missing flag is one line on stderr at exit 2, and
 a target the allowlist does not name is exit 1.
+Fixture: a drafts directory you create, an allowlist with one
+`channel<TAB>target` line, and a body file. Every test runs against fake
+endpoints — an `httptest` server per channel, a fake mailer, an injected clock
+— and the refusals below open no socket. A credential is read only from the
+environment `nova-secrets exec` delivers, is never printed, and is never
+measured.
 
 ### First run
 
@@ -595,6 +601,20 @@ POST SHOW OK hash=<sha256> channel=ghost bytes=42 drafts=./drafts
 
 $ nova-post send --draft <sha256> --approval glenn-0123456789ab --drafts ./drafts --bus ./bus --allowlist ./allowlist
 POST OK channel=ghost id=123 url=https://example.com/p/123 hash=<sha256> approval=glenn-0123456789ab bytes=42
+$ nova-post
+POST REFUSED reason=no-arguments give one of draft, show, send, version or help; run: nova-post help
+
+$ nova-post version
+nova-post devel linux/amd64 go1.26.5
+
+$ nova-post draft --channel ghost --target rowan.example --file ./body.md --drafts ./drafts --allowlist ./allowlist
+POST DRAFT OK hash=8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4 channel=ghost target=rowan.example bytes=98 drafts=./drafts
+
+$ nova-post show --draft 8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4 --drafts ./drafts
+POST SHOW OK hash=8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4 channel=ghost bytes=98 drafts=./drafts
+
+$ nova-post send --draft 8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4 --approval glenn-0123456789ab --drafts ./drafts --bus ./bus --allowlist ./allowlist
+POST REFUSED reason=no-approval no receipt glenn-0123456789ab in ./bus; have Glenn send `APPROVE nova-post sha256=8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4` and pass its id
 ```
 
 ## nova-work
