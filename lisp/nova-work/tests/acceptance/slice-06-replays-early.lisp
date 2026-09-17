@@ -32,15 +32,8 @@
     "expected=out-of-order-fragmented-replies-reach-only-their-request"
   (slice1-refuses-verb :pipeline))
 
-;; NEEDS-KERNEL: policy/trial manifests surviving export/import/restart/replay.
-(deftest "policy-round-trip-and-replay" "docs/SPEC-WORK.md:4370"
-    "expected=survives-round-trip;malformed-intake-no-partial-effect"
-  (slice1-refuses-verb :config))
-
-;; NEEDS-KERNEL: estimate pinning by revision and unknown-price!=0.
-(deftest "pricing-is-pinned-by-revision" "docs/SPEC-WORK.md:5287"
-    "expected=old-estimate-reproducible;missing-dimension-unknown"
-  (slice1-refuses-verb :estimate))
+;; policy-round-trip-and-replay and pricing-is-pinned-by-revision now run in
+;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 
 ;; NEEDS-KERNEL: priority verbs and the grants-nothing invariant.
 (deftest "priority-grants-nothing" "docs/SPEC-WORK.md:5421"
@@ -76,21 +69,14 @@
 ;;; and dispatch surfaces). They are kept here, named, so the promised spec is
 ;;; not lost; each carries what it needs before it can turn green.
 
-(deftest "quiet-until-actionable" "docs/SPEC-WORK.md:4373"
-    "expected=zero-model-dispatch-for-unchanged;batching-bounded;urgent-bypass"
-  ;; NEEDS-KERNEL: model dispatch throttling/batching and urgent-correction bypass.
-  (ok t "pending; needs the model dispatch surface"))
-
 (deftest "rank-2-precedes-10" "docs/SPEC-WORK.md:5414"
     "expected=integer-rank-order;equal-and-default-by-id;restart-stable;unknown-only-first-unseen"
   ;; NEEDS-KERNEL: priority rank slots and history-pinned ordering/pagination.
   (ok t "pending; needs priority ranks and the ready cursor"))
 
 
-(deftest "read-only-intake" "docs/SPEC-WORK.md:5583"
-    "expected=recording-adapter-fails-on-mutation-endpoint;remote-inventory-compared-before-after"
-  ;; NEEDS-KERNEL: the recording intake adapter and source mutation endpoint guard.
-  (ok t "pending; needs the intake adapter"))
+;; quiet-until-actionable and read-only-intake now run in
+;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 
 (deftest "reconcile-preserves-contradiction" "docs/SPEC-WORK.md:5262"
     "expected=contradictory-observations-kept-unresolved;no-forged-inference"

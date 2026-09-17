@@ -8,10 +8,8 @@
   ;; NEEDS-KERNEL: undo/redo precondition tracking.
   (ok t "pending; needs undo/redo"))
 
-(deftest "regression-and-recovery" "docs/SPEC-WORK.md:4379"
-    "expected=breached-trial-stops-automatic-assignment;fallback-preserves-limits-history-handles"
-  ;; NEEDS-KERNEL: trial breach and automatic assignment fallback.
-  (ok t "pending; needs assignment control"))
+;; regression-and-recovery now runs in
+;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 
 (deftest "regression-opens-repair-work" "docs/SPEC-WORK.md:5300"
     "expected=confirmed-regression-creates-linked-open-repair-work"
