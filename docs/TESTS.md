@@ -596,3 +596,28 @@ POST SHOW OK hash=<sha256> channel=ghost bytes=42 drafts=./drafts
 $ nova-post send --draft <sha256> --approval glenn-0123456789ab --drafts ./drafts --bus ./bus --allowlist ./allowlist
 POST OK channel=ghost id=123 url=https://example.com/p/123 hash=<sha256> approval=glenn-0123456789ab bytes=42
 ```
+
+## nova-ci
+
+Fixture: `cmd/nova-ci/testdata/example-events.jsonl`. The verb reads on stdin and
+writes nothing, so each `$` line below pipes the fixture in; the transcript was
+produced by running the built binary, not written by hand.
+
+### First run
+
+```text
+$ nova-ci slowtests --budget 60 < cmd/nova-ci/testdata/example-events.jsonl
+CI-SLOW package=github.com/mas-bandwidth/nova-tools/internal/example seconds=65.1s budget=60s slowest=TestSlowThing:63.4s,TestAlsoSlow:1.5s
+
+$ nova-ci slowtests --budget 120 < cmd/nova-ci/testdata/example-events.jsonl
+CI-SLOW OK packages=2 slowest=github.com/mas-bandwidth/nova-tools/internal/example:65.1s
+```
+
+The input is the newline-delimited `go test -json` stream the test step already
+produces. Each package's total is its package-level `Elapsed`, and the
+`slowest=` list names the few test-level rows that spent it, so the first run
+tells the reader whether one test or the whole package is the cost. `--budget`
+is whole seconds and defaults to 60. The common mistake is forgetting the
+redirect: with an empty stdin the verb reads zero packages and prints
+`CI-SLOW OK packages=0 slowest=none`, which is why the test step always tees
+the stream first (`.github/workflows/ci.yml`).

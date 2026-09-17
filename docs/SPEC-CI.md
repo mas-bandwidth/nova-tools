@@ -136,3 +136,62 @@ darwin never saw it.
 5. A test using `oneline.Quote` is allowed, with the network it reports on faked.
 6. Adding an entry to `testdata/template-paths-allowlist.txt` is refused, and
    removing one is allowed.
+
+## The per-package test time budget
+
+**The verb.** The budget check is `cmd/nova-ci`'s first verb, `slowtests`:
+
+```
+slowtests  read newline-delimited go test -json TestEvents on stdin; refuse any
+           package whose summed elapsed time is over --budget (default 60s)
+```
+
+It runs as `go test -json -count=1 <packages> | tee "$RUNNER_TEMP/test.json"; go
+run ./cmd/nova-ci slowtests --budget 60 < "$RUNNER_TEMP/test.json"` in the
+self-hosted `test` step of `.github/workflows/ci.yml`, so the slow package
+surfaces to the coordinator the moment it happens.
+
+**The invariant.** A package's total is the sum of its package-level
+`Elapsed` — the `pass`, `fail` or `skip` event whose `Test` is empty — and a
+package whose total is over `--budget` is a refusal. The engine is the
+`internal/ci/slowtests` subpackage's `Parse` and `Sum`: the events come from the
+caller, the budget comes from the caller, and nothing reads a file, the clock or
+the network. The test-level `Elapsed` rows are kept, sorted worst first, only so
+a finding can name where the time went; they never decide the verdict.
+
+**Its one-line output.** On a clean stream it prints one line, `CI-SLOW OK
+packages=<n> slowest=<pkg>:<seconds>`, where `packages=` is the packages seen
+and `slowest=` the single slowest package overall (or `slowest=none` when the
+stream is empty). On a refusal it prints one line per offending package, `CI-SLOW
+package=<pkg> seconds=<seconds> budget=<b> slowest=<TestA:3.2s,TestB:2.9s>`, the
+slowest tests in that package, comma-separated, worst first and capped at three,
+then exits 2; the lines go to stdout, so one `CI-SLOW` grep reads the whole run.
+The stream is one `go test -json` line per event, parsed by `encoding/json`; a
+line that is not a TestEvent is a refusal naming its line number, never a silent
+skip, so a truncated pipe cannot read as a clean run.
+
+**Its refusals (exit 2, one remedy line each).** A malformed line —
+`remedy="stdin is not newline-delimited go test -json"`. A `--budget` of zero or
+less — `remedy="--budget must be a whole number of seconds greater than zero"`. A
+missing or unreadable invocation is the tool’s own one-line refusal ending `run:
+nova-ci help`.
+
+**The mistake it removes.** `nova-secrets` sat at 120 seconds in the suite and
+nothing noticed, because nothing summed the per-package elapsed time `go test
+-json` was already printing. A green that hides a doubling suite is the same
+mistake as a flaky wait, one layer up.
+
+**Red tests.** `internal/ci/slowtests/slowtests_test.go` feeds canned TestEvent
+lines through the parser and the summer, and `cmd/nova-ci/main_test.go` runs the
+verb end to end:
+
+1. A package at `3.2s` under a `60s` budget is `CI-SLOW OK packages=1
+   slowest=example.com/pkg:3.2s`, exit 0.
+2. A package summing `75.3s` with tests at `3.2s` and `2.9s` is one line naming
+   the package, its total, the budget and `slowest=TestA:3.2s,TestB:2.9s`, exit
+   2.
+3. An empty stream is `CI-SLOW OK packages=0 slowest=none`, exit 0.
+4. A line that is not JSON is a refusal naming its line number.
+5. The slowest list is sorted and capped at three.
+6. More than one package over budget prints one line each, worst first, an order
+   that does not depend on map iteration.
