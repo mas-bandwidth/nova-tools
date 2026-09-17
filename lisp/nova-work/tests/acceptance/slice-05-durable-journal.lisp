@@ -487,39 +487,12 @@
 ;;;   set on every node, `who` is unchanged, no lease is written, no worker is
 ;;;   selected, and no approval is bypassed.
 
-;;; NEEDS-KERNEL: state-export-describes-exactly-r (SPEC-WORK.md:3117) —
-;;;   `session export --state --at <revision>`: capturing R while R+1 is
-;;;   accepted yields bytes that describe R; an exact-snapshot export with B
-;;;   equal to R and an absent end, and one with B below R over a multi-record
-;;;   prefix across a rotation; an absent end below R, a missing or swapped
-;;;   record, a wrong end hash or revision and a cut inside an envelope are each
-;;;   refused, and a present later tail is never replayed.
-
-;;; NEEDS-KERNEL: state-export-is-one-long-operation (SPEC-WORK.md:3117) — an
-;;;   export blocked on archive I/O acknowledges its operation at once, status,
-;;;   cancel and an unrelated mutation stay responsive under it, and wait
-;;;   returns the same operation and captured revision after publication or
-;;;   refusal; an export inside an atomic batch is refused by entry id.
-
-;;; NEEDS-KERNEL: state-export-pin-survives-clip (SPEC-WORK.md:3118) — capturing
-;;;   R, a clip and a retention pass at R+1 during the copy, then exactly R
-;;;   completes or a recovery gap is named; no pinned member is reclaimed and
-;;;   no current bytes are substituted.
-
-;;; NEEDS-KERNEL: state-export-disconnect-and-cancel (SPEC-WORK.md:3118) — a
-;;;   lost client, a restart and a cancellation around the no-replace
-;;;   publication keep one operation and one output identity, no duplicate
-;;;   directory and no claim to reverse a published one; an existing destination
-;;;   is refused; a staged manifest before the commit is not published.
-
-;;; NEEDS-KERNEL: state-export-refuses-a-gap (SPEC-WORK.md:3119) — a missing
-;;;   mandatory member, a changed digest, a dangling internal reference, a path
-;;;   escape, a symlink, an output overrun and a corrupt S-expression are each
-;;;   refused with no valid load; a historical export whose resolver observations
-;;;   are gone is refused with a named proof gap and never given current ones;
-;;;   --closed-history range over [from,to) declares its omissions while keeping
-;;;   closure, all reaches C past the resident window and a fresh load reproduces
-;;;   its proof.
+;;; The state-export/load replays of SPEC-WORK.md:3197-3225 now run against
+;;; src/state-export.lisp: state-export-describes-exactly-r and
+;;; state-export-is-one-long-operation live in slice-08-replays-late.lisp, and
+;;; state-export-pin-survives-clip, state-export-disconnect-and-cancel,
+;;; state-export-refuses-a-gap, state-load-is-isolated and fenced-export-can-finish
+;;; live in slice-09-state-export-replays.lisp. No NEEDS-KERNEL stub remains.
 ;;; ------------------------------------------------------------------
 ;;; 50-71. replays promised by docs/SPEC-WORK.md:2400-3600 (part 3 of 4)
 ;;;
@@ -581,10 +554,10 @@
 
 ;;; 53. fenced-export-can-finish   docs/SPEC-WORK.md:5451
 ;;;
-;; NEEDS-KERNEL: a fenced session and the operation-id read/cancel of an export.
-;;   In a fenced session an export started, its status and terminal line read by
-;;   id, an unfinished one cancelled, an unknown/non-export id and every
-;;   canonical write refused `fenced`.
+;;; Moved to slice-09-state-export-replays.lisp, which owns the fenced session
+;;; replay (an export started; its status and terminal line read by id; an
+;;; unfinished one cancelled; an unknown/non-export id and every canonical
+;;; write refused `fenced`) of SPEC-WORK.md:5902.
 
 ;;; 54. roles-are-configured-not-inferred   docs/SPEC-WORK.md:3172
 ;;;
@@ -731,9 +704,9 @@
 ;; (deftest "hold-survives-a-crash" "docs/SPEC-WORK.md:3517"
 ;;     "expected=hold-and-capture-anchor-durable-before-ack")
 
-;; NEEDS-KERNEL: a clip that publishes during a live capture carries the pin forward; the capture never reads a newer scope.
-;; (deftest "capture-survives-clip" "docs/SPEC-WORK.md:3517"
-;;     "expected=clip-carries-pin-forward;no-reconstruct-from-newer-scope")
+;; capture-survives-clip now runs against src/state-export.lisp in
+;; slice-09-replays-holds.lisp (a clip publishing while a capture is live
+;; carries the pin forward; the capture never rebuilds from a newer scope).
 
 ;; NEEDS-KERNEL: the dispatch barrier is checked at offer, at conversion and at the last send.
 ;; (deftest "no-dispatch-slips-past-a-hold" "docs/SPEC-WORK.md:3534"
@@ -1100,14 +1073,9 @@ asserts does not exist in slice 1."
     (check-equal :unconfirmed (availability-state active)
                  "a nonresponse reads unconfirmed")))
 
-;; fenced-export-can-finish: in a fenced session an export started, its status
-;; and terminal line read by id; an unfinished one cancelled with publication
-;; reconciled; an unknown id, a non-export id, operation list and every
-;; canonical write refused `fenced`; no second owner and no mutation authority.
-;; NEEDS-KERNEL: export/operation ids and a fenced (single-owner) session.
-(deftest-pending "fenced-export-can-finish" "docs/SPEC-WORK.md:5451"
-    "expected=terminal-read-by-id;cancel-reconciles;canonical-write=fenced;one-owner"
-  "export and fencing are not in slice 1")
+;; fenced-export-can-finish now runs against src/state-export.lisp in
+;; slice-09-state-export-replays.lisp (terminal read by id; cancel reconciled;
+;; canonical write refused `fenced`; one owner).
 
 ;; findings-across-c-and-o: the worked acceptance asserted line by line -- four
 ;; ids, four rows, open=1 closed=3 closed-in=3, no id twice, the dispositions
