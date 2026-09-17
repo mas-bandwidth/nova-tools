@@ -81,9 +81,8 @@
   "status and cancel answered within their bound while a busy capture, export and clip are in flight"
   "OPERATION-STATUS")
 
-(needs-kernel "stop-is-a-hold-not-a-cancel" "docs/SPEC-WORK.md:5250"
-  "execution stop writing a hold and directives and no transition, goal show still printing stop=none"
-  "EXECUTION-STOP")
+;; stop-is-a-hold-not-a-cancel now lives in slice-09-replays-holds.lisp, with
+;; the execution-control kernel it needed.
 
 (needs-kernel "subscription-is-not-free-reference-cost" "docs/SPEC-WORK.md:5288"
   "the three cost values (subscription, reference, local api) kept separately labelled"

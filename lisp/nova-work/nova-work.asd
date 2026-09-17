@@ -19,6 +19,7 @@
                (:file "src/journal")
                (:file "src/kernel")
                (:file "src/state-export")
+               (:file "src/control")
                (:file "src/replays-applicable-delegation")))
 
 (defsystem "nova-work/tests"

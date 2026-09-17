@@ -1355,10 +1355,8 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
     "expected=one-event;original-OK;changed-payload-refuses"
   (slice1-refuses-verb :redo))
 
-;; NEEDS-KERNEL: a pause/hold and dispatch gate; acceptance retained :accepted-held.
-(deftest "no-dispatch-slips-past-a-hold" "docs/SPEC-WORK.md:5258"
-    "expected=offer-before-pause-refused-at-send;held-acceptance-converts-nothing"
-  (slice1-refuses-verb :execution-stop))
+;; no-dispatch-slips-past-a-hold now lives in slice-09-replays-holds.lisp, with
+;; the pause/hold and dispatch gate it needed.
 
 (deftest "no-effect-mutation-is-journaled" "docs/SPEC-WORK.md:5176"
     "expected=noop-journaled;changed=0;digest-unchanged;rev+1"

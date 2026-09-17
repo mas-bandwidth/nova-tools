@@ -72,7 +72,8 @@ is compared against; it is never the path `query --ask size` takes."
     "slice-06-replays-early.lisp"
     "slice-07-replays-mid.lisp"
     "slice-08-replays-late.lisp"
-    "slice-09-state-export-replays.lisp"))
+    "slice-09-state-export-replays.lisp"
+    "slice-09-replays-holds.lisp"))
 
 (dolist (f *acceptance-slices*)
   (load (asdf:system-relative-pathname :nova-work/tests

@@ -21,7 +21,11 @@
 (in-package #:nova-work)
 
 (defstruct (kernel (:constructor %make-kernel))
-  state journal next-rev)
+  state journal next-rev
+  ;; The execution-control state: attempts, offers, durable holds and their
+  ;; captures. It moves no work revision and writes no transition; see
+  ;; control.lisp and SPEC-WORK.md:3921-3980.
+  controls)
 
 (defvar *before-apply-hook* nil
   "A test seam. When bound, it is called with the envelope after the journal has
@@ -41,7 +45,8 @@ below the state's revision is refused rather than silently reissued."
                            rev-base (state-revision state))))
     (%make-kernel :state state
                   :journal (or journal (make-ordering-journal))
-                  :next-rev (or rev-base (1+ (state-revision state))))))
+                  :next-rev (or rev-base (1+ (state-revision state)))
+                  :controls (make-ctl))))
 
 ;;; What a request may carry, per verb. SPEC-WORK.md:3227
 ;;; `every-field-has-an-owning-verb` wants every field mapped to its owning
