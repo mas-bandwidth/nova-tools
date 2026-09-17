@@ -16,6 +16,7 @@
 
 ;; pipeline-replies-are-correlated is now the executable replay in
 ;; ../acceptance.lisp (card 8608).
+;; page-budget-is-not-max is implemented in ../acceptance.lisp (card 8601).
 
 ;; policy-round-trip-and-replay and pricing-is-pinned-by-revision now run in
 ;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
