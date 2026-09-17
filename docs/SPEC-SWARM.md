@@ -646,6 +646,22 @@ from it. The default worker is used when a task has no profile, so an existing
 `--worker` invocation remains the compatibility path and this tool still has no
 implicit opinion about whose model runs.
 
+**A description names its key by `key_file` or by `secret`, exactly one (issue
+#881).** `key_file` is the old shape: a path, the plaintext key read as data
+(rule 6). `secret` is the NAME of an environment variable — `"secret":
+"DEEPSEEK_API_KEY"` — delivered into the runner's own environment by `nova-secrets
+exec` around the run (docs/SPEC-SECRETS.md, the second caller): the key is sealed
+once and delivered at use, and it is **never a file on disk**. When `secret` is
+set, `run` and `supervise` require that variable to be present and non-empty in
+their own environment and pass it to the harness under the description's
+`env_var`; a description with neither, or with `secret` set and the variable
+absent, is refused naming the variable and the remedy — run the binary under
+`nova-secrets exec --only <NAME> -- <this command>`. The value is never written
+to any file, never printed, and never in a RUN or SUPERVISE line; the harness
+config still carries the variable's NAME, never the value (the key section
+below). The wall's probe has no key file to prove it cannot read, and runs its
+other checks without one (SPEC-SANDBOX rule 10).
+
 **`version`** prints the Conventions' one line — `nova-swarm <build identity>
 <goos>/<goarch> <go version>`, exit 0 — from `internal/buildinfo`, the same
 resolution every binary here uses. It takes no flags and no arguments.
@@ -1239,7 +1255,7 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 |------|---------|
 | 0 | the verb ran and passed: a task queued, a batch queued, a pool drained, a page written, a report printed |
 | 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `run` that refused a task whose prompt is over its `max_input` |
-| 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, unreadable pool, unreadable worker description, a key file that is absent or empty, `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
+| 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, unreadable pool, unreadable worker description, a key file that is absent or empty, a description whose `secret` variable is absent or empty in the runner's own environment (naming the variable and `nova-secrets exec --only <NAME>`), `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
 
 **A failed task is not a failed `run`.** A worker that exits non-zero moves its
 files to `failed/` and the pass continues; `RUN OK` carries `failed=<n>` and

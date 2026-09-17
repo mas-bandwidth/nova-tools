@@ -39,7 +39,7 @@ const usage = `nova-sandbox: one command, contained by the OS (see docs/SPEC-SAN
 usage:
   nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>]
                [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
-  nova-sandbox probe --write <dir>... [--read <dir>...] --secret <path> [--net-deny]
+  nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
   nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
                [-- <command> <args...>]
   nova-sandbox check [--max <n>]
@@ -68,7 +68,10 @@ usage:
   --acl <t|c>     who adds the windows ACEs. Accepted and ignored on darwin,
                   with one NOTE line, for the same reason as --name.
   --secret <path> probe only: the file a probe proves it cannot read. A path is
-                  not a secret; the file's contents are never read.
+                  not a secret; the file's contents are never read. A probe may run
+                  WITHOUT one -- a caller whose key is delivered by nova-secrets
+                  exec into the environment has no key file, and the probe then
+                  proves the wall's other checks (issue #881).
   --max <n>       how many lines a listing prints before one MORE line stands for
                   the rest. Default 20, and 0 means all.
 
@@ -334,9 +337,10 @@ func checkVerb(stdout io.Writer) int {
 	return 0
 }
 
-// probeVerb is rule 10: five checks under the REAL policy for this platform, run once
-// before the first task. A wall that denies the work too is broken, and a two-check
-// probe would call it a pass.
+// probeVerb is rule 10: four or five checks under the REAL policy for this platform, run once
+// before the first task (the fifth, read_secret, runs only where a --secret file is named;
+// a key delivered by nova-secrets exec has no file). A wall that denies the work too is
+// broken, and a two-check probe would call it a pass.
 func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	f := parse(args)
 	// EVERY independent problem in ONE run. Emma, dogfooding v0.12.0 (nova-tools #104):
@@ -347,10 +351,6 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// together, and the probe runs only when none of them spoke.
 	var bad []sandbox.Refusal
 	bad = append(bad, f.bad...)
-	if f.secret == "" {
-		bad = append(bad, sandbox.Refusal{Reason: "check",
-			Text: "--secret is required and names the file this probe proves it cannot read: --secret <path>"})
-	}
 	// Rule 10: the probe re-executes THIS binary under the policy it just generates, with
 	// an internal verb, never a shell. os.Executable() is the resolved command of that
 	// wrapped run, so its directory is the root "the directory of the resolved command"
@@ -364,7 +364,9 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	}
 	// --secret is a caller path like every other, so rule 5 resolves it: absolute,
 	// existing, symlinks followed, and refused for absence rather than passing a probe
-	// against a file that is not there.
+	// against a file that is not there. A probe WITHOUT --secret is sound: a caller
+	// whose key arrives by environment (nova-secrets exec) has no key FILE for the wall
+	// to protect, and the probe then proves the wall's other four checks (issue #881).
 	var secret string
 	if f.secret != "" {
 		got, refusal := sandbox.ResolveCallerFile("--secret", f.secret)
@@ -405,11 +407,14 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		return sandbox.ExitCannotRun
 	}
 	// rule 6: a --secret inside a named path is a misconfiguration, not a failed probe.
-	for _, d := range append(append([]string{}, p.Reads...), p.Writes...) {
-		if sandbox.Inside(secret, d) {
-			fmt.Fprintf(stderr, "PROBE REFUSED reason=secret_inside_allow: --secret %s is inside %s; the secret is never inside either list\n",
-				oneline.Escape(secret), oneline.Escape(d))
-			return sandbox.ExitCannotRun
+	// A probe without --secret has no secret to place, and the check is skipped.
+	if secret != "" {
+		for _, d := range append(append([]string{}, p.Reads...), p.Writes...) {
+			if sandbox.Inside(secret, d) {
+				fmt.Fprintf(stderr, "PROBE REFUSED reason=secret_inside_allow: --secret %s is inside %s; the secret is never inside either list\n",
+					oneline.Escape(secret), oneline.Escape(d))
+				return sandbox.ExitCannotRun
+			}
 		}
 	}
 
@@ -450,14 +455,21 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	}
 	nonce := hex.EncodeToString(rawNonce[:])
 
+	// FIVE CHECKS, OR FOUR WHERE NO --secret was named (issue #881): a caller whose key
+	// arrives by environment has no key file, so there is no read_secret to prove. The
+	// order is the spec's own.
 	type step struct{ name, path, expect string }
 	steps := []step{
 		{"write_outside_control", outside, "allow"},
 		{"write_outside", outside, "deny"},
-		{"read_secret", secret, "deny"},
-		{"write_inside", filepath.Join(p.Writes[0], ".nova-sandbox-probe-inside"), "allow"},
-		{"read_root", p.Command, "allow"},
 	}
+	if secret != "" {
+		steps = append(steps, step{"read_secret", secret, "deny"})
+	}
+	steps = append(steps,
+		step{"write_inside", filepath.Join(p.Writes[0], ".nova-sandbox-probe-inside"), "allow"},
+		step{"read_root", p.Command, "allow"},
+	)
 	passed, failed := 0, 0
 	for _, s := range steps {
 		var got string

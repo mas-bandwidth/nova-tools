@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -339,6 +340,45 @@ func sprintf(format string, args ...any) string {
 		out = strings.Replace(out, "%s", a.(string), 1)
 	}
 	return out
+}
+
+// ISSUE #881: a worker description may name its secret instead of a key file on disk
+// (docs/SPEC-SWARM.md, the worker description; nova-secrets delivers the value into the
+// run's own environment, never a file). The loader accepts `secret`, refuses a
+// description with NEITHER key_file nor secret, and refuses one carrying both -- the two
+// mechanisms contradict. The old key_file shape stays accepted.
+func TestASecretNamedWorkerDescriptionIsAcceptedByTheLoader(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "worker")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(body string) string {
+		path := filepath.Join(dir, "w.json")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	withSecret := `{"name":"w","provider":"p","model":"m","env_var":"FAKE_KEY","secret":"FAKE_SECRET","usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` + strconv.Quote(home) + `,"deadline":"5m"}`
+	if _, problems := LoadWorker(write(withSecret)); len(problems) != 0 {
+		t.Errorf("a description naming a secret is accepted, got %d problems: %v", len(problems), problems)
+	}
+	// Neither key_file nor secret: refused.
+	neither := strings.Replace(withSecret, `,"secret":"FAKE_SECRET"`, "", 1)
+	if _, problems := LoadWorker(write(neither)); len(problems) == 0 {
+		t.Error("a description with neither key_file nor secret is a refusal")
+	}
+	// Both key_file and secret: refused, because the two mechanisms contradict.
+	both := `{"name":"w","provider":"p","model":"m","env_var":"FAKE_KEY","key_file":"` + filepath.Join(dir, "key") + `","secret":"FAKE_SECRET","usage":"none","harness":"h","harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":` + strconv.Quote(home) + `,"deadline":"5m"}`
+	if _, problems := LoadWorker(write(both)); len(problems) == 0 {
+		t.Error("a description carrying both key_file and secret is a refusal")
+	}
+	// The old shape: key_file alone stays accepted.
+	old := strings.Replace(withSecret, `,"secret":"FAKE_SECRET"`, `,"key_file":"`+filepath.Join(dir, "key")+`"`, 1)
+	if _, problems := LoadWorker(write(old)); len(problems) != 0 {
+		t.Errorf("the key_file shape stays accepted, got %d problems: %v", len(problems), problems)
+	}
 }
 
 // RULE 11, VERBATIM (SPEC-SWARM.md:148-155): a process of the job's own group that outlives

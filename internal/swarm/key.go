@@ -82,6 +82,32 @@ func KeyFileMode(path string) (os.FileMode, bool) {
 	return mode, mode&0o077 != 0
 }
 
+// ReadKeyOrSecret is the key the worker description names, by either half (issue #881):
+// read from the key file, or read from this process's own environment under the name the
+// description's `secret` carries. run and supervise both call it, so the variable must be
+// present and non-empty in EACH process's own environment -- run's at admission, the
+// supervisor's when it inherits that environment and starts the harness. It returns the
+// value and an error that names the variable and never the value.
+func ReadKeyOrSecret(w Worker) (string, error) {
+	if w.Secret != "" {
+		return SecretFromEnv(w.Secret)
+	}
+	return ReadKey(w.KeyFile, w.EnvVar)
+}
+
+// SecretFromEnv reads the variable a description names as its `secret` from this
+// process's own environment. `nova-secrets exec` is what sets it (docs/SPEC-SECRETS.md,
+// the second caller); the value is never written to a file, never printed, and never in a
+// RUN or SUPERVISE line -- the refusal below names the VARIABLE and the remedy, never the
+// value.
+func SecretFromEnv(name string) (string, error) {
+	v := os.Getenv(name)
+	if strings.TrimSpace(v) == "" {
+		return "", fmt.Errorf("the worker description's secret %s is absent or empty in this run's environment; the value is delivered by `nova-secrets exec`, which sets it -- run this binary under `nova-secrets exec --only %s -- <this command>` (or set %s by hand); the value is never a file", name, name, name)
+	}
+	return v, nil
+}
+
 func envOr(varName string) string {
 	if strings.TrimSpace(varName) == "" {
 		return "<VAR>"

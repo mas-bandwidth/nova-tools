@@ -27,12 +27,20 @@ import (
 // Worker is a worker description, decoded strictly: an unknown field is a refusal, because
 // a misspelled field in a file that names a key's location is a silent default.
 type Worker struct {
-	Name        string   `json:"name"`
-	Provider    string   `json:"provider"`
-	Model       string   `json:"model"`
-	BaseURL     string   `json:"base_url,omitempty"`
-	EnvVar      string   `json:"env_var"`
-	KeyFile     string   `json:"key_file"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	BaseURL  string `json:"base_url,omitempty"`
+	EnvVar   string `json:"env_var"`
+	KeyFile  string `json:"key_file"`
+	// SECRET (issue #881): the NAME of the environment variable that holds the key in
+	// THIS process's own environment, delivered by `nova-secrets exec` around the run
+	// (docs/SPEC-SECRETS.md, the second caller). It is the replacement for `key_file`
+	// when the key is sealed once and delivered at use and NEVER a file on disk. Exactly
+	// one of `key_file` and `secret` is set; run and supervise require that variable to
+	// be present and non-empty, and the value is never written to a file, never printed,
+	// and never in a RUN or SUPERVISE line.
+	Secret      string   `json:"secret,omitempty"`
 	Usage       string   `json:"usage"`
 	Harness     string   `json:"harness"`
 	HarnessArgs []string `json:"harness_args,omitempty"`
@@ -79,12 +87,12 @@ func LoadWorker(path string) (Worker, []error) {
 	var w Worker
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return w, []error{fmt.Errorf("--worker wants a readable worker description (a JSON file naming provider, model, env_var, key_file, harness, worker_dir, deadline and usage): %s", redactedReason(err))}
+		return w, []error{fmt.Errorf("--worker wants a readable worker description (a JSON file naming provider, model, env_var, key_file or secret, harness, worker_dir, deadline and usage): %s", redactedReason(err))}
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&w); err != nil {
-		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, usage, harness, harness_args, worker_dir, deadline, board, read_roots, input_limit_phrases", path, err)}
+		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, read_roots, input_limit_phrases", path, err)}
 	}
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
@@ -115,7 +123,22 @@ func LoadWorker(path string) (Worker, []error) {
 	want(w.Provider, "provider", "the provider id the harness config declares, such as deepseek")
 	want(w.Model, "model", "the model id, such as deepseek-chat")
 	want(w.EnvVar, "env_var", "the NAME of the environment variable the provider reads, such as DEEPSEEK_API_KEY; never its value")
-	want(w.KeyFile, "key_file", "the path of a file holding one line, the bare key or NAME=<key>, mode 0600")
+	// THE KEY IS NAMED TWO WAYS, AND A DESCRIPTION CARRIES EXACTLY ONE (issue #881). A
+	// `key_file` is the old shape: a file the person wrote, read as data. A `secret` is
+	// the name of the variable `nova-secrets exec` delivers into this process's own
+	// environment -- the key is sealed once and delivered at use, never a file on disk.
+	// Neither is a description with no key at all, and both is a description with two
+	// contradicting answers; each is refused here, at the one moment a person can still
+	// fix it.
+	switch {
+	case w.Secret == "" && w.KeyFile == "":
+		problems = append(problems, fmt.Errorf("%s: a description names its key either by key_file (a path, the old shape) or by secret (the NAME of the variable nova-secrets exec delivers, such as DEEPSEEK_API_KEY); this description has neither", path))
+	case w.Secret != "" && w.KeyFile != "":
+		problems = append(problems, fmt.Errorf("%s: key_file %s and secret %s both name a key; a description carries one or the other, never both -- the key is either a file a person wrote (key_file) or a variable nova-secrets exec delivers (secret)", path, w.KeyFile, w.Secret))
+	}
+	if w.Secret != "" && !validEnvName(w.Secret) {
+		problems = append(problems, fmt.Errorf("%s: secret %q is not an environment variable NAME; it wants the NAME nova-secrets exec delivers, such as DEEPSEEK_API_KEY, and never a value or a path", path, w.Secret))
+	}
 	want(w.Harness, "harness", "the harness command to run, found on PATH")
 	want(w.WorkerDir, "worker_dir", "the home copy of the worker's own directory, refreshed into a slot directory one way")
 	want(w.Deadline, "deadline", "this worker's default deadline per task, such as 20m")
@@ -340,6 +363,28 @@ func (w Worker) DefaultDeadline() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// validEnvName is the shape a `secret` may take: an environment variable NAME, the same
+// shape a POSIX shell would accept for one. A name with a `=` is a value dressed as a
+// name, and a name with a space or a dash is a typo the loader catches where the caller
+// can still fix it rather than at the first run.
+func validEnvName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // slotDirHolding answers the slot directory of workerDir that holds path -- a sibling of
