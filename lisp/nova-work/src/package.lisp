@@ -815,7 +815,96 @@
     ;; kernel's clip / accept-offer / release-hold.
     #:ctl-clip
     #:ctl-accept-offer
-    #:ctl-release-hold))
+    #:ctl-release-hold
+    ;; regression receipts (card 8641)
+    #:regression-receipt
+    #:make-regression-receipt
+    #:regression-receipt-p
+    #:regression-receipt-criterion
+    #:regression-receipt-revision-coverage
+    #:regression-receipt-uncertainty
+    #:regression-receipt-assertion
+    #:regression-receipt-mutation
+    #:assertion-holds-p
+    #:regression-evidence-p
+    #:green-badge-p
+    ;; savepoint vs shared checkpoint (card 8641)
+    #:savepoint
+    #:make-savepoint
+    #:savepoint-p
+    #:savepoint-id
+    #:savepoint-schema
+    #:savepoint-local-revision
+    #:savepoint-age
+    #:checkpoint
+    #:make-checkpoint
+    #:checkpoint-p
+    #:checkpoint-id
+    #:checkpoint-shared-revision
+    #:savepoint-is-not-shared-backup-p
+    #:restore-open
+    #:savepoint-report
+    #:checkpoint-line
+    ;; a stop across distributed work (card 8641)
+    #:control-request
+    #:make-control-request
+    #:control-request-p
+    #:control-request-kind
+    #:control-request-request
+    #:control-request-targets
+    #:control-handle
+    #:make-control-handle
+    #:control-handle-p
+    #:control-handle-target
+    #:control-handle-request
+    #:control-handle-delivered
+    #:control-handle-acknowledged
+    #:control-handle-reconciled
+    #:control-handle-generation
+    #:copy-control-handle
+    #:blocked-question
+    #:make-blocked-question
+    #:blocked-question-p
+    #:blocked-question-node
+    #:blocked-question-question
+    #:blocked-question-fallback
+    #:blocked-question-persisted
+    #:*control-kinds*
+    #:control-kind-p
+    #:distribute-control
+    #:stop-reaches-p
+    #:control-retry-identity
+    #:apply-correction
+    #:fallback-plan
+    #:independent-tasks-stall-p
+    ;; node add field order (card 8641)
+    #:*node-add-structure-fields*
+    #:*node-add-pre-fold-fields*
+    #:node-add-field-value
+    #:node-add-structure
+    #:node-add-structure-keys
+    #:node-add-pre-fold-structure
+    #:node-add-digest
+    #:node-add-digest-second
+    #:write-node-add-value
+    #:load-node-add-fixture
+    ;; archive completeness (card 8641)
+    #:*archive-gap-kinds*
+    #:archive-gap
+    #:make-archive-gap
+    #:archive-gap-p
+    #:archive-gap-kind
+    #:archive-gap-detail
+    #:archive-gap-source-issue
+    #:archive-capture
+    #:make-archive-capture
+    #:archive-capture-p
+    #:archive-capture-source-issue
+    #:archive-capture-author
+    #:archive-capture-gaps
+    #:archive-gaps-explicit-p
+    #:archive-absorbable-p
+    #:author-retains-source-p))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
