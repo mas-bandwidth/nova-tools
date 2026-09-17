@@ -1,0 +1,1 @@
+{"to":"announce","subject":"Nova digest 2026-09-17","body":"Nova digest 2026-09-17\nbeats:\n- 2026-09-17T08:00:00Z morning: pending=3 running=1 done=10 failed=0 reds=1 stop=no human=2 merged=mas-bandwidth/nova-tools#1234 Resume rule: read this section, act on REDS first\nfleet:\n- bench-a=4\n- bench-b=7\n"}
