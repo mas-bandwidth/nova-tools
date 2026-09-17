@@ -478,10 +478,15 @@ tick with no pending or no free slots clears the marker.
 **status reads a per-root index, not every job file** (#1088). A root holding a full day —
 2,000 finished jobs across 40 slot dirs plus a pool, ~1,100 queue entries — made `status
 --oneline` walk every root and open every job's `usage.tsv` on every tick, over two minutes
-on a real root. `<root>/status-index.tsv` remembers, per job, the job directory's mtime, a
-class, a token count and the usage rows the two readers fold; `status` stats each indexed
-job directory and re-reads only the jobs whose directory mtime moved, so a warm tick opens
-no job file at all. `run` and `harvest` append a finished job to its root's index as they
+on a real root. `<root>/status-index.tsv` remembers, per job, a class, a token count, the
+usage rows the two readers fold, and the key that says they hold: the mtimes of the three
+files a job writes as it finishes — `usage.tsv`, its harness store
+`data/opencode/opencode.db` and `RESULT.md`. `status` stats only those three files per
+indexed job and re-reads only the jobs one of them moved for, so a finished job whose
+harness log or store wal keeps moving is never re-opened for it, and a warm tick opens no
+job file and starts no `sqlite3` at all. The class is `RESULT.md`'s verdict (done, abstain,
+blocked), falling back to the usage row's return code when the job wrote none. `run` and
+`harvest` append a finished job to its root's index as they
 fold it, so a job is indexed before the next tick needs it; a root with no index is walked
 once and the index written, and a root that sat still is answered from the index alone. The
 RATE arithmetic still takes the first measured row of each file and a day's spend still sums

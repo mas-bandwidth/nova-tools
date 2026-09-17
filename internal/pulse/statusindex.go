@@ -1,6 +1,7 @@
 package pulse
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,18 +19,21 @@ var statusIndexReads int64
 // usage.tsv on every tick (#1088). It lives beside the root it describes, so
 // `<root>/status-index.tsv` travels with the root and a fresh process pays no warmup.
 //
-// The columns are `job  mtime  class  tokens` and then the usage rows the two status
-// readers fold -- five fields per row, `started  ended  rc  usd  tokens`. `job` is the
-// usage.tsv path relative to the root and `mtime` the job directory's mtime in UnixNano.
-// status refreshes one job only when that directory's mtime moved; run and harvest append
-// a finished job's rows as they fold it, so a new job is in the index before the next tick
-// reads it. A root with no index is walked once and the index written, and a root with an
-// index opens no job file at all.
+// The columns are `job  key  class  tokens` and then the usage rows the two status readers
+// fold -- five fields per row, `started  ended  rc  usd  tokens`. `job` is the usage.tsv
+// path relative to the root and `key` is the mtimes of the three files a job writes as it
+// finishes: usage.tsv, its harness store data/opencode/opencode.db and RESULT.md. A job is
+// refreshed only when one of those moves, never when any other file in its directory -- the
+// harness log, the store's own wal -- does; run and harvest append a finished job's rows as
+// they fold it, so a new job is in the index before the next tick reads it. A root with no
+// index is walked once and the index written, and a root with an index opens no job file at
+// all. `class` is RESULT.md's verdict, not the usage row's return code.
 const statusIndexName = "status-index.tsv"
 
-// indexEntry is one job's cached usage rows and the directory mtime that says they hold.
+// indexEntry is one job's cached class, usage rows and the key that says they hold.
 type indexEntry struct {
-	mtime int64
+	key   string
+	class string
 	rows  []indexRow
 }
 
@@ -86,9 +90,9 @@ func loadUsageFiles(roots []string) []usageFile {
 	return out
 }
 
-// refreshStatusIndex answers one root's usage files from its index, stat-ing each indexed
-// job directory and re-reading only the jobs whose mtime moved. A root without an index is
-// walked once and the index written; a job directory that vanished is dropped. The index is
+// refreshStatusIndex answers one root's usage files from its index, re-reading only the
+// jobs whose usage.tsv, harness store or RESULT.md moved. A root without an index is walked
+// once and the index written; a job whose usage.tsv vanished is dropped. The index is
 // rewritten only when something moved. New jobs are appended by run and harvest as they
 // finish, so this never re-walks a root the first call already built.
 func refreshStatusIndex(root string) []usageFile {
@@ -108,13 +112,12 @@ func refreshStatusIndex(root string) []usageFile {
 	} else {
 		for rel := range entries {
 			abs := filepath.Join(root, rel)
-			fi, err := os.Stat(filepath.Dir(abs))
-			if err != nil {
+			if _, err := os.Stat(abs); err != nil {
 				delete(entries, rel)
 				changed = true
 				continue
 			}
-			if fi.ModTime().UnixNano() == entries[rel].mtime {
+			if indexKey(abs) == entries[rel].key {
 				continue
 			}
 			entries[rel] = readIndexEntry(abs)
@@ -167,34 +170,77 @@ func indexRelative(root, path string) (string, bool) {
 	return rel, true
 }
 
-// readIndexEntry parses one job's usage.tsv into its rows, carrying the job directory's
-// mtime. A file with no measured rows still gets an entry so the mtime is remembered and
-// the job is not re-opened every tick; the readers skip the rows they cannot use.
+// statusHarnessDB is the harness store a job keeps under its own data home, beside
+// usage.tsv and RESULT.md. SPEC-SWARM's readers name the same store (rule 13).
+const statusHarnessDB = "data/opencode/opencode.db"
+
+// indexKey is the job's cache key: the mtimes of the three files the job writes as it
+// finishes -- usage.tsv, its harness store data/opencode/opencode.db and RESULT.md. A file
+// that is not there is 0. Any other file moving in the job directory, the harness log most
+// of all, leaves the key alone, so a finished job is never re-opened for it (#1088).
+func indexKey(usagePath string) string {
+	dir := filepath.Dir(usagePath)
+	return fmt.Sprintf("%d,%d,%d",
+		fileMtimeNano(usagePath),
+		fileMtimeNano(filepath.Join(dir, filepath.FromSlash(statusHarnessDB))),
+		fileMtimeNano(filepath.Join(dir, "RESULT.md")))
+}
+
+// fileMtimeNano is one file's mtime in UnixNano, 0 when it is not there.
+func fileMtimeNano(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.ModTime().UnixNano()
+}
+
+// resultClass is the class RESULT.md states -- abstain, blocked or done -- falling back to
+// the usage row's own return code when the job wrote no RESULT.md. The class is cached with
+// the rows so status never opens RESULT.md or the usage file twice for one finished job.
+func resultClass(jobDir string, rows []indexRow) string {
+	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+	if err == nil {
+		lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+		if len(lines) > 1 {
+			switch line2 := strings.TrimSpace(lines[1]); {
+			case strings.HasPrefix(line2, "ABSTAIN"):
+				return "abstain"
+			case strings.HasPrefix(line2, "BLOCKED"):
+				return "blocked"
+			case strings.HasPrefix(line2, "DONE"):
+				return "done"
+			}
+		}
+	}
+	class, _ := entrySummary(rows)
+	return class
+}
+
+// readIndexEntry parses one job's usage.tsv into its rows, carrying the cache key and
+// RESULT.md's class. A file with no measured rows still gets an entry so its key is
+// remembered and the job is not re-opened every tick; the readers skip the rows they cannot
+// use.
 func readIndexEntry(path string) indexEntry {
 	atomic.AddInt64(&statusIndexReads, 1)
-	e := indexEntry{}
-	fi, err := os.Stat(filepath.Dir(path))
-	if err != nil {
-		return e
-	}
-	e.mtime = fi.ModTime().UnixNano()
+	e := indexEntry{key: indexKey(path)}
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		return e
-	}
-	for _, l := range strings.Split(string(raw), "\n") {
-		if l == "" || strings.HasPrefix(l, "job") {
-			continue
+	if err == nil {
+		for _, l := range strings.Split(string(raw), "\n") {
+			if l == "" || strings.HasPrefix(l, "job") {
+				continue
+			}
+			f := strings.Split(l, "\t")
+			e.rows = append(e.rows, indexRow{
+				started: cell(f, 2),
+				ended:   cell(f, 3),
+				rc:      cell(f, 4),
+				usd:     cell(f, 12),
+				tokens:  tokensCell(f),
+			})
 		}
-		f := strings.Split(l, "\t")
-		e.rows = append(e.rows, indexRow{
-			started: cell(f, 2),
-			ended:   cell(f, 3),
-			rc:      cell(f, 4),
-			usd:     cell(f, 12),
-			tokens:  tokensCell(f),
-		})
 	}
+	e.class = resultClass(filepath.Dir(path), e.rows)
 	return e
 }
 
@@ -232,8 +278,7 @@ func readStatusIndex(root string) (map[string]indexEntry, bool) {
 		if len(f) < 4 {
 			continue
 		}
-		mtime, _ := strconv.ParseInt(f[1], 10, 64)
-		e := indexEntry{mtime: mtime}
+		e := indexEntry{key: f[1], class: f[2]}
 		for i := 4; i+4 < len(f); i += 5 {
 			e.rows = append(e.rows, indexRow{started: f[i], ended: f[i+1], rc: f[i+2], usd: f[i+3], tokens: f[i+4]})
 		}
@@ -251,13 +296,17 @@ func writeStatusIndex(root string, entries map[string]indexEntry) {
 	}
 	sort.Strings(names)
 	var b strings.Builder
-	b.WriteString("job\tmtime\tclass\ttokens\tstarted\tended\trc\tusd\ttokens\n")
+	b.WriteString("job\tkey\tclass\ttokens\tstarted\tended\trc\tusd\ttokens\n")
 	for _, rel := range names {
 		e := entries[rel]
-		class, tokens := entrySummary(e.rows)
+		_, tokens := entrySummary(e.rows)
+		class := e.class
+		if class == "" {
+			class = entrySummaryClass(e.rows)
+		}
 		b.WriteString(rel)
 		b.WriteByte('\t')
-		b.WriteString(strconv.FormatInt(e.mtime, 10))
+		b.WriteString(e.key)
 		b.WriteByte('\t')
 		b.WriteString(class)
 		b.WriteByte('\t')
@@ -282,6 +331,13 @@ func writeStatusIndex(root string, entries map[string]indexEntry) {
 		return
 	}
 	_ = os.Rename(tmp, path)
+}
+
+// entrySummaryClass is the usage-row class alone: done when the first row's rc is 0, else
+// failed. It is the fallback for a job that wrote no RESULT.md.
+func entrySummaryClass(rows []indexRow) string {
+	class, _ := entrySummary(rows)
+	return class
 }
 
 // entrySummary is the class and token count the index carries per job: done when the first
