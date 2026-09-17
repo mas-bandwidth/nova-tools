@@ -692,3 +692,122 @@
                                    "a recovered operation is reconciled before anything is retried")))
                (close-file-journal reopened))))
       (ignore-errors (delete-file path)))))
+
+;;; ------------------------------------------------------------------
+;;; the-cli-thin-client (SPEC-WORK.md:2642-2646, :2679-2683, :2691-2694).
+;;; The row the spec does not name a replay for gets its own deftest, named
+;;; by the paragraph: the Go CLI is a thin client of the resident session, and
+;;; what is executable here is the client side of the wire the wire row owns --
+;;; the ordered request frame, the reply matched by request id, the lines split
+;;; by the second token, and the emitted count. The live socket and its framing
+;;; are the transport and wire rows'; the client drives decoded frames here.
+;;; ------------------------------------------------------------------
+
+(deftest "the-cli-thin-client" "docs/SPEC-WORK.md:2642-2646,2679-2683,2691-2694"
+    "expected=frame-ordered-ints-are-strings;lines-split-by-second-token;replies-matched-by-id;duplicate-id-refused;unknown-id-refused;emitted-counted;no-identity"
+  ;; The request frame is the pinned spelling op/request/as/expect/now/max/
+  ;; deadline/args, in that order, and every integer is a JSON string
+  ;; (SPEC-WORK.md:2663-2676).
+  (let ((frame (client-request-frame
+                (make-client-request :op "query" :request "q-1" :as "rowan"
+                                     :expect 9007199254740993
+                                     :now "2026-09-14T12:00:00Z" :max 20
+                                     :args '(("node" . "acme/work"))))))
+    (ok (search "\"op\":\"query\"" frame) "the frame names the op: ~A" frame)
+    (ok (search "\"request\":\"q-1\"" frame) "the frame names its request id: ~A" frame)
+    (ok (search "\"as\":\"rowan\"" frame) "the frame carries the author text: ~A" frame)
+    ;; an integer above 2^53 is a string of decimal digits, never a JSON number
+    (ok (search "\"expect\":\"9007199254740993\"" frame)
+        "a bignum is not a JSON-string field: ~A" frame)
+    (ok (search "\"max\":\"20\"" frame) "a small integer is a string too: ~A" frame)
+    ;; an absent key is null, not an empty string
+    (ok (search "\"deadline\":null" frame) "an absent deadline is null: ~A" frame)
+    (ok (search "\"args\":{\"node\":\"acme/work\"}" frame)
+        "args is the ordered JSON object: ~A" frame)
+    (ok (not (search "\"max\":20" frame)) "no JSON number crosses the frame: ~A" frame))
+  ;; The client ships no identity: an absent `as` stays null and no friend,
+  ;; bench or house name is a default of this build (SPEC-WORK.md:5209).
+  (let ((bare (client-request-frame (make-client-request :op "query" :request "q-2"))))
+    (ok (search "\"as\":null" bare) "an absent author is null: ~A" bare)
+    (ok (not (search "acme" bare)) "the tool ships a house name: ~A" bare)
+    (ok (not (search "rowan" bare)) "the tool ships a friend name: ~A" bare))
+  ;; The client splits the handed lines by the second token and by nothing
+  ;; else: OK/ROW/NOTE/MORE to stdout, FAIL/RACED to stderr (:2679-2683).
+  (let ((lines '("QUERY OK ask=size" "READY ROW id=acme/work/f1/t1" "FLEET NOTE pong"
+                 "QUERY MORE after=7" "SESSION FAIL reason=held"
+                 "CLIP RACED expected=deadbeef found=cafef00d")))
+    (multiple-value-bind (stdout stderr) (client-route-lines lines)
+      (check-equal '("QUERY OK ask=size" "READY ROW id=acme/work/f1/t1"
+                     "FLEET NOTE pong" "QUERY MORE after=7")
+                   stdout "OK/ROW/NOTE/MORE are stdout, whatever the noun")
+      (check-equal '("SESSION FAIL reason=held" "CLIP RACED expected=deadbeef found=cafef00d")
+                   stderr "FAIL/RACED are stderr, whatever the noun")))
+  ;; A fresh client holds no kernel and reloads nothing; it does not put the
+  ;; same request id in flight twice on one connection (:2646, :2701).
+  (let ((client (make-cli-client)))
+    (check-equal '() (cli-client-in-flight client) "a fresh client has nothing in flight")
+    (check-equal '() (cli-client-settled client) "a fresh client has settled nothing")
+    (check-equal 0 (cli-client-emitted client) "a fresh client has printed nothing")
+    (ok (stringp (cli-client-send client (make-client-request :op "query" :request "q-1")))
+        "the first request is admitted")
+    (let ((refused nil))
+      (handler-case
+          (progn (cli-client-send client (make-client-request :op "query" :request "q-1"))
+                 (fail "the same id was put in flight twice"))
+        (unsupported-input () (setf refused t)))
+      (ok refused "the same id in flight twice is refused"))
+    ;; A reply matches by its request id, never arrival order: q-2's frame may
+    ;; arrive first and still settle only q-2.
+    (ok (stringp (cli-client-send client (make-client-request :op "query" :request "q-2")))
+        "the second request is admitted")
+    (let ((reply (client-decode-response
+                  "{\"request\":\"q-2\",\"ok\":true,\"exit\":\"0\",\"lines\":[\"QUERY OK ask=size\"],\"rev\":\"7\",\"pushed\":\"6\"}")))
+      (cli-client-receive client reply)
+      (check-equal "q-2" (getf reply :request) "the out-of-order reply settles q-2")
+      (check-equal 0 (getf reply :exit) "the reply carries its exit code")
+      (check-equal '("q-1") (mapcar #'car (cli-client-in-flight client))
+                   "q-1 is still outstanding after q-2's reply"))
+    (cli-client-receive client (client-decode-response
+                                "{\"request\":\"q-1\",\"ok\":true,\"exit\":\"0\",\"lines\":[],\"rev\":\"7\",\"pushed\":\"6\"}"))
+    (check-equal '() (cli-client-in-flight client) "both replies settle their own request")
+    (check-equal '("q-2" "q-1") (cli-client-settled client)
+                 "the settled ids are the ones the replies named")
+    ;; An unknown response id is a protocol error: nothing is falsely settled.
+    (cli-client-send client (make-client-request :op "query" :request "q-3"))
+    (let ((refused nil))
+      (handler-case
+          (progn (cli-client-receive
+                  client (client-decode-response
+                          "{\"request\":\"q-9\",\"ok\":true,\"exit\":\"0\",\"lines\":[],\"rev\":\"7\",\"pushed\":\"6\"}"))
+                 (fail "an unknown response id settled nothing"))
+        (unsupported-input () (setf refused t)))
+      (ok refused "an unknown response id is a protocol error")
+      (check-equal '("q-3") (mapcar #'car (cli-client-in-flight client))
+                   "the unknown reply settled no outstanding request")))
+  ;; The client prints exactly the lines it was handed and counts the bytes it
+  ;; printed; emitted is on every OK line (SPEC-WORK.md:2679-2681, :5336).
+  (let ((lines '("QUERY OK ask=size" "SESSION FAIL reason=held")))
+    (check-equal (+ (length "QUERY OK ask=size") 1
+                    (length "SESSION FAIL reason=held") 1)
+                 (client-lines-bytes lines)
+                 "emitted counts every printed line and its newline"))
+  (let* ((client (make-cli-client))
+         (out (make-string-output-stream))
+         (err (make-string-output-stream)))
+    (cli-client-send client (make-client-request :op "query" :request "q-9"))
+    (multiple-value-bind (exit emitted stdout stderr)
+        (cli-client-run client
+                        "{\"request\":\"q-9\",\"ok\":true,\"exit\":\"0\",\"lines\":[\"QUERY OK ask=size\",\"SESSION FAIL reason=x\"],\"rev\":\"1\",\"pushed\":\"-\"}"
+                        :out out :err err)
+      (check-equal 0 exit "the client prints the response's own exit code")
+      (check-equal (+ (length "QUERY OK ask=size") 1 (length "SESSION FAIL reason=x") 1)
+                   emitted "emitted is the bytes printed")
+      (check-string= "QUERY OK ask=size" (string-trim '(#\Newline)
+                                                        (get-output-stream-string out))
+                     "stdout carries the OK line")
+      (check-string= "SESSION FAIL reason=x" (string-trim '(#\Newline)
+                                                           (get-output-stream-string err))
+                     "stderr carries the FAIL line")
+      (check-equal emitted (cli-client-emitted client)
+                   "the client's own emitted count is the bytes it printed")))
+)

@@ -510,6 +510,28 @@
    #:wire-pipeline-request
    #:wire-feed
    #:wire-dispatch
+   ;; the CLI thin client (SPEC-WORK.md:2642-2646, :2679-2683, :2691-2694)
+   #:make-client-request
+   #:client-request-op
+   #:client-request-request
+   #:client-request-as
+   #:client-request-expect
+   #:client-request-now
+   #:client-request-max
+   #:client-request-deadline
+   #:client-request-args
+   #:client-request-frame
+   #:client-decode-response
+   #:client-route-lines
+   #:client-lines-bytes
+   #:make-cli-client
+   #:cli-client-p
+   #:cli-client-in-flight
+   #:cli-client-settled
+   #:cli-client-emitted
+   #:cli-client-send
+   #:cli-client-receive
+   #:cli-client-run
    #:independent-batch-results
    #:atomic-batch-validate
    #:make-wire-session
