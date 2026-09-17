@@ -75,6 +75,8 @@
          (m2 (nth-value 2 (take-slot m1 "N2" :slots 1 :holder "sess-b" :id "alloc-b"))))
     (check-equal 16 (replay-machine-cores m2) "machine m-a1 declares :cores 16")
     (check-equal 2 (replay-machine-concurrent m2) "machine m-a1 declares :concurrent 2")
+    (check-equal 16 (machine-cores m2) "machine m-a1 declares :cores 16")
+    (check-equal 2 (machine-concurrent m2) "machine m-a1 declares :concurrent 2")
     (check-equal 2 (machine-live-slots m2) "two allocations each consume one slot")
     ;; the third take is refused even though fourteen cores sit idle.
     (multiple-value-bind (taken3 line3 m3)
@@ -87,6 +89,9 @@
       (check-equal 2 (length (replay-machine-allocations m3))
                    "no third allocation is written")
       (check-equal 14 (- (replay-machine-cores m2) (machine-live-slots m2))
+      (check-equal 2 (length (machine-allocations m3))
+                   "no third allocation is written")
+      (check-equal 14 (- (machine-cores m2) (machine-live-slots m2))
                    "fourteen cores sit idle and cores are a separate constraint"))))
 
 ;;; ------------------------------------------------------------------
