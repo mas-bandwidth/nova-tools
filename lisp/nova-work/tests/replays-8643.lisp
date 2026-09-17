@@ -105,8 +105,19 @@
 ;;; ------------------------------------------------------------------
 
 (deftest "copied-journal-grants-nothing" "docs/SPEC-WORK.md:6017"
-    "expected=restore-inspects-in-isolation;no-ownership-no-dispatch;start-over-copy-fenced;journal-id-notwithstanding"
-  (let* ((copy '(:journal-id "j-abc" :savepoint "sp-1" :bench "bench-a"))
+    "expected=restore-inspects-in-isolation;no-ownership-no-dispatch;start-over-copy-fenced;journal-id-notwithstanding;image-and-replies-loaded"
+  (let* ((records (list (list :seq 1 :request "r1" :reply '("OK r1") :payload-sha256 "p1" :events '(1))
+                        (list :seq 2 :request "r2" :reply '("OK r2") :payload-sha256 "p2" :events '(2))))
+         (journal (make-journal-chain
+                   :id "j-abc"
+                   :segments (list (make-journal-segment :path "journal.1"
+                                                         :header '() :records '()))))
+         (sp (savepoint-store-verified
+              (savepoint-write (make-savepoint-store) "sp-1" 2 1 records :journal journal)))
+         (copy (list :journal-id "j-abc" :savepoint sp :bench "bench-a"
+                     :journal journal :image (savepoint-image-events 1 records)
+                     :replies (savepoint-retained-replies records)
+                     :records records))
          (restored (restore-copy copy)))
     (check-equal "j-abc" (getf restored :journal-id) "the copy's journal id is read")
     (check-equal :read-only (getf restored :isolation)
@@ -115,6 +126,16 @@
     (check-equal 0 (getf restored :dispatches) "a copied restore dispatches nothing")
     (check-equal 0 (getf restored :side-effects)
                  "a copied restore duplicates no external side effect")
+    ;; the very same isolated read-only session a local restore opens, with the
+    ;; image and its retained replies loaded and nothing dispatched.
+    (let ((session (getf restored :session)))
+      (ok session "the copied restore opened a session")
+      (ok (restore-session-read-only-p session) "the copied session is read-only")
+      (check-equal (savepoint-image-events 1 records) (restore-session-image session)
+                   "the copied session loaded the image")
+      (check-equal '(2) (mapcar (lambda (r) (getf r :seq))
+                                (restore-session-replayed-records session))
+                   "the copied session replayed the records after the cut"))
     ;; a session start over the copy is refused by the fencing rules.
     (multiple-value-bind (ok line code) (start-over-copy copy)
       (check-equal nil ok "a session start over a copy is refused")

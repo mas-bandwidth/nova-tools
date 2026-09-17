@@ -4,7 +4,7 @@
 (in-package #:nova-work/tests)
 
 (deftest "torn-tail-is-diagnosed-not-truncated" "docs/SPEC-WORK.md:492"
-    "expected=torn-tail-signals-corrupt;file-bit-for-bit-preserved"
+    "expected=torn-tail-signals-corrupt;file-bit-for-bit-preserved;torn-tail-and-corrupt-record-and-journal-mismatch-each-by-its-kind;none-rounded"
   (let* ((path (test-journal-path "torn-tail"))
          (initial-hash (root-digest (make-seed-state *seed*))))
     (unwind-protect
@@ -13,18 +13,61 @@
              (let ((k (fresh :journal j)))
                (submit k (doing-request :node "acme/work/f1/t1" :request "req-1")))
              (close-file-journal j))
-           (let ((valid-bytes (file-byte-count path)))
+           (let* ((valid-bytes (file-byte-count path))
+                  (valid-sha (file-sha256-hex path)))
              (with-open-file (out path :direction :output :if-exists :append :element-type 'character)
                (write-string "(:frame :seq 2 :len 90 :checksum \"0000\"" out)
                (finish-output out))
-             (let ((torn-bytes (file-byte-count path)))
+             (let* ((torn-bytes (file-byte-count path))
+                    (torn-sha (file-sha256-hex path)))
                (ok (> torn-bytes valid-bytes) "torn bytes appended")
-               (let ((signaled nil))
+               (let ((reason nil))
                  (handler-case (open-file-journal path :initial-state-hash initial-hash)
-                   (journal-corrupt-data () (setf signaled t)))
-                 (ok signaled "the torn tail was not diagnosed"))
-               (check-equal torn-bytes (file-byte-count path) "the file was truncated"))))
-      (ignore-errors (delete-file path)))))
+                   (journal-corrupt-data (c) (setf reason (journal-corrupt-data-reason c))))
+                 (ok reason "the torn tail was not diagnosed"))
+               (check-equal torn-bytes (file-byte-count path)
+                            "the file was truncated")
+               (check-string= torn-sha (file-sha256-hex path)
+                              "the file is bit for bit as it was"))))
+      (ignore-errors (delete-file path))))
+  ;; savepoint verify tells the three gaps apart and rounds none of them to
+  ;; another: a torn tail is an interrupted append, a flipped bit is a corrupt
+  ;; record and a wrong journal id is a journal mismatch
+  ;; (docs/SPEC-WORK.md:6124-6130, :6454-6459).
+  (let* ((records (list (list :seq 1 :request "r1" :reply '("OK r1") :payload-sha256 "p1" :events '(1))))
+         (journal (make-journal-chain
+                   :id "journal-abc"
+                   :segments (list (make-journal-segment :path "journal.1"
+                                                         :header '() :records '()))))
+         (sp (savepoint-store-verified
+              (savepoint-write (make-savepoint-store) "sp-1" 1 1 records :journal journal)))
+         (image (savepoint-image-events 1 records))
+         (replies (savepoint-retained-replies records))
+         (torn (nth-value 1
+                          (savepoint-verify (make-savepoint-load
+                                             :savepoint sp :journal journal
+                                             :image image :replies replies
+                                             :records records :gap :torn-tail))))
+         (corrupt (nth-value 1
+                             (savepoint-verify (make-savepoint-load
+                                                :savepoint sp :journal journal
+                                                :image (list :events '(99))
+                                                :replies replies :records records))))
+         (mismatch (nth-value 1
+                              (savepoint-verify
+                               (make-savepoint-load :savepoint sp :image image
+                                                    :replies replies :records records
+                                                    :journal (make-journal-chain :id "other")))))
+         (verified (savepoint-verify (make-savepoint-load :savepoint sp :journal journal
+                                                          :image image :replies replies
+                                                          :records records))))
+    (check-equal :verified verified "a whole savepoint verifies")
+    (ok (search "recovery-gap kind=torn-tail" torn) "a torn tail is named: ~A" torn)
+    (ok (search "recovery-gap kind=corrupt-record" corrupt)
+        "a flipped bit is a corrupt record: ~A" corrupt)
+    (ok (search "journal mismatch" mismatch) "a wrong header is a journal mismatch: ~A" mismatch)
+    (ok (not (equal torn corrupt)) "a torn tail is not rounded to a corrupt record")
+    (ok (not (equal corrupt mismatch)) "a corrupt record is not rounded to a journal mismatch")))
 
 (deftest "replay-mints-nothing" "docs/SPEC-WORK.md:493"
     "expected=root-digest-exact,next-rev-exact,no-fresh-id"

@@ -1240,6 +1240,11 @@
     #:restore-session-dispatch-count
     #:restore-session-replayed-messages
     #:restore-session-external-effects
+    #:restore-session-image
+    #:restore-session-replies
+    #:restore-session-replayed-records
+    #:restore-session-cut
+    #:restore-session-boundary
     #:restore-dispatch
     #:promote-repair
     #:make-scope-review
@@ -1305,6 +1310,18 @@
     #:savepoint-retained-replies
     #:savepoint-write
     #:savepoint-list
+    #:savepoint-verify
+    #:savepoint-restore
+    #:make-savepoint-load
+    #:savepoint-load-p
+    #:savepoint-load-savepoint
+    #:savepoint-load-journal
+    #:savepoint-load-image
+    #:savepoint-load-replies
+    #:savepoint-load-records
+    #:savepoint-load-gap
+    #:savepoint-cut-sequence
+    #:savepoint-content-ok-p
     ;; replays-8650 (nova-tools #362)
     #:migrate-state-schema
     #:declare-shared-prerequisite
