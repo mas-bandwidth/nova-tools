@@ -733,12 +733,19 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		// model's own doing; `rc=<n>` is a harness that ran and ended badly; a silent harness
 		// is neither, and its exit code -- 0 in the fault that wrote this rule -- says nothing
 		// worth going to read. The exit code is still on the card's own NATIVE OK line.
+		// A WALL DEATH BEFORE THE PLAIN FENCE (issue #918). When the run's own capture
+		// holds the harness's raw `auto-rejecting` line, the death is `wall`: it names
+		// the rejected path AND the commits ./repo kept, so the harvester can push them.
+		if report, ok := WallDeath(job, c.label); ok {
+			return "abstain", "wall", report, ""
+		}
 		// THE FENCE BEFORE EVERYTHING ELSE THE HARNESS DID (issue #644). When the harness's
 		// own permission fence auto-rejected a path -- the card's `../scratch`, a read-only
 		// /sys path on a bench with no wall -- the model was stopped by the MACHINERY, not
 		// by its own judgement, and neither `no-result` (the model published nothing) nor
 		// `harness-silent` (the harness never ran) is true of it. The token is read off the
-		// card's own NATIVE OK line, never recomputed here.
+		// card's own NATIVE OK line, never recomputed here, and stays its own token for a
+		// runner that reported the rejection without the raw line the wall death reads.
 		if p, ok := cardFenceRejected(job); ok {
 			return "abstain", "fence", "path=" + p, ""
 		}
