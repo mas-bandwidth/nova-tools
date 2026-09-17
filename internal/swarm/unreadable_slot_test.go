@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -83,5 +84,64 @@ func TestAnUnreadableSlotFileIsNotEvidenceAJobIsOver(t *testing.T) {
 	}
 	if alive, _ := in.state(fresh, now); alive {
 		t.Error("a slot file that is GONE is an answer, and the dispatcher waits on nothing for it")
+	}
+}
+
+// THE WINDOWS FLAKE CLASS, finish side (run 34698330796, `TestANumericBudgetWithNoUsageSourceIsRefused`).
+//
+// A slot file that collided is not a slot the dispatcher cannot free. `finish` retired the
+// slot when the slot file read failed, even when exit.json confirmed the job ended properly
+// (nonce + attestation match). A retired slot makes the run exit 1 over a pool that drained
+// green. The slot must be freed when exit.json is this launch's answer, because what the
+// dispatcher could not read it cannot say is free -- but what the supervisor wrote beside
+// the job is free enough.
+func TestAFinishedJobFreesItsSlotWhenExitJSONConfirmsDespiteAnUnreadableSlotFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p, err := OpenPool(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A slot file that is a DIRECTORY: every read fails, standing in for the Windows
+	// collision.
+	if err := os.MkdirAll(p.Path(Slots, "1.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	jobDir := filepath.Join(dir, "job")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The job's own completion evidence, under this launch's nonce and attestation.
+	nonce := "abc123"
+	attestSecret := fixtureAttest
+	if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: 0, End: EndDone, Nonce: nonce, Attest: attestSecret}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAtomic(ResultPath(jobDir), []byte("# t\n\n## Head\nfindings: 0\nnotes read: 0\nrepo: o/n\nrev: abc\na paragraph.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := Sidecar{ID: "test-job-1", Files: 1, Tokens: 100000, Unmetered: true, Job: jobDir, Slot: 1, Started: Stamp(time.Now().UTC())}
+	if err := p.WriteSidecar(Running, sc); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &running{sc: sc, slot: 1, nonce: nonce, exitAttest: ExitAttestHash(attestSecret), jobDir: jobDir, started: time.Now(), deadline: 30 * time.Second}
+
+	var out, errb bytes.Buffer
+	in := RunInput{Pool: p, Worker: Worker{}, Stdout: &out, Stderr: &errb, Now: func() time.Time { return time.Now().UTC() }}
+	retired := map[int]bool{}
+
+	_, end, _ := in.finish(r, retired, in.Now())
+	if end != EndDone {
+		t.Fatalf("the job ended done, got %q: %s%s", end, out.String(), errb.String())
+	}
+	if retired[1] {
+		t.Fatal("a job whose exit.json confirms the end frees its slot: the dispatcher retired it over a collision")
+	}
+	// The slot is freed: no file remains.
+	if _, err := os.Stat(p.slotPath(1)); err == nil {
+		t.Error("the slot file is freed after finish confirms the job")
 	}
 }
