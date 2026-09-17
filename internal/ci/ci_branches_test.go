@@ -52,6 +52,36 @@ func TestMergeGroupRunsTheFullHostedLegs(t *testing.T) {
 	}
 }
 
+// TestSelfHostedShardsSelectThePackagesAChangeTouches pins the self-hosted
+// test fan-out's price law: on pull_request and merge_group the shards carry
+// only the packages the change touches and their in-module importers, while
+// the push to dev and the nightly schedule keep the whole tree. The selection
+// reads the diff against the event's own base (pull_request.base.sha,
+// merge_group.base_sha); a change that touches no Go package — docs or lisp
+// only — selects nothing and the fan-out collapses to one leg that prints
+// "nothing to test for this change" and exits 0. Without the selection a docs
+// change pays twenty-four shards, which is what held the merge queue.
+func TestSelfHostedShardsSelectThePackagesAChangeTouches(t *testing.T) {
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	block := jobBody(src, "test-packages")
+	if block == "" {
+		t.Fatal("no test-packages job in ci.yml; the self-hosted fan-out has no selection to check")
+	}
+	if runsOnHosted(block) {
+		t.Fatal("test-packages is not the self-hosted fan-out; the test is looking at the wrong job")
+	}
+	for _, want := range []string{
+		"github.event.pull_request.base.sha",
+		"github.event.merge_group.base_sha",
+		"nothing to test for this change",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("test-packages does not carry %q: the self-hosted shards must select the packages a change touches on pull_request and merge_group and run nothing for a change that touches no Go package", want)
+		}
+	}
+}
+
 // jobBlocks returns each job's body, keyed by job name, with the job's own
 // `if:` and steps but without the next job's. It starts at `jobs:` and stops at
 // the first top-level key, so the keys under `on:` (`push:`, `pull_request:`)
