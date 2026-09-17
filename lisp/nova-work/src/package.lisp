@@ -262,7 +262,39 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+    ;; long operation, cancel, clip and undo/redo replays (card 8609)
+    #:*operation-limits*
+    #:make-operation
+    #:operation-p
+    #:operation-id
+    #:operation-op
+    #:operation-request
+    #:operation-state
+    #:operation-result
+    #:operation-staged-bytes
+    #:operation-retained-results
+    #:make-work-session
+    #:work-session-p
+    #:work-session-operations
+    #:work-session-events
+    #:work-session-receipts
+    #:work-session-limits
+    #:work-session-git-timeout
+    #:session-operation
+    #:session-add-operation
+    #:operation-status
+    #:operation-pending-p
+    #:session-bounded-p
+    #:operation-cancel
+    #:clip-request
+    #:operation-wait
+    #:session-stop
+    #:reconcile-operations
+    #:*reversible-verbs*
+    #:undo-request
+    #:moved-preconditions
+    #:redo-request))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
