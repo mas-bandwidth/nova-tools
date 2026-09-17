@@ -56,15 +56,49 @@
                  (close-file-journal j2)))))
       (ignore-errors (delete-file path)))))
 
-;;; The remaining sixteen named replays assert kernel code this slice does not
+(deftest "dedup-page-unavailable-refuses" "docs/SPEC-WORK.md:5598-5601"
+    "expected=unreadable-page-refused-dedup-unavailable-applying-nothing;admitted-when-readable;changed-payload-refused"
+  (let* ((journal (make-ordering-journal))
+         (k (fresh :journal journal))
+         (req (close-request :request "dedup-page-1")))
+    (ok (submit k req) "the first close was refused")
+    (let ((digest-before (root-digest (kernel-state k)))
+          (rev-before (kernel-next-rev k)))
+      ;; The dedup page the retry needs cannot be read: refuse it, never answer
+      ;; it as new and apply nothing.
+      (setf (dedup-page-available-p journal) nil)
+      (multiple-value-bind (okp line code) (submit k req)
+        (ok (not okp) "a retry with an unreadable dedup page was admitted")
+        (check-equal 1 code "the unreadable-page refusal exit code")
+        (ok (search "dedup unavailable" line)
+            "the refusal did not say dedup unavailable: ~A" line))
+      (check-string= digest-before (root-digest (kernel-state k))
+                     "the refused retry applied something")
+      (check-equal rev-before (kernel-next-rev k)
+                   "the refused retry moved the revision")
+      ;; Readable again, the same request and payload is answered by its original
+      ;; reply, applying nothing.
+      (setf (dedup-page-available-p journal) t)
+      (multiple-value-bind (okp line code env) (submit k req)
+        (declare (ignore line))
+        (ok okp "the retry was refused once the page was readable")
+        (check-equal 0 code "the admitted retry exit code")
+        (ok (getf env :replayed) "the admitted retry is not marked replayed")
+        (check-equal '() (getf env :events) "the admitted retry applied new events"))
+      ;; The same id with a changed payload still refuses.
+      (multiple-value-bind (okp line code)
+          (submit k (close-request :request "dedup-page-1" :reason "changed"))
+        (declare (ignore code))
+        (ok (not okp) "a changed payload was admitted")
+        (ok (search "reused with a different payload" line)
+            "the changed-payload refusal was not named: ~A" line))
+      (check-string= digest-before (root-digest (kernel-state k))
+                     "a refusal moved the state"))))
+
+;;; The remaining fifteen named replays assert kernel code this slice does not
 ;;; carry (index paging, the clip, closed-history windows, day manifests and the
 ;;; new friend/model/fleet verbs). Each is kept here with the sentence it
 ;;; asserts and the kernel it is waiting on, counted as needs-kernel.
-
-;; NEEDS-KERNEL: dedup-page-unavailable-refuses (docs/SPEC-WORK.md:582,592)
-;;   a dedup page the predicate needs and cannot read refuses the request as
-;;   `dedup unavailable`, never answers it as new. Waits on the paged dedup
-;;   index store; slice 1 keeps only the bounded ordering-journal fake.
 
 ;; NEEDS-KERNEL: history-grows-startup-does-not (docs/SPEC-WORK.md:646)
 ;;   a session start loads no whole C and no whole dedup index; startup cost is
