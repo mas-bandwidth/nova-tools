@@ -60,8 +60,8 @@ usage:
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
-  nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
    nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
    nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
    nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
@@ -191,6 +191,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdQuickstart(rest, stdout, stderr)
 	case "native":
 		return cmdNative(rest, stdout, stderr)
+	case "route":
+		return cmdRoute(rest, stdout, stderr)
 	case "bench":
 		return cmdBench(rest, stdout, stderr)
 	case "reap":
