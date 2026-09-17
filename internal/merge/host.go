@@ -15,13 +15,22 @@ import (
 // read verdict is the only thing that authorizes a merge, and a read verdict is recorded
 // by a line at a keyboard, never parsed out of anything the host returns.
 
+// CheckDetail is one check run's name and its conclusion, as the host reported it.
+// The wait verb prints both on its RED line, so the bucket count alone is not enough.
+type CheckDetail struct {
+	Name       string
+	Conclusion string
+}
+
 // Checks is a head commit's evidence, in three buckets counted SEPARATELY. Zero fail is
 // not the same news as zero pending, and the merge condition wants zero of both.
 type Checks struct {
-	Green    int
-	Pending  int
-	Red      int
-	RedNames []string
+	Green        int
+	Pending      int
+	Red          int
+	RedNames     []string
+	Details      []CheckDetail
+	PendingNames []string
 }
 
 // Bucket classifies one check's state the way the merge condition counts it.
@@ -41,6 +50,11 @@ func Bucket(state string) string {
 
 // Add counts one check by name and state.
 func (c *Checks) Add(name, state string) {
+	conclusion := strings.ToLower(strings.TrimSpace(state))
+	if conclusion == "" {
+		conclusion = "pending"
+	}
+	c.Details = append(c.Details, CheckDetail{Name: name, Conclusion: conclusion})
 	switch Bucket(state) {
 	case "green":
 		c.Green++
@@ -49,7 +63,29 @@ func (c *Checks) Add(name, state string) {
 		c.RedNames = append(c.RedNames, name)
 	default:
 		c.Pending++
+		c.PendingNames = append(c.PendingNames, name)
 	}
+}
+
+// ConclusionFor returns the conclusion the host reported for the named check,
+// or "failure" when nothing was recorded for it.
+func (c Checks) ConclusionFor(name string) string {
+	for _, d := range c.Details {
+		if d.Name == name {
+			return d.Conclusion
+		}
+	}
+	return "failure"
+}
+
+// PendingList names the pending checks, sorted, or "-" when there are none.
+func (c Checks) PendingList() string {
+	if len(c.PendingNames) == 0 {
+		return "-"
+	}
+	names := append([]string(nil), c.PendingNames...)
+	sort.Strings(names)
+	return strings.Join(names, ",")
 }
 
 // Total is how many checks there were at all.
@@ -101,6 +137,12 @@ type PR struct {
 	Fork      bool
 	URL       string
 	Subject   string
+	// Merged and Closed are the wait verb's poll state, read back every poll from
+	// the same gh reader as everything else here. MergeSHA is the merge commit
+	// the host reports for a merged PR, empty when the host names none.
+	Merged   bool
+	Closed   bool
+	MergeSHA string
 }
 
 // Host is the edge between this tool and the forge. It is an interface for two reasons:
@@ -159,7 +201,7 @@ func (h *GH) gh(args ...string) (string, error) {
 // PR reads the fields the merge condition needs, in one call.
 func (h *GH) PR(n int) (PR, error) {
 	out, err := h.gh("pr", "view", strconv.Itoa(n), "--repo", h.Repo, "--json",
-		"number,author,baseRefName,headRefName,headRepositoryOwner,headRefOid,mergeable,isDraft,url,title")
+		"number,author,baseRefName,headRefName,headRepositoryOwner,headRefOid,mergeable,isDraft,url,title,state,mergedAt,mergeCommit")
 	if err != nil {
 		return PR{}, err
 	}
@@ -182,6 +224,11 @@ func decodePR(out string, n int, repo string) (PR, error) {
 		IsDraft             bool                   `json:"isDraft"`
 		URL                 string                 `json:"url"`
 		Title               string                 `json:"title"`
+		State               string                 `json:"state"`
+		MergedAt            string                 `json:"mergedAt"`
+		MergeCommit         struct {
+			OID string `json:"oid"`
+		} `json:"mergeCommit"`
 	}
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {
 		return PR{}, fmt.Errorf("gh pr view %d did not answer JSON this tool can read: %w", n, err)
@@ -195,11 +242,15 @@ func decodePR(out string, n int, repo string) (PR, error) {
 		return PR{}, fmt.Errorf("pull request %d's head branch is not a name this tool hands to git: %w", n, err)
 	}
 	owner, _, _ := strings.Cut(repo, "/")
+	state := strings.ToUpper(strings.TrimSpace(raw.State))
+	merged := strings.TrimSpace(raw.MergedAt) != "" || state == "MERGED"
+	closed := merged || state == "CLOSED"
 	return PR{
 		Number: raw.Number, Author: raw.Author.Login, Base: raw.BaseRefName,
 		HeadRef: raw.HeadRefName, HeadOID: raw.HeadRefOid, Mergeable: raw.Mergeable,
 		Draft: raw.IsDraft, Fork: raw.HeadRepositoryOwner.Login != "" && raw.HeadRepositoryOwner.Login != owner,
 		URL: raw.URL, Subject: raw.Title,
+		Merged: merged, Closed: closed, MergeSHA: strings.TrimSpace(raw.MergeCommit.OID),
 	}, nil
 }
 

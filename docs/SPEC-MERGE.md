@@ -453,7 +453,10 @@ nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
 nova-merge stop       --lane <dir>
 nova-merge dry-run    --lane <dir> [--max <n>]
 nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
+nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
 nova-merge version
+
+`wait` blocks in one full-context turn instead of watching GitHub by hand: it polls the same gh reader the lane uses for PR state and checks (`Host.PR` and `Host.Checks`, no new client) every `--interval` (default 30s) until the PR is merged (`MERGE WAIT MERGED pr=<n> sha=<merge sha> wall=<s>`, exit 0), a required check fails or the PR is closed unmerged (`MERGE WAIT RED pr=<n> check=<name> conclusion=<c> wall=<s>`, exit 2), or `--timeout` runs out (`MERGE WAIT TIMEOUT pr=<n> state=<state> pending=<names> wall=<s>`, exit 3). It prints exactly one line on stdout and nothing between polls, so a coordinator spends one turn per merge instead of one turn per `gh` call.
 
 every verb takes [--lane <dir>]; every verb that runs git or gh also takes
 [--timeout <seconds>], default 120
