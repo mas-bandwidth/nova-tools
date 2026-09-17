@@ -3272,6 +3272,23 @@ preserved, and **no savings percentage is claimed yet**: a cheaper read half or
 a shorter receipt alone does not prove lower total cost, and a harness that does
 not report a category prints `unknown` rather than `zero`.
 
+#### Boundaries and the deciding cases
+
+The transaction stays inside the bus's own boundary. The bus owns message transport and receipts;
+`nova-wake` owns subscriptions; `nova-work` owns assignments. A note is carried, read and
+receipted here and nothing more: this tool does not read a subscription out of a
+message, and it does not infer permission from message content or Git author — who may act
+is a fact the roster and the assignment holder carry, never a line in a body and never
+the name on a commit. Authorizing a send is the explicit command naming bus, remote,
+branch and speaker; no prepared artifact, note or trailer stands in for it.
+
+The contract above is decided by tests over disposable local fakes, never the
+network: a **stale checkout**, **concurrent sends**, **a lost push response**,
+**quoted text**, **an invalid recipient**, **a CC-only update** and
+**interrupted draft handling**. Each is answered without a second note and
+without dropping a reader, and none of the seven may be traded away for a
+smaller receipt.
+
 ### The receipt rule
 
 `receipt` appends one line to `from-<me>/RECEIPTS` and pushes it the same way a
