@@ -102,6 +102,9 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		// The ledger's own `<ledger>.tsv.tmp`, written through before the one rename that
 		// lands the day's rows; the ledger the caller names is the file this verb maintains.
 		"cmd/nova-tokens/sumswarm.go": {"os.WriteFile("},
+		// The pool ledger's own `<ledger>.tsv.tmp` for fold-pool, same shape: this run's
+		// staged ledger landing by one rename.
+		"internal/tokens/foldpool.go": {"os.WriteFile("},
 		// In package staging, the publisher's own-run temporary marker batch.json.tmp
 		// unlinked via syscall.Unlink after successful atomic no-replace link to batch.json.
 		"internal/tokens/package.go": {"syscall.Unlink("},
