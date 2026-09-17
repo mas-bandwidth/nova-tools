@@ -253,6 +253,18 @@ of burning the afternoon); `fleet wake` wakes by magic packet to the bench's
 `mac`; `fleet standard` is the standard itself, run locally or over ssh,
 whose checks are the contract below.
 
+`fleet suspend` sleeps the idle benches: a bench holding a running card
+(a lease or a job directory with a live pid under `~/rowan-swarm-root` or
+`~/stella-swarm-root`) or a busy runner (a `Runner.Worker` process) is
+`FLEET <name> BUSY <what>`, exit 2, and is never suspended unless `--force`;
+`--if-idle` skips a busy bench instead of refusing it, and an idle one runs
+`sudo systemctl suspend` and prints `FLEET <name> SUSPENDED`. `fleet wake`
+builds the Wake-on-LAN magic packet in Go — six `0xFF` bytes then the bench's
+`mac` sixteen times, to UDP broadcast port 9, no external tool — and then
+polls ssh until the bench answers, printing `FLEET <name> AWAKE wall=<s>` or
+`FLEET <name> WAKE TIMEOUT`, exit 3; a bench whose `mac` is `-` cannot be
+woken and is `FLEET REFUSED bench=<name> no-mac`, exit 2.
+
 `tools/bench-standard.sh` is the one admin entry for a Linux bench: it checks
 the bench against the standard and prints `STANDARD OK ...`, or one
 `DRIFT <what>` line per finding followed by `STANDARD DRIFT (see lines
