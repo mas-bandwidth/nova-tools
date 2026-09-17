@@ -722,6 +722,15 @@ lists as available must run, or be marked (issue #515):
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 ```
 
+### cut
+
+`pool` writes one candidate per line into `pool.tsv`, field 1 the locator the
+sources line declares (an `owner/repo` for the `issues` kind, never the source
+kind). `cut` renders each card from its typed template, and a template's
+`<source>` in the `STEP 1` clone URL renders that locator — `git clone -q
+https://github.com/mas-bandwidth/nova-tools.git .` — so every card clones the
+repo it is about (the dogfood probe's red line cloned `github.com/issues.git`).
+
 ### version
 
 `nova-pulse version` (and `--version`) prints which build is running, one line,
