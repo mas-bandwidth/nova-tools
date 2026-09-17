@@ -271,13 +271,44 @@
 ;;   ;; bounded, and a restart reconciling the operation ids that were pending.)
 ;; NEEDS-KERNEL: the operation scheduler plus capture/export/clip (no such verbs).
 
-;;; cancel-is-a-request-not-an-erasure  SPEC-WORK.md prose :2580 / table :5189
-;; (deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5189"
-;;     "cancel-ack-own-disposition;accepted-mutation-not-erased;uncertain-external-reported-uncertain"
-;;   ;; a cancellation acknowledged with its own final disposition, erasing no
-;;   ;; accepted mutation, and reporting an uncertain external effect as uncertain
-;;   ;; rather than as cancelled.)
-;; NEEDS-KERNEL: the cancel verb and external-effect disposition (none here).
+;;; cancel-is-a-request-not-an-erasure  SPEC-WORK.md prose :5789-5791 / table :5189
+(deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5789-5791"
+    "cancel-ack-own-disposition;accepted-mutation-not-erased;uncertain-external-reported-uncertain"
+  ;; A cancellation is a request with its own acknowledgement and its own final
+  ;; disposition: it erases no accepted mutation, cancels once on a replay, and
+  ;; an uncertain external effect is reported uncertain rather than cancelled.
+  (let* ((events '((:id "ev-accepted" :kind :state-to-done :request "req-accepted")))
+         (session (make-work-session
+                   :events events :receipts '(:receipt-1)
+                   :operations (list (make-operation :id "op-cap" :op :capture
+                                                      :request "req-cap" :state :running))))
+         (before-events (work-session-events session)))
+    (multiple-value-bind (after disposition)
+        (operation-cancel session "op-cap" :request "req-cancel-1")
+      (check-equal :cancelled (getf disposition :state)
+                   "the cancel ack carries its own final disposition")
+      (check-equal "req-cancel-1" (getf disposition :request)
+                   "the ack echoes the cancel's own request id")
+      (check-equal before-events (work-session-events after)
+                   "the accepted mutation is not erased")
+      ;; a cancel replayed twice cancels once.
+      (multiple-value-bind (again disposition-2)
+          (operation-cancel after "op-cap" :request "req-cancel-1")
+        (check-equal :cancelled (getf disposition-2 :state) "the replay answers cancelled")
+        (check-equal t (getf disposition-2 :replayed) "the replay applies nothing")
+        (check-equal before-events (work-session-events again)
+                     "the replay erases nothing")))
+    ;; an uncertain external effect is reported uncertain, not cancelled.
+    (let ((uncertain (make-work-session
+                      :events events
+                      :operations (list (make-operation :id "op-pay" :op :pay
+                                                         :request "req-pay" :state :running)))))
+      (multiple-value-bind (after disposition)
+          (operation-cancel uncertain "op-pay" :request "req-cancel-2"
+                            :external-effect :uncertain)
+        (declare (ignore after))
+        (check-equal :uncertain (getf disposition :state)
+                     "an uncertain external effect reads uncertain, never cancelled")))))
 
 ;;; undo-appends-and-preserves  SPEC-WORK.md prose :2665 / table :5192
 ;; (deftest "undo-appends-and-preserves" "docs/SPEC-WORK.md:5192"
@@ -723,9 +754,29 @@
 ;; (deftest "stop-is-a-hold-not-a-cancel" "docs/SPEC-WORK.md:3499"
 ;;     "expected=hold-plus-directives;no-transition;not-a-cancel")
 
-;; NEEDS-KERNEL: the :cancel's evidence covers the attempt set, so one worker's stop note cannot cancel another live attempt.
-;; (deftest "one-stop-note-cannot-cancel-two-attempts" "docs/SPEC-WORK.md:3499"
-;;     "expected=one-stop-note-cannot-cancel-node-with-another-live-attempt")
+;;; one-stop-note-cannot-cancel-two-attempts  SPEC-WORK.md prose :3940-3942
+(deftest "one-stop-note-cannot-cancel-two-attempts" "docs/SPEC-WORK.md:3940-3942"
+    "expected=one-stop-note-cannot-cancel-node-with-another-live-attempt"
+  ;; The :cancel's evidence must cover every attempt live at the request, so a
+  ;; stop note covering one of two live attempts is refused; the same note with
+  ;; both covered is admitted and the task is cancelled only then.
+  (let ((k (fresh)))
+    (record-attempt k "acme/work/f1/t1" "att-1")
+    (record-attempt k "acme/work/f1/t1" "att-2")
+    (request-cancel k "acme/work/f1/t1" :request "cancel-req-1")
+    (multiple-value-bind (ok line code)
+        (cancel-confirm k "acme/work/f1/t1" :evidence '("att-1"))
+      (ok (not ok) "a one-attempt note cancelled a two-attempt node")
+      (check-equal 1 code "refusal exit code")
+      (ok (search "cannot cancel" line) "refusal does not name the rule: ~A" line))
+    (multiple-value-bind (ok line code)
+        (cancel-confirm k "acme/work/f1/t1" :evidence '("att-1" "att-2"))
+      (ok ok "two covered attempts still refused: ~A" line)
+      (check-equal 0 code "admission exit code"))
+    (check-equal t (cancel-requested-p k "acme/work/f1/t1")
+                 "the request edge stands after the confirmation")
+    (check-string= "stop=requested" (goal-stop k "acme/work/f1/t1")
+                   "goal show reads the state edge, not a hold")))
 
 ;; NEEDS-KERNEL: the hold and the capture anchor are journaled before EXECUTION OK, so a crash leaves both.
 ;; (deftest "hold-survives-a-crash" "docs/SPEC-WORK.md:3517"
@@ -873,11 +924,6 @@
 ;; (deftest "cache-aware-context-choice" "docs/SPEC-WORK.md:4377"
 ;;     "expected=cache-read-write-tier-threshold-priced-separately;reset-costs-refused-when-separate;lower-hit-can-win-on-cost"
 ;;   ;; NEEDS-KERNEL: cache tier pricing and context-choice cost model
-;;   )
-
-;; (deftest "cancel-is-a-request-not-an-erasure" "docs/SPEC-WORK.md:5189"
-;;     "expected=cancel-has-its-own-disposition;erases-no-mutation;uncertain-effect-reported-uncertain"
-;;   ;; NEEDS-KERNEL: cancellation verb with final disposition, distinct from erasure
 ;;   )
 
 ;; (deftest "chat-and-file-render-are-byte-identical" "docs/SPEC-WORK.md:5304"
