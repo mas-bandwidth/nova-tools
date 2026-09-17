@@ -89,9 +89,96 @@
   "the three cost values (subscription, reference, local api) kept separately labelled"
   "SUBSCRIPTION-COST")
 
-(needs-kernel "unchanged-config-is-one-bounded-answer" "docs/SPEC-WORK.md:5284"
-  "the config exchange bounded, validated and atomic, no roster and no prose repeated per poll"
-  "CONFIG-DELTA")
+;; unchanged-config-is-one-bounded-answer: a request naming a friend and its
+;; last-known config hash and revision answers `UNCHANGED` with that identity in
+;; one bounded reply, with no roster and no prose repeated per poll.
+(deftest "unchanged-config-is-one-bounded-answer" "docs/SPEC-WORK.md:5284"
+    "expected=one-bounded-answer-unchanged-with-identity;no-roster-no-prose"
+  (let* ((base (make-config :friend "bob" :schema 1 :revision 7
+                            :fragments '((:models ("m1")) (:routes ()))))
+         (same (make-config :friend "bob" :schema 1 :revision 7
+                            :fragments '((:models ("m1")) (:routes ())))))
+    (multiple-value-bind (kind answer) (config-request base same)
+      (check-equal :unchanged kind "an equal identity answers UNCHANGED")
+      (ok (stringp answer) "the answer is one string")
+      (ok (not (find #\Newline answer)) "the answer is exactly one line")
+      (ok (search "UNCHANGED" answer) "the answer says UNCHANGED")
+      (ok (search "bob" answer) "the answer carries the friend")
+      (ok (search "7" answer) "the answer carries the revision")
+      (ok (search (getf same :hash) answer) "the answer carries the named hash"))
+    (let ((moved (make-config :friend "bob" :schema 1 :revision 8
+                              :fragments '((:models ("m1" "m2")) (:routes ())))))
+      (multiple-value-bind (kind delta) (config-request base moved)
+        (check-equal :delta kind "a moved identity answers a bounded delta")
+        (check-equal 1 (length delta) "only the changed fragment is carried")
+        (check-equal :models (getf (first delta) :key)
+                     "the changed fragment is named")))
+    (multiple-value-bind (kind full) (config-request nil same)
+      (check-equal :full kind "an unknown base asks for a bounded full manifest")
+      (check-equal "bob" (getf full :friend) "the full manifest names the friend"))))
+
+;; an-invalid-delta-leaves-the-old-config: the exchange is validated against the
+;; exact named base; an invalid delta changes no fragment and leaves the old
+;; config in place.
+(deftest "an-invalid-delta-leaves-the-old-config" "docs/SPEC-WORK.md:5284"
+    "expected=invalid-delta-refused-atomically;old-config-untouched"
+  (let ((base (make-config :friend "bob" :schema 1 :revision 7
+                           :fragments '((:models ("m1"))))))
+    ;; a wrong fragment hash refuses and leaves BASE untouched.
+    (let ((bad (list (list :key :models :value '("m1" "m2") :hash "not-the-hash"))))
+      (multiple-value-bind (config refusal) (apply-config-delta base bad)
+        (check-equal base config "the old config is returned untouched")
+        (ok refusal "the invalid delta is refused")
+        (ok (search "hash" refusal) "the refusal names the hash")))
+    ;; an unknown fragment refuses and leaves BASE untouched.
+    (multiple-value-bind (config refusal)
+        (apply-config-delta base (list (make-delta-entry :bogus '("x"))))
+      (check-equal base config "an unknown fragment leaves the old config")
+      (ok refusal "the unknown fragment is refused"))
+    ;; a valid delta applies atomically, moving the revision exactly once.
+    (multiple-value-bind (config refusal)
+        (apply-config-delta base (list (make-delta-entry :models '("m1" "m2"))))
+      (check-equal nil refusal "the valid delta is admitted")
+      (check-equal '("m1" "m2") (config-fragment config :models)
+                   "the fragment changed")
+      (check-equal 8 (getf config :revision) "the revision moved once")
+      (check-equal '("m1") (config-fragment base :models)
+                   "the base was not mutated"))))
+
+;; a-partial-manifest-is-refused: a partial config is never admitted as a
+;; complete replacement, the completeness hash must match, and no secret is in
+;; a manifest.
+(deftest "a-partial-manifest-is-refused" "docs/SPEC-WORK.md:5285"
+    "expected=partial-never-admitted-as-complete;no-secret-in-a-manifest"
+  (let* ((full '((:models ("m1")) (:routes ("r1")) (:friends ("bob"))))
+         (m (make-manifest :friend "bob" :schema 1 :revision 7 :parts full)))
+    ;; a complete manifest with a matching completeness hash is admitted.
+    (multiple-value-bind (admitted refusal)
+        (admit-manifest m '(:models :routes :friends))
+      (check-equal nil refusal "the complete manifest is admitted")
+      (ok admitted "the admitted manifest is returned"))
+    ;; a manifest missing a declared part is refused whole.
+    (multiple-value-bind (admitted refusal)
+        (admit-manifest m '(:models :routes :friends :pricing))
+      (check-equal nil admitted "a partial manifest is never admitted")
+      (ok (search "partial" (string-downcase refusal))
+          "the refusal names the partial config"))
+    ;; a manifest whose parts no longer match its completeness hash is refused.
+    (let ((tampered (copy-list m)))
+      (setf (getf tampered :parts) (remove :friends full :key #'car))
+      (multiple-value-bind (admitted refusal)
+          (admit-manifest tampered '(:models :routes :friends))
+        (check-equal nil admitted "a tampered manifest is refused")
+        (ok refusal "the refusal is named")))
+    ;; a manifest carrying a credential value is refused, secret named.
+    (let ((secret (make-manifest
+                   :friend "bob" :schema 1 :revision 7
+                   :parts (append full '((:api-key ("sk-123")))))))
+      (multiple-value-bind (admitted refusal)
+          (admit-manifest secret '(:models :routes :friends))
+        (check-equal nil admitted "a manifest carrying a secret is refused")
+        (ok (search "secret" (string-downcase refusal))
+            "the refusal names the secret")))))
 
 (needs-kernel "undo-appends-and-preserves" "docs/SPEC-WORK.md:5192"
   "an undo appending a typed compensating envelope with its lineage while the original event and every receipt stay where they are"

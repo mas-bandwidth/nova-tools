@@ -208,7 +208,41 @@
     #:role-from-config
     #:role-inferred-from-model-p
     #:agreed-limit-for
-    #:spend-role))
+    #:spend-role
+    ;; config/availability replays (card 8627)
+    #:make-availability
+    #:availability-state
+    #:availability-last-contact
+    #:availability-reserved
+    #:availability-silence-threshold
+    #:availability-answer-window
+    #:availability-pinged
+    #:silence-breach-p
+    #:silence-ping
+    #:mark-pinged
+    #:mark-unconfirmed
+    #:make-return-reconciliation
+    #:return-reconciliation-assignments
+    #:return-reconciliation-capacity
+    #:return-reconciliation-done
+    #:reconcile-return
+    #:return-done-p
+    #:dispatch-gate
+    #:fragment-digest
+    #:*config-fragment-keys*
+    #:*config-secret-keys*
+    #:make-config
+    #:config-hash
+    #:config-identity
+    #:config-fragment
+    #:make-delta-entry
+    #:config-delta
+    #:config-request
+    #:apply-config-delta
+    #:manifest-digest
+    #:make-manifest
+    #:find-secret
+    #:admit-manifest))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
