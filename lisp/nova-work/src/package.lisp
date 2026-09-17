@@ -934,7 +934,16 @@
     #:plan-cost
     #:refresh-admission #:make-refresh-admission
     #:refresh-admission-decision #:refresh-admission-adapter #:refresh-admission-evidence
-    #:refresh-refusal #:refresh-allowed-p #:choose-context-plan))
+    #:refresh-refusal #:refresh-allowed-p #:choose-context-plan
+    ;; replays card 8643: dry run, cost lineage, compaction and copied journals
+    #:make-replay-session
+    #:preview-mutation
+    #:apply-mutation
+    #:join-cost-lineage
+    #:compact-copies
+    #:restore-copy
+    #:start-over-copy
+    #:join-experiment-cost))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
