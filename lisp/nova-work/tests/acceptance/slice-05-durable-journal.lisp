@@ -908,15 +908,6 @@ asserts does not exist in slice 1."
     "expected=undo-restores-before;late-undo=conflict;both-events-stand"
   "no undo verb in slice 1")
 
-;; efficiency-lessons-gate: prime projection respects --max-bytes; unpoured
-;; checklist items never count in |O|; tripped nodes require --reason; delegate
-;; mode refuses edits below the model; packets lacking :effort are refused;
-;; dispatches crossing the configured daily fleet spend ceiling are refused.
-;; NEEDS-KERNEL: model dispatch, delegate mode, :effort and spend-ceiling gates.
-(deftest-pending "efficiency-lessons-gate" "docs/SPEC-WORK.md:4439"
-    "expected=max-bytes-respected;unpoured!=O;tripped=reason;no-effort=refused;ceiling=refused"
-  "dispatch/effort/ceiling enforcement is not in slice 1")
-
 ;; endpoint-is-local-and-private: the session's directory created 0700 and its
 ;; socket 0600, both owned by the running account; a pre-existing directory or
 ;; socket with wider modes refused rather than reused; the Windows named pipe
@@ -926,14 +917,6 @@ asserts does not exist in slice 1."
 (deftest-pending "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5276"
     "expected=dir-0700;socket-0600;wider-modes-refused;no-network-listener"
   "no session endpoint exists in slice 1")
-
-;; evidence-before-adoption: missing baseline/coverage, unmatched quality or a
-;; retrospective correlation alone cannot auto-promote; a fully qualified
-;; prospective result can.
-;; NEEDS-KERNEL: an adoption/promotion gate over baseline, coverage and quality.
-(deftest-pending "evidence-before-adoption" "docs/SPEC-WORK.md:4378"
-    "expected=missing-baseline=no-promote;prospective-qualified=promote"
-  "adoption gating is not in slice 1")
 
 ;; explicit-rest-is-not-pinged: the configured silence threshold triggers one
 ;; bounded ping; a nonresponsive capacity marked unavailable with reason
@@ -1005,37 +988,6 @@ asserts does not exist in slice 1."
 ;; ACTIVE observations, model and rate records, O and C history, roadmaps and
 ;; accounting provenance; derived caches rebuild to equivalent values.
 ;; NEEDS-KERNEL: an export/import path over a durable captured revision.
-
-;; gas-town-efficiency-accounting: root-only step records and inline checklists
-;; avoid node explosion; durable next-triggers ensure empty pulses cause zero
-;; model re-executions.
-;; NEEDS-KERNEL: step-record granularity and durable next-trigger accounting.
-(deftest-pending "gas-town-efficiency-accounting" "docs/SPEC-WORK.md:4438"
-    "expected=node-explosion=0;empty-pulse-reexecutions=0"
-  "efficiency accounting is not in slice 1")
-
-;; goal-crosses-harness: G a :doing leaf at revision r; harness A as coordinator
-;; C sets, updates, and writes a (:coordinator "C") note with a :deny; harness B
-;; shows --as C against the live session and the clipped snapshot, both print
-;; goal=G, rev= at or after every write, stop=requested (not cancelled), and the
-;; same note id and constraint row byte for byte; B's update --progress on G is
-;; refused `stop requested`; A writes cancel evidence; B's next show prints
-;; stop=cancelled; B copied no conversation.
-;; NEEDS-KERNEL: goal verb, coordinator notes/delegation, and a clipped snapshot.
-(deftest-pending "goal-crosses-harness" "docs/SPEC-WORK.md:5456"
-    "expected=goal=G;stop=requested;note-byte-for-byte;progress=refused;stop=cancelled"
-  "no goal/session/delegation in slice 1")
-
-;; goal-expect-is-required: goal set and goal update without --expect exit 2
-;; naming the flag, nothing written; with --expect at the current local
-;; revision, admitted; with --expect one behind, refused `stale` at exit 1 with
-;; the current value printed; --dry-run with the stale expectation prints the
-;; same refusal and writes no event, no journal revision and no dedup entry; a
-;; show never takes --expect.
-;; NEEDS-KERNEL: a goal CLI with --expect revision comparison and --dry-run.
-(deftest-pending "goal-expect-is-required" "docs/SPEC-WORK.md:5493"
-    "expected=no-expect=exit-2;one-behind=stale;dry-run-writes-nothing"
-  "no goal CLI in slice 1")
 
 ;; goal-stale-update-refuses: A and B both show at r; A writes update, r+1; B's
 ;; update --expect r is refused `GOAL FAIL ... expect=r current=r+1: stale`,
