@@ -708,6 +708,14 @@
    #:request-bundle-requests
    #:read-request-bundle
    #:session-replay
+   ;; the framed `hello` protocol-version handshake (SPEC-WORK.md:2662-2685)
+   #:wire-unframe
+   #:protocol-build-identity
+   #:protocol-version-list
+   #:protocol-hello-versions
+   #:protocol-hello-frame
+   #:protocol-hello-ok-text
+   #:protocol-hello-refused-text
    #:make-operation-registry
    #:operation-registry-p
    #:operation-registry-operations
