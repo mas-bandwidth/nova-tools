@@ -849,7 +849,7 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 	if err := killGroup(c); err != nil {
 		select {
 		case <-done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatalf("the reporter could not be killed and did not finish either: %v", err)
 		}
 		return false

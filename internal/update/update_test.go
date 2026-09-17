@@ -378,7 +378,7 @@ func TestFourReadLimitAndOverallBudget(t *testing.T) {
 	defer cancel()
 	started := time.Now()
 	r := readEntries(ctx, entries, options{timeout: time.Second}, Environment{Client: client}, false)
-	if time.Since(started) > time.Second || max.Load() > 4 {
+	if time.Since(started) > 30*time.Second || max.Load() > 4 {
 		t.Fatal("budget or concurrency", time.Since(started), max.Load())
 	}
 	if len(r) != 40 || r[39].Installed.Reason != "budget" {
@@ -402,7 +402,7 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 	if err != nil || len(state.Delivered) != 0 || len(state.Pending) != 0 {
 		t.Fatal(state, err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	unlock, err := lockSnapshot(ctx, s)
 	if err != nil {

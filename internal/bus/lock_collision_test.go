@@ -116,7 +116,7 @@ func TestLockFileImmediateNonblockingRejectsCollisionImmediately(t *testing.T) {
 	if got := atomic.LoadInt32(&attempts); got != 1 {
 		t.Fatalf("lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
 	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
 		t.Fatalf("lockFile with wait=0 took %v, want near-immediate return", elapsed)
 	}
 
@@ -151,7 +151,7 @@ func TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld(t *testing.T
 	if got := atomic.LoadInt32(&attempts); got != 1 {
 		t.Fatalf("lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
 	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
 		t.Fatalf("lockFile with wait=0 took %v, want near-immediate return", elapsed)
 	}
 

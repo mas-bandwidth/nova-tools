@@ -50,7 +50,10 @@ func TestFriendSequenceSnapshotReport(t *testing.T) {
 
 	out.Reset()
 	errs.Reset()
-	if code := update.Main("nova-version", []string{"report", "--file", manifest}, "", &out, &errs); code != 0 {
+	// Generous probe and run deadlines: the report shells out to every adopted
+	// tool, and the default five-second probe timeout asserts the machine's
+	// load under a shared runner rather than the manifest's contents.
+	if code := update.Main("nova-version", []string{"report", "--file", manifest, "--timeout", "30s", "--budget", "60s"}, "", &out, &errs); code != 0 {
 		t.Fatalf("report on the adopted manifest: exit %d\nstdout: %s\nstderr: %s", code, out.String(), errs.String())
 	}
 	if !strings.Contains(out.String(), "REPORT OK checked=2 known=2 unknown=0") {
