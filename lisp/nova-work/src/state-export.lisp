@@ -249,3 +249,132 @@ refused."
   "Every canonical write is refused `fenced`."
   (declare (ignore session verb))
   (values nil "REFUSED: fenced" 1))
+
+;;; ------------------------------------------------------------------
+;;; `session export --state --at`: the flags and the pinned revision
+;;; (SPEC-WORK.md:3197-3223)
+;;; ------------------------------------------------------------------
+
+(defun validate-export-form (&key state at (closed-history :none) from to)
+  "`--state` is required with `--at` and the request export refuses `--at`;
+`range` requires both stamps, the half-open `[from, to)`, and `none`/`all`
+refuse them (SPEC-WORK.md:3201-3204). Answers (values okp reason)."
+  (cond
+    ((and at (not state))
+     (values nil "--at is refused on the request export"))
+    ((and state (null at))
+     (values nil "--state requires --at"))
+    ((eq closed-history :range)
+     (cond
+       ((or (null from) (null to)) (values nil "range requires --from and --to"))
+       ((not (string< (string from) (string to)))
+        (values nil "range is half-open [from, to)"))
+       (t (values t "range accepted"))))
+    ((member closed-history '(:none :all))
+     (if (or from to)
+         (values nil "only range takes --from/--to")
+         (values t "closed-history accepted")))
+    (t (values nil "closed-history must be none, all or range"))))
+
+(defstruct (export-pin (:conc-name export-pin-))
+  "One `--at` resolved to a savepoint plus the exact journal prefix that reaches
+it, pinned until the operation ends."
+  revision savepoint journal-prefix member)
+
+(defun resolve-export-at (state at &key savepoints (retain-from 0) members)
+  "Resolve `--at` to a savepoint and the exact journal prefix that reaches it,
+pinned until the operation ends. A revision outside the recoverable range, or
+below recoverable retention, refuses naming the revision and, when one is
+known, the missing member; it is never approximated by a later snapshot
+(SPEC-WORK.md:3212-3215)."
+  (let ((revision (state-revision state)))
+    (cond
+      ((or (< at 0) (> at revision))
+       (values nil (format nil "EXPORT FAIL: revision ~D is outside the recoverable range 0..~D"
+                           at revision)))
+      ((< at retain-from)
+       (values nil (format nil "EXPORT FAIL: revision ~D is outside recoverable retention below ~D~@[; missing member ~A~]"
+                           at retain-from (first members))))
+      (t
+       (let* ((history (state-history state))
+              (prefix (remove-if (lambda (record)
+                                   (> (getf record :revision) at))
+                                 history))
+              (savepoint
+                (or (and savepoints
+                         (first (sort (remove-if (lambda (s) (> s at)) savepoints)
+                                      #'>)))
+                    0)))
+         (values (make-export-pin :revision at :savepoint savepoint
+                                  :journal-prefix prefix)
+                 (format nil "EXPORT PIN revision=~D savepoint=~D records=~D"
+                         at savepoint (length prefix))))))))
+
+(defun export-wire-op ()
+  "The wire operation the resident export runs as."
+  "session.export")
+
+(defun begin-state-export (registry state &key (id "op-export-1")
+                                              (request "req-export-1")
+                                              (author "rowan")
+                                              (stamp "2026-09-17T00:00:00Z")
+                                              at savepoints (retain-from 0)
+                                              destination)
+  "The resident form of `session export --state --at` is one long operation: the
+id is durable before it is printed and the request is acknowledged at once with
+OPERATION OK id= op=export state=queued (SPEC-WORK.md:3204-3208). Answers
+(values id op line code); a revision outside retention answers (values nil nil
+refusal 1)."
+  (multiple-value-bind (pin reason)
+      (resolve-export-at state at :savepoints savepoints :retain-from retain-from)
+    (unless pin
+      (return-from begin-state-export (values nil nil reason 1)))
+    (operation-accept registry :id id :kind :export :request request
+                               :author author :stamp stamp)
+    (let ((op (make-state-export :id id :revision (export-pin-revision pin)
+                                 :bytes (canonical-string (state-canonical-form state))
+                                 :members (export-members state)
+                                 :status :queued :destination destination
+                                 :published nil)))
+      (values id op
+              (format nil "OPERATION OK id=~A op=export state=queued" id)
+              0))))
+
+(defun state-export-wait (op)
+  "`operation wait --id` prints the terminal line for the export: EXPORT OK at
+the captured revision, or EXPORT FAIL for a cancelled one (SPEC-WORK.md:3204-3207)."
+  (if (eq (state-export-status op) :cancelled)
+      (format nil "EXPORT FAIL id=~A: cancelled; publication reconciled"
+              (state-export-id op))
+      (progn
+        (setf (state-export-status op) :complete
+              (state-export-terminal op)
+              (format nil "EXPORT OK id=~A rev=~D operation=~A"
+                      (state-export-id op) (state-export-revision op)
+                      (state-export-id op)))
+        (state-export-terminal op))))
+
+(defun state-export-cancel-ack (op)
+  "Cancellation acknowledges, then reconciles whether publication happened, and
+never promises to unpublish (SPEC-WORK.md:3219-3220). Answers (values line code)."
+  (multiple-value-bind (ok line code) (cancel-state-export op)
+    (declare (ignore ok))
+    (values (if (zerop code)
+                (format nil "~A; publication reconciled" line)
+                line)
+            code)))
+
+(defun snapshot-state-export (snapshot at)
+  "The offline `--snapshot` counterpart: `--at` must equal that snapshot's
+captured revision, it reads no session and runs as one finite process, and it
+prints the same terminal line with operation=- (SPEC-WORK.md:3216-3218)."
+  (let ((captured (snapshot-revision snapshot)))
+    (unless (eql at captured)
+      (return-from snapshot-state-export
+        (values nil
+                (format nil "EXPORT FAIL: --at ~D does not equal the snapshot revision ~D"
+                        at captured)
+                1)))
+    (values (export-manifest (snapshot-state snapshot))
+            (format nil "EXPORT OK rev=~D operation=-" captured)
+            0)))

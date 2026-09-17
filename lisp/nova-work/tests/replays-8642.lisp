@@ -136,7 +136,40 @@
       (check-equal :already-complete (getf done-cancel :disposition)
                    "cancelling a finished op claimed a cancellation success")
       (check-equal :done (getf done-cancel :state)
-                   "a finished op's state was falsified by cancellation"))))
+                   "a finished op's state was falsified by cancellation")))
+  ;; A busy import stages its inputs outside the mutation loop, bounded by
+  ;; explicit limits, and only the owning engine admits a validated result at the
+  ;; expected revision: a stale stage writes nothing, so a concurrent capture is
+  ;; never a second writer (SPEC-WORK.md:2748-2750, :2753).
+  (let ((area (make-capture-stage)))
+    (multiple-value-bind (id line code)
+        (begin-import area :id "op-import-1" :request "req-import")
+      (check-equal 0 code "the import was not acknowledged")
+      (check-equal "import.stage" (capture-wire-op :import)
+                   "the import wire op is not named")
+      (ok (search "OPERATION OK" line) "the import ack is not an OPERATION OK: ~A" line)
+      (check-equal :running (registry-operation-state (capture-stage-registry area) id)
+                   "the import is not accepted as running"))
+    (multiple-value-bind (ok line) (capture-stage-input area :id "in-1" :kind :issue
+                                                       :expected-revision 7 :bytes 128)
+      (ok ok "a source input did not stage: ~A" line))
+    (multiple-value-bind (ok line) (capture-admit-result area 7 :id "in-1" :result :mapped)
+      (ok ok "a fresh staged result was not admitted: ~A" line))
+    (multiple-value-bind (ok line) (capture-admit-result area 8 :id "in-1" :result :mapped)
+      (ok (null ok) "a stale staged result was admitted: ~A" line)
+      (ok (search "stale" line) "the refusal does not name staleness: ~A" line))
+    (check-equal 1 (length (capture-stage-results area))
+                 "a stale stage wrote a second result")
+    ;; Staged bytes and inputs are bounded by explicit limits.
+    (let* ((limits (capture-stage-limits area))
+           (attempts (loop repeat (1+ (getf limits :staged-inputs)) collect
+                       (multiple-value-bind (ok line)
+                           (capture-stage-input area
+                                                :id (format nil "bulk-~D" (random 100000))
+                                                :kind :comment :expected-revision 7
+                                                :bytes 1)
+                         (declare (ignore line)) ok))))
+      (ok (some #'null attempts) "the staged inputs were not bounded by the declared limit"))))
 
 ;;; ------------------------------------------------------------------
 ;;; batches-and-pipelines                       SPEC-WORK.md:6240
