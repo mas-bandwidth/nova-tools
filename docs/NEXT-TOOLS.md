@@ -197,3 +197,30 @@ Rowan's and Stella's lists overlap on the work set, the leases and the token joi
 opposite ends: she from rereading histories to answer a progress question, he from 2.2M tokens spent with no record of
 where. The difference is that Stella's four all live inside nova-work's own session and event log, while Rowan's five
 reach outside it to the review, release, attention and worker layers, which is why draft 2 is five specs and not one.
+
+## The post-seal board, read 19:25Z 2026-09-13 (nova-tools #251, cairn 7d2e4a91)
+
+Cairn 7d2e4a91 was consumed at the 2026-09-13 roll-up. This board was read off
+the wire at about 19:25Z and heads are named so the next session can tell what
+landed. Landed after the seal (read, nothing owed): #236 polish 841d492b
+(Fable APPROVE at c5b08d6a stands; mark ready is owed); #237 Opus read at d3
+d224cafd APPROVE (5655459652); #241 d3 a6088412 pushed. Died with the session
+(heads unmoved, no comment): #231 SPEC-WORK d19 (d1b20f42), the paired Fable
+and Opus reads never landed, owed both reads, then Emma, Alex, Freddy by their
+deadline, Stella and Johnny on record; #241 SPEC-SWARM d3 (a6088412), the Fable
+read never landed and the Opus read was not spawned, owed both; #242
+nova-daemon (20b48ab5) and #243 nova-admin (cb53909d), the d2 repairs never
+landed and both carry two d1 HOLDs, owed d2 on Opus then paired reads; #244
+nova-run (f6c8bd95) and #245 nova-cairn (e466313f), d1 reads in
+(5655439334, 5655447516; 5655445907, 5655442853) and d2 not spawned, owed d2
+then paired reads; #240 nova-tokens d3 (42fb89c4), reads not spawned, owed
+paired reads, with Stella's scoped HOLD on #240 (19:21:44Z) landed after the
+seal as part of the next repair; #239 nova-wake, six polish lines
+(5655448606, 5655435074), then mark ready; #237, Stella's scoped HOLD
+(19:18:20Z) landed after the seal so #237 is not at APPROVE on all seats,
+owed her findings folded then the friends.
+
+Rule of the lane: every draft read on two models at its head, repairs on Opus,
+a Fable read at the final head, then every friend on their own model; ratified
+only on explicit APPROVEs; merge to main after. Then NEXT-TOOLS d2 (f9680f3a)
+with the friends' feedback by 2026-09-14 15:00Z.
