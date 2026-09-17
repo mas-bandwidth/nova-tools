@@ -16,6 +16,8 @@ nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
+nova-pulse handoff --queue <dir> --to <name> --bus <clone> --roots <dirs> [--as <name>] [--work <dir>] [--max <n>]
+nova-pulse takeover --queue <dir> --as <name> --bus <clone> --roots <dirs> [--max <n>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
@@ -45,6 +47,10 @@ func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 		return 0
 	case "harvest":
 		return harvestVerb(args, out, errs)
+	case "handoff":
+		return handoffVerb(args, out, errs)
+	case "takeover":
+		return takeoverVerb(args, out, errs)
 	case "beat":
 		return beatVerb(args, out, errs)
 	case "watch":
@@ -214,5 +220,61 @@ func watchVerb(args []string, out, errs io.Writer) int {
 	return Watch(WatchInput{
 		Queue: o.queue, Bus: o.bus, Jobs: o.jobs, Until: o.until, Cap: capDur,
 		Stdout: out, Stderr: errs,
+	})
+}
+
+func handoffVerb(args []string, out, errs io.Writer) int {
+	o := struct {
+		queue, to, bus, roots, as, work string
+		max                             int
+	}{max: 20}
+	f := flag.NewFlagSet("handoff", flag.ContinueOnError)
+	f.SetOutput(io.Discard)
+	f.StringVar(&o.queue, "queue", "", "the queue directory")
+	f.StringVar(&o.to, "to", "", "the successor the shift goes to")
+	f.StringVar(&o.bus, "bus", "", "the nova-bus clone carrying the note")
+	f.StringVar(&o.roots, "roots", "", "the benches, comma separated")
+	f.StringVar(&o.as, "as", "", "the name the note is sent as")
+	f.StringVar(&o.work, "work", "", "a nova-work checkout whose ownership moves too")
+	f.IntVar(&o.max, "max", 20, "per-kind output cap")
+	if err := f.Parse(args); err != nil {
+		return refusal(errs, "HANDOFF", fmt.Errorf("%s (run nova-pulse help)", err))
+	}
+	if len(f.Args()) != 0 {
+		return refusal(errs, "HANDOFF", fmt.Errorf("handoff takes no positional arguments (run nova-pulse help)"))
+	}
+	if o.max < 0 {
+		return refusal(errs, "HANDOFF", fmt.Errorf("invalid bound (use --max >= 0)"))
+	}
+	return Handoff(HandoffInput{
+		Queue: o.queue, To: o.to, Bus: o.bus, Roots: o.roots, As: o.as,
+		Work: o.work, Max: o.max, Stdout: out, Stderr: errs,
+	})
+}
+
+func takeoverVerb(args []string, out, errs io.Writer) int {
+	o := struct {
+		queue, as, bus, roots string
+		max                   int
+	}{max: 20}
+	f := flag.NewFlagSet("takeover", flag.ContinueOnError)
+	f.SetOutput(io.Discard)
+	f.StringVar(&o.queue, "queue", "", "the queue directory")
+	f.StringVar(&o.as, "as", "", "the name taking the shift")
+	f.StringVar(&o.bus, "bus", "", "the nova-bus clone of the shift")
+	f.StringVar(&o.roots, "roots", "", "the benches, comma separated")
+	f.IntVar(&o.max, "max", 20, "per-kind output cap")
+	if err := f.Parse(args); err != nil {
+		return refusal(errs, "TAKEOVER", fmt.Errorf("%s (run nova-pulse help)", err))
+	}
+	if len(f.Args()) != 0 {
+		return refusal(errs, "TAKEOVER", fmt.Errorf("takeover takes no positional arguments (run nova-pulse help)"))
+	}
+	if o.max < 0 {
+		return refusal(errs, "TAKEOVER", fmt.Errorf("invalid bound (use --max >= 0)"))
+	}
+	return Takeover(TakeoverInput{
+		Queue: o.queue, As: o.as, Bus: o.bus, Roots: o.roots,
+		Max: o.max, Stdout: out, Stderr: errs,
 	})
 }

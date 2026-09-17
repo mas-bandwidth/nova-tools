@@ -46,7 +46,7 @@ type fakeSpec struct {
 // fakeTools are the names the shared bin directory answers to: every program nova-pulse
 // starts. A name with no spec in the test's directory exits 97 and says so, which is how a
 // test proves the fake ran and the real tool did not.
-var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "nova-merge"}
+var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "nova-merge", "nova-wake"}
 
 var (
 	fakeRoot    string // the one directory outside t.TempDir(), owned by TestMain
