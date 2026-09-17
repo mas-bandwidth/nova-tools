@@ -158,6 +158,8 @@
     #:applicable-answer-verdicts
     #:applicable-answer-notes
     #:applicable-answer-fail
+    #:applicable-answer-shown
+    #:applicable-answer-more
     #:verdict-eligible-p
     #:verdict-unknown-p
     #:verdict-planning-p
