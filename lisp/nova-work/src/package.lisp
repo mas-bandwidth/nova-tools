@@ -1404,7 +1404,73 @@
     #:allocation-record-released
     #:allocation-record-fenced
     #:allocation-live-p
-    #:allocation-suspect-p))
+    #:allocation-suspect-p
+    ;; replays card 8663: presence and the held lease, and the fleet allocation
+    #:*holder-silence-seconds*
+    #:friend-lease
+    #:make-friend-lease
+    #:friend-lease-holder
+    #:friend-lease-node
+    #:friend-lease-state
+    #:friend-lease-generation
+    #:held-lease-p
+    #:lease-fenced-p
+    #:fence-lease
+    #:holder-asleep-finding
+    #:friend-presence
+    #:make-friend-presence
+    #:friend-presence-name
+    #:friend-presence-state
+    #:offer-record
+    #:make-offer-record
+    #:offer-record-id
+    #:offer-record-node
+    #:offer-record-friend
+    #:offer-record-state
+    #:recovery-session
+    #:make-recovery-session
+    #:recovery-session-offers
+    #:recovery-session-leases
+    #:recovery-session-reassignments
+    #:recovery-session-rev
+    #:offer-to-sleeper
+    #:stale-entries
+    #:reassign-node
+    #:friend-heartbeat
+    #:friend-who
+    #:machine
+    #:machine-concurrent
+    #:machine-generation
+    #:assign-machine
+    #:make-assign-machine
+    #:assign-machine-id
+    #:assign-machine-concurrent
+    #:assign-machine-generation
+    #:allocation
+    #:make-allocation
+    #:allocation-id
+    #:allocation-machine
+    #:allocation-slot
+    #:allocation-slots
+    #:allocation-node
+    #:allocation-generation
+    #:allocation-state
+    #:allocation-active-p
+    #:fleet
+    #:make-fleet
+    #:assign-fleet
+    #:make-assign-fleet
+    #:assign-fleet-machine
+    #:assign-fleet-allocations
+    #:assign-fleet-take
+    #:assign-fleet-release
+    #:assign-fleet-heartbeat
+    #:assign-fleet-list
+    #:fleet-machine
+    #:fleet-allocations
+    #:fleet-occupied-slots
+    #:fleet-first-free-slot
+    #:fleet-active-slots))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
