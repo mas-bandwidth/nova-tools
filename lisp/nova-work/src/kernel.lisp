@@ -21,7 +21,7 @@
 (in-package #:nova-work)
 
 (defstruct (kernel (:constructor %make-kernel))
-  state journal next-rev fleet
+  state journal next-rev fleet routes
   ;; The single-writer kernel (SPEC-WORK.md:2603-2616): one command thread owns O
   ;; and C and applies mutations in order; readers never touch it. The queue
   ;; holds accepted commands, Q-LOCK/Q-CVAR guard the mailbox, THREAD is the
@@ -64,6 +64,9 @@ below the state's revision is refused rather than silently reissued."
                            ;; The fleet is CONFIG supplied to the session, never a
                            ;; constant in the tool; see src/fleet.lisp.
                            :fleet (make-fleet :friends friends)
+                           ;; The model route registry is CONFIG supplied/held by
+                           ;; the session beside the fleet; see src/routes.lisp.
+                           :routes (make-route-registry)
                            :controls (make-ctl)
                            :queue '()
                            :q-lock (sb-thread:make-mutex)
@@ -339,6 +342,11 @@ command loop is a defect)."
     ;; touches the root, its counters or its history.
     (when (eq verb :machine)
       (return-from %submit (machine-submit kernel request)))
+    ;; The one verb that configures the model routes (SPEC-WORK.md:2289, *Model
+    ;; routes*) is CONFIG too: it writes a `:kind :route` member beside the
+    ;; fleet and never touches the root, its counters or its history.
+    (when (eq verb :route)
+      (return-from %submit (route-submit kernel request)))
     (unless (member verb '(:state-to-done :state-to-doing :event-reopen))
       (error 'unsupported-input
              :what (format nil "unsupported: verb ~A is not in slice 1"
@@ -688,77 +696,3 @@ unknown bytes (SPEC-WORK.md:3366)."
               1)
       (values t "SESSION OK" 0)))
 
-;;; ------------------------------------------------------------------
-;;; machine-is-config-and-never-a-work-tree-node (SPEC-WORK.md:3620, :6092)
-;;; ------------------------------------------------------------------
-
-(defstruct (machine-record
-             (:constructor make-machine-record
-                 (&key id name owner connect roles permits limits facts
-                       declared-by declared-at)))
-  id name owner connect roles permits limits facts declared-by declared-at)
-
-(defun machine-config-section (machine)
-  "A machine is the `:kind :machine` member record of the fleet section of
-CONFIG, and never a work-tree node (SPEC-WORK.md:3620)."
-  (list :section :fleet :kind :machine :id (machine-record-id machine)))
-
-(defun machine-work-tree-node-p (machine)
-  "Equipment never completes: a machine is no child of O and under no repository
-work set."
-  (declare (ignore machine))
-  nil)
-
-(defun machine-node-field (machine)
-  "Every :machine event writes :node (:absent) by the kind's own subject rule."
-  (declare (ignore machine))
-  +absent+)
-
-(defun machine-acceptance (machine)
-  (declare (ignore machine))
-  nil)
-
-(defun machine-derived-state (machine)
-  (declare (ignore machine))
-  nil)
-
-(defun machine-settle (machine)
-  "No verb can settle a machine."
-  (values nil
-          (format nil "STATE FAIL machine=~A: equipment does not settle"
-                  (machine-record-id machine))
-          2))
-
-(defun machine-to-done (machine)
-  "No verb can take a machine `:to :done`."
-  (values nil
-          (format nil "STATE FAIL machine=~A: equipment has no edge to done"
-                  (machine-record-id machine))
-          2))
-
-(defun machine-completion-evidence-p (machine)
-  "Equipment does not complete, so nothing a machine does is completion
-evidence."
-  (declare (ignore machine))
-  nil)
-
-(defun register-machine (machine &key counts)
-  "Register a machine as fleet CONFIG. Answers the event and the counts. No
-count, roadmap or required set moves when a machine is written
-(SPEC-WORK.md:3620, :6092)."
-  (let ((config (machine-config-section machine)))
-    (values
-     (list :kind :machine
-           :section (getf config :section)
-           :node (machine-node-field machine)
-           :event-id "ev-8661-machine-1"
-           :request "req-machine-1"
-           :machine (machine-record-id machine)
-           :rev 1 :pushed nil :changed 1 :emitted 0)
-     counts)))
-
-(defun machine-ok-line (event)
-  (format nil "MACHINE OK id=~A request=~A machine=~A rev=~D pushed=~A changed=~D emitted=~D"
-          (getf event :event-id) (getf event :request) (getf event :machine)
-          (getf event :rev) (or (getf event :pushed) "-")
-          (getf event :changed) (getf event :emitted)))

@@ -67,17 +67,56 @@
         (ok (search "credential in record" line) "the refusal names the rule: ~A" line)
         (ok (not (search "sk-live-3f9a" line)) "the refused value is never echoed")))
     ;; A route is CONFIG and never a work node: no count moves.
-    (let ((k (make-kernel :state (make-seed-state *seed*))))
-      (let ((before (state-open-count (kernel-state k))))
-        (route-register reg :id "r-config" :provider "acme" :endpoint "https://x"
-                        :key-location '(:env "K") :plan :flat :owner "glenn")
-        (check-equal before (state-open-count (kernel-state k))
-                     "writing a route moves no |O|")
-        (check-equal +absent+ (route-node-field (route-member reg "r-config"))
-                     "a route event writes :node (:absent)")
-        (check-equal '(:section :routes :kind :route :id "r-config")
-                     (route-config-section (route-member reg "r-config"))
-                     "the record is a :kind :route member of the routes section")))))
+    (let* ((k (make-kernel :state (make-seed-state *seed*) :friends '("glenn")))
+           (before (state-open-count (kernel-state k))))
+      (route-register reg :id "r-config" :provider "acme" :endpoint "https://x"
+                      :key-location '(:env "K") :plan :flat :owner "glenn")
+      (check-equal before (state-open-count (kernel-state k))
+                   "writing a route moves no |O|")
+      (check-equal +absent+ (route-node-field (route-member reg "r-config"))
+                   "a route event writes :node (:absent)")
+      (check-equal '(:section :routes :kind :route :id "r-config")
+                   (route-config-section (route-member reg "r-config"))
+                   "the record is a :kind :route member of the routes section")
+      ;; The real `route` verb writes the CONFIG member through `submit`.
+      (multiple-value-bind (ok line code event)
+          (submit k (list :verb :route :change :register
+                          :route "anthropic/claude-3.7-sonnet"
+                          :provider "anthropic" :endpoint "https://api.example.com"
+                          :key-location '(:env "ANTHROPIC_KEY") :plan :metered
+                          :cost-per-mtok 15
+                          :capabilities '(:text :yes :code :yes :tool-calls :yes)
+                          :owner "glenn" :request "rreq-1"))
+        (ok ok "the real route verb admits a well-formed route: ~A" line)
+        (check-equal 0 code "route register exit code")
+        (ok (search "ROUTE OK" line) "the verb prints a ROUTE OK line")
+        (check-equal t (absentp (getf event :node))
+                     "the :route event writes :node (:absent)")
+        (check-equal +absent+ (getf event :node) "the node field is absent")
+        (let ((member (route-member (kernel-routes k)
+                                    "anthropic/claude-3.7-sonnet")))
+          (check-equal '(:section :routes :kind :route
+                         :id "anthropic/claude-3.7-sonnet")
+                       (route-config-section member)
+                       "the record is a :kind :route member of the routes section")
+          (check-equal '(:env "ANTHROPIC_KEY") (route-key-location member)
+                       "the listing stores the key by env name, never value")))
+      (check-equal before (state-open-count (kernel-state k))
+                   "the real route verb moves no |O|")
+      ;; The real verb refuses a raw credential and echoes no value.
+      (multiple-value-bind (ok line code)
+          (submit k (list :verb :route :change :register :route "r-bad"
+                          :provider "acme" :endpoint "https://x"
+                          :key-location "sk-live-3f9a" :plan :flat
+                          :owner "glenn" :request "rreq-2"))
+        (ok (not ok) "the real verb refuses a raw key: ~A" line)
+        (check-equal 1 code "real credential refusal exit code")
+        (ok (search "credential in record" line) "the refusal names the rule: ~A" line)
+        (ok (not (search "sk-live-3f9a" line)) "the refused value is never echoed"))
+      (check-equal 1 (route-member-count (kernel-routes k))
+                   "a credential refusal writes no second route")
+      (ok (null (route-member (kernel-routes k) "r-bad"))
+          "the refused route is not in the registry"))))
 
 ;;; ------------------------------------------------------------------
 ;;; routing-picks-flat-before-metered              SPEC-WORK.md:6302
