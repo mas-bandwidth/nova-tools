@@ -15,7 +15,7 @@ nova-bus receipt --bus <dir> --as <name> --verdict APPROVE|HOLD|ADOPTED --re <id
 
 **What each reads and writes.** `wait --on-note` reads the bus from `--bus`, fetches
 `--remote`/`--branch` on `--interval`, and reads the notes addressed to the caller
-by To: or Cc:; it writes nothing unless `--advance` is given, when it moves and
+by To: only (addr=to is the default; --cc opts in to Cc: notes, which are data, not a wake); it writes nothing unless `--advance` is given, when it moves and
 pushes the caller's cursor as `inbox --advance` does. `receipt --verdict` reads the
 bus and roster, resolves `--re` against the open list, and writes one receipt note
 into the caller's lane — `Verdict: <APPROVE|HOLD|ADOPTED>`, `Re: <id>`, the `--text`
