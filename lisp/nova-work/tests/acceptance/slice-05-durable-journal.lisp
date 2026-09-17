@@ -514,11 +514,6 @@
 
 ;;; 58. dispatch-ack-and-ownership-are-three (SPEC-WORK.md:5219) now runs as
 ;;; the real deftest below, over the four-fact dispatch records.
-;;; 58. dispatch-ack-and-ownership-are-three   docs/SPEC-WORK.md:5219
-;;;
-;; NEEDS-KERNEL: dispatch/delivery/acknowledgement and accepted-ownership as
-;;   distinct facts; a pending offer reserving only declared capacity; a timeout
-;;   alone launching no duplicate.
 
 ;;; 59. requested-model-is-not-observed-model   docs/SPEC-WORK.md:5222
 ;;;
@@ -541,11 +536,6 @@
 
 ;;; 63. return-reconciles-before-dispatch (SPEC-WORK.md:5226) now runs as the
 ;;; real deftest in slice-07-replays-mid.lisp.
-;;; 63. return-reconciles-before-dispatch   docs/SPEC-WORK.md:5226
-;;;
-;; NEEDS-KERNEL: return reconciling outstanding assignments and capacity.
-;;   A return reconciles outstanding assignments and observed capacity before
-;;   any new dispatch.
 
 ;;; 64. unchanged-config-is-one-bounded-answer   docs/SPEC-WORK.md:5284
 ;;;
@@ -577,9 +567,6 @@
 
 ;; four-facts-four-verbs (SPEC-WORK.md:3398) now runs as the real deftest in
 ;; tests/acceptance/slice-09-fleet-assignment.lisp.
-;; NEEDS-KERNEL: offer/acknowledge/decline verbs keep the four facts apart, infer none, launch none.
-;; (deftest "four-facts-four-verbs" "docs/SPEC-WORK.md:3398"
-;;     "expected=dispatch-delivery-accepted-ownership-stay-apart;nothing-inferred;nothing-launched")
 
 ;; NEEDS-KERNEL: acknowledge/decline admit only behind an operator-configured verifier.
 ;; (deftest "a-receipt-needs-a-verifier" "docs/SPEC-WORK.md:3413"
@@ -591,9 +578,6 @@
 
 ;; offer-writes-intent-and-a-reservation (SPEC-WORK.md:5229) now runs as the
 ;; real deftest in tests/acceptance.lisp.
-;; NEEDS-KERNEL: an admitted offer writes :effect :dispatched, a pending-offer entry, and one (offer,attempt) reservation.
-;; (deftest "offer-writes-intent-and-a-reservation" "docs/SPEC-WORK.md:3439"
-;;     "expected=:effect-:dispatched;pending-offer;reservation-keyed-by-offer-attempt;no-lease")
 
 ;; no-shadow-lease-across-holders (SPEC-WORK.md:5238) now runs as the real
 ;; deftest in tests/acceptance.lisp.
@@ -706,12 +690,6 @@
 ;; NEEDS-KERNEL: roadmap row ordering and completion; no roadmap verb exists yet.
 ;; axisless-history (SPEC-WORK.md:5383) --- two ordered rows, one finished, exported/loaded and
 ;; reopened past the window: both rows and evidence present, denominator not reduced by completion.
-
-;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) now runs as the
-;; real deftest in tests/replays-8640.lisp.
-;; NEEDS-KERNEL: correct/execution-correct barrier; no correct verb exists yet.
-;; bare-correct-refuses-under-execution (SPEC-WORK.md:5272) --- the bare correct refused by name
-;; while an attempt is live and admitted once none is.
 
 ;;; batch-with-bounds-and-urgency: the real replay lives in
 ;;; tests/replays-8642.lisp:60 (nova-tools #362) --- byte/record bounds,
@@ -883,14 +861,8 @@ asserts does not exist in slice 1."
 (deftest-pending "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
     "expected=fetches=0;nul=bad-link;private-node-prints-no-value"
   "no link render/fetch in slice 1")
-;; efficiency-lessons-gate: prime projection respects --max-bytes; unpoured
-;; checklist items never count in |O|; tripped nodes require --reason; delegate
-;; mode refuses edits below the model; packets lacking :effort are refused;
-;; dispatches crossing the configured daily fleet spend ceiling are refused.
-;; NEEDS-KERNEL: model dispatch, delegate mode, :effort and spend-ceiling gates.
-(deftest-pending "efficiency-lessons-gate" "docs/SPEC-WORK.md:4439"
-    "expected=max-bytes-respected;unpoured!=O;tripped=reason;no-effort=refused;ceiling=refused"
-  "dispatch/effort/ceiling enforcement is not in slice 1")
+;; efficiency-lessons-gate (SPEC-WORK.md:4439) now runs as the real deftest in
+;; tests/replays-8644.lisp, with the prime/effort/ceiling gates it named.
 ;; edit-never-fetches-a-link now lives in tests/acceptance.lisp over the
 ;; node-edit link validation and renderer of src/node-verbs.lisp (nova-tools #362).
 
