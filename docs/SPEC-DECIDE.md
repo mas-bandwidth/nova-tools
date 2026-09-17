@@ -1,8 +1,10 @@
 # nova-decide — specification: the typed-decision route (Jev)
 
 The typed-decision route answers small judgments with a system-one model and a
-calibrated confidence, beside deterministic machinery that keeps every
-authority it already had. A decision advises; the machinery decides.
+provider-reported confidence, beside deterministic machinery that keeps every
+authority it already had. The confidence is the provider's number, not a
+number of our own, and the floor (rule 5) is applied to that provider's
+number. A decision advises; the machinery decides.
 
 This spec is normative. If the code and this document disagree, one of them has
 a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md), whose
@@ -16,7 +18,7 @@ Every rule here is normative. Each has one line in **red tests** near the end.
 
 1. **A decision is a typed judgment over bounded evidence.** a decision is a choice,
    a 0-N score or a yes/no over bounded evidence, answered by a system-one
-   model in under a second with a calibrated confidence. The three types are
+   model with a provider-reported confidence. The three types are
    `choice` (one of named options), `score` (a float on a 0-N legend) and
    `noul` (a yes/no over one statement). The evidence is bounded: the caller
    names the state text and the questions, and nothing else is consulted.
@@ -32,11 +34,13 @@ Every rule here is normative. Each has one line in **red tests** near the end.
    <option>,"probabilities":{<option>:<p>},"confidence":<0-1>} |
    {"type":"score","score":<float>,"legend":{...},"confidence":<0-1>} |
    {"type":"noul","noul":<0-1>}}, "usage": {"input_tokens": n,
-   "output_tokens": n}}`. Latency 300-700 ms. The key comes ONLY from the
+   "output_tokens": n}}`. Provider-reported latency 300-700 ms; the retained
+   trials measure the real figures (about 400 ms in a 20-call trial on
+   2026-09-17, no retained file). The key comes ONLY from the
    environment variable named by the caller (default JEV_API_KEY,
    TYPESAFE_API_KEY also accepted), never a file, never argv, never printed.
    (The hurt: a provider abstraction that hid which model answered, so a
-   calibration measured on one model was quoted for another.)
+   number measured on one model was quoted for another.)
 3. **The key arrives sealed.** The key comes only from the environment by
    nova-secrets exec, never a file, argv or a log. The caller names the
    variable; the tool reads it from its own environment and passes it as the
@@ -112,16 +116,21 @@ fallback in every row is today's behaviour without the call.
 
 ### nova-swarm route
 
-Route incoming work to a lane by kind. Measured: card routing 19/20 kinds at
-937 input tokens and 436 ms. The floor is per lane; below it the card keeps
-today's routing.
+Route incoming work to a lane by kind. Measured: card routing 19/20 kinds
+correct against a human label, at 937 input tokens, in the 2026-09-17 route
+trial of 20 calls, retained at `mas-bandwidth/rowan-new
+reports/jev/2026-09-17-card-route.tsv@21d27719 (model jev-latest, 22 rows)`;
+latency about 400 ms in a 20-call trial on 2026-09-17, no retained file. The
+floor is per lane; below it the card keeps today's routing.
 
 ### manager abstain / needs_human
 
 A manager judgment that abstains below its floor instead of guessing.
-Measured: abstain reason 9 above a 0.9 floor consistent and 21 below all
-flagged needs_human. The fallback for `needs_human` is a person, never a
-second guess.
+Measured: abstain reason 9 above a 0.9 floor consistent between runs and 21
+below all flagged needs_human, in the 2026-09-17 abstain trial of 30 calls,
+retained at `mas-bandwidth/rowan-new
+reports/jev/2026-09-17-589-abstain-reason.tsv@4857e071 (model jev-latest, 31
+rows)`. The fallback for `needs_human` is a person, never a second guess.
 
 ### nova-bus inbox triage (opt-in, public buses only)
 
@@ -138,17 +147,41 @@ answers real: a flaky test re-run is cheap, a missed page is not.
 
 Classify a player's intent (ships danger, collision, maneuver) into the
 game's existing response table. Measured: ships danger MAE 0.18, collision
-60/60, maneuver 51/60 low confidence — the maneuver band stays on the
-hand-written table until its confidence earns the floor. Throughput measured:
-22 calls/s at concurrency 10.
+60/60 correctness against a human label, and maneuver 51/60 low confidence,
+all in the 2026-09-17 ships trial of 60 calls, retained at
+`mas-bandwidth/rowan-new reports/jev/2026-09-17-ships.tsv@21d27719 (model
+jev-latest, 62 rows)` — the maneuver band stays on the hand-written table
+until its confidence earns the floor. Throughput measured: 22 calls/s at
+concurrency 10, measured in the 2026-09-17 ships trial of 60 calls.
 
 ## Red tests
 
 One line per rule, then one per adoption. Each runs against the httptest fake
 of rule 9, with no network, and each must be seen red before it is trusted.
 
-1. A question over bounded state returns the typed answer with a confidence in
-   under a second; an untyped reply is refused, not parsed.
+**Trial report (measured, not normative).** These fake-provider tests validate
+the interface contract — the request and response shapes, the confidence floor
+and the refusal paths — and nothing more. They cannot reproduce a real model's
+behaviour: real-model accuracy, latency and throughput are only what the
+retained trials in `mas-bandwidth/rowan-new reports/jev/` show, named here by
+path. Measured: card routing 19/20 kinds correct against a human label at ~937
+input tokens in the 2026-09-17 route trial of 20 calls, retained at
+`mas-bandwidth/rowan-new
+reports/jev/2026-09-17-card-route.tsv@21d27719 (model jev-latest, 22 rows)`,
+latency about 400 ms in a 20-call trial on 2026-09-17, no retained file;
+abstain reason 9 above the 0.9 floor consistent between runs and 21 below all
+flagged `needs_human` in the 2026-09-17 abstain trial of 30 calls, retained at
+`mas-bandwidth/rowan-new
+reports/jev/2026-09-17-589-abstain-reason.tsv@4857e071 (model jev-latest, 31
+rows)`; ships danger MAE 0.18, collision 60/60 correctness against a human
+label, maneuver 51/60 low confidence stays on the hand-written table, all in
+the 2026-09-17 ships trial of 60 calls, retained at `mas-bandwidth/rowan-new
+reports/jev/2026-09-17-ships.tsv@21d27719 (model jev-latest, 62 rows)`, with
+throughput 22 calls/s at concurrency 10 measured in that trial; and the note
+`2026-09-17-jev-note.pdf` (all 2026-09-17).
+
+1. A question over bounded state returns the typed answer with a
+   provider-reported confidence; an untyped reply is refused, not parsed.
 2. The fake asserts path `/v1/systemone`, model `jev-latest`, the header
    value, and the three question shapes; a body missing `state` is refused; a
    key on argv or in a log is red; `TYPESAFE_API_KEY` is accepted where
@@ -174,14 +207,15 @@ of rule 9, with no network, and each must be seen red before it is trusted.
     dropped; the original message or log still exists after the decision.
 12. A delivered batch or a finished task is decided; an empty wait or a pending
     task is not, and no provider call is made for it.
-13. Route adoption: 19/20 kinds correct, ~937 input tokens, ~436 ms per call;
-    the 20th falls back to today's routing.
-14. Abstain adoption: 9 above the 0.9 floor all consistent, 21 below all
-    flagged `needs_human`; none guessed.
+13. Route adoption: the route verb takes the fixture's above-floor answer and
+    prints the chosen kind; below the floor it falls back to the default route
+    and says so.
+14. Abstain adoption: the abstain reason and `needs_human` come through with
+    their confidence; a below-floor answer leaves the abstain as the
+    machinery's own.
 15. Inbox adoption: opt-in only, public buses only; a private bus is refused;
     below-floor notes stay unclassified.
 16. Pulse adoption: below the floor the gate answers real; a forced-flaky
     mutation pages.
-17. Game adoption: ships danger MAE 0.18, collision 60/60, maneuver 51/60 low
-    confidence stays on the table; 22 calls/s at concurrency 10 against the
-    fake.
+17. Game adoption: the game path uses the decision above the floor and falls
+    back to the local rule below it.
