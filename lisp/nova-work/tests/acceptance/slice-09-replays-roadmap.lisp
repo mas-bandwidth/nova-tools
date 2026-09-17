@@ -98,32 +98,127 @@
 ;;; configure-no-effect-and-undo-conflict   docs/SPEC-WORK.md:5842
 ;;; ------------------------------------------------------------------
 
-(deftest "configure-no-effect-and-undo-conflict" "docs/SPEC-WORK.md:5842"
-    "expected=equal-value-receipt;retry-returns-original-receipt-and-keeps-later-value;undo-only-while-guards-match"
-  (let ((cfg0 (r8621-cfg-make 5)))
-    ;; An equal-value configure, its reply lost.
-    (multiple-value-bind (cfg1 r1) (r8621-cfg-configure cfg0 5 "r1")
-      (check-equal 0 (getf r1 :changed)
-                   "an equal-value configure did not report no effect")
-      ;; A later edit.
-      (multiple-value-bind (cfg2 r2) (r8621-cfg-configure cfg1 7 "r2")
-        (check-equal 1 (getf r2 :changed) "the later edit did not change the value")
-        ;; Then the retry: the original receipt returned and the later value kept.
-        (multiple-value-bind (cfg3 r3 code) (r8621-cfg-retry cfg2 "r1")
-          (check-equal 0 code "the retry was refused")
-          (check-equal 0 (getf r3 :changed)
-                       "the retry did not return the original receipt")
-          (check-equal 7 (r8621-cfg-value cfg3)
-                       "the retry clobbered the later value"))
-        ;; Undo restores an ordered preimage only while its guards match.
-        (multiple-value-bind (cfg4 line code) (r8621-cfg-undo cfg2 2)
-          (check-equal 0 code "an undo with a matching guard refused")
-          (check-equal 5 (r8621-cfg-value cfg4)
-                       "the undo did not restore the ordered preimage"))
-        (multiple-value-bind (cfg5 line code) (r8621-cfg-undo cfg2 0)
-          (check-equal 2 code "undo did not refuse a stale guard")
-          (check-equal 7 (r8621-cfg-value cfg5)
-                       "a refused undo moved the value"))))))
+(deftest "configure-no-effect-and-undo-conflict" "docs/SPEC-WORK.md:5994"
+    "expected=equal-value-receipt;retry-returns-original-receipt-and-keeps-later-value;undo-only-while-guards-match;all-keep-refused;bad-patch-refused;layout-populated-refused"
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/t1" :type :task :parent "root" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm" :parent "root" :title "R" :row-kind :epic
+                        :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '() :permitted-roots '() :reason "new"
+                        :request "rm-1" :stamp "2026-09-17T00:00:00Z")
+      (ok okp "the roadmap was not created: ~A" line)
+      (check-equal 0 code "roadmap create exit"))
+    ;; An equal-value configure is the no-effect receipt changed=0 and moves no
+    ;; scope revision.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:set :epic)
+                           :aggregation-patch '(:keep)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:keep)
+                           :permitted-roots-patch '(:keep)
+                           :reason "same" :request "r1")
+      (ok okp "an equal-value configure was refused: ~A" line)
+      (check-equal 0 code "equal-value configure exit")
+      (ok (search "change=configure changed=0" line)
+          "an equal-value configure was not a no-effect receipt: ~A" line))
+    (check-equal 0 (roadmap-view-revision (kernel-state k) "rm")
+                 "a no-effect configure moved the scope revision")
+    ;; A later effective edit.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:keep)
+                           :aggregation-patch '(:set :all-members)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:keep)
+                           :permitted-roots-patch '(:keep)
+                           :reason "later" :request "r2")
+      (ok okp "the later configure was refused: ~A" line)
+      (check-equal 0 code "later configure exit")
+      (ok (search "change=configure changed=1" line)
+          "the later configure did not change: ~A" line))
+    (check-equal 1 (roadmap-view-revision (kernel-state k) "rm")
+                 "an effective configure did not advance the scope revision")
+    ;; Then the retry of the lost reply: the original receipt returns and the
+    ;; later value stands.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:set :epic)
+                           :aggregation-patch '(:keep)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:keep)
+                           :permitted-roots-patch '(:keep)
+                           :reason "same" :request "r1")
+      (ok okp "the retry was refused: ~A" line)
+      (check-equal 0 code "retry exit")
+      (ok (search "change=configure changed=0" line)
+          "the retry did not return the original receipt: ~A" line))
+    (check-equal :all-members (roadmap-view-aggregation (kernel-state k) "rm")
+                 "the retry clobbered the later value")
+    ;; Undo restores the ordered preimage only while its guard matches.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure-undo k :roadmap "rm" :of "r2" :request "u1")
+      (ok okp "an undo with a matching guard refused: ~A" line)
+      (check-equal 0 code "matching-guard undo exit")
+      (check-equal :required-members (roadmap-view-aggregation (kernel-state k) "rm")
+                   "the undo did not restore the ordered preimage"))
+    ;; A later effective configure moves the postimage, so the same undo conflicts.
+    (roadmap-configure k :roadmap "rm"
+                       :row-kind-patch '(:keep)
+                       :aggregation-patch '(:set :leaves)
+                       :completion-policy-patch '(:keep)
+                       :axes-patch '(:keep)
+                       :permitted-roots-patch '(:keep)
+                       :reason "moved" :request "r3")
+    (multiple-value-bind (okp line code)
+        (roadmap-configure-undo k :roadmap "rm" :of "r2" :request "u2")
+      (ok (null okp) "an undo with a stale guard did not refuse")
+      (check-equal 1 code "stale-guard undo exit")
+      (ok (search "conflict" line) "the undo conflict was not named: ~A" line)
+      (check-equal :leaves (roadmap-view-aggregation (kernel-state k) "rm")
+                   "a refused undo moved the value"))
+    ;; An all-keep request is refused, not a no-effect receipt.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:keep)
+                           :aggregation-patch '(:keep)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:keep)
+                           :permitted-roots-patch '(:keep)
+                           :reason "nothing" :request "r4")
+      (ok (null okp) "an all-keep configure was accepted")
+      (check-equal 2 code "all-keep exit")
+      (ok (search "all keep" line) "the all-keep refusal: ~A" line))
+    ;; A clear on a policy or a malformed patch is a bad patch.
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:clear)
+                           :aggregation-patch '(:keep)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:keep)
+                           :permitted-roots-patch '(:keep)
+                           :reason "bad" :request "r5")
+      (ok (null okp) "a clear on a policy patch was accepted")
+      (check-equal 2 code "bad-patch exit")
+      (ok (search "bad patch" line) "the bad-patch refusal: ~A" line))
+    ;; The layout changes only while every axis is empty and :members is empty.
+    (let ((view (node-view (kernel-state k) "rm")))
+      (setf (getf view :members) '("root/t1")))
+    (multiple-value-bind (okp line code)
+        (roadmap-configure k :roadmap "rm"
+                           :row-kind-patch '(:keep)
+                           :aggregation-patch '(:keep)
+                           :completion-policy-patch '(:keep)
+                           :axes-patch '(:set ("col"))
+                           :permitted-roots-patch '(:keep)
+                           :reason "layout" :request "r6")
+      (ok (null okp) "a layout change on a populated roadmap was accepted")
+      (check-equal 2 code "layout-populated exit")
+      (ok (search "layout populated" line)
+          "the layout refusal did not name layout populated: ~A" line))))
 
 ;;; ------------------------------------------------------------------
 ;;; completed-view-mutation                 docs/SPEC-WORK.md:5845

@@ -308,11 +308,16 @@
       (ok (not okp) "the reserved-plan role was spent on routine work")
       (ok (search "reserved" reason) "the refusal does not name the reservation: ~A" reason))))
 
-(deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:5344"
-    "expected=node-add--type-roadmap-exit-2-naming-roadmap-create;one-node-and-one-view-atomic"
-  ;; SPEC-WORK.md:5795 -- `node add --type roadmap` exit 2 naming `roadmap
-  ;; create`; `roadmap create` writing one node and one view in one envelope.
-  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)))
+(deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:3072"
+    "expected=node-add--type-roadmap-exit-2-naming-roadmap-create;one-node-and-one-view-atomic;members-empty;axes-none-writes-empty-axes;axis-ids-distinct;under-is-a-node-never-the-open-root"
+  ;; SPEC-WORK.md:3072-3078 -- `node add --type roadmap` exit 2 naming
+  ;; `roadmap create`; the one creator writes the node and its initial view as
+  ;; one `:roadmap-create` `:structure` event, its `:under` a node and never the
+  ;; open root, every create starting with `:members ()`, `--axes-none` writing
+  ;; `:axes ()`, axis ids distinct, and the view carrying `:members`,
+  ;; `:permitted-roots` and `:projections`.
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/f1" :type :feature :parent "root" :state :unknown)))
          (k (make-kernel :state (make-seed-state seed))))
     (multiple-value-bind (okp line code)
         (node-add k :id "rm" :type :roadmap :parent "root")
@@ -321,9 +326,53 @@
       (ok (search "roadmap create" line) "names roadmap create: ~A" line))
     (multiple-value-bind (okp line code)
         (roadmap-create k :id "rm" :parent "root" :title "Now"
-                        :axes '() :members '()
+                        :row-kind :epic :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '("col" "row") :permitted-roots '("root")
+                        :members '()
                         :reason "new" :request "rm-1" :stamp "2026-09-17T00:00:00Z")
       (ok okp "roadmap create accepted: ~A" line)
-      (check-equal 0 code "roadmap create exit"))
+      (check-equal 0 code "roadmap create exit")
+      (ok (search "change=create" line) "roadmap create line: ~A" line))
     (check-equal :roadmap (node-type (kernel-state k) "rm") "roadmap node exists")
-    (ok (node-view (kernel-state k) "rm") "roadmap view created atomically")))
+    (let ((view (node-view (kernel-state k) "rm")))
+      (ok view "roadmap view created atomically")
+      (check-equal '() (getf view :members) "every create starts with members ()")
+      (check-equal '("col" "row") (getf view :axes) "the axes were not written")
+      (check-equal '("root") (getf view :permitted-roots)
+                   "the permitted roots were not written")
+      (check-equal '() (getf view :projections) "projections start empty")
+      (check-equal :epic (getf view :row-kind) "the row kind was not written")
+      (check-equal :required-members (getf view :aggregation)
+                   "the aggregation was not written"))
+    ;; One `:roadmap-create` `:structure` event landed in the roadmap's own
+    ;; append-only structure history.
+    (let ((events (roadmap-structure-events (kernel-state k) "rm")))
+      (check-equal 1 (length events) "the create was not one structure event")
+      (let ((ev (first events)))
+        (check-equal :structure (getf ev :kind) "the create event kind")
+        (check-equal :roadmap-create (getf ev :verb) "the create event verb")
+        (check-equal '(:node "root") (getf ev :under)
+                     "the create's :under was not a node reference")
+        (check-equal :roadmap (getf ev :node-type) "the create event node type")))
+    ;; Axis ids are distinct: a duplicate refuses and writes no node.
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm-dup" :parent "root" :row-kind :epic
+                        :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '("dup" "dup") :reason "bad" :request "rm-2")
+      (ok (null okp) "a create with duplicate axis ids was accepted")
+      (check-equal 2 code "duplicate axis ids exit")
+      (ok (search "distinct" line) "the duplicate-axis refusal: ~A" line)
+      (ok (null (nova-work::%node-quiet (kernel-state k) "rm-dup"))
+          "a refused create wrote a node"))
+    ;; `--under` names a node and never the open root.
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm-root" :parent nil :row-kind :epic
+                        :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '() :reason "bad" :request "rm-3")
+      (ok (null okp) "a create under the open root was accepted")
+      (check-equal 2 code "rootless create exit")
+      (ok (null (nova-work::%node-quiet (kernel-state k) "rm-root"))
+          "the rootless refusal wrote a node"))))
