@@ -61,18 +61,17 @@ func refuse(reason, format string, a ...any) Refusal {
 // Input is the argv as the caller typed it, before any resolution. Everything here is a
 // claim about this job; Build turns it into a Policy or into refusals.
 type Input struct {
-	Reads         []string
-	Writes        []string
-	Cwd           string // empty: the first --write (rule 13)
-	Tmp           string // empty: <first --write>/.nova-sandbox-tmp (rule 8)
-	Name          string // windows container name; accepted and ignored elsewhere
-	NetDeny       bool
-	NetListen     bool
-	GPU           string   // --gpu none|metal; empty means none (issue #230)
-	NoSystemReads bool     // --no-system-reads: omit the linux system read roots (issue #893)
-	Argv          []string // the command and its arguments, everything after --
-	Home          string   // the caller's HOME as the child will see it (rule 9)
-	LookAt        string   // PATH to resolve the command on; empty means the process's own
+	Reads     []string
+	Writes    []string
+	Cwd       string // empty: the first --write (rule 13)
+	Tmp       string // empty: <first --write>/.nova-sandbox-tmp (rule 8)
+	Name      string // windows container name; accepted and ignored elsewhere
+	NetDeny   bool
+	NetListen bool
+	GPU       string   // --gpu none|metal; empty means none (issue #230)
+	Argv      []string // the command and its arguments, everything after --
+	Home      string   // the caller's HOME as the child will see it (rule 9)
+	LookAt    string   // PATH to resolve the command on; empty means the process's own
 }
 
 // Policy is one run's wall: resolved, absolute, existing paths and nothing guessed. The
@@ -140,30 +139,6 @@ var darwinOptRoots = []string{"/opt/homebrew", "/opt/local"}
 // fixedDarwinPrefixes are the roots the template already grants as subpaths. An optional
 // root under one of them is dropped rather than emitted twice.
 var fixedDarwinPrefixes = []string{"/usr", "/bin", "/sbin", "/System", "/Library", "/private/etc", "/private/var/select", "/dev"}
-
-// linuxSystemReadCandidates is issue #893 as data: on Linux the sandbox always reads
-// the system roots the resolver and TLS need, each only if it exists. A harness that
-// cannot resolve a name inside the sandbox is a sandbox bug, not a network one.
-// macOS sandbox-exec never hid those paths, so this is Linux only.
-var linuxSystemReadCandidates = []string{"/etc", "/usr", "/lib", "/lib64", "/run/systemd/resolve", "/proc/self"}
-
-// systemReadRoots is the existing subset of the candidates above on this machine, in
-// table order, as literal paths. Skipped if absent; only a caller's path is refused
-// for absence (rule 5). Unresolved on purpose: /proc/self must stay that spelling,
-// and resolving /etc on a Mac would say /private/etc, which the test pins as wrong.
-func systemReadRoots(goos string) []string {
-	if goos != "linux" {
-		return nil
-	}
-	var out []string
-	for _, c := range linuxSystemReadCandidates {
-		if _, err := os.Stat(c); err != nil {
-			continue
-		}
-		out = append(out, c)
-	}
-	return out
-}
 
 // OptionalRoots is the machine's answer to the table above plus the directory of the
 // resolved command, which is a root for exactly this run (the spec's roots table names
@@ -580,23 +555,10 @@ func Build(in Input) (*Policy, []Refusal) {
 	if len(bad) > 0 {
 		return nil, bad
 	}
-	// Issue #893: on linux the sandbox always reads the system roots the resolver
-	// and TLS need, each only if it exists. They join p.Reads so the SANDBOX OK
-	// line's read= count includes them. --no-system-reads omits them, for the
-	// tests that assert the minimal policy. After the refusals above, so a
-	// caller-named home guard never sees them as caller input.
-	if !in.NoSystemReads {
-		seen := map[string]bool{}
-		for _, r := range p.Reads {
-			seen[r] = true
-		}
-		for _, s := range systemReadRoots(runtime.GOOS) {
-			if !seen[s] {
-				p.Reads = append(p.Reads, s)
-				seen[s] = true
-			}
-		}
-	}
+	// Issue #893, PR 948 re-cut: the linux system read roots are not a field here and
+	// not a caller switch. The linux backend's linuxReadRoots is the one policy, applied
+	// by addRules (rule 3): a harness that cannot resolve a name inside the sandbox is a
+	// sandbox bug, not a network one.
 	// rule 8, and the one directory this tool creates: everything above passed.
 	if makeTmp {
 		tmp := filepath.Join(first, tmpDirName)

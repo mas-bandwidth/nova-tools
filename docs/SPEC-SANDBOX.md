@@ -592,7 +592,7 @@ source, not a string built in three places, and `policy` prints them:
 | platform | roots |
 |---|---|
 | darwin | `/`, `/etc`, `/tmp`, `/var` (each the directory or link itself, `(literal ...)`, not a subpath), `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/opt/homebrew`, `/opt/local`, `/private/etc`, `/private/var/select`, `/dev` (read), the directory of the resolved command; plus **write** on `/dev/null` and `/dev/tty` |
-| linux | `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`, `/opt`, `/dev` (read), `/proc`, the directory of the resolved command; plus **write** on `/dev/null` and `/dev/tty` |
+| linux | `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`, `/run/systemd/resolve`, `/opt`, `/dev` (read), `/proc`, the directory of the resolved command; plus **write** on `/dev/null` and `/dev/tty` |
 | windows | `%WINDIR%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, the directory of the resolved command |
 
 `/` itself and `/dev` are in the darwin list because they were measured to be
@@ -641,11 +641,14 @@ network one. Measured 2026-09-17 on hulk (landlock abi=4): inside nova-sandbox
 the harness could not resolve DNS or read CA certificates, because the default
 read set hid `/etc`, `/usr`, `/lib`, `/lib64` and `/run/systemd/resolve` — curl
 said `Could not resolve host`; with `--read /etc --read /usr
---read /run/systemd/resolve` it got `http=200`. So on linux the policy builder
-adds `/etc`, `/usr`, `/lib`, `/lib64`, `/run/systemd/resolve` and `/proc/self`
-by default, each only if it exists, and the `SANDBOX OK` line's `read=` count
-includes them. `--no-system-reads` turns them off, for the tests that assert
-the minimal policy; `nova-swarm` passes nothing new and inherits the default.
+--read /run/systemd/resolve` it got `http=200`. The Linux backend therefore
+always reads the roots in `linuxReadRoots` in `internal/sandbox/wrap_linux.go`,
+applied by `addRules`, including the resolver runtime directory
+`/run/systemd/resolve`, and it says so in the roots table above. They are part
+of the one roots table, not a separate policy and not a caller switch: there is
+no flag that turns them off. The `SANDBOX OK` line's `read=` count is the
+caller's `--read` list and does not include them; `nova-swarm` passes nothing
+new and inherits the table.
 
 The home directory is never a root — **including by way of the command**. One
 root is computed rather than named, "the directory of the resolved command", and

@@ -1,50 +1,38 @@
+//go:build linux
+
 package sandbox
 
 import (
-	"runtime"
-	"strings"
+	"reflect"
 	"testing"
 )
 
-// nova-tools #893: on Linux the sandbox always reads the system roots the
-// resolver and TLS need. Do not run landlock here; assert the policy object.
-func TestLinuxDefaultsIncludeSystemReads(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skipf("skipped on %s: system reads are the linux default", runtime.GOOS)
-	}
-	write, read, home, _ := scratch(t)
-	p, bad := Build(in(t, write, read, home, anExecutable(t)))
-	if len(bad) > 0 {
-		t.Fatalf("refused: %v", bad)
-	}
-	joined := "\n" + strings.Join(p.Reads, "\n") + "\n"
-	for _, want := range []string{"/etc", "/usr"} {
-		if !strings.Contains(joined, "\n"+want+"\n") {
-			t.Fatalf("default policy read roots %v do not list %s; the resolver and TLS need it", p.Reads, want)
+// nova-tools #893, PR 948 re-cut: linuxReadRoots is the ONE system-reads policy. On
+// Linux the sandbox always reads the system roots the resolver and TLS need, enforced
+// by addRules and never switched off, because a harness that cannot resolve a name
+// inside the sandbox is a sandbox bug, not a network one.
+func TestLinuxReadRootsIncludeTheResolverDirectory(t *testing.T) {
+	for _, want := range []string{"/etc", "/usr", "/lib", "/lib64", "/run/systemd/resolve"} {
+		found := false
+		for _, r := range linuxReadRoots {
+			if r == want {
+				found = true
+			}
 		}
-	}
-	if len(p.Reads) < 2 {
-		t.Fatalf("read=%d does not include the system roots", len(p.Reads))
+		if !found {
+			t.Fatalf("linuxReadRoots %v does not list %s; the resolver and TLS need it", linuxReadRoots, want)
+		}
 	}
 }
 
-func TestNoSystemReadsOmitsSystemRoots(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skipf("skipped on %s: system reads are the linux default", runtime.GOOS)
-	}
-	write, read, home, _ := scratch(t)
-	iv := in(t, write, read, home, anExecutable(t))
-	iv.NoSystemReads = true
-	p, bad := Build(iv)
-	if len(bad) > 0 {
-		t.Fatalf("refused: %v", bad)
-	}
-	for _, r := range p.Reads {
-		if r == "/etc" || r == "/usr" {
-			t.Fatalf("with NoSystemReads the policy still lists %s: %v", r, p.Reads)
+// The system reads are not a caller switch and there is no second table: a field on
+// Input or Policy would be the duplicate policy PR 948 removed.
+func TestSystemReadsAreNotAFieldOnInputOrPolicy(t *testing.T) {
+	for _, typ := range []reflect.Type{reflect.TypeOf(Input{}), reflect.TypeOf(Policy{})} {
+		for _, name := range []string{"SystemReads", "NoSystemReads"} {
+			if f, ok := typ.FieldByName(name); ok {
+				t.Fatalf("%s still carries %s: linuxReadRoots is the one enforced policy", typ, f.Name)
+			}
 		}
-	}
-	if len(p.Reads) != 1 {
-		t.Fatalf("with NoSystemReads read=%d, want the caller's 1", len(p.Reads))
 	}
 }
