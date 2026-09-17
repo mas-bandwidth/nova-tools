@@ -643,7 +643,7 @@ nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
 nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity>
-nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
+nova-swarm cost     --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
 nova-swarm version
@@ -2397,6 +2397,17 @@ subtotal remains visible, while an all-unknown USD total is `usd=-` and is
 never read as measured zero.
 `cost` reads `<pool>/usage/` and nothing under `done/`, `failed/` or
 `running/`, which is why it answers after `reclaim`.
+
+**`--by model|day|repo` folds the same rows into one summed line per group**, printed
+after the per-task lines and before `COST OK`, one
+`COST BY <group>=<value> tasks=<n> in=<sum> out=<sum> cache_write=<sum> cache_read=<sum>
+reasoning=<sum> usd=<sum or ->` per group, sorted by `cache_read` descending. A group
+whose rows carry a `-` in `usd` prints `usd=-`: the summed dollar figure is an absence
+when any row in it is an absence, and a partial subtotal is never read as the group's
+price. `--summary-only` prints the `COST BY` lines and `COST OK` and no `COST TASK`
+lines, which is the page a coordinator reads to answer *which model, which day, which
+repo*. A `--by` value that is not `model`, `day` or `repo` is refused rather than read
+as a fourth grouping.
 
 This exists because **a fleet can burn a session**: one fleet ran about 9M
 tokens, and three parallel workflows hit the limit in 20 minutes (Glenn,
