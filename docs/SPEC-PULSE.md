@@ -110,8 +110,9 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    line then green line, one row per item.
 7. **The route is the cheapest capable, from a cost table, never a hand.** `cut` reads the
    cost table `--benches <file>` (default `benches.tsv` beside `--templates`; a `routes.tsv`
-   beside it is read the same way): one column per model, two rows — `cost`, a class
-   `zero|flat|metered` with a `usd per Mtok`, and `capability`, `read|text|code|replay`. Per
+   beside it is read the same way): one column per model, three rows — a `model` row naming
+   each model, then `cost`, a class `zero|flat|metered` with a `usd per Mtok`, and
+   `capability`, `read|text|code|replay`. Per
    card class a model is capable when its capability covers the kind's (`read`, `text` and
    `tone` need `read|text|replay`; `fix` and `drift` need `code`; `replay` needs `replay`),
    and `cut` picks the capable model with the lowest average cost per token — `zero` beats
@@ -1200,6 +1201,9 @@ handoff (rule **The manager tier**).
    lines, and this draft's `--benches` and `--timeout`; `cut.go` prints `flash=<n> pro=<n>` on
    `CUT OK` where rule 7's cost table gives `zero=<n> flat=<n> metered=<n>`; and
    `TestCutModelByKind` pins the routing replay 8 replaces. A fourth is rule 9's: `internal/pulse/launch.go` still writes
+   `zero=<n> flat=<n> metered=<n>` on `CUT OK` (rule 7's cost table) and `TestCutModelByKind`
+   asserts the table's routes, while `cards.tsv` still carries four fields where rule 7 gives
+   five; and rule 9's: `internal/pulse/launch.go` still writes
    `PULSE REFUSED UNDER-SLOTS` and `launch_test.go` pins it, `pulseVerbs` still offers
    `[--queue]` and carries none of the three gate flags — one card retires the refusal, turns
    that test into replay 9, drops `[--queue]` and adds the gates, in that order, so the red is

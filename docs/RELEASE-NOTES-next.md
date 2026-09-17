@@ -36,8 +36,8 @@ New: one bounded, exact-revision **review packet**, no opinion and no merge.
 New: one tool, five verbs, no model call — every token is a card's.
 
 - **Verbs:** `pool`, `cut`, `launch`, `harvest`, `manager`. `harvest` is no longer marked `(not yet implemented)`.
-- **Flags:** `pool --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]`; `cut --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]`; `launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]`; `harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]`; `manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]`.
-- **Changed behaviour:** `pool --max` is defined and honored; `manager` is the bounded controller — each cycle is wait, notes, harvest, triage, merge, refill and one `MANAGER` line, and `--hours 0` runs one cycle and ends `SHIFT END`; help names the `models.tsv` shape `cut` wants.
+- **Flags:** `pool --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]`; `cut --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]`; `launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]`; `harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]`; `manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]`.
+- **Changed behaviour:** `pool --max` is defined and honored; `manager` is the bounded controller — each cycle is wait, notes, harvest, triage, merge, refill and one `MANAGER` line, and `--hours 0` runs one cycle and ends `SHIFT END`; `cut` routes by the cheapest capable model from the cost table (`benches.tsv` or `routes.tsv`) and prints `CUT ROUTE route=<model> reason=<class>` per card.
 
 ## nova-secrets
 

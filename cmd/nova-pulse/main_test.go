@@ -119,9 +119,11 @@ func TestSpecVerbsBlockMarksUnshippedVerbs(t *testing.T) {
 	}
 }
 
-// cut-refusal-names-models-shape: a cut whose templates dir has no models.tsv is refused,
-// and the refusal names the two-line shape flash <model id> / pro <model id> (issue #633).
-func TestCutRefusalNamesModelsShape(t *testing.T) {
+// cut-refusal-names-cost-table-shape: a cut whose templates dir has no benches.tsv (or
+// routes.tsv) is refused, and the refusal names the shape: a `model` row of names, a
+// `cost` row of `zero|flat|metered` with a usd per Mtok, and a `capability` row
+// (SPEC-PULSE rule 7).
+func TestCutRefusalNamesCostTableShape(t *testing.T) {
 	dir := t.TempDir()
 	pool := writeMainFile(t, dir, "pool.tsv", "mas-bandwidth/nova-tools\t1\tread\tTitle\tread\n")
 	templates := filepath.Join(dir, "templates")
@@ -131,10 +133,10 @@ func TestCutRefusalNamesModelsShape(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := run([]string{"cut", "--pool", pool, "--templates", templates, "--out", filepath.Join(dir, "out"), "--root", filepath.Join(dir, "root")}, &out, &errb, time.Now().UTC())
 	if code != 2 {
-		t.Fatalf("cut missing models.tsv exit = %d, want 2; stderr=%s", code, errb.String())
+		t.Fatalf("cut missing cost table exit = %d, want 2; stderr=%s", code, errb.String())
 	}
-	if !strings.Contains(errb.String(), "flash <model id>") || !strings.Contains(errb.String(), "pro <model id>") {
-		t.Fatalf("stderr=%q, want the two-line shape flash <model id> / pro <model id>", errb.String())
+	if !strings.Contains(errb.String(), "benches.tsv") || !strings.Contains(errb.String(), "cost") || !strings.Contains(errb.String(), "capability") {
+		t.Fatalf("stderr=%q, want the cost table shape named (benches.tsv, cost, capability)", errb.String())
 	}
 }
 
@@ -231,7 +233,7 @@ func TestCutMaxBoundsCardsCut(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("cut exit = %d, want 0; stderr=%s", code, errb.String())
 	}
-	want := "CUT OK cards=6 skipped=0 flash=0 pro=6 out=" + out
+	want := "CUT OK cards=6 skipped=0 zero=0 flat=6 metered=0 out=" + out
 	if !strings.Contains(stdout.String(), want) {
 		t.Fatalf("stdout=%q, want it to carry %q", stdout.String(), want)
 	}
