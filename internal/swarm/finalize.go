@@ -65,7 +65,7 @@ func (p *Pool) Finalize(e Ending) (Finalized, error) {
 	var out Finalized
 	attempt := 1
 	if e.Sidecar.Requeued > 0 {
-		attempt = 2
+		attempt = e.Sidecar.Requeued + 1
 	}
 	row := UsageRow{
 		"job": e.Sidecar.ID, "attempt": strconv.Itoa(attempt), "from": dashOr(e.Sidecar.From),
@@ -103,7 +103,7 @@ func (p *Pool) copyReport(e Ending, out Finalized) (Finalized, error) {
 	}
 	attempt := 1
 	if e.Sidecar.Requeued > 0 {
-		attempt = 2
+		attempt = e.Sidecar.Requeued + 1
 	}
 	// The same rename this package publishes every record through, read the same way: a
 	// collision here would write the MarkerNoResult that outlives the run over a report

@@ -65,6 +65,15 @@ type Worker struct {
 	// one its provider uses. It never SUBSTITUTES: a caller teaching the tool their
 	// provider's words cannot silently un-teach it another's.
 	InputLimitPhrases []string `json:"input_limit_phrases,omitempty"`
+
+	// LAUNCH GRACE (issue #900): how long a harness may run before its exit stops
+	// counting as a LAUNCH failure. Nine of forty Muse requests died in under two
+	// seconds with a provider 5xx and wasted the slot they held; a death inside this
+	// window whose tail names a provider server error is a launch that did not take,
+	// and the dispatcher retries it instead of filing it. OPTIONAL: the default is
+	// DefaultLaunchGrace (15s). A slow failure -- one that takes longer than this -- is
+	// a real run that failed and is never retried.
+	LaunchGrace string `json:"launch_grace,omitempty"`
 }
 
 // The usage sources a description may declare (rule 13). There are two.
@@ -92,7 +101,7 @@ func LoadWorker(path string) (Worker, []error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&w); err != nil {
-		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, read_roots, input_limit_phrases", path, err)}
+		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, read_roots, input_limit_phrases, launch_grace", path, err)}
 	}
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
@@ -261,6 +270,11 @@ func LoadWorker(path string) (Worker, []error) {
 	if w.Deadline != "" {
 		if _, err := time.ParseDuration(w.Deadline); err != nil {
 			problems = append(problems, fmt.Errorf("%s: deadline wants a duration such as 20m, got %q", path, w.Deadline))
+		}
+	}
+	if w.LaunchGrace != "" {
+		if d, err := time.ParseDuration(w.LaunchGrace); err != nil || d <= 0 {
+			problems = append(problems, fmt.Errorf("%s: launch_grace wants a positive duration such as 15s, got %q", path, w.LaunchGrace))
 		}
 	}
 	return w, problems

@@ -1310,12 +1310,13 @@ RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|fals
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
-RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
 RUN MALFORMED id=<id> slot=<n> line=<n> dest=failed
 RUN INPUT-LIMIT id=<id> slot=<n> after=<d> input=<n|-> max=<n|-> dest=failed: <the provider's own words>
+RUN PROVIDER id=<id> slot=<n> after=<d> attempts=<n> dest=<failed> provider=<ref|-> requeued=<true|false>: <the provider's own words>
 RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|malformed> findings=<n> refusals=<n> notes=<sent>/<read|-> unpublished=<true|false> budget=<spent|n+|->/<n> dest=<done|failed> [log=<one bounded line of what the harness said>]
 RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
 RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<true|false> budget=<spent|n+|->/<n> survived=<true|false> requeued=<true|false> reaped=<1|2>
@@ -2073,6 +2074,24 @@ digit — refused when it is read, because a job classed this way is never retri
 tool hands the harness, which `run` checks **before** the launch and refuses with the same
 class and the measured size: it bounds what the dispatcher can measure, and the files the
 worker then opens are still `--files`.
+
+**A launch that dies in its first seconds on a provider 5xx is retried, and only
+then filed `end=provider`.** Measured on 2026-09-17: nine of forty Muse requests died in
+under two seconds with `Unexpected server error … ref=err_…`, each having taken a slot and
+spent its harvest on a request the provider never began, and the pool read them as ordinary
+failures. So a harness exit inside the **launch grace** — the worker description's
+`launch_grace`, fifteen seconds by default — whose output tail names a provider server error
+(`unexpected server error`, `internal server error`, or a `502`, `503` or `529` as a whole
+word) is a **launch failure** and not a finished task. The dispatcher retries the same task,
+after a jittered 5–20 s and then a jittered 30–60 s, and after the third fast failure it
+files it with `end=provider` and the provider's `ref=` on its `RUN PROVIDER` line, in the
+sidecar and in the usage row. The retry keeps the task: each attempt is `from=` the attempt
+before, the usage rows carry `attempt=1`, `attempt=2`, `attempt=3`, and a field the provider
+never reported stays a dash and never becomes a zero. A slow failure — one that takes longer
+than the grace — is a real run that failed and is **not** retried, and `run --no-auto-retry`
+files the first fast failure without launching a descendant. A native run applies the same
+rule to its launch and appends one usage row per launch, so a retried card's `usage.tsv`
+carries its attempts for the one job.
 
 ## `requeue` — the same task, changed
 

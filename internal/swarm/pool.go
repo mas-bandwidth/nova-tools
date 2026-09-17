@@ -97,32 +97,33 @@ type Verdict struct {
 // Sidecar is everything the pool knows about a task that is not its text. It travels with
 // the task file from pending/ to running/ to done/ or failed/.
 type Sidecar struct {
-	ID         string   `json:"id"`
-	Label      string   `json:"label,omitempty"`
-	Template   string   `json:"template,omitempty"`
-	Files      int      `json:"files"`
-	Tokens     int      `json:"tokens,omitempty"`
-	Unmetered  bool     `json:"unmetered,omitempty"`
-	Deadline   string   `json:"deadline"`
-	Batch      string   `json:"batch,omitempty"`
-	From       string   `json:"from,omitempty"`
-	Requeued   int      `json:"requeued,omitempty"`
-	Reaped     int      `json:"reaped,omitempty"`
-	Launch     string   `json:"launch,omitempty"`
-	Malformed  int      `json:"malformed,omitempty"`
-	Violation  string   `json:"violation,omitempty"`
-	MaxInput   int      `json:"max_input,omitempty"`
-	Limit      string   `json:"limit,omitempty"`
-	Job        string   `json:"job,omitempty"`
-	Slot       int      `json:"slot,omitempty"`
-	Started    string   `json:"started,omitempty"`
-	Ended      string   `json:"ended,omitempty"`
-	End        string   `json:"end,omitempty"`
-	RC         int      `json:"rc"`
-	Notes      int      `json:"notes,omitempty"`
-	Class      string   `json:"class,omitempty"`
-	ReplacedBy string   `json:"replaced_by,omitempty"`
-	Verdict    *Verdict `json:"verdict,omitempty"`
+	ID          string   `json:"id"`
+	Label       string   `json:"label,omitempty"`
+	Template    string   `json:"template,omitempty"`
+	Files       int      `json:"files"`
+	Tokens      int      `json:"tokens,omitempty"`
+	Unmetered   bool     `json:"unmetered,omitempty"`
+	Deadline    string   `json:"deadline"`
+	Batch       string   `json:"batch,omitempty"`
+	From        string   `json:"from,omitempty"`
+	Requeued    int      `json:"requeued,omitempty"`
+	Reaped      int      `json:"reaped,omitempty"`
+	Launch      string   `json:"launch,omitempty"`
+	Malformed   int      `json:"malformed,omitempty"`
+	Violation   string   `json:"violation,omitempty"`
+	MaxInput    int      `json:"max_input,omitempty"`
+	Limit       string   `json:"limit,omitempty"`
+	ProviderRef string   `json:"provider_ref,omitempty"`
+	Job         string   `json:"job,omitempty"`
+	Slot        int      `json:"slot,omitempty"`
+	Started     string   `json:"started,omitempty"`
+	Ended       string   `json:"ended,omitempty"`
+	End         string   `json:"end,omitempty"`
+	RC          int      `json:"rc"`
+	Notes       int      `json:"notes,omitempty"`
+	Class       string   `json:"class,omitempty"`
+	ReplacedBy  string   `json:"replaced_by,omitempty"`
+	Verdict     *Verdict `json:"verdict,omitempty"`
 }
 
 // BudgetWord is what a RUN line prints for this task's token budget ceiling.

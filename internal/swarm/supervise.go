@@ -194,6 +194,20 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 				reason := fmt.Sprintf("%s limit: a request of %d did not fit a %d ceiling", sig.Class, sig.Value, sig.Limit)
 				return ExitRecord{RC: rc, Signal: signal, End: EndInputLimit, Spent: spent, Observed: observed, Partial: partial, Reason: reason}
 			}
+			// A LAUNCH THAT DIES IN THE GRACE ON A PROVIDER 5XX (issue #900). The
+			// request never began: the provider answered a server error and the harness
+			// wrote two lines and stopped. A run inside the launch grace whose tail
+			// names a server error is marked `end=provider`, and the dispatcher's finish
+			// decides the retry. A slow failure -- past the grace -- is a real run that
+			// failed and is left exactly as before.
+			if elapsed := in.Now().Sub(started); elapsed < LaunchGrace(in.Worker) {
+				if tail := HarnessTail(jobDir); tail != "" {
+					if ref, ok := ProviderLaunchFailure([]byte(tail)); ok {
+						return ExitRecord{RC: rc, Signal: signal, End: EndProvider, Spent: spent, Observed: observed, Partial: partial,
+							Reason: providerLaunchReason(ref, tail)}
+					}
+				}
+			}
 			// AND A PROVIDER'S INPUT LIMIT IS ITS OWN CLASS, named by the process that
 			// watched the harness say it (#103). Two Freddy reads of whole specs died
 			// `rc=1 end=failed` on 2026-09-12 and the dispatcher had only the rc; the

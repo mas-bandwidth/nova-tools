@@ -214,3 +214,37 @@ func WriteCardUsage(path string, row UsageRow) error {
 	body := strings.Join(head, "\t") + "\n" + strings.Join(values, "\t") + "\n"
 	return writeAtomic(path, []byte(body), 0o644)
 }
+
+// AppendCardUsage appends one attempt's usage row to a card's usage.tsv, writing the header
+// first when the file is new (issue #900). A native run that retried a launch writes one row
+// per attempt -- attempt=1,2,3 for one card -- so the file holds the header and one row per
+// launch, and a reader folds them. A field the provider did not report stays a dash, never a
+// zero, exactly as in the single-row writer.
+func AppendCardUsage(path string, row UsageRow) error {
+	_, statErr := os.Stat(path)
+	var b strings.Builder
+	if statErr != nil {
+		b.WriteString(strings.Join(CardUsageColumns, "\t"))
+		b.WriteByte('\n')
+	}
+	values := make([]string, 0, len(CardUsageColumns))
+	for _, c := range CardUsageColumns {
+		v := strings.TrimSpace(row[c])
+		if v == "" {
+			v = Dash
+		}
+		v = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(v)
+		values = append(values, v)
+	}
+	b.WriteString(strings.Join(values, "\t"))
+	b.WriteByte('\n')
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(b.String()); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}

@@ -271,24 +271,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 
 	// THE CHILD. The deadline is a context, so the process (and any it started in its
 	// own group) is killed when the wall runs out, not merely handed a suggestion.
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.deadline)
-	defer cancel()
 	secretEnv := ""
 	if cfg.worker != nil {
 		secretEnv = cfg.worker.Secret
 	}
 	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, secretEnv)
 	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
-	cmd := exec.CommandContext(ctx, runPath, runArgv...)
-	cmd.Env = childEnv
-	cmd.Dir = jobDir
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the child's stdin %s could not be opened: %s", oneline.Field(os.DevNull), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
 	defer devNull.Close()
-	cmd.Stdin = devNull
 	log, err := os.OpenFile(filepath.Join(cfg.slotDir, "native.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		refuseNative(errOut, fmt.Sprintf("the run log %s could not be opened: %s", oneline.Field(filepath.Join(cfg.slotDir, "native.log")), oneline.Escape(err.Error())))
@@ -326,8 +320,6 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// is guessed. The logs still carry every byte; the buffer holds stderr for the parse.
 	var wallOut bytes.Buffer
 	capture := io.MultiWriter(log, harnessOut)
-	cmd.Stdout = capture
-	cmd.Stderr = io.MultiWriter(capture, &wallOut)
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -341,15 +333,49 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if cfg.noWall {
 		res.wall = "none-by-flag"
 	}
-	start := time.Now()
-	if err := cmd.Run(); err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			res.rc = ee.ExitCode()
-		}
-	} else {
-		res.rc = 0
+
+	// THE LAUNCH GRACE (issue #900). A harness that dies inside this window with a
+	// provider server error in its own output is a launch that did not take: the provider
+	// answered before the request began, and the slot was spent on nothing. The SAME card
+	// is retried -- 5-20s jittered, then 30-60s -- and each launch writes its own usage row
+	// (attempt=1,2,3). A failure past the grace is a real run that failed and is not
+	// retried.
+	grace := swarm.DefaultLaunchGrace
+	if cfg.worker != nil {
+		grace = swarm.LaunchGrace(*cfg.worker)
 	}
-	res.wallSeconds = time.Since(start).Seconds()
+	for attempt := 1; ; attempt++ {
+		before := fileSize(outLog)
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.deadline)
+		cmd := exec.CommandContext(ctx, runPath, runArgv...)
+		cmd.Env = childEnv
+		cmd.Dir = jobDir
+		cmd.Stdin = devNull
+		cmd.Stdout = capture
+		cmd.Stderr = io.MultiWriter(capture, &wallOut)
+		attemptStart := time.Now()
+		runErr := cmd.Run()
+		elapsed := time.Since(attemptStart)
+		cancel()
+		res.wallSeconds += elapsed.Seconds()
+		switch ee := runErr.(type) {
+		case nil:
+			res.rc = 0
+		case *exec.ExitError:
+			res.rc = ee.ExitCode()
+		default:
+			res.rc = -1
+		}
+		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
+		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
+		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, errOut)
+		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
+		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
+			time.Sleep(swarm.ProviderRetryDelay(attempt))
+			continue
+		}
+		break
+	}
 	log.Close()
 	harnessOut.Close()
 	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
@@ -375,10 +401,35 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 	}
 
-	// Slice 10: one usage.tsv beside the run, read from the harness's own store, so a batch
-	// can fold the card's tokens and dollars without re-reading the harness.
-	res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], start, time.Now(), res.rc, errOut)
 	return res, 0
+}
+
+// fileSize is a path's size, or 0 when it cannot be measured: the mark the retry loop reads
+// before a launch so the provider tail it inspects is THIS attempt's output.
+func fileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
+}
+
+// readSince reads what one launch appended to the capture after offset, bounded so a chatty
+// harness does not read a whole log to answer a yes/no.
+func readSince(path string, offset int64) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, 64<<10))
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // fenceRejected is the first path the harness's own fence auto-rejected in this job's
@@ -663,14 +714,19 @@ func sameDir(a, b string) bool {
 // When sqlite3 is missing the columns are dashes and the note is carried to the caller, and
 // the run still finishes rather than failing on a number nobody can see. When no store exists
 // the row keeps its dashes and the returned reason and path name what the NATIVE OK line says.
-func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc int, errOut io.Writer) (reason, path string) {
+//
+// ONE ROW PER LAUNCH (issue #900): a native run that retried a launch appends a row for each
+// attempt, so a retried card's usage.tsv carries attempt=1,2,3 for its one job and each
+// attempt is summed once. A fast failure whose provider reported nothing keeps its dashes,
+// and `usd` stays a dash rather than becoming a zero.
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc, attempt int, errOut io.Writer) (reason, path string) {
 	usage, note, storePath, rr := swarm.ReadCardUsage(dataHome, start, end)
 	rcCol := "-"
 	if rc >= 0 {
 		rcCol = strconv.Itoa(rc)
 	}
 	row := swarm.UsageRow{
-		"job": cfg.label, "attempt": "1",
+		"job": cfg.label, "attempt": strconv.Itoa(attempt),
 		"started": start.UTC().Format(time.RFC3339),
 		"ended":   end.UTC().Format(time.RFC3339),
 		"rc":      rcCol, "provider": provider, "model": model,
@@ -680,10 +736,10 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 	}
 	row["usd"] = dash(usage.Values["usd"])
 	jobDir := filepath.Join(cfg.slotDir, "jobs", cfg.label)
-	if err := swarm.WriteCardUsage(filepath.Join(jobDir, "usage.tsv"), row); err != nil {
+	if err := swarm.AppendCardUsage(filepath.Join(jobDir, "usage.tsv"), row); err != nil {
 		fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 	}
-	_ = swarm.WriteCardUsage(filepath.Join(cfg.slotDir, "usage.tsv"), row)
+	_ = swarm.AppendCardUsage(filepath.Join(cfg.slotDir, "usage.tsv"), row)
 	if note != "" {
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}
