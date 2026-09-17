@@ -342,6 +342,18 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     ESCALATE` line naming its owner, and the duty tier files an issue in the dogfood shape
     and a fix card. Exit is 0 when every check passes, 1 when any check refuses or the
     receipt is unconfirmed, 2 on a refusal.
+28. **Voluntary adoption matrix, owned by each friend (#182).** `adoption` reads one
+    five-column TSV file the caller names (`tool`, `friend`, `state`, `version`, `detail`,
+    header byte for byte) and prints one `ADOPTION` line per choice plus a count line; it
+    makes no network call, sends nothing, installs nothing and needs no bus, so the
+    version report stays useful before any bus adoption. `state` is one of `evaluated`,
+    `useful-now`, `tried`, `adopted`, `declined`, `deferred`, `unknown` or `equivalent`;
+    `version` is the installed version the friend reports or `-` when unknown or not
+    applicable, and `detail` carries the friend's own reason or provenance (`-` when none).
+    Silence is never agreement: a tool with no row is absent, never adopted, and a row is
+    that friend's own word, never attributed from another's. Declined, deferred, unknown
+    and equivalent are answers, never failures: the run exits 0 with those states present.
+    Friends choose when and what to update; there is no forced installation and no timer.
 
 ## The versions file
 
@@ -367,10 +379,11 @@ nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--ki
 nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
+nova-update adoption --file <path> [--as <friend>] [--max <n>]
 nova-update help
 ```
 
-Those four usage lines are the string `nova-update help` prints, byte for byte: one string
+Those five usage lines are the string `nova-update help` prints, byte for byte: one string
 in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version snapshot …` reads the adopted manifest and reports its count on one line,
@@ -419,10 +432,15 @@ ADOPT DONE sha=<12 hex> ok=<n> refused=<m>
 ADOPT SENT to=<who,who> line=<nova-bus's SEND OK line, escaped>
 ADOPT NOTE <something true about this run that is not a finding>
 ADOPT REFUSED: <reason> (<remedy>)
+ADOPTION at=<stamp> file=<path> entries=<n> max=<n>
+ADOPTION tool=<tool> friend=<friend> state=<evaluated|useful-now|tried|adopted|declined|deferred|unknown|equivalent> version=<v|-> detail=<reason, escaped>
+ADOPTION MORE kind=<choice> shown=<n> total=<t> <remedy>
+ADOPTION OK entries=<n> friends=<n> file=<path>
+ADOPTION REFUSED: <reason> (<remedy>)
 ```
 
-`UPDATE`, `APPLY`, `REPORT` and `ADOPT` are the first tokens, `OK` and `FAIL` the verdicts and the
-**last** line; the rest are informational second tokens, declared here as SPEC.md requires,
+`UPDATE`, `APPLY`, `REPORT`, `ADOPT` and `ADOPTION` are the first tokens, `OK` and `FAIL` the verdicts and the
+**last** line (`ADOPTION` has no `FAIL`: declined, deferred, unknown and equivalent are answers); the rest are informational second tokens, declared here as SPEC.md requires,
 on stdout, `REFUSED` and `FAIL` on stderr; every value is one `internal/oneline` token.
 
 ## First run — meet your installed tools
