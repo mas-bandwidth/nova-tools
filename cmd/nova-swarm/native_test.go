@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // THE NATIVE OPENCODE PATH (issue #296, slice 2). A frozen run configuration is executed
@@ -684,6 +686,76 @@ func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
 	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
 	if !sameDir(got, jobDir) {
 		t.Errorf("from cwd %s the child's cwd is %q, want the job directory %q", foreign, got, jobDir)
+	}
+}
+
+// TestWallNamedDecodesTheProducersEscapedCwd is the unit half of issue #572: the wall writes
+// `cwd=` through oneline.Field (cmd/nova-sandbox/main.go), so the job directory reaches this
+// side with its spaces escaped (`stella 2` -> `stella\x202`). wallNamed must decode that
+// field back to the path the producer held before it names the directory the child ran in.
+// The receipt is built by the producer's own encoder, not hard-coded unescaped.
+func TestWallNamedDecodesTheProducersEscapedCwd(t *testing.T) {
+	dir := "/Users/glenn/Documents/ChatGPT/stella 2/.scratch/stella-tools/runs/1/jobs/terminology"
+	line := "SANDBOX OK backend=sandbox-exec abi=- read=3 write=2 net=nopromise cwd=" +
+		oneline.Field(dir) + " ancestors=17 cmd=opencode\n"
+	backend, cwd, reason := wallNamed(line)
+	if reason != "" {
+		t.Fatalf("wallNamed did not read the SANDBOX OK line (%s): %q", reason, line)
+	}
+	if backend != "sandbox-exec" {
+		t.Errorf("wallNamed's backend is %q, want sandbox-exec", backend)
+	}
+	if cwd != dir {
+		t.Errorf("wallNamed's cwd is %q, want the decoded path %q", cwd, dir)
+	}
+}
+
+// TestNativeWalledJobPathWithSpacesCompletes is the regression for issue #572: a job whose
+// path holds a space -- the configured root sits under `stella 2` -- is not a pre-launch
+// refusal. The wall is the fake sandbox, which encodes its `cwd=` through oneline.Field
+// exactly as the real producer does, so the escape round-trip is exercised rather than a
+// hard-coded unescaped receipt. A job that completed must be validated against the decoded
+// path and reach the usage recorder, never wear the face of a launch that never happened.
+func TestNativeWalledJobPathWithSpacesCompletes(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+
+	root := filepath.Join(t.TempDir(), "stella 2")
+	slot := filepath.Join(root, "slot-1")
+	if err := os.MkdirAll(slot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	label := "space-cwd"
+
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card: []byte("FAKE-PWD\n"), slotDir: slot, root: root, deadline: 30 * time.Second,
+		sandbox: sandbox,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("a completed job in a path with a space exits 0, got %d:\n%s", code, errOut.String())
+	}
+	if strings.Contains(errOut.String(), "NATIVE REFUSED") {
+		t.Fatalf("a completed job is not a pre-launch refusal:\n%s", errOut.String())
+	}
+	if res.wall != "fake-wall" {
+		t.Errorf("the run keeps the wall's own name, got %q", res.wall)
+	}
+	jobDir := filepath.Join(slot, "jobs", label)
+	// The child ran in the job directory, proven by the card's own known answer.
+	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+	if err != nil {
+		t.Fatalf("the card's known answer was not written: %v", err)
+	}
+	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
+	if !sameDir(got, jobDir) {
+		t.Errorf("the child's cwd is %q, want the job directory %q", got, jobDir)
+	}
+	// A completed job retains its usage receipt.
+	if _, err := os.Stat(filepath.Join(jobDir, "usage.tsv")); err != nil {
+		t.Errorf("the completed job wrote no usage.tsv under %s: %v", jobDir, err)
 	}
 }
 

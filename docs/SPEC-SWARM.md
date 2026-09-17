@@ -875,6 +875,18 @@ model whose tool calls the harness never parsed (issue #591): no tool ran, nothi
 was written, the child exited 0 and the line said OK. `gather` scores such a card
 `ABSTAIN reason=harness-silent`, before `no-result` and before `rc=<n>`.
 
+**The wall's `SANDBOX OK` line is a producer's one-line record and `native` reads
+it as one** (issue #572). The wall renders `cwd=<dir>` through the same
+`internal/oneline` field encoding every path slot uses, so a job directory whose
+path holds a space — the configured root under `stella 2` — arrives as one token
+with the space escaped (`stella\x202`). `native` **decodes that field before it
+compares the wall's cwd with the job directory**. Taking the escaped token
+literally made the two spellings differ as strings while the refusal escaped both
+again and displayed them identically, so a job that had already completed its
+`RESULT.md` and its usage row was refused as a pre-launch failure that could be
+replayed. The containment check is unchanged: a cwd that is not the job directory
+still refuses, and only the one field the comparison reads is decoded.
+
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
 `requeue`, `note`, `finalize` and `reclaim` are the verbs that act; `supervise`
