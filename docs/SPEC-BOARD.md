@@ -1,5 +1,19 @@
 # nova-board — specification
 
+## Status: the input adapter, not yet retired
+
+**nova-board is retained as the input adapter, and it is retired only after
+nova-work's views and event adapter replace it and are dogfooded.** nova-board
+infers state from events — a read-side projection — while
+[nova-work](SPEC-WORK.md) holds that state as truth with leases, attempts and
+evidence, and `who` and `check` are its views. A second inferred source can
+disagree with the first, so the fold described below becomes the adapter that
+turns a PR opened, a check green and a note received into events on nodes; the
+board page then renders `who` and `check`; and the tool and this spec are retired
+with a pointer only once that replacement is dogfooded. Until then this document
+remains normative for the fold, and nothing is deleted: `cmd/nova-board` and
+`internal/board` stay.
+
 Five verbs at the **owed-work layer**. A **board** is the list of things a group of
 lines owes: one **card** per item, appended when it is noticed, taken by whoever
 picks it up, closed with a sentence saying how. Nothing on it is ever deleted and
