@@ -194,7 +194,7 @@ func foldCardMessages(rows [][]string) (ProviderUsage, string) {
 	}
 	values["provider"] = dashOr(provider)
 	values["model"] = dashOr(model)
-	return ProviderUsage{Values: values, Observed: true}, ""
+	return ProviderUsage{Values: values, Observed: true, Turns: len(rows)}, ""
 }
 
 // WriteCardUsage writes one card's usage.tsv, header line and one row, atomically. The

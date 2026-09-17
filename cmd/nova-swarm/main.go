@@ -572,6 +572,18 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		return 2
 	}
+	// CARD-8349: a card budget below the harness's MEASURED startup cost is a
+	// budget every card dies against at once, so it is refused by name here,
+	// before the lock and before the first worker. An absent measurement
+	// accepts the budget and is written from the first finished task.
+	if w.HasCardBudget() {
+		if sc, err := swarm.ReadStartupCost(p.Dir); err == nil {
+			if line := w.BudgetRefusal(sc); line != "" {
+				fmt.Fprintln(stderr, oneline.Escape(line))
+				return 2
+			}
+		}
+	}
 	key, err := swarm.ReadKeyOrSecret(w)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-swarm run: %s\n", oneline.Err(err))
@@ -1342,6 +1354,16 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	f.want(*deadline, "deadline", "the wall duration that kills the child (e.g. 60s, 5m)")
 	if f.refused(stderr) {
 		return 2
+	}
+	// CARD-8349: a card budget below the harness's MEASURED startup cost is
+	// refused by name before any directory is made and before any child starts.
+	if workerGiven && w.HasCardBudget() {
+		if sc, err := swarm.ReadStartupCost(*root); err == nil {
+			if line := w.BudgetRefusal(sc); line != "" {
+				fmt.Fprintln(stderr, oneline.Escape(line))
+				return 2
+			}
+		}
 	}
 	d, err := time.ParseDuration(*deadline)
 	if err != nil || d <= 0 {

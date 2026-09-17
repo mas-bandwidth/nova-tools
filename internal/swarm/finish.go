@@ -126,6 +126,38 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	if survivors > 0 && end == EndDone {
 		end = EndViolation
 	}
+	// THE CARD BUDGET, at the finish beside the supervisor's watch: a harness
+	// that exited on its own past max_turns or max_cache_read still ends with
+	// end=budget and a PROMPT-DEFECT line, so a budget the sampler missed
+	// between ticks is still a budget. The stop path is the deadline's --
+	// failed/ with end=budget in usage.tsv, findings kept (rule 3).
+	if end != EndViolation && end != EndInputLimit && in.Worker.HasCardBudget() {
+		if usage, err := ReadProviderUsage(in.Worker.Usage, in.Worker.DataHome(sc.Slot, sc.ID)); err == nil {
+			turns := CountCardTurns(r.jobDir, usage)
+			if over, cacheRead, max := in.Worker.OverCardBudget(usage, turns); over {
+				end = EndBudget
+				rec.RC, rec.End = -1, EndBudget
+				_ = AppendPromptDefect(r.jobDir, sc.ID, cacheRead, max, turns)
+			}
+		} else {
+			turns := CountCardTurns(r.jobDir, ProviderUsage{})
+			if over, cacheRead, max := in.Worker.OverCardBudget(ProviderUsage{}, turns); over {
+				end = EndBudget
+				rec.RC, rec.End = -1, EndBudget
+				_ = AppendPromptDefect(r.jobDir, sc.ID, cacheRead, max, turns)
+			}
+		}
+	}
+	// CARD-8349: the first finished task leaves the next run a fact -- the
+	// harness's measured startup cost -- when no measurement is there yet, so
+	// the next run can refuse a card budget below it at load.
+	if in.Worker.HasCardBudget() {
+		if usage, err := ReadProviderUsage(in.Worker.Usage, in.Worker.DataHome(sc.Slot, sc.ID)); err == nil {
+			cacheRead, _ := CardCacheRead(usage)
+			_ = RecordStartupCostIfAbsent(in.Pool.Dir, HarnessSHA256(in.Worker.Harness), cacheRead, CountCardTurns(r.jobDir, usage))
+		}
+	}
+
 	dest := destinationFor(end, report.Class, rec.RC)
 	sc.Class, sc.End, sc.RC, sc.Ended, sc.Notes = report.Class, end, rec.RC, Stamp(now), notesSent
 	// THE PROVIDER'S OWN WORDS OUTLIVE THE JOB DIRECTORY, in the record `triage` reads:

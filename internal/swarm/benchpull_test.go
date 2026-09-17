@@ -134,8 +134,8 @@ func TestPullWaitsForResult(t *testing.T) {
 		t.Fatalf("three files come back, one explicit scp each; scp saw %d:\n%v", len(copies), copies)
 	}
 	for _, l := range copies {
-		for _, filter := range []string{"--include", "--exclude", "-r", "*"} {
-			if strings.Contains(l, filter) {
+		for _, field := range strings.Fields(l) {
+			if strings.HasPrefix(field, "-") || strings.Contains(field, "*") {
 				t.Fatalf("a copy names a filter or a pattern rather than one file, which is how a copy of nothing exits 0: %q", l)
 			}
 		}

@@ -178,6 +178,10 @@ func (r UsageRow) Int(name string) (int, bool) {
 type ProviderUsage struct {
 	Values   map[string]string
 	Observed bool // the source answered with a row
+	// Turns is the usage row count: the message rows folded into Values, the
+	// same assistant-turn count the card budget reads where the harness log
+	// has fewer. Zero where nothing was observed.
+	Turns int
 }
 
 // TokenColumns are nova-tokens's five types, which are the five this tool sums.
