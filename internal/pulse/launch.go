@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -30,6 +31,14 @@ type LaunchInput struct {
 	Stdout   io.Writer
 	Stderr   io.Writer
 	Now      func() time.Time
+	// Log is where the structured JSON event line goes, beside the stdout line and never
+	// instead of it. nil writes no JSON line, which is how the tests that predate the
+	// slice keep their exact stdout and stderr; cmd/nova-pulse passes stderr, which on a
+	// bench is the systemd journal.
+	Log io.Writer
+	// GUID is the source of this run's guid. nil reads the real /proc in production; a
+	// test injects a fixed one so it reads no /proc.
+	GUID func() string
 }
 
 // sliceTimeout is rule 8's quiet window: a slot whose native.log was written within this
@@ -75,10 +84,13 @@ func Launch(in LaunchInput) int {
 	n := len(cards)
 	if n > free && !in.Queue {
 		fmt.Fprintf(in.Stderr, "PULSE REFUSED UNDER-SLOTS cards=%d free=%d (pass --queue, or wait)\n", n, free)
+		in.event("refuse", fmt.Sprintf("launch: %d cards over %d free slots", n, free), 0, nil)
 		return 2
 	}
 
 	id := swarm.NewID(in.Now(), "pulse")
+	started := in.Now()
+	in.event("start", "launch: pulse "+id, 0, nil)
 	goCards := cards
 	queued := 0
 	if n > free {
@@ -119,7 +131,36 @@ func Launch(in LaunchInput) int {
 
 	fmt.Fprintf(in.Stdout, "PULSE OK id=%s n=%d free-before=%d queued=%d batches=%d deadline=%s\n",
 		oneline.Field(id), n, free, queued, batches, oneline.Field(in.Deadline))
+	in.event("done", fmt.Sprintf("launch: pulse %s cards=%d", id, n), in.Now().Sub(started), nil)
 	return 0
+}
+
+// event writes the structured JSON line BESIDE the stdout event line, through internal/log.
+// It writes nothing when the caller configured no Log writer, which is how every test that
+// predates the slice keeps its exact stdout and stderr. The stdout line is written by the
+// caller and is never touched here: the JSON line is additive, and a reader that only knows
+// the stdout event still works.
+func (in LaunchInput) event(event, msg string, dur time.Duration, err error) {
+	if in.Log == nil {
+		return
+	}
+	clock := in.Now
+	if clock == nil {
+		clock = time.Now
+	}
+	guid := in.GUID
+	if guid == nil {
+		guid = log.ProcessGUID
+	}
+	l := log.New(clock, guid, "nova-pulse")
+	l.Verb = "launch"
+	l.Event = event
+	l.Msg = msg
+	l.DurMS = dur.Milliseconds()
+	if err != nil {
+		l.Err = err.Error()
+	}
+	_ = l.Write(in.Log)
 }
 
 // runBatch admits one batch as the swarm's CARD form of nova-swarm batch and relays a swarm

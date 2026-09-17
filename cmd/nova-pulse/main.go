@@ -307,6 +307,7 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return pulse.Launch(pulse.LaunchInput{
 		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline, Queue: *queue,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
+		Log: stderr,
 	})
 }
 
