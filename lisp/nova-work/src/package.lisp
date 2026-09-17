@@ -262,7 +262,29 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+    ;; execution-control replay model (nova-tools #362)
+   #:install-hold
+   #:release-hold
+   #:hold-for-scope
+   #:hold-for-control
+   #:dispatch-admitted-p
+   #:race-admitted-p
+   #:accept-offer
+   #:reconcile-acceptance
+   #:make-observation
+   #:observation-attempt
+   #:observation-outcome
+   #:observation-usage
+   #:synthesised-usage
+   #:reconcile-observations
+   #:release-permitted-p
+   #:resume-workers
+   #:resume-hold-kept-p
+   #:unsupported-outcome
+   #:correct-segment
+   #:execution-correct
+   #:bare-correct))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
