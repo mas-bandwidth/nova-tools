@@ -117,8 +117,9 @@ is available today.
   downward, while refusals, results, evidence, usage and learning travel upward;
   each parent verifies the child's completion claim. ([SPEC-WORK.md, The envelope up](SPEC-WORK.md#the-envelope-up-and-the-no-that-survives-the-hop))
 - **pit stop** — a cascading worker failure is not fixed by more workers; the
-  deliberate slow-down to go fast, whose exit is a trust batch. **Definition
-  pending**; the request to publish its meaning is [#576](https://github.com/mas-bandwidth/nova-tools/issues/576). ([PIT-STOP.md](PIT-STOP.md))
+  coordinator's deliberate slow-down to spend the machine on the faults that
+  make every card slower, doing bugs only until one trust batch proves them
+  gone. ([SPEC-PULSE.md, The pit stop](SPEC-PULSE.md#the-pit-stop) · [PIT-STOP.md](PIT-STOP.md))
 - **policy** — the approved, finite rule set the manager executes without
   expanding it. ([SPEC-PULSE.md, The manager tier](SPEC-PULSE.md#the-manager-tier))
 - **pool** — the enumeration of bounded open work a pulse can draw from, written
