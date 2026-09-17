@@ -363,6 +363,9 @@
         (declare (ignore after))
         (check-equal :uncertain (getf disposition :state)
                      "an uncertain external effect reads uncertain, never cancelled")))))
+(needs-kernel "undo-redo" "docs/SPEC-WORK.md:5599"
+  "reversible edits reversed, history preserved, redo only against valid preconditions; a conflict explicit and mutating nothing"
+  "REDO")
 
 (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5930-5934"
     "expected=clip-returns-OPERATION-OK;commit-is-the-snapshot-digest;push-moves-the-remote-tip;wait-prints-CLIP-OK;pushed-is-the-pinned-revision;raced-CLIP-RACED-pushes-nothing;session-stop-CLIP-then-SESSION"

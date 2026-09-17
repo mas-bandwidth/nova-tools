@@ -171,6 +171,7 @@
       (declare (ignore line))
       (ok okp "the latest change does not undo")
       (check-equal 0 code "undo-of-latest exit code"))))
+  (slice1-refuses-verb :redo))
 
 ;; protocol-version-negotiated-or-refused is now the executable replay in
 ;; ../acceptance.lisp (card 8608).

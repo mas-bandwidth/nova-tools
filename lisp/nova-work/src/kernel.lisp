@@ -35,6 +35,11 @@
   ;; captures. It moves no work revision and writes no transition; see
   ;; control.lisp and SPEC-WORK.md:3921-3980.
   controls)
+  state journal next-rev
+  ;; The applied-request index the undo path reads for an original request's
+  ;; preimage and its reversibility. It is not the dedup index, which stays the
+  ;; journal's (SPEC-WORK.md:2117 forbids an unbounded request-id map).
+  (applied (make-hash-table :test #'equal)))
 
 (defvar *before-apply-hook* nil
   "A test seam. When bound, it is called with the envelope after the journal has

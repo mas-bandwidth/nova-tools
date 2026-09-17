@@ -16,6 +16,7 @@
 (defstruct (wnode (:conc-name wnode-))
   id type parent coordinator children required required-count required-open state branch
   open-count
+  id type parent children required required-count required-open state branch open-count
   ;; The five permitted metadata fields of `node edit` (SPEC-WORK.md:5798). An
   ;; absent field is +ABSENT+ and an empty or false value is kept as itself, so
   ;; keep, clear, set-empty and set-false are four distinguishable states.
