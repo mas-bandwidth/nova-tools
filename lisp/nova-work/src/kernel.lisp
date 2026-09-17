@@ -348,6 +348,67 @@ whole envelope is applied."
 
 ;;; The counters, read.
 
+;;; `node remove` (SPEC-WORK.md:2372-2396)
+
+(defun %open-subtree (state id)
+  "The subtree of ID split into its still-open ids and its already-closed ids,
+parents before children."
+  (let ((open '()) (closed '()))
+    (labels ((walk (x)
+               (if (eq :o (wnode-branch (%node-quiet state x)))
+                   (push x open)
+                   (push x closed))
+               (dolist (c (wnode-children (%node-quiet state x)))
+                 (walk c))))
+      (walk id))
+    (values (nreverse open) (nreverse closed))))
+
+(defun node-remove (kernel id &key (by "rowan") (reason "removed")
+                              (request (format nil "remove-~A" id))
+                              (stamp "2026-09-14T12:00:00Z")
+                              (generation-owner "gen-4"))
+  "A node and the still-open items of its subtree settle into C with disposition
+removed, one :settle each in one envelope; the node's own settle names the
+already-closed ids beneath it; a finished item's disposition, evidence and
+settle stamp are untouched. A node already in C is a no-effect NODE NOTE
+(SPEC-WORK.md:2372-2396, replay remove-settles-only-open-items)."
+  (let* ((state (kernel-state kernel))
+         (node (%node-quiet state id)))
+    (unless node
+      (error 'unsupported-input :what (format nil "no such node ~A" id)))
+    (if (eq :c (wnode-branch node))
+        (let ((row (find id (wstate-rows state) :key (lambda (r) (getf r :node))
+                         :test #'equal)))
+          (values t (format nil "NODE NOTE already-closed node=~A disposition=~A settled=~A"
+                            id (or (getf row :disposition) :done) (or (getf row :stamp) "-"))
+                  0))
+        (multiple-value-bind (open-ids closed-ids) (%open-subtree state id)
+          (let* ((rev (kernel-next-rev kernel))
+                 (last-rev rev)
+                 (events '()))
+            (dolist (item (reverse open-ids))
+              (push (make-work-event
+                     :kind :settle :node item :by by
+                     :fields (list :disposition :removed :reason reason
+                                   :already-closed (if (equal item id) closed-ids '()))
+                     :stamp stamp :clock :tool :request request
+                     :generation-owner generation-owner :rev rev
+                     :session-written-p t)
+                    events)
+              (setf last-rev rev)
+              (incf rev))
+            (setf events (nreverse events))
+            (let ((envelope (list :request request
+                                  :digest (payload-digest events)
+                                  :events events)))
+              (setf (kernel-state kernel) (apply-envelope state envelope))
+              (setf (kernel-next-rev kernel) (1+ last-rev))
+              (values t
+                      (format nil "NODE OK id=~A request=~A node=~A rev=~D pushed=- changed=~D"
+                              (event-id (car (last events))) request id last-rev
+                              (length events))
+                      0)))))))
+
 (defun ask-size (kernel)
   "`query --ask size` (SPEC-WORK.md:1575). It reads the counter and triggers no
 rollup, no scan, no parse and no replay: nothing below touches a node."

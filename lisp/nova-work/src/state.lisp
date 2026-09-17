@@ -375,6 +375,8 @@ flag where every need is terminal again) or was reverted (false, raise it)."
        (push (list :key (closed-row-key event) :kind :settle :node id
                    :rev (work-event-rev event)
                    :disposition (getf (work-event-fields event) :disposition)
+                   :reason (getf (work-event-fields event) :reason +absent+)
+                   :already-closed (getf (work-event-fields event) :already-closed +absent+)
                    :stamp (work-event-stamp event)
                     :revived (wnode-revived node)
                     :settles (wnode-settles node))

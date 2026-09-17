@@ -10,13 +10,64 @@
 
 (deftest "merged-is-not-distributed" "docs/SPEC-WORK.md:1986-1997,5093"
     "expected=landed-sha-released-dash-while-release-open"
-  ;; NEEDS-KERNEL: landed=/released= disposition-row fields, reverse-dependency index, release tasks.
-  (ok t "merged-versus-distributed is outside slice 1"))
+  (let* ((finding (make-finding "acme/sec/alex-2" :branch :c :disposition :done
+                                :evidence (list (list :criterion :version :against "deadbeef")
+                                                (list :criterion :merged :against "4b81c0d5"))))
+         (open-release (list (make-release-task "acme/release/v0.4.3"
+                                                :version "v0.4.3"
+                                                :deps '("acme/sec/alex-2")
+                                                :branch :o))))
+    (let ((row (disposition-row finding open-release)))
+      (check-equal :c (getf row :branch) "the fix is in C")
+      (check-equal :done (getf row :disposition) "disposition=done")
+      (check-equal "4b81c0d5" (getf row :landed) "landed is the :merged :against sha")
+      (check-equal "-" (getf row :released) "released=- while the release task is open"))
+    (let* ((settled (list (make-release-task "acme/release/v0.4.3"
+                                             :version "v0.4.3"
+                                             :deps '("acme/sec/alex-2")
+                                             :branch :c
+                                             :settle-stamp "2026-09-13T00:00:00Z")))
+           (row (disposition-row finding settled)))
+      (check-equal "v0.4.3" (getf row :released) "released=<version> once the task settles"))
+    (let* ((settled (list (make-release-task "acme/release/v0.4.3"
+                                             :version "v0.4.3" :deps '("acme/sec/alex-2")
+                                             :branch :c :settle-stamp "2026-09-13T00:00:00Z")
+                          (make-release-task "acme/release/v0.4.4"
+                                             :version "v0.4.4" :deps '("acme/sec/alex-2")
+                                             :branch :c :settle-stamp "2026-09-14T00:00:00Z")))
+           (row (disposition-row finding settled)))
+      (check-equal "v0.4.3" (getf row :released) "the release that first carried the fix"))
+    (let ((row (disposition-row (make-finding "acme/sec/alex-9" :branch :o :disposition :pending
+                                              :evidence '())
+                                open-release)))
+      (check-equal "-" (getf row :landed) "no merged evidence reads landed=-")
+      (check-equal "-" (getf row :released) "no settled release reads released=-"))))
 
 (deftest "ready-names-the-blocker-and-the-resolver" "docs/SPEC-WORK.md:2019"
     "expected=every-blocked-row-names-reason-and-resolver"
-  ;; NEEDS-KERNEL: `ready --node X` view, deps/blocked-by/resolver derivation.
-  (ok t "ready-names-the-blocker-and-the-resolver is outside slice 1"))
+  (let* ((items (list (make-ready-item "acme/f/t1" :branch :o :deps '("acme/f/t2"))
+                      (make-ready-item "acme/f/t2" :branch :o :holder "freddy")
+                      (make-ready-item "acme/f/t3" :branch :o :deps '("acme/f/t-done"))
+                      (make-ready-item "acme/f/t-done" :branch :c :state :done
+                                       :responsible "emma")
+                      (make-ready-item "acme/f/t4" :branch :o :responsible "rowan")))
+         (rows (ready-rows items))
+         (by-id (lambda (id) (find id rows :key #'ready-row-id :test #'equal))))
+    (let ((r (funcall by-id "acme/f/t1")))
+      (ok r "t1 has a row")
+      (ok (not (ready-row-ready r)) "t1 is not ready")
+      (check-equal "blocked by acme/f/t2" (ready-row-reason r) "reason names the blocker")
+      (check-equal "freddy" (ready-row-resolver r) "resolver is the blocker's holder"))
+    (let ((r (funcall by-id "acme/f/t2")))
+      (check-equal t (ready-row-ready r) "a held but unblocked item is ready")
+      (check-equal "freddy" (ready-row-resolver r) "its own resolver is its holder"))
+    (let ((r (funcall by-id "acme/f/t3")))
+      (check-equal t (ready-row-ready r) "a settled dependency does not block")
+      (check-equal "-" (ready-row-reason r) "a ready row prints reason=-"))
+    (let ((r (funcall by-id "acme/f/t4")))
+      (check-equal t (ready-row-ready r) "an unheld item is ready")
+      (check-equal "rowan" (ready-row-resolver r) "its resolver is its responsible"))
+    (check-equal 4 (length rows) "one row per O item; the C item is not listed")))
 
 (deftest "history-grows-startup-does-not" "docs/SPEC-WORK.md:2084-2092,5117"
     "expected=resident-bytes-flat-as-history-grows"
@@ -25,8 +76,49 @@
 
 (deftest "remove-settles-only-open-items" "docs/SPEC-WORK.md:2305,5075"
     "expected=closed-leaf-untouched-already-closed-named"
-  ;; NEEDS-KERNEL: `node remove` verb, :already-closed field, live-lease refusal.
-  (ok t "node-remove settling is outside slice 1"))
+  (let* ((seed '((:id "rw"      :type :work-set :state :unknown)
+                 (:id "rw/f"    :type :feature  :parent "rw" :state :doing)
+                 (:id "rw/f/t1" :type :task     :parent "rw/f" :state :doing)
+                 (:id "rw/f/t2" :type :task     :parent "rw/f" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (ok (submit k (close-request :node "rw/f/t1" :request "rw-close-1")) "t1 closes")
+    (check-equal 1 (state-closed-count (kernel-state k)) "|C| after the close")
+    (let* ((t1-stamp (getf (find "rw/f/t1" (state-closed-rows (kernel-state k))
+                                :key (lambda (r) (getf r :node)) :test #'equal)
+                           :stamp)))
+      (multiple-value-bind (okp line code) (node-remove k "rw/f" :request "rw-remove-1")
+        (ok okp line)
+        (check-equal 0 code "remove exits 0")
+        (check-equal :c (node-branch (kernel-state k) "rw/f") "the feature settles into C")
+        (check-equal :c (node-branch (kernel-state k) "rw/f/t2") "the open leaf settles")
+        (check-equal :c (node-branch (kernel-state k) "rw/f/t1") "the closed leaf stays in C")
+        (check-equal :done (node-state (kernel-state k) "rw/f/t1") "the done leaf stays done")
+        (check-equal :removed (getf (find "rw/f/t2" (state-closed-rows (kernel-state k))
+                                         :key (lambda (r) (getf r :node)) :test #'equal)
+                                    :disposition)
+                     "the open leaf's settle carries disposition=removed")
+        (check-equal 3 (state-closed-count (kernel-state k)) "|C| moves by two, not three")
+        (check-equal 1 (state-open-count (kernel-state k)) "only the work set stays open")
+        (check-equal 4 (+ (state-open-count (kernel-state k))
+                          (state-closed-count (kernel-state k)))
+                     "no rule 18 finding: the branches still partition the set")
+        (let ((t1-after (find "rw/f/t1" (state-closed-rows (kernel-state k))
+                              :key (lambda (r) (getf r :node)) :test #'equal))
+              (f-row (find "rw/f" (state-closed-rows (kernel-state k))
+                           :key (lambda (r) (getf r :node)) :test #'equal)))
+          (check-equal :done (getf t1-after :disposition) "t1's disposition is untouched")
+          (check-equal t1-stamp (getf t1-after :stamp) "t1's settle stamp is untouched")
+          (check-equal :removed (getf f-row :disposition) "the feature reads disposition=removed")
+          (check-equal '("rw/f/t1") (getf f-row :already-closed)
+                       "the feature's settle names the already-closed leaf"))
+        ;; A fresh-id repeat while still closed is the no-effect case.
+        (multiple-value-bind (okp2 line2 code2) (node-remove k "rw/f" :request "rw-remove-2")
+          (ok okp2 line2)
+          (check-equal 0 code2 "repeat exits 0")
+          (ok (search "already-closed" line2) "the repeat prints NODE NOTE already-closed")
+          (check-equal 3 (state-closed-count (kernel-state k))
+                       "the repeat writes no second settle")
+          (check-equal 1 (state-open-count (kernel-state k)) "the repeat moves no counter"))))))
 
 (deftest "applicable-cap-never-hides-a-deny" "docs/SPEC-WORK.md:5498-5502"
     "expected=constraint-row-before-cut-rows;notes-more;fail-no-eligible-no-row"
@@ -75,13 +167,54 @@
 ;;; counted, exactly as the card asks.
 ;;; ------------------------------------------------------------------
 
-;;; endpoint-is-local-and-private  SPEC-WORK.md prose :2476 / table :5276
-;; (deftest "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5276"
-;;     "session-dir=0700;socket=0600;wider-mode-refused;no-network-bind"
-;;   ;; the session's directory created 0700 and its socket 0600, both owned
-;;   ;; by the running account; a pre-existing directory or socket with wider
-;;   ;; modes refused rather than reused; no listener on any network address.)
-;; NEEDS-KERNEL: the session/socket layer (slice 1 has no socket, no session dir).
+;;; endpoint-is-local-and-private  SPEC-WORK.md prose :2646-2653 / table :5727
+(deftest "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5727"
+    "session-dir=0700;socket=0600;wider-mode-refused;no-network-bind"
+  ;; the session's directory created 0700 and its socket 0600, both owned
+  ;; by the running account; a pre-existing directory or socket with wider
+  ;; modes refused rather than reused; no listener on any network address.
+  (let* ((base (concatenate 'string (namestring (uiop:temporary-directory))
+                            (format nil "nw-~D" (random 1000000))))
+         (dir (concatenate 'string base "/s"))
+         (sock (concatenate 'string dir "/w")))
+    (unwind-protect
+         (progn
+           (unless (probe-file base) (sb-posix:mkdir base #o700))
+           (let ((ep (make-session-endpoint dir sock)))
+             (check-equal #o700 (session-endpoint-directory-mode ep)
+                          "the session directory is 0700")
+             (check-equal #o600 (session-endpoint-socket-mode ep) "the socket is 0600")
+             (check-equal (current-account-uid) (session-endpoint-owner ep)
+                          "both are owned by the running account")
+             (check-equal (local-socket-family) (session-endpoint-socket-family ep)
+                          "the socket is a local (AF_UNIX) socket")
+             (ok (not (endpoint-network-listener-p ep)) "no network listener"))
+           ;; A pre-existing directory with wider modes refuses rather than reuses.
+           (let ((wide (concatenate 'string base "/w")))
+             (sb-posix:mkdir wide #o755)
+             (handler-case
+                 (progn (make-session-endpoint wide (concatenate 'string wide "/w"))
+                        (ok nil "a 0755 directory must be refused"))
+               (nova-work-error (c) (declare (ignore c))
+                 (ok t "a pre-existing 0755 directory is refused"))))
+           ;; A pre-existing socket path with wider modes refuses the same way.
+           (let* ((d2 (concatenate 'string base "/d"))
+                  (s2 (concatenate 'string d2 "/w")))
+             (sb-posix:mkdir d2 #o700)
+             (with-open-file (f s2 :direction :output :if-exists :supersede)
+               (declare (ignore f)))
+             (sb-posix:chmod s2 #o644)
+             (handler-case
+                 (progn (make-session-endpoint d2 s2)
+                        (ok nil "a 0644 socket must be refused"))
+               (nova-work-error (c) (declare (ignore c))
+                 (ok t "a pre-existing 0644 socket is refused")))))
+      (ignore-errors (sb-posix:unlink sock))
+      (ignore-errors (sb-posix:rmdir dir))
+      (ignore-errors (sb-posix:rmdir (concatenate 'string base "/w")))
+      (ignore-errors (sb-posix:unlink (concatenate 'string base "/d/w")))
+      (ignore-errors (sb-posix:rmdir (concatenate 'string base "/d")))
+      (ignore-errors (sb-posix:rmdir base)))))
 
 ;;; wire-integers-are-strings  SPEC-WORK.md prose :2510 / table :5159
 ;; (deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
