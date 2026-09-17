@@ -1055,11 +1055,35 @@ func TestNativeSharedGoCaches(t *testing.T) {
 	if !strings.Contains(got, "GOTOOLCHAIN=local\n") {
 		t.Errorf("GOTOOLCHAIN is not local:\n%s", got)
 	}
-	// Each directory existed with mode 0755 before the child ran: the record is written by
-	// the child, so its stat is the proof the parent made them first.
-	for _, name := range []string{"GOMODCACHE", "GOCACHE"} {
-		if !strings.Contains(got, "stat "+name+": mode=0755 dir=true\n") {
-			t.Errorf("%s was not an existing 0755 directory before the child ran:\n%s", name, got)
+	// Each directory existed before the child ran: the record is written by the child, so
+	// its own stat is the proof the parent made them first. Windows has no POSIX mode bits,
+	// so there the record proves existence and this test proves a file can be created;
+	// elsewhere the mode 0755 is the assertion.
+	for _, dir := range []struct{ name, path string }{
+		{"GOMODCACHE", wantMod},
+		{"GOCACHE", wantBuild},
+	} {
+		line := ""
+		for _, l := range strings.Split(got, "\n") {
+			if strings.HasPrefix(l, "stat "+dir.name+": ") {
+				line = l
+			}
+		}
+		if runtime.GOOS == "windows" {
+			if !strings.Contains(line, "dir=true") {
+				t.Errorf("%s was not an existing directory before the child ran:\n%s", dir.name, got)
+				continue
+			}
+			probe := filepath.Join(dir.path, "writable-probe")
+			if err := os.WriteFile(probe, []byte("probe\n"), 0o644); err != nil {
+				t.Errorf("%s is not writable for the child's caches: %v", dir.path, err)
+				continue
+			}
+			_ = os.Remove(probe)
+			continue
+		}
+		if !strings.Contains(line, "mode=0755 dir=true") {
+			t.Errorf("%s was not an existing 0755 directory before the child ran:\n%s", dir.name, got)
 		}
 	}
 	// The shared cache is in the wall's write set, so every card of the bench may extract a
