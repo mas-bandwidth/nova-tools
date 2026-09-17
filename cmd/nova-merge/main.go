@@ -53,6 +53,7 @@ usage:
   nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
   nova-merge stop       --lane <dir>
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
+  nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
 
@@ -156,8 +157,13 @@ type Deps struct {
 	Sleep   func(time.Duration)
 	RepoURL func(repo string) string
 	NewHost func(repo string, timeout time.Duration) merge.Host
-	Runner  merge.Runner
-	BuildID func() string
+	// NewSweepHost is `sweep`'s forge: a repository's merge queue, its open pull
+	// requests and their runs. It is a separate seam from NewHost because it is a
+	// separate verb with a separate host interface, and the test that sweeps a fake
+	// queue must not have to stand up a lane's host to do it.
+	NewSweepHost func(repo, branch string, timeout time.Duration) merge.SweepHost
+	Runner       merge.Runner
+	BuildID      func() string
 }
 
 func production() Deps {
@@ -167,6 +173,9 @@ func production() Deps {
 		RepoURL: func(repo string) string { return "https://github.com/" + repo + ".git" },
 		NewHost: func(repo string, timeout time.Duration) merge.Host {
 			return merge.NewGH(repo, timeout, nil)
+		},
+		NewSweepHost: func(repo, branch string, timeout time.Duration) merge.SweepHost {
+			return merge.NewGHSweep(repo, branch, timeout, nil)
 		},
 		BuildID: buildID,
 	}
@@ -241,6 +250,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdStop(rest, stdout, stderr, deps)
 	case "wait":
 		return cmdWait(rest, stdout, stderr, deps)
+	case "sweep":
+		return cmdSweep(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -257,9 +268,10 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		return false
 	}
 	creation := verb == "init" || verb == "quickstart"
-	// `wait` watches one pull request by polling the host, so it names the
-	// repository outright like `init` does; every other verb reads the lane's.
-	watch := verb == "wait"
+	// `wait` watches one pull request by polling the host, and `sweep` reads a
+	// repository's merge queue, so both name the repository outright like `init`
+	// does; every other verb reads the lane's.
+	watch := verb == "wait" || verb == "sweep"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
 		if name == "repo" && watch {
 			continue
