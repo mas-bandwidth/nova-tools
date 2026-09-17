@@ -358,15 +358,20 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	t.Run("after-spawn", func(t *testing.T) {
 		b := newBench(t)
 		b.inject()
-		taskID := b.add("task after spawn\nFAKE-FINDINGS 0\nFAKE-AWAIT-NOTE 5\n")
+		// The hold is 20 s, not 5: the note cannot be delivered until the adopting run has
+		// read RUN ADOPT, and on a loaded runner that run's own start is what takes the
+		// time. Under the job's 30 s deadline, and matching after-handshake below.
+		taskID := b.add("task after spawn\nFAKE-FINDINGS 0\nFAKE-AWAIT-NOTE 20\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-spawn"}
 		b.run() // runner killed after spawn
 		b.extraEnv = nil
 
-		// The supervisor identifies itself after the runner is gone; wait for that
-		// observable, then let the adopting run deliver the note that finishes the job.
-		// A 1 s FAKE-SLEEP and a 300 ms sleep made both halves a race against the runner.
-		waitIdentified(t, filepath.Join(b.dir, "worker-home-1", "jobs", taskID))
+		// Wait for the one observable the adopting run decides from -- the supervisor's
+		// identity in the slot file -- then let it deliver the note that finishes the job.
+		// supervisor.pid is written by the dispatcher when it FORKS the supervisor, while
+		// the launch still reads reserved, so waiting on it started the adopting run too
+		// early under load and it quarantined the reservation instead of adopting it.
+		waitIdentified(t, b, taskID)
 		exit, stdout, stderr := adoptAndNote(t, b, taskID)
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
@@ -379,12 +384,12 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	t.Run("after-identify", func(t *testing.T) {
 		b := newBench(t)
 		b.inject()
-		taskID := b.add("task after identify\nFAKE-FINDINGS 0\nFAKE-AWAIT-NOTE 5\n")
+		taskID := b.add("task after identify\nFAKE-FINDINGS 0\nFAKE-AWAIT-NOTE 20\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-identify"}
 		b.run() // runner killed right after identify
 		b.extraEnv = nil
 
-		waitIdentified(t, filepath.Join(b.dir, "worker-home-1", "jobs", taskID))
+		waitIdentified(t, b, taskID)
 		exit, stdout, stderr := adoptAndNote(t, b, taskID)
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
@@ -801,18 +806,38 @@ func waitStopped(t *testing.T, pid int) {
 	t.Fatalf("supervisor %d never reached its pause point; ps says %q", pid, last)
 }
 
-// waitIdentified waits for a supervisor to have identified itself -- its supervisor.pid on
-// disk -- so a test starts the adopting run on an observable instead of a fixed sleep. The
-// bound is generous; only a failure to identify at all costs the test its time.
-func waitIdentified(t *testing.T, jobDir string) {
+// testWaitBound is how long a poll waits for an observable before it gives up. A test reads
+// it from the environment so a loaded runner can be given more time without editing the
+// test; the default is generous because every wait that uses it returns the MOMENT the
+// observable appears, and a slow box pays only when the fact never arrives.
+func testWaitBound() time.Duration {
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
+}
+
+// waitIdentified waits for a supervisor to have IDENTIFIED itself, which the pool exposes
+// as the task's slot reading `launched` -- the same state the adopting run decides from.
+// It is NOT supervisor.pid: the dispatcher writes that file when it forks the supervisor,
+// before the supervisor has run at all and while the launch still reads reserved, so a wait
+// on it ended instantly and the adopting run met a reservation under load, quarantined it,
+// and the test never saw RUN ADOPT. The wait is event-driven -- 50 ms polls on the code's own
+// state, returned as soon as it lands -- and the bound is generous only so a launch that
+// never identifies is reported rather than waited on forever.
+func waitIdentified(t *testing.T, b *bench, taskID string) {
 	t.Helper()
-	for waited := time.Duration(0); waited < 30*time.Second; waited += 5 * time.Millisecond {
-		if _, err := os.Stat(filepath.Join(jobDir, "supervisor.pid")); err == nil {
+	p := mustOpenPool(t, b.pool)
+	for waited := time.Duration(0); waited < testWaitBound(); waited += 50 * time.Millisecond {
+		if sf, err := p.ReadSlot(1); err == nil && sf.State == swarm.SlotLaunched {
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("the supervisor never identified itself (no supervisor.pid under %s)", jobDir)
+	t.Fatalf("the supervisor never identified itself (slot 1 never read %q), so the adopting run would meet a reservation: %s",
+		swarm.SlotLaunched, b.jobDir(taskID))
 }
 
 // adoptAndNote runs the dispatcher once and, the moment it names the adopted job, delivers
