@@ -1720,6 +1720,11 @@ takes a lease per card before it runs and releases it after. The seven rules:
 - an expired lease with a live pid is DRIFT and stays;
 - a launch without a lease is refused by the launcher.
 
+**The store is the authority.** A launcher reads it before it runs and releases
+its lease after; the broker is the only writer. No owner keeps a private count
+that could drift from the leases on disk, and a card found running with no lease
+is drift whether or not an owner believes it holds one.
+
 ## The deadline, held by the machinery
 
 Every task carries a deadline. The default is the worker description's, and
