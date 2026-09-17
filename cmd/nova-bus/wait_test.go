@@ -302,10 +302,14 @@ func TestWaitAdvancesTheCursorExactlyAsInboxDoes(t *testing.T) {
 		r.mustCode(t, 0).
 			mustContain(t, "stdout", "INBOX NOTE id=bo-444444444444").
 			mustContain(t, "stdout", "INBOX CURSOR commit=")
-		// The commit the run READ TO, which is the one under the cursor commit it then
-		// made: both verbs advance to the head they read, and the cursor is what they
-		// commit on top of it.
-		readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD~1"))
+		// The commit the run READ TO is the one before the commit that wrote from-ada/CURSOR,
+		// found by the FILE rather than as HEAD~1. wait does NOT return on a first poll that
+		// found a carry (#328), so it keeps polling beyond the advance and the head commit
+		// can carry the BEAT pushed on exit; HEAD~1 would then be the BEAT commit and not the
+		// advance that the CURSOR hangs off. The CURSOR commit's parent is the claim about
+		// the bus in both shapes.
+		cursorCommit := strings.TrimSpace(gitIn(t, checkout, "log", "-1", "--format=%H", "--", "from-ada/CURSOR"))
+		readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", cursorCommit+"~1"))
 		cursor := strings.TrimSpace(read(t, checkout, "from-ada/CURSOR"))
 		fields := strings.Fields(cursor)
 		if len(fields) < 3 || fields[0] != readTo {
@@ -461,6 +465,49 @@ func TestWaitWithoutAdvanceBlocksWhenCursorIsUnadvanced(t *testing.T) {
 	r.mustContain(t, "stdout", "WAIT TIMEOUT after=")
 	if strings.Contains(r.stdout, "WAIT OK") {
 		t.Fatalf("wait without --advance returned WAIT OK with nothing new:\n%s", r.stdout)
+	}
+}
+
+// Issue #328, the bug behind the harness summary: an unadvanced cursor's carry
+// backlog MUST NOT make wait return on its first poll. The earlier shape handed the
+// caller the same listing inbox would, every call, as long as the cursor stayed where
+// it was -- which on a busy bus is a hot loop with a network fetch in it, exactly the
+// failure wait exists to avoid. `wait` blocks until a note NEWER than the moment the
+// call started arrives, not until inbox would list anything; a caller with a carry
+// backlog runs inbox first to see it, or passes --advance so the second wait is a real
+// wait for a note newer than the start (#328).
+func TestWaitWithoutAdvanceBlocksOverTheCarryBacklog(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
+	t.Parallel()
+	hermetic(t)
+	checkout, bare := busDir(t)
+	// Ada's cursor IS at the head (an inbox --advance has been run), so the call
+	// is incremental -- but Bo has pushed a new note since she ran --advance and
+	// she has not pulled it forward. The note sits in the diff between her cursor
+	// and the head, which is exactly the carry backlog a busy bus leaves behind.
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
+
+	other := bench(t, bare)
+	note(t, other, "bo-666666666666", "left while Ada was idle")
+	if err := push(other); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, checkout, "pull", "-q", "--ff-only", "origin", "main")
+
+	const timeout = 1 * time.Second
+	start := time.Now()
+	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)
+	took := time.Since(start)
+
+	r.mustContain(t, "stdout", "WAIT TIMEOUT after=")
+	if strings.Contains(r.stdout, "WAIT OK") {
+		t.Fatalf("wait without --advance returned WAIT OK on the carry backlog:\n%s", r.stdout)
+	}
+	if took < timeout {
+		t.Fatalf("wait without --advance returned after %s, before its %s deadline, over a carry backlog:\n%s",
+			took, timeout, r.stdout)
 	}
 }
 
