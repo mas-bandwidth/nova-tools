@@ -1076,7 +1076,67 @@
    #:source-capture-reconciled-p
    #:make-dispatch-packet
    #:make-dispatch-route
-   #:dispatch-gates))
+   #:dispatch-gates
+    ;; acceptance replays 8647: policy, price, quiet, intake, recovery
+    #:make-efficiency-policy
+    #:efficiency-policy-complete-p
+    #:make-policy-store
+    #:policy-store-policy
+    #:policy-store-history
+    #:policy-store-manifests
+    #:policy-store-executions
+    #:policy-store-rev
+    #:policy-intake
+    #:policy-store-export
+    #:policy-store-import
+    #:policy-undo
+    #:policy-replay
+    #:make-trial-manifest
+    #:trial-manifest-id
+    #:make-execution-reference
+    #:execution-reference-policy-revision
+    #:make-pricing-record
+    #:pricing-record-id
+    #:pricing-record-input
+    #:pricing-record-effective-time
+    #:make-pricing-registry
+    #:register-pricing
+    #:lookup-pricing
+    #:pricing-refresh
+    #:pricing-rate
+    #:estimate-cost
+    #:make-dispatch-pulse
+    #:dispatch-pulse-record-bound
+    #:dispatch-pulse-pending
+    #:dispatch-pulse-pending-bytes
+    #:dispatch-pulse-dispatches
+    #:dispatch-pulse-flush
+    #:observation-urgent-p
+    #:observe-pulse
+    #:make-recording-adapter
+    #:adapter-inventory
+    #:adapter-read
+    #:adapter-read-calls
+    #:adapter-mutation-calls
+    #:adapter-mutate
+    #:dry-run-capture
+    #:initial-import
+    #:apply-plan
+    #:trial-stage
+    #:trial-tolerances
+    #:trial-fallback
+    #:trial-tolerance-breach
+    #:role-limits-within-p
+    #:fallback-eligible-p
+    #:make-assignment-control
+    #:assignment-control-policy
+    #:assignment-control-attempts
+    #:assignment-control-handles
+    #:assignment-control-suspended
+    #:assignment-control-blocker
+    #:automatic-assignment-allowed-p
+    #:regression-recover
+    #:assign-automatic))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

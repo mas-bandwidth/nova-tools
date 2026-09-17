@@ -22,15 +22,8 @@
 ;; pipeline-replies-are-correlated is now the executable replay in
 ;; ../acceptance.lisp (card 8608).
 
-;; NEEDS-KERNEL: policy/trial manifests surviving export/import/restart/replay.
-(deftest "policy-round-trip-and-replay" "docs/SPEC-WORK.md:4370"
-    "expected=survives-round-trip;malformed-intake-no-partial-effect"
-  (slice1-refuses-verb :config))
-
-;; NEEDS-KERNEL: estimate pinning by revision and unknown-price!=0.
-(deftest "pricing-is-pinned-by-revision" "docs/SPEC-WORK.md:5287"
-    "expected=old-estimate-reproducible;missing-dimension-unknown"
-  (slice1-refuses-verb :estimate))
+;; policy-round-trip-and-replay and pricing-is-pinned-by-revision now run in
+;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 
 (deftest "priority-grants-nothing" "docs/SPEC-WORK.md:5872"
     "expected=who-unchanged;no-lease;no-bypass"
@@ -227,10 +220,8 @@
             (check-equal "zz-default" cursor2 "the cursor continues at the pinned order")))))))
 
 
-(deftest "read-only-intake" "docs/SPEC-WORK.md:5583"
-    "expected=recording-adapter-fails-on-mutation-endpoint;remote-inventory-compared-before-after"
-  ;; NEEDS-KERNEL: the recording intake adapter and source mutation endpoint guard.
-  (ok t "pending; needs the intake adapter"))
+;; quiet-until-actionable and read-only-intake now run in
+;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
 
 (deftest "reconcile-preserves-contradiction" "docs/SPEC-WORK.md:5262"
     "expected=contradictory-observations-kept-unresolved;no-forged-inference"
