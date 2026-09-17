@@ -54,6 +54,8 @@ usage:
   nova-merge dry-run    --lane <dir> [--max <n>]
   nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>] [--decide [--floor <0-1>] [--card <file>] [--key-env <var>] [--base-url <url>]]
   nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
+  nova-merge fold       --branches <file> --onto <base> --out <branch> [--lane <dir>]
+  nova-merge fold       --close-folded --pr <n>
   nova-merge stop       --lane <dir>
   nova-merge classify   --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
@@ -271,6 +273,12 @@ type Deps struct {
 	// test drives a miniredis and a fake forge and reaches no network.
 	Dial  func(addr string) *redis.Client
 	Forge func(repo, base string, timeout time.Duration) ci.Forge
+	// TestTree runs the package test the repository names for the fold's scratch tree
+	// (docs/SPEC-MERGE.md "The fold (#1142)"): lisp/nova-work/run-tests.sh for a
+	// nova-work fold, go test for Go. TestLayout runs the layout test of #560 after it.
+	// Both are injected so a fold test uses a fake and reaches no toolchain.
+	TestTree   func(dir string) error
+	TestLayout func(dir string) error
 }
 
 func production() Deps {
@@ -302,6 +310,8 @@ func production() Deps {
 		Forge: func(repo, base string, timeout time.Duration) ci.Forge {
 			return ci.NewGHForge(repo, base, timeout)
 		},
+		TestTree:   realTestTree,
+		TestLayout: realTestLayout,
 	}
 }
 
@@ -370,6 +380,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdDryRun(rest, stdout, stderr, deps)
 	case "packet":
 		return cmdPacket(rest, stdout, stderr, deps)
+	case "fold":
+		return cmdFold(rest, stdout, stderr, deps)
 	case "stop":
 		return cmdStop(rest, stdout, stderr, deps)
 	case "queue":
