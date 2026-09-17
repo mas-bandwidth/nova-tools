@@ -1,0 +1,21 @@
+package fixture
+
+import "testing"
+
+type fakeClock struct{ now int }
+
+func (c *fakeClock) Advance(n int) { c.now += n }
+
+type fakeBench struct {
+	clock *fakeClock
+	done  bool
+}
+
+func TestFixtureFakeBenchAndClock(t *testing.T) {
+	b := fakeBench{clock: &fakeClock{}}
+	b.clock.Advance(5)
+	b.done = true
+	if !b.done {
+		t.Fatal("the event never arrived")
+	}
+}
