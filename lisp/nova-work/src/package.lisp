@@ -101,15 +101,44 @@
    #:journal-uncertain-p
    #:sync-stream
    #:sync-directory
-   ;; kernel
-   #:make-kernel
-   #:kernel-state
-   #:kernel-journal
-   #:kernel-next-rev
-   #:submit
-   #:ask-size
-    #:open-issue-count
-    #:open-leaf-count
+    ;; kernel
+    #:make-kernel
+    #:kernel-state
+    #:kernel-journal
+    #:kernel-next-rev
+    #:submit
+    #:ask-size
+     #:open-issue-count
+     #:open-leaf-count
+    ;; state export / isolated load (SPEC-WORK.md:3273-3297, replays :5879-5905)
+    #:export-state
+    #:export-complete
+    #:export-manifest
+    #:state-export-id
+    #:state-export-revision
+    #:state-export-bytes
+    #:state-export-members
+    #:state-export-status
+    #:state-export-terminal
+    #:state-export-published
+    #:publish-state-export
+    #:cancel-state-export
+    #:retention-pass
+    #:load-state
+    #:snapshot-state
+    #:snapshot-revision
+    #:snapshot-query
+    #:snapshot-accept-session-p
+    #:with-isolation
+    #:isolation-count
+    #:isolation-writes
+    #:make-fenced-session
+    #:fenced-export-start
+    #:fenced-status
+    #:fenced-cancel
+    #:fenced-operation-list
+    #:fenced-write
+    #:fenced-claim
     ;; applicable/delegation replays (Go card 8132)
     #:note-id
     #:make-note
