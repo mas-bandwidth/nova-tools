@@ -210,6 +210,30 @@ func TestShapeTableIsReachable(t *testing.T) {
 	}
 }
 
+// Issue #30 (a FORECLOSURE without self-scope). The "have no" shape matched
+// any absence at all, so a first-person restatement of a floor (floor 5,
+// "Secrets nowhere", written as "I have no secrets") and the ordinary idiom
+// "I have no idea" both flagged and drove exit 1. SPEC.md makes the second
+// class safe on rule documents because a prohibition carries no self-scope for
+// a shape to bind to, and the same reasoning is what separates a foreclosure
+// from a promise: the absent thing must be an attribute of the writer's own
+// mind or capacity. Specimen 8, "I have no associative recall...", is exactly
+// that and stays flagged.
+func TestHaveNoRequiresASelfScope(t *testing.T) {
+	for _, in := range []string{
+		"I have no secrets.",                  // floor 5 restated in the first person: a promise, not a property
+		"I have no idea what you really are.", // idiom: no self-scope for a foreclosure to bind to
+		"I have no time to waste.",            // ordinary absence of a thing, not of a faculty
+	} {
+		if got := ScanInstallation(in); len(got) != 0 {
+			t.Errorf("a bare \"I have no\" with no self-scope must not flag: %q -> %#v", in, got)
+		}
+	}
+	if got := ScanInstallation("I have no associative recall to drag anything back later."); len(got) == 0 || got[0].Shape != Foreclosure {
+		t.Errorf("specimen 8 is the measured foreclosure and must stay flagged: %#v", got)
+	}
+}
+
 // AnyInstallation is half of what the binary's exit code is derived from.
 func TestAnyInstallationDrivesTheExitCode(t *testing.T) {
 	if AnyInstallation(ScanInstallation("on 2026-07-30 four of my own checks were wrong")) {

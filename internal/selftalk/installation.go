@@ -408,7 +408,19 @@ var rankIdiom = regexp.MustCompile(`(?i)\b(?:at (?:most|least|best|worst)|` +
 
 var (
 	// FORECLOSURE.
-	haveNo = regexp.MustCompile(`(?i)\b(?:i|we) have no\b`) // specimen 8
+	//
+	// THE SELF-SCOPE IS IN THE OBJECT. A foreclosure states a door shut about
+	// what the writer IS or CAN DO, so "have no" only fires when the absent
+	// thing is a faculty, capacity, or instrument of the writer's own. Without
+	// that scope the bare shape matched every first-person absence: floor 5
+	// restated as "I have no secrets" is a promise, and "I have no idea" is an
+	// idiom, and neither says what the writer is. The noun set is closed for
+	// the same reason verdictAsA's is: an open object matches "I have no time".
+	// Specimen 8, "I have no associative recall to drag anything back later",
+	// is the measured shape.
+	haveNo = regexp.MustCompile(`(?i)\b(?:i|we) have no (?:\w+ ){0,2}?(?:recall|memory|` +
+		`recollection|access|ability|capacity|faculty|understanding|grasp|knowledge|awareness|` +
+		`sense|control|means|power|way|instrument)\b`) // specimen 8
 	// specimen 2. THE SELF-SCOPE MUST BE CLOSE. Measured: with the scope free to sit anywhere in
 	// the segment, "if there is no debt those fail at the PREMISE rather than at my judgment"
 	// flags -- an absence in an ATTACKER's premise, bound to me only by a "my" forty characters
