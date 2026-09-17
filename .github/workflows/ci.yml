@@ -517,10 +517,18 @@ jobs:
     # carry their runner image as a plain string and are quoted as a JSON string
     # in the same expression. Same steps, timeout and package selection below.
     runs-on: ${{ fromJSON(matrix.leg.labels || format('"{0}"', matrix.leg.runner)) }}
-    # TWO, the two-minute law for a job on the CL path. The full suite does not
-    # fit over the whole tree; scoping to the group's changed packages is what
-    # fits it, and the CI budget test (internal/ci) holds this cap.
-    timeout-minutes: 2
+    # FIVE: the one allowed exception to the two-minute law. Every other job on
+    # the CL path stays at TWO, but this gate is not a small check — it runs the
+    # FULL hosted suite (no -short) of the packages a group changes, on three
+    # platforms, sharded by size. Under load (the Studio running sixteen
+    # self-hosted legs plus three friends, windows-latest cold) its darwin shards
+    # were cancelled at 2:44 and its windows shards at 2:40 on 2026-09-17, and a
+    # cancelled shard drops the whole group and restarts every group behind it,
+    # so the two-minute cap on this one job was the throughput limit of the whole
+    # fleet. Scoping to the group's changed packages plus the shard-by-size
+    # matrix was already in place; five minutes is the allowance the budget test
+    # (internal/ci) records, and the comment there carries the reason.
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
