@@ -726,6 +726,9 @@
     #:roadmap-view-open
     #:export-roadmap-view
     #:load-roadmap-view
+    ;; the roadmap verbs (E04 row 8: percent --axis on a matrix, src/roadmap.lisp)
+    #:roadmap-percent
+    #:roadmap-cell-verified-p
     ;; render replays (nova-tools #362)
     #:make-render-session
     #:render-session-p

@@ -460,3 +460,116 @@
         (multiple-value-bind (restored line) (scopes-undo mutated touched guards scopes)
           (check-equal nil restored "an intervening mutation did not refuse undo")
           (ok (search "conflict" line) "the undo conflict was not named: ~A" line))))))
+
+;;; ------------------------------------------------------------------
+;;; percent-axis-on-a-matrix                docs/SPEC-WORK.md:5590
+;;; ------------------------------------------------------------------
+
+(deftest "percent-axis-on-a-matrix" "docs/SPEC-WORK.md:5590"
+    "expected=applicable-is-per-axis-member;rows-and-baseline-rows-roadmap-wide;percentage-over-applicable;zero-applicable-prints-no-percentage;matrix-requires-axis;non-matrix-refuses-axis;partial-cell-k-n-and-unknown"
+  ;; SPEC-WORK.md:3118, :1937-1951, :2101, :5590-5593 -- `percent --axis
+  ;; <member>` on a matrix: applicable= is the live rows less those with a
+  ;; recorded out-of-scope cell for that member, rows= and baseline-rows= are
+  ;; the roadmap's own, the percentage is green over applicable, and a percent
+  ;; over zero applicable rows prints green=0 applicable=0 with no percentage.
+  (let* ((seed (append
+                '((:id "root" :type :work-set :parent nil :state :unknown))
+                (loop for i from 1 to 10
+                      collect (list :id (format nil "root/f~D" i) :type :feature
+                                    :parent "root" :state :unknown))
+                (loop for i from 1 to 10
+                      collect (list :id (format nil "root/f~D/t" i) :type :task
+                                    :parent (format nil "root/f~D" i) :state :doing))
+                ;; f3 carries a second, still-open required leaf: a partial cell.
+                (list (list :id "root/f3/t2" :type :task :parent "root/f3"
+                            :state :unknown))))
+         (k (make-kernel :state (make-seed-state seed)))
+         (rows (loop for i from 1 to 10 collect (format nil "root/f~D" i)))
+         (cols (loop for i from 1 to 9 collect (format nil "c~D" i))))
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm" :parent "root" :title "M" :row-kind :feature
+                        :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '("row" "col") :permitted-roots '() :reason "new"
+                        :request "rm-1" :stamp "2026-09-17T00:00:00Z")
+      (ok okp "the matrix roadmap was not created: ~A" line)
+      (check-equal 0 code "matrix create exit"))
+    (check-equal 2 (length (roadmap-view-axes (kernel-state k) "rm"))
+                 "the matrix did not declare two axes")
+    ;; Nine rows settle; f3 stays open with one of its two leaves finished.
+    (dolist (i '(1 2 4 5 6 7 8 9 10))
+      (multiple-value-bind (okp line code)
+          (submit k (close-request :node (format nil "root/f~D/t" i)
+                                   :request (format nil "d~D" i)))
+        (ok okp "closing a leaf of row ~D was refused: ~A" i line)
+        (check-equal 0 code "close exit")))
+    (multiple-value-bind (okp line code)
+        (submit k (close-request :node "root/f3/t" :request "d3a"))
+      (ok okp "closing f3's first leaf was refused: ~A" line)
+      (check-equal 0 code "f3 close exit"))
+    ;; The axis members the `axis --add` verb writes: ten rows, nine columns.
+    ;; (The kernel commits a copy per envelope, so the view is written after the
+    ;; closes.)
+    (let* ((state (kernel-state k))
+           (wnode (nova-work::%node-quiet state "rm"))
+           (view (nova-work::wnode-view wnode)))
+      (setf (getf view :axis-members) (list (cons "row" (copy-list rows))
+                                            (cons "col" (copy-list cols))))
+      (setf (getf view :members) (copy-list rows))
+      ;; One out-of-scope cell for c2 -- the row f3 -- and every row out of
+      ;; scope for c9, whose applicable set is therefore empty.
+      (setf (getf view :cells)
+            (append (list (cons (list "root/f3" "c2") '(:out-of-scope t)))
+                    (loop for r in rows
+                          collect (cons (list r "c9") '(:out-of-scope t)))))
+      ;; A new plist key rebuilds the list, so write it back onto the node.
+      (setf (nova-work::wnode-view wnode) view))
+    ;; c1: every row applies; nine are green, f3 is a partial cell.
+    (multiple-value-bind (okp line code) (roadmap-percent k :node "rm" :axis "c1")
+      (ok okp "percent --axis c1 was refused: ~A" line)
+      (check-equal 0 code "percent c1 exit")
+      (ok (search "green=9" line) "c1 green was not 9: ~A" line)
+      (ok (search "applicable=10" line) "c1 applicable was not 10: ~A" line)
+      (ok (search "rows=10" line) "c1 rows was not 10: ~A" line)
+      (ok (search "baseline-rows=10" line) "c1 baseline-rows was not 10: ~A" line)
+      (ok (search "percent=90%" line) "c1 percentage was not 90%: ~A" line)
+      (ok (search "k/n=1/2" line) "the partial cell's k/n was not 1/2: ~A" line)
+      (ok (search "unknown=1" line) "the partial cell's unknown was not 1: ~A" line))
+    ;; c2: the open row f3 is out of scope, so nine apply and all nine are
+    ;; green -- the percentage is over applicable, not over rows.
+    (multiple-value-bind (okp line code) (roadmap-percent k :node "rm" :axis "c2")
+      (ok okp "percent --axis c2 was refused: ~A" line)
+      (check-equal 0 code "percent c2 exit")
+      (ok (search "applicable=9" line) "c2 applicable was not 9: ~A" line)
+      (ok (search "green=9" line) "c2 green was not 9: ~A" line)
+      (ok (search "rows=10" line) "c2 rows was not 10: ~A" line)
+      (ok (search "percent=100%" line) "c2 percentage was not 100%: ~A" line))
+    ;; c9: zero applicable rows prints green=0 applicable=0 and no percentage.
+    (multiple-value-bind (okp line code) (roadmap-percent k :node "rm" :axis "c9")
+      (ok okp "percent --axis c9 was refused: ~A" line)
+      (check-equal 0 code "percent c9 exit")
+      (ok (search "green=0 applicable=0" line)
+          "the zero-applicable line was not green=0 applicable=0: ~A" line)
+      (ok (not (search "percent=" line))
+          "a percentage was printed over zero applicable rows: ~A" line))
+    ;; A matrix requires --axis, an unknown member refuses, and a zero-axis
+    ;; roadmap refuses the flag it does not take (:3118).
+    (multiple-value-bind (okp line code) (roadmap-percent k :node "rm")
+      (ok (null okp) "a matrix percent with no --axis was accepted")
+      (check-equal 2 code "missing axis exit")
+      (ok (search "--axis" line) "the missing-axis refusal did not name the flag: ~A" line))
+    (multiple-value-bind (okp line code) (roadmap-percent k :node "rm" :axis "nope")
+      (ok (null okp) "an unknown axis member was accepted")
+      (check-equal 2 code "unknown member exit"))
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm-ax" :parent "root" :title "A" :row-kind :feature
+                        :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '() :permitted-roots '() :reason "new"
+                        :request "rm-2" :stamp "2026-09-17T00:00:00Z")
+      (ok okp "the axisless roadmap was not created: ~A" line)
+      (check-equal 0 code "axisless create exit"))
+    (multiple-value-bind (okp line code) (roadmap-percent k :node "rm-ax" :axis "c1")
+      (ok (null okp) "an axisless percent with --axis was accepted")
+      (check-equal 2 code "non-matrix axis exit")
+      (ok (search "--axis" line) "the non-matrix refusal did not name the flag: ~A" line))))

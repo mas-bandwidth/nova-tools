@@ -1059,3 +1059,165 @@ retired row and no evidence is narrowed by the default closed window (SPEC-WORK.
 :1648-1664); WINDOW changes no row here."
   (declare (ignore window))
   (copy-tree view))
+
+;;; ------------------------------------------------------------------
+;;; `percent --axis` on a matrix (docs/SPEC-WORK.md:2326-2329, :3118,
+;;; :1937-1951, :2101, :5590-5593).
+;;; ------------------------------------------------------------------
+;;;
+;;; `query --ask percent --node R --axis <member>` is the roadmap rollup for one
+;;; axis member. `rows=` is the roadmap's required-set cardinality -- the live
+;;; first-axis members -- and `baseline-rows=` the membership its last
+;;; `:baseline` recorded; both are the roadmap's own and are the same under
+;;; every `--axis`. `applicable=` is the live rows less those with a recorded
+;;; out-of-scope cell for that member, and the percentage is `green` over
+;;; `applicable`. A matrix requires `--axis`; a zero- or one-axis roadmap takes
+;;; none and refuses one at exit 2 (:3118). `percent` over zero applicable rows
+;;; prints `green=0 applicable=0` and no percentage, at exit 0 (:1943-1944), and
+;;; every partial cell’s `k/n` and `unknown=<u>` follows on a `QUERY ROW`
+;;; (:2101). The `axis` and `cell` verbs on other E04 rows own the view fields
+;;; this read consumes; a view built by hand is read the same way.
+
+(defparameter +percent-non-live-states+ '(:removed :cancelled :superseded)
+  "A row is live unless its node is removed, cancelled or superseded; done is
+live (:1156-1157).")
+
+(defun %percent-axes (view)
+  "VIEW's declared axes as an ordered alist (axis-id . members), the shape the
+`axis` verb owns in `:axis-members`; a legacy bare `:axes` declares no members."
+  (let ((members (getf view :axis-members)))
+    (if members
+        members
+        (mapcar (lambda (a) (if (consp a) (cons (car a) (copy-list (cdr a)))
+                                (cons a '())))
+                (getf view :axes)))))
+
+(defun %percent-first-axis-members (view)
+  "The ordered first-axis members, the roadmap's required rows (:1156, :1174)."
+  (or (cdr (car (%percent-axes view)))
+      (getf view :members)))
+
+(defun %percent-row-live-p (state id)
+  "A row is live while its node is not removed, cancelled or superseded."
+  (let ((n (and (stringp id) (%node-quiet state id))))
+    (and n (not (member (wnode-state n) +percent-non-live-states+)) t)))
+
+(defun %percent-member-known-p (view member)
+  "True when MEMBER is a member of one of VIEW's declared axes (:2326)."
+  (and (some (lambda (a) (member member (cdr a) :test #'string=))
+             (%percent-axes view))
+       t))
+
+(defun %percent-out-of-scope-p (view row member)
+  "True when VIEW records ROW's coordinate with MEMBER as out of scope (:1176)."
+  (some (lambda (cell)
+          (let ((coord (car cell)))
+            (and (getf (cdr cell) :out-of-scope)
+                 (member row coord :test #'string=)
+                 (member member coord :test #'string=))))
+        (getf view :cells)))
+
+(defgeneric roadmap-cell-verified-p (kernel node-id)
+  (:documentation
+   "The verification seam `percent` reads for a cell's green state
+(docs/SPEC-WORK.md:1937-1941, :5078): whether NODE-ID's done is backed by
+verified evidence. The verifier and staged-admission subsystem is outside this
+epic, so the one in-process implementation here reads the node's settled
+branch.")
+  (:method (kernel node-id)
+    (let ((n (and (stringp node-id) (%node-quiet (kernel-state kernel) node-id))))
+      (and n (eq :c (wnode-branch n))))))
+
+(defun %percent-settled-p (state id)
+  "True when ID's node has settled into C, however its evidence is rated."
+  (let ((n (and (stringp id) (%node-quiet state id))))
+    (and n (eq :c (wnode-branch n)))))
+
+(defun %percent-leaf-counts (state id)
+  "Answer (values DONE TOTAL UNKNOWN) for the required leaves beneath ID. A
+required leaf is a required node with no required children; DONE is the settled
+count over TOTAL, and an open leaf still `:unknown` is unknown (:1939-1940)."
+  (let ((done 0) (total 0) (unknown 0))
+    (labels ((walk (n)
+               (let ((required-children
+                       (loop for c in (wnode-children n)
+                             for cn = (%node-quiet state c)
+                             when (and cn (wnode-required cn)) collect cn)))
+                 (if required-children
+                     (dolist (c required-children) (walk c))
+                     (when (wnode-required n)
+                       (incf total)
+                       (when (eq :c (wnode-branch n)) (incf done))
+                       (when (and (eq :o (wnode-branch n))
+                                  (eq :unknown (wnode-state n)))
+                         (incf unknown)))))))
+      (let ((root (%node-quiet state id)))
+        (when root (walk root))))
+    (values done total unknown)))
+
+(defun roadmap-percent (kernel &key node roadmap axis)
+  "`query --ask percent` for NODE (or ROADMAP) and one axis member (:2326-2329,
+:3118, :1937-1951, :2101). Answers (values OK-P LINE EXIT-CODE): a matrix
+without `--axis`, a non-matrix with one, and an unknown axis member each refuse
+at exit 2; zero applicable rows print `green=0 applicable=0` with no percentage."
+  (let* ((state (kernel-state kernel))
+         (id (or node roadmap))
+         (view (and (stringp id) (node-view state id))))
+    (unless view
+      (return-from roadmap-percent
+        (values nil (format nil "QUERY FAIL node=~A: no roadmap view" id) 1)))
+    (let* ((axes (%percent-axes view))
+           (matrix (>= (length axes) 2))
+           (rows-members (%percent-first-axis-members view))
+           (rows (count-if (lambda (m) (%percent-row-live-p state m)) rows-members)))
+      (cond
+        ((and matrix (null axis))
+         (return-from roadmap-percent
+           (values nil
+                   (format nil "QUERY FAIL node=~A: --ask percent requires --axis <member> on a matrix"
+                           id)
+                   2)))
+        ((and (not matrix) axis)
+         (return-from roadmap-percent
+           (values nil
+                   (format nil "QUERY FAIL node=~A: --axis is refused on a zero- or one-axis roadmap"
+                           id)
+                   2)))
+        ((and matrix (not (%percent-member-known-p view axis)))
+         (return-from roadmap-percent
+           (values nil
+                   (format nil "QUERY FAIL node=~A: no such axis member ~A" id axis)
+                   2))))
+      (let* ((live (remove-if-not (lambda (m) (%percent-row-live-p state m))
+                                  rows-members))
+             (applicable-rows (if matrix
+                                  (remove-if (lambda (m)
+                                               (%percent-out-of-scope-p view m axis))
+                                             live)
+                                  live))
+             (applicable (length applicable-rows))
+             (green (count-if (lambda (m) (roadmap-cell-verified-p kernel m))
+                              applicable-rows))
+             (done-unverified
+               (count-if (lambda (m) (and (%percent-settled-p state m)
+                                          (not (roadmap-cell-verified-p kernel m))))
+                         applicable-rows))
+             (baseline (or (getf view :baseline-rows) rows))
+             (row-kind (getf view :row-kind))
+             (cell-rows
+               (loop for m in applicable-rows
+                     unless (roadmap-cell-verified-p kernel m)
+                       collect (multiple-value-bind (done total unknown)
+                                   (%percent-leaf-counts state m)
+                                 (format nil "QUERY ROW cell=~A,~A k/n=~D/~D unknown=~D"
+                                         m (or axis "-") done total unknown)))))
+        (values t
+                (if (plusp applicable)
+                    (format nil "QUERY OK ask=percent node=~A axis=~A row-kind=~A green=~D applicable=~D rows=~D baseline-rows=~D done-unverified=~D percent=~D%~{~%~A~}"
+                            id (or axis "-") (roadmap-name row-kind)
+                            green applicable rows baseline done-unverified
+                            (round (* 100 green) applicable) cell-rows)
+                    (format nil "QUERY OK ask=percent node=~A axis=~A row-kind=~A green=0 applicable=0 rows=~D baseline-rows=~D done-unverified=0~{~%~A~}"
+                            id (or axis "-") (roadmap-name row-kind)
+                            rows baseline cell-rows))
+                0)))))
