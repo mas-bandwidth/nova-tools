@@ -140,10 +140,9 @@
   (ok t "slice 1 carries no roadmap create: NEEDS-KERNEL roadmap node + view envelope"))
 
 
-(deftest "roadmap-proof" "docs/SPEC-WORK.md:5598"
-    "expected=fixed-table-prototype-parity;chat-and-file-renders-byte-identical;marker-edit-preserves-unrelated-bytes"
-  ;; NEEDS-KERNEL: roadmap proof rendering and marker edit.
-  (ok t "slice 1 carries no roadmap proof: NEEDS-KERNEL roadmap render + marker"))
+;;;; `roadmap-proof` moved to tests/replays-8649.lisp when its kernel landed
+;;;; (card 8649): the pure render and marker edit are no longer a NEEDS-KERNEL
+;;;; stub.
 
 (deftest "roles-are-configured-not-inferred" "docs/SPEC-WORK.md:5214"
     "expected=role-read-from-CONFIG-never-the-model;reserved-roles-not-spent-on-routine-work"

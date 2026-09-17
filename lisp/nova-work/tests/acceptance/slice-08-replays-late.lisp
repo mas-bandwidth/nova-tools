@@ -3,25 +3,11 @@
 
 (in-package #:nova-work/tests)
 
-(deftest "rotation-keeps-one-journal" "docs/SPEC-WORK.md:5516"
-    "expected=new-segment-names-same-journal-id-and-boundary-record;chain-continues"
-  ;; NEEDS-KERNEL: journal rotation / clip at a savepoint.
-  (ok t "slice 1 carries no rotation: NEEDS-KERNEL clip/rotation of the journal"))
-
-(deftest "rule-2-unavailable-is-not-green" "docs/SPEC-WORK.md:5151"
-    "expected=rule-2-unavailable-partition-exit-1-distinct-from-dangling;never-green-over-unread-history"
-  ;; NEEDS-KERNEL: rule 2 resolution of a reference into a closed partition.
-  (ok t "slice 1 carries no rule-2 partition read: NEEDS-KERNEL closed-index read"))
-
-(deftest "savepoint-cut-never-splits-an-envelope" "docs/SPEC-WORK.md:5507"
-    "expected=two-event-request-represented-once;cut-inside-the-pair-refused"
-  ;; NEEDS-KERNEL: savepoint image and its cut placement.
-  (ok t "slice 1 carries no savepoint: NEEDS-KERNEL savepoint image + cut"))
-
-(deftest "savepoint-write-failure-keeps-the-previous" "docs/SPEC-WORK.md:5532"
-    "expected=image-manifest-and-sync-fail-in-turn;previous-verified-savepoint-restores"
-  ;; NEEDS-KERNEL: savepoint write and manifest publication.
-  (ok t "slice 1 carries no savepoint: NEEDS-KERNEL savepoint manifest + sync"))
+;;;; `rotation-keeps-one-journal`, `rule-2-unavailable-is-not-green`,
+;;;; `savepoint-cut-never-splits-an-envelope` and
+;;;; `savepoint-write-failure-keeps-the-previous` moved to
+;;;; tests/replays-8649.lisp when their kernel landed (card 8649). The
+;;;; NEEDS-KERNEL stubs are gone with them.
 
 (deftest "schema-evolution" "docs/SPEC-WORK.md:5601"
     "expected=old-schemas-migrate-losslessly;unsupported-refuses-preserving-originals;migration-never-rewrites-the-only-copy"
