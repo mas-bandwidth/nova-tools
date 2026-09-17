@@ -630,7 +630,60 @@
     #:priority-operation-cancel
     #:priority-operation-wait
     #:priority-table-set
-    #:priority-table-clear))
+    #:priority-table-clear
+    ;; attempts/capabilities/silence replays (card 8626)
+    #:*capability-group-kinds*
+    #:make-capability-group
+    #:capability-group-p
+    #:capability-group-id
+    #:capability-group-kind
+    #:capability-group-source
+    #:capability-group-last-verified
+    #:capability-group-availability
+    #:capability-group-constraints
+    #:capability-group-declared-support
+    #:capability-group-runtime-verified
+    #:capability-group-free-capacity
+    #:capability-declared-support-p
+    #:capability-runtime-verified-p
+    #:capability-free-capacity
+    #:capability-fields-collapse-p
+    #:dispatch-fact
+    #:dispatch-fact-p
+    #:dispatch-fact-kind
+    #:dispatch-fact-request
+    #:dispatch-fact-node
+    #:dispatch-fact-to
+    #:dispatch-fact-state
+    #:dispatch-fact-reserved
+    #:dispatch-fact-declared
+    #:copy-dispatch-fact
+    #:dispatch-offer
+    #:delivery-receipt
+    #:acknowledgement
+    #:accepted-ownership
+    #:facts-collapsed-p
+    #:pending-offer-p
+    #:pending-offer-reserved
+    #:pending-offer-declared
+    #:offer-after-timeout
+    #:dispatch-launched-p
+    #:second-offer-admitted-p
+    #:make-attempt
+    #:attempt
+    #:attempt-p
+    #:attempt-id
+    #:attempt-node
+    #:attempt-requested-model
+    #:attempt-observed
+    #:attempt-usage
+    #:attempt-observed-model
+    #:append-attempt
+    #:attempts-collapsed-p
+    #:silence-action
+    #:availability-after-window
+    #:silence-verdict
+    #:probe-outcome))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
