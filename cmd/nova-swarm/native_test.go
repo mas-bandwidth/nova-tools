@@ -1530,6 +1530,7 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 // line, because a description that named "secret": "<NAME>" would keep the key in the
 // environment instead.
 func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
+	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
