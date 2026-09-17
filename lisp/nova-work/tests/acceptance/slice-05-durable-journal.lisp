@@ -1171,14 +1171,6 @@ asserts does not exist in slice 1."
     (check-equal "att-2" (attempt-id (second attempts))
                  "the retry keeps its own identity")))
 
-;; four-facts-four-verbs: an admitted offer with declared free slots writing
-;; :effect :dispatched, a pending-offer index entry, refused by name while an
-;; attempt is live and admitted once none is.
-;; NEEDS-KERNEL: the offer verb and a pending-offer index.
-(deftest-pending "four-facts-four-verbs" "docs/SPEC-WORK.md:5229"
-    "expected=effect-dispatched;pending-offer-entry;live-attempt=refused;none=admitted"
-  "the offer/dispatch verbs are not in slice 1")
-
 ;; full-round-trip: export a captured revision, load it in a fresh isolated
 ;; engine, export again, and compare every semantic field, stable ids, Unicode
 ;; and literal text, order where meaningful, links, evidence, roles, CONFIG,
