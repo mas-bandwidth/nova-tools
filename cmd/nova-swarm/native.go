@@ -58,19 +58,21 @@ type nativeRunConfig struct {
 
 // nativeRunResult is what one run records when the child has gone.
 type nativeRunResult struct {
-	rc           int     // the child's exit code; -1 when the deadline killed it
-	wallSeconds  float64 // the wall the run took
-	wall         string  // the wall's own name from its SANDBOX OK line, or "none"
-	cardSHA256   string  // sha256 of the card text, lowercase hex
-	binarySHA256 string  // sha256 of the harness binary, lowercase hex
-	job          string  // the job directory <slot>/jobs/<label> the child ran in
-	usageState   string  // the store path the NATIVE OK line names when no store answered, "" otherwise
-	usageReason  string  // no-rows | no-store | no-sqlite3, "" when the store answered
-	configSHA    string  // sha8 of the carried provider config, "" when --config named none
-	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
-	harness      string  // ok | silent: silent when the capture holds no words of the child's and no result was found
-	fence        string  // the first path the harness's own fence auto-rejected, "" when it rejected nothing
-	wallReport   string  // the WALL report line when the fence stopped the card and it published nothing (issue #918)
+	rc           int               // the child's exit code; -1 when the deadline killed it
+	wallSeconds  float64           // the wall the run took
+	wall         string            // the wall's own name from its SANDBOX OK line, or "none"
+	cardSHA256   string            // sha256 of the card text, lowercase hex
+	binarySHA256 string            // sha256 of the harness binary, lowercase hex
+	job          string            // the job directory <slot>/jobs/<label> the child ran in
+	usageState   string            // the store path the NATIVE OK line names when no store answered, "" otherwise
+	usageReason  string            // no-rows | no-store | no-sqlite3, "" when the store answered
+	configSHA    string            // sha8 of the carried provider config, "" when --config named none
+	tmp          string            // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
+	harness      string            // ok | silent: silent when the capture holds no words of the child's and no result was found
+	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
+	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
+	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
+	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -397,9 +399,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		default:
 			res.rc = -1
 		}
+		// THE END WORD FOR THIS LAUNCH: the row names how the attempt ended, and the wall
+		// block below refines it to `wall` when the machinery, not the model, stopped the
+		// card (issue #644's follow-up).
+		res.end = swarm.EndDone
+		if res.rc != 0 {
+			res.end = swarm.EndFailed
+		}
 		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
-		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, errOut)
+		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, res.end, errOut)
 		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
@@ -433,6 +442,27 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// WallDeath asks the result first.
 	if report, ok := swarm.WallDeath(jobDir, cfg.label); ok {
 		res.wallReport = report
+	}
+
+	// AND WHETHER THE WALL ITSELF STOPPED IT (issue #644's follow-up). The harness's own
+	// `permission ... auto-rejecting` line is above; the sandbox's `SANDBOX REFUSED` and
+	// `Operation not permitted` on a path are the OS wall's words in the same capture. A run
+	// with either and no result ends `wall`, and the usage row and the report line say so.
+	// ONLY WITHOUT A RESULT. A card that published despite the line is done, and naming it
+	// walled would take a finished report away from the harvester (wall_batch_test.go).
+	if _, published := swarm.FindCardResult(jobDir); !published {
+		if raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log")); err == nil {
+			if wr, ok := swarm.WallRefused(raw); ok {
+				res.wallRefusal = wr
+			}
+		}
+	}
+	res.end = swarm.EndDone
+	if res.rc != 0 {
+		res.end = swarm.EndFailed
+	}
+	if (res.wallRefusal != swarm.WallRefusal{}) {
+		res.end = swarm.EndWall
 	}
 
 	if wall != "" {
@@ -853,12 +883,12 @@ func sameDir(a, b string) bool {
 // When sqlite3 is missing the columns are dashes and the note is carried to the caller, and
 // the run still finishes rather than failing on a number nobody can see. When no store exists
 // the row keeps its dashes and the returned reason and path name what the NATIVE OK line says.
-//
 // ONE ROW PER LAUNCH (issue #900): a native run that retried a launch appends a row for each
 // attempt, so a retried card's usage.tsv carries attempt=1,2,3 for its one job and each
 // attempt is summed once. A fast failure whose provider reported nothing keeps its dashes,
-// and `usd` stays a dash rather than becoming a zero.
-func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc, attempt int, errOut io.Writer) (reason, path string) {
+// and `usd` stays a dash rather than becoming a zero. The `end` column names how the attempt
+// ended -- done, failed, or wall (issue #644's follow-up).
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc, attempt int, endWord string, errOut io.Writer) (reason, path string) {
 	usage, note, storePath, rr := swarm.ReadCardUsage(dataHome, start, end)
 	rcCol := "-"
 	if rc >= 0 {
@@ -868,6 +898,7 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		"job": cfg.label, "attempt": strconv.Itoa(attempt),
 		"started": start.UTC().Format(time.RFC3339),
 		"ended":   end.UTC().Format(time.RFC3339),
+		"end":     dash(endWord),
 		"rc":      rcCol, "provider": provider, "model": model,
 	}
 	for _, c := range swarm.TokenColumns {

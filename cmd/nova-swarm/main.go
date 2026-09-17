@@ -1483,6 +1483,14 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if res.wallReport != "" {
 		fmt.Fprintln(stdout, oneline.Escape(res.wallReport))
 	}
+	// THE REPORT LINE A WALL DEATH OWES (issue #644's follow-up): the path the wall refused,
+	// the step the card reached, and the commits it left on its branch so a harvester can
+	// still push the work. Printed only when the wall stopped a card with no result, which is
+	// the one shape nativeRun sets res.wall for.
+	if (res.wallRefusal != swarm.WallRefusal{}) {
+		branch, commits, _ := swarm.WallCommits(filepath.Join(res.job, "repo"))
+		fmt.Fprintln(stdout, swarm.WallLine(cfg.label, res.wallRefusal, branch, commits))
+	}
 	if res.rc != 0 {
 		if res.rc > 0 {
 			return res.rc

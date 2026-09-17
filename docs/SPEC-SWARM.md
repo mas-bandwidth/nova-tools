@@ -1132,6 +1132,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `line1-mismatch` | published a result whose line 1 is not its contract line |
 | `no-result` | ended with rc 0 and published no `RESULT.md`, at the job root or below it |
 | `fence` | was stopped by the HARNESS'S OWN permission fence: it auto-rejected a path and the model stopped there, so the card never got to publish (issue #644). The path follows as `path=<p>` |
+| `wall` | was stopped by the WALL — the harness's permission auto-reject line, or the sandbox's own `SANDBOX REFUSED` / `Operation not permitted` on a path outside the write set — and published no `RESULT.md`. The refused path and the last `STEP <n>` the card reached follow as `path=<p> step=<n>`, and one `WALL task=<id> path=<p> step=<n> [commits=<n> branch=<name>]` report line is printed on the notes so a harvester can still push the commits the dead card left (issue #644's follow-up) |
 | `harness-silent` | its harness wrote nothing at all — no word in the run's capture and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
 | `runner-refused` | its RUNNER exited before the harness started — no `NATIVE` line and no `harness-output.log` — so the non-zero exit code is the runner's, not the harness's; the runner's last line follows as `last=<line>` (issue #618) |
 | `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it, and its harness DID run |
@@ -1158,12 +1159,14 @@ token off the line rather than guessing from files a batch creates itself.
 or `result-after-deadline` at the deadline — before `card-abstain` (line 1 or
 line 2 beginning `ABSTAIN`) and `line1-mismatch`. With no matching result: the
 kill classes the machinery watched itself — `idle=<s>`, `input-limit` — and
-`admission`, then `fence`, then `harness-silent`, then `deadline`, then the pair `no-result`
+`admission`, then `fence`, then `wall`, then `harness-silent`, then `deadline`, then the pair `no-result`
 (ended clean) and `rc=<n>` (ended non-zero), which are one slot split by the exit
-code. **`fence` comes before `harness-silent`, `deadline`, `no-result` and `rc=<n>`**:
-a card the machinery's own fence stopped is neither a model that published nothing
-nor a harness that never ran, and reading it as either sends a coordinator to the
-model for a wall this tool built (issue #644). **`rc=<n>` is never first**:
+code. **`fence` and `wall` come before `harness-silent`, `deadline`, `no-result` and `rc=<n>`**:
+a card the machinery's own fence or the OS wall stopped is neither a model that published
+nothing nor a harness that never ran, and reading it as either sends a coordinator to the
+model for a wall this tool built (issue #644). A card that published a matching `RESULT.md`
+anyway is done: the wall is named only when the report is absent, because a wall that was
+survived is not the card's end. **`rc=<n>` is never first**:
 an exit code from a harness that never ran the card is nothing to go and read.
 `idle=<s>` and `input-limit` are decided before the result is read at all — they
 are what the machinery watched happen, true whether a result exists or not;
@@ -1544,7 +1547,7 @@ RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|fals
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
-RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|wall|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
