@@ -522,3 +522,30 @@ REPORT at=2026-09-12T17:29:33Z file=cmd/nova-version/testdata/example.tsv host=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-version/testdata/example.tsv
 ```
+
+
+## nova-cairn
+
+No fixture: the store is created by the run itself. Every line below is local
+— plain files under the named store, no Redis, no remote, no network — and
+`cmd/nova-cairn/firstrun_test.go` runs each `$` line in `t.TempDir()`, so the
+`./cairns` below is a fresh directory per run. The stamps come from `--now`
+because a transcript must read the same twice; a stranger's first run omits
+it and the real clock answers instead.
+
+### First run
+
+```text
+$ nova-cairn open --store ./cairns --session s1 --source bench-a/session-7 --publish manual --now 2026-09-17T12:00:00Z
+OPEN OK session=s1 store=./cairns publish=manual stamp=2026-09-17T12:00:00Z
+
+$ nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --source bench-a/session-7#L3 --publish manual --now 2026-09-17T12:05:00Z
+APPEND OK session=s1 entry=e1 persisted=true published=false publish=manual duplicate=false stamp=2026-09-17T12:05:00Z
+
+$ nova-cairn index --store ./cairns
+INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
+INDEX COVERAGE sessions=1 entries=1 shown=1
+
+$ nova-cairn receipt --store ./cairns --session s1 --entry e1
+RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual
+```
