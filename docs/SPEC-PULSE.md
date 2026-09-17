@@ -15,8 +15,8 @@ window reads one line per cycle.
 - `nova-pulse pool` enumerates bounded open work from declared sources into `pool.tsv`.
 - `nova-pulse cut` writes one card per candidate from a typed template, in the practice-17
   shape ([WORKER-CARDS.md](WORKER-CARDS.md) 17), and a `cards.tsv` with the model by kind.
-- `nova-pulse launch` allocates free slots, admits the cards as one batch with a `--then`
-  that names `harvest`, and queues what did not fit.
+- `nova-pulse launch` allocates free slots, admits the cards as one batch, and queues what did
+  not fit.
 - `nova-pulse harvest` pushes and opens a PR for every card whose `RESULT.md` line 1 is its
   contract line, sends every abstain to `retry.tsv` with the harness's last refusal line,
   cuts a read card per PR, and pulses again — queue first.
@@ -31,7 +31,7 @@ more. Merges are not this tool's: `nova-merge` and a person hold the gates
 ## The loop, in words
 
 ```
-pool ──► cut ──► launch ══(nova-swarm batch, --then harvest)══► harvest ──► pool ──► …
+pool ──► cut ──► launch ══(nova-swarm batch: pool admission)══► harvest ──► pool ──► …
  │                 │                                              │
  │  candidates     │  every free slot is filled with admitted work;│  done: push, PR, read card
  │  from sources   │  the rest wait in queue.tsv, never dropped    │  abstain: retry.tsv, no push
@@ -165,6 +165,24 @@ The loop ends only when the pool and the queue are both empty, and then it says 
      ended or the deadline — and never earlier. A `BATCH REFUSED` line from the swarm is
      relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued.
 11. **`--then` is gated on the verdict, never on mergeability.** `harvest` disposes a card by
+10. **Every card goes through `batch`, never a single `add`.** `launch` runs exactly one
+    `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>s
+    --files <n> --tokens <n>` per model route present, so at most two admissions, both under
+    one pulse id recorded in `<root>/pulses/<id>.tsv` (`batch id`, `model`, `n`). `<n>` on
+    `--files` and `--tokens` is that route's card count and summed token bound taken from its
+    `cards.tsv` columns, so the admission is bounded exactly as the cards say. Where
+    `cards.tsv` carries no budget column, the budgets come from the configuration --
+    `[launch] files` (default 40) and `[launch] tokens` (default the explicit word
+    `unmetered`, which is what a native runner with no live token accounting has always
+    meant). Neither is ever omitted: `nova-swarm batch` requires both and refuses to guess,
+    so a launch that names none is refused before a card starts (issue #869). This is the
+    pool/tasks admission mode: it enqueues work and returns, it does not wait and it holds no
+    follow-on. `--then` is the gather mode's flag (`batch --cards --runner`), so `launch`
+    never passes it; `launch`'s whole-seconds `--deadline` is spelled as the duration `<s>s`
+    the swarm's `Sidecar.Deadline` parser requires, because a bare `120` parses as no deadline
+    and silently falls back to the worker default (issue #534). A `BATCH REFUSED` line from
+    the swarm is relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued.
+11. **`harvest` is gated on the verdict, never on mergeability.** `harvest` disposes a card by
     its own two lines — line 1 the contract, line 2 the verdict — and by the `BRANCH` line.
     It never asks `nova-merge` whether the PR can merge, never reads a hosted check, never
     waits for a read. A chain that waits on mergeability waits on a person, and the pulse
@@ -896,9 +914,9 @@ clone and copy pay about 44 s and the model loop pays the tail — the same leve
   person rewrites it, and the rewritten card is a new candidate.
 - **No model call, no summary, no judgement.** It never reads a report body, never opens a
   transcript, never scores a finding. The swarm's packet is the whole read.
-- **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `--then`;
-  the alarm is `width`, run by nova-wake or a person. The one clock is the manager tier's
-  cycle (#587), and its tick is **Rate and convergence** rule 1.
+- **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `harvest` and
+  the manager tier's tick; the alarm is `width`, run by nova-wake or a person. The one clock
+  is the manager tier's cycle (#587), and its tick is **Rate and convergence** rule 1.
 
 ## The manager tier
 
@@ -1160,6 +1178,12 @@ handoff (rule **The manager tier**).
      `--cards` TSV holding exactly the admitted cards in order, `--deadline`, a `--runner`,
      `--root`, and a `--then` whose argv begins `nova-pulse harvest --id <id>`; a `BATCH
      REFUSED` fixture reply is `PULSE REFUSED` with that reason, `queue.tsv` unchanged.
+12. `launch-every-card-through-batch`: two model routes present run exactly two `nova-swarm
+    batch` invocations and zero `nova-swarm add`, each with `--label pulse-<id>`, a `--files`
+    equal to that route's card count, a `--tokens` equal to the sum of that route's `tokens`
+    column in `cards.tsv`, a duration-form `--deadline <s>s`, and no `--then` (the gather
+    mode's flag, which this admission does not carry); a `BATCH REFUSED` fixture
+    reply is `PULSE REFUSED` with that reason, `queue.tsv` unchanged.
 13. `harvest-pushes-only-on-line1-match`: three done cards — line 1 equal, line 1 differing
     by one byte, line 1 equal with `BRANCH main` — push exactly one, by `git push <https>
     <branch>:<branch>`, open exactly one draft PR whose body is the `RESULT.md` lines, and
@@ -1389,6 +1413,10 @@ handoff (rule **The manager tier**).
    --root <root>"` to `nova-swarm batch`'s card form, which runs it when every card is done
    and never earlier (rule 10); the pool form's `--then` (card 269) is no longer on launch's
    path. Nothing else in this draft depends on it.
+4. **What batches the chain.** `nova-swarm batch`'s pool/tasks admission mode enqueues work
+   and returns; `--then` belongs to its `--cards --runner` gather mode only. Default: `launch`
+   admits and prints its line, and `harvest` is run by the manager tier's tick (or a person),
+   never chained from the admission batch itself.
 5. **What the shipped tool is behind on, named rather than assumed.** This is a draft, and
    `## Tests this spec demands` says so: the replays are demanded of the implementation, not
    read off it. Three deltas are open against `internal/pulse` at this draft's head, each one
