@@ -279,35 +279,11 @@
 ;;   ;; rather than as cancelled.)
 ;; NEEDS-KERNEL: the cancel verb and external-effect disposition (none here).
 
-;;; undo-appends-and-preserves  SPEC-WORK.md prose :2665 / table :5192
-;; (deftest "undo-appends-and-preserves" "docs/SPEC-WORK.md:5192"
-;;     "compensating-envelope-with-lineage;original-event-and-receipts-untouched"
-;;   ;; an undo of a named request appending a typed compensating envelope with its
-;;   ;; lineage while the original event and every receipt stay exactly where they are.)
-;; NEEDS-KERNEL: the undo verb and its reversible-verb table (no undo in slice).
-
-;;; redo-refuses-a-stale-plan  SPEC-WORK.md prose :2666 / table :5194
-;; (deftest "redo-refuses-a-stale-plan" "docs/SPEC-WORK.md:5194"
-;;     "stale-precondition-refused-atomically;names-what-changed;writes-nothing;undo-not-deleted"
-;;   ;; a redo whose preconditions moved refused atomically, naming what changed,
-;;   ;; writing nothing, and never reached by deleting the undo.)
-;; NEEDS-KERNEL: the redo verb (no undo/redo stack in slice 1).
-
-;;; undo-refuses-an-external-effect  SPEC-WORK.md prose :2666 / table :5201
-;; (deftest "undo-refuses-an-external-effect" "docs/SPEC-WORK.md:5201"
-;;     "sent/paid/published/deleted-refused-as-external;history-never-reset"
-;;   ;; an undo over a sent message, a paid execution, a publication and a source
-;;   ;; deletion refused and reported as an external effect; shared Git history
-;;   ;; never reset as the undo path.)
-;; NEEDS-KERNEL: undo plus external-effect awareness (no such model here).
-
-;;; undo-names-its-reversible-set  SPEC-WORK.md prose :2721 / table :5332
-;; (deftest "undo-names-its-reversible-set" "docs/SPEC-WORK.md:5332"
-;;     "each-reversible-verb-undone-by-table;refused-verb-refused-named;terminal-dispositions-refused"
-;;   ;; every row of the reversible-verb table exercised; each refused verb refused
-;;   ;; `not reversible here` naming itself; an undo over cancel and node remove
-;;   ;; refused because both dispositions are terminal.)
-;; NEEDS-KERNEL: the reversible-verb table and undo (does not exist in slice 1).
+;;; `undo-appends-and-preserves`, `redo-refuses-a-stale-plan`,
+;;; `undo-refuses-an-external-effect` and `undo-names-its-reversible-set` are
+;;; real replays now (nova-tools #362): the first two over
+;;; src/replays-operations-undo.lisp in slice-08 and slice-07, the last two over
+;;; src/edit-undo.lisp in tests/acceptance.lisp. The parked stubs are gone.
 
 ;;; clip-is-one-long-operation  SPEC-WORK.md prose :2568 / table :5327
 ;; (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5327"
@@ -349,12 +325,8 @@
 ;;   ;; by its original NODE OK; an equal-value edit the no-effect receipt changed=0.)
 ;; NEEDS-KERNEL: the node edit verb and a changed= receipt (no edit in slice 1).
 
-;;; edit-undo-preserves-later-work  SPEC-WORK.md prose :2845 / table :5355
-;; (deftest "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
-;;     "undo-restores-before;undo-after-intervening-edit-refused;both-events-stand"
-;;   ;; an edit undone restores :before; the same undo after an intervening edit
-;;   ;; refused conflict, both events standing.)
-;; NEEDS-KERNEL: edit undo (no node edit or undo in slice 1).
+;;; `edit-undo-preserves-later-work` is a real replay now, over
+;;; src/edit-undo.lisp in tests/acceptance.lisp (nova-tools #362).
 
 ;;; edit-never-fetches-a-link  SPEC-WORK.md prose :2845 / table :5357
 ;; (deftest "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
@@ -1050,12 +1022,8 @@ asserts does not exist in slice 1."
     "expected=fetches=0;nul=bad-link;private-node-prints-no-value"
   "no link render/fetch in slice 1")
 
-;; edit-undo-preserves-later-work: an edit undone restores :before; the same
-;; undo after an intervening edit is refused conflict, both events standing.
-;; NEEDS-KERNEL: an undo verb with a :before field and conflict detection.
-(deftest-pending "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
-    "expected=undo-restores-before;late-undo=conflict;both-events-stand"
-  "no undo verb in slice 1")
+;; edit-undo-preserves-later-work is a real replay now, over
+;; src/edit-undo.lisp in tests/acceptance.lisp (nova-tools #362).
 
 ;; endpoint-is-local-and-private: the session's directory created 0700 and its
 ;; socket 0600, both owned by the running account; a pre-existing directory or

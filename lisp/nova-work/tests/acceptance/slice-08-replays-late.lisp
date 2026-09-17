@@ -359,17 +359,9 @@
             "stop's CLIP OK names its own operation")
         (ok (search "SESSION OK" (second lines)) "stop prints SESSION OK second: ~A" (second lines))))))
 
-(needs-kernel "undo-redo" "docs/SPEC-WORK.md:5599"
-  "reversible edits reversed, history preserved, redo only against valid preconditions; a conflict explicit and mutating nothing"
-  "REDO")
-
-(needs-kernel "unknown-price-is-not-zero" "docs/SPEC-WORK.md:5287"
-  "a missing pricing dimension reported unknown, never read as a zero historical receipt"
-  "PRICE-LOOKUP")
-
-(needs-kernel "unrelated-receipts-stay-reusable" "docs/SPEC-WORK.md:5301"
-  "a changed source or criterion preserving the historic tick at its pinned revision while unrelated receipts stay untouched"
-  "RECEIPT-LOOKUP")
+;; Moved to tests/replays-8651.lisp as real replays (nova-tools #362):
+;; "undo-redo", "unknown-price-is-not-zero" and
+;; "unrelated-receipts-stay-reusable".
 
 ;; Moved to tests/acceptance.lisp as a real replay over src/assignment.lisp
 ;; (nova-tools #362): "until-is-overdue-not-released".
