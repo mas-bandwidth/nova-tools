@@ -192,18 +192,6 @@
   "an undo over a sent message, a paid execution, a publication and a source deletion refused and reported as an external effect"
   "UNDO")
 
-(needs-kernel "undo-redo" "docs/SPEC-WORK.md:5599"
-  "reversible edits reversed, history preserved, redo only against valid preconditions; a conflict explicit and mutating nothing"
-  "REDO")
-
-(needs-kernel "unknown-price-is-not-zero" "docs/SPEC-WORK.md:5287"
-  "a missing pricing dimension reported unknown, never read as a zero historical receipt"
-  "PRICE-LOOKUP")
-
-(needs-kernel "unrelated-receipts-stay-reusable" "docs/SPEC-WORK.md:5301"
-  "a changed source or criterion preserving the historic tick at its pinned revision while unrelated receipts stay untouched"
-  "RECEIPT-LOOKUP")
-
 (needs-kernel "until-is-overdue-not-released" "docs/SPEC-WORK.md:5243"
   "at --until and lease expiry no duplicate launch and no stopped or completed claim, the reservation retained until reconciled"
   "LEASE-UNTIL")
