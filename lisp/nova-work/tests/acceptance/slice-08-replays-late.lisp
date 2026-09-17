@@ -98,7 +98,42 @@
       (multiple-value-bind (okp reason)
           (validate-export (capture-export new 3 :base 1 :end '(:sequence 3 :sha256 "h3")) split)
         (ok (not okp) "a cut inside an envelope was admitted")
-        (ok (search "cut inside" reason) "the refusal names the split envelope: ~A" reason)))))
+        (ok (search "cut inside" reason) "the refusal names the split envelope: ~A" reason))))
+  ;; `--state` is required with `--at`, and the request export refuses `--at`.
+  (multiple-value-bind (okp reason) (validate-export-form :state nil :at 2)
+    (ok (not okp) "the request export admitted --at")
+    (ok (search "--at" reason) "the refusal does not name --at: ~A" reason))
+  (multiple-value-bind (okp reason) (validate-export-form :state t)
+    (ok (not okp) "a state export without --at was admitted")
+    (ok (search "--at" reason) "the refusal does not name --at: ~A" reason))
+  ;; `range` requires both stamps; the other closed-history selections refuse them.
+  (multiple-value-bind (okp reason)
+      (validate-export-form :state t :at 2 :closed-history :range
+                            :from "2026-09-14T00:00:00Z")
+    (ok (not okp) "a range with one stamp was admitted")
+    (ok reason "the one-stamp refusal is named: ~A" reason))
+  (multiple-value-bind (okp reason)
+      (validate-export-form :state t :at 2 :closed-history :range
+                            :from "2026-09-14T00:00:00Z" :to "2026-09-15T00:00:00Z")
+    (ok okp "a half-open range was refused: ~A" reason))
+  (multiple-value-bind (okp reason)
+      (validate-export-form :state t :at 2 :closed-history :none
+                            :from "2026-09-14T00:00:00Z")
+    (ok (not okp) "a non-range selection admitted --from")
+    (ok reason "the stamp refusal is named: ~A" reason))
+  ;; `--at` resolves to a pinned revision and refuses outside recoverable retention.
+  (let* ((k (fresh))
+         (state (kernel-state k))
+         (r (state-revision state)))
+    (multiple-value-bind (pin line)
+        (resolve-export-at state r :savepoints (list r) :retain-from 0)
+      (ok pin "a recoverable revision did not resolve: ~A" line)
+      (check-equal r (export-pin-revision pin)
+                   "the pin does not name the captured revision"))
+    (multiple-value-bind (pin line)
+        (resolve-export-at state 0 :savepoints '(0) :retain-from 1)
+      (ok (null pin) "a revision outside retention resolved")
+      (ok (search "retention" line) "the refusal does not name retention: ~A" line))))
 
 (deftest "state-export-is-one-long-operation" "docs/SPEC-WORK.md:5885"
     "expected=blocked-export-acknowledges-at-once;wait-returns-the-captured-revision"
@@ -131,7 +166,41 @@
         (begin-operation reg :export 44 :inside-batch t :entry-id "batch-7")
       (check-equal nil id "an export inside an atomic batch was admitted")
       (check-equal 2 code "the batch refusal exit code")
-      (ok (search "batch-7" line) "the refusal names the entry id: ~A" line))))
+      (ok (search "batch-7" line) "the refusal names the entry id: ~A" line)))
+  ;; The resident form is one long operation over the durable accept record: the
+  ;; id is durable before it is printed and the ack names op=export and the wire
+  ;; op session.export (SPEC-WORK.md:3204-3208).
+  (let* ((journal (make-accept-journal))
+         (registry (make-operation-registry :journal journal))
+         (k (fresh))
+         (r (state-revision (kernel-state k))))
+    (multiple-value-bind (id op line code)
+        (begin-state-export registry (kernel-state k) :id "op-export-9"
+                            :request "req-export-9" :at r :savepoints (list r))
+      (check-equal "op-export-9" id "the export did not return its id")
+      (ok (search "OPERATION OK" line) "the ack is not an OPERATION OK: ~A" line)
+      (ok (search "op=export" line) "the ack does not name op=export: ~A" line)
+      (check-equal 0 code "the export did not acknowledge")
+      (check-equal "session.export" (export-wire-op) "the wire op is not session.export")
+      (ok (accept-record-of journal id) "the export id is not durable before it is printed")
+      ;; wait prints the terminal EXPORT OK at the captured revision.
+      (let ((terminal (state-export-wait op)))
+        (ok (search "EXPORT OK" terminal) "wait does not print EXPORT OK: ~A" terminal)
+        (ok (search (format nil "rev=~D" r) terminal)
+            "the terminal line does not carry the captured revision: ~A" terminal))))
+  ;; The offline `--snapshot` counterpart runs one finite process and names no
+  ;; operation; a mismatched --at refuses (SPEC-WORK.md:3216-3218).
+  (let* ((k (fresh))
+         (manifest (export-manifest (kernel-state k) :id "exp-snap"))
+         (snap (load-state manifest :max-bytes 1000000)))
+    (multiple-value-bind (result line code) (snapshot-state-export snap 0)
+      (declare (ignore result))
+      (check-equal 0 code "the snapshot export refused")
+      (ok (search "operation=-" line) "the snapshot form does not name operation=-: ~A" line))
+    (multiple-value-bind (result line code) (snapshot-state-export snap 5)
+      (declare (ignore result))
+      (check-equal 1 code "a mismatched snapshot export was admitted")
+      (ok (search "--at" line) "the refusal does not name --at: ~A" line))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; Replays promised by docs/SPEC-WORK.md lines 3600-end, part 8 of 8.

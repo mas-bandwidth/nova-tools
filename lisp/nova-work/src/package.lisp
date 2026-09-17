@@ -1887,7 +1887,39 @@
     #:verdict-hold-p
     #:verdict-terminal-p
     #:tick-verdict-row
-    #:read-owed-p))
+    #:read-owed-p
+    ;; E02 source capture and import staging (SPEC-WORK.md:2721-2760): the long
+    ;; capture/import operation, the bounded staged bytes and the revision-fenced
+    ;; admission of a validated result.
+    #:*capture-stage-limits*
+    #:make-capture-stage
+    #:capture-stage-p
+    #:capture-stage-registry
+    #:capture-stage-inputs
+    #:capture-stage-limits
+    #:capture-stage-results
+    #:begin-source-capture
+    #:begin-import
+    #:capture-stage-input
+    #:capture-stage-bytes
+    #:capture-input-count
+    #:capture-admit-result
+    #:capture-result-of
+    #:capture-wire-op
+    ;; E02 `session export --state --at` (SPEC-WORK.md:3197-3223): the flag
+    ;; validation, the pinned revision, the resident one-long-operation form and
+    ;; the offline snapshot form.
+    #:validate-export-form
+    #:resolve-export-at
+    #:export-pin-p
+    #:export-pin-revision
+    #:export-pin-savepoint
+    #:export-pin-journal-prefix
+    #:begin-state-export
+    #:state-export-wait
+    #:snapshot-state-export
+    #:export-wire-op
+    #:state-export-cancel-ack))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
