@@ -139,7 +139,10 @@ exact offer. Consents to nothing: no lease, no W, no conversion, no release."
       ((null verifier) (%refuse "ACKNOWLEDGE" "provenance unverified"))
       ((not (equal (getf entry :node) node)) (%refuse "ACKNOWLEDGE" "offer is for another node"))
       ((not (equal (getf entry :generation) generation))
-       (%refuse "ACKNOWLEDGE" "offer is for another generation"))
+       (%late-receipt book offer attempt receipt-digest receipt-id request
+                      :lineage (list :offer offer :attempt attempt
+                                     :seen-generation (getf entry :generation)
+                                     :receipt-generation generation)))
       ((not (equal (getf entry :attempt) attempt)) (%refuse "ACKNOWLEDGE" "offer is for another attempt"))
       (t
        (let ((nbk (%pending-update book offer
@@ -166,7 +169,10 @@ nor default. A cross-holder acceptance or a late one creates no lease."
       ((null entry) (%refuse "ACKNOWLEDGE" "no such offer ~A" offer))
       ((not (getf entry :received)) (%refuse "ACKNOWLEDGE" "no earlier verified :received on the offer"))
       ((not (equal (getf entry :generation) generation))
-       (%refuse "ACKNOWLEDGE" "generation changed"))
+       (%late-receipt book offer attempt receipt-digest receipt-id request
+                      :lineage (list :offer offer :attempt attempt
+                                     :seen-generation (getf entry :generation)
+                                     :receipt-generation generation)))
       ((member (getf entry :state) '(:declined :accepted :overdue :late :replaced))
        (%late-accept book offer attempt receipt-digest receipt-id request))
       (t
@@ -203,6 +209,20 @@ nor default. A cross-holder acceptance or a late one creates no lease."
                                 offer (if lease holder by))
                       :accepted nbk)))))))))
 
+(defun %late-receipt (book offer attempt receipt-digest receipt-id request &key lineage)
+  "A receipt after a decline, an acceptance, a generation change, an expiry or a
+replacement is retained :late, linked to its lineage. It converts nothing,
+creates no lease, launches nothing and releases nothing
+(SPEC-WORK.md:3912-3919)."
+  (let ((nbk (%pending-update book offer (lambda (e) (list* :state :late e)))))
+    (setf (leasebook-effects nbk) (%lput (cons offer attempt) :late (leasebook-effects book)))
+    (when receipt-id
+      (setf (leasebook-receipts nbk)
+            (%lput receipt-id (list :digest receipt-digest :effect :late :request request
+                                    :lineage lineage)
+                   (leasebook-receipts book))))
+    (values t (format nil "ACKNOWLEDGE OK late offer=~A" offer) :late nbk)))
+
 (defun %late-accept (book offer attempt receipt-digest receipt-id request)
   "A late acceptance is retained :late: it revives no lease, converts nothing,
 releases nothing and overwrites no successor."
@@ -210,7 +230,8 @@ releases nothing and overwrites no successor."
     (setf (leasebook-effects nbk) (%lput (cons offer attempt) :late (leasebook-effects book)))
     (when receipt-id
       (setf (leasebook-receipts nbk)
-            (%lput receipt-id (list :digest receipt-digest :effect :late :request request)
+            (%lput receipt-id (list :digest receipt-digest :effect :late :request request
+                                    :lineage (list :offer offer :attempt attempt))
                    (leasebook-receipts book))))
     (values t (format nil "ACKNOWLEDGE OK stage=accepted late offer=~A" offer) :late nbk)))
 
