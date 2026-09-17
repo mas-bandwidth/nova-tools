@@ -10,6 +10,7 @@ import (
 
 // Test 6: TestSopsErrorsAreNeverPassedThroughRaw
 func TestSopsErrorsAreNeverPassedThroughRaw(t *testing.T) {
+	t.Parallel()
 	bin := buildNovaSecrets(t)
 	td := t.TempDir()
 	storeDir := filepath.Join(td, "store")
@@ -60,6 +61,7 @@ exit 1
 
 // Test 7: TestTheKeyFileModeIsARefusalOnEveryVerbThatTakesOne
 func TestTheKeyFileModeIsARefusalOnEveryVerbThatTakesOne(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -150,6 +152,7 @@ func TestTheKeyFileModeIsARefusalOnEveryVerbThatTakesOne(t *testing.T) {
 
 // Test 8: TestTheVersionProbeMakesNoNetworkCall
 func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
+	t.Parallel()
 	bin := buildNovaSecrets(t)
 	td := t.TempDir()
 	storeDir := filepath.Join(td, "store")
@@ -195,6 +198,7 @@ func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
 
 // Test 9: TestARequireThatIsMissingRefusesBeforeTheCommandStarts
 func TestARequireThatIsMissingRefusesBeforeTheCommandStarts(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -232,6 +236,7 @@ func TestARequireThatIsMissingRefusesBeforeTheCommandStarts(t *testing.T) {
 
 // Test 10: TestAMultiLineValueIsRefusedWithGenerateItWhereItIsUsed
 func TestAMultiLineValueIsRefusedWithGenerateItWhereItIsUsed(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 

@@ -8,6 +8,7 @@ import (
 )
 
 func TestRootExecRejectsModifiedOtherCommittedSeat(t *testing.T) {
+	t.Parallel()
 	sops := findSops(t)
 	bin := buildNovaSecrets(t)
 	td := t.TempDir()
@@ -43,6 +44,7 @@ func TestRootExecRejectsModifiedOtherCommittedSeat(t *testing.T) {
 }
 
 func TestRootExecRejectsDeletedOtherCommittedSeat(t *testing.T) {
+	t.Parallel()
 	sops := findSops(t)
 	bin := buildNovaSecrets(t)
 	td := t.TempDir()
@@ -78,6 +80,7 @@ func TestRootExecRejectsDeletedOtherCommittedSeat(t *testing.T) {
 }
 
 func TestRootExecRejectsModifiedNestedCommittedYAML(t *testing.T) {
+	t.Parallel()
 	sops := findSops(t)
 	bin := buildNovaSecrets(t)
 	td := t.TempDir()
@@ -120,6 +123,7 @@ func TestRootExecRejectsModifiedNestedCommittedYAML(t *testing.T) {
 }
 
 func TestRootExecRejectsDirectoryReplacingOtherCommittedSeat(t *testing.T) {
+	t.Parallel()
 	sops := findSops(t)
 	bin := buildNovaSecrets(t)
 	td := t.TempDir()

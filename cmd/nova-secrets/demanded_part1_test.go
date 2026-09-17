@@ -12,6 +12,7 @@ import (
 
 // Test 1: TestASeatOpensTheFilesItsRulesNameAndNoOther
 func TestASeatOpensTheFilesItsRulesNameAndNoOther(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -231,6 +232,7 @@ func TestASeatOpensTheFilesItsRulesNameAndNoOther(t *testing.T) {
 
 // Test 2: TestExecSetsExactlyTheKeysInTheFile
 func TestExecSetsExactlyTheKeysInTheFile(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -321,6 +323,7 @@ func TestExecSetsExactlyTheKeysInTheFile(t *testing.T) {
 
 // Test 3: TestExecReplacesItselfAndPassesTheStatusThrough
 func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -380,6 +383,7 @@ func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
 
 // Test 4: TestNoVerbPrintsAValue
 func TestNoVerbPrintsAValue(t *testing.T) {
+	t.Parallel()
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)
 
@@ -421,6 +425,7 @@ func TestNoVerbPrintsAValue(t *testing.T) {
 
 // Test 5: TestGetIsRefusedBeforeAnythingIsRead
 func TestGetIsRefusedBeforeAnythingIsRead(t *testing.T) {
+	t.Parallel()
 	bin := buildNovaSecrets(t)
 	out, errOut, code := runNovaSecrets(bin, "get", "--store", "/nonexistent/store/that/would/panic")
 	if code != 2 {

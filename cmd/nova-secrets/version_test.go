@@ -8,6 +8,7 @@ import (
 )
 
 func TestVersionLineRetainsBuildIdentity(t *testing.T) {
+	t.Parallel()
 	saved := version
 	t.Cleanup(func() { version = saved })
 	version = "v1.2.3-rc1+build.7"
@@ -36,6 +37,7 @@ func TestVersionLineRetainsBuildIdentity(t *testing.T) {
 }
 
 func TestVersionVerbsNeedNoSecretsSetup(t *testing.T) {
+	t.Parallel()
 	bin := buildNovaSecrets(t)
 	for _, verb := range []string{"version", "--version"} {
 		t.Run(verb, func(t *testing.T) {
@@ -52,6 +54,7 @@ func TestVersionVerbsNeedNoSecretsSetup(t *testing.T) {
 }
 
 func TestVersionRefusesArguments(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	if code := cmdVersion([]string{"--store", "/never-opened"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("cmdVersion exit = %d, want 2", code)
