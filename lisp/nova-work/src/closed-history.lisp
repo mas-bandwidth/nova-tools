@@ -136,8 +136,10 @@ not admitted under --branch closed or --branch root
      (values nil (format nil "QUERY FAIL ask=~A: --branch is required"
                          (or ask :size))
              2))
-    ((and (eq branch :closed) (null from) (null to))
-     (values nil "QUERY FAIL branch=closed: --from or --to is required" 2))
+    ((and (member branch '(:closed :root)) (null from) (null to))
+     (values nil (format nil "QUERY FAIL branch=~A: --from or --to is required"
+                         branch)
+             2))
     ((and (eq branch :open) from)
      (values nil "QUERY FAIL branch=open: --from is not admitted" 2))
     ((and (member ask '(:who :stale :handoffs)) (member branch '(:closed :root)))

@@ -1303,6 +1303,17 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
     (ok (not okp) "closed with no window refuses")
     (check-equal 2 code "exit 2")
     (ok (search "from" line) "the refusal names the window: ~A" line))
+  ;; --branch root carries the same required window as --branch closed
+  ;; (SPEC-WORK.md:2309).
+  (multiple-value-bind (okp line code)
+      (nova-work::validate-ask :ask :size :branch :root)
+    (ok (not okp) "root with no window refuses")
+    (check-equal 2 code "exit 2")
+    (ok (search "from" line) "the root refusal names the window: ~A" line))
+  (multiple-value-bind (okp line code)
+      (nova-work::validate-ask :ask :size :branch :root :from 1 :to 2)
+    (ok okp "a root ask with its window is admitted: ~A" line)
+    (check-equal 0 code "exit 0"))
   (multiple-value-bind (okp line code)
       (nova-work::validate-ask :ask :size :branch :open :from 1)
     (ok (not okp) "a window under open refuses")
@@ -1858,4 +1869,56 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
             (declare (ignore ceffect))
             (ok (null cok) "conflicting bytes for one receipt id are refused")
             (ok (search "conflicting" cline)
-                "the refusal names the conflict: ~A" cline)))))))
+                "the refusal names the conflict: ~A" cline))))))
+  ;; the same request replays its recorded disposition (SPEC-WORK.md:3912-3919).
+  (let* ((book (nth-value 3
+                (leasebook-offer (make-leasebook :nodes '(("n1" . :doing)))
+                                 :offer "off-replay" :node "n1" :generation "gen-4"
+                                 :attempt "att-replay" :to "alice" :profile "cap@1"
+                                 :reserve 1 :until "2026-09-14T12:30:00Z"
+                                 :free-slots 4 :profile-ok t)))
+         (rbook (nth-value 3
+                 (leasebook-receipt book :receipt-id "rc-replay" :receipt-digest "rd-replay"
+                                    :request "q-replay" :stage :received :offer "off-replay"
+                                    :node "n1" :generation "gen-4" :attempt "att-replay"
+                                    :verifier "v")))
+         (before (leasebook-receipts rbook)))
+    (multiple-value-bind (rok rline reffect r2book)
+        (leasebook-receipt rbook :receipt-id "rc-replay" :receipt-digest "rd-replay"
+                           :request "q-replay" :stage :received :offer "off-replay"
+                           :node "n1" :generation "gen-4" :attempt "att-replay"
+                           :verifier "v")
+      (ok rok "the same request replays its recorded disposition: ~A" rline)
+      (check-equal :received reffect "the replay answers the recorded effect")
+      (check-equal before (leasebook-receipts r2book)
+                   "the replay writes no second receipt and never a new one")))
+  ;; a receipt after a generation change is :late, linked to its lineage, and a
+  ;; late decline over an accepted lease releases nothing (SPEC-WORK.md:3912-3919).
+  (let* ((abook (accepted-book))
+         (reservations (leasebook-reservations abook))
+         (leases (leasebook-leases abook)))
+    (multiple-value-bind (gok gline geffect gbook)
+        (leasebook-receipt abook :receipt-id "rc-gen" :receipt-digest "rd-gen"
+                           :request "q-gen" :stage :accepted :offer "off-1" :node "n1"
+                           :generation "gen-5" :attempt "att-1" :by "alice"
+                           :default "release" :deadline "2026-09-14T13:00:00Z")
+      (ok gok "a receipt after a generation change is retained, not refused: ~A" gline)
+      (check-equal :late geffect "a generation-change receipt carries :effect :late")
+      (check-equal leases (leasebook-leases gbook)
+                   "a generation-change receipt creates no lease")
+      (check-equal reservations (leasebook-reservations gbook)
+                   "a generation-change receipt releases no committed capacity")
+      (let ((rec (alist-get "rc-gen" (leasebook-receipts gbook))))
+        (ok rec "the late receipt is retained in the ledger")
+        (check-equal :late (getf rec :effect) "the ledger records the :late effect")
+        (ok (getf rec :lineage) "the late receipt is linked to its lineage")))
+    (multiple-value-bind (dok dline deffect dbook)
+        (leasebook-decline abook :offer "off-1" :node "n1" :generation "gen-4"
+                           :attempt "att-1" :receipt-id "rc-dec" :receipt-digest "rd-dec"
+                           :request "q-dec")
+      (ok dok "a decline after acceptance is retained late: ~A" dline)
+      (check-equal :late deffect "a late decline carries :effect :late")
+      (check-equal reservations (leasebook-reservations dbook)
+                   "a late decline releases no committed reservation")
+      (check-equal leases (leasebook-leases dbook)
+                   "a late decline releases no lease"))))
