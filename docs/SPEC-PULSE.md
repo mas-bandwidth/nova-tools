@@ -325,6 +325,14 @@ listeners not under their unit, nothing else destructive. The network probe
 runs inside the real sandbox, never from the host, so what it reports is what
 a card would see.
 
+The same probe is the gate that admits a bench to the loop at all, and it is
+the CI job that runs it: `fleet-probe` in `ci.yml`, dispatched with `bench` and
+`slots`, one job per requested runner slot on that bench's Linux runners. It
+builds `nova-sandbox` from the checkout and runs the network fetch inside it,
+failing unless the fetch answers 200, so a bench enters the loop only after the
+SANDBOXED probe is green. A host probe is never the evidence: #893 is the night
+one passed while every sandboxed card died.
+
 The hurts, one line each: tonight's 97 ssh turns in the window is the cost
 this section exists to remove; the bins drift Stella found is what `fleet
 survey` catches before a card does; the resolver defect a host probe missed
