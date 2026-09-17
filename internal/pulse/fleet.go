@@ -649,3 +649,223 @@ func fleetWaitLabel(d time.Duration) string {
 	}
 	return d.String()
 }
+
+// --- fleet secrets -------------------------------------------------------------------
+
+// FleetSecretsInput is everything the fleet secrets verb needs, apart from flag
+// parsing, so a test can drive it against a benches file and a fake ssh on PATH.
+type FleetSecretsInput struct {
+	Benches string
+	SSH     string
+	Timeout time.Duration
+	Max     int
+	Stdout  io.Writer
+	Stderr  io.Writer
+}
+
+// fleetBench is one row of the benches file: name<TAB>ssh-target<TAB>home<TAB>mac.
+type fleetBench struct {
+	Name   string
+	Target string
+	Home   string
+	Mac    string
+}
+
+// readFleetBenches reads the shared fleet benches file. A line that is blank or starts
+// with `#` is skipped; every other line needs at least name, ssh-target and home.
+func readFleetBenches(path string) ([]fleetBench, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []fleetBench
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimRight(line, "\r")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		if len(f) < 3 {
+			return nil, fmt.Errorf("line %d wants name, ssh-target and home, tab separated, got %d field(s)", i+1, len(f))
+		}
+		b := fleetBench{Name: f[0], Target: f[1], Home: f[2]}
+		if len(f) > 3 {
+			b.Mac = f[3]
+		}
+		if b.Name == "" || b.Target == "" || b.Home == "" {
+			return nil, fmt.Errorf("line %d has an empty name, ssh-target or home", i+1)
+		}
+		out = append(out, b)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no benches in %s", path)
+	}
+	return out, nil
+}
+
+// fleetSeat is one bench's answer, after the remote seat script has run.
+type fleetSeat struct {
+	status string // OK, REFUSED, NO-SEAT, UNREACHABLE
+	seat   string
+	head   string
+	names  string
+	reason string
+}
+
+// fleetSeatScript is the remote script, run through `ssh <target> bash -s`. It sets
+// HOME to the bench's home column so `~` is the bench's own home, pulls the store,
+// counts the seat keys, and runs the check for the one seat it found. It prints exactly
+// one tab-separated FLEETSEAT line; the Go side is the only place a line is formatted.
+func fleetSeatScript(home string) string {
+	return strings.Join([]string{
+		"HOME=" + fleetQuote(home),
+		"export HOME",
+		`store="$HOME/nova-bench/secrets"`,
+		`git -C "$store" pull --ff-only >/dev/null 2>&1`,
+		`n=0`,
+		`keys=""`,
+		`for k in "$HOME"/.config/nova-secrets/*.key; do`,
+		`  [ -e "$k" ] || continue`,
+		`  n=$((n+1))`,
+		`  keys="$k"`,
+		`done`,
+		`if [ "$n" -ne 1 ]; then`,
+		`  printf 'FLEETSEAT\tNO-SEAT\t-\t-\t%s\tfound %s keys\n' "$n" "$n"`,
+		`  exit 0`,
+		`fi`,
+		`seat=$(basename "$keys")`,
+		`seat=${seat%.key}`,
+		`if out=$(nova-secrets check --store "$store" --as "$seat" --key "$keys" --sops "$HOME/.local/bin/sops" 2>&1); then`,
+		`  head=$(printf '%s\n' "$out" | sed -n 's/.*head=\([0-9A-Za-z]*\).*/\1/p' | head -n 1)`,
+		`  names=$(printf '%s\n' "$out" | sed -n 's/.*keys=\([0-9]*\).*/\1/p' | head -n 1)`,
+		`  if [ -z "$names" ]; then`,
+		`    nout=$(nova-secrets names --store "$store" --as "$seat" 2>/dev/null || true)`,
+		`    names=$(printf '%s\n' "$nout" | sed -n 's/.*keys=\([0-9]*\).*/\1/p' | head -n 1)`,
+		`  fi`,
+		`  [ -n "$names" ] || names=1`,
+		`  printf 'FLEETSEAT\tOK\t%s\t%s\t%s\t\n' "$seat" "$head" "$names"`,
+		`else`,
+		`  reason=$(printf '%s' "$out" | tr '\n\r\t' '   ')`,
+		`  printf 'FLEETSEAT\tREFUSED\t%s\t-\t-\t%s\n' "$seat" "$reason"`,
+		`fi`,
+	}, "\n")
+}
+
+// fleetSeatParse reads the one FLEETSEAT line the remote script prints.
+func fleetSeatParse(out string) (fleetSeat, bool) {
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.SplitN(strings.TrimRight(line, "\r"), "\t", 6)
+		if len(f) != 6 || f[0] != "FLEETSEAT" {
+			continue
+		}
+		s := fleetSeat{status: f[1], seat: f[2], head: f[3], names: f[4], reason: f[5]}
+		return s, true
+	}
+	return fleetSeat{}, false
+}
+
+// checkFleetSeat runs one bench's seat script under the per-bench timeout.
+func checkFleetSeat(ctx context.Context, ssh string, b fleetBench) fleetSeat {
+	cmd := exec.CommandContext(ctx, ssh, b.Target, "bash", "-s")
+	cmd.Stdin = strings.NewReader(fleetSeatScript(b.Home))
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fleetSeat{status: "UNREACHABLE", reason: "timeout"}
+	}
+	if err != nil {
+		reason := lastLine(stderr.String())
+		if reason == "" {
+			reason = err.Error()
+		}
+		return fleetSeat{status: "UNREACHABLE", reason: reason}
+	}
+	if s, ok := fleetSeatParse(stdout.String()); ok {
+		return s
+	}
+	return fleetSeat{status: "UNREACHABLE", reason: "no answer"}
+}
+
+func lastLine(s string) string {
+	s = strings.TrimRight(s, "\n")
+	if i := strings.LastIndex(s, "\n"); i >= 0 {
+		s = s[i+1:]
+	}
+	return strings.TrimSpace(s)
+}
+
+// FleetSecrets runs the seat check on every bench in parallel and prints one FLEET
+// line per bench. It exits 0 when every seat checked OK, 2 when any refused or found no
+// seat, and 3 when any bench was unreachable.
+func FleetSecrets(in FleetSecretsInput) int {
+	if in.SSH == "" {
+		in.SSH = "ssh"
+	}
+	if in.Timeout <= 0 {
+		in.Timeout = 120 * time.Second
+	}
+	if strings.TrimSpace(in.Benches) == "" {
+		return refusal(in.Stderr, "FLEET", fmt.Errorf("missing --benches; refusing to guess (supply the fleet benches file)"))
+	}
+	benches, err := readFleetBenches(in.Benches)
+	if err != nil {
+		return refusal(in.Stderr, "FLEET", fmt.Errorf("%s (a benches file is name, ssh-target, home, mac per line)", oneline.Err(err)))
+	}
+
+	results := make([]fleetSeat, len(benches))
+	var wg sync.WaitGroup
+	for i, b := range benches {
+		wg.Add(1)
+		go func(i int, b fleetBench) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), in.Timeout)
+			defer cancel()
+			results[i] = checkFleetSeat(ctx, in.SSH, b)
+		}(i, b)
+	}
+	wg.Wait()
+
+	list := bounded.Capped(in.Stdout, in.Max, "FLEET", "bench",
+		"run: nova-pulse fleet secrets --benches <file> --max 0")
+	exit := 0
+	for i, b := range benches {
+		r := results[i]
+		switch r.status {
+		case "OK":
+			list.Line(fmt.Sprintf("FLEET %s SEAT %s check=OK head=%s names=%s",
+				oneline.Field(b.Name), oneline.Field(r.seat), oneline.Field(fleetShortHead(r.head)), oneline.Field(r.names)))
+		case "NO-SEAT":
+			n := r.names
+			if n == "" {
+				n = "0"
+			}
+			list.Line(fmt.Sprintf("FLEET %s NO-SEAT (found %s keys)", oneline.Field(b.Name), oneline.Field(n)))
+			if exit < 2 {
+				exit = 2
+			}
+		case "REFUSED":
+			list.Line(fmt.Sprintf("FLEET %s SEAT %s check=REFUSED %s",
+				oneline.Field(b.Name), oneline.Field(r.seat), oneline.Escape(r.reason)))
+			if exit < 2 {
+				exit = 2
+			}
+		default:
+			list.Line(fmt.Sprintf("FLEET %s UNREACHABLE %s",
+				oneline.Field(b.Name), oneline.Escape(r.reason)))
+			exit = 3
+		}
+	}
+	list.More()
+	return exit
+}
+
+// fleetShortHead is the store head as the line prints it: the first eight hex.
+func fleetShortHead(head string) string {
+	if len(head) > 8 {
+		return head[:8]
+	}
+	return head
+}
