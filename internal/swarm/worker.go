@@ -89,6 +89,22 @@ type Worker struct {
 	// DefaultLaunchGrace (15s). A slow failure -- one that takes longer than this -- is
 	// a real run that failed and is never retried.
 	LaunchGrace string `json:"launch_grace,omitempty"`
+
+	// ROUTE AND MAX_INFLIGHT (issue #917): the provider path a task competes on and the
+	// ceiling on how many of its tasks may be in flight at once. A route defaults to
+	// `provider/model`; `run` counts the live tasks it can see for that route (its own
+	// pool, plus the leases of any --slots-store whose label carries the route) and
+	// starts nothing while the count is at the ceiling. OPTIONAL: max_inflight 0 is no
+	// ceiling, and a negative is refused at load.
+	Route       string `json:"route,omitempty"`
+	MaxInflight int    `json:"max_inflight,omitempty"`
+
+	// STALL_AFTER (issue #917): how long a running task's harness log may go without
+	// growing before the supervisor ends it with end=stall. 60 cards froze mid-tool-call
+	// for 13 minutes beside a Flash run that answered in 11s; a silent harness is not a
+	// working one. OPTIONAL: the default is DefaultStallAfter (4m); a zero or negative
+	// value is refused at load.
+	StallAfter string `json:"stall_after,omitempty"`
 }
 
 // The usage sources a description may declare (rule 13). There are two.
@@ -116,7 +132,7 @@ func LoadWorker(path string) (Worker, []error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&w); err != nil {
-		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, class, input_limit_phrases, launch_grace", path, err)}
+		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, class, input_limit_phrases, launch_grace, route, max_inflight, stall_after", path, err)}
 	}
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
@@ -306,6 +322,14 @@ func LoadWorker(path string) (Worker, []error) {
 			problems = append(problems, fmt.Errorf("%s: launch_grace wants a positive duration such as 15s, got %q", path, w.LaunchGrace))
 		}
 	}
+	if w.MaxInflight < 0 {
+		problems = append(problems, fmt.Errorf("%s: max_inflight wants a non-negative count of tasks in flight, got %d", path, w.MaxInflight))
+	}
+	if w.StallAfter != "" {
+		if d, err := time.ParseDuration(w.StallAfter); err != nil || d <= 0 {
+			problems = append(problems, fmt.Errorf("%s: stall_after wants a positive duration such as 4m, got %q", path, w.StallAfter))
+		}
+	}
 	return w, problems
 }
 
@@ -404,6 +428,32 @@ func (w Worker) DefaultDeadline() time.Duration {
 	d, err := time.ParseDuration(w.Deadline)
 	if err != nil {
 		return 0
+	}
+	return d
+}
+
+// DefaultStallAfter is how long a running harness log may not grow before the supervisor
+// ends the task end=stall when the description names no ceiling of its own.
+const DefaultStallAfter = 4 * time.Minute
+
+// RouteName is the lane this description's tasks compete on for the in-flight cap: the
+// description's own `route` when it names one, otherwise `provider/model`.
+func (w Worker) RouteName() string {
+	if r := strings.TrimSpace(w.Route); r != "" {
+		return r
+	}
+	return w.Provider + "/" + w.Model
+}
+
+// StallAfterDuration is this description's silent-log ceiling, or DefaultStallAfter when it
+// names none. A value that does not parse is the load's refusal, never a silent default.
+func (w Worker) StallAfterDuration() time.Duration {
+	if w.StallAfter == "" {
+		return DefaultStallAfter
+	}
+	d, err := time.ParseDuration(w.StallAfter)
+	if err != nil || d <= 0 {
+		return DefaultStallAfter
 	}
 	return d
 }
@@ -674,6 +724,25 @@ func HarnessTail(jobDir string) string {
 		return kept
 	}
 	return fmt.Sprintf("...+%dB", dropped) + kept
+}
+
+// LastLogLine is the last complete line of a job's harness log, capped to max characters:
+// the `last=` field of the supervisor's STALL line, which names what a silent harness said
+// before it went quiet (issue #917).
+func LastLogLine(jobDir string, max int) string {
+	kept, _ := tailBytes(filepath.Join(jobDir, "harness.log"), 8192)
+	if kept == "" {
+		return "-"
+	}
+	line := kept
+	if i := strings.LastIndexByte(kept, '\n'); i >= 0 {
+		line = kept[i+1:]
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "-"
+	}
+	return oneline.Cap(line, max)
 }
 
 // tailBytes streams the LAST n bytes of a worker-writable regular file, never holding the

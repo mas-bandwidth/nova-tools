@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // THE SUPERVISOR: the child the runner forks, and the process that owns a job.
@@ -167,6 +169,19 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 	timer := time.NewTimer(deadline)
 	defer timer.Stop()
 
+	// THE STALL DETECTOR (issue #917): a running task whose harness log has not grown for
+	// stall_after is not working, it is frozen mid-call -- 60 cards sat silent for 13
+	// minutes beside a Flash run that answered in 11s. The supervisor watches the log's
+	// SIZE, not its mtime (a worker that holds the file open and writes nothing does not
+	// touch the mtime on every filesystem), and ends the task end=stall with the last line
+	// it said. It is checked on its own cadence so a four-minute ceiling is not rounded up
+	// to the usage sampler's.
+	stallAfter := in.Worker.StallAfterDuration()
+	stall := time.NewTicker(stallPoll(interval, stallAfter))
+	defer stall.Stop()
+	var lastSize int64 = -1
+	lastGrowth := in.Now()
+
 	dataHome := in.Worker.DataHome(in.Slot, in.Task)
 	failures := 0
 	var seen ProviderUsage
@@ -286,8 +301,54 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 				<-done
 				return ExitRecord{RC: -1, End: EndBudget, Survivors: boolCount(survived), Spent: spent, Observed: true, Partial: partial}
 			}
+		case <-stall.C:
+			size, ok := harnessLogSize(jobDir)
+			if !ok {
+				continue
+			}
+			if size != lastSize {
+				lastSize, lastGrowth = size, in.Now()
+				continue
+			}
+			if in.Now().Sub(lastGrowth) < stallAfter {
+				continue
+			}
+			// SILENT PAST THE CEILING: end it and name the last thing it said. The reap
+			// is the deadline's own, so a frozen harness that left a child behind is
+			// recorded with its survivor count exactly as a killed one is.
+			silent := in.Now().Sub(lastGrowth)
+			last := LastLogLine(jobDir, 120)
+			fmt.Fprintf(in.Stderr, "STALL task=%s silent=%s last=%s\n",
+				oneline.Field(in.Task), trimDuration(silent), oneline.Escape(last))
+			survived := Reap(jobPgid, jobStarted, TerminateGrace)
+			<-done
+			return ExitRecord{RC: -1, End: EndStall, Survivors: boolCount(survived), Spent: spent, Observed: observed, Partial: partial,
+				Reason: fmt.Sprintf("stall: the harness log did not grow for %s; last=%s", trimDuration(silent), last)}
 		}
 	}
+}
+
+// harnessLogSize is the size of a job's harness.log when it is a regular file. A log that is
+// not there yet, or is not a regular file, answers false and the stall check skips it.
+func harnessLogSize(jobDir string) (int64, bool) {
+	fi, err := os.Stat(filepath.Join(jobDir, "harness.log"))
+	if err != nil || !fi.Mode().IsRegular() {
+		return 0, false
+	}
+	return fi.Size(), true
+}
+
+// stallPoll is how often the stall detector asks whether the log has grown: a quarter of the
+// ceiling, but never slower than the usage sampler already ticks and never faster than 50ms.
+func stallPoll(interval, stallAfter time.Duration) time.Duration {
+	p := stallAfter / 4
+	if interval > 0 && interval < p {
+		p = interval
+	}
+	if p < 50*time.Millisecond {
+		p = 50 * time.Millisecond
+	}
+	return p
 }
 
 // endWith writes the completion evidence and exits. The evidence is written through .tmp and
