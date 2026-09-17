@@ -34,6 +34,7 @@ nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   reboot --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help

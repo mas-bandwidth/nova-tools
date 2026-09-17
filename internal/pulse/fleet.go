@@ -1,15 +1,17 @@
 package pulse
 
-// fleet power (SPEC-PULSE ## Fleet, issue #880 item 17): `fleet suspend` sleeps the idle
-// benches so a solar fleet does not burn the afternoon, and `fleet wake` wakes them by
-// magic packet. This file is both verbs and the benches-file plumbing they share.
+// The fleet verb: the machines named in one tab-separated file, acted on over ssh. This file
+// is `fleet reboot` -- boot a bench, then wait for its runners to register again -- and the
+// fleet power verbs `fleet suspend`, which sleeps the idle benches so a solar fleet does not
+// burn the afternoon, and `fleet wake`, which wakes them by magic packet (SPEC-PULSE ## Fleet,
+// issue #880 items 14 and 17).
 //
 // The fleet rule (docs/SPEC-PULSE.md, "Fleet"): every fleet verb prints one FLEET <name>
 // line per bench, runs the benches in parallel under --timeout, exits 0/2/3 (0 ok, 2
 // drift-or-refused, 3 unreachable), takes ssh from --ssh so a test puts a fake on PATH and
 // no test makes a network call, and refuses `studio` for any admin act. The magic packet is
 // built here, in Go, and sent through an injected sender: a test replaces it and no test
-// opens a socket. The wake waiter is a clock and a sleep handed in, so a test reaches a wall
+// opens a socket. The waiter here is a clock and a sleep handed in, so a test reaches a wall
 // of minutes without waiting for one.
 
 import (
@@ -19,6 +21,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +40,17 @@ const fleetPowerDefaultWait = 3 * time.Minute
 // Fifteen seconds: long enough that the poll is not the load, short enough that a boot
 // under a minute is seen within a minute.
 const fleetPowerPollEvery = 15 * time.Second
+
+// fleetPollEvery is how often the waiter asks a rebooting bench whether its runners are
+// back. Fifteen seconds: long enough that the poll is not the load, short enough that a
+// boot under a minute is seen within a minute.
+const fleetPollEvery = 15 * time.Second
+
+// fleetDefaultWait is the whole time a bench gets to come back: five minutes.
+const fleetDefaultWait = 5 * time.Minute
+
+// fleetDefaultTimeout is the bound on every ssh child when the caller names none.
+const fleetDefaultTimeout = 120 * time.Second
 
 // FleetBench is one line of the benches file: name, ssh target, home, mac (mac is "-" when
 // the bench never sleeps). The file is shared with `fleet survey`.
@@ -461,6 +475,171 @@ func (in FleetWakeInput) wakeOne(b FleetBench, packet []byte, wait time.Duration
 
 // fleetWakePollScript is the remote poll: any answer from a booted bench carries AWAKE.
 const fleetWakePollScript = "echo AWAKE"
+
+// --- fleet reboot --------------------------------------------------------------------
+
+// FleetRebootInput is everything `fleet reboot` needs: the file, the names, the ssh path,
+// the wait and child bound, and the clock and sleep a test replaces.
+type FleetRebootInput struct {
+	Benches string
+	Names   []string
+	SSH     string // the ssh program; empty is "ssh"
+	Wait    time.Duration
+	Timeout time.Duration
+	Max     int // at most this many FLEET lines; 0 is all
+	Now     func() time.Time
+	Sleep   func(time.Duration)
+	Stdout  io.Writer
+	Stderr  io.Writer
+}
+
+// fleetRebootResult is one bench's one line and how it went.
+type fleetRebootResult struct {
+	line        string
+	refused     bool
+	unreachable bool
+}
+
+// FleetReboot boots each named bench, waits for its runners, and prints one FLEET line per
+// bench. A bench not in the file, and `studio` by name, are refused (exit 2); a bench that
+// never answers is unreachable (exit 3). Refusals are read before any ssh starts.
+func FleetReboot(in FleetRebootInput) int {
+	if in.Now == nil {
+		in.Now = func() time.Time { return time.Now().UTC() }
+	}
+	if in.Sleep == nil {
+		in.Sleep = time.Sleep
+	}
+	wait := in.Wait
+	if wait <= 0 {
+		wait = fleetDefaultWait
+	}
+	benches, err := ReadFleetBenches(in.Benches)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "nova-pulse fleet reboot: %s; refusing to guess\n", oneline.Err(err))
+		return 2
+	}
+
+	results := make([]fleetRebootResult, len(in.Names))
+	var wg sync.WaitGroup
+	for i, name := range in.Names {
+		results[i] = fleetRebootRefusal(name, benches)
+		if results[i].refused {
+			continue
+		}
+		b := benches[name]
+		wg.Add(1)
+		go func(i int, b FleetBench) {
+			defer wg.Done()
+			results[i] = in.rebootOne(b, wait)
+		}(i, b)
+	}
+	wg.Wait()
+
+	exit := 0
+	printed := 0
+	for _, r := range results {
+		if in.Max > 0 && printed >= in.Max {
+			break
+		}
+		fmt.Fprintln(in.Stdout, r.line)
+		printed++
+		switch {
+		case r.unreachable:
+			exit = 3
+		case r.refused:
+			if exit == 0 {
+				exit = 2
+			}
+		}
+	}
+	return exit
+}
+
+// fleetRebootRefusal reads one requested name against the file. `studio` is refused for any
+// admin act; a name the file does not carry is refused rather than guessed.
+func fleetRebootRefusal(name string, benches map[string]FleetBench) fleetRebootResult {
+	if strings.EqualFold(strings.TrimSpace(name), "studio") {
+		return fleetRebootResult{line: "FLEET REFUSED bench=" + oneline.Field(name), refused: true}
+	}
+	if _, ok := benches[name]; !ok {
+		return fleetRebootResult{line: "FLEET REFUSED bench=" + oneline.Field(name), refused: true}
+	}
+	return fleetRebootResult{}
+}
+
+// rebootOne is one bench: the reboot command, then a poll every fifteen seconds until the
+// runners answer or the whole wait is gone.
+func (in FleetRebootInput) rebootOne(b FleetBench, wait time.Duration) fleetRebootResult {
+	start := in.Now()
+	deadline := start.Add(wait)
+	_, _ = in.ssh(b.SSH, "sudo systemctl reboot 2>/dev/null || sudo reboot 2>/dev/null")
+	for {
+		if !in.Now().Before(deadline) {
+			return fleetRebootResult{
+				line:        fmt.Sprintf("FLEET %s REBOOT TIMEOUT after %s", oneline.Field(b.Name), fleetWaitLabel(wait)),
+				unreachable: true,
+			}
+		}
+		in.Sleep(fleetPollEvery)
+		out, err := in.ssh(b.SSH, fleetPollScript)
+		if err != nil {
+			continue
+		}
+		if n, ok := fleetReady(out); ok {
+			wall := int64(in.Now().Sub(start).Seconds())
+			return fleetRebootResult{
+				line: fmt.Sprintf("FLEET %s REBOOTED wall=%d runners=%d", oneline.Field(b.Name), wall, n),
+			}
+		}
+	}
+}
+
+// ssh runs one remote script on the bench with the ssh program from --ssh, bounded by
+// --timeout. The target is the benches file's ssh column; the script is the remote command.
+func (in FleetRebootInput) ssh(target, script string) (string, error) {
+	program := in.SSH
+	if program == "" {
+		program = "ssh"
+	}
+	timeout := in.Timeout
+	if timeout <= 0 {
+		timeout = fleetDefaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, script)
+	raw, err := cmd.CombinedOutput()
+	return string(raw), err
+}
+
+// fleetReady reads the poll script's answer: `READY <n>` when the runners are listening,
+// anything else is not yet.
+func fleetReady(out string) (int, bool) {
+	fields := strings.Fields(out)
+	for i, f := range fields {
+		if f != "READY" || i+1 >= len(fields) {
+			continue
+		}
+		if n, err := strconv.Atoi(fields[i+1]); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+// fleetPollScript is the remote poll: nova-runner-1 must be active (system or user scope),
+// and then the active runner services are counted.
+const fleetPollScript = `if systemctl is-active --quiet nova-runner-1.service 2>/dev/null || systemctl --user is-active --quiet nova-runner-1.service 2>/dev/null; then
+  n=0
+  for u in $(systemctl list-units --type=service --all --no-legend 'nova-runner-*.service' 2>/dev/null | awk '{print $1}'); do
+    if systemctl is-active --quiet "$u" 2>/dev/null || systemctl --user is-active --quiet "$u" 2>/dev/null; then n=$((n+1)); fi
+  done
+  [ "$n" -lt 1 ] && n=1
+  echo "READY $n"
+else
+  echo "WAIT"
+fi`
 
 // fleetWaitLabel prints the wait the way a person said it: whole minutes as `5m`, else the
 // duration's own spelling.

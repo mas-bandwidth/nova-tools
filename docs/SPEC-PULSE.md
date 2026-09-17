@@ -327,6 +327,17 @@ test is red); `fleet-refuses-studio` (any admin verb with `studio` in
 `--benches` is `FLEET REFUSED bench=studio`, exit 2, and the fixture ssh log
 is empty).
 
+`nova-pulse fleet reboot --benches <file> --bench <name>[,<name>] [--ssh <path>]
+[--wait <duration, default 5m>] [--timeout <s>] [--max <n>]` boots each named
+bench by `sudo systemctl reboot` (or `sudo reboot`) over ssh, then polls every
+fifteen seconds until ssh answers and `nova-runner-1.service` is active in the
+system or user scope, printing `FLEET <name> REBOOTED wall=<s> runners=<n>` or
+`FLEET <name> REBOOT TIMEOUT after <wait>`. A bench not in the file is refused,
+and `studio` is refused by name. Every fleet verb prints one `FLEET <name> ...`
+line per bench, never more than `--max`, runs the benches in parallel under
+`--timeout`, and takes ssh from `--ssh` so a test puts a fake on `PATH` and no
+test reaches a machine.
+
 ## The verbs
 
 ```
