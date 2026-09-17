@@ -57,10 +57,25 @@ func fixtureLog(label string) string {
 	return b.String()
 }
 
+// writeAt writes a fixture file and sets its mtime explicitly, so the index keys the test
+// asserts on are the ones the test set and never the clock's sub-second guess (#1088).
+func writeAt(t *testing.T, path, body string, mod time.Time) {
+	t.Helper()
+	write(t, path, body)
+	if err := os.Chtimes(path, mod, mod); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fixtureBase is the fixed clock origin every indexed fixture file is stamped from: the
+// status index keys on the tuples, so the test sets them rather than trusting the clock.
+var fixtureBase = time.Date(2026, 9, 16, 8, 0, 0, 0, time.UTC)
+
 // bigStatusRoot writes 2,000 finished jobs across 40 slots, each with RESULT.md,
 // usage.tsv, a real data/opencode/opencode.db and a 300 KB harness log, and returns the
 // bench root. The db and the log are what a real job carries and the fixture used to miss;
-// the index must not touch either on a warm tick (#1088).
+// the index must not touch either on a warm tick (#1088). Each job's three indexed files
+// get explicit, distinct mtimes so the key is deterministic on any filesystem.
 func bigStatusRoot(t *testing.T, day string) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "bench")
@@ -74,17 +89,22 @@ func bigStatusRoot(t *testing.T, day string) string {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			write(t, filepath.Join(dir, "RESULT.md"),
-				"RESULT: "+label+" done\nDONE\nBRANCH rowan/"+label+"\nREPO mas-bandwidth/nova-tools\n")
-			write(t, filepath.Join(dir, "usage.tsv"),
+			base := fixtureBase.Add(time.Duration(s*perSlot+j) * time.Minute)
+			writeAt(t, filepath.Join(dir, "RESULT.md"),
+				"RESULT: "+label+" done\nDONE\nBRANCH rowan/"+label+"\nREPO mas-bandwidth/nova-tools\n", base.Add(2*time.Second))
+			writeAt(t, filepath.Join(dir, "usage.tsv"),
 				"job\tattempt\tstarted\tended\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\n"+
-					label+"\t1\t"+day+"T09:00:00Z\t"+day+"T09:10:00Z\t0\t-\tgo\t-\t-\t-\t-\t-\t0.0010\n")
+					label+"\t1\t"+day+"T09:00:00Z\t"+day+"T09:10:00Z\t0\t-\tgo\t-\t-\t-\t-\t-\t0.0010\n", base)
 			if dbSeed != nil {
 				dataDir := filepath.Join(dir, "data", "opencode")
 				if err := os.MkdirAll(dataDir, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(dataDir, "opencode.db"), dbSeed, 0o644); err != nil {
+				dbPath := filepath.Join(dataDir, "opencode.db")
+				if err := os.WriteFile(dbPath, dbSeed, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(dbPath, base.Add(time.Second), base.Add(time.Second)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -180,15 +200,13 @@ func TestStatusUsesThePerRootIndex(t *testing.T) {
 		t.Errorf("warm status rewrote %s; the index is touched only when a job moves", statusIndexName)
 	}
 
-	// A job whose directory mtime moved is re-read and its new row answered.
+	// A job whose usage.tsv moved is re-read and its new row answered. The mtime is set
+	// explicitly, so the key moves on any filesystem however fast the fixture writes.
 	dir := filepath.Join(root, "0", "jobs", "card-0-0")
-	write(t, filepath.Join(dir, "usage.tsv"),
+	moved := fixtureBase.Add(24 * time.Hour)
+	writeAt(t, filepath.Join(dir, "usage.tsv"),
 		"job\tattempt\tstarted\tended\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\n"+
-			"card-0-0\t1\t"+day+"T09:00:00Z\t"+day+"T09:20:00Z\t0\t-\tgo\t-\t-\t-\t-\t-\t0.0050\n")
-	moved := time.Now().Add(time.Second)
-	if err := os.Chtimes(dir, moved, moved); err != nil {
-		t.Fatal(err)
-	}
+			"card-0-0\t1\t"+day+"T09:00:00Z\t"+day+"T09:20:00Z\t0\t-\tgo\t-\t-\t-\t-\t-\t0.0050\n", moved)
 	atomic.StoreInt64(&statusIndexReads, 0)
 	out, code = runOnelineStatus(queue, root, day)
 	if code != 0 {
@@ -234,7 +252,7 @@ func TestStatusIndexNeverReopensAFinishedJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(dir, "harness.log"), "the harness restarted and logged one line\n")
-	moved := time.Now().Add(2 * time.Second)
+	moved := fixtureBase.Add(48 * time.Hour)
 	if err := os.Chtimes(dir, moved, moved); err != nil {
 		t.Fatal(err)
 	}
@@ -253,12 +271,9 @@ func TestStatusIndexNeverReopensAFinishedJob(t *testing.T) {
 
 	// The cached class is RESULT.md's, not the usage row's: a job that wrote ABSTAIN answers
 	// abstain, and RESULT.md moving is what refreshes it.
-	write(t, filepath.Join(dir, "RESULT.md"),
-		"RESULT: card-0-0 done\nABSTAIN the fixture changed its mind\nBRANCH rowan/card-0-0\n")
-	future := time.Now().Add(4 * time.Second)
-	if err := os.Chtimes(filepath.Join(dir, "RESULT.md"), future, future); err != nil {
-		t.Fatal(err)
-	}
+	future := fixtureBase.Add(72 * time.Hour)
+	writeAt(t, filepath.Join(dir, "RESULT.md"),
+		"RESULT: card-0-0 done\nABSTAIN the fixture changed its mind\nBRANCH rowan/card-0-0\n", future)
 	atomic.StoreInt64(&statusIndexReads, 0)
 	if _, code := runOnelineStatus(queue, root, day); code != 0 {
 		t.Fatalf("status exit = %d after RESULT.md moved", code)

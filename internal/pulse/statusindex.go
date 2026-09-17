@@ -21,9 +21,10 @@ var statusIndexReads int64
 //
 // The columns are `job  key  class  tokens` and then the usage rows the two status readers
 // fold -- five fields per row, `started  ended  rc  usd  tokens`. `job` is the usage.tsv
-// path relative to the root and `key` is the mtimes of the three files a job writes as it
-// finishes: usage.tsv, its harness store data/opencode/opencode.db and RESULT.md. A job is
-// refreshed only when one of those moves, never when any other file in its directory -- the
+// path relative to the root and `key` is the mtime+size of the three files a job writes as
+// it finishes: usage.tsv, its harness store data/opencode/opencode.db and RESULT.md. A job
+// is refreshed only when one of those tuples moves, never when any other file in its
+// directory -- the
 // harness log, the store's own wal -- does; run and harvest append a finished job's rows as
 // they fold it, so a new job is in the index before the next tick reads it. A root with no
 // index is walked once and the index written, and a root with an index opens no job file at
@@ -174,25 +175,27 @@ func indexRelative(root, path string) (string, bool) {
 // usage.tsv and RESULT.md. SPEC-SWARM's readers name the same store (rule 13).
 const statusHarnessDB = "data/opencode/opencode.db"
 
-// indexKey is the job's cache key: the mtimes of the three files the job writes as it
-// finishes -- usage.tsv, its harness store data/opencode/opencode.db and RESULT.md. A file
-// that is not there is 0. Any other file moving in the job directory, the harness log most
-// of all, leaves the key alone, so a finished job is never re-opened for it (#1088).
+// indexKey is the job's cache key: the mtime and size of the three files the job writes as
+// it finishes -- usage.tsv, its harness store data/opencode/opencode.db and RESULT.md. A
+// file that is not there is 0,0. The pair, not the mtime alone, makes the key content-stable
+// on APFS: a file rewritten in the same clock tick still moves the key through its size, and
+// a tuple that did not move at all is unchanged, so a finished job is never re-opened for
+// the harness log or the store's wal (#1088).
 func indexKey(usagePath string) string {
 	dir := filepath.Dir(usagePath)
-	return fmt.Sprintf("%d,%d,%d",
-		fileMtimeNano(usagePath),
-		fileMtimeNano(filepath.Join(dir, filepath.FromSlash(statusHarnessDB))),
-		fileMtimeNano(filepath.Join(dir, "RESULT.md")))
+	m1, s1 := fileStamp(usagePath)
+	m2, s2 := fileStamp(filepath.Join(dir, filepath.FromSlash(statusHarnessDB)))
+	m3, s3 := fileStamp(filepath.Join(dir, "RESULT.md"))
+	return fmt.Sprintf("%d,%d,%d,%d,%d,%d", m1, s1, m2, s2, m3, s3)
 }
 
-// fileMtimeNano is one file's mtime in UnixNano, 0 when it is not there.
-func fileMtimeNano(path string) int64 {
+// fileStamp is one file's mtime in UnixNano and its size, 0,0 when it is not there.
+func fileStamp(path string) (mtime, size int64) {
 	fi, err := os.Stat(path)
 	if err != nil {
-		return 0
+		return 0, 0
 	}
-	return fi.ModTime().UnixNano()
+	return fi.ModTime().UnixNano(), fi.Size()
 }
 
 // resultClass is the class RESULT.md states -- abstain, blocked or done -- falling back to
