@@ -39,9 +39,10 @@ const (
 	gateEvent    = "push"
 )
 
-// CIRun is one run as `gh run list --json status,conclusion,headSha,databaseId,workflowName,event`
+// CIRun is one run as `gh run list --json status,conclusion,headSha,databaseId,workflowName,event,createdAt,updatedAt`
 // gives it. The gate reads only the ci workflow's push runs, so it can tell the branch's own
 // run from a certification, workflow_dispatch, schedule or merge_group run at the same sha.
+// CreatedAt/UpdatedAt are the run's wall, which the ci-wall rule (issue #888) reads.
 type CIRun struct {
 	ID         int64  `json:"databaseId"`
 	Status     string `json:"status"`
@@ -49,13 +50,18 @@ type CIRun struct {
 	HeadSHA    string `json:"headSha"`
 	Workflow   string `json:"workflowName"`
 	Event      string `json:"event"`
+	CreatedAt  string `json:"createdAt"`
+	UpdatedAt  string `json:"updatedAt"`
 }
 
 // CIJob is the failing job of a run: its name, and its log, which is where the failing test
-// and the issue the red belongs to are named.
+// and the issue the red belongs to are named. StartedAt/CompletedAt are the job's wall,
+// which the ci-wall rule reads to name the long pole.
 type CIJob struct {
-	Name string `json:"name"`
-	Log  string `json:"log"`
+	Name        string `json:"name"`
+	Log         string `json:"log"`
+	StartedAt   string `json:"startedAt"`
+	CompletedAt string `json:"completedAt"`
 }
 
 // RunSource is where the gate's verdict comes from. The shipped one wraps gh; a test's
@@ -73,6 +79,82 @@ type GateInput struct {
 	Source RunSource
 	Stdout io.Writer
 	Stderr io.Writer
+}
+
+// ciWallMax is the CI wall that earns a pit stop (issue #888, Glenn 2026-09-17:
+// "when it is over 2 minutes, you pit stop and fix that"). A run whose wall
+// (created_at to updated_at) is over it writes a CI-WALL line to <queue>/REDS
+// and the gate's status line carries STOP: ci-wall.
+const ciWallMax = 120
+
+// wallJobser is the jobs API the gate already fetches, read for walls: the job
+// with the largest wall is the long pole. A source that does not offer it
+// leaves the pole unknown ("-"), never a guess.
+type wallJobser interface {
+	Jobs(repo string, runID int64) ([]CIJob, error)
+}
+
+// stampWall is the seconds between two RFC3339 stamps, false when either is missing.
+func stampWall(from, to string) (int64, bool) {
+	if from == "" || to == "" {
+		return 0, false
+	}
+	a, err := time.Parse(time.RFC3339, from)
+	if err != nil {
+		return 0, false
+	}
+	b, err := time.Parse(time.RFC3339, to)
+	if err != nil {
+		return 0, false
+	}
+	return int64(b.Sub(a).Seconds()), true
+}
+
+// runWall is the run's wall from the runs API the gate already reads.
+func runWall(r CIRun) (int64, bool) { return stampWall(r.CreatedAt, r.UpdatedAt) }
+
+// jobWall is one job's wall from the jobs API the gate already fetches.
+func jobWall(j CIJob) (int64, bool) { return stampWall(j.StartedAt, j.CompletedAt) }
+
+// longPole is the job with the largest wall, or "-" when unknown.
+func longPole(in GateInput, run CIRun) (string, string) {
+	if s, ok := in.Source.(wallJobser); ok {
+		if jobs, err := s.Jobs(in.Repo, run.ID); err == nil {
+			best, bestWall, found := "-", int64(-1), false
+			for _, j := range jobs {
+				w, ok := jobWall(j)
+				if !ok {
+					continue
+				}
+				if !found || w > bestWall {
+					best, bestWall, found = j.Name, w, true
+				}
+			}
+			if found {
+				if best == "" {
+					best = "-"
+				}
+				return oneline.Field(best), fmt.Sprintf("%d", bestWall)
+			}
+		}
+	}
+	return "-", "-"
+}
+
+// checkCIWall records the run's wall for the branch tip: a wall over ciWallMax
+// writes one CI-WALL line to <queue>/REDS and reports the STOP suffix the
+// gate's status line carries. A wall under it changes nothing.
+func checkCIWall(in GateInput, run CIRun) string {
+	wall, ok := runWall(run)
+	if !ok || wall <= ciWallMax {
+		return ""
+	}
+	name, jobWall := longPole(in, run)
+	if err := os.MkdirAll(in.Queue, 0o755); err == nil {
+		appendLine(filepath.Join(in.Queue, "REDS"),
+			fmt.Sprintf("CI-WALL %d %d long-pole=%s %s", run.ID, wall, name, jobWall))
+	}
+	return " STOP: ci-wall"
 }
 
 // failingTest matches the failing test's name in a Go test log.
@@ -128,6 +210,7 @@ func Gate(in GateInput) int {
 
 	switch runVerdict(run) {
 	case "red":
+		wallStop := checkCIWall(in, run)
 		job, jerr := in.Source.FailedJob(in.Repo, run.ID)
 		name, test := "-", "-"
 		if jerr == nil {
@@ -151,12 +234,13 @@ func Gate(in GateInput) int {
 			fmt.Fprintf(in.Stderr, "GATE REFUSED queue=%s: %s (the gate could not write STOP; check the directory)\n", oneline.Field(in.Queue), oneline.Err(err))
 			return 2
 		}
-		fmt.Fprintf(in.Stdout, "GATE RED repo=%s branch=%s sha=%s run=%d job=%s test=%s admit=%s stop=written\n",
+		fmt.Fprintf(in.Stdout, "GATE RED repo=%s branch=%s sha=%s run=%d job=%s test=%s admit=%s stop=written%s\n",
 			oneline.Field(in.Repo), oneline.Field(in.Branch), sha12(run.HeadSHA), run.ID,
-			oneline.Field(name), oneline.Field(test), oneline.Field(dash(admit)))
+			oneline.Field(name), oneline.Field(test), oneline.Field(dash(admit)), wallStop)
 		return 1
 
 	case "green":
+		wallStop := checkCIWall(in, run)
 		state := "none"
 		if raw, err := os.ReadFile(stop); err == nil {
 			if strings.HasPrefix(strings.TrimSpace(string(raw)), StopMark) {
@@ -171,15 +255,16 @@ func Gate(in GateInput) int {
 				state = "kept"
 			}
 		}
-		fmt.Fprintf(in.Stdout, "GATE GREEN repo=%s branch=%s sha=%s run=%d stop=%s\n",
-			oneline.Field(in.Repo), oneline.Field(in.Branch), sha12(run.HeadSHA), run.ID, state)
+		fmt.Fprintf(in.Stdout, "GATE GREEN repo=%s branch=%s sha=%s run=%d stop=%s%s\n",
+			oneline.Field(in.Repo), oneline.Field(in.Branch), sha12(run.HeadSHA), run.ID, state, wallStop)
 		return 0
 
 	default:
+		wallStop := checkCIWall(in, run)
 		// Cancelled, queued, still running, or no run at all: NOT a verdict. Bug 8 is what
 		// reading one as red costs -- a cancelled dev run froze the bench for six minutes.
-		fmt.Fprintf(in.Stdout, "GATE HELD repo=%s branch=%s sha=%s run=%d reason=%s stop=unchanged\n",
-			oneline.Field(in.Repo), oneline.Field(in.Branch), sha12(run.HeadSHA), run.ID, oneline.Field(heldReason(run)))
+		fmt.Fprintf(in.Stdout, "GATE HELD repo=%s branch=%s sha=%s run=%d reason=%s stop=unchanged%s\n",
+			oneline.Field(in.Repo), oneline.Field(in.Branch), sha12(run.HeadSHA), run.ID, oneline.Field(heldReason(run)), wallStop)
 		return 0
 	}
 }
@@ -259,7 +344,7 @@ func NewGHRunSource(timeout time.Duration) RunSource { return ghRunSource{timeou
 func (g ghRunSource) LatestRun(repo, branch string) ([]CIRun, error) {
 	raw, err := g.sh("gh", "run", "list", "--repo", repo, "--branch", branch,
 		"--workflow", gateWorkflow, "--event", gateEvent, "--limit", "1",
-		"--json", "status,conclusion,headSha,databaseId,workflowName,event")
+		"--json", "status,conclusion,headSha,databaseId,workflowName,event,createdAt,updatedAt")
 	if err != nil {
 		return nil, err
 	}
@@ -268,6 +353,22 @@ func (g ghRunSource) LatestRun(repo, branch string) ([]CIRun, error) {
 		return nil, fmt.Errorf("gh run list did not answer json: %s", oneline.Err(err))
 	}
 	return runs, nil
+}
+
+// Jobs reads the run's jobs with their walls, so the ci-wall rule can name the
+// long pole. It is the same jobs API FailedJob already fetches.
+func (g ghRunSource) Jobs(repo string, runID int64) ([]CIJob, error) {
+	raw, err := g.sh("gh", "run", "view", fmt.Sprintf("%d", runID), "--repo", repo, "--json", "jobs")
+	if err != nil {
+		return nil, err
+	}
+	var view struct {
+		Jobs []CIJob `json:"jobs"`
+	}
+	if err := json.Unmarshal([]byte(raw), &view); err != nil {
+		return nil, fmt.Errorf("gh run view did not answer json: %s", oneline.Err(err))
+	}
+	return view.Jobs, nil
 }
 
 func (g ghRunSource) FailedJob(repo string, runID int64) (CIJob, error) {
@@ -328,6 +429,7 @@ func (g ghRunSource) sh(name string, args ...string) (string, error) {
 type fileRunSource struct {
 	Runs []CIRun `json:"runs"`
 	Job  CIJob   `json:"job"`
+	List []CIJob `json:"jobs"`
 }
 
 // NewFileRunSource reads a source file: {"runs":[...],"job":{"name":...,"log":...}}, or a
@@ -338,7 +440,7 @@ func NewFileRunSource(path string) (RunSource, error) {
 		return nil, fmt.Errorf("cannot read --source %s: %s (it holds the runs gh would have answered)", path, oneline.Err(err))
 	}
 	var src fileRunSource
-	if err := json.Unmarshal(raw, &src); err == nil && (len(src.Runs) > 0 || src.Job.Name != "") {
+	if err := json.Unmarshal(raw, &src); err == nil && (len(src.Runs) > 0 || src.Job.Name != "" || len(src.List) > 0) {
 		return &src, nil
 	}
 	var runs []CIRun
@@ -353,3 +455,15 @@ func (f *fileRunSource) LatestRun(repo, branch string) ([]CIRun, error) {
 }
 
 func (f *fileRunSource) FailedJob(repo string, runID int64) (CIJob, error) { return f.Job, nil }
+
+// Jobs is the file's jobs array, so a --source run names the same long pole
+// the jobs API would have answered.
+func (f *fileRunSource) Jobs(repo string, runID int64) ([]CIJob, error) {
+	if len(f.List) > 0 {
+		return f.List, nil
+	}
+	if f.Job.Name != "" {
+		return []CIJob{f.Job}, nil
+	}
+	return nil, fmt.Errorf("no jobs in --source %s", repo)
+}
