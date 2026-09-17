@@ -177,6 +177,39 @@
              (check-equal (local-socket-family) (session-endpoint-socket-family ep)
                           "the socket is a local (AF_UNIX) socket")
              (ok (not (endpoint-network-listener-p ep)) "no network listener"))
+           ;; The local listener really binds, listens and accepts one local
+           ;; connection; the bound socket and its directory keep their modes.
+           (let* ((ld (concatenate 'string base "/l"))
+                  (ls (concatenate 'string ld "/w"))
+                  (lep (make-session-endpoint ld ls))
+                  (listener (make-local-listener lep)))
+             (unwind-protect
+                  (progn
+                    (ok (listener-open-p listener) "the local listener is open")
+                    (check-equal (local-socket-family) (listener-socket-family listener)
+                                 "the listening socket is AF_UNIX, never a network family")
+                    (check-equal #o600 (logand (sb-posix:stat-mode (sb-posix:stat ls)) #o777)
+                                 "the bound socket path is 0600")
+                    (check-equal #o700 (logand (sb-posix:stat-mode (sb-posix:stat ld)) #o777)
+                                 "the directory stays 0700")
+                    (let ((client (make-instance 'sb-bsd-sockets:local-socket :type :stream)))
+                      (unwind-protect
+                           (progn
+                             (sb-bsd-sockets:socket-connect client ls)
+                             (let ((accepted (listener-accept listener)))
+                               (ok accepted "the listener accepts the local connection")
+                               (ignore-errors (sb-bsd-sockets:socket-close accepted))))
+                        (ignore-errors (sb-bsd-sockets:socket-close client)))))
+               (listener-close listener))
+             (ignore-errors (sb-posix:unlink ls))
+             (ignore-errors (sb-posix:rmdir ld)))
+           ;; A network family is a different family, which is what "no network
+           ;; listener" means rather than a flag the endpoint asserts about itself.
+           (ok (not (eql (local-socket-family)
+                         (sb-bsd-sockets:socket-family
+                          (make-instance 'sb-bsd-sockets:inet-socket
+                                         :type :stream :protocol :tcp))))
+               "AF_UNIX and AF_INET are different families")
            ;; A pre-existing directory with wider modes refuses rather than reuses.
            (let ((wide (concatenate 'string base "/w")))
              (sb-posix:mkdir wide #o755)
