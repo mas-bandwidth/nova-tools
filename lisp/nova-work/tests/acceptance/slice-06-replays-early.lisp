@@ -11,11 +11,8 @@
 ;; packet-and-route-gates (SPEC-WORK.md:4848) now runs as the real deftest in
 ;; tests/replays-8646.lisp, with the packet and route gates it named.
 
-;; page-budget-is-not-max is implemented in ../acceptance.lisp (card 8601).
-;; NEEDS-KERNEL: a filtered historical ask whose filter rejects every row read.
-(deftest "page-budget-is-not-max" "docs/SPEC-WORK.md:5550"
-    "expected=shown=0;pages=<n>;whole-history-never-scanned"
-  (slice1-refuses-verb :query))
+;; page-budget-is-not-max now lives in ../acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
 
 ;; pipeline-replies-are-correlated is now the executable replay in
 ;; ../acceptance.lisp (card 8608).

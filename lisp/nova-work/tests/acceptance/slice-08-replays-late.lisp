@@ -355,9 +355,8 @@
 ;; unknown-price-is-not-zero now runs in
 ;; lisp/nova-work/tests/replays-8651.lisp (nova-tools #362).
 
-(needs-kernel "unrelated-receipts-stay-reusable" "docs/SPEC-WORK.md:5301"
-  "a changed source or criterion preserving the historic tick at its pinned revision while unrelated receipts stay untouched"
-  "RECEIPT-LOOKUP")
+;; unrelated-receipts-stay-reusable now lives in tests/replays-8651.lisp over
+;; the proof scopes of src/replays-8651.lisp (nova-tools #362).
 
 ;; Moved to tests/acceptance.lisp as a real replay over src/assignment.lisp
 ;; (nova-tools #362): "until-is-overdue-not-released".

@@ -663,9 +663,8 @@
 ;; until-is-overdue-not-released (SPEC-WORK.md:5243) now runs as the real
 ;; deftest in tests/acceptance.lisp.
 
-;; NEEDS-KERNEL: a late receipt is retained as :effect :late, a duplicate consumes no capacity, conflicting bytes refused.
-;; (deftest "late-and-duplicate-receipts-are-retained" "docs/SPEC-WORK.md:3474"
-;;     "expected=:effect-:late-retained;duplicate-consumes-no-capacity;conflicting-bytes-refused")
+;; late-and-duplicate-receipts-are-retained now lives in tests/acceptance.lisp
+;; over the leasebook of src/assignment.lisp (nova-tools #362).
 
 ;; stop-is-a-hold-not-a-cancel (SPEC-WORK.md:3944) now runs as the real deftest
 ;; in slice-09-replays-holds.lisp, with the hold and dispatch gate it needed.
@@ -755,14 +754,13 @@
 ;; in tests/replays-8641.lisp over src/replays-8641.lisp and src/node-verbs.lisp
 ;; (nova-tools #362).
 
-;; NEEDS-KERNEL: state-as-of reconstruction over settle/revive chains; no as-of query exists yet.
-;; as-of-reconstructs-settle-revive-settle (SPEC-WORK.md:5137) --- one id settled on day A,
-;; revived on day B, settled again on day C: each interval's ask answering that state, the three
-;; answers different, the earlier two unchanged by later events.
+;; as-of-reconstructs-settle-revive-settle now lives in
+;; tests/acceptance/slice-04-doing-and-journal.lisp over the settle/revive
+;; chains of src/kernel.lisp (nova-tools #362).
 
-;; NEEDS-KERNEL: state-as-of partition refusal; no as-of query exists yet.
-;; as-of-refuses-unavailable-partition (SPEC-WORK.md:5135) --- a state-as-of ask whose day
-;; partition cannot be opened refused at exit 1 naming that partition, never answered from a later row.
+;; as-of-refuses-unavailable-partition now lives in
+;; tests/acceptance/slice-09-replays-8603.lisp over the as-of ask of
+;; src/closed-history.lisp (nova-tools #362).
 
 ;;; async-operations: the real replay lives in tests/replays-8642.lisp:117
 ;;; (nova-tools #362) --- launch/cancel dispositions with no double launch and no
@@ -797,6 +795,13 @@
 ;;     "expected=many-segments-read-in-bounded-pages;max-caps-rows;more-names-after;day-never-read-whole"
 ;;   ;; NEEDS-KERNEL: closed-history index with day segments and paged reads
 ;;   )
+;; (deftest "branch-and-window-required" "docs/SPEC-WORK.md:5095"
+;;     "expected=query-ask-without-branch-refused-exit-2;closed-without-from-to-refused;from-under-open-refused;who-stale-handoffs-refused-under-closed-and-root"
+;;   ;; NEEDS-KERNEL: query command and --branch/--window flag validation at exit 2
+;;   )
+
+;; busy-day-many-segments now lives in tests/acceptance.lisp over the
+;; closed-history model of src/replays-closed-history.lisp (nova-tools #362).
 
 ;; cache-aware-context-choice now runs in
 ;; lisp/nova-work/tests/replays-8642.lisp (nova-tools #362).
@@ -822,15 +827,11 @@
 ;;; tests/acceptance/slice-09-replays-8603.lisp:81 (nova-tools #362); this
 ;;; duplicate parked copy is removed.
 
-;; (deftest "closed-paged-without-full-load" "docs/SPEC-WORK.md:5087"
-;;     "expected=max-20-reads-20;more-names-after;next-page-reads-next-20;parses=0-replays=0;whole-history-never-loaded"
-;;   ;; NEEDS-KERNEL: closed listing paging over the closed index
-;;   )
+;; closed-paged-without-full-load now lives in tests/acceptance.lisp over the
+;; closed-index paging of src/replays-closed-history.lisp (nova-tools #362).
 
-;; (deftest "closed-row-with-archive-absent" "docs/SPEC-WORK.md:5090"
-;;     "expected=ask-answers-same-four-rows-with-archive-absent;archived-body-ask-prints-gap-and-coverage-gap"
-;;   ;; NEEDS-KERNEL: retention archive file and coverage-gap ask
-;;   )
+;; closed-row-with-archive-absent now lives in tests/acceptance.lisp over the
+;; closed-history index of src/replays-closed-history.lisp (nova-tools #362).
 
 ;; (deftest "compaction-keeps-the-last-copy" "docs/SPEC-WORK.md:5309"
 ;;     "expected=compaction-never-removes-the-only-recoverable-copy"
@@ -858,20 +859,16 @@
 ;; cost-joins-include-the-coordinator now runs in
 ;; lisp/nova-work/tests/replays-8643.lisp (nova-tools #362).
 
-;; (deftest "cursor-pinned-across-a-new-settle" "docs/SPEC-WORK.md:5141"
-;;     "expected=no-missing-no-duplicate-row;pinned-revision-honoured;unservable-pin-refused-page-expired"
-;;   ;; NEEDS-KERNEL: paged continuation cursor pinned to a served revision
-;;   )
+;; cursor-pinned-across-a-new-settle now lives in
+;; tests/acceptance/slice-04-doing-and-journal.lisp and tests/acceptance.lisp
+;; over the closed-index cursor of src/replays-closed-history.lisp (#362).
 
-;; (deftest "days-merge-by-revision-never-concatenate" "docs/SPEC-WORK.md:5547"
-;;     "expected=backdated-closure-in-earlier-day;from-to-prints-revision-order-across-boundary;one-batch-and-ten-yield-identical-leaves"
-;;   ;; NEEDS-KERNEL: day-partition date index merged by revision
-;;   )
+;; days-merge-by-revision-never-concatenate now lives in tests/acceptance.lisp
+;; over the day tree of src/replays-closed-history.lisp (nova-tools #362).
 
-;; (deftest "dedup-page-unavailable-refuses" "docs/SPEC-WORK.md:5147"
-;;     "expected=retry-with-unreadable-dedup-page-refused-dedup-unavailable-applies-nothing;admitted-when-readable"
-;;   ;; NEEDS-KERNEL: dedup page availability gate on retry
-;;   )
+;; dedup-page-unavailable-refuses now lives in
+;; tests/acceptance/slice-04-doing-and-journal.lisp over the dedup page gate of
+;; src/journal.lisp (nova-tools #362).
 ;;; ------------------------------------------------------------------
 ;;; Replays promised by docs/SPEC-WORK.md lines 3600-end (card 280,
 ;;; part 3 of 8). Each names a replay named in the acceptance appendix or
@@ -1120,24 +1117,14 @@ asserts does not exist in slice 1."
 ;; ------------------------------------------------------------------
 ;; historic-tick-survives-a-source-change   docs/SPEC-WORK.md:5300
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: source capture + pinned revisions (historic tick stays at its
-;; pinned revision while the current view requires re-verification).
-;;(deftest "historic-tick-survives-a-source-change" "docs/SPEC-WORK.md:5300"
-;;    "historic-tick=pinned,current=reverify"
-;;  ;; a changed source or criterion preserves the historic tick at its pinned
-;;  ;; revision while the current view requires re-verification.)
+;; historic-tick-survives-a-source-change now lives in tests/replays-8645.lisp
+;; over the tick records of src/replays-8645.lisp (nova-tools #362).
 
 ;; ------------------------------------------------------------------
 ;; history-grows-startup-does-not   docs/SPEC-WORK.md:5117
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: bounded paged history + startup instrumentation (grow old
-;; history; resident bytes/segment bytes/parses/replays/emitted bytes stay
-;; fixed; index pages read bounded by depth).
-;;(deftest "history-grows-startup-does-not" "docs/SPEC-WORK.md:5117"
-;;    "resident-bytes=stable,pages=bounded-by-depth"
-;;  ;; O, recent-window volume and page bounds held fixed while old history
-;;  ;; grows: startup resident bytes, segment bytes read, parses, replays and
-;;  ;; emitted bytes do not move; index pages read stay bounded by depth.)
+;; history-grows-startup-does-not now lives in tests/acceptance.lisp over the
+;; closed-history instrumentation of src/replays-closed-history.lisp (#362).
 
 ;; hold-survives-a-crash (SPEC-WORK.md:5254) now runs as the real deftest in
 ;; tests/acceptance/slice-09-replays-holds.lisp.
@@ -1145,24 +1132,15 @@ asserts does not exist in slice 1."
 ;; ------------------------------------------------------------------
 ;; indivisible-record-refused-before-ack   docs/SPEC-WORK.md:5543
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: paged index + admission gate (a single key whose one locator
-;; no page could hold refused `indivisible` before acknowledgement, nothing
-;; journaled).
-;;(deftest "indivisible-record-refused-before-ack" "docs/SPEC-WORK.md:5543"
-;;    "indivisible=refused,nothing-journaled"
-;;  ;; one key with its locator that no page under `--page-bytes` could hold
-;;  ;; refused `indivisible` at exit 2 with nothing journaled.)
+;; indivisible-record-refused-before-ack now lives in
+;; tests/acceptance/slice-09-replays-8603.lisp over the admission gate of
+;; src/closed-history.lisp (nova-tools #362).
 
 ;; ------------------------------------------------------------------
 ;; late-and-duplicate-receipts-are-retained   docs/SPEC-WORK.md:5243
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: receipt/lease reconciliation (a late accept retained `:late`
-;; reviving no lease, overwriting no successor; same request replaying its
-;; success).
-;;(deftest "late-and-duplicate-receipts-are-retained" "docs/SPEC-WORK.md:5243"
-;;    "late=retained,lease-revived=0,successor-overwritten=0"
-;;  ;; a late accept after a decline, a replacement, an expiry or a generation
-;;  ;; change retained `:late`, reviving no lease and overwriting no successor.)
+;; late-and-duplicate-receipts-are-retained now lives in tests/acceptance.lisp
+;; over the leasebook of src/assignment.lisp (nova-tools #362).
 
 ;; ------------------------------------------------------------------
 ;; local-tokens-cost-zero-api   docs/SPEC-WORK.md:5288
@@ -1173,12 +1151,8 @@ asserts does not exist in slice 1."
 ;; ------------------------------------------------------------------
 ;; materialized-working-set   docs/SPEC-WORK.md:5597
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: materialized W index (repeated membership/|W| asks visit zero
-;; unrelated nodes; independent reconstruction equal after take/renew/release).
-;;(deftest "materialized-working-set" "docs/SPEC-WORK.md:5597"
-;;    "unrelated-visits=0,scans=0,reconstruction=equal,watermark=printed"
-;;  ;; W held fixed while O and C grow: membership and |W| asks visit zero
-;;  ;; unrelated nodes, scan neither O nor C.)
+;; materialized-working-set now lives in tests/replays-8646.lisp over the
+;; materialized W index of src/replays-8646.lisp (nova-tools #362).
 
 ;; ------------------------------------------------------------------
 ;; matrix-retirement   docs/SPEC-WORK.md:5387
