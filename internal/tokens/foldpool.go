@@ -27,18 +27,18 @@ type PoolKey struct {
 
 // PoolAgg is one key's folded totals.
 type PoolAgg struct {
-	Tasks int
-	In    int64
-	Out   int64
-	Cw    int64
-	Cr    int64
-	Rsn   int64
-	HasIn bool
-	HasOut bool
-	HasCw bool
-	HasCr bool
-	HasRsn bool
-	UsdMicro int64
+	Tasks      int
+	In         int64
+	Out        int64
+	Cw         int64
+	Cr         int64
+	Rsn        int64
+	HasIn      bool
+	HasOut     bool
+	HasCw      bool
+	HasCr      bool
+	HasRsn     bool
+	UsdMicro   int64
 	UsdUnknown int
 }
 
