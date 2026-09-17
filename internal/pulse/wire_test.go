@@ -93,7 +93,7 @@ func TestWiredOnceTickRunsEverySeam(t *testing.T) {
 		Queue: queue, Roots: root, Repo: "mas-bandwidth/nova-tools", Branch: "dev",
 		Now: func() time.Time { return now }, Config: func() Config { return cfg },
 		TempGlob:  filepath.Join(t.TempDir(), "*swarmtest*"),
-		Runs:      &fakeRuns{run: CIRun{ID: 77, Status: "completed", Conclusion: "success", HeadSHA: "0123456789abcdef"}},
+		Runs:      &fakeRuns{runs: []CIRun{{ID: 77, Status: "completed", Conclusion: "success", HeadSHA: "0123456789abcdef", Workflow: "ci", Event: "push"}}},
 		PRs:       prs,
 		Enqueuer:  &fakeEnqueuer{},
 		Procs:     &fakeProcs{live: map[int]bool{}},

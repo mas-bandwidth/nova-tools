@@ -12,16 +12,16 @@ import (
 // fakeRuns is the RunSource a test drives the gate with: no gh, no network, and a record of
 // every ask so a test can prove the answer came from here.
 type fakeRuns struct {
-	run    CIRun
+	runs   []CIRun
 	runErr error
 	job    CIJob
 	jobErr error
 	asked  []string
 }
 
-func (f *fakeRuns) LatestRun(repo, branch string) (CIRun, error) {
+func (f *fakeRuns) LatestRun(repo, branch string) ([]CIRun, error) {
 	f.asked = append(f.asked, "latest "+repo+" "+branch)
-	return f.run, f.runErr
+	return f.runs, f.runErr
 }
 
 func (f *fakeRuns) FailedJob(repo string, runID int64) (CIJob, error) {
@@ -52,8 +52,8 @@ func readStop(t *testing.T, queue string) []string {
 func TestGateWritesStopWithTheIssueAsAdmissionName(t *testing.T) {
 	queue := t.TempDir()
 	src := &fakeRuns{
-		run: CIRun{ID: 35120376309, Status: "completed", Conclusion: "failure", HeadSHA: "8f3714d1c0de0000"},
-		job: CIJob{Name: "studio-fast", Log: "--- FAIL: TestGateHoldsTheBench (0.04s)\n    gate_test.go:12: fix #828 first\n"},
+		runs: []CIRun{{ID: 35120376309, Status: "completed", Conclusion: "failure", HeadSHA: "8f3714d1c0de0000", Workflow: "ci", Event: "push"}},
+		job:  CIJob{Name: "studio-fast", Log: "--- FAIL: TestGateHoldsTheBench (0.04s)\n    gate_test.go:12: fix #828 first\n"},
 	}
 	out, errb, code := gateRun(t, queue, src)
 	if code != 1 {
@@ -84,8 +84,8 @@ func TestGateWritesStopWithTheIssueAsAdmissionName(t *testing.T) {
 func TestGateAdmissionFallsBackToTheTestName(t *testing.T) {
 	queue := t.TempDir()
 	src := &fakeRuns{
-		run: CIRun{ID: 7, Status: "completed", Conclusion: "failure", HeadSHA: "abcdefabcdef0123"},
-		job: CIJob{Name: "space (2)", Log: "ok  \tpkg/one\n--- FAIL: TestRefillCounts\nFAIL\tpkg/two\n"},
+		runs: []CIRun{{ID: 7, Status: "completed", Conclusion: "failure", HeadSHA: "abcdefabcdef0123", Workflow: "ci", Event: "push"}},
+		job:  CIJob{Name: "space (2)", Log: "ok  \tpkg/one\n--- FAIL: TestRefillCounts\nFAIL\tpkg/two\n"},
 	}
 	out, errb, code := gateRun(t, queue, src)
 	if code != 1 {
@@ -113,7 +113,7 @@ func TestGateHoldsOnCancelledAndInProgress(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			queue := t.TempDir()
-			src := &fakeRuns{run: CIRun{ID: 3, Status: tc.status, Conclusion: tc.conclusion, HeadSHA: "0123456789abcdef"}}
+			src := &fakeRuns{runs: []CIRun{{ID: 3, Status: tc.status, Conclusion: tc.conclusion, HeadSHA: "0123456789abcdef", Workflow: "ci", Event: "push"}}}
 			out, errb, code := gateRun(t, queue, src)
 			if code != 0 {
 				t.Fatalf("exit = %d, want 0; %q %q", code, out, errb)
@@ -140,7 +140,7 @@ func TestGateHeldLeavesAnExistingStopAlone(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(queue, StopFile), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	src := &fakeRuns{run: CIRun{ID: 9, Status: "in_progress"}}
+	src := &fakeRuns{runs: []CIRun{{ID: 9, Status: "in_progress", Workflow: "ci", Event: "push"}}}
 	if _, _, code := gateRun(t, queue, src); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
@@ -159,7 +159,7 @@ func TestGateGreenClearsOnlyTheGatesOwnStop(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(queue, StopFile), []byte("MAIN-RED deadbeefdead run=1 job=j test=T\n#828\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		src := &fakeRuns{run: CIRun{ID: 11, Status: "completed", Conclusion: "success", HeadSHA: "feedfacefeedface"}}
+		src := &fakeRuns{runs: []CIRun{{ID: 11, Status: "completed", Conclusion: "success", HeadSHA: "feedfacefeedface", Workflow: "ci", Event: "push"}}}
 		out, errb, code := gateRun(t, queue, src)
 		if code != 0 {
 			t.Fatalf("exit = %d, want 0; %q %q", code, out, errb)
@@ -178,7 +178,7 @@ func TestGateGreenClearsOnlyTheGatesOwnStop(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(queue, StopFile), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		src := &fakeRuns{run: CIRun{ID: 12, Status: "completed", Conclusion: "success", HeadSHA: "feedfacefeedface"}}
+		src := &fakeRuns{runs: []CIRun{{ID: 12, Status: "completed", Conclusion: "success", HeadSHA: "feedfacefeedface", Workflow: "ci", Event: "push"}}}
 		out, errb, code := gateRun(t, queue, src)
 		if code != 0 {
 			t.Fatalf("exit = %d, want 0; %q %q", code, out, errb)
@@ -194,7 +194,7 @@ func TestGateGreenClearsOnlyTheGatesOwnStop(t *testing.T) {
 	})
 	t.Run("none at all", func(t *testing.T) {
 		queue := t.TempDir()
-		src := &fakeRuns{run: CIRun{ID: 13, Status: "completed", Conclusion: "success", HeadSHA: "feedfacefeedface"}}
+		src := &fakeRuns{runs: []CIRun{{ID: 13, Status: "completed", Conclusion: "success", HeadSHA: "feedfacefeedface", Workflow: "ci", Event: "push"}}}
 		out, errb, code := gateRun(t, queue, src)
 		if code != 0 {
 			t.Fatalf("exit = %d, want 0; %q %q", code, out, errb)
@@ -228,7 +228,7 @@ func TestGateRefusesAnUnreadableSource(t *testing.T) {
 func TestGateReadsRunsFromASourceFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "runs.json")
-	body := `{"runs":[{"databaseId":21,"status":"completed","conclusion":"failure","headSha":"1111222233334444"}],
+	body := `{"runs":[{"databaseId":21,"status":"completed","conclusion":"failure","headSha":"1111222233334444","workflowName":"ci","event":"push"}],
 	          "job":{"name":"dev-gate","log":"--- FAIL: TestSweepEnqueues\nsee #781\n"}}`
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -267,4 +267,78 @@ func TestGateRefusesMissingInput(t *testing.T) {
 			t.Fatalf("stderr = %q, want a GATE REFUSED line", errb.String())
 		}
 	}
+}
+
+// gate-reads-the-ci-push-run-for-the-tip (issue #879): the gate names the workflow it reads
+// -- ci, the CL tier -- and the event, push, for the branch tip, and a certification,
+// workflow_dispatch, schedule or merge_group run at the same sha never decides the branch.
+// At one sha a green certification run, a red ci push run and a green ci workflow_dispatch
+// run: the verdict is RED from the push run. The inverse -- green ci push, red ci
+// workflow_dispatch -- is GREEN, and a ci push run still in progress holds while a green
+// certification run sits at the same sha.
+func TestGateReadsTheCIPushRunForTheBranchTip(t *testing.T) {
+	sha := "8f3714d1c0de0000"
+	cert := CIRun{ID: 35147087783, Status: "completed", Conclusion: "success", HeadSHA: sha, Workflow: "Certification", Event: "push"}
+	pushRed := CIRun{ID: 35147087691, Status: "completed", Conclusion: "failure", HeadSHA: sha, Workflow: "ci", Event: "push"}
+	pushGreen := CIRun{ID: 35147087692, Status: "completed", Conclusion: "success", HeadSHA: sha, Workflow: "ci", Event: "push"}
+	pushRunning := CIRun{ID: 35147087693, Status: "in_progress", HeadSHA: sha, Workflow: "ci", Event: "push"}
+	dispatchRed := CIRun{ID: 99, Status: "completed", Conclusion: "failure", HeadSHA: sha, Workflow: "ci", Event: "workflow_dispatch"}
+
+	t.Run("red push beats a green certification and a green dispatch", func(t *testing.T) {
+		queue := t.TempDir()
+		src := &fakeRuns{
+			runs: []CIRun{cert, pushRed, dispatchRed},
+			job:  CIJob{Name: "studio-fast", Log: "--- FAIL: TestGateReadsTheCIPushRunForTheBranchTip\n    gate_test.go:12: see #879\n"},
+		}
+		out, errb, code := gateRun(t, queue, src)
+		if code != 1 {
+			t.Fatalf("gate on the red ci push run exit = %d, want 1; out=%q err=%q", code, out, errb)
+		}
+		lines := nonEmptyLines(out + errb)
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], "GATE RED ") {
+			t.Fatalf("want one GATE RED line, got %q", lines)
+		}
+		if !strings.Contains(lines[0], "run=35147087691") {
+			t.Fatalf("the verdict is not the ci push run's: %q", lines[0])
+		}
+		stop := readStop(t, queue)
+		if !strings.Contains(stop[0], "run=35147087691") {
+			t.Fatalf("STOP names the wrong run: %q", stop[0])
+		}
+	})
+
+	t.Run("green push beats a red dispatch", func(t *testing.T) {
+		queue := t.TempDir()
+		src := &fakeRuns{runs: []CIRun{dispatchRed, pushGreen}}
+		out, errb, code := gateRun(t, queue, src)
+		if code != 0 {
+			t.Fatalf("gate on the green ci push run exit = %d, want 0; out=%q err=%q", code, out, errb)
+		}
+		lines := nonEmptyLines(out + errb)
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], "GATE GREEN ") {
+			t.Fatalf("want one GATE GREEN line, got %q", lines)
+		}
+		if !strings.Contains(lines[0], "run=35147087692") {
+			t.Fatalf("the verdict is not the ci push run's: %q", lines[0])
+		}
+	})
+
+	t.Run("a running push holds past a green certification", func(t *testing.T) {
+		queue := t.TempDir()
+		src := &fakeRuns{runs: []CIRun{cert, pushRunning}}
+		out, errb, code := gateRun(t, queue, src)
+		if code != 0 {
+			t.Fatalf("gate on the in-progress ci push run exit = %d, want 0; out=%q err=%q", code, out, errb)
+		}
+		lines := nonEmptyLines(out + errb)
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], "GATE HELD ") {
+			t.Fatalf("want one GATE HELD line, got %q", lines)
+		}
+		if !strings.Contains(lines[0], "reason=in_progress") || !strings.Contains(lines[0], "run=35147087693") {
+			t.Fatalf("the hold is not the ci push run's: %q", lines[0])
+		}
+		if _, err := os.Stat(filepath.Join(queue, StopFile)); !os.IsNotExist(err) {
+			t.Fatalf("a held gate wrote a STOP (err=%v)", err)
+		}
+	})
 }

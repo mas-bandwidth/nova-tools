@@ -31,12 +31,24 @@ const StopFile = "STOP"
 // it was written by a person, and no green lifts it.
 const StopMark = "MAIN-RED"
 
-// CIRun is one ci run as `gh run list --json status,conclusion,headSha,databaseId` gives it.
+// gateWorkflow and gateEvent name the one run the gate reads for the branch tip: the ci
+// workflow's push run, the CL tier's own verdict. A certification, workflow_dispatch,
+// schedule or merge_group run at the same sha never decides the branch (issue #879).
+const (
+	gateWorkflow = "ci"
+	gateEvent    = "push"
+)
+
+// CIRun is one run as `gh run list --json status,conclusion,headSha,databaseId,workflowName,event`
+// gives it. The gate reads only the ci workflow's push runs, so it can tell the branch's own
+// run from a certification, workflow_dispatch, schedule or merge_group run at the same sha.
 type CIRun struct {
 	ID         int64  `json:"databaseId"`
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
 	HeadSHA    string `json:"headSha"`
+	Workflow   string `json:"workflowName"`
+	Event      string `json:"event"`
 }
 
 // CIJob is the failing job of a run: its name, and its log, which is where the failing test
@@ -49,7 +61,7 @@ type CIJob struct {
 // RunSource is where the gate's verdict comes from. The shipped one wraps gh; a test's
 // answers a fixture, so no test in this package reaches the network.
 type RunSource interface {
-	LatestRun(repo, branch string) (CIRun, error)
+	LatestRun(repo, branch string) ([]CIRun, error)
 	FailedJob(repo string, runID int64) (CIJob, error)
 }
 
@@ -98,11 +110,20 @@ func Gate(in GateInput) int {
 	}
 
 	stop := filepath.Join(in.Queue, StopFile)
-	run, err := in.Source.LatestRun(in.Repo, in.Branch)
+	runs, err := in.Source.LatestRun(in.Repo, in.Branch)
 	if err != nil {
 		fmt.Fprintf(in.Stderr, "GATE REFUSED repo=%s branch=%s: %s (the gate never guesses a verdict; fix the source, or pass --source <file>)\n",
 			oneline.Field(in.Repo), oneline.Field(in.Branch), oneline.Err(err))
 		return 2
+	}
+	run, ok := ciPushRun(runs)
+	if !ok {
+		// No ci push run for the branch tip: NOT a verdict. The certification that is
+		// green says nothing about the tier the gate holds, and a run of another event
+		// at the same sha is a run of another lane.
+		fmt.Fprintf(in.Stdout, "GATE HELD repo=%s branch=%s reason=no-ci-push-run stop=unchanged\n",
+			oneline.Field(in.Repo), oneline.Field(in.Branch))
+		return 0
 	}
 
 	switch runVerdict(run) {
@@ -182,6 +203,18 @@ func runVerdict(r CIRun) string {
 	}
 }
 
+// ciPushRun is the gate's one run: the newest ci workflow run whose event is push, whatever
+// its status -- an in-progress push run is a hold, never a verdict from an older run or a
+// run of another workflow at the same sha. The list comes newest first from gh.
+func ciPushRun(runs []CIRun) (CIRun, bool) {
+	for _, r := range runs {
+		if r.Workflow == gateWorkflow && r.Event == gateEvent {
+			return r, true
+		}
+	}
+	return CIRun{}, false
+}
+
 // heldReason names why a run is not a verdict, in one token.
 func heldReason(r CIRun) string {
 	if r.ID == 0 && r.Status == "" {
@@ -223,20 +256,18 @@ type ghRunSource struct{ timeout time.Duration }
 // NewGHRunSource is the gate's source when no --source file is given.
 func NewGHRunSource(timeout time.Duration) RunSource { return ghRunSource{timeout: timeout} }
 
-func (g ghRunSource) LatestRun(repo, branch string) (CIRun, error) {
-	raw, err := g.sh("gh", "run", "list", "--repo", repo, "--branch", branch, "--limit", "1",
-		"--json", "status,conclusion,headSha,databaseId")
+func (g ghRunSource) LatestRun(repo, branch string) ([]CIRun, error) {
+	raw, err := g.sh("gh", "run", "list", "--repo", repo, "--branch", branch,
+		"--workflow", gateWorkflow, "--event", gateEvent, "--limit", "1",
+		"--json", "status,conclusion,headSha,databaseId,workflowName,event")
 	if err != nil {
-		return CIRun{}, err
+		return nil, err
 	}
 	var runs []CIRun
 	if err := json.Unmarshal([]byte(raw), &runs); err != nil {
-		return CIRun{}, fmt.Errorf("gh run list did not answer json: %s", oneline.Err(err))
+		return nil, fmt.Errorf("gh run list did not answer json: %s", oneline.Err(err))
 	}
-	if len(runs) == 0 {
-		return CIRun{}, nil
-	}
-	return runs[0], nil
+	return runs, nil
 }
 
 func (g ghRunSource) FailedJob(repo string, runID int64) (CIJob, error) {
@@ -317,11 +348,8 @@ func NewFileRunSource(path string) (RunSource, error) {
 	return &fileRunSource{Runs: runs}, nil
 }
 
-func (f *fileRunSource) LatestRun(repo, branch string) (CIRun, error) {
-	if len(f.Runs) == 0 {
-		return CIRun{}, nil
-	}
-	return f.Runs[0], nil
+func (f *fileRunSource) LatestRun(repo, branch string) ([]CIRun, error) {
+	return f.Runs, nil
 }
 
 func (f *fileRunSource) FailedJob(repo string, runID int64) (CIJob, error) { return f.Job, nil }
