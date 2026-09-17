@@ -248,12 +248,8 @@
 ;; NEEDS-KERNEL: socket disconnect + a pushed= counter (slice-1 receipt has pushed=-).
 
 ;;; no-effect-mutation-is-journaled  SPEC-WORK.md prose :2797 / table :5176
-;; (deftest "no-effect-mutation-is-journaled" "docs/SPEC-WORK.md:5176"
-;;     "event-id-recorded;journal+1;changed=0;projection-digest-unchanged;rev+1"
-;;   ;; a mutation whose patches are all no-ops: the event id recorded, journal
-;;   ;; length +1, changed=0 on its OK line, the domain-projection digest unchanged
-;;   ;; while the event revision advances by one.)
-;; NEEDS-KERNEL: a patch/mutation verb and a changed= count (slice 1 has neither).
+;;; The real replay now lives in tests/acceptance.lisp over the node-edit verbs
+;;; of src/node-verbs.lisp (nova-tools #362).
 
 ;;; operation-survives-the-client  SPEC-WORK.md prose :2580 / table :5183
 ;; (deftest "operation-survives-the-client" "docs/SPEC-WORK.md:5183"
@@ -349,12 +345,8 @@
 ;; NEEDS-KERNEL: the clip verb and the operation/wait transport (no clip in slice).
 
 ;;; repo-only-at-the-root  SPEC-WORK.md prose :2846 / table :5341
-;; (deftest "repo-only-at-the-root" "docs/SPEC-WORK.md:5341"
-;;     "root-repo-accepted-unique;dup-repo-refused-held;subtree-repo-refused;edit/move-cannot-change"
-;;   ;; --repo under-root open work-set accepted and unique; --repo again refused
-;;   ;; `repo held by <id>`; --repo under a parent refused `repo outside root`;
-;;   ;; node edit and node move unable to change it.)
-;; NEEDS-KERNEL: node add/edit/move and the --repo field (no node verbs in slice).
+;;; The real replay now lives in tests/acceptance.lisp over the node verbs of
+;;; src/node-verbs.lisp (nova-tools #362).
 
 ;;; roadmap-has-one-creator  SPEC-WORK.md prose :2846 / table :5344
 ;; (deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:5344"
@@ -365,35 +357,20 @@
 ;; NEEDS-KERNEL: the roadmap verbs (no roadmap in slice 1).
 
 ;;; metadata-patches-preserve-intent  SPEC-WORK.md prose :2844 / table :5347
-;; (deftest "metadata-patches-preserve-intent" "docs/SPEC-WORK.md:5347"
-;;     "keep/clear/set-empty/set-false/set-value-distinct;all-keep/malformed/wrong-type-refused;version-on-feature-refused"
-;;   ;; keep, clear, set-empty, set-false and set-value on each of five fields
-;;   ;; round-tripping and digesting distinctly; malformed and wrong-type patches
-;;   ;; refused with no event and no counter moved; --version on a :feature refused.)
-;; NEEDS-KERNEL: node metadata-patch verbs (no node edit/version field in slice).
+;;; The real replay now lives in tests/acceptance.lisp over the node-edit verbs
+;;; of src/node-verbs.lisp (nova-tools #362).
 
 ;;; edit-is-atomic-and-replayable  SPEC-WORK.md prose :2845 / table :5351
-;; (deftest "edit-is-atomic-and-replayable" "docs/SPEC-WORK.md:5351"
-;;     "bad-patch-writes-nothing;named-fields-only-move;retry-replays-original;equal-value=no-effect-receipt"
-;;   ;; a bad one-of-five patch writing nothing; an accepted mixed edit moving only
-;;   ;; its named fields and the category index; the same request id retried answered
-;;   ;; by its original NODE OK; an equal-value edit the no-effect receipt changed=0.)
-;; NEEDS-KERNEL: the node edit verb and a changed= receipt (no edit in slice 1).
+;;; The real replay now lives in tests/acceptance.lisp over the node-edit verbs
+;;; of src/node-verbs.lisp (nova-tools #362).
 
 ;;; edit-undo-preserves-later-work  SPEC-WORK.md prose :2845 / table :5355
-;; (deftest "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
-;;     "undo-restores-before;undo-after-intervening-edit-refused;both-events-stand"
-;;   ;; an edit undone restores :before; the same undo after an intervening edit
-;;   ;; refused conflict, both events standing.)
-;; NEEDS-KERNEL: edit undo (no node edit or undo in slice 1).
+;;; The real replay now lives in tests/acceptance.lisp over the node-edit and
+;;; node-undo verbs of src/node-verbs.lisp (nova-tools #362).
 
 ;;; edit-never-fetches-a-link  SPEC-WORK.md prose :2845 / table :5357
-;; (deftest "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
-;;     "live-link-added/edited/rendered-zero-requests;nul-link-refused;private-refusal-prints-no-value"
-;;   ;; a link that is a live URL to a counting endpoint added, edited and rendered
-;;   ;; with zero requests observed; a link holding NUL refused `bad link`; a
-;;   ;; refusal on a private node printing no value.)
-;; NEEDS-KERNEL: node edit + link handling (no link/network model in slice 1).
+;;; The real replay now lives in tests/acceptance.lisp over the node-edit link
+;;; validation and renderer of src/node-verbs.lisp (nova-tools #362).
 
 ;;; move-keeps-every-count  SPEC-WORK.md prose :2889 / table :5360
 ;; (deftest "move-keeps-every-count" "docs/SPEC-WORK.md:5360"
@@ -827,10 +804,9 @@
 ;; accepted-creates-one-lease-or-binds (SPEC-WORK.md:5238) now runs as the
 ;; real deftest in tests/acceptance.lisp.
 
-;; NEEDS-KERNEL: node add verb with twelve fields; no node-add exists yet.
-;; add-field-order-is-complete (SPEC-WORK.md:5337) --- a node add with every one of the twelve
-;; fields, one with each absent, one with --links-empty and one with --clear-links, digested by
-;; two serializers to four distinct values; a pre-fold-order fixture refused at load.
+;; add-field-order-is-complete (SPEC-WORK.md:5337) --- the real replay now lives
+;; in tests/replays-8641.lisp over src/replays-8641.lisp and src/node-verbs.lisp
+;; (nova-tools #362).
 
 ;; NEEDS-KERNEL: configuration delta validation; no config exists yet.
 ;; an-invalid-delta-leaves-the-old-config (SPEC-WORK.md:5284) --- the exchange bounded,
@@ -1043,14 +1019,8 @@ asserts does not exist in slice 1."
     "expected=preview-mutates-nothing;dedup-still-new;events-pending-pushed-unchanged"
   "no dry-run projection exists in slice 1")
 
-;; edit-is-atomic-and-replayable: a bad one-of-five patch writes nothing; an
-;; accepted mixed edit moves only its named fields and the category index; the
-;; same request id retried answers NODE OK; a changed payload refuses; an
-;; equal-value edit is the no-effect receipt, changed=0, rev up by one.
-;; NEEDS-KERNEL: an edit patch verb and category index.
-(deftest-pending "edit-is-atomic-and-replayable" "docs/SPEC-WORK.md:5351"
-    "expected=one-of-five-writes-nothing;changed-payload-refused;equal-value=changed-0"
-  "no edit verb in slice 1")
+;; edit-is-atomic-and-replayable now lives in tests/acceptance.lisp over the
+;; node-edit verb of src/node-verbs.lisp (nova-tools #362).
 
 ;; efficiency-lessons-gate (SPEC-WORK.md:4916) now runs as the real deftest in
 ;; tests/replays-8644.lisp, with the dispatch/effort/ceiling gates it named.
@@ -1061,13 +1031,19 @@ asserts does not exist in slice 1."
 (deftest-pending "edit-never-fetches-a-link" "docs/SPEC-WORK.md:5357"
     "expected=fetches=0;nul=bad-link;private-node-prints-no-value"
   "no link render/fetch in slice 1")
+;; efficiency-lessons-gate: prime projection respects --max-bytes; unpoured
+;; checklist items never count in |O|; tripped nodes require --reason; delegate
+;; mode refuses edits below the model; packets lacking :effort are refused;
+;; dispatches crossing the configured daily fleet spend ceiling are refused.
+;; NEEDS-KERNEL: model dispatch, delegate mode, :effort and spend-ceiling gates.
+(deftest-pending "efficiency-lessons-gate" "docs/SPEC-WORK.md:4439"
+    "expected=max-bytes-respected;unpoured!=O;tripped=reason;no-effort=refused;ceiling=refused"
+  "dispatch/effort/ceiling enforcement is not in slice 1")
+;; edit-never-fetches-a-link now lives in tests/acceptance.lisp over the
+;; node-edit link validation and renderer of src/node-verbs.lisp (nova-tools #362).
 
-;; edit-undo-preserves-later-work: an edit undone restores :before; the same
-;; undo after an intervening edit is refused conflict, both events standing.
-;; NEEDS-KERNEL: an undo verb with a :before field and conflict detection.
-(deftest-pending "edit-undo-preserves-later-work" "docs/SPEC-WORK.md:5355"
-    "expected=undo-restores-before;late-undo=conflict;both-events-stand"
-  "no undo verb in slice 1")
+;; edit-undo-preserves-later-work now lives in tests/acceptance.lisp over the
+;; node-edit and node-undo verbs of src/node-verbs.lisp (nova-tools #362).
 
 ;; endpoint-is-local-and-private: the session's directory created 0700 and its
 ;; socket 0600, both owned by the running account; a pre-existing directory or
@@ -1357,13 +1333,11 @@ asserts does not exist in slice 1."
 ;; ------------------------------------------------------------------
 ;; metadata-patches-preserve-intent   docs/SPEC-WORK.md:5347
 ;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: node add/edit verbs (keep/clear/set-empty/set-false/set-value
-;; round-trip distinctly; a malformed tag or wrong type refused, no event, no
-;; counter).
-;;(deftest "metadata-patches-preserve-intent" "docs/SPEC-WORK.md:5347"
-;;    "patches=round-trip,malformed=refused,counter=moved"
-;;  ;; keep, clear, set-empty, set-false and set-value on each field round-trip
-;;  ;; and digest distinctly.)
+;; The real replay now lives in tests/acceptance.lisp over the node-edit metadata
+;; patches of src/node-verbs.lisp (nova-tools #362): keep, clear, set-empty,
+;; set-false and set-value round-trip and digest distinctly, a malformed or
+;; wrong-type patch is refused with no event and no counter moved, and
+;; --version on a :feature is refused.
 
 ;; ------------------------------------------------------------------
 ;; move-keeps-every-count   docs/SPEC-WORK.md:5360

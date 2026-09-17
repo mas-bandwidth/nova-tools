@@ -1060,10 +1060,11 @@ rows, the worked acceptance's four ids (SPEC-WORK.md:5550)."
       (ok (null (search "7" line)) "no value printed: ~A" line))))
 
 (deftest "repo-only-at-the-root" "docs/SPEC-WORK.md:5341"
-    "expected=repo-at-root-unique;second-refused-repo-held-by;under-parent-refused"
+    "expected=repo-at-root-unique;second-refused-repo-held-by;under-parent-refused;edit-cannot-change"
   ;; SPEC-WORK.md:5792 -- `--repo` under the open root and `--type work-set`
   ;; accepted and unique; the same `--repo` again refused `repo held by <id>`;
-  ;; `--repo` under a parent refused `repo outside root`.
+  ;; `--repo` under a parent refused `repo outside root`; `node edit` cannot
+  ;; change it (node move has no repository field to change).
   (let ((k (make-kernel :state (make-seed-state '()))))
     (multiple-value-bind (okp line code)
         (node-add k :id "r1" :type :work-set :parent nil :repo "acme/x")
@@ -1079,7 +1080,15 @@ rows, the worked acceptance's four ids (SPEC-WORK.md:5550)."
         (node-add k :id "r3" :type :work-set :parent "r1" :repo "acme/y")
       (ok (null okp) "under-parent repo refused")
       (check-equal 1 code "under-parent exit")
-      (ok (search "repo outside root" line) "outside root named: ~A" line))))
+      (ok (search "repo outside root" line) "outside root named: ~A" line))
+    (multiple-value-bind (okp line code)
+        (node-edit k "r1" :changes (list :repo "acme/z") :request "edit-repo"
+                   :reason "change" :stamp "2026-09-17T00:04:00Z")
+      (ok (null okp) "a repo patch on node edit must refuse")
+      (check-equal 1 code "repo patch exit")
+      (ok (search "bad patch repo" line) "the repo patch is named: ~A" line))
+    (check-string= "acme/x" (node-repo (kernel-state k) "r1")
+                   "node edit left the repository unchanged")))
 
 (deftest "roadmap-has-one-creator" "docs/SPEC-WORK.md:5344"
     "expected=node-add--type-roadmap-exit-2-naming-roadmap-create;one-node-and-one-view-atomic"
