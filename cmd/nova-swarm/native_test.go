@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1440,4 +1441,148 @@ func TestNativeCaptureRefusesSymlink(t *testing.T) {
 	if string(raw) != "the bytes outside the wall\n" {
 		t.Errorf("the run wrote through the planted symlink; the file outside now holds:\n%s", raw)
 	}
+}
+
+// ISSUE #881 (a): a key is authorized for one model only, and the worker description pins
+// that one. `nova-swarm native --worker <file>` makes the description the source of the
+// model; a --model whose model half differs is refused, naming BOTH models on one line, at
+// exit 2, before any directory is made and before any child starts. Without --worker,
+// native keeps --model as today.
+func TestNativeRefusesAModelThatDiffersFromTheWorkerDescription(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	cardPath := filepath.Join(root, "card.md")
+	if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	desc := nativeWorkerDescription(t, "fake-model", "key_file")
+
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{"native", "--harness", bin, "--model", "fake/other-model",
+		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
+		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+	if rc != 2 {
+		t.Fatalf("a --model that differs from the description's is refused exit 2, got %d:\n%s%s", rc, stdout.String(), stderr.String())
+	}
+	// THE ONE LINE NAMES BOTH MODELS: the description's fake-model and the --model typed.
+	line := strings.TrimSpace(stderr.String())
+	mustContain(t, "the refusal", line, "fake/other-model")
+	mustContain(t, "the refusal", line, "fake-model")
+	if n := strings.Count(line, "\n") + 1; n != 1 {
+		t.Fatalf("the refusal names both models on ONE line, got %d:\n%s", n, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "NATIVE OK") {
+		t.Errorf("the refusal comes before any child runs:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(slot, "jobs")); err == nil {
+		t.Errorf("the refusal comes before any job directory is made:\n%s", stderr.String())
+	}
+}
+
+// ISSUE #881 (b): a description naming "secret": "<NAME>" takes the key from the
+// ENVIRONMENT -- `nova-secrets exec` set it around the run -- so native passes NAME through
+// to the harness's environment and writes NO auth file under the job. --auth remains only
+// the legacy shape's. The fake harness proves the key is present by length, never by value.
+func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	cardPath := filepath.Join(root, "card.md")
+	if err := os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	desc := nativeWorkerDescription(t, "fake-model", "secret")
+	t.Setenv("FAKE_KEY", fakeKey)
+
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
+		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+	if rc != 0 {
+		t.Fatalf("a secret worker runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
+	}
+	jobDir := filepath.Join(slot, "jobs", "card")
+	// THE HARNESS SAW THE NAME: the key reached it by environment, proven by length.
+	capture, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
+	if err != nil {
+		t.Fatalf("the run captured no harness output under the job: %v", err)
+	}
+	mustContain(t, "the harness capture", string(capture), "the key is present, length")
+	// NO AUTH FILE IS WRITTEN UNDER THE JOB: neither the carried copy nor the harness's own.
+	for _, p := range []string{
+		filepath.Join(slot, "data", "auth.json"),
+		filepath.Join(slot, "data", "opencode", "auth.json"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("a secret worker writes no auth file, but %s exists", p)
+		}
+	}
+	// The value is in no file under the slot, and in no line this tool printed.
+	if found := grepTree(t, slot, fakeKey); found != "" {
+		t.Errorf("the secret is at rest in a file under the slot: %s", found)
+	}
+	if strings.Contains(stdout.String()+stderr.String(), fakeKey) {
+		t.Error("the secret reached an event line")
+	}
+}
+
+// ISSUE #881 (b), the legacy half: `--auth` with a `--worker` description whose key is a
+// key_file still copies the provider secret to the data home -- and says so in ONE NOTE
+// line, because a description that named "secret": "<NAME>" would keep the key in the
+// environment instead.
+func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cardPath := filepath.Join(root, "card.md")
+	if err := os.WriteFile(cardPath, []byte("a card\nFAKE-FINDINGS 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	desc := nativeWorkerDescription(t, "fake-model", "key_file")
+
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		"--worker", desc, "--auth", auth, "--card", cardPath, "--slot", slot, "--root", root,
+		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+	if rc != 0 {
+		t.Fatalf("the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
+	}
+	mustContain(t, "the legacy note", stderr.String(), "NATIVE NOTE: --auth")
+	if _, err := os.Stat(filepath.Join(slot, "data", "auth.json")); err != nil {
+		t.Errorf("the legacy shape still copies the auth file to the data home: %v", err)
+	}
+}
+
+// nativeWorkerDescription writes a worker description the native run can be pointed at: the
+// model it pins, and the key named either by the legacy key_file (for --auth) or by the
+// `secret` variable a nova-secrets exec would deliver.
+func nativeWorkerDescription(t *testing.T, model, keyShape string) string {
+	t.Helper()
+	home := t.TempDir()
+	desc := map[string]any{
+		"name": "fake-1", "provider": "fake", "model": model,
+		"env_var": "FAKE_KEY", "usage": "opencode",
+		"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
+		"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
+	}
+	if keyShape == "secret" {
+		desc["secret"] = "FAKE_KEY"
+	} else {
+		key := filepath.Join(t.TempDir(), "key")
+		if err := os.WriteFile(key, []byte("FAKE_KEY="+fakeKey+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		desc["key_file"] = key
+	}
+	raw, err := json.MarshalIndent(desc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "worker.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
