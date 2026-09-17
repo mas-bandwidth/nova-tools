@@ -292,51 +292,17 @@ func countGated(dir, sub string) int {
 
 func countUngated(dir, sub string) int { return countCards(dir, sub) - countGated(dir, sub) }
 
-// collectUsage walks every bench for usage.tsv rows.
+// collectUsage reads every bench's usage.tsv rows through the per-root status index
+// (statusindex.go): the first measured row of each file, which is what the rate arithmetic
+// folds. A root is refreshed only for the jobs whose directory mtime moved (#1088).
 func collectUsage(roots []string) []usageRow {
 	var rows []usageRow
-	for _, r := range roots {
-		_ = filepath.WalkDir(r, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || d.Name() != "usage.tsv" {
-				return nil
-			}
-			if row, ok := parseUsage(path); ok {
-				rows = append(rows, row)
-			}
-			return nil
-		})
+	for _, f := range loadUsageFiles(roots) {
+		if row, ok := f.first(); ok {
+			rows = append(rows, row)
+		}
 	}
 	return rows
-}
-
-func parseUsage(path string) (usageRow, bool) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return usageRow{}, false
-	}
-	lines := strings.Split(string(raw), "\n")
-	for _, l := range lines {
-		if l == "" || strings.HasPrefix(l, "job") {
-			continue
-		}
-		f := strings.Split(l, "\t")
-		if len(f) < 13 {
-			continue
-		}
-		started, errS := time.Parse(time.RFC3339, f[2])
-		ended, errE := time.Parse(time.RFC3339, f[3])
-		if errS != nil || errE != nil {
-			continue
-		}
-		rc, _ := strconv.Atoi(f[4])
-		usd := 0.0
-		if f[12] != "-" {
-			usd, _ = strconv.ParseFloat(f[12], 64)
-		}
-		return usageRow{started: started, ended: ended, hasTime: true, rc: rc, usd: usd,
-			wall: ended.Sub(started).Seconds()}, true
-	}
-	return usageRow{}, false
 }
 
 type rateLine struct {

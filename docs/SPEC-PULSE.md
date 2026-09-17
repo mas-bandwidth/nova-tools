@@ -475,6 +475,19 @@ the queue, the second prints `STATUS STARVED` — status exits 2, so a wake
 fires on idle slots with waiting work; one tick alone never starves, and a
 tick with no pending or no free slots clears the marker.
 
+**status reads a per-root index, not every job file** (#1088). A root holding a full day —
+2,000 finished jobs across 40 slot dirs plus a pool, ~1,100 queue entries — made `status
+--oneline` walk every root and open every job's `usage.tsv` on every tick, over two minutes
+on a real root. `<root>/status-index.tsv` remembers, per job, the job directory's mtime, a
+class, a token count and the usage rows the two readers fold; `status` stats each indexed
+job directory and re-reads only the jobs whose directory mtime moved, so a warm tick opens
+no job file at all. `run` and `harvest` append a finished job to its root's index as they
+fold it, so a job is indexed before the next tick needs it; a root with no index is walked
+once and the index written, and a root that sat still is answered from the index alone. The
+RATE arithmetic still takes the first measured row of each file and a day's spend still sums
+every row, both now from the index. Replay:
+`status-oneline-two-thousand-job-root-is-fast`.
+
 **The verdict is the health metric** (Glenn, 2026-09-15, #549, #553). Contraction is tracked
 every tick, and the `CONTRACTION` line's `verdict` is `CONVERGING`, or `EXPANDING` when any one
 stream's ratio — cards `cut/done`, prs `opened/merged`, issues `filed/closed` — has been above

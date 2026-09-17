@@ -275,6 +275,7 @@ func (m *manager) handleNotes(lines []string) {
 // harvest disposes every launched card whose job has a RESULT.md: a read records its verdict,
 // a work card is pushed and opened as a PR, an abstain is triaged.
 func (m *manager) harvest() {
+	done := map[string][]string{} // root -> finished jobs, appended to the status index once
 	for _, card := range m.cardsIn("launched") {
 		job, root := m.jobFor(card)
 		if job == "" {
@@ -294,6 +295,12 @@ func (m *manager) harvest() {
 		default:
 			m.openPR(card, job, lines)
 		}
+		done[root] = append(done[root], job)
+	}
+	// The finished jobs join their roots' status indexes, so status answers the next tick
+	// without opening a job's usage.tsv (#1088).
+	for root, jobs := range done {
+		appendStatusIndex(root, jobs)
 	}
 }
 
