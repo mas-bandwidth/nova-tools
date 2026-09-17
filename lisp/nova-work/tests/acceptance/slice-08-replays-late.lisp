@@ -53,6 +53,7 @@
   (ok t "slice 1 carries no admission: NEEDS-KERNEL verifier + staged admission"))
 
 (deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5874"
+(deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5423"
     "expected=capture-R-while-R+1-accepted-and-the-bytes-describe-R"
   (let* ((records (list (state-record 1 "e1" "h1" '(:ev 1))
                         (state-record 2 "e2" "h2" '(:ev 2))))
