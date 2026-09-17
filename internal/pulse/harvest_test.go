@@ -279,6 +279,89 @@ func TestThenGatedOnVerdict(t *testing.T) {
 	}
 }
 
+// harvest-cuts-read-card-per-pr (SPEC-PULSE rule 13): every PR harvest opens
+// yields one row in next.tsv — template read, or tone for a seed page — carrying
+// the bench cost table's cheapest model that can hold it (local first), and the
+// relaunch cuts it first with that model.
+func TestHarvestCutsReadCardPerPR(t *testing.T) {
+	harvestOne := func(t *testing.T, label string) (root, next, cards, out string) {
+		t.Helper()
+		root, specs, arglog := setupPulse(t)
+		fakeGit(t, specs, arglog)
+		fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/416")
+		fakeTool(t, specs, "nova-pulse", fakeSpec{Log: arglog, Default: fakeRule{
+			Stdout: "PULSE OK id=p2 n=1 free-before=1 queued=0 batches=1 deadline=300",
+		}})
+
+		// The bench cost table beside --templates (runHarvest passes
+		// Templates=root): local is zero-cost and read-capable, so every read
+		// card routes there, never to a paid route.
+		writeTSV(t, filepath.Join(root, "benches.tsv"), []string{
+			"model\tlocal-zero\tgo-flat\tzen-metered\n",
+			"cost\tzero 0\tflat 0\tmetered 0.18\n",
+			"capability\tread\tcode\treplay\n",
+		})
+
+		addCard(t, root, label, "1", "flash", "RESULT "+label+" sha=aaa",
+			"RESULT "+label+" sha=aaa\nDONE\nBRANCH br1\nREPO owner/repo\n")
+
+		out, _ = runHarvest(t, root)
+		if !strings.Contains(out, "prs=1") {
+			t.Fatalf("want prs=1, got:\n%s", out)
+		}
+		raw, err := os.ReadFile(filepath.Join(root, "next.tsv"))
+		if err != nil {
+			t.Fatalf("harvest must cut a read card into next.tsv: %v", err)
+		}
+		next = string(raw)
+		raw, err = os.ReadFile(filepath.Join(root, "cards.tsv"))
+		if err != nil {
+			t.Fatalf("relaunch must cut cards.tsv: %v", err)
+		}
+		cards = string(raw)
+		return root, next, cards, out
+	}
+
+	// One card after #416: a normal PR yields one read row routed local-first.
+	_, next, cards, _ := harvestOne(t, "a")
+	rows := nonempty(next)
+	if len(rows) != 1 {
+		t.Fatalf("want one read card in next.tsv after #416, got %d:\n%s", len(rows), next)
+	}
+	p := strings.Split(rows[0], "\t")
+	if len(p) != 5 || p[0] != "pr" || p[1] != "owner/repo#416" || p[2] != "read" || p[4] != "read" {
+		t.Fatalf("next.tsv row = %q, want pr<TAB>owner/repo#416<TAB>read<TAB><title><TAB>read", rows[0])
+	}
+	if model := cardsModel(cards, "owner-repo-416"); model != "local-zero" {
+		t.Fatalf("read card model = %q, want local-zero (the bench cost table's cheapest capable route, local first)", model)
+	}
+
+	// A seed page yields the tone template, still routed local-first.
+	_, next, cards, _ = harvestOne(t, "seed-front")
+	rows = nonempty(next)
+	if len(rows) != 1 {
+		t.Fatalf("want one read card in next.tsv after #416, got %d:\n%s", len(rows), next)
+	}
+	p = strings.Split(rows[0], "\t")
+	if len(p) != 5 || p[4] != "tone" {
+		t.Fatalf("seed page next.tsv row = %q, want template tone", rows[0])
+	}
+	if model := cardsModel(cards, "owner-repo-416"); model != "local-zero" {
+		t.Fatalf("seed read card model = %q, want local-zero (the bench cost table's cheapest capable route, local first)", model)
+	}
+}
+
+// cardsModel returns the model column of the cards.tsv row with the given label.
+func cardsModel(cards, label string) string {
+	for _, r := range nonempty(cards) {
+		p := strings.Split(r, "\t")
+		if len(p) == 4 && p[0] == label {
+			return p[2]
+		}
+	}
+	return "<missing>"
+}
+
 func writeTSV(t *testing.T, path string, lines []string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "")), 0o644); err != nil {

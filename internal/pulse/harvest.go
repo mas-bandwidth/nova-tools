@@ -519,14 +519,20 @@ func appendRetry(root string, c CardRow, refusal string) {
 	fmt.Fprintf(f, "%s\t%s\t%s\n", c.Label, c.Card, refusal)
 }
 
-// appendNext appends a read card to next.tsv: pr<TAB>repo#n<TAB>read<TAB>title<TAB>read.
-func appendNext(root, repo string, pr int, label string) {
+// appendNext appends a read card to next.tsv: pr<TAB>repo#n<TAB>read<TAB>title<TAB>read,
+// or template tone for a seed page (SPEC-PULSE rule 13). A seed page is a title
+// naming one; the kind stays read either way.
+func appendNext(root, repo string, pr int, title string) {
+	tmpl := "read"
+	if strings.Contains(strings.ToLower(title), "seed") {
+		tmpl = "tone"
+	}
 	f, err := os.OpenFile(filepath.Join(root, "next.tsv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "pr\t%s#%d\tread\t%s\tread\n", repo, pr, label)
+	fmt.Fprintf(f, "pr\t%s#%d\tread\t%s\t%s\n", repo, pr, title, tmpl)
 }
 
 const childTimeout = 120 * time.Second

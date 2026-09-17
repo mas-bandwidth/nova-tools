@@ -175,7 +175,15 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     before the sources. The read card's model comes from the bench cost table, cheapest
     route that can hold it (the local model first, per the cost-row issue), so reads stay
     off the paid routes. Reads go by verb, through cards, like everything else; a PR nobody
-    is asked to read is a PR that waits.
+    is asked to read is a PR that waits. The machinery is literal: a title naming a seed
+    page cuts template `tone`, every other title cuts `read`, the kind staying `read`
+    either way; the relaunch routes the read card to the cost table's cheapest capable
+    route — `benches.tsv` beside `--templates`, or `routes.tsv` when that is what is
+    there, one column per model with a `cost` row (`zero|flat|metered` plus `usd per
+    Mtok`) and a `capability` row, `zero` beating `flat` beating `metered` and ties broken
+    by `usd per Mtok` — so the zero-cost local model wins; with neither file present the
+    relaunch keeps the kind-only route it has always written. Replay
+    `harvest-cuts-read-card-per-pr` holds one card after #416.
 14. **An abstain is requeued at most once, under a new card number, then escalated.** For
     every `ABSTAIN` row and every card with no `RESULT.md`, `harvest` counts it in
     `abstain=<n>` and triages it by its reason token as the manager does (#587): a first
