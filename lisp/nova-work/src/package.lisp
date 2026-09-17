@@ -262,7 +262,12 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+    ;; closed-history / clip / new-verb replays (card 8603)
+    #:ask-state-as-of
+    #:admit-record
+    #:clip
+    #:split-index-page))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)
