@@ -124,6 +124,11 @@ type Sidecar struct {
 	Class       string   `json:"class,omitempty"`
 	ReplacedBy  string   `json:"replaced_by,omitempty"`
 	Verdict     *Verdict `json:"verdict,omitempty"`
+	// THE ROUTE AND ITS CAP TRAVEL WITH THE TASK (issue #917), so `status` can count live
+	// tasks per route without loading a worker description it was not given.
+	Route       string `json:"route,omitempty"`
+	MaxInflight int    `json:"max_inflight,omitempty"`
+	Stalled     int    `json:"stalled,omitempty"`
 }
 
 // BudgetWord is what a RUN line prints for this task's token budget ceiling.

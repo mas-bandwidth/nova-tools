@@ -43,7 +43,7 @@ usage:
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
-  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
+  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox] [--slots-store <dir>]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
   nova-swarm status    --pool <dir> [--max <n>]
   nova-swarm stop      --pool <dir>
@@ -579,6 +579,10 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// ONE loud workaround, which a person types and no environment variable can produce.
 	sandboxPath := f.fs.String("sandbox", "", "")
 	noSandbox := f.fs.Bool("no-sandbox", false, "")
+	// THE BENCH SLOT STORE (issue #917): when several dispatchers share one bench, each
+	// names the store whose leases carry a route, so the per-route ceiling is counted across
+	// them and not once per pool.
+	slotsStore := f.fs.String("slots-store", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -688,6 +692,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		NoAutoRetry:   *noAutoRetry,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
 		Supervisor: self, WorkerFile: *worker, Sandbox: wall, NoSandbox: *noSandbox,
+		SlotsStore: *slotsStore,
 	})
 }
 
@@ -792,6 +797,10 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	list.More()
+	// THE ROUTE'S OWN LINE (issue #917): STATUS ROUTE <route> inflight=<n> cap=<c>.
+	for _, r := range swarm.RouteStatus(p) {
+		fmt.Fprintf(stdout, "STATUS ROUTE %s inflight=%d cap=%d\n", oneline.Field(r.Route), r.Inflight, r.Cap)
+	}
 	numbers, bad, _ := p.SlotNumbers()
 	quarantined := 0
 	for _, n := range numbers {

@@ -47,6 +47,10 @@ type RunInput struct {
 	// once per job. The two are exclusive and the verb refuses both at once.
 	Sandbox   string
 	NoSandbox bool
+	// SlotsStore is a bench's slot-store directory (issue #917). When it is named, the
+	// in-flight count for a route also counts the leases under it whose label carries the
+	// route, so two dispatchers on one bench share one ceiling. Empty means this pool alone.
+	SlotsStore string
 }
 
 // WorkerCap is the ceiling on --workers (Glenn, 2026-09-10). A request above it is a
@@ -204,8 +208,17 @@ func Run(in RunInput) int {
 			dest := destinationFor(end, fin.Class, rec.RC)
 			_ = p.WriteSidecar(Running, sc)
 			requeued := false
-			if end == EndKilled && !in.NoAutoRetry {
-				requeued = in.requeue(sc, now())
+			if !in.NoAutoRetry {
+				switch end {
+				case EndKilled:
+					requeued = in.requeue(sc, now())
+				case EndStall:
+					// A stalled job a dead dispatcher left behind gets the same one retry
+					// as the live path, and only when the route is below its cap (#917).
+					if in.routeBelowCap(sc) {
+						requeued = in.requeueStall(sc, now())
+					}
+				}
 			}
 			_ = p.Claim(sc.ID, Running, dest)
 			// A DATA HOME THAT MAY STILL HAVE A WRITER IN IT IS NOT FREE: rule 11's
@@ -340,6 +353,12 @@ func Run(in RunInput) int {
 	for {
 		// Start what can be started, while the dispatcher's own deadline is ahead of us.
 		for !haltAdmissions && !now().After(deadline) && !p.Stopped() && len(watching) < in.Workers {
+			// THE PER-ROUTE CEILING (#917), before a task is even claimed: a route at its
+			// cap starts nothing, so its live tasks stay under the number the provider can
+			// answer.
+			if !in.routeBelowCap(Sidecar{}) {
+				break
+			}
 			slot, ok := freeSlot(p, in.Workers, quarantined, retired, watching)
 			if !ok {
 				break
@@ -576,6 +595,9 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 			oneline.Escape(oneline.Cap(reason, oneline.TailBytes))), launchRefused
 	}
 	sc.Job, sc.Slot, sc.Started = jobDir, slot, Stamp(in.Now())
+	// THE ROUTE AND ITS CAP RIDE THE SIDECAR (issue #917): `status` counts live tasks per
+	// route from what the pool already holds, without a worker description it was not given.
+	sc.Route, sc.MaxInflight = in.Worker.RouteName(), in.Worker.MaxInflight
 	_ = p.WriteSidecar(Running, sc)
 
 	// The SUPERVISOR is the process that samples usage, so the interval has to reach it:

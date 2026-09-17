@@ -114,7 +114,24 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
    silent past its deadline is reaped and its job is re-queued once by default,
    with `requeued=1` in the new task's sidecar; `run --no-auto-retry` instead
    finalizes that attempt without an automatic descendant. A job reaped a second
-   time goes to `failed/` with `reaped=2` and is not re-queued again.
+    time goes to `failed/` with `reaped=2` and is not re-queued again.
+
+    **A per-route in-flight cap and a stall detector guard the provider (issue
+    #917).** A worker description may name a `route` (default
+    `provider/model`) and a `max_inflight` count, and a route at its cap starts
+    nothing. `run` counts the live tasks on a route across the pools it can see
+    — its own pool first, and, when a bench names `--slots-store`, the leases
+    under that store whose label carries the route — and never launches a task
+    while the count is at or above `max_inflight`; `status` prints one line per
+    route, `STATUS ROUTE <route> inflight=<n> cap=<c>`. And a harness that stops
+    writing its log is over, whatever its process is doing: when
+    `<job>/harness.log` has not grown for the description's `stall_after` (a
+    duration, default 4m) the supervisor reaps the job's group, records
+    `end=stall` with the silence and the last log line, and prints `STALL
+    task=<id> silent=<s> last=<line>`; a stalled task is re-queued once, exactly
+    as a reap is, and only when its route is below its cap. (2026-09-17: 60
+    cards froze mid-tool-call for 13 minutes while the pool still counted them
+    running, and one key queued forever above 30-40 concurrent requests.)
 8. **Results are counted per batch, on one line, and completion is evidence
    separate from the finding count.** `triage` classifies every report as
    `ok`, `clean`, `plan-only` or `no-result`, and prints one `TRIAGE BATCH`
@@ -172,7 +189,8 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `usd`. `attempt` is `1` for a fresh job and `2` for the one automatic
     re-queue (rule 7), `from` is the earlier job id or `-`, `started` and
     `ended` are UTC stamps the tool wrote, `end` is one of `done`, `killed`,
-    `budget`, `budget-unverifiable` (rule 13), `violation`, `failed`, `unknown`
+    `budget`, `budget-unverifiable` (rule 13), `stall` (the harness log stopped
+    growing, rule 7), `violation`, `failed`, `unknown`
     (no completion evidence, rule
     17), `launch-failed` (rule 18), and `rc` is the worker's exit code, `-`
     for `unknown` and `launch-failed`. A

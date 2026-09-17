@@ -195,6 +195,11 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		// `end=provider` and the provider's ref, and no fourth launch is spent on it.
 		in.waitProviderBackoff(sc.Requeued)
 		requeued = in.retryProvider(sc, now)
+	case end == EndStall && !in.NoAutoRetry && in.routeBelowCap(sc):
+		// A STALLED TASK IS REQUEUED ONCE, AND NEVER WHILE THE ROUTE IS AT ITS CAP (#917):
+		// requeuing into a route that is already saturated recreates the queue the cap
+		// exists to prevent, so the retry waits for room rather than being immediate.
+		requeued = in.requeueStall(sc, now)
 	case limited && sc.Requeued < 1 && !in.NoAutoRetry:
 		in.waitBackoff(r.jobDir)
 		requeued = in.retry429(sc, now)
@@ -278,6 +283,11 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 			report = "WALL task=" + oneline.Field(sc.ID) + " path=" + Dash
 		}
 		return report, EndWall, dest
+	case end == EndStall:
+		// THE REPORT LINE #917 ASKS FOR, verbatim: the task, how long it was silent, and
+		// the last thing the harness said, so a person reads the stall without a log the
+		// next `reclaim` deletes.
+		return fmt.Sprintf("STALL task=%s silent=%s last=%s", oneline.Field(sc.ID), oneline.Field(rec.Silent), oneline.Escape(rec.Last)), EndStall, dest
 	case report.Class == ClassMalformed:
 		return fmt.Sprintf("RUN MALFORMED id=%s slot=%d line=%d dest=failed",
 			oneline.Field(sc.ID), r.slot, report.MalformedLine), EndFailed, dest
@@ -320,7 +330,7 @@ func rateLimitedOutcome(inLog bool, end string, rc int) bool {
 // not the other is how a job's findings go missing.
 func reapEnd(end string) bool {
 	switch end {
-	case EndKilled, EndBudget, EndUnverifiable:
+	case EndKilled, EndBudget, EndUnverifiable, EndStall:
 		return true
 	}
 	return false
@@ -374,7 +384,7 @@ func survivorsSeen(aliveBefore, survivedTheReap bool) int {
 func destinationFor(end, class string, rc int) string {
 	switch {
 	case end == EndViolation, end == EndKilled, end == EndUnverifiable, end == EndUnknown, end == EndFailed,
-		end == EndInputLimit, end == EndProvider, end == EndWall:
+		end == EndInputLimit, end == EndProvider, end == EndWall, end == EndStall:
 		return Failed
 	case class == ClassMalformed, class == ClassPlanOnly, class == ClassNoResult:
 		return Failed

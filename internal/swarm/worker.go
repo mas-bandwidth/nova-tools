@@ -89,6 +89,40 @@ type Worker struct {
 	// DefaultLaunchGrace (15s). A slow failure -- one that takes longer than this -- is
 	// a real run that failed and is never retried.
 	LaunchGrace string `json:"launch_grace,omitempty"`
+
+	// MAX_INFLIGHT and ROUTE (issue #917) are the per-route concurrency ceiling. A route is
+	// the provider/model a task spends against, and above ~30-40 concurrent requests one key
+	// queues forever: a dispatcher that never launches more than `max_inflight` tasks for a
+	// route keeps the queue where the provider answers. `route` defaults to provider/model;
+	// zero `max_inflight` is no ceiling.
+	MaxInflight int    `json:"max_inflight,omitempty"`
+	Route       string `json:"route,omitempty"`
+
+	// STALL_AFTER (issue #917): a harness that stops writing its log is over, whatever its
+	// process is doing. When the log has not grown for this long the supervisor ends the
+	// job with `end=stall` and names the last line it said. It defaults to
+	// DefaultStallAfter, so a description that names nothing still has a stall bound.
+	StallAfter string `json:"stall_after,omitempty"`
+}
+
+// DefaultStallAfter is the stall bound a description that names none runs under.
+const DefaultStallAfter = 4 * time.Minute
+
+// RouteName is the route a task under this description spends against: `route` where the
+// description names one, and the provider and model otherwise.
+func (w Worker) RouteName() string {
+	if r := strings.TrimSpace(w.Route); r != "" {
+		return r
+	}
+	return w.Provider + "/" + w.Model
+}
+
+// StallAfterDuration is the stall bound, the description's own or the default.
+func (w Worker) StallAfterDuration() time.Duration {
+	if d, err := time.ParseDuration(w.StallAfter); err == nil && d > 0 {
+		return d
+	}
+	return DefaultStallAfter
 }
 
 // The usage sources a description may declare (rule 13). There are two.
@@ -116,7 +150,7 @@ func LoadWorker(path string) (Worker, []error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&w); err != nil {
-		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, class, input_limit_phrases, launch_grace", path, err)}
+		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, secret, usage, harness, harness_args, worker_dir, deadline, board, max_turns, max_cache_read, read_roots, class, input_limit_phrases, launch_grace, max_inflight, route, stall_after", path, err)}
 	}
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
@@ -304,6 +338,14 @@ func LoadWorker(path string) (Worker, []error) {
 	if w.LaunchGrace != "" {
 		if d, err := time.ParseDuration(w.LaunchGrace); err != nil || d <= 0 {
 			problems = append(problems, fmt.Errorf("%s: launch_grace wants a positive duration such as 15s, got %q", path, w.LaunchGrace))
+		}
+	}
+	if w.MaxInflight < 0 {
+		problems = append(problems, fmt.Errorf("%s: max_inflight wants a count of tasks that may run at once for this route, such as 4; zero means no ceiling, and %d is not a count", path, w.MaxInflight))
+	}
+	if w.StallAfter != "" {
+		if _, err := time.ParseDuration(w.StallAfter); err != nil {
+			problems = append(problems, fmt.Errorf("%s: stall_after wants a duration such as 4m, got %q", path, w.StallAfter))
 		}
 	}
 	return w, problems
