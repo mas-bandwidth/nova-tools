@@ -482,9 +482,13 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `<job>/exit.json` carries this launch's `nonce`), with the job's own
     deadline, measured from its start, as the outer bound — and a job that
     ends with its slot file present and unreadable has that slot **retired
-    for the rest of the run**, never freed: what a dispatcher could not read
-    it cannot call free, which is the answer rule 17 gives the same file at
-    start-up; (6) **finalization** — when the
+    for the rest of the run**, never freed — UNLESS the job's own
+    `<job>/exit.json` carries this launch's `nonce` and `attest`, the
+    supervisor's completion evidence, in which case the end is confirmed and
+    the slot is freed: an unreadable file is an unanswered question and the
+    observable answers it, while a file the dispatcher could not read and
+    whose job left no such evidence it cannot call free, which is the answer
+    rule 17 gives the same file at start-up; (6) **finalization** — when the
     harness exits, the supervisor writes `<job>/exit.json` with `{rc, signal,
     ended, survivors, nonce}` through `.tmp` and rename, **the durable completion
     evidence** — an `exit.json` whose `nonce` is not the slot file's is not
