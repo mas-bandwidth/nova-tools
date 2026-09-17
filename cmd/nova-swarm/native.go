@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -73,13 +74,41 @@ type nativeRunResult struct {
 	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
 	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
+	stop         string            // deadline | terminated: why the machinery ended a killed run, "" when the child ended it
 }
+
+// nativeWaitDelay bounds how long Wait may keep waiting for the run's capture pipes
+// after the child has exited or the wall has fired (issue #1129). The process-group kill
+// below closes the pipes at once in the ordinary case; this is the belt beside it, so a
+// harness that escaped the group holding the pipe cannot hang the run a second time.
+const nativeWaitDelay = 2 * time.Second
 
 // nativeRun executes one frozen configuration and returns the recorded result and
 // the command's exit code: 0 the child ran, 2 a refusal (one REFUSED line on
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
 func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
+	// THE WALL, THE DEADLINE AND A SIGNAL ARE ONE STOP (issue #1129). SIGTERM -- a
+	// manager stopping the run -- and SIGALRM -- the outer `alarm` an adoption pass wraps
+	// a probe in -- cancel runCtx exactly as the per-attempt deadline does, so each ends
+	// the run with the harness's whole group killed rather than being ignored while the
+	// harness hangs on a queued provider request. The reason the stop took is recorded on
+	// a channel and carried on the NATIVE OK line and into the job's abstain.
+	runCtx, stopRun := context.WithCancel(context.Background())
+	defer stopRun()
+	termCh := make(chan os.Signal, 1)
+	signal.Notify(termCh, nativeSignals()...)
+	defer signal.Stop(termCh)
+	stopReason := make(chan string, 1)
+	go func() {
+		select {
+		case s := <-termCh:
+			stopReason <- nativeSignalReason(s)
+			stopRun()
+		case <-runCtx.Done():
+		}
+	}()
+
 	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute AND symlink-resolved at
 	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
 	// `--write x/...`), and so the run's own paths cannot disagree with each other: on darwin
@@ -388,10 +417,24 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if cfg.worker != nil {
 		grace = swarm.LaunchGrace(*cfg.worker)
 	}
+	killed := false
 	for attempt := 1; ; attempt++ {
 		before := fileSize(outLog)
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.deadline)
+		ctx, cancel := context.WithTimeout(runCtx, cfg.deadline)
 		cmd := exec.CommandContext(ctx, runPath, runArgv...)
+		// THE HARNESS'S WHOLE GROUP DIES, NOT THE WALL ALONE (issue #1129). The wall
+		// runs the harness as its child; a kill that reached only the wall left the
+		// harness alive and holding this run's capture pipe, so Wait never returned. The
+		// child leads its own group and Cancel kills the group.
+		nativeOwnGroup(cmd)
+		cmd.WaitDelay = nativeWaitDelay
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return os.ErrProcessDone
+			}
+			swarm.KillGroup(cmd.Process.Pid, "")
+			return cmd.Process.Kill()
+		}
 		cmd.Env = childEnv
 		cmd.Dir = jobDir
 		cmd.Stdin = devNull
@@ -400,6 +443,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		attemptStart := time.Now()
 		runErr := cmd.Run()
 		elapsed := time.Since(attemptStart)
+		// The run was ended by the wall or a signal, not by the child: the context is
+		// done and the child did not end cleanly. A child that finished as the wall
+		// fired ended on its own and keeps its own outcome.
+		killed = ctx.Err() != nil && runErr != nil
 		cancel()
 		res.wallSeconds += elapsed.Seconds()
 		switch ee := runErr.(type) {
@@ -421,7 +468,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
 		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, res.end, errOut)
 		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
-		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
+		if !killed && launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
 			continue
 		}
@@ -476,6 +523,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		res.end = swarm.EndWall
 	}
 
+	// WHY THE MACHINERY ENDED THE RUN (issue #1129): the deadline, or the one signal
+	// that arrived, if a signal arrived at all. The channel's value was sent before the
+	// run context was cancelled, so a read after the loop cannot miss it.
+	if killed {
+		res.stop = "deadline"
+		select {
+		case r := <-stopReason:
+			res.stop = r
+		default:
+		}
+	}
+
 	if wall != "" {
 		backend, cwd, reason := wallNamed(wallOut.String())
 		if reason != "" {
@@ -489,7 +548,42 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 	}
 
+	// THE ABSTAIN THE MACHINERY OWES (issue #1129). When the wall or a signal ended a
+	// run whose card published nothing, the outcome is recorded where every later
+	// reader looks for one -- the job's RESULT.md -- as the card's own abstain is: the
+	// contract line, then ABSTAIN with the one reason token. A result the card DID
+	// publish is never overwritten, because a late result is the card's, not ours.
+	if killed {
+		if err := writeNativeAbstain(jobDir, cfg.card, res.stop); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the %s abstain %s could not be written: %s\n",
+				oneline.Field(res.stop), oneline.Field(filepath.Join(jobDir, "RESULT.md")), oneline.Escape(err.Error()))
+		}
+	}
+
 	return res, 0
+}
+
+// writeNativeAbstain writes the abstain a killed run owes its caller: line 1 is the
+// card's contract line and line 2 is `ABSTAIN reason=<why>`, where why is `deadline` or
+// `terminated`. It is written only when the job holds no RESULT.md -- the card's own
+// result, if it published one, wins.
+func writeNativeAbstain(jobDir string, card []byte, why string) error {
+	path := filepath.Join(jobDir, "RESULT.md")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	body := nativeContractLine(card) + "\nABSTAIN reason=" + why + "\n"
+	return os.WriteFile(path, []byte(body), 0o644)
+}
+
+// nativeContractLine is line 1 of the card text, the contract line the RESULT.md compares
+// against, with a trailing CR stripped so a CRLF card does not carry its carriage return
+// into the result.
+func nativeContractLine(card []byte) string {
+	if i := bytes.IndexByte(card, '\n'); i >= 0 {
+		card = card[:i]
+	}
+	return strings.TrimRight(string(card), "\r")
 }
 
 // fileSize is a path's size, or 0 when it cannot be measured: the mark the retry loop reads

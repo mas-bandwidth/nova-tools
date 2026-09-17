@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -25,7 +27,13 @@ func main() {
 	// test 11 was a RACE against a child that was already dying, and under three parallel
 	// benches it lost and the violation went unseen.
 	if os.Getenv("FAKE_BACKGROUND_CHILD") == "1" {
-		time.Sleep(60 * time.Second)
+		secs := 60
+		if v := os.Getenv("FAKE_BACKGROUND_CHILD_SECONDS"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				secs = n
+			}
+		}
+		time.Sleep(time.Duration(secs) * time.Second)
 		return
 	}
 	if len(os.Args) < 2 {
@@ -253,6 +261,19 @@ func main() {
 				[]byte(strconv.Itoa(child.Process.Pid)+"\n"), 0o644)
 		}
 	}
+	// FAKE-BACKGROUND-SLEEP is FAKE-BACKGROUND with a caller-chosen bound (issue #1129): a
+	// deadline-kill test needs a grandchild that is clearly alive when the wall fires but
+	// does not leave a 60 s corpse behind, and a short sleep keeps the red case from waiting
+	// a full minute on the child the kill was supposed to reap.
+	if n, ok := number(prompt, "FAKE-BACKGROUND-SLEEP"); ok {
+		child := exec.Command(os.Args[0], "--background-child")
+		child.Env = append(os.Environ(), "FAKE_BACKGROUND_CHILD=1", "FAKE_BACKGROUND_CHILD_SECONDS="+strconv.Itoa(n))
+		_ = child.Start()
+		if child.Process != nil && job != "" {
+			_ = os.WriteFile(filepath.Join(job, "background.pid"),
+				[]byte(strconv.Itoa(child.Process.Pid)+"\n"), 0o644)
+		}
+	}
 	// The other half of rule 11: a worker that forks and WAITS for its child leaves nothing
 	// alive in its group, and is no violation at all.
 	if _, ok := directive(prompt, "FAKE-FOREGROUND-CHILD"); ok && os.Getenv("FAKE_FOREGROUND_CHILD") != "1" {
@@ -262,6 +283,14 @@ func main() {
 	}
 	if os.Getenv("FAKE_FOREGROUND_CHILD") == "1" {
 		return
+	}
+	// FAKE-IGNORE-TERM is THE HARD-CASE CHILD (issue #1129): a harness that declines the
+	// polite SIGTERM and keeps running. The deadline must still kill it -- the wall is a
+	// SIGKILL of the whole group, never a negotiation -- so a run whose deadline is its
+	// only stop does not hang on a stubborn harness. Installed before FAKE-SLEEP so the
+	// sleep happens with the signal already ignored.
+	if _, ok := directive(prompt, "FAKE-IGNORE-TERM"); ok {
+		signal.Ignore(syscall.SIGTERM)
 	}
 	if d, ok := duration(prompt, "FAKE-SLEEP"); ok {
 		time.Sleep(d)

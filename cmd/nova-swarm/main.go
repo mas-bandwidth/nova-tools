@@ -1529,8 +1529,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
-	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s\n",
-		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState))
+	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s%s\n",
+		oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), stopSuffix(res.stop))
 	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.
 	if res.wallReport != "" {
@@ -1641,6 +1641,17 @@ func usageSuffix(reason, path string) string {
 		return ""
 	}
 	return " usage=none reason=" + oneline.Field(reason) + " path=" + oneline.Field(path)
+}
+
+// stopSuffix names the one ending the machinery brought, never the child: ` reason=deadline`
+// when the run's own wall fired, and ` reason=terminated` when a manager's SIGTERM ended it
+// (issue #1129, after #779). It is the abstain's reason on the wire, so a coordinator knows
+// the run was stopped from outside and does not read a silent exit as a spent failure.
+func stopSuffix(reason string) string {
+	if strings.TrimSpace(reason) == "" {
+		return ""
+	}
+	return " reason=" + oneline.Field(reason)
 }
 
 func orElse(a, b string) string {

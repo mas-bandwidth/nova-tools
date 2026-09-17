@@ -915,6 +915,20 @@ pin. `--no-shared-caches` restores the old behaviour exactly, with no names set 
 caches under `HOME`, for a bench that wants one slot's caches isolated; the slot's data home
 layout is otherwise untouched.
 
+**The wall, the deadline and a signal are one stop, and it takes the harness's whole
+group** (issue #1129). `native --deadline N` ends the run at N seconds whatever the
+harness is doing: the child leads its own process group, so the kill reaches the wall
+AND the harness the wall started, never the wall alone -- a probe whose Muse request
+queued at the provider lived 2h28m past its 360s wall because killing the wall left the
+harness holding the run's capture pipe and `Wait` never returned. The run honours
+`SIGTERM` and `SIGALRM` the same way, so the outer `alarm` an adoption pass wraps a probe
+in ends it too. At the stop, when the card has published no `RESULT.md`, the run writes
+the abstain with reason `deadline` -- line 1 the card's contract line, line 2 `ABSTAIN
+reason=deadline` -- carries `reason=deadline` on its `NATIVE OK` line, and exits 1; a
+manager's `SIGTERM` is the same ending named `reason=terminated` (after #779). A result
+the card did publish is never overwritten: a late result is the card's, and the run
+records it as such.
+
 **The harness's own fence is configured by the run, never left to its
 defaults** (issue #644). OpenCode asks before a tool touches a path it calls
 external, and a `run` with no terminal answers every such question by rejecting
