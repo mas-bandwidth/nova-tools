@@ -25,12 +25,23 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
 func main() {
+	// The reader closes the pipe the moment its byte budget is spent; that is the
+	// whole point of the fixture. Without ignoring SIGPIPE, writing to a closed
+	// stdout would kill this process on the spot -- before its final byte count
+	// is recorded -- and leave the count at whatever intermediate value the last
+	// periodic record wrote. Ignoring it turns the broken pipe into an ordinary
+	// EPIPE, which emit already treats as "the reader went away", so the final
+	// count is written deterministically and the reader's Wait is a real sync
+	// point for it (#370).
+	signal.Ignore(syscall.SIGPIPE)
 	args := os.Args[1:]
 	has := func(want string) bool {
 		for _, a := range args {
