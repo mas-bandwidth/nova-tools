@@ -4650,6 +4650,37 @@ refresh is a meaningful config change with its source and effective time and nev
 a historical receipt** (replays `pricing-is-pinned-by-revision`, `unknown-price-is-not-zero`,
 `subscription-is-not-free-reference-cost`, `local-tokens-cost-zero-api`).
 
+**The daily report is a blended virtual cost per token, and routing lives inside it.** The day's
+**blended virtual cost per token** is the sum of the configured weighted costs divided by the
+corresponding **non-overlapping counted tokens**, and the report states its token categories, its
+scale, its **priced coverage** and its denominator; unsupported or unpriced usage stays visible and
+is **never summed as zero**, and actual monetary cost is reported separately when the evidence
+supports it. **Both primary goals are reported side by side and neither replaces the other**:
+**the highest-quality useful work with the fewest tokens** and **the lowest average cost per token**.
+The daily total tokens, the total spend, quality, elapsed time and completed scope are printed
+beside the average, so burning cheap tokens for useless work cannot manufacture an apparent
+improvement, and a per-task cost is diagnostic rather than a productivity denominator across
+differently sized changes. **The measurement covers the whole operational unit across every model
+involved**: preparation, coordination, implementation, independent review, correction, retries,
+abandoned work and handoffs are counted once each; **mandatory review** is distinguished from
+**extra rework**; and where a stage's share is unknown the **stage-attribution gap** is preserved
+rather than filled by a guess.
+
+**Eligible work is routed on the whole route, never on a builder's token price.** A route is
+priced only from the eligible routes `applicable` returned, using **versioned, configurable
+token-category weights** and **dated monetary profiles** with their explicit uncertainty; no model
+ordering or price is hard-coded, and an unknown-cost route never wins merely because its estimate
+is empty. **Wall-clock time is priority #3**, subordinate to quality, total tokens and cost:
+dependency-ready work is parallelised only when quality, cost and total tokens are preserved, and
+an **urgency mode records** its reason and scope and can focus ready capacity without inverting
+this order or weakening permissions, safety or quality. **A shared account is a shared budget**:
+its quota, rate and concurrency limits are counted once across the pools that share them, capacity
+is **reserved for coordination, recovery and essential review**, and a cheap-looking job that would
+exhaust a shared account and take its coordinator offline is refused. **Unknown remaining quota is
+not unlimited capacity**, and the **significant-cost thresholds** such a refusal and an
+expensive-route exception use are configured rather than invented. *(nova-tools#175; the future
+derived view is [PROPOSAL-SCHEDULING-COST.md](PROPOSAL-SCHEDULING-COST.md).)*
+
 **These facts inform a coordinator and grant nothing.** They combine with availability, actual free
 capacity, prerequisites, agreed limits and cost policy to prefer a capable economical route by
 **total operational cost for accepted work, reviews and rework included, never token price alone**,
