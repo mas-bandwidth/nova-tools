@@ -179,9 +179,8 @@
 ;; stop-is-a-hold-not-a-cancel now lives in slice-09-replays-holds.lisp, with
 ;; the execution-control kernel it needed.
 
-(needs-kernel "subscription-is-not-free-reference-cost" "docs/SPEC-WORK.md:5288"
-  "the three cost values (subscription, reference, local api) kept separately labelled"
-  "SUBSCRIPTION-COST")
+;; subscription-is-not-free-reference-cost now runs in
+;; lisp/nova-work/tests/replays-8650.lisp (nova-tools #362).
 
 ;; unchanged-config-is-one-bounded-answer: a request naming a friend and its
 ;; last-known config hash and revision answers `UNCHANGED` with that identity in
@@ -363,9 +362,8 @@
   "reversible edits reversed, history preserved, redo only against valid preconditions; a conflict explicit and mutating nothing"
   "REDO")
 
-(needs-kernel "unknown-price-is-not-zero" "docs/SPEC-WORK.md:5287"
-  "a missing pricing dimension reported unknown, never read as a zero historical receipt"
-  "PRICE-LOOKUP")
+;; unknown-price-is-not-zero now runs in
+;; lisp/nova-work/tests/replays-8651.lisp (nova-tools #362).
 
 (needs-kernel "unrelated-receipts-stay-reusable" "docs/SPEC-WORK.md:5301"
   "a changed source or criterion preserving the historic tick at its pinned revision while unrelated receipts stay untouched"
