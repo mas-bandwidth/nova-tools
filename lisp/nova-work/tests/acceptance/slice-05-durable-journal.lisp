@@ -691,14 +691,6 @@
 ;; (deftest "four-facts-four-verbs" "docs/SPEC-WORK.md:3398"
 ;;     "expected=dispatch-delivery-accepted-ownership-stay-apart;nothing-inferred;nothing-launched")
 
-;; NEEDS-KERNEL: acknowledge/decline admit only behind an operator-configured verifier.
-;; (deftest "a-receipt-needs-a-verifier" "docs/SPEC-WORK.md:3413"
-;;     "expected=unverified-provenance-refused;state-unchanged;no-bus-body-authority")
-
-;; NEEDS-KERNEL: staged verifier/provenance/payload inputs run outside the mutation loop; stale/failed stage writes nothing.
-;; (deftest "staged-admission-refuses" "docs/SPEC-WORK.md:3414"
-;;     "expected=stale-or-failed-stage-writes-nothing")
-
 ;; NEEDS-KERNEL: an admitted offer writes :effect :dispatched, a pending-offer entry, and one (offer,attempt) reservation.
 ;; (deftest "offer-writes-intent-and-a-reservation" "docs/SPEC-WORK.md:3439"
 ;;     "expected=:effect-:dispatched;pending-offer;reservation-keyed-by-offer-attempt;no-lease")
@@ -770,11 +762,6 @@
 ;; NEEDS-KERNEL: manifest exchange and roster validation; no config manifest exists yet.
 ;; a-partial-manifest-is-refused (SPEC-WORK.md:5285) --- the exchange bounded, validated and
 ;; atomic, no roster, no prose repeated per poll, no secret in a manifest.
-
-;; NEEDS-KERNEL: verifier/payload reader and staged admission; no verify verb exists yet.
-;; a-receipt-needs-a-verifier (SPEC-WORK.md:5234) --- a copied note and an --as <recipient>
-;; with no verifier result refused with no canonical write; a verifier returning after a
-;; conflicting revision or failing validation writes no reservation, receipt, lease or W change.
 
 ;; NEEDS-KERNEL: attempt/usage attribution records; no attempt model exists yet.
 ;; a-retry-does-not-overwrite-its-attempt (SPEC-WORK.md:5222) --- unknown staying unknown,
