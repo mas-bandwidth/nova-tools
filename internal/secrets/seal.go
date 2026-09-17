@@ -137,7 +137,7 @@ func RunSeal(opts SealOptions) (string, error) {
 	}
 	plaintext := sealApply(existing, opts.Name, value)
 
-	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, seatFile, plaintext)
+	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, plaintext)
 	if err != nil {
 		return "", err
 	}
@@ -336,15 +336,21 @@ func sealDecrypt(run execCommand, sopsPath, keyPath, filePath string) ([]byte, e
 
 // sealEncrypt hands the plaintext to sops on stdin, with the seat file named only through
 // --filename-override so the config's own rule picks the recipients.
-func sealEncrypt(run execCommand, sopsPath, keyPath, seatFile string, plaintext []byte) ([]byte, error) {
+//
+// Two things real sops insists on, which a lenient fake once hid: it needs a file
+// argument even when the bytes come from stdin (/dev/stdin; without it sops exits 100,
+// "no file specified"), and it finds .sops.yaml from its working directory, whose
+// path_regex rules are relative to the store. So the child runs inside the store and
+// the verb works from any directory the caller happens to be in.
+func sealEncrypt(run execCommand, sopsPath, keyPath, storeDir, seatFile string, plaintext []byte) ([]byte, error) {
 	tmpDir, err := os.MkdirTemp("", "nova-secrets-seal-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary isolation directory: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	out, err := run(bytes.NewReader(plaintext), sealSopsEnv(keyPath, tmpDir), "", sopsPath,
-		"-e", "--filename-override", seatFile, "--input-type", "yaml", "--output-type", "yaml")
+	out, err := run(bytes.NewReader(plaintext), sealSopsEnv(keyPath, tmpDir), storeDir, sopsPath,
+		"-e", "--filename-override", seatFile, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
 	if err != nil {
 		exitCode := 1
 		if exitErr, ok := err.(*exec.ExitError); ok {
