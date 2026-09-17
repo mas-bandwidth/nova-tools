@@ -519,6 +519,13 @@ What a first run gets wrong, and what each one wants:
 - **A second watch on one `--state`.** Two runs each write the whole map, so the
   later write erases what the earlier one learned. One state file per watch.
 
+The flags a line retypes every call — `--bus`, `--as`, `--state`,
+`--on-deadline` and `--receipt-max-words` — may live in a config file instead:
+this tool reads `<cwd>/.nova-wake/config`, or the file named by
+`NOVA_WAKE_CONFIG`, as `key=value` lines, and a flag given on the command line
+wins. A required value named by neither the file nor a flag is still a refusal,
+now naming the config file as a second remedy.
+
 By default nothing here fetches: the bus checkout is read as it stands, and
 every `WAKE SOURCE bus` line carries `head=` and `head-at=` so you can see it
 stand still. Two flags change that, and never both at once — one fetch per poll,
