@@ -63,10 +63,6 @@ usage:
                   net=nopromise.
   --net-listen    grant INBOUND ip as well; without it a job that does not
                   listen cannot be listened to. Never with --net-deny.
-  --no-system-reads
-                  omit the Linux system read roots (/etc, /usr, /lib, /lib64,
-                  /run/systemd/resolve, /proc/self); for the tests that assert
-                  the minimal policy. Without it Linux always reads them.
   --gpu <n|m>     the explicit local GPU capability: none (default) or metal.
                   Opt-in only; metal records intent and never widens
                   mach-lookup or grants blanket device access (#230).
@@ -138,7 +134,6 @@ type flags struct {
 	cwd, tmp, name, secret, acl string
 	gpu                         string
 	netDeny, netListen          bool
-	noSystemReads               bool
 	max                         int
 	maxSet                      bool
 	argv                        []string
@@ -198,8 +193,6 @@ func parse(args []string) flags {
 			f.netDeny = true
 		case "--net-listen":
 			f.netListen = true
-		case "--no-system-reads":
-			f.noSystemReads = true
 		case "--max":
 			v, i = want(i, "--max")
 			n := 0
@@ -265,7 +258,7 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 	}
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
-		NetDeny: f.netDeny, NetListen: f.netListen, NoSystemReads: f.noSystemReads, Argv: f.argv, Home: homeOf(env),
+		NetDeny: f.netDeny, NetListen: f.netListen, Argv: f.argv, Home: homeOf(env),
 		GPU: f.gpu,
 	})
 	if len(bad) > 0 {
@@ -395,7 +388,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// earns together belong in the same print.
 	p, policyBad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, NetDeny: f.netDeny, NetListen: f.netListen,
-		NoSystemReads: f.noSystemReads, GPU: f.gpu,
+		GPU:  f.gpu,
 		Argv: []string{self, probeStepVerbName}, Home: homeOf(env),
 	})
 	bad = append(bad, policyBad...)
@@ -752,7 +745,7 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	}
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
-		NetDeny: f.netDeny, NetListen: f.netListen, NoSystemReads: f.noSystemReads, Argv: argv, Home: homeOf(env),
+		NetDeny: f.netDeny, NetListen: f.netListen, Argv: argv, Home: homeOf(env),
 		GPU: f.gpu,
 	})
 	if len(bad) > 0 {

@@ -38,10 +38,14 @@ const Backend = "landlock"
 // /lib64 on a pure-arm64 image, no /opt on a minimal one). Rule 5 refuses a CALLER's
 // missing path; a missing root is the machine's shape, not the caller's mistake.
 //
+// /run/systemd/resolve is here because the resolver and TLS need it (issue #893): a
+// harness that cannot resolve a name inside the sandbox is a sandbox bug, not a network
+// one. It is part of this one table, enforced by addRules, and not switchable.
+//
 // /proc, NOT /proc/self: a /proc/self opened O_PATH resolves at open time to the pid
 // that opened it -- the tool's -- so a rule built on it would grant the wrapped process
 // its own /proc entry and grant every child it spawns nothing.
-var linuxReadRoots = []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/opt", "/dev", "/proc"}
+var linuxReadRoots = []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/run/systemd/resolve", "/opt", "/dev", "/proc"}
 
 // linuxWriteFiles is the rest of that table: /dev is READ-only above, and these two are
 // the writable exceptions in it. Measured, not assumed -- with /dev read-only and these

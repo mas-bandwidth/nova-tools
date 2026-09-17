@@ -500,6 +500,19 @@ func TestUsageCarriesTheReadRemedy(t *testing.T) {
 	}
 }
 
+// PR 948 re-cut (#893): the linux read roots are not switchable, so the banner must not
+// advertise a --no-system-reads the parser no longer has.
+func TestHelpDoesNotAdvertiseNoSystemReads(t *testing.T) {
+	j := newJob(t)
+	code, out, _ := j.tool(t, j.env(), "help")
+	if code != 0 {
+		t.Fatalf("help exit %d", code)
+	}
+	if strings.Contains(out, "no-system-reads") {
+		t.Fatalf("the usage banner still advertises --no-system-reads:\n%s", out)
+	}
+}
+
 // Rule 1 on every platform whose body is not built: the refusal names the platform and
 // the command does NOT run.
 func TestUnbuiltPlatformsRefuse(t *testing.T) {
