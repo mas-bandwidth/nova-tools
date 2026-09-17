@@ -2124,6 +2124,51 @@ What the table says, in one sentence each:
 The conditions are worth more than the model. That is the finding. The table
 is the last one a person assembles by hand: `TRIAGE BATCH` prints it (rule 8).
 
+## The efficiency card (#87), cross-tool
+
+The card is a measurement, taken on the bench on **2026-09-12**, of the same
+work paid for once per tool. This section is the part of it that binds
+`nova-swarm`; the other tools' halves live in their own normative specs, and
+nothing here restates them. The card is cross-tool, so its two rules are
+stated as contract, not as a bench recipe.
+
+### The same clone, once per swarm job
+
+Twenty-one jobs on the measured bench each carried their own `repo`, **21
+jobs**, **307 MB** of one object graph, and about **3.6M cache-read tokens**
+re-deriving a tree that is byte-identical for every job on the same head.
+`bin/child-clone.sh:111` already answers it for the schema repo:
+`--reference-if-able` off an on-disk checkout makes a large clone cheap, and
+`--dissociate` copies the objects in. So the rule is **one reference checkout
+per batch**, and every job's clone is built from it: a per-job clone under the
+job directory (rule 7 is unchanged — the checkout is still the job's own)
+passes `--reference` off the batch's reference checkout and then `--dissociate`, so the object graph
+is read once and the per-job clone is small. The tool prints the clone line it
+expects when it prepares a job; a card that clones without the reference is
+paying the graph again.
+
+### The prompt text is the tool's
+
+Five shell scripts duplicated five of the seven tools on the measured bench,
+and for `nova-swarm` the live text was `run-worker-v2.sh:120` — a shell
+script's private variable, not a template. That is the inverse of this spec:
+the prompts and their conditions are `internal/swarm/templates.go` in the
+binary, printable, and versioned with the tool (the templates are the single
+highest-value thing in this spec). So **the prompt text the workers run is the
+tool's**: `Prompt` and `WrapTemplate` assemble it from the named template, the
+shell scripts are prototypes that this spec deliberately does not transcribe
+(see "What the prototype does that this spec forbids", item 10), and the
+switch away from them is the two-step switch above. No tool's live state is a
+shell script's private variable.
+
+### Red tests
+
+The card earns the same red-first bar as every rule here: seen red before it
+is trusted.
+
+- a per-job clone built with `--reference` and `--dissociate` shares the reference checkout's object graph and still has its own working tree;
+- the worker prompt carries the named template's conditions from the tool, with no shell script in the path.
+
 ## The races, taken out
 
 **Two workers on one slot.** The dispatcher's free-slot search walked its own
