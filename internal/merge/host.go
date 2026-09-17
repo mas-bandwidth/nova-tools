@@ -305,6 +305,40 @@ func (h *GH) BranchOID(branch string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// OpenPRs reads the repository's open pull requests, one row each, for the rebase cutter.
+// The merge state is the host's own word and no field here is an instruction.
+func (h *GH) OpenPRs() ([]RebasePR, error) {
+	out, err := h.gh("pr", "list", "--repo", h.Repo, "--state", "open", "--limit", "300", "--json",
+		"number,mergeStateStatus,headRefName,title,createdAt")
+	if err != nil {
+		return nil, err
+	}
+	return decodeOpenPRs(out)
+}
+
+// decodeOpenPRs is the arrival point of the open list: the host's JSON becomes the rows the
+// filter reads. A head branch becomes a git argument on a later verb, so it is checked
+// where it arrives, exactly as a single pull request's is.
+func decodeOpenPRs(out string) ([]RebasePR, error) {
+	var raw []struct {
+		Number           int    `json:"number"`
+		MergeStateStatus string `json:"mergeStateStatus"`
+		HeadRefName      string `json:"headRefName"`
+		Title            string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return nil, fmt.Errorf("gh pr list did not answer JSON this tool can read: %w", err)
+	}
+	prs := make([]RebasePR, 0, len(raw))
+	for _, r := range raw {
+		if err := ValidRefName(r.HeadRefName); err != nil {
+			return nil, fmt.Errorf("pull request %d's head branch is not a name this tool hands to git: %w", r.Number, err)
+		}
+		prs = append(prs, RebasePR{Number: r.Number, HeadRef: r.HeadRefName, Title: r.Title, MergeState: r.MergeStateStatus})
+	}
+	return prs, nil
+}
+
 // Checks reads a commit's check runs and buckets them.
 func (h *GH) Checks(oid string) (Checks, error) {
 	out, err := h.gh("api", fmt.Sprintf("repos/%s/commits/%s/check-runs", h.Repo, oid),

@@ -85,6 +85,13 @@ var mergeAudit = audit.Config{
 		// parses the answers, and it never prints. Its one line is rendered back here
 		// through oneline/decide.Line, whose every field is escaped.
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// bytes is a Buffer and not a stream: CutKind's one line is captured into it and
+		// parsed for the card's name, never handed to stdout as it stands.
+		`"bytes"`,
+		// pulse's cut kind writes a card FILE and prints its one line into the Buffer
+		// above; its stderr is this binary's own stderr, so no line of its reaches the
+		// one line this verb prints.
+		`"github.com/mas-bandwidth/nova-tools/internal/pulse"`,
 	},
 	MinClassified: 60,
 }
