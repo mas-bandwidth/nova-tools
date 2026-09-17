@@ -666,10 +666,6 @@
 ;; or stop across already-distributed tasks, with durable request identity, delivery,
 ;; acknowledgement and reconciled handles; blocked questions and bounded fallbacks persisted.
 
-;; NEEDS-KERNEL: as-of query over day partitions; no state-as-of exists yet.
-;; absent-day-is-not-a-gap (SPEC-WORK.md:5130) --- a day with no manifest inside a complete
-;; manifested range answering its rows with gap=0 and no note.
-
 ;; NEEDS-KERNEL: lease creation/binding and W entry; no lease or W index exists yet.
 ;; accepted-creates-one-lease-or-binds (SPEC-WORK.md:5238) --- an accepted receipt after
 ;; received creating exactly one :lease and one W entry, or binding a second attempt to the same
@@ -1139,18 +1135,6 @@ asserts does not exist in slice 1."
 ;;  ;; enforced; imported prose cannot execute a command or alter authority.)
 
 ;; ------------------------------------------------------------------
-;; index-replayed-after-crash   docs/SPEC-WORK.md:5071
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: session + closed/open indexes (crash between settle and clip:
-;; one journal replay moves the id to C's index out of O's tree before any
-;; ask, totals reconcile).
-;;(deftest "index-replayed-after-crash" "docs/SPEC-WORK.md:5071"
-;;    "replay=one,open+closed=total,revive=recovered-in-O"
-;;  ;; a session killed between a `:settle` and the next clip: the restart's one
-;;  ;; journal replay puts the item in C's index and out of O's tree before the
-;;  ;; first ask, `open=` and `closed=` sum to the same total.)
-
-;; ------------------------------------------------------------------
 ;; indivisible-record-refused-before-ack   docs/SPEC-WORK.md:5543
 ;; ------------------------------------------------------------------
 ;; NEEDS-KERNEL: paged index + admission gate (a single key whose one locator
@@ -1233,16 +1217,6 @@ asserts does not exist in slice 1."
 ;;    "patches=round-trip,malformed=refused,counter=moved"
 ;;  ;; keep, clear, set-empty, set-false and set-value on each field round-trip
 ;;  ;; and digest distinctly.)
-
-;; ------------------------------------------------------------------
-;; missing-segment-is-a-gap   docs/SPEC-WORK.md:5132
-;; ------------------------------------------------------------------
-;; NEEDS-KERNEL: closed history segments + coverage gaps (a removed named
-;; segment prints `gap=<n>` and a coverage-gap note, never an empty closed set).
-;;(deftest "missing-segment-is-a-gap" "docs/SPEC-WORK.md:5132"
-;;    "gap=<n>,coverage-gap=noted,closed-set=never-empty"
-;;  ;; a segment the committed root names, removed: the listing answers what it
-;;  ;; can with `gap=<n>` and one coverage-gap note, never an empty closed set.)
 
 ;; ------------------------------------------------------------------
 ;; move-keeps-every-count   docs/SPEC-WORK.md:5360
@@ -1391,10 +1365,5 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
   (slice1-refuses-verb :offer))
 
 ;; NEEDS-KERNEL: archive export/reload and a recent-only export never labelled full.
-
-;; NEEDS-KERNEL: clip staging/verify/commit in one revision with both index roots.
-(deftest "one-revision-publishes-together" "docs/SPEC-WORK.md:5124"
-    "expected=segments-indexes-files-one-commit;kill-leaves-prev-root"
-  (slice1-refuses-verb :clip))
 
 ;; NEEDS-KERNEL: execution stop as a hold plus an evidence-set custom cancel.

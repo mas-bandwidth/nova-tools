@@ -262,7 +262,37 @@
     #:manifest-digest
     #:make-manifest
     #:find-secret
-    #:admit-manifest))
+    #:admit-manifest
+    ;; publication, overlay and day coverage (replays of SPEC-WORK.md:716-762)
+    #:publication
+    #:make-publication
+    #:pub-revision
+    #:pub-snapshot-sha
+    #:pub-closed-sha
+    #:pub-dedup-sha
+    #:pub-manifests
+    #:pub-files
+    #:verify-publication
+    #:overlay
+    #:make-overlay
+    #:ov-pages
+    #:ov-entries
+    #:replay-overlay
+    #:closed-entry
+    #:make-closed-entry
+    #:ce-rev
+    #:ce-id
+    #:ce-stamp
+    #:closed-segment
+    #:make-closed-segment
+    #:seg-name
+    #:seg-entries
+    #:day-manifest
+    #:make-day-manifest
+    #:man-name
+    #:man-refs
+    #:manifest-for-day
+    #:closed-day-selection))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

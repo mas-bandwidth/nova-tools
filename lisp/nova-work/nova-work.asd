@@ -21,7 +21,8 @@
                (:file "src/state-export")
                (:file "src/fleet")
                (:file "src/replays-applicable-delegation")
-               (:file "src/replays-config-and-availability")))
+               (:file "src/replays-config-and-availability")
+               (:file "src/replays-publication")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."

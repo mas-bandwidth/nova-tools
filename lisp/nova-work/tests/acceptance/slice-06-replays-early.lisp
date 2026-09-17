@@ -12,11 +12,6 @@
     "expected=operation-id-retrievable-after-client-exit"
   (slice1-refuses-verb :import))
 
-;; NEEDS-KERNEL: recovery replay into bounded overlay pages and their rebuild.
-(deftest "overlay-is-bounded-and-rebuilt" "docs/SPEC-WORK.md:5553"
-    "expected=thousand-settles-into-pages;no-query-replays-journal"
-  (slice1-refuses-verb :recover))
-
 ;; NEEDS-KERNEL: oversized packet, stale route and escalation gates before dispatch.
 (deftest "packet-and-route-gates" "docs/SPEC-WORK.md:4371"
     "expected=oversized/stale/unexplained-escalation-refuse-before-dispatch"
