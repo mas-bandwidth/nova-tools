@@ -220,10 +220,8 @@
   ;; NEEDS-KERNEL: the savepoint restore recovery session.
   (ok t "pending; needs savepoint restore"))
 
-(deftest "resume-is-two-actions" "docs/SPEC-WORK.md:5268"
-    "expected=release-hold-only-lifts-its-control;resume-workers-refuses-unsupported-capability"
-  ;; NEEDS-KERNEL: release-hold / resume-workers verbs.
-  (ok t "pending; needs execution control"))
+;; resume-is-two-actions (SPEC-WORK.md:4019) now runs as the real deftest in
+;; tests/replays-8640.lisp, with the release-hold / resume-workers verbs it named.
 
 (deftest "return-reconciles-before-dispatch" "docs/SPEC-WORK.md:5226"
     "expected=return-reconciles-before-new-dispatch;one-bounded-ping-at-threshold"
