@@ -26,7 +26,7 @@ nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> [--bench <name>]... [--once]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
@@ -371,6 +371,10 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	deadline := f.fs.String("deadline", "", "")
 	queue := f.fs.Bool("queue", false, "")
 	max := f.fs.Int("max", bounded.Default, "")
+	routes := f.fs.String("routes", "", "")
+	floor := f.fs.Float64("floor", 0.9, "")
+	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
+	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -386,11 +390,15 @@ func cmdLaunch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *max < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
 	}
+	if *floor < 0 || *floor > 1 {
+		f.add(fmt.Sprintf("--floor is between 0 and 1, got %g; answers below it keep the card's own worker", *floor))
+	}
 	if f.refused(stderr) {
 		return 2
 	}
 	return pulse.Launch(pulse.LaunchInput{
 		Cards: *cards, Root: *root, Slots: *slots, Deadline: *deadline, Queue: *queue,
+		Routes: *routes, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
 		Log: stderr,
 	})
