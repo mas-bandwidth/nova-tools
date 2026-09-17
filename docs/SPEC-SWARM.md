@@ -1857,6 +1857,11 @@ below. Each condition names the failure it closes.
    found nothing is NOT a failed task: write the `## Head` with `findings: 0`.
    Never report a finding to have something to report.
 6. Check the board before reporting: a card that already names this is a `dup:`.
+7. A SEVERITY FLOOR: emit only findings at or above `HIGH`. A finding below the
+   floor is not emitted at all. State the floor in RESULT.md's `## Head`
+   paragraph as `floor: HIGH`, and mark each emitted finding with its severity.
+   The floor decides which findings are emitted, not how they are written:
+   every emitted finding still quotes its rule verbatim with `file:line`.
 
 Keep RESULT.md concise: omit progress narration, praise, repeated task text, and a
 separate summary. Each finding keeps its proof in compact form: severity, `file:line`,
@@ -1867,6 +1872,14 @@ the report overflows, preserve the proof and say so. Preserve the complete RESUL
 shape and its mandatory `## Head`, `## Findings`, `## Per item`, `## Gates`,
 `## Left owed`, and `## One line` sections.
 ```
+
+The seventh condition is the severity floor (#65). The noise that made AI code
+review a complaint is measured, not argued: the reader emits only findings at or
+above `HIGH`, writes `floor: HIGH` in the head, and a below-floor finding is not
+written at all. It is the bounded-output rule applied to the reader, so a read's
+verdict is easier to act on because everything that survives the floor is worth a
+round. The floor decides which findings are emitted, not how they are written, so
+the verbatim-quote condition still holds for every finding that survives it.
 
 ### `probe-row` — make one claim true or false
 
