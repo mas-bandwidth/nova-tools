@@ -24,6 +24,8 @@
 
 ;; policy-round-trip-and-replay and pricing-is-pinned-by-revision now run in
 ;; lisp/nova-work/tests/replays-8647.lisp (nova-tools #362).
+;; pipeline-replies-are-correlated is now the executable replay in
+;; ../acceptance.lisp (card 8608).
 
 (deftest "priority-grants-nothing" "docs/SPEC-WORK.md:5872"
     "expected=who-unchanged;no-lease;no-bypass"

@@ -506,6 +506,13 @@
       (handler-case (wire-parse-json (format nil "{\"revision\": ~A}" number))
         (unsupported-input () (setf refused t)))
       (ok refused "a wire frame carrying the JSON number ~A is refused" number))))
+(needs-kernel "working-is-a-view" "docs/SPEC-WORK.md:5082"
+  "|W| <= |O| over a set where every item is leased then released, and no verb writes W"
+  "WORKING-SET")
+
+;; wire-integers-are-strings is now the executable replay in
+;; ../acceptance.lisp (card 8608); it uses the wire codec, not the store's
+;; restricted reader.
 
 (deftest "wire-is-length-prefixed-utf8-json" "docs/SPEC-WORK.md:2661-2663"
     "expected=4-byte-big-endian-length;utf8-payload;fragments-buffered;oversized-refused-one-framed-error"
