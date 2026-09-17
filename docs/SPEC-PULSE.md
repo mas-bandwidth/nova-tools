@@ -299,6 +299,7 @@ nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
+nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
@@ -856,3 +857,20 @@ by `lisp/nova-work/tests/acceptance.lisp` (WORKER-CARDS.md practice 26).
 - [Open questions](spec-pulse/14-open-questions-each-with-a-default-and-the-default-stands-un.md)
 - [CI wall](spec-pulse/15-ci-wall.md)
 - [Layout](spec-pulse/16-layout.md)
+- [The beat](spec-pulse/17-the-beat.md)
+
+## The beat
+
+The coordinator window restarts thin at every beat (token item, cairn 8386). `nova-pulse
+beat --queue <dir> --cairn <file> --title <text> [--resume <text>]` appends one section to
+the cairn file — `## <UTC time> <title>`, then one line per queue fact: the pending,
+running, done and failed counts from `status`, the `REDS` line count, whether `STOP`
+stands, the `HUMAN` line count, and the last merged PR from `<queue>/MERGED` — and then the
+`Resume rule:` line: `--resume`, or `read this section, run nova-pulse status, act on
+REDS/STOP/HUMAN first` when the flag names none. It reads only the queue and makes no model
+call. When the cairn file is in a git repo it commits it (`git add` and one commit, never a
+push) and otherwise leaves it uncommitted, and either way it prints `BEAT OK cairn=<file>
+lines=<n>`, where `<n>` is the cairn's line count, and then the line a fresh window restarts
+from: `RESTART: exit this window; the next window boots from <cairn>`. Replays:
+`beat-appends-the-queue-section`, `beat-appends-a-second-section`,
+`beat-without-git-still-says-ok`.

@@ -14,6 +14,7 @@ const pulseVerbs = `nova-pulse pool    --sources <file> --root <dir> [--out <poo
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
+nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
@@ -44,6 +45,8 @@ func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 		return 0
 	case "harvest":
 		return harvestVerb(args, out, errs)
+	case "beat":
+		return beatVerb(args, out, errs)
 	case "status":
 		return statusVerb(args, out, errs)
 	case "progress":
@@ -142,5 +145,36 @@ func progressVerb(args []string, out, errs io.Writer) int {
 	}
 	return Progress(ProgressInput{
 		Queue: o.queue, Roots: o.roots, Day: o.day, Stdout: out, Stderr: errs,
+	})
+}
+
+func beatVerb(args []string, out, errs io.Writer) int {
+	o := struct {
+		queue, cairn, title, resume string
+	}{}
+	f := flag.NewFlagSet("beat", flag.ContinueOnError)
+	f.SetOutput(io.Discard)
+	f.StringVar(&o.queue, "queue", "", "the queue directory")
+	f.StringVar(&o.cairn, "cairn", "", "the cairn file this beat is appended to")
+	f.StringVar(&o.title, "title", "", "the one-line title of this beat")
+	f.StringVar(&o.resume, "resume", "", "the resume rule this beat writes")
+	if err := f.Parse(args); err != nil {
+		return refusal(errs, "BEAT", fmt.Errorf("%s (run nova-pulse help)", err))
+	}
+	if len(f.Args()) != 0 {
+		return refusal(errs, "BEAT", fmt.Errorf("beat takes no positional arguments (run nova-pulse help)"))
+	}
+	if o.queue == "" {
+		return refusal(errs, "BEAT", fmt.Errorf("missing --queue; refusing to guess (supply the queue directory)"))
+	}
+	if o.cairn == "" {
+		return refusal(errs, "BEAT", fmt.Errorf("missing --cairn; refusing to guess (supply the cairn file)"))
+	}
+	if o.title == "" {
+		return refusal(errs, "BEAT", fmt.Errorf("missing --title; refusing to guess (supply the one-line title)"))
+	}
+	return Beat(BeatInput{
+		Queue: o.queue, Cairn: o.cairn, Title: o.title, Resume: o.resume,
+		Stdout: out, Stderr: errs,
 	})
 }

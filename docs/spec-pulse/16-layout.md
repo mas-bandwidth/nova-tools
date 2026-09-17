@@ -27,3 +27,4 @@ by `lisp/nova-work/tests/acceptance.lisp` (WORKER-CARDS.md practice 26).
 - [Open questions](spec-pulse/14-open-questions-each-with-a-default-and-the-default-stands-un.md)
 - [CI wall](spec-pulse/15-ci-wall.md)
 - [Layout](spec-pulse/16-layout.md)
+- [The beat](spec-pulse/17-the-beat.md)

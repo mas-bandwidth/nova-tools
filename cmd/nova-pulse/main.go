@@ -23,6 +23,7 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>]
+nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeout <s>] [--max <n>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
@@ -158,6 +159,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdCut(rest, stdout, stderr)
 	case "harvest":
 		return cmdHarvest(rest, stdout, stderr)
+	case "beat":
+		return cmdBeat(rest, stdout, stderr, now)
 	case "manager":
 		return cmdManager(rest, stdout, stderr)
 	case "status":
@@ -319,6 +322,28 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 		Max:          *max,
 		Stdout:       stdout,
 		Stderr:       stderr,
+	})
+}
+
+func cmdBeat(args []string, stdout, stderr io.Writer, now time.Time) int {
+	f := newFlags("beat")
+	queue := f.fs.String("queue", "", "")
+	cairn := f.fs.String("cairn", "", "")
+	title := f.fs.String("title", "", "")
+	resume := f.fs.String("resume", "", "")
+
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*queue, "queue", "the queue directory holding pending, launched, done, failed and the state files")
+	f.want(*cairn, "cairn", "the cairn file this beat is appended to")
+	f.want(*title, "title", "the one-line title of this beat")
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.Beat(pulse.BeatInput{
+		Queue: *queue, Cairn: *cairn, Title: *title, Resume: *resume,
+		Now: func() time.Time { return now }, Stdout: stdout, Stderr: stderr,
 	})
 }
 
