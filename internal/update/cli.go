@@ -87,7 +87,12 @@ func help(name string, w io.Writer) {
 		fmt.Fprintln(w, updateVerbs)
 	}
 	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n", name)
-	fmt.Fprintln(w, "Report needs no bus or network. Updates require an explicit apply name. Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running.")
+	note := "Report needs no bus or network. "
+	if name != "nova-version" {
+		note += "Updates require an explicit apply name. "
+	}
+	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
+	fmt.Fprintln(w, note)
 	fmt.Fprintf(w, "\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n  %s version\n", name, name, name)
 }
 func interspersed(f *flag.FlagSet, args []string) []string {

@@ -28,6 +28,23 @@ func TestVersionStampAndUsage(t *testing.T) {
 	}
 }
 
+func TestVersionHelpDoesNotDemandAnApplyVerb(t *testing.T) {
+	var out, err bytes.Buffer
+	if code := update.Main("nova-version", []string{"help"}, "", &out, &err); code != 0 {
+		t.Fatalf("help exit=%d stderr=%s", code, err.String())
+	}
+	if strings.Contains(out.String(), "apply name") {
+		t.Fatalf("nova-version help tells a stranger to apply a name it has no verb for:\n%s", out.String())
+	}
+	var upd, updErr bytes.Buffer
+	if code := update.Main("nova-update", []string{"help"}, "", &upd, &updErr); code != 0 {
+		t.Fatalf("nova-update help exit=%d stderr=%s", code, updErr.String())
+	}
+	if !strings.Contains(upd.String(), "apply name") {
+		t.Fatalf("nova-update help lost its apply verb:\n%s", upd.String())
+	}
+}
+
 func TestVersionReportFileUsageStatesShape(t *testing.T) {
 	var out, err bytes.Buffer
 	if code := update.Main("nova-version", []string{"help"}, "", &out, &err); code != 0 {
