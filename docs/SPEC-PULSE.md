@@ -600,6 +600,47 @@ line binds the card it heads; the swarm records the same hash at admission and r
 after line 2. `<head>` is the repo's default-branch head at cut time, read once per repo per
 `cut` run; a candidate whose repo cannot be read is `skipped` with the reason, never cut blind.
 
+## The cost of a card (#855), 2026-09-16
+
+Measured 2026-09-16 over 1,068 jobs, all benches, from `usage.tsv`: input 62.1M, output
+7.2M, cache_write 4.0M, **cache_read 1,434.6M**, reasoning 8.7M. Per job: reads 44.7k input
+against 5.2k output; fixes 66k/7.3k; replays 86k/8.9k; implementations 144k/12.4k. The bill
+is context x harness turns: the cache reads are 23x the input, because every tool call in a
+card re-sends the whole context. A 45k-token read that takes 30 harness turns bills about
+1.35M cache-read tokens. The lever is turns per card, not the model. And reasoning is 8.7M
+against 7.2M visible output — 121% — so a read that thinks at full effort pays for a chain
+of thought no read needs.
+
+The rules:
+
+1. **`cut-steps-are-the-turn-budget`.** `cut` emits cards whose numbered step count is the
+   turn budget: a read-family card (`read`, `text`, `tone`) takes at most 8 turns, a
+   writing-family card (`fix`, `replay`, `drift`) at most 20 turns. A template whose
+   rendered card exceeds its budget is `CUT REFUSED template=<name>: <which>` naming the
+   rule, and no card is written. The hurt that made it: the 1,434.6M cache-read tokens
+   above, where a read card that greps around for thirty turns re-bills a 45k-token context
+   thirty times. Steps name the exact file and line range, one check each, no exploration;
+   the budget is the step count, so the count is the contract.
+   Red test: `cut-steps-are-the-turn-budget`.
+
+2. **`harvest-records-turns-per-card`.** `harvest` records the turns each card took from
+   its `<job>/harness.log` and marks a card over its kind's budget as one template finding,
+   counted on the `HARVEST` line and written to `retry.tsv` the way an abstain is (rule 14),
+   so a template that cannot fit the budget is rewritten, never re-sent. The hurt that made
+   it: without a measured turn count the budget is a hope, and a card over budget is spent
+   again on the next pool.
+   Red test: `harvest-records-turns-per-card`.
+
+3. **`cut-read-card-names-low-reasoning`.** A read-family card's route carries the
+   provider's low reasoning setting — the OpenCode variant, or DeepSeek `reasoning_effort`
+   where the route supports it — while fix, replay and drift cards keep the default. The
+   hurt that made it: reasoning is 8.7M against 7.2M visible output, 121% of it, and a read
+   does not need chain-of-thought at full effort. Measure per kind daily.
+   Red test: `cut-read-card-names-low-reasoning`.
+
+The wall clock agrees: the mean job directory lifetime is 480 s against a 436 s wall, so
+clone and copy pay about 44 s and the model loop pays the tail — the same lever.
+
 ## What this draft does not do
 
 - **No model routing beyond the cost table.** One table in git, read by `cut`: the capable
