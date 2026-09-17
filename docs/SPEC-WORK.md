@@ -6819,6 +6819,60 @@ proposal. It preserves automatic resilience as a goal without claiming that a
 safe cross-bench failover protocol has already been built. All older references
 to merging simultaneous coordinator edits are superseded by this section.
 
+### Automatic handover and worker-loss recovery *(SPEC-AHEAD: #180; a proposed integration outcome, not a deployed failover)*
+
+This is the concrete handover the singleton rule enables, and **nothing here is claimed
+implemented**: it is the behavior a team configures now and the tests a release must pass before
+any unattended failover is deployed.
+
+A team configures its **coordinator set, eligibility, succession and authority scope**, and
+**no particular friend is embedded** in the tool or the default: eligibility, capacity,
+succession order and the actions a successor may take are configuration, and a replacement may act only
+within the authority that configuration already granted. Coordinator redundancy is real only
+across **independent providers** and accounts. Two coordinators that rely on the same provider,
+credential or shared-state service are one **shared failure domain** and must be reported as
+such, because the intended deployment may put one coordinator on one provider and its successor
+on another; either may take over within configured authority without waiting for human dispatch.
+
+Detect **explicit exhaustion** of plan, credit or rate capacity and the **expiry of liveness**
+separately. Silence alone does not identify the cause: a stale heartbeat or an unanswered ping
+is an availability signal, never consent and never proof of exclusive takeover authority. An
+explicitly exhausted coordinator that still answers is not the same event as one whose
+liveness has expired, and the report names which one happened. Ownership is durable and fenced:
+a **validated lease** with a monotonically increasing generation admits or publishes work for
+exactly **one effective owner**, including across network partitions, so a partitioned or
+returned old coordinator can produce **no conflicting publication** and no admitted mutation of
+its own; every request under an obsolete generation is refused, and a competing activation is
+refused when exclusive ownership cannot be established.
+
+A transfer reconciles before it dispatches. The current graph, ownership and attempts,
+**exact revisions**, acceptance criteria, the **ready queue**, **cost reservations**,
+**deferred decisions** and **persistent stop controls** all move with the role, and the receiver must
+**reconcile in-flight workers** before it transfers or reschedules their work, so no two writers
+own one task across the handover. Admission must **reserve configured shared account capacity**
+for essential coordination and recovery, so a cheap-looking task cannot exhaust the account that
+keeps a coordinator reachable, and it accounts for outstanding reservations and observed spend
+without double-counting. Budget exhaustion, stale contact and an explicit stop are distinct
+events. Recovery handles partial failure, **late usage**, **duplicate notifications** and
+**returning friends** without trusting **stale state**: a replayed or late result is reconciled
+against the current revision and ownership generation rather than applied twice.
+
+A replacement acts only within previously configured authority. Failover must not override a
+**rest or stop decision**, **create credentials**, or **expand access**, and **silence is not consent**:
+a pending observation is never permission. If no eligible coordinator exists, preserve
+**recoverable state** and report the **concrete unavailable function** — naming the provider,
+account or shared-state service that is present but unusable — rather than guessing, activating a
+competing owner or claiming a recovery that did not happen.
+
+**Acceptance evidence.** A **fault-injection** run loses the active coordinator
+**during dispatch**, **partitions the old coordinator**, then brings it back while a worker
+returns a **late result**; it must prove one effective owner, bounded recovery, no conflicting
+publication, **preserved stop state** and accurate budget reservations. Repeat with an entire
+provider unavailable, the alternate provider unavailable in the opposite direction, a
+**sleeping worker**, **shared-state service loss** and **all coordinators unavailable**, demonstrating
+recovery within configured authority where possible and an honest recoverable state where it is
+not. Filing this issue implies no unattended failover deployment.
+
 ## Roadmap as a view; the Schema pilot *(Stella)*
 
 **The current roadmap view is completion-only** (Glenn, via Stella's 5654780545, corrected
