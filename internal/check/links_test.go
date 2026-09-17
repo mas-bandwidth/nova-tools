@@ -556,3 +556,21 @@ func TestLinksDirIsASymlinkToTheTree(t *testing.T) {
 		}
 	}
 }
+
+// The two seed-floor fixtures under testdata/ are pinned excerpts of nova's
+// own records and floors_test.go consumes them as text, so a markdown link
+// inside one points at a target that lives in nova, not in this repository.
+// That made `nova-check links --dir .` red on this repository itself — four
+// broken links, all in seed-floors.md (issue #34) — even though the fixture is
+// not a defect: it is deliberately incomplete. The references are flattened to
+// plain text so a fixture carries no link target at all, which is what lets
+// the repository run links over itself; floors_test still matches the prose.
+func TestLinksSeedFixturesCarryNoTargets(t *testing.T) {
+	res, err := LinksExcluding("testdata", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Broken) != 0 {
+		t.Errorf("testdata carries %d broken link(s); a pinned fixture must not point outside the repo: %v", len(res.Broken), res.Broken)
+	}
+}
