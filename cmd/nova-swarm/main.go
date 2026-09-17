@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -971,7 +972,7 @@ func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f.wantMax(*max)
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	if *decide && (*floor < 0 || *floor > 1) {
-		f.add(fmt.Sprintf("--floor is a confidence between 0 and 1, got %v; 0.9 is how a caller says a suggestion must be sure before it is printed as a decision", *floor))
+		f.add(fmt.Sprintf("--floor is a confidence between 0 and 1, got %s; 0.9 is how a caller says a suggestion must be sure before it is printed as a decision", oneline.Field(strconv.FormatFloat(*floor, 'g', -1, 64))))
 	}
 	if f.refused(stderr) {
 		return 2
