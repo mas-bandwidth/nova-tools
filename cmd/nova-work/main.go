@@ -38,6 +38,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -404,8 +405,7 @@ func cmdPush(args []string, stdout, stderr io.Writer, now time.Time) int {
 	priority := fs.Int("priority", 0, "")
 	needs := fs.String("needs", "", "")
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(stderr, "nova-work push: %s; run: nova-work help\n", oneline.Cap(err.Error(), oneline.TailBytes))
-		return 2
+		return refuse(stderr, " push", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "nova-work push: takes no positional arguments, got %d (flags come before arguments)\n", fs.NArg())
@@ -457,7 +457,7 @@ func cmdPush(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	fields := map[string]string{
 		"id": newCardID(), "label": label, "body": string(body),
-		"priority": fmt.Sprint(*priority), "needs": needList,
+		"priority": strconv.Itoa(*priority), "needs": needList,
 		"pushed-at": now.UTC().Format(time.RFC3339),
 	}
 	streamID, err := client.Add(ctx, redisq.ReadyStream, fields)
