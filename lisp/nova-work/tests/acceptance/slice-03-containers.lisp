@@ -77,10 +77,11 @@
 (defvar *journal-test-counter* 0)
 
 (defun test-journal-path (name)
-  (let* ((base (uiop:default-temporary-directory))
-         (dir (merge-pathnames "nova-work-test-journals/" base)))
-    (ensure-directories-exist dir)
-    (format nil "~A~A-~D-~D.journal" (namestring dir) name (get-universal-time) (incf *journal-test-counter*))))
+  "A journal path beneath this suite process's one private root, so two
+concurrent suites never share a journal directory."
+  (format nil "~A~A-~D-~D.journal"
+          (test-private-dir "journals")
+          name (get-universal-time) (incf *journal-test-counter*)))
 
 (defun file-byte-count (path)
   (with-open-file (in path :direction :input :element-type '(unsigned-byte 8))

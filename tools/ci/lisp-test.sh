@@ -28,7 +28,7 @@ export TMPDIR
 trap 'rm -rf "$TMPDIR"' EXIT
 echo "lisp-test.sh: TMPDIR=$TMPDIR" >&2
 
-sbcl --non-interactive \
+sbcl --no-sysinit --no-userinit --non-interactive \
   --eval "(require :asdf)" \
   --eval "(push #p\"${lisp}/\" asdf:*central-registry*)" \
   --eval "(handler-bind ((warning #'muffle-warning)) (asdf:load-system :nova-work/tests))" \

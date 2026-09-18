@@ -146,15 +146,12 @@
 (defvar *state-load-test-counter* 0)
 
 (defun test-state-load-dir (name)
-  "A fresh scratch parent for one state-load replay, so the three copies of this
-slice file (the loader list names it once per fold) never collide."
-  (let* ((base (uiop:default-temporary-directory))
-         (dir (merge-pathnames
-               (format nil "nova-work-state-load-~A-~D-~D/" name
-                       (get-universal-time) (incf *state-load-test-counter*))
-               base)))
-    (ensure-directories-exist dir)
-    (namestring dir)))
+  "A fresh scratch parent for one state-load replay beneath the suite's one
+private root, so neither the three copies of this slice file (the loader list
+names it once per fold) nor a concurrent suite ever collide."
+  (test-private-dir
+   (format nil "state-load-~A-~D-~D" name
+           (get-universal-time) (incf *state-load-test-counter*))))
 
 (deftest "state-load-is-isolated" "docs/SPEC-WORK.md:5896"
     "expected=no-ownership-dispatch-replay-merge-resolver-network-or-repo-write;re-export-equal"

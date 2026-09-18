@@ -65,5 +65,6 @@
 
 (defun main ()
   (let ((code (run-all)))
+    (test-private-root-cleanup)
     #+sbcl (sb-ext:exit :code code :abort nil)
     #-sbcl (progn code)))

@@ -52,7 +52,8 @@
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
   :depends-on ("nova-work")
   :serial t
-  :components ((:file "tests/harness")
+  :components (               (:file "tests/harness")
+               (:file "tests/private-root")
                (:file "tests/acceptance")
                (:file "tests/replays-8680")
                (:file "tests/replays-applicable-delegation")

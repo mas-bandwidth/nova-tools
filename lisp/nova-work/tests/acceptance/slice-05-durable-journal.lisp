@@ -156,42 +156,23 @@
 ;;; ------------------------------------------------------------------
 
 (defun short-socket-base (prefix)
-  "Create and answer a directory short enough to hold an AF_UNIX socket path.
-The kernel bounds a Unix-domain socket path (108 bytes on Linux), which a long
-TMPDIR can exceed, so try short roots first and create the first that works.
-Within each root the name is trimmed until <root>/<name>/l/w fits, because the
-sandbox's writable directory can itself sit far into a long path. A stale
-directory from an earlier run is cleared first so a rerun binds fresh."
-  (flet ((try-root (root)
-           (when root
-             (let* ((trimmed (string-right-trim "/" (namestring (pathname root))))
-                    ;; base + "/l/w" must stay inside the 108-byte sun_path
-                    (budget (- 103 (length trimmed) 1))
-                    (clean (remove-if-not #'alphanumericp prefix))
-                    (name (if (plusp budget)
-                              (subseq clean 0 (min (length clean) budget))
-                              ""))
-                    (base (concatenate 'string trimmed "/" name)))
-               (when (and (plusp (length name))
-                          (< (+ (length base) 4) 108))
-                 (ignore-errors
-                   (uiop:delete-directory-tree
-                    (uiop:ensure-directory-pathname base)
-                    :validate nil :if-does-not-exist :ignore))
-                 (when (ignore-errors (sb-posix:mkdir base #o700) t)
-                   base))))))
-    (or (some #'try-root
-              (list "/dev/shm"
-                    (format nil "/run/user/~D" (sb-posix:getuid))
-                    "/var/tmp"
-                    (uiop:getenv "TMPDIR")
-                    ;; the parent of TMPDIR is still short when TMPDIR itself
-                    ;; is not (the sandbox's sits under the job's working dir).
-                    (uiop:pathname-parent-directory-pathname
-                     (uiop:temporary-directory))))
-        (concatenate 'string
-                     (string-right-trim "/" (namestring (uiop:temporary-directory)))
-                     "/" prefix))))
+  "Create and answer a socket-bearing directory beneath the suite process's one
+private root. The answer is RELATIVE to that root, and the caller chdirs to the
+root before binding, so the AF_UNIX sun_path stays far inside its ~108-byte
+bound even when the ambient TMPDIR is deep. A stale directory is never reused:
+the name carries a fresh unpredictable token and an existing candidate is never
+deleted, adopted or modified."
+  (let* ((root (string-right-trim "/" (test-private-root)))
+         (clean (remove-if-not #'alphanumericp prefix))
+         (rel (concatenate 'string
+                           (subseq clean 0 (min (length clean) 24))
+                           "-" (%suite-token) "/")))
+    ;; base + "l/w" must stay inside the sun_path bound.
+    (when (>= (length rel) 96)
+      (error "short-socket-base: relative socket base ~S exceeds the platform bound"
+             rel))
+    (ensure-directories-exist (concatenate 'string root "/" rel))
+    rel))
 
 ;;; endpoint-is-local-and-private  SPEC-WORK.md prose :2646-2653 / table :5727
 (deftest "endpoint-is-local-and-private" "docs/SPEC-WORK.md:5727"
@@ -204,28 +185,23 @@ directory from an earlier run is cleared first so a rerun binds fresh."
   ;; An AF_UNIX path is bounded (sun_path, about 108 bytes), so a deep TMPDIR
   ;; cannot carry the session socket. Prefer a shorter writable root for the
   ;; endpoint; the other replays' regular files keep the ambient directory.
-  (let* ((tmp (namestring (uiop:temporary-directory)))
+  (let* ((root (string-right-trim "/" (test-private-root)))
          (cwd (sb-posix:getcwd))
-         (*default-pathname-defaults* (pathname tmp))
-         (base (or (if (< (length tmp) 80)
-                       (concatenate 'string tmp (format nil "nw-~D" (random 1000000)))
-                       (short-socket-base (format nil "nw-~D" (random 1000000))))
-                   (if (< (length tmp) 80)
-                       (concatenate 'string tmp (format nil "n~D" (random 99999)))
-                       (format nil "nw-~D-~D" (sb-posix:getpid) (random 1000000)))))
-         (dir (concatenate 'string base "/s"))
+         (*default-pathname-defaults* (pathname (concatenate 'string root "/")))
+         (base (short-socket-base (format nil "nw-~D" (random 1000000))))
+         (dir (concatenate 'string base "s"))
          (sock (concatenate 'string dir "/w"))
-         (wide (concatenate 'string base "/w"))
-         (d2 (concatenate 'string base "/d"))
+         (wide (concatenate 'string base "w"))
+         (d2 (concatenate 'string base "d"))
          (s2 (concatenate 'string d2 "/w")))
     (unwind-protect
          (progn
-           ;; Work under the temporary directory with a path short enough for an
-           ;; AF_UNIX socket: `probe-file` resolves a relative name against
-           ;; *DEFAULT-PATHNAME-DEFAULTS*, so it is bound to the same directory
-           ;; the filesystem calls are made relative to. Clear any path a prior
-           ;; run left behind so the fixture never silently reuses one.
-           (sb-posix:chdir tmp)
+           ;; Work inside the suite's private root, where BASE is a short
+           ;; relative name: `probe-file` resolves a relative name against
+           ;; *DEFAULT-PATHNAME-DEFAULTS*, so it is bound to the root the
+           ;; filesystem calls are made relative to. Never reuse a path: BASE
+           ;; carries a fresh unpredictable token.
+           (sb-posix:chdir root)
            (ignore-errors (sb-posix:unlink sock))
            (ignore-errors (sb-posix:rmdir dir))
            (ignore-errors (sb-posix:unlink s2))
