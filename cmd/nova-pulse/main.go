@@ -27,6 +27,7 @@ nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
+nova-pulse status  --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--max <n>]
@@ -185,7 +186,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case "manager":
 		return cmdManager(rest, stdout, stderr)
 	case "status":
-		return cmdStatus(rest, stdout, stderr)
+		return cmdStatus(rest, stdout, stderr, now)
 	case "progress":
 		return cmdProgress(rest, stdout, stderr)
 	case "gate":
@@ -429,13 +430,16 @@ func cmdManager(args []string, stdout, stderr io.Writer) int {
 	})
 }
 
-func cmdStatus(args []string, stdout, stderr io.Writer) int {
+func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("status")
 	queue := f.fs.String("queue", "", "")
 	roots := f.fs.String("roots", "", "")
 	slotsStore := f.fs.String("slots-store", "", "")
 	day := f.fs.String("day", "", "")
 	oneLine := f.fs.Bool("oneline", false, "")
+	html := f.fs.String("html", "", "")
+	benches := f.fs.String("benches", "", "")
+	ssh := f.fs.String("ssh", "ssh", "")
 	timeout := f.fs.Int("timeout", 120, "")
 	max := f.fs.Int("max", bounded.Default, "")
 	expandingHours := f.fs.Int("expanding-hours", 2, "")
@@ -443,8 +447,6 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	f.want(*queue, "queue", "the queue directory holding pending, launched, done and the state files")
-	f.want(*roots, "roots", "the benches to report, comma separated")
 	if *timeout < 1 {
 		f.add(fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
 	}
@@ -454,6 +456,28 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 	if *expandingHours < 1 {
 		f.add(fmt.Sprintf("--expanding-hours wants a whole number of hours, got %d", *expandingHours))
 	}
+	// --html is the fleet status page as a verb (status-page.sh folded in). It reads the
+	// benches file and the queue, counts live cards from running card processes, and prints
+	// one STATUS HTML line; the eight-line report and --oneline are untouched.
+	if *html != "" {
+		f.want(*benches, "benches", "the fleet file: name, ssh target, home, mac one per line")
+		if f.refused(stderr) {
+			return 2
+		}
+		return pulse.StatusHTML(pulse.StatusHTMLInput{
+			HTML:    *html,
+			Benches: *benches,
+			Queue:   *queue,
+			SSH:     *ssh,
+			Timeout: time.Duration(*timeout) * time.Second,
+			Reader:  statusHTMLReader,
+			Now:     func() time.Time { return now },
+			Stdout:  stdout,
+			Stderr:  stderr,
+		})
+	}
+	f.want(*queue, "queue", "the queue directory holding pending, launched, done and the state files")
+	f.want(*roots, "roots", "the benches to report, comma separated")
 	if f.refused(stderr) {
 		return 2
 	}
