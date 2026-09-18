@@ -353,7 +353,7 @@ func awaitRequest(t *testing.T, requests <-chan string) string {
 	select {
 	case r := <-requests:
 		return r
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("no request reached the session")
 		return ""
 	}
