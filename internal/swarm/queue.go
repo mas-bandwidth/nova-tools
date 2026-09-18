@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -102,6 +103,63 @@ func OwnedCards(benchDir, worker string) ([]string, error) {
 	return names, nil
 }
 
+// ClaimTimeout is the maximum duration an uncompleted card claim remains valid before
+// being considered abandoned by a crashed or hung worker process.
+const ClaimTimeout = 10 * time.Second
+
+// claimPath returns the exclusive claim record path for a card in taken/.
+func claimPath(takenDir, cardName string) string {
+	return filepath.Join(takenDir, cardName+".claim")
+}
+
+// claimCard attempts to acquire an exclusive, cross-process claim on cardName in takenDir.
+// The claim file is created with os.O_CREATE|os.O_EXCL, which is an atomic kernel operation
+// (CreateFile with CREATE_NEW on Windows, open with O_CREAT|O_EXCL on POSIX). If a claim file
+// already exists, it is checked for expiration (older than ClaimTimeout) or completion (if
+// the final taken/<winner>-<name>.card already exists). Stale claims are cleaned up, allowing
+// interrupted claims to recover.
+func claimCard(takenDir, cardName, worker string) (bool, error) {
+	path := claimPath(takenDir, cardName)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err == nil {
+		fmt.Fprintf(f, "%s %d %d\n", worker, os.Getpid(), time.Now().Unix())
+		f.Close()
+		return true, nil
+	}
+	if !errors.Is(err, os.ErrExist) {
+		return false, err
+	}
+	// Another worker holds a claim. Check if it is stale by reading its bytes:
+	// a claim record records the claimant worker, pid, and creation unix timestamp.
+	raw, readErr := os.ReadFile(path)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, readErr
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) >= 3 {
+		if ts, pErr := strconv.ParseInt(fields[2], 10, 64); pErr == nil {
+			if time.Now().Unix()-ts > int64(ClaimTimeout/time.Second) {
+				_ = os.Remove(path)
+				f2, err2 := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+				if err2 == nil {
+					fmt.Fprintf(f2, "%s %d %d\n", worker, os.Getpid(), time.Now().Unix())
+					f2.Close()
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
+// releaseClaim removes the exclusive claim file after the card rename has completed or failed.
+func releaseClaim(takenDir, cardName string) {
+	_ = os.Remove(claimPath(takenDir, cardName))
+}
+
 // takeMu serializes the file rename step across concurrent workers in the same process.
 // On POSIX platforms, directory renames are serialized atomically by the kernel VFS. On
 // Windows, MoveFileEx across concurrent callers on the same source path opens the source
@@ -133,16 +191,24 @@ func TakeCard(benchDir, worker string) (string, bool, error) {
 		return "", false, err
 	}
 	for _, name := range names {
+		claimed, err := claimCard(taken, name, worker)
+		if err != nil {
+			return "", false, err
+		}
+		if !claimed {
+			continue // another worker claimed this card
+		}
 		dst := filepath.Join(taken, worker+"-"+name+CardExt)
 		src := filepath.Join(queue, name+CardExt)
 		takeMu.Lock()
-		err := renameSteady(src, dst)
+		rErr := renameSteady(src, dst)
 		takeMu.Unlock()
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+		releaseClaim(taken, name)
+		if rErr != nil {
+			if errors.Is(rErr, os.ErrNotExist) {
 				continue // another worker took this card first
 			}
-			return "", false, err
+			return "", false, rErr
 		}
 		return name, true, nil
 	}
@@ -220,16 +286,24 @@ func Steal(victimDir, worker string, capacity int) ([]string, error) {
 		if err := os.MkdirAll(taken, 0o755); err != nil {
 			return stolen, err
 		}
+		claimed, cErr := claimCard(taken, names[0], worker)
+		if cErr != nil {
+			return stolen, cErr
+		}
+		if !claimed {
+			continue // another worker claimed this card
+		}
 		src := filepath.Join(queue, names[0]+CardExt)
 		dst := filepath.Join(taken, worker+"-"+names[0]+CardExt)
 		takeMu.Lock()
-		err = renameSteady(src, dst)
+		rErr := renameSteady(src, dst)
 		takeMu.Unlock()
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+		releaseClaim(taken, names[0])
+		if rErr != nil {
+			if errors.Is(rErr, os.ErrNotExist) {
 				continue // another worker took this card first
 			}
-			return stolen, err
+			return stolen, rErr
 		}
 		stolen = append(stolen, names[0])
 	}

@@ -2,7 +2,9 @@ package swarm
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -260,4 +262,138 @@ func collideUntilRename(t *testing.T, dst string) *atomic.Int64 {
 	}
 	t.Cleanup(func() { forceTransientIO = nil })
 	return &hits
+}
+
+// TestTwoProcessesCannotTakeOneCard proves cross-process exclusion across independent worker
+// processes on the same bench. Two OS subprocesses race for one card; exactly one wins and takes
+// it, while the loser observes that the card is claimed/gone and exits clean.
+func TestTwoProcessesCannotTakeOneCard(t *testing.T) {
+	if os.Getenv("TEST_SUBPROCESS_TAKE_CARD") == "1" {
+		bench := os.Getenv("TEST_BENCH_DIR")
+		worker := os.Getenv("TEST_WORKER_NAME")
+		_, ok, err := TakeCard(bench, worker)
+		if err != nil {
+			os.Exit(2)
+		}
+		if ok {
+			os.Exit(0)
+		}
+		os.Exit(1)
+	}
+
+	bench := t.TempDir()
+	plantCard(t, bench, "race")
+
+	cmd1 := exec.Command(os.Args[0], "-test.run=^TestTwoProcessesCannotTakeOneCard$")
+	cmd1.Env = append(os.Environ(),
+		"TEST_SUBPROCESS_TAKE_CARD=1",
+		"TEST_BENCH_DIR="+bench,
+		"TEST_WORKER_NAME=proc0",
+	)
+
+	cmd2 := exec.Command(os.Args[0], "-test.run=^TestTwoProcessesCannotTakeOneCard$")
+	cmd2.Env = append(os.Environ(),
+		"TEST_SUBPROCESS_TAKE_CARD=1",
+		"TEST_BENCH_DIR="+bench,
+		"TEST_WORKER_NAME=proc1",
+	)
+
+	var wg sync.WaitGroup
+	var code1, code2 int
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		err := cmd1.Run()
+		if err != nil {
+			if ee, ok := err.(*exec.ExitError); ok {
+				code1 = ee.ExitCode()
+				return
+			}
+			code1 = -1
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		err := cmd2.Run()
+		if err != nil {
+			if ee, ok := err.(*exec.ExitError); ok {
+				code2 = ee.ExitCode()
+				return
+			}
+			code2 = -1
+		}
+	}()
+	wg.Wait()
+
+	zeros := 0
+	if code1 == 0 {
+		zeros++
+	}
+	if code2 == 0 {
+		zeros++
+	}
+	if zeros != 1 {
+		t.Fatalf("exit codes = (%d, %d), want exactly one 0 exit: exactly one process wins", code1, code2)
+	}
+
+	left, err := QueueCards(bench)
+	if err != nil {
+		t.Fatalf("queue: %v", err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("queue still holds %v, want empty", left)
+	}
+
+	taken, err := os.ReadDir(TakenDir(bench))
+	if err != nil {
+		t.Fatalf("taken: %v", err)
+	}
+	if len(taken) != 1 {
+		t.Fatalf("taken holds %d entries, want 1", len(taken))
+	}
+	if !strings.HasSuffix(taken[0].Name(), "-race"+CardExt) {
+		t.Fatalf("ownership record = %q, want *-race.card", taken[0].Name())
+	}
+}
+
+// TestInterruptedClaimRecovery asserts that a stale claim file left by a crashed or killed
+// worker is cleanly broken after ClaimTimeout, allowing the waiting card to be recovered.
+func TestInterruptedClaimRecovery(t *testing.T) {
+	bench := t.TempDir()
+	plantCard(t, bench, "crashed")
+
+	taken := TakenDir(bench)
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	claim := filepath.Join(taken, "crashed.claim")
+	oldStamp := time.Now().Unix() - 2*int64(ClaimTimeout/time.Second)
+	if err := os.WriteFile(claim, []byte(fmt.Sprintf("crashed-worker 99999 %d\n", oldStamp)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	name, ok, err := TakeCard(bench, "w1")
+	if err != nil {
+		t.Fatalf("take with stale claim: %v", err)
+	}
+	if !ok || name != "crashed" {
+		t.Fatalf("TakeCard = (%q, %t), want (crashed, true)", name, ok)
+	}
+
+	left, err := QueueCards(bench)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("queue still holds %v, want empty", left)
+	}
+
+	owned, err := OwnedCards(bench, "w1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owned) != 1 || owned[0] != "crashed" {
+		t.Fatalf("owned = %v, want [crashed]", owned)
+	}
 }
