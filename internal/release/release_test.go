@@ -847,7 +847,7 @@ func TestAdoptSendsInstallsAndWritesOneReceiptPerMachine(t *testing.T) {
 			// --no-certify: these cases are about the install, and an adopt certifies by
 			// default since 2026-09-18. The waiver is explicit here exactly as it must be
 			// on a real command line.
-			args := []string{"adopt", "--version", "v0.16.0", "--machines", list,
+			args := []string{"adopt", "--no-certify", "--version", "v0.16.0", "--machines", list,
 				"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/home/nova/.local/bin",
 				"--dest", "/home/nova/nova-bench/build", "--no-certify"}
 			if platform != "" {
@@ -898,7 +898,7 @@ func TestAdoptSendsInstallsAndWritesOneReceiptPerMachine(t *testing.T) {
 // rather than sent and then found missing on the far side.
 func TestAdoptRefusesAReleaseWithNoUpdateForTheTarget(t *testing.T) {
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh",
 		"--from", built(t, "v0.16.0", "windows-amd64", "nova-bus"), "--bin", "/b", "--dest", "/d",
 		"--platform", "windows-amd64", "--no-certify"}, &o, &e, Deps{SSH: &fakeSSH{}})
@@ -915,7 +915,7 @@ func TestAdoptRefusesOneMachineAndStillReportsTheRest(t *testing.T) {
 		refuse: map[string]error{"vision": fmt.Errorf("ssh: connect to host vision port 22: Connection refused")},
 	}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0", "--machines", list,
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0", "--machines", list,
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/home/nova/.local/bin",
 		"--dest", "/home/nova/nova-bench/build", "--no-certify"}, &o, &e, Deps{SSH: s})
 	if code != 1 {
@@ -949,7 +949,7 @@ func TestAdoptRefusesAMachineWhoseInstallSaidNothing(t *testing.T) {
 	from := built(t, "v0.16.0", "", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"hulk": "bash: nova-update: command not found\n"}}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0", "--machines", machinesFile(t, "hulk\n"),
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0", "--machines", machinesFile(t, "hulk\n"),
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: s})
 	if code != 1 || !strings.Contains(e.String(), "RELEASE REFUSED machine=hulk") {
 		t.Fatalf("code=%d errs=%s", code, e.String())
@@ -960,7 +960,7 @@ func TestAdoptRefusesAMachineNameThatIsNotOne(t *testing.T) {
 	from := built(t, "v0.16.0", "", "nova-update")
 	s := &fakeSSH{}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "hulk; rm -rf /\n"), "--ssh", "/usr/bin/ssh",
 		"--from", from, "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: s})
 	if code != 2 {
@@ -973,7 +973,7 @@ func TestAdoptRefusesAMachineNameThatIsNotOne(t *testing.T) {
 
 func TestAdoptRefusesAnEmptyMachineList(t *testing.T) {
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "# nobody\n\n"), "--ssh", "/usr/bin/ssh",
 		"--from", built(t, "v0.16.0", "", "nova-update"), "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 || !strings.Contains(e.String(), "no machine") {
@@ -1044,7 +1044,7 @@ func TestProgressGoesToStderrAndReceiptsToStdout(t *testing.T) {
 	from := built(t, "v0.16.0", "", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n"}}
 	var o, e bytes.Buffer
-	if code := Run("nova-update", []string{"adopt", "--version", "v0.16.0", "--machines", machinesFile(t, "hulk\n"),
+	if code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0", "--machines", machinesFile(t, "hulk\n"),
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: s}); code != 0 {
 		t.Fatalf("%d %s", code, e.String())
 	}
@@ -1086,7 +1086,7 @@ func TestAdoptFetchesTheReleaseFromAnotherMachine(t *testing.T) {
 		},
 	}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "vision\nmini\n"), "--ssh", "/usr/bin/ssh",
 		"--from", "hulk:/home/nova/nova-bench/release", "--stage", stage,
 		"--expect-sums", digest,
@@ -1121,7 +1121,7 @@ func TestAdoptFetchesTheReleaseFromAnotherMachine(t *testing.T) {
 
 func TestAdoptRefusesARemoteFromWithNoStage(t *testing.T) {
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
 		"--from", "hulk:/releases", "--bin", "/b", "--dest", "/d"}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 || !strings.Contains(e.String(), "--stage") {
@@ -1146,7 +1146,7 @@ func TestAdoptRefusesAFetchThatDoesNotMatchItsChecksums(t *testing.T) {
 		t.Fatal(err)
 	}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
 		"--from", "hulk:/releases", "--stage", t.TempDir(), "--expect-sums", digest,
 		"--bin", "/b", "--dest", "/d", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
@@ -1221,7 +1221,7 @@ func TestAdoptUsesEachMachinesOwnBinAndDest(t *testing.T) {
 		"vision": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n",
 	}}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0", "--machines", list,
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0", "--machines", list,
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "~/.local/bin",
 		"--dest", "~/nova-bench/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 0 {
@@ -1316,7 +1316,7 @@ func TestAdoptPassesRetireToEachMachineAndCountsIt(t *testing.T) {
 		"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=18\n",
 	}}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh", "--from", from,
 		"--bin", "~/.local/bin", "--dest", "~/build", "--retire", "~/go/bin",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
@@ -1387,7 +1387,7 @@ func TestAdoptRefusesAPathTheRemoteShellWouldReadAsSyntax(t *testing.T) {
 	for _, flag := range []string{"--bin", "--dest", "--retire"} {
 		for _, bad := range hostile {
 			t.Run(flag+" "+bad, func(t *testing.T) {
-				args := []string{"adopt", "--version", "v0.16.0",
+				args := []string{"adopt", "--no-certify", "--version", "v0.16.0",
 					"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh",
 					"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 					"--platform", "linux-amd64"}
@@ -1420,7 +1420,7 @@ func TestAdoptRefusesAHostilePathInTheMachinesFile(t *testing.T) {
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "hulk\nvision\t/opt/x; rm -rf /\n"), "--ssh", "/usr/bin/ssh",
 		"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
@@ -1484,7 +1484,7 @@ func TestAdoptRefusesAFetchedReleaseWhoseSumsAreNotTheOnesCut(t *testing.T) {
 	// A digest of something else entirely: what the cut recorded.
 	cutDigest := strings.Repeat("ab", 32)
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
 		"--from", "hulk:/releases", "--stage", t.TempDir(), "--expect-sums", cutDigest,
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
@@ -1506,7 +1506,7 @@ func TestAdoptRefusesARemoteFromWithNoDigestToCheckAgainst(t *testing.T) {
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{serves: map[string]string{"hulk": ArtifactDir(from, "v0.16.0", "linux", "amd64")}}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
 		"--from", "hulk:/releases", "--stage", t.TempDir(),
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
@@ -1555,7 +1555,7 @@ func TestCutRecordsTheSumsDigestTheAdoptWillCheck(t *testing.T) {
 	}
 	o.Reset()
 	e.Reset()
-	if code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	if code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
 		"--from", "hulk:/releases", "--stage", t.TempDir(), "--expect-sums", want,
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"},
@@ -1678,7 +1678,7 @@ func TestAdoptTreatsRemoteOutputAsDataNotAsACommand(t *testing.T) {
 		"hulk": "$(touch " + marker + ")\n`touch " + marker + "`\n; touch " + marker + "\n",
 	}}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh", "--from", from,
 		"--bin", "~/.local/bin", "--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 1 || !strings.Contains(e.String(), "RELEASE REFUSED machine=hulk") {
@@ -1695,7 +1695,7 @@ func TestAdoptRunsTheBinaryItSentByAbsolutePath(t *testing.T) {
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
-	if code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	if code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh", "--from", from,
 		"--bin", "~/.local/bin", "--dest", "~/nova-bench/build", "--platform", "linux-amd64"},
 		&o, &e, Deps{SSH: s}); code != 0 {
@@ -1723,7 +1723,7 @@ func TestAdoptInfersTheVersionWhenThereIsOnlyOne(t *testing.T) {
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--machines", machinesFile(t, "hulk\n"),
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--machines", machinesFile(t, "hulk\n"),
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 0 {
@@ -1747,7 +1747,7 @@ func TestAdoptRefusesToGuessBetweenTwoVersionsAndNamesThem(t *testing.T) {
 	}
 	s := &fakeSSH{}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--machines", machinesFile(t, "hulk\n"),
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--machines", machinesFile(t, "hulk\n"),
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
 	if code != 2 {
@@ -1765,7 +1765,7 @@ func TestAdoptRefusesToGuessBetweenTwoVersionsAndNamesThem(t *testing.T) {
 
 func TestAdoptRefusesAnEmptyArtifactRoot(t *testing.T) {
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--machines", machinesFile(t, "hulk\n"),
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--machines", machinesFile(t, "hulk\n"),
 		"--ssh", "/usr/bin/ssh", "--from", t.TempDir(), "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 || !strings.Contains(e.String(), "no release") {
@@ -1851,7 +1851,7 @@ func TestAdoptDryRunProbesEveryMachineAndStreamsNothing(t *testing.T) {
 		refuse: map[string]error{"mini": fmt.Errorf("ssh: connect to host mini port 22: Connection refused")},
 	}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "hulk\nvision\nmini\n"), "--ssh", "/usr/bin/ssh",
 		"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64", "--dry-run"}, &o, &e, Deps{SSH: s})
@@ -1895,7 +1895,7 @@ func TestAdoptStreamsNothingToAMachineThatAlreadyHasTheRelease(t *testing.T) {
 		},
 	}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "hulk\nvision\n"), "--ssh", "/usr/bin/ssh",
 		"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 		"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
