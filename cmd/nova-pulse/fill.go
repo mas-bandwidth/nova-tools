@@ -50,6 +50,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	launched := f.fs.String("launched", "", "")
 	lanes := f.fs.String("lanes", "queue/control/lanes.tsv", "")
 	machines := f.fs.String("machines", "queue/control/machines.tsv", "")
+	session := f.fs.String("session", "", "")
 	once := f.fs.Bool("once", false, "")
 	capacity := f.fs.Int("capacity", -1, "")
 	launcher := f.fs.String("launcher", "", "")
@@ -91,6 +92,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Launched: *launched,
 		Lanes:    *lanes,
 		Machines: *machines,
+		Session:  *session,
 		Benches:  []string(benches),
 		Only:     []string(only),
 		Once:     *once,

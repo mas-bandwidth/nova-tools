@@ -24,8 +24,9 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
@@ -433,12 +434,45 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	floor := f.fs.Float64("floor", 0.9, "")
 	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
 	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
+	bench := f.fs.String("bench", "", "")
+	machines := f.fs.String("machines", "", "")
+	ssh := f.fs.String("ssh", "", "")
+	session := f.fs.String("session", "", "")
+	branchPrefix := f.fs.String("branch-prefix", pulse.DefaultBranchPrefix, "")
+	base := f.fs.String("base", "", "")
+	since := f.fs.String("since", "", "")
+	launched := f.fs.String("launched", "", "")
+	doneDir := f.fs.String("done", "", "")
+	failedDir := f.fs.String("failed", "", "")
+	var clones benchFlag
+	f.fs.Var(&clones, "clone", "")
 
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	f.want(*id, "id", "the pulse id whose cards this harvest folds")
-	f.want(*root, "root", "the pulse root this pulse's state hangs under")
+	// A bench harvest folds what is on the bench. There is no pulse packet to name and no
+	// relaunch to feed, so --id, --sources and --templates are not its to supply: a
+	// `cut --rows` produces none of the three (dogfood, 2026-09-18).
+	onBench := strings.TrimSpace(*bench) != ""
+	if !onBench {
+		f.want(*id, "id", "the pulse id whose cards this harvest folds")
+	}
+	f.want(*root, "root", "the pulse root this pulse's state hangs under, or with --bench the swarm root ON the bench")
+	var age time.Duration
+	if s := strings.TrimSpace(*since); s != "" {
+		d, err := time.ParseDuration(s)
+		switch {
+		case err != nil:
+			f.add(fmt.Sprintf("--since wants a duration like 6h, got %q", s))
+		case d < 0:
+			f.add(fmt.Sprintf("--since is 0 or more, got %s", d))
+		default:
+			age = d
+		}
+	}
+	if onBench && len(clones) == 0 {
+		f.add("--clone is required with --bench; the branch is pushed from a clone HERE, never from the bench (pass --clone <dir>, or --clone <owner>/<name>=<dir> per repo)")
+	}
 	if *maxBodyBytes <= 0 {
 		f.add(fmt.Sprintf("--max-body-bytes wants a positive byte count, got %d", *maxBodyBytes))
 	}
@@ -460,6 +494,17 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 		Max:          *max,
 		Stdout:       stdout,
 		Stderr:       stderr,
+		Bench:        *bench,
+		Machines:     *machines,
+		SSH:          *ssh,
+		Clones:       []string(clones),
+		Session:      *session,
+		BranchPrefix: *branchPrefix,
+		Base:         *base,
+		Since:        age,
+		Launched:     *launched,
+		Done:         *doneDir,
+		Failed:       *failedDir,
 	}
 	if *decideOn {
 		client, err := decide.New(*baseURL, *keyEnv)

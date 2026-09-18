@@ -650,7 +650,8 @@ runner name and the run id on the line.
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
@@ -1964,3 +1965,90 @@ Red tests, one per rule, each faking the network, the bench or the clock:
 8. `harvest-working-classes-are-the-five` — one fixture job per class prints exactly the five classes and an `HARVEST OK` whose counts sum, through fixture `gh`, `git` and clock.
 9. `harvest-working-timer-install` — a fixture `systemctl` records `daemon-reload` and `enable --now`, both unit files carry the harvest flags, and an unknown action is exit 2 with one remedy.
 10. `harvest-working-output-is-bounded` — 200 fixture jobs print at most `--max` lines plus one `HARVEST MORE`, every value one token, with fixture `gh`, `git` and `systemctl`.
+
+## Harvest, from a bench
+
+Glenn, 2026-09-17: *"every script and hand step sketched on the bench becomes an official
+verb"*. `~/rowan-working/bin/harvest-bench.sh` was the working reference on 2026-09-18 — one
+`ssh` loop over a bench's job directories, a push from the Studio, a PR per job — and a
+dogfood loop of three schema cards on hulk found six edges in it and in the local harvest
+beside it. This section is what shipped; the **Harvest on the working layout** section above
+is the wider layout the same verb grows into. The lines, as `nova-pulse help` prints them:
+
+```
+nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
+```
+
+1. **`--bench` reads the jobs where they are.** The verb lists every
+   `<root>/<slot>/jobs/<label>` on the bench over the ssh seam and reads each `RESULT.md`
+   from there. Without it, harvest read those paths *locally*, found nothing, and reported a
+   card that had finished green with a committed branch as `retry=1` — a success reported as
+   a retry. The one remote script lists directories and copies `RESULT.md` bodies; every
+   decision — the session, the prefix, the base, the age — is taken here, because half the
+   defects of the hand loop were the shell itself.
+
+2. **A card with no job directory under the root ran somewhere else, and is not an
+   abstain.** The local fold counts it under `elsewhere=<n>`, writes no `retry.tsv` row and
+   rewrites no card, and one `HARVEST NOTE` names the remedy: harvest it from its bench.
+
+3. **A bench harvest wants no `--id`, no `--sources` and no `--templates`.** There is no
+   pulse packet to name and no relaunch to feed, and a `cut --rows` produces none of the
+   three. It wants `--clone`, because the branch is pushed from here.
+
+4. **The branch is pushed from the coordinator, never from the bench.** The job's clone is
+   fetched over `ssh://<bench><job>/repo` into `refs/harvest/<branch>` in the local clone
+   `--clone` names and pushed from there by explicit refspec. A bench holds no forge
+   credential and never will (*Secrets never copied between machines*). `--clone <dir>` is
+   the clone for any repo; `--clone <owner>/<name>=<dir>` binds one, which is the two-repo
+   table the script hardcoded.
+
+5. **The filter is the session and the branch prefix, never an age alone.** `--session <id>`
+   takes only jobs whose `RESULT.md` names that session, `--branch-prefix` (default
+   `rowan/`) only branches under it, and `--since` is an optional extra bound rather than
+   the whole filter. The script took *every* `rowan/*` job under six hours, whoever cut it.
+   A job passed over is one line naming its reason: `session`, `branch-prefix`, `age`,
+   `no-repo`, `no-clone`.
+
+6. **The base is the card's, in both places it is used.** The `RESULT.md`'s `BASE` line,
+   else `--base`, else `dev`. The no-commit guard is `git rev-list --count
+   origin/<base>..refs/harvest/<branch>` — the script hardcoded `origin/dev` — and a job
+   that committed nothing is **not pushed**, is marked `.harvested` and prints
+   `HARVEST NO-COMMIT`. The PR's base is that same base; the script hardcoded schema's to
+   `main`.
+
+7. **The PR title is cut at a word boundary and keeps its suffix.** The whole title,
+   ` (<label>, <bench>)` included, is at most 110 bytes; the head is cut back to the last
+   space and closed with `...`. The script cut the `RESULT` line at 110 mid-word and then
+   appended the suffix on top of it, so the title lost a word *and* ran past the cap.
+
+8. **`harvest` drains `--launched`, so a lane is released by the verb that folds it.**
+   Nothing but `manager` drained it, and a lane taken by a card that finished hours ago
+   stayed occupied forever. A launched card whose job is done (a `RESULT.md`) moves to
+   `--done`, one whose job directory is gone moves to `--failed`, each with a marker naming
+   the lane, the bench and why; one still running is left alone. The lane comes from the
+   `<card>.launched` marker `fill` writes beside the card — `lane`, `bench`, `label`,
+   `session`, `at` — so the release is by lane name and never by parsing the card again.
+
+```
+HARVEST JOB bench=<name> label=<label> branch=<name> sha=<sha> base=<branch> pr=<repo>#<n>
+HARVEST NO-COMMIT bench=<name> label=<label> branch=<name> base=<branch> (nothing was committed; not pushed)
+HARVEST SKIP bench=<name> label=<label> reason=<session|branch-prefix|age|no-repo|no-clone|no-count> <detail>
+HARVEST DRAIN card=<card-<n>.md> lane=<name> state=<done|failed> bench=<name> why=<result|job-dir-gone>
+HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> took=<d>
+```
+
+Exit 0, 1 when a fetch, a push or the forge failed for any job, 2 on a refusal that never
+started. Red tests, one per edge, each against the fake shell, the fake forge and the fake
+git on PATH — no test opens a connection:
+
+1. `TestHarvestBenchReadsResultsOverTheShellSeamAndOpensThePR` — rules 1, 3 and 4.
+2. `TestHarvestDoesNotCountAMissingJobDirAsARetry` — rule 2.
+3. `TestHarvestBenchFiltersBySessionAndBranchPrefix` — rule 5.
+4. `TestHarvestBenchMarksANoCommitJobAgainstTheCardsBase` — rule 6, the guard.
+5. `TestHarvestBenchOpensThePRAgainstTheCardsBase` — rule 6, the PR.
+6. `TestHarvestPRTitleCutsAtAWordBoundaryAndKeepsTheSuffix` and
+   `TestHarvestBenchHandsTheForgeTheCutTitle` — rule 7.
+7. `TestHarvestReleasesTheLaneOfAFinishedCard` — rule 8.
+8. `TestFillWritesTheLaunchedMarkerCarryingTheLaneAndSession`,
+   `TestFillReadsTheLiveLaneFromTheMarkerNotTheCard` and
+   `TestFillRemovesTheLaunchedMarkerWhenTheLauncherFails` — rule 8's marker.
