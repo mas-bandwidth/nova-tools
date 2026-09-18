@@ -1262,6 +1262,41 @@ The shipped classes, and the fault each one names:
 | `loki-ready`, `redis-ping`, `postgres-ready` | services | the stack answers locally |
 | `bus-push`, `release-path` | coordination | the bus is clean and in sync; `nova-update` is on PATH |
 
+**A workload body is portable, because the bench is not chosen when it is written.** The
+registry has carried a darwin bench since 2026-09-18 (`air  glenn@100.117.59.68
+darwin/arm64  bench,runner`), and the first run on it found three faults of which two were
+*silent passes*: `find -printf` is GNU, so `diag-size` read no oldest log and reported the
+size as the rate; there is no `getent` on darwin, so `services-reach` read the empty output
+of a program the machine does not have as "the name does not resolve", with the address
+sitting in `/etc/hosts`; and on darwin a **loaded** launchd job and one that **survives a
+reboot** are two different facts, so `runner-path` never read
+`~/Library/LaunchAgents/actions.runner.*.plist`.
+
+`internal/fleet/portable.go` holds every shipped body to the template class of #1415. It
+reads text — it runs nothing and reaches no machine — and refuses two kinds of thing:
+
+- a **spelling** one OS does not have (`nproc`, `find -printf`, `stat -c`, `sha256sum`,
+  `df -B`, `which`, `go --version`, `time -f`, `readlink -f`, …), unless the *same line*
+  also names its portable other half. `if [ "$(uname -s)" = Darwin ]; then sysctl -n
+  hw.ncpu; else nproc; fi` **is** the portable spelling and is never refused;
+- a **tool** that lives on one OS only (`getent`, `systemctl`, `launchctl`, `dscacheutil`,
+  `sysctl`, `brew`), unless the body guards it with `command -v <tool>`.
+
+Each finding carries its remedy. The allowlist at
+`internal/fleet/testdata/workload_portability_allowlist.txt` is shrink-only, matched by
+`<class> <spelling>` and **never by line**, and is empty. A run that reads *no* workload is
+red, which is how the embedded set going missing is found rather than reported as a clean
+pass over nothing.
+
+The darwin toolchain roots are #1419's list, inside certification: a Mac's toolchains are
+installed *and* on `PATH` and still die inside a bare wall, because `/opt/homebrew/bin/go`
+is a symlink into `/opt/homebrew/Cellar/go/<ver>/libexec` and the grant is checked against
+the resolved target. `go-test`, `wall-toolchain` and `sbcl` name the Cellar **trees** as
+`reads:` — never `/opt/homebrew/bin`, which is a directory of launchers a card could exec
+out of — and each body looks in the tree before it looks at whatever `PATH` resolves. A root
+that is not on the machine is skipped, so the same card is one card on both operating
+systems.
+
 One row per machine per class is appended to `--certs`:
 
 ```
@@ -1321,8 +1356,26 @@ UNREACHABLE or TIMEOUT writes nothing at all.
 body: its body runs HERE. The branch is taken before the run, not after it.
 
 **A machine certifies ITSELF without ssh.** When the machine named is the machine running the
-verb (by registry name, ssh target or short host name) the workload runs here through `bash
--s`, and one `CERTIFY NOTE machine=<m> transport=local reason=this-is-the-machine` says so.
+verb (by registry name, ssh target, short host name, **or one of this machine's own
+addresses**) the workload runs here through `bash -s`, and one `CERTIFY NOTE machine=<m>
+transport=local reason=this-is-the-machine` says so. The addresses are there because a row
+may name a machine by address: the Air is `air  glenn@100.117.59.68` and calls itself
+`macbook`, so on 2026-09-18 the Air certifying the Air opened an ssh to its own tailnet
+address and reported twelve of its fourteen classes `UNREACHABLE`. An IPv4 literal is also
+never cut at the first dot — `100.117.59.68` is not a host called `100`.
+
+**A line in the class's own token is the machine ANSWERING**, whatever words are in it. Every
+`expect:` names the word its class speaks in (`^SERVICES OK` → `SERVICES`), and a line that
+begins with it came from the body. Without that rule the Air's `SERVICES FAIL redis ... Could
+not connect to Redis at 69.67.149.151:6379: Connection refused` — redis-cli's words, through
+an ssh that worked perfectly — was read as the transport failing, the verdict was thrown
+away and no row was written: a real fault of the fleet disappearing into a count of machines
+nobody could reach.
+
+**A forge nobody could ask is `UNREACHABLE`, not `FAIL`.** `gh` is not authenticated
+everywhere the verb runs, and `runner-online FAIL evidence="gh api ...: exit status 1"` is a
+judgement about a machine made from a question nobody managed to ask. No row, counted apart,
+never repaired — the same rule as a broken ssh.
 
 **A dry run never says OK**: it ends `CERTIFY DRY-RUN machines=<n> would=<n>`, because a run
 that reached nothing has no passes to report.

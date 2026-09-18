@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -108,13 +109,19 @@ type StatusHTMLInput struct {
 	Branch   string   // the branch whose merge queue and tip the page shows; empty is dev
 	Self     string   // the name of the host running the verb; empty omits the row
 	Loops    []string // label=pattern pairs counted on the self host
-	Timeout  time.Duration
-	Reader   FleetReader
-	SelfRead SelfReader
-	Ship     Publisher
-	Now      func() time.Time
-	Stdout   io.Writer
-	Stderr   io.Writer
+	// Certs is the certificates file `fleet certify` appends to. The page gains one
+	// certification cell per bench read from it and from NOTHING else: no ssh, no forge, no
+	// registry, because a page that guesses what it did not measure is the DOWN row again.
+	// Empty leaves every cell a dash, which is "nobody asked" and not "nothing is certified".
+	Certs      string
+	CertMaxAge time.Duration // how long a certificate stands; 0 is fleet.DefaultMaxAge
+	Timeout    time.Duration
+	Reader     FleetReader
+	SelfRead   SelfReader
+	Ship       Publisher
+	Now        func() time.Time
+	Stdout     io.Writer
+	Stderr     io.Writer
 }
 
 // defaultDayStart is when the day's merged counter resets. It is 02:00Z because
@@ -242,6 +249,19 @@ func StatusHTML(in StatusHTMLInput) int {
 		self = &s
 	}
 
+	// The certification column. The file is read ONCE, here, and a file that will not read
+	// is said out loud rather than becoming a page full of dashes nobody can explain.
+	var certs []fleet.Certificate
+	certsRead := false
+	if path := strings.TrimSpace(in.Certs); path != "" {
+		rows, cerr := fleet.ReadCertificates(path)
+		if cerr != nil {
+			fmt.Fprintf(in.Stderr, "STATUS NOTE certs=%s unread=%s\n", oneline.Field(path), oneline.Quote(oneline.Err(cerr)))
+		} else {
+			certs, certsRead = rows, true
+		}
+	}
+
 	queueDepth := countCards(in.Queue, "pending")
 	ready := countCards(in.Queue, "ready")
 	launched := countFillLog(in.Queue, "attempt=")
@@ -255,6 +275,7 @@ func StatusHTML(in StatusHTMLInput) int {
 		queueDepth: queueDepth, ready: ready, launched: launched, refused: refusedByCapacity,
 		hygiene: hygiene, readings: readings, self: self,
 		merged: count{}, opened: count{},
+		certs: certificationOf(certs, certsRead, benches, self, now, in.CertMaxAge),
 	}
 	if repo := firstLine(filepath.Join(in.Queue, "REPO")); repo != "" {
 		env := ghEnv(os.Environ(), in.GhConfig)
@@ -459,4 +480,25 @@ func fleetStatusScript(home, since string) string {
 		`[ $a1 -gt $a ] && a=$a1; [ $a2 -lt $a ] && a=$a2; [ $a3 -lt $a ] && a=$a3; [ $a -lt 0 ] && a=0`,
 		`printf 'STATUSFLEET\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$live" "$cores" "$load" "$free" "$mem" "$a" "$hyg"`,
 	}, "\n")
+}
+
+// certificationOf is one cell per row of the slots table, keyed by the name that row prints.
+// The self row is a machine too -- the coordinator is in the registry and is certified like
+// every other -- so it gets a cell as well.
+func certificationOf(certs []fleet.Certificate, read bool, benches []FleetBench, self *SelfReading, now time.Time, maxAge time.Duration) map[string]string {
+	if !read {
+		return nil
+	}
+	names := make([]string, 0, len(benches)+1)
+	for _, b := range benches {
+		names = append(names, b.Name)
+	}
+	if self != nil && strings.TrimSpace(self.Name) != "" {
+		names = append(names, self.Name)
+	}
+	out := map[string]string{}
+	for _, c := range fleet.SummarizeAll(certs, names, now, maxAge) {
+		out[c.Machine] = c.Column()
+	}
+	return out
 }

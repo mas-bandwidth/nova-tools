@@ -189,8 +189,40 @@ UNREACHABLE or TIMEOUT writes nothing at all.
 **A `where: coordinator` workload never opens an ssh**, whether it asks the forge or runs a
 body: its body runs HERE. The branch is taken before the run, not after it.
 
+**A workload body is portable, because the bench is not chosen when it is written.** The
+registry has carried a darwin bench since 2026-09-18 — `air  glenn@100.117.59.68
+darwin/arm64  bench,runner` — and the first run on it found three faults of which two were
+*silent passes*: `find -printf` is GNU (so `diag-size` read no oldest log and reported the
+size as the rate), there is no `getent` on darwin (so `services-reach` read the empty output
+of a missing program as "the name does not resolve", with the address in `/etc/hosts`), and a
+**loaded** launchd job and one that **survives a reboot** are two different facts (so
+`runner-path` never read `~/Library/LaunchAgents/actions.runner.*.plist`). Every shipped body
+is held to #1415's template class by `internal/fleet/portable.go`: a spelling one OS lacks is
+refused unless the same line names its portable other half, and a one-OS tool is refused
+unless the body guards it with `command -v`. The allowlist is shrink-only, matched by class
+and spelling and never by line, and is empty. A run that reads no workload is red.
+
+**The darwin toolchain roots are #1419's list.** `/opt/homebrew/bin/go` is a symlink into
+`/opt/homebrew/Cellar/go/<ver>/libexec`, each toolchain resolves its runtime from the
+directory of the launcher that ran it, and the grant is checked against the resolved target —
+so `go-test`, `wall-toolchain` and `sbcl` name the Cellar **trees** as `reads:`, never
+`/opt/homebrew/bin`, and each body looks in the tree before whatever `PATH` resolves. A root
+absent from the machine is skipped, so one card is one card on both operating systems.
+
+**A line in the class's own token is the machine ANSWERING.** Each `expect:` names the word
+its class speaks in; a line beginning with it came from the body, and the transport question
+is never asked of it. The Air's `SERVICES FAIL redis ... Connection refused` — redis-cli's
+words, through an ssh that worked — was read as ssh failing, and a real fault of the fleet
+disappeared into a count of machines nobody could reach.
+
+**A forge nobody could ask is `UNREACHABLE`, not `FAIL`**, for the same reason a broken ssh
+is: `gh` is not authenticated everywhere the verb runs, and a judgement about a machine made
+from a question nobody asked is the `build=Host\x20key\x20verification\x20failed.` row
+again. No row, counted apart, never repaired.
+
 **A machine certifies ITSELF without ssh.** When the machine named is the machine running the
-verb — by registry name, ssh target or short host name — the workload runs here through
+verb — by registry name, ssh target, short host name, or one of this machine's own
+addresses — the workload runs here through
 `bash -s`, and `CERTIFY NOTE machine=<m> transport=local reason=this-is-the-machine` says so
 once. hulk certifying hulk went through `ssh hulk` and died on its own host key.
 
