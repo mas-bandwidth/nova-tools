@@ -69,7 +69,6 @@ func AsLeaseRefusal(err error) (*LeaseRefusal, bool) {
 	return nil, false
 }
 
-
 // PullResult names the card a pull owns and the lease it holds it under.
 type PullResult struct {
 	Owner string

@@ -124,11 +124,16 @@ func TakeCard(benchDir, worker string) (string, bool, error) {
 		return "", false, err
 	}
 	for _, name := range names {
-		dst := filepath.Join(taken, worker+"-"+name+CardExt)
-		if err := renameSteady(filepath.Join(queue, name+CardExt), dst); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+		claim := filepath.Join(taken, name+".claim")
+		src := filepath.Join(queue, name+CardExt)
+		if err := renameSteady(src, claim); err != nil {
+			if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrExist) {
 				continue // another worker took this card first
 			}
+			return "", false, err
+		}
+		dst := filepath.Join(taken, worker+"-"+name+CardExt)
+		if err := renameSteady(claim, dst); err != nil {
 			return "", false, err
 		}
 		return name, true, nil
@@ -208,11 +213,15 @@ func Steal(victimDir, worker string, capacity int) ([]string, error) {
 			return stolen, err
 		}
 		src := filepath.Join(queue, names[0]+CardExt)
-		dst := filepath.Join(taken, worker+"-"+names[0]+CardExt)
-		if err := renameSteady(src, dst); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+		claim := filepath.Join(taken, names[0]+".claim")
+		if err := renameSteady(src, claim); err != nil {
+			if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrExist) {
 				continue // another worker took this card first
 			}
+			return stolen, err
+		}
+		dst := filepath.Join(taken, worker+"-"+names[0]+CardExt)
+		if err := renameSteady(claim, dst); err != nil {
 			return stolen, err
 		}
 		stolen = append(stolen, names[0])
