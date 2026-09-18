@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -56,9 +57,22 @@ func TestAppendEntryIsAppendOnlyJSONLines(t *testing.T) {
 			t.Errorf("line %d does not say what Rowan would have picked", i+1)
 		}
 	}
-	if fi, err := os.Stat(path); err != nil {
+	// The log is the tool's own, and what that MEANS is the platform's own.
+	// Unix has the mode bit the tool asked for; Windows has no POSIX mode bits
+	// at all -- Go reports every writable file there as 0666 whatever was
+	// requested, and the real protection is an ACL this test cannot read -- so
+	// asserting 0600 there was asserting something no Windows bench can be
+	// true. The permission the tool REQUESTS is 0600 on both.
+	fi, err := os.Stat(path)
+	if err != nil {
 		t.Fatal(err)
-	} else if mode := fi.Mode().Perm(); mode != 0o600 {
+	}
+	mode := fi.Mode().Perm()
+	if runtime.GOOS == "windows" {
+		if mode&0o200 == 0 {
+			t.Errorf("the log the tool appends to is not writable: mode %v", mode)
+		}
+	} else if mode != 0o600 {
 		t.Errorf("the log is the tool's own: mode %v", mode)
 	}
 }
