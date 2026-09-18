@@ -1225,7 +1225,7 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--harness <path>] [--model <p/m>|--worker <file>] [--swarm-root <dir>] [--ssh <path>] [--capacity <n>] [--launcher <path>] [--dry-run] [--deadline <s>] [--launch-grace <d>] [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -1317,18 +1317,75 @@ catches the failure without waiting for the work, and the child is waited on in 
 background rather than left a zombie. What happens to a card after that is the
 bench's, and draining `--launched` when it finishes is `manager`'s.
 
+**Everything `fill` does to a machine comes from that machine's registry row.** A
+bench name is a name in a file: `air` is reached at `glenn@100.117.59.68`, and the
+row's `ssh` column is the only thing `fill` ever sshes to. The capacity formula is
+chosen the same way, by the row's `os/arch` column and never by probing the machine
+to ask what it is — `nproc`, `/proc/loadavg`, `/proc/meminfo` and `df -BG` on linux;
+`sysctl -n hw.ncpu`, `sysctl -n vm.loadavg`, `sysctl -n hw.memsize` and `df -g` on
+darwin. Both come from the schema dogfood on the M2 Air (2026-09-18), where `fill`
+could not serve a darwin bench **by construction**: it sshed the bench name and sent
+a `/proc` script to a Mac, and both failures came back as `exit status 255`. An os
+the tool has no formula for is a named refusal, not a linux script sent hopefully.
+
+darwin has no `MemAvailable`, so its memory term is the machine's **total** halved
+rather than what is free. On the machines we have that is the conservative direction
+— an 8 GB Air yields 4, under its core term.
+
+**A card may say which os it needs, and it then runs only there.** The line is
+`os: <name>` in the card's own text, or the os half of a `LEG: <os>/<arch>` line; a
+card that names neither runs anywhere, which is most of them. A darwin card offered
+a linux bench is passed over and left ready for a bench that can run it — this tick,
+if one is named, or a later one. A card no named bench can run is not left in
+silence:
+
+```
+FILL WAITING os=darwin cards=2 first=card-9601.md named=hulk=linux,vision=linux
+```
+
+**The launcher is `nova-swarm native` on the bench**, started over the same `ssh` the
+capacity probe uses and at the same target. The card is copied to
+`<swarm root>/cards/<card>` first, and the job runs in its own slot under the root, so
+`harvest --bench`'s `<root>/*/jobs/*/` finds it afterwards. `--harness <path>` and
+`--model <provider/model>` (or `--worker <file>`, which pins one) are the launcher's
+own, and it refuses by name rather than guessing either. `--swarm-root <dir>` is the
+root on the bench; left out, it is `$HOME/<the row's seat>`, which is what the seat
+column has meant since the hand loop passed `swarm-<bench>` as its second argument,
+and a row with no seat is a refusal. `--ssh <path>` names the ssh program.
+
+`flash-native-bench.sh` was the launcher until 2026-09-18. It was retired that day
+and is on no machine, so every launch was an `exec: no such file or directory` that
+the tick counted as a failure.
+
+**`--dry-run` reads the real capacity and launches nothing.** It is the one probe a
+bench just added to the registry is worth: it reaches the machine for capacity and
+for nothing else — no card moves, no launcher runs — and the line carries the number,
+the os and the ssh target, so the row that produced it can be checked against the
+file:
+
+```
+$ nova-pulse fill --once --dry-run --machines ./queue/control/machines.tsv --bench air --ready ./queue/ready --launched ./queue/launched
+FILL DRY tick=1 air:capacity=4,take=4,os=darwin,arch=arm64,ssh=glenn@100.117.59.68 ready=0
+```
+
+A bench it could not reach prints `capacity=-` and the tick exits 1, with the child's
+own last line on the `FILL NOTE`. `--dry-run` and `--capacity` together are refused:
+one exists to read the real number and the other is the fixed one that opens no
+connection.
+
 **`--capacity <n>` and `--launcher <path>` make the tick runnable without a bench.**
 `--capacity` is a fixed capacity for every bench and no `ssh` at all; `--launcher` is
-the program each card is handed to, `flash-native-bench.sh` when it is left out. A
-dry run over a directory of cards exercises the whole tick, lanes included:
+a local program each card is handed to, with the hand loop's own five arguments
+(`<bench> <seat> <card> <label> <deadline>`), taken from the registry row. Together
+they run the whole tick, lanes included, on a machine with no fleet at all:
 
 ```
 nova-pulse fill --ready ./queue/ready --launched ./queue/launched --lanes ./queue/control/lanes.tsv --bench bench-a --capacity 2 --launcher ./bin/echo-card --once
 ```
 
 **`--session <id>` is stamped into every launched card's marker.** When `fill` moves a
-card into `--launched` it writes `<card>.launched` beside it — `lane`, `bench`, `label`,
-`session`, `card`, `at` — and that marker, not the card's own text, is what holds the
+card into `--launched` it writes `<card>.launched` beside it — `lane`, `bench`, `ssh`,
+`os`, `label`, `session`, `card`, `at` — and that marker, not the card's own text, is what holds the
 lane. A live card whose text a worker rewrote still holds the lane it took, and a
 launcher that fails takes its marker with the card back to `--ready`. `harvest` reads
 the marker to release the lane and to know whose job it is looking at.

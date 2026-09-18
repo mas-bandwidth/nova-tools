@@ -33,6 +33,18 @@ package pulse
 // launch -- are injected seams (Capacity and CardLauncher), so a test drives the whole
 // tick against a fake ready directory, a fake clock and a fake launcher. No test opens an
 // ssh connection or spawns a process.
+//
+// Both seams are handed the machine's REGISTRY ROW, never its name. A bench name is not a
+// hostname and does not say what the machine runs: `air` is reached at
+// `glenn@100.117.59.68` and answers a darwin capacity formula, and a fill that knew only
+// the name sshed nowhere and sent /proc to a Mac (the schema dogfood on the M2 Air,
+// 2026-09-18). The row is resolved ONCE, here, past refuseNonBenches, and it is the row
+// the seams get.
+//
+// A card may say which os it needs -- `os: darwin`, or the os half of a `LEG: darwin/arm64`
+// line -- and it is then launched only on a row whose os matches. A card that names none
+// runs anywhere, exactly as before. A card nothing this tick can run is left ready with one
+// FILL WAITING line per os, so it is not stuck in silence.
 
 import (
 	"errors"
@@ -58,16 +70,19 @@ const FillInterval = 300 * time.Second
 
 // CardLauncher launches one card that Fill has already moved into --launched. It is the
 // per-card seam of the launch verb (internal/pulse/launch.go): one call, in order, one
-// card. The real one shells flash-native-bench.sh on the bench; tests inject a recorder.
+// card. It is handed the machine's registry ROW -- the ssh target, the os and the seat are
+// all facts of that row and none of them is knowable from the bench name. The real one runs
+// `nova-swarm native` on the bench over ssh; tests inject a recorder.
 type CardLauncher interface {
-	Launch(bench, card string) error
+	Launch(m fleet.Machine, card string) error
 }
 
-// Capacity answers how many cards the named bench can take this tick -- card 9316's
-// formula, the min of core, disk and memory headroom. The real one runs it over ssh; tests
-// inject a fixed number.
+// Capacity answers how many cards one bench can take this tick -- card 9316's formula, the
+// min of core, disk and memory headroom. It takes the registry row for the same reason the
+// launcher does: the formula itself is chosen by the row's os, never by probing the machine
+// to find out what it is. The real one runs it over ssh; tests inject a fixed number.
 type Capacity interface {
-	Capacity(bench string) (int, error)
+	Capacity(m fleet.Machine) (int, error)
 }
 
 // refuseNonBenches holds every named bench against the registry BEFORE the first tick, so
@@ -86,6 +101,19 @@ func refuseNonBenches(stderr io.Writer, reg *fleet.Registry, benches []string) i
 	return code
 }
 
+// benchRows resolves every named bench to its registry ROW, in the order the caller named
+// them. It runs past refuseNonBenches, so every name is known and carries the bench role;
+// a name that somehow is not is dropped rather than guessed at.
+func benchRows(reg *fleet.Registry, benches []string) []fleet.Machine {
+	out := make([]fleet.Machine, 0, len(benches))
+	for _, bench := range benches {
+		if m, ok := reg.Lookup(bench); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // guardedCapacity is the capacity seam with the registry in front of it: a capacity probe
 // is an ssh to the machine, which is load, which is exactly what a runner host may not take.
 type guardedCapacity struct {
@@ -93,11 +121,11 @@ type guardedCapacity struct {
 	next Capacity
 }
 
-func (g guardedCapacity) Capacity(bench string) (int, error) {
-	if err := g.reg.RequireBench(bench); err != nil {
+func (g guardedCapacity) Capacity(m fleet.Machine) (int, error) {
+	if err := g.reg.RequireBench(m.Name); err != nil {
 		return 0, err
 	}
-	return g.next.Capacity(bench)
+	return g.next.Capacity(m)
 }
 
 // guardedLauncher is the launch seam with the registry in front of it: the last gate a card
@@ -107,11 +135,11 @@ type guardedLauncher struct {
 	next CardLauncher
 }
 
-func (g guardedLauncher) Launch(bench, card string) error {
-	if err := g.reg.RequireBench(bench); err != nil {
+func (g guardedLauncher) Launch(m fleet.Machine, card string) error {
+	if err := g.reg.RequireBench(m.Name); err != nil {
 		return err
 	}
-	return g.next.Launch(bench, card)
+	return g.next.Launch(m, card)
 }
 
 // FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
@@ -125,6 +153,7 @@ type FillInput struct {
 	Benches  []string      // the benches to fill, in order
 	Only     []string      // glob patterns over a card's filename; empty takes every ready card
 	Once     bool          // true runs exactly one tick and returns
+	DryRun   bool          // read each bench's capacity, launch nothing and move nothing
 	Interval time.Duration // how long between ticks; 0 takes FillInterval
 	Stdout   io.Writer
 	Stderr   io.Writer
@@ -184,6 +213,9 @@ func Fill(in FillInput) int {
 	// moment the card, or the capacity probe, would reach the machine.
 	in.Capacity = guardedCapacity{reg: reg, next: in.Capacity}
 	in.Launcher = guardedLauncher{reg: reg, next: in.Launcher}
+	// The rows, once. Everything below this line works from the registry's own facts --
+	// the ssh target, the os, the seat -- and never from the bench name.
+	rows := benchRows(reg, in.Benches)
 	for _, dir := range []string{in.Ready, in.Launched} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return refusal(in.Stderr, "FILL", fmt.Errorf("cannot open %s: %s (name a writable directory)", oneline.Field(dir), oneline.Err(err)))
@@ -191,7 +223,7 @@ func Fill(in FillInput) int {
 	}
 
 	for tick := 1; ; tick++ {
-		lines, res := fillTick(in, tick)
+		lines, res := fillTick(in, rows, tick)
 		for _, line := range lines {
 			fmt.Fprintln(in.Stdout, line)
 		}
@@ -230,12 +262,15 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // move out of ready is the claim, so a card another hand already took is skipped and never
 // launched twice; a launcher that fails moves its card back and releases its lane. It
 // returns the FILL line first and then one FILL HELD line per held card.
-func fillTick(in FillInput, tick int) ([]string, tickResult) {
+func fillTick(in FillInput, rows []fleet.Machine, tick int) ([]string, tickResult) {
 	cards := selectedCards(readyCards(in.Ready), in.Only)
 	lanes := laneTable(in.Lanes)
 	live := liveLanes(in.Launched)
-	idx := 0
-	res := tickResult{benches: len(in.Benches)}
+	// A card is offered to every bench in turn until one takes it, so a card that names an
+	// os only the third bench runs still lands. `taken` is what stops it landing twice: the
+	// old shared cursor could not hold both facts at once.
+	taken := make(map[string]bool, len(cards))
+	res := tickResult{benches: len(rows)}
 	var held []string
 
 	if strays := strayCards(in.Ready); len(strays) > 0 {
@@ -244,14 +279,15 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 			"fill reads card-<n>.md and nothing else; rename it, or cut it with nova-pulse cut")
 	}
 
-	parts := make([]string, 0, len(in.Benches))
-	for _, bench := range in.Benches {
+	parts := make([]string, 0, len(rows))
+	for _, m := range rows {
 		want := 0
 		capacityFailed := false
-		if n, err := in.Capacity.Capacity(bench); err != nil {
+		n, err := in.Capacity.Capacity(m)
+		if err != nil {
 			capacityFailed = true
 			if res.err == nil {
-				res.err = fmt.Errorf("capacity on %s: %w", field(bench), err)
+				res.err = fmt.Errorf("capacity on %s: %w", field(m.Name), err)
 			}
 		} else {
 			want = n
@@ -262,20 +298,45 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 		if want < 0 {
 			want = 0
 		}
+		// --dry-run stops here: the probe is the whole errand, and nothing below this
+		// line may move a card or reach a machine again.
+		if in.DryRun {
+			if capacityFailed {
+				res.failed++
+				parts = append(parts, fmt.Sprintf("%s:capacity=-,take=0,os=%s,ssh=%s",
+					oneline.Field(m.Name), oneline.Field(m.OS), oneline.Field(m.SSH)))
+				continue
+			}
+			parts = append(parts, fmt.Sprintf("%s:capacity=%d,take=%d,os=%s,arch=%s,ssh=%s",
+				oneline.Field(m.Name), n, want, oneline.Field(m.OS), oneline.Field(m.Arch), oneline.Field(m.SSH)))
+			continue
+		}
 
 		launched, failed := 0, 0
-		for want > 0 && idx < len(cards) {
-			card := cards[idx]
-			idx++
+		for _, card := range cards {
+			if want <= 0 {
+				break
+			}
+			if taken[card] {
+				continue
+			}
+			// The os is a requirement of the card, not a preference: a darwin card on a
+			// linux bench is a wasted slot and a red run. The card is left for a bench
+			// that can run it, this tick or a later one.
+			if need := cardOS(card); need != "" && !strings.EqualFold(need, m.OS) {
+				continue
+			}
 			lane := cardLane(card)
 			if lane != "" {
 				if _, known := lanes[lane]; !known {
 					refuseLane(in, card, lane)
+					taken[card] = true
 					continue
 				}
 				if holder, isLive := live[lane]; isLive {
 					held = append(held, fmt.Sprintf("FILL HELD card=%s lane=%s live=%s",
 						oneline.Field(filepath.Base(card)), oneline.Field(lane), oneline.Field(holder)))
+					taken[card] = true
 					continue
 				}
 			}
@@ -284,18 +345,20 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 			if err := os.Rename(card, moved); err != nil {
 				// Another tick or another hand took it first: the card is in exactly
 				// one place at every moment, and a card is never launched twice.
+				taken[card] = true
 				continue
 			}
-			writeLaunchedMarker(in, moved, base, lane, bench)
+			taken[card] = true
+			writeLaunchedMarker(in, moved, base, lane, m)
 			if lane != "" {
 				live[lane] = base
 			}
 			want--
-			if err := in.Launcher.Launch(bench, moved); err != nil {
+			if err := in.Launcher.Launch(m, moved); err != nil {
 				failed++
 				failLaunch(in, moved, base, lane, live, err)
 				if res.err == nil {
-					res.err = fmt.Errorf("launch %s on %s: %w", field(base), field(bench), err)
+					res.err = fmt.Errorf("launch %s on %s: %w", field(base), field(m.Name), err)
 				}
 				continue
 			}
@@ -304,11 +367,15 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 		if capacityFailed || (launched == 0 && failed > 0) {
 			res.failed++
 		}
-		parts = append(parts, fmt.Sprintf("%s:launched=%d,failed=%d", oneline.Field(bench), launched, failed))
+		parts = append(parts, fmt.Sprintf("%s:launched=%d,failed=%d", oneline.Field(m.Name), launched, failed))
 	}
 
 	var b strings.Builder
-	b.WriteString("FILL tick=")
+	b.WriteString("FILL ")
+	if in.DryRun {
+		b.WriteString("DRY ")
+	}
+	b.WriteString("tick=")
 	b.WriteString(strconv.Itoa(tick))
 	for _, p := range parts {
 		b.WriteByte(' ')
@@ -317,7 +384,70 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	b.WriteString(" ready=")
 	b.WriteString(strconv.Itoa(len(readyCards(in.Ready))))
 	lines := append([]string{b.String()}, held...)
+	if !in.DryRun {
+		lines = append(lines, waitingLines(cards, taken, rows)...)
+	}
 	return lines, res
+}
+
+// waitingLines names the cards no named bench could run because none of them runs the os
+// the card asks for. One line per os, with the first card and the count, and what the named
+// benches actually run -- a card that waits in silence is a card nobody knows is waiting.
+func waitingLines(cards []string, taken map[string]bool, rows []fleet.Machine) []string {
+	have := map[string]bool{}
+	named := make([]string, 0, len(rows))
+	for _, m := range rows {
+		have[strings.ToLower(m.OS)] = true
+		named = append(named, m.Name+"="+m.OS)
+	}
+	first := map[string]string{}
+	count := map[string]int{}
+	var order []string
+	for _, card := range cards {
+		if taken[card] {
+			continue
+		}
+		need := cardOS(card)
+		if need == "" || have[need] {
+			continue
+		}
+		if _, seen := first[need]; !seen {
+			first[need] = filepath.Base(card)
+			order = append(order, need)
+		}
+		count[need]++
+	}
+	out := make([]string, 0, len(order))
+	for _, need := range order {
+		out = append(out, fmt.Sprintf("FILL WAITING os=%s cards=%d first=%s named=%s",
+			oneline.Field(need), count[need], oneline.Field(first[need]),
+			oneline.Field(strings.Join(named, ","))))
+	}
+	return out
+}
+
+// cardOS reads the os a card must run on: an `os: <name>` line, or the os half of a
+// `LEG: <os>/<arch>` line. "" is a card that runs anywhere, which is most of them. Only the
+// exact field prefix counts, so a `LEGS:` line is prose -- the same rule cardLane keeps.
+func cardOS(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		t := strings.TrimSpace(line)
+		for _, prefix := range []string{"os:", "OS:", "LEG:", "leg:"} {
+			v, ok := strings.CutPrefix(t, prefix)
+			if !ok {
+				continue
+			}
+			v = strings.TrimSpace(v)
+			if goos, _, _ := strings.Cut(v, "/"); strings.TrimSpace(goos) != "" {
+				return strings.ToLower(strings.TrimSpace(goos))
+			}
+		}
+	}
+	return ""
 }
 
 // failLaunch is what a launcher's failure costs: the card goes back to --ready, its lane is
@@ -464,15 +594,17 @@ func launchedMarker(dir, base string) string {
 }
 
 // writeLaunchedMarker records what the card took the moment it became live: the lane it
-// holds, the bench it went to, its label and the session that cut it. `harvest` reads this
-// to release the lane and to know whose job it is looking at.
-func writeLaunchedMarker(in FillInput, moved, base, lane, bench string) {
+// holds, the bench it went to and how that bench is reached, its label and the session that
+// cut it. `harvest` reads this to release the lane and to know whose job it is looking at,
+// and the ssh and os lines are how a person reading the marker can tell WHICH machine ran
+// the card without opening the registry as it was that day.
+func writeLaunchedMarker(in FillInput, moved, base, lane string, m fleet.Machine) {
 	now := in.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	body := fmt.Sprintf("lane=%s\nbench=%s\nlabel=%s\nsession=%s\ncard=%s\nat=%s\n",
-		lane, bench, strings.TrimSuffix(base, ".md"), in.Session, base,
+	body := fmt.Sprintf("lane=%s\nbench=%s\nssh=%s\nos=%s\nlabel=%s\nsession=%s\ncard=%s\nat=%s\n",
+		lane, m.Name, m.SSH, m.OS, strings.TrimSuffix(base, ".md"), in.Session, base,
 		now().UTC().Format(time.RFC3339))
 	_ = os.WriteFile(launchedMarker(in.Launched, base), []byte(body), 0o644)
 }

@@ -325,6 +325,33 @@ both `runner` and `bench` must carry a dated exception in its notes,
 `allow-shared=<YYYY-MM-DD> <why>`; hulk and vision carry one until the pull
 worker runs cards in containers. `nova-pulse fleet registry` lists the file.
 
+**The row, not the name, is what reaches the machine.** Resolving a bench name
+is not only a permission check: the row carries the two facts a name cannot.
+The `ssh` column is the host — `air` is a name in a file and
+`glenn@100.117.59.68` is the machine — and every ssh a verb opens goes there.
+The `os/arch` column chooses what is sent: `fill`'s capacity formula is linux's
+`/proc` or darwin's `sysctl`, picked from the row and never by probing the
+machine to ask what it is, because the probe is the connection the tool was
+deciding about. An os the tool has no formula for is a refusal that names it.
+Both were found by the schema dogfood on the M2 Air (2026-09-18), where `fill`
+could not serve a darwin bench BY CONSTRUCTION and reported it as
+`exit status 255`. The capacity and launch seams therefore take a
+`fleet.Machine`, not a `bench string`; the bench-name class rule
+(`internal/ci`) holds the shape, and its allowlist shrank by three entries when
+they did.
+
+**A card may name the os it needs.** `os: <name>`, or the os half of a
+`LEG: <os>/<arch>` line, is a requirement: `fill` launches that card only on a
+row whose os matches, and passes it over on every other bench. A card that
+names neither runs anywhere. A card no named bench can run stays ready and is
+named on one `FILL WAITING` line per os, with what the named benches actually
+run — a card waiting in silence is a card nobody knows is waiting.
+
+**`fill --dry-run` is the probe a new row earns.** It reads each named bench's
+capacity over ssh and does nothing else: no card moves and no launcher runs.
+The line carries the number, the os and the ssh target, so the row that
+produced it can be read back against the file.
+
 The fleet rule: every fleet verb prints one `FLEET <name>` line per bench,
 runs the benches in parallel under `--timeout <s>` (default 120), exits
 0/2/3 (0 ok, 2 drift-or-refused, 3 unreachable), takes ssh from `--ssh` so

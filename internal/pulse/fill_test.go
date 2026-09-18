@@ -14,18 +14,20 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 )
 
 // laneCap answers a fixed capacity per bench.
 type laneCap map[string]int
 
-func (c laneCap) Capacity(bench string) (int, error) { return c[bench], nil }
+func (c laneCap) Capacity(m fleet.Machine) (int, error) { return c[m.Name], nil }
 
 // laneLauncher records one line per launched card, bench then card.
 type laneLauncher struct{ calls []string }
 
-func (l *laneLauncher) Launch(bench, card string) error {
-	l.calls = append(l.calls, bench+" "+card)
+func (l *laneLauncher) Launch(m fleet.Machine, card string) error {
+	l.calls = append(l.calls, m.Name+" "+card)
 	return nil
 }
 
@@ -216,12 +218,12 @@ type failingLauncher struct {
 	calls int
 }
 
-func (l *failingLauncher) Launch(bench, card string) error { l.calls++; return l.err }
+func (l *failingLauncher) Launch(fleet.Machine, string) error { l.calls++; return l.err }
 
 // deadCapacity refuses every capacity read, as an unreachable bench does.
 type deadCapacity struct{ err error }
 
-func (c deadCapacity) Capacity(bench string) (int, error) { return 0, c.err }
+func (c deadCapacity) Capacity(fleet.Machine) (int, error) { return 0, c.err }
 
 // markersIn lists the marker files beside a card, by suffix kind.
 func markersIn(t *testing.T, dir, glob string) []string {
@@ -319,7 +321,7 @@ type oneFailingLauncher struct {
 	seen  []string
 }
 
-func (l *oneFailingLauncher) Launch(bench, card string) error {
+func (l *oneFailingLauncher) Launch(m fleet.Machine, card string) error {
 	l.calls++
 	l.seen = append(l.seen, filepath.Base(card))
 	if filepath.Base(card) == l.fail {

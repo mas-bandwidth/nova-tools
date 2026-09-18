@@ -7,7 +7,6 @@
 # a function that has left, or that resolves its name now, is a red run.
 
 internal/pulse/manager.go:reissue formats the requeued card's text and touches no machine; the bench it names is written into a card that pulse.Fill resolves before launching it
-internal/pulse/fill.go:writeLaunchedMarker writes the launched card's marker on the coordinator's own disk and touches no machine; the bench it records is the one pulse.Fill already put through refuseNonBenches and guardedLauncher before the card was launched at all
 
 # `harvest --bench` resolves its name ONCE, at the verb's edge: harvestBench calls
 # requireBench (fleet.Registry.RequireBench) before the first ssh. These four are below
@@ -18,8 +17,6 @@ internal/pulse/harvestbench.go:benchRepoURL builds the ssh://<bench><dir>/repo s
 internal/pulse/harvestbench.go:markHarvested one `touch <dir>/.harvested` through the BenchShell seam, called only from harvestBench after its requireBench guard; the seam below it is sshShell.Run
 internal/pulse/harvestbench.go:sshShell.Run the raw ssh seam; the same road as cmd/nova-pulse's sshCapacity.Capacity -- it is constructed in exactly one place (harvestBench, when the caller injected no BenchShell) and reached only through that verb, which resolved the bench name first
 
-cmd/nova-pulse/fill.go:sshCapacity.Capacity the raw ssh capacity probe; it is reached only through pulse.Fill, which wraps every Capacity in guardedCapacity and asks RequireBench first, and it is constructed in exactly one place (cmd/nova-pulse/fill.go) and handed straight to pulse.Fill
-cmd/nova-pulse/fill.go:flashLauncher.Launch the raw per-card launcher; the same road, wrapped by pulse.Fill in guardedLauncher, constructed in exactly one place and handed straight to it
 
 cmd/nova-pulse/power.go:powerOnlineCount the Mac power verbs exist FOR the CI runner hosts: nova-pulse wake and sleep are how batman and superman are woken for the merge group and let sleep again (the fleet runs on solar). A runner host is the RIGHT answer here, so a bench guard would refuse the verb's whole purpose; they place no card and no load, only a magic packet and a runner-list read
 cmd/nova-pulse/power.go:powerBusyCount the same verbs, asking GitHub whether that runner host's runners are busy before letting it sleep

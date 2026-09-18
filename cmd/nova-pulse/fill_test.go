@@ -14,19 +14,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
+
+// benchARow is the registry row the launcher tests below are handed: the seams take the
+// row, never the bench name.
+var benchARow = fleet.Machine{Name: "bench-a", SSH: "bench-a", OS: "linux", Arch: "x64", Seat: "swarm-bench-a", Cores: 64}
 
 // fillCapStub answers a fixed capacity per bench.
 type fillCapStub map[string]int
 
-func (f fillCapStub) Capacity(bench string) (int, error) { return f[bench], nil }
+func (f fillCapStub) Capacity(m fleet.Machine) (int, error) { return f[m.Name], nil }
 
 // fillLaunchStub records one line per launched card, bench then card.
 type fillLaunchStub struct{ calls []string }
 
-func (l *fillLaunchStub) Launch(bench, card string) error {
-	l.calls = append(l.calls, bench+" "+card)
+func (l *fillLaunchStub) Launch(m fleet.Machine, card string) error {
+	l.calls = append(l.calls, m.Name+" "+card)
 	return nil
 }
 
@@ -183,7 +188,7 @@ func TestSSHCapacityCarriesTheChildsLastLine(t *testing.T) {
 		Stderr: "ssh: connect to host bench-x port 22: Connection refused",
 		Exit:   255,
 	}})
-	_, err := sshCapacity{}.Capacity("bench-x")
+	_, err := sshCapacity{}.Capacity(fleet.Machine{Name: "bench-x", SSH: "bench-x", OS: "linux"})
 	if err == nil {
 		t.Fatal("capacity over a refused connection answered no error")
 	}
@@ -271,10 +276,10 @@ func TestLaunchDoesNotWaitForTheCardToRun(t *testing.T) {
 	bin := filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix())
 	card := filepath.Join(t.TempDir(), "card-001.md")
 
-	if err := (flashLauncher{bin: bin, grace: time.Millisecond}).Launch("bench-a", card); err != nil {
+	if err := (benchLauncher{bin: bin, grace: time.Millisecond}).Launch(benchARow, card); err != nil {
 		t.Fatalf("a launcher still running at the grace answered an error: %v", err)
 	}
-	err := flashLauncher{bin: bin, grace: 0}.Launch("bench-a", card)
+	err := benchLauncher{bin: bin, grace: 0}.Launch(benchARow, card)
 	if err == nil {
 		t.Fatal("with no grace the launcher is waited for; its failure was not seen")
 	}
@@ -288,8 +293,8 @@ func TestLaunchDoesNotWaitForTheCardToRun(t *testing.T) {
 func TestLaunchStillCatchesAFailureInTheGrace(t *testing.T) {
 	specs := fakePATH(t)
 	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stderr: "no such bench", Exit: 7}})
-	l := flashLauncher{bin: filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()), grace: 10 * time.Second}
-	err := l.Launch("bench-a", filepath.Join(t.TempDir(), "card-001.md"))
+	l := benchLauncher{bin: filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()), grace: 10 * time.Second}
+	err := l.Launch(benchARow, filepath.Join(t.TempDir(), "card-001.md"))
 	if err == nil {
 		t.Fatal("an exit-7 launcher answered no error")
 	}

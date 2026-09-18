@@ -148,13 +148,13 @@ func TestTheLaunchSeamRefusesARunnerHostOnItsOwn(t *testing.T) {
 	}
 	rec := &laneLauncher{}
 	g := guardedLauncher{reg: reg, next: rec}
-	if err := g.Launch("batman", "card-001.md"); err == nil {
+	if err := g.Launch(fleet.Machine{Name: "batman", SSH: "batman", OS: "darwin"}, "card-001.md"); err == nil {
 		t.Fatal("the launcher put a card on a CI runner host")
 	}
 	if len(rec.calls) != 0 {
 		t.Fatalf("the refused card still reached the launcher: %q", rec.calls)
 	}
-	if err := g.Launch("hulk", "card-001.md"); err != nil {
+	if err := g.Launch(fleet.Machine{Name: "hulk", SSH: "hulk", OS: "linux"}, "card-001.md"); err != nil {
 		t.Fatalf("the launcher refused a bench: %v", err)
 	}
 }
@@ -168,10 +168,10 @@ func TestTheCapacitySeamRefusesARunnerHostOnItsOwn(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := guardedCapacity{reg: reg, next: laneCap{"hulk": 7, "batman": 99}}
-	if _, err := g.Capacity("batman"); err == nil {
+	if _, err := g.Capacity(fleet.Machine{Name: "batman", SSH: "batman", OS: "darwin"}); err == nil {
 		t.Fatal("the capacity probe reached a CI runner host")
 	}
-	n, err := g.Capacity("hulk")
+	n, err := g.Capacity(fleet.Machine{Name: "hulk", SSH: "hulk", OS: "linux"})
 	if err != nil || n != 7 {
 		t.Fatalf("capacity on a bench = %d, %v; want 7, nil", n, err)
 	}
