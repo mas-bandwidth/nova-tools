@@ -417,11 +417,14 @@ func waitingLines(cards []string, taken map[string]bool, rows []fleet.Machine) [
 		}
 		count[need]++
 	}
+	// The roster is QUOTED, not Field-escaped: it is a list of `<bench>=<os>` pairs, and
+	// Field escapes `=` to \x3d because a field VALUE may not carry one. The quotes are
+	// the delimiter instead, and what is between them reads as it would be typed.
 	out := make([]string, 0, len(order))
 	for _, need := range order {
 		out = append(out, fmt.Sprintf("FILL WAITING os=%s cards=%d first=%s named=%s",
 			oneline.Field(need), count[need], oneline.Field(first[need]),
-			oneline.Field(strings.Join(named, ","))))
+			oneline.Quote(strings.Join(named, ","))))
 	}
 	return out
 }

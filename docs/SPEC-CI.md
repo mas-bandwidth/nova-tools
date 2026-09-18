@@ -1032,9 +1032,12 @@ to hand-written sources so the first cannot pass by reading nothing.
 **Its allowlist.** `internal/ci/testdata/benchname_allowlist.txt`, one
 `<path>:<func>` per line with its reason, checked in BOTH directions — a listed
 function that has left or now resolves its name is a red run — so the list only
-shrinks. Today: `reissue` (formats card text, touches no machine), the two raw
-seams `sshCapacity.Capacity` and `flashLauncher.Launch` (wrapped by
-`pulse.Fill`), and the Mac power verbs, which exist FOR the runner hosts.
+shrinks. Today: `reissue` (formats card text, touches no machine), the five
+`harvestbench.go` helpers below `harvestBench`'s own guard, and the Mac power
+verbs, which exist FOR the runner hosts. `sshCapacity.Capacity`,
+`flashLauncher.Launch` and `writeLaunchedMarker` left the list on 2026-09-18:
+`fill`'s seams take a `fleet.Machine` row now, so they carry no bench name to
+resolve — the ssh target and the os come off the row itself.
 **Its remedy line.** `<path>:<func> takes a bench name and does not resolve it
 through the machines registry; call fleet.RequireBench (or fleetOneBench /
 refuseNonBenches) first, or add it to internal/ci/testdata/benchname_allowlist.txt
@@ -1042,6 +1045,32 @@ with the reason`.
 **Its narrowings.** Only the two packages where a bench name reaches a machine
 are read; a bench name that arrives as a different type, or through a package
 outside them, is the compiler's rule, not this one.
+
+### `goos-name` — a platform-named test file says so
+
+**The rule.** A `_test.go` file whose name ends in a GOOS or GOARCH
+(`_darwin_test.go`, `_windows_test.go`, `_arm64_test.go`) is compiled on that
+platform and nowhere else, because Go reads the constraint out of the FILENAME.
+Such a file must declare the constraint explicitly with a `//go:build` line, so
+the file says what its name already does — or be renamed, and run everywhere.
+**The hurt.** 2026-09-18: `fill_darwin_test.go` was named after its SUBJECT, the
+darwin edges of `nova-pulse fill`. It was compiled on no machine in the linux
+lane. Every local `go test ./...` printed `ok` for a package whose new tests had
+never been built, and the first thing to run them was the merge group's own
+darwin shard, which went red on an assertion nobody had executed.
+**The test.** `TestAPlatformNamedTestFileSaysSo` and
+`TestThePlatformSuffixReaderReadsWhatItClaims`
+(`internal/ci/goosname_class_test.go`); the second holds the filename reader to
+hand-written names so the first cannot pass by matching nothing.
+**Its allowlist.** None, and it needs none: the remedy is one line in the file.
+Thirteen of the fourteen platform-named test files already carried it.
+**Its remedy line.** `<path> is compiled only on <goos>, because Go reads the
+constraint out of the filename and nothing in the file says so; add a
+`//go:build <goos>` line if that is meant, or rename the file (drop the
+`_<goos>`) so it runs everywhere`.
+**Its narrowings.** Test files only. A non-test `_<goos>.go` file is the normal
+way to write per-platform code and is paired with its siblings by the compiler;
+a test file has no sibling to notice it is missing.
 
 ### `prmerge` — nothing reaches the dev merge queue but a batch
 
