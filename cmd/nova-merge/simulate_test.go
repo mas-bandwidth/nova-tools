@@ -186,8 +186,9 @@ func TestDecodeMergeQueueReadsTheOrderedNumbers(t *testing.T) {
 // The live reader derives <owner>/<name> from a github origin in either spelling.
 func TestParseRepoSlugFromBothOriginForms(t *testing.T) {
 	for _, c := range []struct{ raw, want string }{
-		{"https://github.com/mas-bandwidth/nova-tools.git", "mas-bandwidth/nova-tools"},
-		{"git@github.com:mas-bandwidth/nova-tools.git", "mas-bandwidth/nova-tools"},
+		{"https://example.com/mas-bandwidth/nova-tools.git", "mas-bandwidth/nova-tools"},
+		{"git@example.com:mas-bandwidth/nova-tools.git", "mas-bandwidth/nova-tools"},
+		{"git@example.com:owner/name", "owner/name"},
 	} {
 		got, err := parseRepoSlug(c.raw)
 		if err != nil || got != c.want {

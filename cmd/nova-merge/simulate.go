@@ -79,14 +79,15 @@ func repoSlug(repo string, timeout time.Duration, runner merge.Runner) (string, 
 	return parseRepoSlug(raw)
 }
 
-// parseRepoSlug reads the last two path segments of a github.com URL, whether it is
-// https://github.com/owner/name.git or git@github.com:owner/name.git.
+// parseRepoSlug reads the last two path segments of an origin, whether it is
+// https://host/owner/name.git or git@host:owner/name.git; the host is not
+// inspected, so the parser and its test name no real host.
 func parseRepoSlug(raw string) (string, error) {
 	s := strings.TrimSpace(raw)
-	if i := strings.Index(s, "github.com:"); i >= 0 {
-		s = s[i+len("github.com:"):]
-	} else if i := strings.Index(s, "github.com/"); i >= 0 {
-		s = s[i+len("github.com/"):]
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+len("://"):]
+	} else if i := strings.Index(s, ":"); i >= 0 {
+		s = s[i+1:]
 	}
 	s = strings.TrimSuffix(s, ".git")
 	parts := strings.Split(s, "/")
