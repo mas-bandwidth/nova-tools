@@ -348,7 +348,10 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     and `triage` read `RESULT.md` only, never `RESULT.md.tmp`, and there is no
     mtime anywhere in the tool: a revision's identity is the SHA-256 of its
     bytes, and `<pool>/triage.json` records, per job id, the hash of the
-    revision last folded into a page. A `RESULT.md` whose hash is not the
+    revision last folded into a page. (The ONE exception is rule 19's `reap`,
+    which reads a harness log's age to decide whether a slot is finished; it
+    never reads or decides a report's identity, and it never touches a
+    `RESULT.md`.) A `RESULT.md` whose hash is not the
     recorded one is new and is folded; a file whose hash **changes between
     the read and the end of the parse** — a writer that ignored the protocol
     and appended in place — is not folded this run, prints `TRIAGE SKIPPED
@@ -550,6 +553,24 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     vanished with no durable evidence of any kind (ubuntu and macOS, measured
     2026-09-12). Nothing here ends a job by hangup: a job ends at its deadline,
     at its budget, at the runner's group kill, or by `stop`.
+19. **The caches are shared per bench, and a finished slot's working bytes are
+    reaped.** A native job's toolchain and modules are the same for every card
+    under one root, so `native` and the supervisor point the harness child at
+    **one shared cache root**, `<root>/cache`, by `GOMODCACHE`, `GOCACHE` and
+    `NPM_CONFIG_CACHE`, and name it as a permitted write root beside the job
+    directory (SPEC-SANDBOX rule 17). The root is never a job's data home: 120
+    cards that each download the Go toolchain and every module into their own
+    data home filled hulk and vision to 100% (issue #1048). `nova-swarm reap
+    --root <dir> [--older <duration, default 1h>] [--dry-run]` removes, for
+    every slot whose job published a `RESULT.md` or whose newest harness log is
+    older than `--older`, the slot's `data/`, `tmp/` and `jobs/*/scratch`,
+    keeping `RESULT.md`, `usage.tsv` and the logs, and prints `REAP OK
+    slots=<n> freed=<bytes>`. A slot no result and no old log has is live and is
+    untouched, and `run` calls the same function at task end unless the worker
+    description sets `keep_data: true` (a task property, like a budget, never a
+    default), which leaves every slot's `data/` where it is for a person who
+    needs to read it. The shared `cache/` is never a reap target: it is the
+    thing the next job reuses.
 
 ## The card is a pipeline, not a loop (issue #856)
 
@@ -634,6 +655,7 @@ nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --runner <cmd>
 nova-swarm bench    probe --benches <file> --bench <name>
 nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
 nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--worker <file>]
+nova-swarm reap     --root <dir> [--older <duration>] [--dry-run]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
