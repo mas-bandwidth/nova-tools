@@ -1717,6 +1717,18 @@ attempts that write no certificate at all, so a run killed halfway through a mac
 says what it had learned: `at<TAB>machine<TAB>class<TAB>verdict<TAB>evidence`. The tool never
 reads it; it is for the person who comes back and asks what happened.
 
+**The provisioning standard has a default.** `--standard` names a file; without one it is the
+clone's `tools/bench-standard.sh`, and outside a clone the copy EMBEDDED in the binary --
+the same bytes, so the hash does not move between them. The first real fleet-wide run refused
+with `tools/bench-standard.sh not found above the working directory`, which is not something
+a six-hourly timer can fix. Each run says which it used: `CERTIFY NOTE standard=<path|embedded> hash=<h>`.
+
+**A forge that cannot be read is UNREACHABLE**, like a machine that cannot be reached: "gh
+could not answer" says nothing about whether a machine's runners are online. The forge read
+is PAGED (`--paginate`, `per_page=100`): it read one page of thirty until 2026-09-18, the
+fleet has ninety-five runners, and five of eight machines were told "the forge names no
+online <machine>-nova-*" while every one of them was serving. That read is the reaper's too.
+
 **A machine certifies ITSELF without ssh.** When the machine named is the machine running the
 verb (by registry name, ssh target or short host name) the workload runs here through `bash
 -s`, and one `CERTIFY NOTE machine=<m> transport=local reason=this-is-the-machine` says so.

@@ -526,3 +526,56 @@ func TestEveryAttemptLeavesItsEvidenceAsItHappens(t *testing.T) {
 		t.Errorf("the record holds %d git-identity rows, want 1", rows)
 	}
 }
+
+// TestAForgeThatCannotBeReadIsUnreachableAndNeverAFailure: the same rule as ssh. "gh could
+// not answer" says nothing about whether a machine's runners are online, and a FAIL for it
+// withholds a certificate on the strength of this tool's own trouble.
+func TestAForgeThatCannotBeReadIsUnreachableAndNeverAFailure(t *testing.T) {
+	certs := writeFile(t, "certs.tsv", "")
+	out, errs, code := runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "hulk", Certs: certs,
+		Remote: &fakeRemote{answers: map[string]remoteAnswer{
+			"hulk": {out: "nova-merge v0.17.0\nEVERYTHING OK PONG ready online\n"},
+		}},
+		Forge: fakeForge{err: errors.New("gh: HTTP 401: Bad credentials")},
+		Repo:  "mas-bandwidth/nova-tools", Hash: "h", Now: fixedNow,
+	})
+	all := out + errs
+	if !strings.Contains(all, "CERTIFY hulk registry-truth UNREACHABLE reason=") {
+		t.Errorf("a forge that could not be read was not UNREACHABLE:\n%s", all)
+	}
+	if strings.Contains(all, "registry-truth FAIL") || strings.Contains(all, "runner-online FAIL") {
+		t.Errorf("a forge failure was written as a verdict about the machine:\n%s", all)
+	}
+	for _, r := range mustRead(t, certs) {
+		if r.Class == "registry-truth" || r.Class == "runner-online" {
+			t.Errorf("a forge failure wrote a row: %+v", r)
+		}
+	}
+	if code == 0 {
+		t.Errorf("exit = 0 although two classes could not be answered:\n%s", all)
+	}
+}
+
+// TestTheStandardHashIsTheSameFromTheFileAndFromTheEmbeddedCopy: the launchd job runs outside
+// any clone, so `--standard` must have a default -- and a default that hashed to something
+// else would expire the whole fleet every time the loop ran.
+func TestTheStandardHashIsTheSameFromTheFileAndFromTheEmbeddedCopy(t *testing.T) {
+	body := "echo standard v1\n"
+	path := writeFile(t, "bench-standard.sh", body)
+	loads, err := StandardWorkloads()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromFile, err := StandardHash(path, loads)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromBytes, err := StandardHashFrom([]byte(body), loads)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromFile != fromBytes {
+		t.Errorf("the hash of the file is %s and of the same bytes %s; a certificate written by the loop would expire the fleet", fromFile, fromBytes)
+	}
+}

@@ -343,11 +343,19 @@ func ParseWorkload(source string, raw []byte) (Workload, error) {
 // standard file and over every workload's bytes, in class order. Either half moving is a
 // new hash and so a fleet with no current certificates, which is the honest state.
 func StandardHash(standard string, loads []Workload) (string, error) {
-	h := sha256.New()
 	raw, err := os.ReadFile(standard)
 	if err != nil {
 		return "", fmt.Errorf("cannot read the provisioning standard %s: %w", standard, err)
 	}
+	return StandardHashFrom(raw, loads)
+}
+
+// StandardHashFrom is the same hash over the standard's BYTES. The loop's launchd job runs
+// outside any clone, so the standard has to have a default -- the copy embedded in the
+// binary -- and a default that hashed to anything but the file's own hash would expire every
+// certificate in the fleet on every run of the timer.
+func StandardHashFrom(raw []byte, loads []Workload) (string, error) {
+	h := sha256.New()
 	fmt.Fprintf(h, "standard %d\n", len(raw))
 	h.Write(raw)
 	ordered := append([]Workload(nil), loads...)
@@ -1309,7 +1317,8 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 func registryTruth(in CertifyInput, reg *Registry, m Machine) (string, string) {
 	runners, err := in.Forge.Runners(in.Repo)
 	if err != nil {
-		return VerdictFail, oneline.Err(err)
+		// The same rule as ssh: "gh could not answer" is not a verdict about a machine.
+		return VerdictUnreachable, "the forge could not be read: " + oneline.Err(err)
 	}
 	prefix := m.Name + "-nova-"
 	online, stale := 0, []string{}
@@ -1459,7 +1468,7 @@ func TransportFailure(out string, err error) (string, bool) {
 func runnersOnline(in CertifyInput, m Machine) (string, string) {
 	runners, err := in.Forge.Runners(in.Repo)
 	if err != nil {
-		return VerdictFail, oneline.Err(err)
+		return VerdictUnreachable, "the forge could not be read: " + oneline.Err(err)
 	}
 	prefix := m.Name + "-nova-"
 	seen, offline := 0, []string{}

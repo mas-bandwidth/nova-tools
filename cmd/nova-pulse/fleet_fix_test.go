@@ -7,6 +7,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -193,14 +194,20 @@ func TestStatusRunsFromAnywhereWithOnlyTheCertificatesFile(t *testing.T) {
 	t.Chdir(t.TempDir()) // no repository above it, so no tools/bench-standard.sh
 	out, errs, code := runCertifyVerb(t, "--status", "--certs", certs)
 	all := out + errs
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0\n%s", code, all)
+	// 0 or 1 -- the row is as current or as stale as the record says. What must NEVER happen
+	// is a refusal: exit 2 from a verb that reads one file.
+	if code == 2 {
+		t.Fatalf("--status refused although it reads one file:\n%s", all)
 	}
 	if strings.Contains(all, "REFUSED") || strings.Contains(all, "is required") {
 		t.Errorf("--status refused although it reads one file:\n%s", all)
 	}
-	if !strings.Contains(all, "CERTIFY STATUS space go-test OK") {
+	if !strings.Contains(all, "CERTIFY STATUS space go-test") {
 		t.Errorf("--status did not print the record:\n%s", all)
+	}
+	// And it found a standard to compare against without a clone anywhere above it.
+	if !strings.Contains(all, "standard=embedded") {
+		t.Errorf("--status outside a clone did not fall back to the embedded standard:\n%s", all)
 	}
 }
 
@@ -230,5 +237,44 @@ func TestTheLocalMachineIsCertifiedWithoutAnSSHAtTheVerb(t *testing.T) {
 	}
 	if len(local.scripts) == 0 {
 		t.Error("the verb wired no local runner, so nothing ran here")
+	}
+}
+
+// TestCertifyRunsOutsideACloneOnTheEmbeddedStandardAndHashesTheSame: the first real
+// fleet-wide run refused with `tools/bench-standard.sh not found above the working
+// directory`, from a launchd job that runs wherever launchd starts it. The embedded copy is
+// the same bytes, so a machine certified from a clone and one certified by the timer carry
+// the same hash -- a default that hashed differently would expire the fleet every six hours.
+func TestCertifyRunsOutsideACloneOnTheEmbeddedStandardAndHashesTheSame(t *testing.T) {
+	machines, certs, _ := certifyFiles(t)
+	repoStandard := filepath.Join(repoRootFromCmd(t), "tools", "bench-standard.sh")
+	withCertifyFakes(t, &certifyFakeRemote{answers: spaceAnswers()}, certifyFakeForge{})
+	if _, errs, code := runCertifyVerb(t, "--machines", machines, "--machine", "space",
+		"--certs", certs, "--standard", repoStandard, "--no-fix"); code != 0 {
+		t.Fatalf("with --standard: exit %d\n%s", code, errs)
+	}
+	fromFile, err := fleet.ReadCertificates(certs)
+	if err != nil || len(fromFile) == 0 {
+		t.Fatalf("no rows with --standard: %v", err)
+	}
+
+	t.Chdir(t.TempDir()) // no clone above it, which is where the timer runs
+	out, errs, code := runCertifyVerb(t, "--machines", machines, "--machine", "space",
+		"--certs", certs, "--no-fix")
+	all := out + errs
+	if code != 0 {
+		t.Fatalf("outside a clone: exit %d\n%s", code, all)
+	}
+	if !strings.Contains(all, "CERTIFY NOTE standard=embedded") {
+		t.Errorf("the run did not say which standard it used:\n%s", all)
+	}
+	rows, err := fleet.ReadCertificates(certs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := rows[len(rows)-1]
+	if last.Hash != fromFile[0].Hash {
+		t.Errorf("the embedded standard hashes to %s and the file to %s; the timer would expire the fleet on every run",
+			last.Hash, fromFile[0].Hash)
 	}
 }

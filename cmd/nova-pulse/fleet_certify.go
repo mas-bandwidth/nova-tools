@@ -28,6 +28,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/friends"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
+	"github.com/mas-bandwidth/nova-tools/tools"
 )
 
 // The hooks a test replaces, in the shape fleet.go already uses: nothing global, wired in
@@ -168,23 +169,24 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "CERTIFY REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	// The hash needs the provisioning standard, and a RUN needs the hash: a certificate
-	// written under an unknown standard is a certificate that can never expire. --status
-	// only compares against it, so a missing standard there costs the `standard-hash` line
-	// and nothing else, and the verb still answers.
-	standardPath, err := certifyStandardPath(*standard)
-	if err != nil && !*status {
+	// The provisioning standard, and the hash over it. --standard names a file; without one
+	// the clone's own tools/bench-standard.sh is used, and outside a clone the copy embedded
+	// in this binary -- which is the SAME BYTES, so the hash is the same either way.
+	//
+	// The default exists because the first real fleet-wide run refused: the launchd job runs
+	// from wherever launchd starts it, and `tools/bench-standard.sh not found above the
+	// working directory` is not a thing a timer can fix at four in the morning.
+	standardRaw, standardFrom, err := certifyStandard(*standard)
+	if err != nil {
 		fmt.Fprintf(stderr, "CERTIFY REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	hash := ""
-	if err == nil {
-		hash, err = fleet.StandardHash(standardPath, loads)
-		if err != nil && !*status {
-			fmt.Fprintf(stderr, "CERTIFY REFUSED: %s\n", oneline.Err(err))
-			return 2
-		}
+	hash, err := fleet.StandardHashFrom(standardRaw, loads)
+	if err != nil {
+		fmt.Fprintf(stderr, "CERTIFY REFUSED: %s\n", oneline.Err(err))
+		return 2
 	}
+	fmt.Fprintf(stderr, "CERTIFY NOTE standard=%s hash=%s\n", oneline.Field(standardFrom), oneline.Field(hash))
 
 	if *status {
 		return fleet.Status(fleet.StatusInput{
@@ -292,32 +294,38 @@ func certifyWorkloads(dir string) ([]fleet.Workload, error) {
 	return fleet.ReadWorkloads(dir)
 }
 
-// certifyStandardPath answers the provisioning standard file the hash is taken over.
-// --standard names it; left out, it is tools/bench-standard.sh above the working directory,
-// the same file `fleet survey` runs.
-func certifyStandardPath(named string) (string, error) {
-	if named != "" {
-		if _, err := os.Stat(named); err != nil {
-			return "", fmt.Errorf("cannot read --standard %s: %w", named, err)
+// certifyStandard answers the provisioning standard's BYTES and where they came from.
+//
+// Three roads, in order: --standard names a file (a named file that cannot be read is a
+// refusal -- somebody meant that file); the clone's own tools/bench-standard.sh above the
+// working directory; and, outside a clone, the copy embedded in this binary. The embedded
+// copy is the same file, compiled in, so the hash does not move between them.
+func certifyStandard(named string) ([]byte, string, error) {
+	if strings.TrimSpace(named) != "" {
+		raw, err := os.ReadFile(named)
+		if err != nil {
+			return nil, "", fmt.Errorf("cannot read --standard %s: %w", named, err)
 		}
-		return named, nil
+		return raw, named, nil
 	}
 	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for i := 0; i < 16; i++ {
-		candidate := filepath.Join(dir, "tools", "bench-standard.sh")
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
+	if err == nil {
+		for i := 0; i < 16; i++ {
+			candidate := filepath.Join(dir, "tools", "bench-standard.sh")
+			if raw, err := os.ReadFile(candidate); err == nil {
+				return raw, candidate, nil
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
 	}
-	return "", fmt.Errorf("tools/bench-standard.sh not found above the working directory; name it with --standard")
+	if len(tools.BenchStandard) == 0 {
+		return nil, "", fmt.Errorf("this binary carries no provisioning standard and none is above the working directory; name one with --standard")
+	}
+	return tools.BenchStandard, "embedded", nil
 }
 
 // certifyBuildReader is the fill's build seam in production: one ssh per bench per tick,

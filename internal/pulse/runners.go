@@ -24,7 +24,9 @@ package pulse
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -175,17 +177,50 @@ func writeBusySince(queue string, since map[string]time.Time) {
 // `gh run list --status in_progress` for what is actually running, each bounded.
 type GHRunners struct{ Timeout time.Duration }
 
+// Runners reads the WHOLE runner list, every page of it.
+//
+// It read one page until 2026-09-18, and the fleet is three pages long. A non-author ran
+// `fleet certify --all` and five of eight machines were told "the forge names no online
+// <machine>-nova-*" while every one of them was serving runners: the forge said
+// `total_count: 95` and handed back the default page of THIRTY, and the thirty were hulk's
+// 22, batman's 6 and air's 2 -- exactly the three machines that passed. This is the read the
+// REAPER uses too, so every runner past the thirtieth was invisible to every tool here.
+//
+// `--paginate` with `--jq` prints one object per line, pages concatenated, so the answer is
+// a JSON STREAM and not one array. Both shapes are read, because a gh that ignores
+// --paginate must not silently become a parse error.
 func (g GHRunners) Runners(repo string) ([]Runner, error) {
-	out, err := g.sh("gh", "api", "repos/"+repo+"/actions/runners", "--jq", ".runners")
+	out, err := g.sh("gh", "api", "--paginate", "repos/"+repo+"/actions/runners?per_page=100", "--jq", ".runners[]")
 	if err != nil {
 		return nil, err
 	}
-	var runners []Runner
+	return parseRunnerStream(out)
+}
+
+// parseRunnerStream reads either the JSON stream `--paginate --jq` prints or a single JSON
+// array, and refuses anything else by name rather than answering an empty fleet.
+func parseRunnerStream(out string) ([]Runner, error) {
 	if strings.TrimSpace(out) == "" {
 		return nil, nil
 	}
-	if err := json.Unmarshal([]byte(out), &runners); err != nil {
-		return nil, fmt.Errorf("the runner list did not parse: %w", err)
+	if strings.HasPrefix(strings.TrimSpace(out), "[") {
+		var runners []Runner
+		if err := json.Unmarshal([]byte(out), &runners); err != nil {
+			return nil, fmt.Errorf("the runner list did not parse: %w", err)
+		}
+		return runners, nil
+	}
+	var runners []Runner
+	dec := json.NewDecoder(strings.NewReader(out))
+	for {
+		var r Runner
+		if err := dec.Decode(&r); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("the runner list did not parse: %w", err)
+		}
+		runners = append(runners, r)
 	}
 	return runners, nil
 }
