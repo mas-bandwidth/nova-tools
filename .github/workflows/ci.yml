@@ -471,7 +471,7 @@ jobs:
         # and an Intel Mac at load 2; the cards make those packages fast. Until they land the budget is 300 s here so
         # a mechanical red does not hold dev, and every CI-SLOW line is still printed for the coordinator. This covers
         # the Intel Mac benches too (about 3x slower per core than the Studio) that cards 9352 to 9354 make fast.
-        run: go test -json -count=1 ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json"; go run ./cmd/nova-ci slowtests --budget 300 < "$RUNNER_TEMP/test.json"
+        run: go test -json -count=1 -timeout 5m ${{ matrix.entry.packages }} | tee "$RUNNER_TEMP/test.json"; go run ./cmd/nova-ci slowtests --budget 300 < "$RUNNER_TEMP/test.json"
 
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest, macos-latest,
@@ -542,8 +542,14 @@ jobs:
           # two-minute budget instead of hitting Go's 10 m default on main (run
           # 35052889521, panic: test timed out after 10m0s). The self-hosted shards keep
           # running everything; the nightly certification runs the hosted legs full.
-          # -timeout 20m stays as the ceiling, not the target.
-          go test -short -count=1 -timeout 20m $pkgs
+          # -timeout 12m stays above Go's 10 m default (cmd/nova-bus hit it on main,
+          # run 35052889521, panic: test timed out after 10m0s) and fires before the
+          # 15-minute job ceiling, so Go names the hung package instead of the runner
+          # killing the job silently. The two-minute rule is met by gating the
+          # multi-process bus tests behind -short on hosted legs (issue filed); until
+          # that lands, a slow package must not panic the leg. It is the ceiling, not
+          # the target.
+          go test -short -count=1 -timeout 12m $pkgs
 
   plan-merge:
     # How many shard slots this merge group needs, decided before any leg starts.
@@ -866,7 +872,7 @@ jobs:
           go version
 
       - name: friend sequences
-        run: go test -count=1 -run TestFriendSequence ./cmd/...
+        run: go test -count=1 -timeout 1m -run TestFriendSequence ./cmd/...
 
   lisp-changes:
     # THE PATH FILTER for the lisp tier, and it exists because the lisp job must
