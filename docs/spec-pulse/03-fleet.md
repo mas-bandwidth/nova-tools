@@ -254,7 +254,13 @@ mechanized"*). Three triggers:
    `--max-age` (default 24 h) — a machine drifts by the hand of whoever last logged into it,
    and the whole fleet was found drifted with nothing in the tools having changed.
 3. `fleet/launchd/com.rowan.fleet-certify.plist` runs `--all --if-stale` every six hours. A
-   fleet with nothing to do costs one file read and one `nova-merge version` per machine.
+   fleet with nothing to do costs one file read and one `nova-merge version` per machine. Its
+   argv carries `--log` **and** `--bus <clone> --as <name> --to <names>`, because an escalation
+   with no bus is never sent (`escalation=unsent reason=no-bus`): a timer that finds a bad
+   bench, runs the repairs, fails and tells nobody is the half of mechanization that does not
+   pay. The three bus flags travel together — `--bus` without `--as` or `--to` is exit 2 at
+   the flag check, which for a timer is a refusal every six hours and no certification at all.
+   `the-launchd-agent-runs-the-verb-the-loop-needs` reads the argv for all of them.
 
 `--status` reads the record and reaches no machine, so it needs **only `--certs`**: with a
 registry it reports every machine and class the fleet is meant to hold (a class nobody has

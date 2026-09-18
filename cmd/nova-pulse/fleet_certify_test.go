@@ -350,7 +350,12 @@ func TestTheLaunchdAgentRunsTheVerbTheLoopNeeds(t *testing.T) {
 	for _, want := range []string{
 		"--bus /Users/glenn/rowan-working/rowan-stella",
 		"--as Rowan",
-		"--to fleet",
+		// WHO the note goes to is the agent's to choose -- #1382 addresses it to Stella,
+		// who keeps the fleet -- so the rule here is that it goes to SOMEBODY, not to one
+		// particular name. `--to ` with a recipient is checked just below, together with
+		// --bus and --as, because it is those three travelling together that make an
+		// escalation reach a person.
+		"--to ",
 	} {
 		if !strings.Contains(argv, want) {
 			t.Errorf("the agent cannot escalate: its command carries no %q:\n%s", want, argv)
