@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,8 @@ func doctorFake(t *testing.T, lines map[string]string, lookPath func(string) (st
 }
 
 func noPath(name string) (string, error) { return "", errors.New("not found: " + name) }
+
+func doctorLocal(home string) string { return filepath.Join(home, ".local", "bin", "nova-swarm") }
 
 // A pair of stamps that differ, the shape the incident produced: same tool, same platform,
 // a different build identity in field two.
@@ -104,8 +107,8 @@ func TestDoctorRefusesWhenThePATHBinaryIsShadowed(t *testing.T) {
 func TestDoctorResolvesNovaSwarmOnPATH(t *testing.T) {
 	doctorFake(t,
 		map[string]string{
-			"/usr/local/bin/nova-swarm":      doctorRebuiltLine,
-			"/home/me/.local/bin/nova-swarm": doctorRebuiltLine,
+			"/usr/local/bin/nova-swarm": doctorRebuiltLine,
+			doctorLocal("/home/me"):     doctorRebuiltLine,
 		},
 		func(name string) (string, error) {
 			if name != "nova-swarm" {
@@ -162,8 +165,8 @@ func TestDoctorOKWhenTheLocalBinaryIsAbsent(t *testing.T) {
 func TestPreflightRefusesALaunchUnderAShadowedBinary(t *testing.T) {
 	doctorFake(t,
 		map[string]string{
-			"/opt/go/bin/nova-swarm":         doctorStaleLine,
-			"/home/me/.local/bin/nova-swarm": doctorRebuiltLine,
+			"/opt/go/bin/nova-swarm": doctorStaleLine,
+			doctorLocal("/home/me"):  doctorRebuiltLine,
 		},
 		func(string) (string, error) { return "/opt/go/bin/nova-swarm", nil }, "/home/me")
 
@@ -181,8 +184,8 @@ func TestPreflightRefusesALaunchUnderAShadowedBinary(t *testing.T) {
 func TestPreflightLeavesNonLaunchVerbsAlone(t *testing.T) {
 	doctorFake(t,
 		map[string]string{
-			"/opt/go/bin/nova-swarm":         doctorStaleLine,
-			"/home/me/.local/bin/nova-swarm": doctorRebuiltLine,
+			"/opt/go/bin/nova-swarm": doctorStaleLine,
+			doctorLocal("/home/me"):  doctorRebuiltLine,
 		},
 		func(string) (string, error) { return "/opt/go/bin/nova-swarm", nil }, "/home/me")
 
