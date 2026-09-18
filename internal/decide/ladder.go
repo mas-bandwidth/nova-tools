@@ -364,6 +364,15 @@ type RouteResult struct {
 	RulesRung  string
 	Offered    []string
 	Usage      RouteUsage
+	// Next is the rung ABOVE the one answered, named whenever the answer is
+	// below the floor. The step-up signal used to name only the question that
+	// fell short, which left a reader to work out where the work goes next from
+	// a ladder they cannot see (edge 24). It is empty at or above the floor,
+	// and empty where there is no rung above.
+	Next string
+	// Steps is how many decisions this answer took: 1 for an ordinary route,
+	// and one more for each re-ask --step-up made.
+	Steps int
 }
 
 // refuse populates the result with the refusal that ended it and returns both.
@@ -386,16 +395,27 @@ func (r RouteResult) AwaitingTermination() bool { return r.Wait == WaitAwaitingT
 func (r RouteResult) Dispatchable() bool { return r.Wait == WaitNone || r.Wait == "" }
 
 // Line is the one line a route decision prints: the unit (the evidence
-// pointer), the rung, the confidence, the floor it was gated on, the reason and
-// how that rung is asked.
+// pointer), the rung, the confidence, the floor it was gated on, the rung ABOVE
+// it where the answer fell below that floor, how many steps the answer took,
+// the reason and how that rung is asked. Every field is on every line: next is
+// the dash where there is nothing above and nothing to step to, so no reader
+// has to infer an absence.
 func (r RouteResult) Line() string {
 	wait := r.Wait
 	if wait == "" {
 		wait = WaitNone
 	}
-	return fmt.Sprintf("ROUTE unit=%s rung=%s confidence=%.2f floor=%.2f wait=%s reason=%s ask=%s",
+	next := "-"
+	if strings.TrimSpace(r.Next) != "" {
+		next = oneline.Field(r.Next)
+	}
+	steps := r.Steps
+	if steps < 1 {
+		steps = 1
+	}
+	return fmt.Sprintf("ROUTE unit=%s rung=%s confidence=%.2f floor=%.2f wait=%s next=%s steps=%d reason=%s ask=%s",
 		oneline.Field(r.Unit), oneline.Field(r.Rung.Name), r.Confidence, r.Floor,
-		oneline.Field(wait), oneline.Quote(oneline.Escape(r.Reason)), oneline.Field(r.Rung.Ask))
+		oneline.Field(wait), next, steps, oneline.Quote(oneline.Escape(r.Reason)), oneline.Field(r.Rung.Ask))
 }
 
 // The rule confidences. They are the machinery's own numbers, stated here so a
@@ -413,7 +433,15 @@ const (
 // same answer every time. It is what --no-jev runs, and it is the answer the
 // provider's is measured against in the log.
 func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
-	res := RouteResult{Unit: u.ID, Kind: u.Kind, Floor: floor, Source: SourceRules, Wait: WaitNone}
+	return routeRules(reg, u, floor, nil)
+}
+
+// routeRules is RouteRules with an exclusion set: the rungs a step-up has
+// already answered below the floor, which are off the ladder for this ask the
+// way a tried rung is. Nothing else about the rules changes, so an ordinary
+// route (an empty set) is the same answer it always was.
+func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) (RouteResult, error) {
+	res := RouteResult{Unit: u.ID, Kind: u.Kind, Floor: floor, Source: SourceRules, Wait: WaitNone, Steps: 1}
 	if reg == nil || len(reg.Minds) == 0 {
 		return res.refuse(fmt.Errorf("decide: no registry; a ladder with no rungs is not a ladder"))
 	}
@@ -430,6 +458,9 @@ func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
 	}
 
 	burned, tried, failedAt := burnedHeight(reg, u)
+	for name := range excluded {
+		tried[name] = true
+	}
 	res.Escalated = len(u.Attempts) > 0
 	open, openRung, hasOpen := openAttempt(reg, u)
 
@@ -506,7 +537,23 @@ func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
 	}
 	res.Reason = strings.Join(reasons, "; ")
 	res.RulesRung = res.Rung.Name
+	res.Next = nextRung(reg, u, res, tried, failedAt)
 	return res, nil
+}
+
+// nextRung is the rung ABOVE the one answered: where the work goes if this
+// answer does not get it right on the first attempt. It is named only where the
+// answer is below the floor -- above it there is no step to signal -- and it is
+// empty at the top of the ladder, where there is nothing above.
+func nextRung(reg *Registry, u Unit, res RouteResult, tried map[string]bool, failedAt map[int]map[string]bool) string {
+	if res.Confidence >= res.Floor || !res.Dispatchable() || res.Designated {
+		return ""
+	}
+	up, err := pick(reg, u, res.Rung.Height+1, tried, failedAt)
+	if err != nil {
+		return ""
+	}
+	return up.Name
 }
 
 // burnedHeight reads the prior attempts: the highest rung already burned, the
@@ -738,7 +785,73 @@ type Decider interface {
 // floor steps up, and a provider error or a rung nobody offered leaves the
 // rules' answer standing.
 func RouteJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float64) (RouteResult, error) {
-	rules, err := RouteRules(reg, u, floor)
+	return routeJev(ctx, d, reg, u, floor, nil)
+}
+
+// DefaultMaxSteps is how many decisions --step-up makes before it stops. Three
+// is the ladder's own shape: the rung the evidence supports, one sideways, one
+// up. A step-up that has not landed by then is not a confidence problem.
+const DefaultMaxSteps = 3
+
+// RouteStepUp turns the step-up SIGNAL into the rung above it (edge 24).
+//
+// Exit 3 said "below the floor" and named the question that fell short, and
+// there it stopped: nothing re-asked, and the caller was left to read a ladder
+// it cannot see. This asks, and where the answer is below the floor it EXCLUDES
+// that rung from the criteria and asks the same question again, up to maxSteps
+// times.
+//
+// Every step is a decision in its own right: the slice returned holds them all,
+// in order, each carrying its own reason and its own step number, and the
+// caller logs every one of them. The last is the answer, and its exit code is
+// the ordinary one -- a step-up that never got above the floor is still a
+// suggestion, never an authorization.
+func RouteStepUp(ctx context.Context, d Decider, reg *Registry, u Unit, floor float64, maxSteps int) ([]RouteResult, error) {
+	if maxSteps < 1 {
+		return nil, fmt.Errorf("decide: --max-steps %d asks nothing; it wants at least 1, such as --max-steps %d", maxSteps, DefaultMaxSteps)
+	}
+	excluded := map[string]bool{}
+	var order []string
+	steps := make([]RouteResult, 0, maxSteps)
+	for i := 1; i <= maxSteps; i++ {
+		res, err := routeJev(ctx, d, reg, u, floor, excluded)
+		res.Steps = i
+		if len(order) > 0 {
+			res.Reason = fmt.Sprintf("step %d: %s answered below the floor and %s excluded from the criteria; %s",
+				i, pluralRungs(order), strings.Join(order, ", "), res.Reason)
+		}
+		steps = append(steps, res)
+		if err != nil {
+			return steps, err
+		}
+		// Nothing steps past an answer the floor accepts, a wait (which is not
+		// permission to move at all) or a designation (a KIND, not a height:
+		// security does not step anywhere).
+		if res.Confidence >= floor || !res.Dispatchable() || res.Designated {
+			return steps, nil
+		}
+		// The same rung twice is the ladder saying there is nothing left to
+		// exclude. Stopping here is the answer; asking again would only spend.
+		if excluded[res.Rung.Name] || strings.TrimSpace(res.Rung.Name) == "" {
+			return steps, nil
+		}
+		excluded[res.Rung.Name] = true
+		order = append(order, res.Rung.Name)
+	}
+	return steps, nil
+}
+
+// pluralRungs keeps the step reason readable in both directions.
+func pluralRungs(order []string) string {
+	if len(order) == 1 {
+		return "a rung"
+	}
+	return fmt.Sprintf("%d rungs", len(order))
+}
+
+// routeJev is RouteJev with an exclusion set; see routeRules.
+func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float64, excluded map[string]bool) (RouteResult, error) {
+	rules, err := routeRules(reg, u, floor, excluded)
 	if err != nil {
 		// The rules refused before any call could be made: that result is
 		// already populated, and it carries the refusal.
@@ -748,6 +861,9 @@ func RouteJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 		return rules, nil
 	}
 	_, tried, failedAt := burnedHeight(reg, u)
+	for name := range excluded {
+		tried[name] = true
+	}
 	offered := offer(reg, u, rules.Rung.Height, tried, failedAt)
 	rules.Offered = mindNames(offered)
 	if len(offered) < 2 {
@@ -802,6 +918,7 @@ func RouteJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 		res.SteppedUp = true
 		res.Reason += "; " + why
 	}
+	res.Next = nextRung(reg, u, res, tried, failedAt)
 	return res, nil
 }
 
