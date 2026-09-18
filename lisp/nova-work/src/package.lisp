@@ -783,6 +783,14 @@
     ;; the roadmap verbs (E04 row 8: percent --axis on a matrix, src/roadmap.lisp)
     #:roadmap-percent
     #:roadmap-cell-verified-p
+    ;; the `cell` verb and its reads (docs/SPEC-WORK.md:2329, :1183-1186)
+    #:roadmap-cell
+    #:roadmap-view-cells
+    #:roadmap-cell-ref
+    #:roadmap-cell-out-of-scope-p
+    #:roadmap-rows-count
+    #:roadmap-applicable-rows
+    #:roadmap-applicable-count
     ;; render replays (nova-tools #362)
     #:make-render-session
     #:render-session-p
