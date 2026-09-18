@@ -24,11 +24,11 @@
 (deftest "fixture-allocator-retries-past-a-collision" "docs/SPEC-WORK.md:290"
     "expected=one-owned-parent;first-candidate-untouched;second-candidate-created;ownership-after-creation;exact-cleanup"
   ;; (1) one owned fixture parent, below the suite root and nowhere else.
-  (let* ((parent (allocate-fixture "collision"))
+  (let* ((owned-before (copy-list *owned-fixtures*))
+         (parent (allocate-fixture "collision"))
          (root (suite-root))
          (taken (concatenate 'string parent "cand-0"))
-         (neighbour (concatenate 'string parent "neighbour"))
-         (owned-before (copy-list *owned-fixtures*)))
+         (neighbour (concatenate 'string parent "neighbour")))
     (ok (eql 0 (search root parent))
         "the fixture parent is below the suite root: ~A not below ~A" parent root)
     (ok (fixture-owned-p parent) "the fixture parent is owned by this run")
