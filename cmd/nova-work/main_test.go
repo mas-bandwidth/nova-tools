@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -21,6 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/record"
 )
 
 // sessionOKLine is the spec's own SESSION OK grammar line (docs/SPEC-WORK.md,
@@ -733,5 +735,188 @@ func TestEventsOncePublishesChecksDone(t *testing.T) {
 	payload := recvBy(t, ps.Channel(), ci.ChannelPRChecksDone)
 	if payload == "" {
 		t.Fatal("no pr-checks-done payload")
+	}
+}
+
+var cmdNow = time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+
+func testDeps(store record.Store) Deps {
+	return Deps{
+		OpenStore: func(string) (record.Store, error) { return store, nil },
+		OpenConsumer: func(ctx context.Context, addr, stream, group, name string) (record.Consumer, error) {
+			return record.NewRedisConsumer(ctx, addr, stream, group, name)
+		},
+		Now: func() time.Time { return cmdNow },
+	}
+}
+
+func mustRun(t *testing.T, d Deps, args ...string) (int, string, string) {
+	t.Helper()
+	var out, errBuf strings.Builder
+	code := run(args, &out, &errBuf, d)
+	return code, out.String(), errBuf.String()
+}
+
+func TestRecordMigrateCreatesTheSchema(t *testing.T) {
+	store := record.NewFakeStore()
+	code, out, errOut := mustRun(t, testDeps(store), "record", "--postgres", "postgres://space/nova", "--migrate")
+	if code != 0 {
+		t.Fatalf("record --migrate exit = %d, stderr:\n%s", code, errOut)
+	}
+	if store.Versions() != 1 {
+		t.Fatalf("schema versions = %d, want 1", store.Versions())
+	}
+	if !strings.Contains(out, "MIGRATE OK") {
+		t.Fatalf("migrate output does not name the schema:\n%s", out)
+	}
+}
+
+func TestRecordOnceWritesTheRowAndAcksIt(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store := record.NewFakeStore()
+	if _, err := mr.XAdd(record.Stream, "1-0", []string{
+		"label", "9347", "bench", "space", "exit", "0",
+		"result", "RESULT: CARD-9347", "job", "/jobs/card-9347",
+		"commit", "abc1234", "branch", "rowan/postgres-card-results",
+	}); err != nil {
+		t.Fatalf("seed stream: %s", err)
+	}
+	code, out, errOut := mustRun(t, testDeps(store), "record", "--redis", mr.Addr(), "--postgres", "postgres://space/nova", "--once")
+	if code != 0 {
+		t.Fatalf("record --once exit = %d, stderr:\n%s", code, errOut)
+	}
+	if len(store.Rows()) != 1 {
+		t.Fatalf("rows = %d, want 1", len(store.Rows()))
+	}
+	if !strings.Contains(out, "RECORD") || !strings.Contains(out, "inserted=true") {
+		t.Fatalf("record output does not name the row:\n%s", out)
+	}
+}
+
+func TestRecordRefusesWithoutPostgres(t *testing.T) {
+	code, _, errOut := mustRun(t, testDeps(record.NewFakeStore()), "record", "--redis", "127.0.0.1:6379")
+	if code != 2 {
+		t.Fatalf("record without --postgres exit = %d, want 2", code)
+	}
+	if !strings.Contains(errOut, "--postgres") {
+		t.Fatalf("the refusal does not name --postgres:\n%s", errOut)
+	}
+}
+
+func TestRecordRefusesRedisWithoutPostgres(t *testing.T) {
+	code, _, errOut := mustRun(t, testDeps(record.NewFakeStore()), "record", "--migrate", "--redis", "127.0.0.1:6379")
+	if code != 2 {
+		t.Fatalf("record --migrate with no --postgres exit = %d, want 2", code)
+	}
+	if !strings.Contains(errOut, "--postgres") {
+		t.Fatalf("the refusal does not name --postgres:\n%s", errOut)
+	}
+}
+
+func seedResults(t *testing.T, n int) *record.FakeStore {
+	t.Helper()
+	store := record.NewFakeStore()
+	ctx := context.Background()
+	for i := 0; i < n; i++ {
+		exit := 0
+		if i%5 == 0 {
+			exit = 1
+		}
+		done := cmdNow.Add(-time.Duration(i) * time.Minute)
+		row := record.Row{
+			StreamID: fmt.Sprintf("%d-0", i), Label: fmt.Sprintf("card-%d", i),
+			Bench: "space", Exit: exit, DoneAt: &done, RecordedAt: cmdNow,
+		}
+		if _, err := store.Insert(ctx, row); err != nil {
+			t.Fatalf("seed %d: %s", i, err)
+		}
+	}
+	return store
+}
+
+func TestResultsPrintsOneLinePerRowAndAMoreLine(t *testing.T) {
+	code, out, errOut := mustRun(t, testDeps(seedResults(t, 25)), "results", "--postgres", "postgres://space/nova")
+	if code != 0 {
+		t.Fatalf("results exit = %d, stderr:\n%s", code, errOut)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	var resultLines, moreLines int
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "RESULT "):
+			resultLines++
+		case strings.HasPrefix(line, "RESULTS MORE "):
+			moreLines++
+		}
+	}
+	if resultLines != 20 || moreLines != 1 {
+		t.Fatalf("results printed %d RESULT lines and %d MORE lines, want 20 and 1:\n%s", resultLines, moreLines, out)
+	}
+	if !strings.Contains(out, "total=25") {
+		t.Fatalf("the MORE line does not carry the total:\n%s", out)
+	}
+}
+
+func TestResultsFiltersByFailedBenchAndSince(t *testing.T) {
+	store := seedResults(t, 10)
+	// Add one mac row that must not survive --bench space.
+	done := cmdNow
+	if _, err := store.Insert(context.Background(), record.Row{
+		StreamID: "mac-0", Label: "mac-card", Bench: "mac", Exit: 1, DoneAt: &done, RecordedAt: cmdNow,
+	}); err != nil {
+		t.Fatalf("seed mac: %s", err)
+	}
+	code, out, errOut := mustRun(t, testDeps(store),
+		"results", "--postgres", "postgres://space/nova", "--bench", "space", "--failed", "--since", "1h", "--max", "0")
+	if code != 0 {
+		t.Fatalf("results exit = %d, stderr:\n%s", code, errOut)
+	}
+	if strings.Contains(out, "mac-card") {
+		t.Fatalf("--bench space let a mac row through:\n%s", out)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if !strings.HasPrefix(line, "RESULT ") {
+			continue
+		}
+		if !strings.Contains(line, "exit=1") {
+			t.Fatalf("--failed let a passing row through: %s", line)
+		}
+	}
+	if !strings.Contains(out, "RESULT ") {
+		t.Fatalf("no failed rows printed:\n%s", out)
+	}
+}
+
+func TestResultsMaxZeroPrintsEverything(t *testing.T) {
+	code, out, errOut := mustRun(t, testDeps(seedResults(t, 25)),
+		"results", "--postgres", "postgres://space/nova", "--max", "0")
+	if code != 0 {
+		t.Fatalf("results exit = %d, stderr:\n%s", code, errOut)
+	}
+	if strings.Contains(out, "MORE") {
+		t.Fatalf("--max 0 printed a MORE line:\n%s", out)
+	}
+	if got := strings.Count(out, "RESULT "); got != 25 {
+		t.Fatalf("--max 0 printed %d rows, want 25", got)
+	}
+}
+
+func TestResultsRefusesWithoutPostgres(t *testing.T) {
+	code, _, errOut := mustRun(t, testDeps(record.NewFakeStore()), "results")
+	if code != 2 {
+		t.Fatalf("results without --postgres exit = %d, want 2", code)
+	}
+	if !strings.Contains(errOut, "--postgres") {
+		t.Fatalf("the refusal does not name --postgres:\n%s", errOut)
+	}
+}
+
+func TestUnknownVerbIsRefused(t *testing.T) {
+	code, _, errOut := mustRun(t, testDeps(record.NewFakeStore()), "frobnicate")
+	if code != 2 {
+		t.Fatalf("unknown verb exit = %d, want 2", code)
+	}
+	if !strings.Contains(errOut, "unknown verb") {
+		t.Fatalf("the refusal does not name the verb:\n%s", errOut)
 	}
 }

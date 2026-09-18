@@ -737,6 +737,33 @@ $ nova-work dependencies --graph ./deps.json --node b --needs a
 nova-work dependencies: rule 3: :deps edges contain a cycle: b -> a -> b; run: nova-work help
 ```
 
+### The card-result record
+
+`nova-work record` consumes the `cards:done` Redis stream and writes one row per result
+into the `card_results` table, idempotent on the stream id, acking only after the commit;
+`nova-work results` lists and filters those rows.
+
+These lines are a `###` subsection of this one `## nova-work` section rather than a second
+section of their own: `onboarding.Section` reads the first match of a name, so a second
+`## nova-work` is read by nobody and drifts unwatched. They are also not under
+`### First run`, because that block is executed with the tool's production seams and these
+two verbs would reach a real Postgres and a real Redis. `cmd/nova-work/firstrun_test.go`
+runs each `$` line below through `run` with a fake store and a one-message consumer behind
+the seam, and the same store answers every line, so the `results` call lists the row the
+`record` call wrote.
+
+```text
+$ nova-work record --migrate --postgres postgres://space/nova
+MIGRATE OK schema=1
+
+$ nova-work record --once --redis 127.0.0.1:6379 --postgres postgres://space/nova
+RECORD id=1-0 card=9347 bench=space exit=1 commit=abc1234 branch=rowan/postgres-card-results inserted=true result=RESULT: CARD-9347 card results in Postgres
+RECORD OK seen=1 inserted=1 duplicate=0 malformed=0
+
+$ nova-work results --postgres postgres://space/nova --bench space --failed
+RESULT id=1-0 card=9347 bench=space exit=1 commit=abc1234 branch=rowan/postgres-card-results pr=- done=2026-09-18T12:00:00Z result=RESULT: CARD-9347 card results in Postgres
+```
+
 ## nova-work
 
 `nova-work` is the work layer's event bridge. Its one shipped verb, `events`, publishes

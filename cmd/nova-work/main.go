@@ -32,6 +32,11 @@
 // turns the cards:done stream and the gh fallback poll into the pub/sub messages the
 // merge layer reacts to (docs/SPEC-JOBS.md, "Events, not ticks"). It makes no model call
 // and writes no record: every message is a signal, and git stays the record.
+//
+// nova-work is also the durable card-result record of docs/SPEC-STATE.md. record consumes
+// the cards:done Redis stream and writes one row per result into Postgres, idempotent on
+// the stream id; results lists and filters those rows. The two record verbs are thin over
+// internal/record so the tests can put a fake store and a miniredis behind them.
 package main
 
 import (
@@ -49,6 +54,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/workclient"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
@@ -250,14 +256,27 @@ example:
   nova-work plan check --file ./work.work --max-bytes 65536
   nova-work set check --file ./work-set.lisp --ready
   nova-work events --redis 127.0.0.1:6379 --once
+
+nova-work is also the durable card-result record: Redis carries the result, Postgres keeps it.
+
+usage:
+  nova-work record  --postgres <dsn> --redis <addr> [--once] [--deadline 1h] [--migrate]
+  nova-work results --postgres <dsn> [--since 1h] [--bench b] [--failed] [--max 20]
+
+verbs:
+  record  consume cards:done and write one row per result into card_results, idempotent on
+          the stream id; --migrate applies the schema and exits; --once reads one pass
+  results one line per recorded result, newest first
+  help
+  version
+
+example:
+  nova-work record --migrate --postgres postgres://space/nova
+  nova-work record --once --redis 127.0.0.1:6379 --postgres postgres://space/nova
+  nova-work results --postgres postgres://space/nova --bench space --failed --max 5
 `
 
-// refuse is what an unusable invocation or an unreadable plan costs: one line naming
-// what was wrong and the door to the usage, never the banner itself.
-func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-work%s: %s; run: nova-work help\n", oneline.Escape(where), oneline.Escape(what))
-	return 2
-}
+// deps is the seam the tests replace: the store and consumer factories and the clock.
 
 // refused is what could not run at all costs: ONE line on stderr naming what was wrong
 // and the door to the usage, exit 2 -- the client spec's own remedy spelling.
@@ -280,11 +299,16 @@ var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 }
 
 // Deps is everything this binary reaches outside itself, injected so the tests drive a
-// miniredis and a fake forge and reach no network.
+// miniredis, a fake forge and a fake result store, and reach no network. The event
+// bridge's three fields and the record verbs' two are ONE seam rather than two: a second
+// seam beside it was what the two slices each grew on their own branch, and a reader of
+// this package should not have to learn which verb reads which of them.
 type Deps struct {
-	Now   func() time.Time
-	Dial  func(addr string) *redis.Client
-	Forge func(repo, base string, timeout time.Duration) ci.Forge
+	Now          func() time.Time
+	Dial         func(addr string) *redis.Client
+	Forge        func(repo, base string, timeout time.Duration) ci.Forge
+	OpenStore    func(dsn string) (record.Store, error)
+	OpenConsumer func(ctx context.Context, addr, stream, group, name string) (record.Consumer, error)
 }
 
 func production() Deps {
@@ -294,14 +318,18 @@ func production() Deps {
 		Forge: func(repo, base string, timeout time.Duration) ci.Forge {
 			return ci.NewGHForge(repo, base, timeout)
 		},
+		OpenStore: func(dsn string) (record.Store, error) { return record.OpenPostgres(dsn) },
+		OpenConsumer: func(ctx context.Context, addr, stream, group, name string) (record.Consumer, error) {
+			return record.NewRedisConsumer(ctx, addr, stream, group, name)
+		},
 	}
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, production(), version)) }
 
 // run takes the version stamp (a string, for the version verb's tests) and the injected
-// Deps (for the events verb's tests) as trailing options, so the socket client's stamp
-// and the event bridge's dependencies both reach the one entry point.
+// Deps (for the events and record verbs' tests) as trailing options, so the socket
+// client's stamp and every outside edge reach the one entry point.
 func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	stamp := version
 	deps := production()
@@ -324,6 +352,15 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 		return cmdEvents(args[1:], stdout, stderr, deps)
 	}
 	verb, rest := args[0], args[1:]
+	// The record verbs read the deps seam, so they dispatch outside the socket-verb
+	// switch: the switch a reader (and the audit test) walks holds exactly the verbs
+	// the resident session answers.
+	if verb == "record" {
+		return cmdRecord(rest, stdout, stderr, deps)
+	}
+	if verb == "results" {
+		return cmdResults(rest, stdout, stderr, deps)
+	}
 	switch verb {
 	case "help", "--help", "-h":
 		if len(rest) != 0 {
@@ -353,6 +390,13 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	default:
 		return refused(stderr, fmt.Sprintf("unknown verb %q", verb))
 	}
+}
+
+// refuse is what an unusable invocation costs: one line naming what was wrong and the door
+// to the usage, never the banner.
+func refuse(stderr io.Writer, where, what string) int {
+	fmt.Fprintf(stderr, "nova-work%s: %s; run: nova-work help\n", oneline.Escape(where), oneline.Escape(what))
+	return 2
 }
 
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
@@ -879,4 +923,52 @@ func benchName(flagValue string) string {
 		h = h[:i]
 	}
 	return strings.TrimSpace(h)
+}
+
+// ------------------------------------------------------------------------------- flags
+
+// flags is one verb's flag set with package flag's two mouths closed: its error text quotes
+// the argument it could not parse and its usage dump is discarded, so an argument beginning
+// with a dash cannot author a line of stderr before any code here runs.
+type flags struct {
+	verb     string
+	fs       *flag.FlagSet
+	problems []string
+}
+
+func newFlags(verb string) *flags {
+	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	return &flags{verb: verb, fs: fs}
+}
+
+func (f *flags) parse(args []string, stderr io.Writer) bool {
+	if err := f.fs.Parse(args); err != nil {
+		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
+		return false
+	}
+	if n := f.fs.NArg(); n > 0 {
+		fmt.Fprintf(stderr, "nova-work %s: takes no positional arguments, got %d (flags come before arguments)\n", oneline.Escape(f.verb), n)
+		return false
+	}
+	return true
+}
+
+// want records a missing required flag with what it WANTS, never only what was wrong.
+func (f *flags) want(value, name, wants string) {
+	if value == "" {
+		f.problems = append(f.problems, fmt.Sprintf("--%s is required; it wants %s; refusing to guess", oneline.Escape(name), oneline.Escape(wants)))
+	}
+}
+
+func (f *flags) add(problem string) { f.problems = append(f.problems, problem) }
+
+// refused prints every problem this run found, one line each, and reports whether there
+// were any.
+func (f *flags) refused(stderr io.Writer) bool {
+	for _, p := range f.problems {
+		fmt.Fprintf(stderr, "nova-work %s: %s\n", oneline.Escape(f.verb), oneline.Escape(p))
+	}
+	return len(f.problems) > 0
 }
