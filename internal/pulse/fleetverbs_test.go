@@ -83,6 +83,10 @@ func newFleetVerbsFake(t *testing.T) fleetVerbsFake {
 		"case \"$*\" in\n"+
 		"  *clone*) mkdir -p \"$last\"; exit 0;;\n"+
 		"  *rev-parse*) echo abc1234; exit 0;;\n"+
+		// The identity the standard now checks: empty on all four Linux machines of the
+		// fleet on 2026-09-18, and a card that commits without it fails after the work.
+		"  *config*user.email*) echo rowan@mas-bandwidth.com; exit 0;;\n"+
+		"  *config*user.name*) echo 'Rowan Claude'; exit 0;;\n"+
 		"  *) exit 0;;\n"+
 		"esac\n")
 	// tailscale: log the argv, keep whatever came down stdin, answer `ip -4`.
@@ -121,14 +125,23 @@ func fleetStandardHome(t *testing.T, stamp string) string {
 	if err := os.WriteFile(filepath.Join(seat, "rowan.key"), []byte("AGE-SECRET-KEY-FAKE\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// A Mac bench's runner .path: the real git's directory ahead of /usr/bin.
+	// A Mac bench's runner .path: the real git's directory ahead of /usr/bin, and the Go
+	// SDK ahead of both. The SDK entry is what `runner-path-go` reads -- space's sixteen
+	// .path files carried the bare distro PATH on 2026-09-18, so every Go shard scheduled
+	// there ran with no toolchain at all.
 	runner := filepath.Join(home, "runner-nova-tools-1")
 	if err := os.MkdirAll(runner, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(runner, ".path"), []byte("/usr/local/bin:/usr/bin:/bin\n"), 0o644); err != nil {
+	sdkBin := filepath.Join(home, "sdk", "go1.26.5", "bin")
+	if err := os.WriteFile(filepath.Join(runner, ".path"), []byte(sdkBin+":/usr/local/bin:/usr/bin:/bin\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// And the bench's own non-interactive PATH carries ~/.local/bin, which is what
+	// `path-noninteractive` reads: Ubuntu's ~/.bashrc returns before any PATH line for a
+	// non-interactive shell, so `ssh <bench> nova-merge version` answered `command not
+	// found` on every Linux machine in the fleet while a login shell worked.
+	t.Setenv("PATH", filepath.Join(home, ".local", "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return home
 }
 

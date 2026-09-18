@@ -659,9 +659,12 @@ func TestAdoptSendsInstallsAndWritesOneReceiptPerMachine(t *testing.T) {
 				"vision": "RELEASE INSTALLED version=v0.16.0 tools=0 skipped=2\n",
 				"mini":   "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n",
 			}}
+			// --no-certify: these cases are about the install, and an adopt certifies by
+			// default since 2026-09-18. The waiver is explicit here exactly as it must be
+			// on a real command line.
 			args := []string{"adopt", "--version", "v0.16.0", "--machines", list,
 				"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/home/nova/.local/bin",
-				"--dest", "/home/nova/nova-bench/build"}
+				"--dest", "/home/nova/nova-bench/build", "--no-certify"}
 			if platform != "" {
 				args = append(args, "--platform", platform)
 			}
@@ -713,7 +716,7 @@ func TestAdoptRefusesAReleaseWithNoUpdateForTheTarget(t *testing.T) {
 	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh",
 		"--from", built(t, "v0.16.0", "windows-amd64", "nova-bus"), "--bin", "/b", "--dest", "/d",
-		"--platform", "windows-amd64"}, &o, &e, Deps{SSH: &fakeSSH{}})
+		"--platform", "windows-amd64", "--no-certify"}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 || !strings.Contains(e.String(), "nova-update.exe") {
 		t.Fatalf("code=%d errs=%s", code, e.String())
 	}
@@ -729,7 +732,7 @@ func TestAdoptRefusesOneMachineAndStillReportsTheRest(t *testing.T) {
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0", "--machines", list,
 		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/home/nova/.local/bin",
-		"--dest", "/home/nova/nova-bench/build"}, &o, &e, Deps{SSH: s})
+		"--dest", "/home/nova/nova-bench/build", "--no-certify"}, &o, &e, Deps{SSH: s})
 	if code != 1 {
 		t.Fatalf("code=%d", code)
 	}
@@ -762,7 +765,7 @@ func TestAdoptRefusesAMachineWhoseInstallSaidNothing(t *testing.T) {
 	s := &fakeSSH{answer: map[string]string{"hulk": "bash: nova-update: command not found\n"}}
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0", "--machines", machinesFile(t, "hulk\n"),
-		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/b", "--dest", "/d"}, &o, &e, Deps{SSH: s})
+		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: s})
 	if code != 1 || !strings.Contains(e.String(), "RELEASE REFUSED machine=hulk") {
 		t.Fatalf("code=%d errs=%s", code, e.String())
 	}
@@ -774,7 +777,7 @@ func TestAdoptRefusesAMachineNameThatIsNotOne(t *testing.T) {
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "hulk; rm -rf /\n"), "--ssh", "/usr/bin/ssh",
-		"--from", from, "--bin", "/b", "--dest", "/d"}, &o, &e, Deps{SSH: s})
+		"--from", from, "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: s})
 	if code != 2 {
 		t.Fatalf("code=%d out=%s", code, o.String())
 	}
@@ -787,7 +790,7 @@ func TestAdoptRefusesAnEmptyMachineList(t *testing.T) {
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "# nobody\n\n"), "--ssh", "/usr/bin/ssh",
-		"--from", built(t, "v0.16.0", "", "nova-update"), "--bin", "/b", "--dest", "/d"}, &o, &e, Deps{SSH: &fakeSSH{}})
+		"--from", built(t, "v0.16.0", "", "nova-update"), "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 || !strings.Contains(e.String(), "no machine") {
 		t.Fatalf("code=%d errs=%s", code, e.String())
 	}
@@ -857,7 +860,7 @@ func TestProgressGoesToStderrAndReceiptsToStdout(t *testing.T) {
 	s := &fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n"}}
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"adopt", "--version", "v0.16.0", "--machines", machinesFile(t, "hulk\n"),
-		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/b", "--dest", "/d"}, &o, &e, Deps{SSH: s}); code != 0 {
+		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/b", "--dest", "/d", "--no-certify"}, &o, &e, Deps{SSH: s}); code != 0 {
 		t.Fatalf("%d %s", code, e.String())
 	}
 	if !strings.Contains(e.String(), "release: ") {

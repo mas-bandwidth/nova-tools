@@ -1,0 +1,37 @@
+roles: bench,runner,services,coordination
+expect: ^PATH OK
+
+# THE FIRST THING THAT WAS WRONG, on every Linux machine in the fleet, 2026-09-18.
+#
+# Two faults, one line. Ubuntu's ~/.bashrc returns before any PATH line for a NON-INTERACTIVE
+# shell and ~/.profile is never read, so `ssh <bench> nova-merge version` answered `command
+# not found` -- while the same command in a login shell worked, which is why nobody saw it.
+# And once PATH was fixed, ~/go/bin held eighteen `go install`-built nova-* binaries from
+# 08:50 that morning, answering v0.15.3, AHEAD of the real release in ~/.local/bin. That is
+# also why `release adopt` reported tools=0 skipped=21: it asked the binary in --bin, which
+# was current, while the shadow was what served PATH.
+#
+# So the check is not "is nova-merge installed". It is: the nova-merge that a non-interactive
+# ssh RESOLVES is the one in --bin, and it answers.
+set -eu
+RESOLVED=$(command -v nova-merge 2>/dev/null || true)
+if [ -z "$RESOLVED" ]; then
+  echo "PATH FAIL nova-merge is not on the non-interactive PATH: $PATH"
+  exit 1
+fi
+WANT="$NOVA_BIN/nova-merge"
+if [ "$RESOLVED" != "$WANT" ]; then
+  echo "PATH FAIL nova-merge resolves to $RESOLVED, shadowing $WANT (PATH=$PATH)"
+  exit 1
+fi
+VERSION=$("$RESOLVED" version 2>&1 | head -n 1 || true)
+if [ -z "$VERSION" ]; then
+  echo "PATH FAIL $RESOLVED said nothing for version"
+  exit 1
+fi
+SHADOWS=$(ls "$NOVA_HOME"/go/bin/nova-* 2>/dev/null | wc -l | tr -d ' ')
+if [ "$SHADOWS" != "0" ]; then
+  echo "PATH FAIL $SHADOWS nova-* binaries in $NOVA_HOME/go/bin shadow the release in $NOVA_BIN"
+  exit 1
+fi
+echo "PATH OK $RESOLVED $VERSION"

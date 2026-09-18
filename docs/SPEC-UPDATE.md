@@ -398,7 +398,7 @@ nova-update adoption --file <path> [--as <friend>] [--max <n>]
 nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt --version <v> --machines <file> --ssh <path> --from <dir> --bin <dir> --dest <dir> [--platform <goos-goarch>] [--timeout <d>]
+nova-update release adopt --version <v> --machines <file> --ssh <path> --from <dir> --bin <dir> --dest <dir> [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--timeout <d>]
 nova-update help
 ```
 

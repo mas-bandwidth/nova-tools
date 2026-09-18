@@ -142,13 +142,27 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		adopted++
 		fmt.Fprintf(out, "RELEASE ADOPTED machine=%s version=%s tools=%s skipped=%s bin=%s\n",
 			field(machine), field(o.version), field(m[2]), field(m[3]), field(o.bin))
+		// THE ADOPT INVALIDATED THIS MACHINE'S CERTIFICATES by changing its build. With
+		// --certify the renewal happens here, under the version just installed, so the
+		// machine is never left adopted-and-uncertified with a fill that will refuse it.
+		if o.certify != "" {
+			if certifyAdopted(ctx, o, ssh, machine, o.version, out, errs) != 0 {
+				refused++
+			}
+		}
 	}
 	w, result, code := out, "OK", 0
 	if refused > 0 {
 		w, result, code = errs, "FAIL", 1
 	}
-	fmt.Fprintf(w, "RELEASE ADOPT %s machines=%d adopted=%d refused=%d version=%s\n",
-		result, len(machines), adopted, refused, field(o.version))
+	certified := "yes"
+	if o.noCertify {
+		// Said out loud, on the verdict line, because a waived check that is silent is a
+		// check that was never there.
+		certified = "waived"
+	}
+	fmt.Fprintf(w, "RELEASE ADOPT %s machines=%d adopted=%d refused=%d version=%s certified=%s\n",
+		result, len(machines), adopted, refused, field(o.version), certified)
 	return code
 }
 

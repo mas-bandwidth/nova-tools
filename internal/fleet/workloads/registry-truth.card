@@ -1,0 +1,11 @@
+roles: bench,runner,services,coordination
+expect: ^REGISTRY OK
+forge: registry
+
+# The forge decides this one. On 2026-09-18 space carried sixteen ONLINE space-nova-* runners
+# serving merge-group shards while machines.tsv called it `bench,services` -- so THE LOCK,
+# which exists to keep cards off machines that serve the merge group, was happy to put cards
+# on one. The registry is the file every guard reads; a registry that disagrees with the
+# forge is a guard that guards nothing. The verdict is computed in Go and this body is never
+# run on a machine.
+echo "REGISTRY OK is decided by the forge against the machines registry's roles"

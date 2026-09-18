@@ -18,7 +18,7 @@ import (
 const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt --version <v> --machines <file> --ssh <path> --from <dir> --bin <dir> --dest <dir> [--platform <goos-goarch>] [--timeout <d>]`
+nova-update release adopt --version <v> --machines <file> --ssh <path> --from <dir> --bin <dir> --dest <dir> [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--timeout <d>]`
 
 // Deps are the seams. A zero Deps is the production one: the forge is gh, the
 // remote is ssh, the compiler is go, the clock is the machine's. A test fills in
@@ -38,8 +38,29 @@ type Deps struct {
 // share --version, --from and --timeout and a reader should see that once.
 type options struct {
 	repo, from, version, changelog, out, source, bin, machines, ssh, dest, platform string
-	dryRun                                                                          bool
-	timeout                                                                         time.Duration
+	// The three that turn on certification after an adopt. They are named together or
+	// not at all: a certificates file with no registry names no machine's roles, and a
+	// registry with no standard has no hash to write.
+	certify, certs, standard string
+	noCertify                bool
+	dryRun                   bool
+	timeout                  time.Duration
+}
+
+// namedHalf is the flags that WERE given, as a refusal spells them: the complement of the
+// missing list, so a person who passed two of three is told which two to drop.
+func namedHalf(missing []string) []string {
+	gone := map[string]bool{}
+	for _, m := range missing {
+		gone[m] = true
+	}
+	var out []string
+	for _, f := range []string{"--certify", "--certs", "--standard"} {
+		if !gone[f] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func refusal(w io.Writer, token string, err error) int {
@@ -112,6 +133,10 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.ssh, "ssh", "", "the ssh binary")
 		f.StringVar(&o.dest, "dest", "", "artifact root on each machine")
 		f.StringVar(&o.platform, "platform", "", "goos-goarch (default: this host)")
+		f.StringVar(&o.certify, "certify", "", "the machines registry; turns on certification after each install")
+		f.StringVar(&o.certs, "certs", "", "the certificates file the rows are appended to")
+		f.StringVar(&o.standard, "standard", "", "the provisioning standard file the hash is taken over")
+		f.BoolVar(&o.noCertify, "no-certify", false, "adopt without certifying, and say so on the line")
 		required = []string{"version", "from", "bin", "machines", "ssh", "dest"}
 	}
 	token := strings.ToUpper(verb)
@@ -137,6 +162,35 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	}
 	if err := ValidVersion(o.version); err != nil {
 		return refusal(errs, token, err)
+	}
+	// CERTIFICATION AFTER AN ADOPT IS ON BY DEFAULT (Glenn, 2026-09-18: "we want this
+	// certification to be mechanized"). An adopt changes the build on every machine it
+	// touches and so invalidates every certificate those machines held; leaving the renewal
+	// to whoever remembers is how a fleet spends an afternoon uncertified.
+	//
+	// "On by default" cannot mean guessed paths -- SPEC-UPDATE rule 1 -- so it means this:
+	// an adopt that names none of the three and does not waive it is REFUSED, with both
+	// roads on the line. Waiving is `--no-certify`, and it is said out loud on the verdict.
+	if verb == "adopt" {
+		var half []string
+		for _, x := range []struct{ n, v string }{{"certify", o.certify}, {"certs", o.certs}, {"standard", o.standard}} {
+			if x.v == "" {
+				half = append(half, "--"+x.n)
+			}
+		}
+		switch {
+		case o.noCertify && len(half) < 3:
+			return refusal(errs, token, fmt.Errorf(
+				"--no-certify waives certification and %s asks for it; pass one (run %s help)",
+				strings.Join(namedHalf(half), ", "), name))
+		case !o.noCertify && len(half) == 3:
+			return refusal(errs, token, fmt.Errorf(
+				"an adopt certifies the machines it changes: pass --certify <machines registry> --certs <file> --standard <file>, or waive it with --no-certify (run %s help)", name))
+		case !o.noCertify && len(half) > 0:
+			return refusal(errs, token, fmt.Errorf(
+				"missing %s; refusing to guess (certification after an adopt wants the machines registry, the certificates file and the provisioning standard together: run %s help)",
+				strings.Join(half, ", "), name))
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
 	defer cancel()
