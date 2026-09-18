@@ -479,6 +479,106 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 	assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
 }
 
+// TestNativeOKNamesTheCarriedConfig: the NATIVE OK line itself names the config the CHILD
+// sees -- config=<sha8> -- which is the one token of issue #465's fix no other test pins on
+// the printed line: the carry test pins the struct's sha8 and the copied bytes, and the
+// OK-line tests pin sandbox= and harness=, but the token a caller reads to know a configured
+// provider was carried before the child ever ran is asserted by nothing.
+//
+// WHAT THE SHA8 IS, AND WHY IT IS NOT THE NAMED FILE'S OWN BYTES. writeJobConfig hashes the
+// bytes it WRITES to <dataHome>/.config/opencode/opencode.json, AFTER this job's own fence
+// block is merged into them (issue #644, #704) -- "the sha8 OF THE BYTES THE CHILD SEES,
+// which is the only config any later reader can check the run against". So the sha8 is of
+// the merged body and never of the caller's file, and there is no config=- case at all: the
+// fence block is written WHETHER OR NOT --config named a file, so a run without --config
+// still carries a config and still names its sha8. This test originally pinned the caller's
+// own bytes and a dash; both were the pre-#704 contract, and the two assertions below are
+// the contract the code now promises.
+func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
+	windowsIsNotABench(t)
+	bin := nativeHarness(t)
+	const config = `{"provider":{"fake":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
+
+	// carriedSHA is the sha8 of the bytes that landed where the harness reads them, read back
+	// off the disk rather than recomputed from the inputs, so the assertion cannot agree with
+	// the code by repeating its arithmetic.
+	carriedSHA := func(t *testing.T, slot string) string {
+		t.Helper()
+		written, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
+		if err != nil {
+			t.Fatalf("the run carries a config where the harness reads it: %v", err)
+		}
+		sum := sha256.Sum256(written)
+		return hex.EncodeToString(sum[:])[:8]
+	}
+
+	t.Run("with_config", func(t *testing.T) {
+		root, slot := aSlot(t)
+		auth := filepath.Join(t.TempDir(), "auth.json")
+		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+		if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
+			"--auth", auth, "--config", cfgPath, "--deadline", "30s", "--no-wall"},
+			strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 0 {
+			t.Fatalf("the --config run exits 0, got %d:\n%s", rc, stderr.String())
+		}
+		// The named provider is in the carried bytes -- config= names a config that really
+		// carried --config's provider, not merely some config.
+		written, err := os.ReadFile(filepath.Join(slot, "data", ".config", "opencode", "opencode.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(written), `"baseURL"`) || !strings.Contains(string(written), "fake") {
+			t.Errorf("the carried config keeps --config's provider:\n%s", written)
+		}
+		wantSHA := carriedSHA(t, slot)
+		if !strings.Contains(stdout.String(), " config="+wantSHA+" ") {
+			t.Fatalf("NATIVE OK names the sha8 %s of the config the child sees:\n%s", wantSHA, stdout.String())
+		}
+	})
+
+	t.Run("without_config", func(t *testing.T) {
+		root, slot := aSlot(t)
+		auth := filepath.Join(t.TempDir(), "auth.json")
+		if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cardPath := filepath.Join(root, "card.md")
+		if err := os.WriteFile(cardPath, []byte("a card\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
+			"--auth", auth, "--deadline", "30s", "--no-wall"},
+			strings.NewReader(""), &stdout, &stderr, time.Now())
+		if rc != 0 {
+			t.Fatalf("the run without --config exits 0, got %d:\n%s", rc, stderr.String())
+		}
+		// No --config, but the fence block is still written, so the line still names a sha8
+		// and NEVER a dash: a reader can check the fence the child ran under.
+		wantSHA := carriedSHA(t, slot)
+		if !strings.Contains(stdout.String(), " config="+wantSHA+" ") {
+			t.Fatalf("NATIVE OK names the sha8 %s of the fence config carried without --config:\n%s", wantSHA, stdout.String())
+		}
+		if strings.Contains(stdout.String(), " config=- ") {
+			t.Fatalf("config= is never a dash: the fence block is carried whether or not --config named a file:\n%s", stdout.String())
+		}
+	})
+}
+
 // TestFriendSequenceLocalModelCard runs one known-answer card on a fake local provider: the
 // harness is the fake, the provider is a keyless ollama (baseURL, no apiKey, no auth entry),
 // and the card FAKE-PWD answers with the job directory. The run is walled, admitted without a

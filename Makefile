@@ -43,14 +43,45 @@ CL_PKGS := ./cmd/... ./internal/...
 # hang is still named by Go rather than by the runner.
 WINDOWS_TIMEOUT ?= 300s
 
+# DARWIN_TIMEOUT is the per-package ceiling on the merge group's darwin leg, and
+# like WINDOWS_TIMEOUT it is a MEASUREMENT and not a convention carried over from
+# another platform. That leg used the linux 100 s until 2026-09-18, when
+# merge-group run 35369433950 (batch 7, PR #1360) had its darwin shards 0 and 1
+# CANCELLED at the five-minute leg cap on superman.
+#
+# READ THAT RUN BEFORE BELIEVING THE OBVIOUS STORY, because the ceiling is not
+# what killed it: no package came near 100 s, and what ran out was the SHARD'S SUM
+# over 27 packages. The real fix is the shard COUNT coming from darwin's own
+# measurements in testdata/ci/package-sizes-darwin.tsv, and this number is the
+# companion to it — the bound on ONE `go test`, which is a shard's share of a
+# dealt package or the WHOLE of a package when the group opened a single slot. The
+# whole of the largest package on a loaded host is therefore the case it covers:
+# cmd/nova-wake measures 120.3 s on a quiet superman, and 300 s is that with the
+# stated margin and a little over. The leg's ten-minute job cap still fires above
+# it, so a real hang is named by Go rather than by the runner killing the job.
+#
+# TWO NUMBERS MAKE IT AND BOTH ARE WRITTEN DOWN. The sizes in that table were read
+# on a QUIET host — no runner busy, no merge group in flight — because the cancel
+# happened on a machine in its post-power-on state, Spotlight and XprotectService
+# still working and sixteen runners live, and a number read then is the state's
+# number rather than the machine's. The measurement is therefore a FLOOR, and this
+# ceiling is that floor times a STATED MARGIN of two. The margin is measured on
+# the same host both ways, not chosen: cmd/nova-merge is 68.8 s whole on a quiet
+# superman and about 147 s on the loaded superman of that run, which is 2.1x, and
+# the same factor covers the unevenness of dealing tests by NAME instead of time. Neither number is a
+# guess and neither is hidden inside the other; internal/ci's darwin class tests
+# hold both.
+DARWIN_TIMEOUT ?= 300s
+
 # MERGE_TIMEOUT is the per-package ceiling on the merge group's legs. 100 s is
-# the linux and darwin number and is what those legs have always used; the
-# windows leg exports MERGE_TIMEOUT=$(make -s windows-timeout) so the Windows
-# ceiling lives in ONE place — WINDOWS_TIMEOUT above — instead of being written
+# the linux number and is what that leg has always used; the windows and darwin
+# legs export MERGE_TIMEOUT=$(make -s windows-timeout) and
+# MERGE_TIMEOUT=$(make -s darwin-timeout), so each platform's ceiling lives in ONE
+# place — WINDOWS_TIMEOUT and DARWIN_TIMEOUT above — instead of being written
 # again in the workflow. `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet lint test test-full test-short test-pr test-merge test-race test-e2e test-lisp check clean windows-timeout
+.PHONY: help build fmt vet lint test test-full test-short test-pr test-merge test-race test-e2e test-lisp check clean windows-timeout darwin-timeout
 
 help:
 	@echo "make help        this list"
@@ -128,8 +159,9 @@ test-pr:
 
 # The merge-group hosted legs: full tests (no -short) for the packages the group
 # changes, one shard at a time. RUN is the shard's test-name regex; empty means
-# every test in PKGS. MERGE_TIMEOUT is the per-package ceiling — 100 s for linux
-# and darwin, and WINDOWS_TIMEOUT on the windows leg, which exports it.
+# every test in PKGS. MERGE_TIMEOUT is the per-package ceiling — 100 s for linux,
+# WINDOWS_TIMEOUT on the windows leg and DARWIN_TIMEOUT on the darwin leg, each of
+# which exports it.
 test-merge:
 	$(GO) test -count=1 -timeout $(MERGE_TIMEOUT) -run "$(RUN)" $(PKGS)
 
@@ -138,6 +170,11 @@ test-merge:
 # the number. `make -s windows-timeout` is the whole interface.
 windows-timeout:
 	@echo $(WINDOWS_TIMEOUT)
+
+# darwin-timeout is the same interface for the darwin merge leg. One target, one
+# number, read by the workflow: a ceiling written twice is a ceiling that drifts.
+darwin-timeout:
+	@echo $(DARWIN_TIMEOUT)
 
 test-race:
 	$(GO) test -race $(PKGS)

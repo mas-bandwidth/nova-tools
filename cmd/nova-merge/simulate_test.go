@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeQueue is the fake gh of these tests: the live merge queue, as numbers, with no
@@ -141,31 +143,113 @@ func TestSimulateDeadlineMakesASlowCheckPoison(t *testing.T) {
 	contains(t, stdout, "no answer within")
 }
 
-// A tool error -- an entries file that is not there -- is exit 1, and never a poison.
-func TestSimulateToolErrorIsExitOne(t *testing.T) {
+// THE EXIT TABLE docs/CLI.md documents, which the code contradicted on every invalid
+// invocation: "Exit 2 means either a configured check failed or the invocation was
+// invalid... Exit 1 is a preparation or runtime refusal." Every case below names something
+// the CALLER asked for and could not have, and every one of them exited 1.
+//
+// One fixture and one `true` check for all five: none of these reaches a check, and a real
+// `go build` per case would be four minutes of CI for an exit code (docs/TEST-DURATIONS.md).
+func TestSimulateInvalidInvocationsAreExitTwo(t *testing.T) {
 	l := simulateRepo(t)
-	exit, stdout, stderr := l.run("simulate", "--repo", l.work, "--base", "dev",
-		"--entries", filepath.Join(l.dir, "no-such-entries"), "--checks", "go build ./...")
-	if exit != 1 {
-		t.Fatalf("a tool error is exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
-	}
-	contains(t, stderr, "SIMULATE REFUSED")
-	absent(t, stdout, "SIMULATE DONE")
-}
-
-// An entries file holding something that is not a pull request number is refused before
-// any worktree is made.
-func TestSimulateRefusesAnEntriesFileThatIsNotNumbers(t *testing.T) {
-	l := simulateRepo(t)
-	path := filepath.Join(l.dir, "bad-entries.txt")
-	if err := os.WriteFile(path, []byte("one\n"), 0o644); err != nil {
+	notARepo := filepath.Join(l.dir, "not-a-repo")
+	if err := os.MkdirAll(notARepo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exit, _, stderr := l.run("simulate", "--repo", l.work, "--base", "dev", "--entries", path)
-	if exit != 1 {
-		t.Fatalf("a bad entries file is a tool error at exit 1, got %d\n%s", exit, stderr)
+	badEntries := filepath.Join(l.dir, "bad-entries.txt")
+	if err := os.WriteFile(badEntries, []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	contains(t, stderr, "not a pull request number")
+	for _, c := range []struct {
+		name, repo, base, entries, want string
+	}{
+		{"an --entries file that is not there", l.work, "dev", filepath.Join(l.dir, "no-such-entries"), "could not be read"},
+		{"an --entries line that is not a number", l.work, "dev", badEntries, "not a pull request number"},
+		{"a --repo that is not a git repository", notARepo, "dev", entriesFile(t, l, 1), "is not a git repository"},
+		{"a --base the origin does not have", l.work, "no-such-branch", entriesFile(t, l, 1), "could not fetch origin/no-such-branch"},
+		{"an entry the origin does not have", l.work, "dev", entriesFile(t, l, 9999), "could not fetch pull/9999/head"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			exit, stdout, stderr := l.run("simulate", "--repo", c.repo, "--base", c.base,
+				"--entries", c.entries, "--checks", "true")
+			if exit != 2 {
+				t.Fatalf("%s is an invalid invocation at exit 2 (docs/CLI.md), got %d\nstdout: %s\nstderr: %s", c.name, exit, stdout, stderr)
+			}
+			contains(t, stderr, "SIMULATE REFUSED")
+			contains(t, stderr, c.want)
+			absent(t, stdout, "SIMULATE DONE")
+		})
+	}
+}
+
+// THE LEFTOVER. Four dogfood runs on 2026-09-18 left four entries under .git/worktrees and
+// printed no SIMULATE NOTE: the removal was `git worktree remove --force`, and the lane's
+// git seam refuses --force in any argument, so the command never ran and its error went
+// into a discarded `_`. A pass leaves the repository as it found it — no scratch directory
+// and nothing for `git worktree prune` to find — and a removal that cannot happen is one
+// NOTE, which is what CLI.md promises.
+//
+// The checks are `true`: what is under test is the worktree's life, not a compiler.
+func TestSimulateLeavesNoWorktreeEntryBehind(t *testing.T) {
+	l := simulateRepo(t)
+	gitDir := l.git(l.work, "rev-parse", "--absolute-git-dir")
+	before := l.git(l.work, "worktree", "list", "--porcelain")
+
+	exit, stdout, stderr := l.run("simulate", "--repo", l.work, "--base", "dev",
+		"--entries", entriesFile(t, l, 1, 2), "--checks", "true")
+	if exit != 0 {
+		t.Fatalf("simulate: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	absent(t, stderr, "SIMULATE NOTE")
+
+	// Nothing of the scratch worktree is left: not the directory, not git's own record
+	// of it, and `worktree list` says exactly what it said before the run.
+	ents, err := os.ReadDir(gitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), "nova-merge-simulate-") {
+			t.Errorf("the scratch directory %s is still under %s", e.Name(), gitDir)
+		}
+	}
+	if wt, err := os.ReadDir(filepath.Join(gitDir, "worktrees")); err == nil {
+		for _, e := range wt {
+			if strings.HasPrefix(e.Name(), "nova-merge-simulate-") {
+				t.Errorf(".git/worktrees/%s is a prunable entry the pass left behind", e.Name())
+			}
+		}
+	}
+	if after := l.git(l.work, "worktree", "list", "--porcelain"); after != before {
+		t.Errorf("worktree list changed across the pass:\nbefore %q\n after %q", before, after)
+	}
+
+	// Both halves of the removal are driven directly for the NOTE, because neither
+	// failure is a state a whole pass can be made to reach reliably. safepath refusing a
+	// path that is not below the root is the shape of every removal this function must
+	// never make: one NOTE, and the directory untouched.
+	outside := t.TempDir()
+	var buf bytes.Buffer
+	removeScratchWorktree(&buf, l.work, gitDir, outside, time.Minute, l.deps())
+	contains(t, buf.String(), "SIMULATE NOTE")
+	contains(t, buf.String(), "could not be removed")
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatalf("the refusal removed the directory anyway: %v", err)
+	}
+
+	// And a prune that cannot run is the second NOTE, naming the entry still on disk
+	// rather than leaving it for somebody's `git worktree prune` weeks later.
+	scratch, err := os.MkdirTemp(gitDir, "nova-merge-simulate-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf.Reset()
+	removeScratchWorktree(&buf, filepath.Join(l.dir, "not-a-repo-at-all"), gitDir, scratch, time.Minute, l.deps())
+	contains(t, buf.String(), "SIMULATE NOTE")
+	contains(t, buf.String(), "was not")
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Fatalf("the scratch directory survived a run that reported only the prune: %v", err)
+	}
 }
 
 // The GraphQL answer is decoded here, where no gh and no network are needed.
