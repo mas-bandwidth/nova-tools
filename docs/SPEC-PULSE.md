@@ -163,7 +163,16 @@ The loop ends only when the pool and the queue are both empty, and then it says 
      admission is recorded in `<root>/pulses/<id>.tsv` (`batch id`, `n`). The `--then` argv
      is `nova-swarm batch`'s (card 269): it runs when the batch's wait ends — every card
      ended or the deadline — and never earlier. A `BATCH REFUSED` line from the swarm is
-     relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued.
+     relayed as `PULSE REFUSED` with the swarm's reason and nothing is queued. `launch` takes
+     an optional `--routes <routes.tsv>`: with it, every card's worker is a typed decision —
+     the shared core behind `nova-swarm route`, [SPEC-DECIDE.md](SPEC-DECIDE.md) rule 8 —
+     over the four questions, with `--floor` (default 0.9), `--key-env` (default
+     `JEV_API_KEY`) and `--base-url`, and one batch runs per chosen worker description. Below
+     the floor the card keeps its own model column as the default worker, and the line says
+     so. Every decision appends one `ROUTE` line to `<queue>/ROUTES.log` beside the card's
+     label and the time, so the floor is re-tuned from rows and never from a feeling. With no
+     `--routes` the cards group by their model column exactly as before, and no `ROUTES.log`
+     is written.
 11. **`--then` is gated on the verdict, never on mergeability.** `harvest` disposes a card by
 10. **Every card goes through `batch`, never a single `add`.** `launch` runs exactly one
     `nova-swarm batch --pool <root>/pool --tasks <dir> --label pulse-<id> --deadline <s>s
@@ -690,7 +699,7 @@ runner name and the run id on the line.
 ```
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
-nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]

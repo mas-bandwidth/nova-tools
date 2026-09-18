@@ -147,8 +147,9 @@ func fleetVerbsBenches(t *testing.T, home string) string {
 func TestFleetStandardChecksAreDataPerOS(t *testing.T) {
 	linux := FleetStandardChecks("linux", "go1.26.5", "abc123", 25)
 	darwin := FleetStandardChecks("darwin", "go1.26.5", "abc123", 25)
-	if len(linux) == 0 || len(darwin) == 0 {
-		t.Fatalf("check lists are empty: linux=%d darwin=%d", len(linux), len(darwin))
+	windows := FleetStandardChecks("windows", "go1.26.5", "abc123", 25)
+	if len(linux) == 0 || len(darwin) == 0 || len(windows) == 0 {
+		t.Fatalf("check lists are empty: linux=%d darwin=%d windows=%d", len(linux), len(darwin), len(windows))
 	}
 	names := func(list []StandardCheck) map[string]bool {
 		m := map[string]bool{}
@@ -157,10 +158,15 @@ func TestFleetStandardChecksAreDataPerOS(t *testing.T) {
 		}
 		return m
 	}
-	ln, dn := names(linux), names(darwin)
+	ln, dn, wn := names(linux), names(darwin), names(windows)
 	for _, want := range []string{"go", "sbcl", "nova-stamp", "seat", "disk-free"} {
 		if !ln[want] || !dn[want] {
 			t.Errorf("check %q must be in both lists (linux=%v darwin=%v)", want, ln[want], dn[want])
+		}
+	}
+	for _, want := range []string{"go", "nova-stamp", "seat", "disk-free"} {
+		if !wn[want] {
+			t.Errorf("check %q must be in windows list", want)
 		}
 	}
 	if !ln["safe-rm"] {
@@ -170,8 +176,16 @@ func TestFleetStandardChecksAreDataPerOS(t *testing.T) {
 		if !dn[want] {
 			t.Errorf("the Mac bench standard checks %q; the list is %v", want, dn)
 		}
-		if ln[want] {
-			t.Errorf("%q is a Mac bench check and must not be in the Linux list", want)
+		if ln[want] || wn[want] {
+			t.Errorf("%q is a Mac bench check and must not be in linux or windows lists", want)
+		}
+	}
+	for _, want := range []string{"git", "no-wsl", "features", "runner-service", "wol"} {
+		if !wn[want] {
+			t.Errorf("check %q must be in windows list; list is %v", want, wn)
+		}
+		if ln[want] || dn[want] {
+			t.Errorf("%q is a Windows check and must not be in linux or darwin lists", want)
 		}
 	}
 }
@@ -524,5 +538,91 @@ func TestFleetVerbsRefuseAnUnknownBench(t *testing.T) {
 	}
 	if got := fake.log(t, "ssh.log"); got != "" {
 		t.Fatalf("an unknown bench was still reached over ssh: %q", got)
+	}
+}
+
+// Windows checks have negative controls: missing powershell.exe, disabled features,
+// stopped runner, wrong runner service account, and disabled WoL must report DRIFT,
+// never false-green OK.
+func TestFleetStandardWindowsChecksNegativeControls(t *testing.T) {
+	fake := newFleetVerbsFake(t)
+	home := fleetStandardHome(t, "abc123")
+	benches := fleetVerbsBenches(t, home)
+
+	// 1. Without powershell.exe on PATH, all three PowerShell-based checks must DRIFT.
+	var out1, errb1 bytes.Buffer
+	code1 := FleetStandard(FleetStandardInput{
+		Benches: benches, Name: "worker-1", SSH: fake.SSH, OS: "windows",
+		Go: "go1.26.5", Want: "abc123", MinFreeGB: 0,
+		Timeout: 30 * time.Second, Stdout: &out1, Stderr: &errb1,
+	})
+	if code1 != 2 {
+		t.Fatalf("missing powershell must fail with exit 2, got %d\nstdout:\n%s", code1, out1.String())
+	}
+	for _, check := range []string{"features", "runner-service", "wol"} {
+		if strings.Contains(out1.String(), "STANDARD worker-1 "+check+" OK") {
+			t.Errorf("missing powershell must not report false-green OK for %s:\n%s", check, out1.String())
+		}
+		if !strings.Contains(out1.String(), "STANDARD worker-1 "+check+" DRIFT") {
+			t.Errorf("missing powershell must report DRIFT for %s:\n%s", check, out1.String())
+		}
+	}
+
+	// 2. With fake powershell.exe returning negative controls (disabled feature, stopped service, disabled WoL),
+	// they must also report DRIFT.
+	fakePS := filepath.Join(fake.Bin, "powershell.exe")
+	writeFleetVerbsExe(t, fakePS, `#!/bin/sh
+cmd="$*"
+case "$cmd" in
+  *Microsoft-Hyper-V-All*)
+    echo "disabled"
+    ;;
+  *actions.runner.*)
+    echo "stopped"
+    ;;
+  *Wake*)
+    echo "disabled"
+    ;;
+  *)
+    echo "unknown"
+    ;;
+esac
+`)
+
+	var out2, errb2 bytes.Buffer
+	code2 := FleetStandard(FleetStandardInput{
+		Benches: benches, Name: "worker-1", SSH: fake.SSH, OS: "windows",
+		Go: "go1.26.5", Want: "abc123", MinFreeGB: 0,
+		Timeout: 30 * time.Second, Stdout: &out2, Stderr: &errb2,
+	})
+	if code2 != 2 {
+		t.Fatalf("negative controls must fail with exit 2, got %d\nstdout:\n%s", code2, out2.String())
+	}
+	if !strings.Contains(out2.String(), "STANDARD worker-1 features DRIFT want=contains:Containers got=disabled") {
+		t.Errorf("features must report DRIFT with got=disabled:\n%s", out2.String())
+	}
+	if !strings.Contains(out2.String(), "STANDARD worker-1 runner-service DRIFT want=contains:Running\\x20(nova) got=stopped") {
+		t.Errorf("runner-service must report DRIFT with got=stopped:\n%s", out2.String())
+	}
+	if !strings.Contains(out2.String(), "STANDARD worker-1 wol DRIFT want=equals:enabled got=disabled") {
+		t.Errorf("wol must report DRIFT with got=disabled:\n%s", out2.String())
+	}
+
+	// 3. Verify single-quoted bash command generation does not expand $null or $_
+	checks := FleetStandardChecks("windows", "go1.26.5", "abc123", 25)
+	script := fleetStandardScript(home, checks)
+	for _, c := range checks {
+		if c.Name == "features" || c.Name == "runner-service" || c.Name == "wol" {
+			if !strings.Contains(c.Probe, "powershell.exe -NoProfile -Command '") {
+				t.Errorf("%s probe must wrap PowerShell command in single quotes to prevent outer Bash expansion: %s", c.Name, c.Probe)
+			}
+			if strings.Contains(c.Probe, "|| echo") {
+				t.Errorf("%s probe must not have false-green fallback '|| echo': %s", c.Name, c.Probe)
+			}
+		}
+	}
+	// Check generated script preserves $_ for PowerShell
+	if !strings.Contains(script, `$_`) {
+		t.Errorf("generated bash script must preserve $_ for PowerShell without expansion:\n%s", script)
 	}
 }

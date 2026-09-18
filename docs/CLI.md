@@ -2472,6 +2472,34 @@ ledger for each pool: the aggregate key does not contain a pool ID.
 This ledger is distinct from the `sum --swarm-root` daily ledger above. See
 `nova-tokens help` for `profiles`, `session` and ledger-reporting options.
 
+## nova-play
+
+Shared reading annotations at the **margin layer**. Participants anchor notes to exact passages in a source text, reply to each other's notes, and resume across sessions. A changed source produces an explicit anchor conflict rather than silently moving notes. The contract is [docs/SPEC-PLAY.md](SPEC-PLAY.md).
+
+### First run
+
+Three lines: annotate a passage, read the notes back, reply to a friend. Every path is a flag — there is no default source, no default author, and no default annotation file.
+
+```
+$ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
+ANNOTATE OK id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
+
+$ nova-play read --source story.txt
+READ OK source=story.txt notes=1
+NOTE id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
+  PASSAGE The lantern room held a brass fitting.
+  BODY I wonder what alloy this is.
+
+$ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
+REPLY OK id=03ad5e57d795 author=Stella created=2026-09-16T08:22:38Z
+```
+
+**What the flags want.** `--source` is the text being annotated; `--author` is who is speaking; `--passage` is the exact passage text to anchor to (must appear verbatim in the source); `--note` is the annotation text; `--id` is the note to reply to; `--body` is the reply text.
+
+**When the source changes.** Edit the source file between sessions and the next `read` says `ANCHOR STALE`, naming both the stored hash and the current hash. A new annotation is refused until the operator decides whether to migrate notes, discard them, or revert the source.
+
+**What this deliberately is not.** Not a reader or viewer — the source stays where it is, opened in whatever reader the participants choose. Not a publishing platform — notes are local to the machine that creates them. Not a notification system — participants check for new notes by running `read`.
+
 ## nova-update
 
 `nova-update` checks declared versions and applies one chosen update: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
@@ -2556,6 +2584,22 @@ per line with optional TAB-separated `bin` and `dest` overrides; `--dry-run` ask
 it holds and installs nothing.
 
 ```sh
+nova-update release build --version v0.17.0 --out ./release --source . --platform windows-amd64
+nova-update release adopt --version v0.17.0 --machines ./machines.tsv --ssh ssh --from ./release --bin 'C:\Users\nova\.local\bin' --dest 'C:\Users\nova\nova-release' --platform windows-amd64
+```
+
+A **windows** bench is a target like any other. The build names every artifact for it — a
+`windows-amd64` release is a directory of `.exe` files and a `SHA256SUMS` that lists them — and the
+adopt sends and runs `nova-update.exe` there. `--bin`, `--dest`, `--retire` and the `--machines`
+columns take the drive-absolute form as well (`C:\Users\nova\.local\bin`, which is what
+[BENCH-WINDOWS.md](BENCH-WINDOWS.md) puts in that bench's runner `.path`); every backslash is folded
+to a forward slash before a command is composed, because the far side's ssh shell is Git Bash and a
+backslash there is an escape. The drive form is refused for a non-windows target, and a drive-relative
+(`C:Users\nova`) or UNC (`\\server\share`) path is refused everywhere. A cross-built windows artifact
+cannot be run by the host that built it, so the build claims nothing about having done so; see
+[SPEC-RELEASE.md](SPEC-RELEASE.md) §11.
+
+```sh
 nova-update release pull --version v0.17.0 --out ./release --changelog ./CHANGELOG.md --machines ./machines.tsv --ssh ssh --dest '~/nova-release' --reason "shipped a key"
 ```
 
@@ -2628,6 +2672,26 @@ or a larger `--budget`; never remove a lock file to break a live lock.
 Stores encrypted credentials for named seats and delivers selected values to a
 child command. Use `nova-secrets help` for store setup, checks and `exec`; the
 contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).
+
+### Gate a seat pull request
+
+```sh
+nova-secrets gate --store . --base "$BASE_SHA" --head "$HEAD_SHA" \
+  --machines ./queue/control/machines.tsv
+```
+
+The store's own review, as a verb: run it in CI on every pull request against the
+secrets store. It diffs the two refs with git and asks GitHub nothing. It prints
+`GATE APPROVE files=<n> machines=<registry|->` at exit 0, or one
+`GATE REFUSE rule=<n> file=<f>: <why>` line at exit 2.
+
+`--machines` is the fleet's machines registry, and its `seat` column is what
+vouches for a recipient key the diff introduces: a new key is permitted only for
+a seat some machine in the registry carries, so adding a seat needs no human
+approval and still cannot grant a key to a machine the fleet does not have. A row
+whose seat reads `-` vouches for nothing. Leave `--machines` off and that rule
+does not run — the approval line then says `machines=-`, so an APPROVE is never
+mistaken for the fleet having vouched.
 
 ### Seal a replacement value
 
