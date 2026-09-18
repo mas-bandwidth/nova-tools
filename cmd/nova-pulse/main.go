@@ -24,12 +24,12 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse fill    --ready <dir> --launched <dir> [--bench <name>]... [--once]
+nova-pulse fill    --ready <dir> --launched <dir> [--lanes <file>] [--bench <name>]... [--once]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
-nova-pulse status  --queue <dir> --roots <dirs> [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
+nova-pulse status  --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 nova-pulse status  --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
@@ -127,6 +127,17 @@ status --oneline is the whole day in one line under 400 bytes: width per bench,
 pool, STOP, the day's reds, merges, cards done and failed, spend, and the pit-stop
 note when <queue>/PITSTOP exists. A fresh window needs that line and the policy,
 never the transcript.
+status --batches <dir> folds the swarm's own health from the newest batch-*.out
+outputs in that directory: STATUS SWARM first_attempt=<done/(done+abstain)> with
+the hedge the rate calls for below 0.90, one STATUS FAULT line per abstain reason
+loudest first, and STATUS PIT-STOP when one reason recurs five times or more --
+fix the machinery before more cards. It is a path and a flag, there is no default
+to guess, and without it the report says nothing about the swarm; a --batches that
+cannot be read is refused rather than folded as a swarm with no faults.
+status --html renders a bench that does not answer as DOWN and counts it on the
+STATUS HTML line. A row of zeros reads as a bench with nothing to do, which is how
+a fleet nobody could see looked healthy on 2026-09-17. The page also draws the
+metrics.tsv series it writes beside itself.
 cut --kind is the typed cutter and the only numberer: the card number comes from
 the queue state file's next_card under the queue's lock, so two cutters never
 share one and there is no --number flag to pass. cut without --kind is unchanged.
@@ -509,6 +520,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	queue := f.fs.String("queue", "", "")
 	roots := f.fs.String("roots", "", "")
 	slotsStore := f.fs.String("slots-store", "", "")
+	batches := f.fs.String("batches", "", "")
 	day := f.fs.String("day", "", "")
 	oneLine := f.fs.Bool("oneline", false, "")
 	html := f.fs.String("html", "", "")
@@ -574,6 +586,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Queue:          *queue,
 		Roots:          *roots,
 		SlotsStores:    *slotsStore,
+		Batches:        *batches,
 		Day:            *day,
 		Max:            *max,
 		Timeout:        time.Duration(*timeout) * time.Second,

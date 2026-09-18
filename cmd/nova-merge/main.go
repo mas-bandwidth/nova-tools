@@ -61,7 +61,7 @@ usage:
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
-  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>]
 
   nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
   nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
@@ -82,6 +82,15 @@ tests at exit 1. Pushing that branch and opening the pull request is the caller'
 the one who knows whether this is the batch they wanted. --base defaults to dev, which is
 where this repository's integration batches land; --root is rebuilt on every run, so give
 it a directory of the batch's own.
+
+THE GATE TESTS THE WAY CI TESTS. Its test step is the command .github/workflows/ci.yml
+runs -- go test -json -count=1 -timeout 5m -- over the whole merged tree, and its verdict
+is read from that -json stream by the same decoder cmd/nova-ci reads CI's with, so a batch
+that goes green here is a batch that ran what CI runs. integration-4 went green under a
+plain "go test ./..." and three CI legs then failed. The one thing not mirrored is CI's
+fair share of the machine, which is the machine's own fact and not a number this tool may
+write down: pass --gomaxprocs <n> on a bench that is also running CI, and the gate takes
+that many cores instead of all of them.
 
 simulate is the exception to the exit codes below: it exits 2 when it FINDS a poison
 entry -- the one that is green alone and red on top of the entries ahead of it -- and 1

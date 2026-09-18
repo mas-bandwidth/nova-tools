@@ -310,12 +310,15 @@ binary's own grammar and exit table, and governs where it says more than this.
 
 ## nova-check
 
-Six record-layer checks in one binary, each a wall: a record passes or it
+Seven record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
-what makes it say NO, and what it deliberately does not check.
+what makes it say NO, and what it deliberately does not check. Six of them are
+checks over one line's own self repo; the seventh, `dogfood`, is a check over
+the record the family keeps about its own tools, and it is here because it is
+the same shape: a ledger written in advance, read back, and held to.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, plus `version` and `help`. `nova-check version` is the Conventions'
+`corpus`, `dogfood`, plus `version` and `help`. `nova-check version` is the Conventions'
 build line, exit 0; before it existed the same words were
 `nova-check: unknown subcommand "version"`, exit 2, and a green from this tool
 named no build.
@@ -1369,6 +1372,107 @@ has gone missing.
 **Three: an indented example is illustration** — which is the point — so a
 four-column table indented after a blank line is not checked. Indented rows
 *abutting* the table above them are named instead, per the list above.
+
+---
+
+### dogfood — has anybody but the author run it
+
+```
+nova-check dogfood ledger --cli <docs/CLI.md> --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--fail-max <n>]
+nova-check dogfood record --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>
+nova-check dogfood gate   --cli <docs/CLI.md> --receipts <dir> [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
+```
+
+**Why it exists.** Glenn, 2026-09-18: *a tool is not finished until it is
+tested, dogfooded by a non-author on real work with the edges filed, the
+feedback applied, documented and released.* Six of those seven states leave
+evidence somebody else can read — a test run, an issue, a doc, a tag. One does
+not. Whether a **non-author** has ever run the thing was carried in nobody's
+hand but the last speaker's, which is the same shape as `corpus`: the record
+and the evidence about the record were the same sentence. So the claim becomes
+a file. The verbs come from the command reference, the runs come from
+receipts, and `gate` is the exit code a release lane calls.
+
+**The verbs are read from the reference, mechanically**, because a list
+maintained beside the document it describes is a second copy that drifts. A
+declaration is a line inside a fenced block that *starts* with a tool name and
+whose leading lowercase bare words are the verb, at most two — so
+`nova-fuse lift quarantine` and `nova-fuse lift lockdown` are the two verbs
+they are, `nova-check links --dir <dir>` stops at the first flag, and a `$`
+transcript line, a prose mention and a flagless synopsis's trailing
+description declare nothing. The tool comes from the line and not from the
+section heading: a reference shows one tool's verb inside another's section,
+and a verb belongs to the tool that runs it.
+
+**A receipt is one JSON line** — `tool`, `verb`, `by`, `at` (RFC3339, UTC),
+`ok`, `notes`, `issue` — in its own file under `--receipts`, written to a
+temporary name in that directory and renamed into place. The directory is the
+append-only log and each file is one atomic entry, so two benches recording at
+once cannot interleave halves of two records. Every field is stated: `record`
+refuses a blank one with the line that says what the flag wants, and the
+verdict is `--ok` or `--not-ok` and never a default, because an `ok=` that came
+from the absence of a flag is a record of what somebody forgot to type.
+
+**Asserts** (`ledger`, exit 0 — it reports rather than gates): one
+`DOGFOOD tool=… verb=… by=<who|nobody> at=… ok=<yes|no|-> issue=<n|->` row per
+verb the reference declares, in the reference's order, then
+`DOGFOOD OK verbs=<n> dogfooded=<n> by-nonauthor=<n> open-edges=<n>`. The row
+shows the receipt that speaks best for the verb — a non-author's pass first,
+then a non-author's run, then the author's own, latest first inside each rank —
+and the counts come from all of them, not from the row. **Every row prints**:
+this is the one listing here that `--fail-max` does not cap, because a ledger
+that elided rows would hide exactly the verbs nobody has run. The summary line
+is the bounded read of the same thing.
+
+**An author dogfooding their own verb is recorded and does not count.**
+Authorship comes from `--authors <file>` (`<tool> <verb> = <who wrote it>`, one
+per line, exact) or, second-best, from `--repo <dir>`: for each verb, the
+author of the first commit that introduced the verb's word under
+`cmd/<tool>`. Names compare trimmed and case-insensitively and nothing else — a
+receipt that spells a name differently is a receipt with a different name, and
+the ledger says who it has rather than guessing who it meant. A verb neither
+source places has **no** author, so every receipt for it counts: the gate can
+be wrong by asking for one more pass, never by passing a verb nobody ran.
+
+**An edge stays open until somebody runs the verb again and it works.** An
+`ok=false` receipt is an open edge unless a later receipt for the same verb
+says yes. Feedback filed is not feedback applied, and the ledger is the half
+that can see the difference.
+
+**Says NO (exit 1) when:**
+
+- a receipt cannot be read — unparseable, an unknown field, or a blank in a
+  required one. Each is one `DOGFOOD FAIL <file>:<line>: <reason>` line, capped
+  by `--fail-max` with the MORE line that names the flag, and **no ledger is
+  printed at all**: a ledger read from records it could not parse would
+  understate the truth in the one direction that lets a tool ship.
+- `gate` finds an open edge, always, with or without `--require-all`.
+- `gate --require-all` finds a verb no non-author has run and passed. Each
+  finding is one `DOGFOOD GATE FAIL tool=… verb=…: <why>` line, capped the same
+  way, then `DOGFOOD GATE FAIL verbs=<n> findings=<n> shown=<n>`. A green gate
+  is one line: `DOGFOOD GATE OK verbs=<n> by-nonauthor=<n> open-edges=<n>
+  require-all=<yes|no>`.
+
+**Refuses (exit 2) when** `--cli` or `--receipts` is missing (`ledger`,
+`gate`); `--tool`, `--verb`, `--by`, `--notes` or `--receipts` is missing, or
+the verdict is neither or both (`record`); `--receipts` is not a directory; the
+reference declares no verbs at all; an `--authors` line has no `=`, an empty
+side, or maps one verb twice; or the `--repo` read runs past `--git-timeout`.
+
+**A receipt naming a verb the reference does not declare is a `DOGFOOD NOTE`
+on stderr, not a row and not a count.** The reference and the receipts
+disagree, and one of them is wrong — which is a finding about the documentation
+rather than about the tool, so it is said and not gated on.
+
+**Deliberately does not check:** *whether the run was any good.* `notes` is
+prose and nobody grades it; a receipt says somebody ran the verb on real work
+and what happened, and the judgment that it was real work is the dogfooder's,
+made in the open under their own name. Nor does it check that the issue a
+receipt names exists, is open, or is about this verb (that is `gh`'s to know,
+and this tool reaches no network); nor that the person is who they say they
+are (the receipts live in a repository, and git's authorship is the record that
+answers that); nor that a verb's tests pass, which is a different wall in a
+different lane.
 
 ---
 
@@ -4671,11 +4775,20 @@ in both the MORE line and the closing line.
 
 ### WAITS ON: nothing
 
-`nova-check` is the one tool of the seven with no clock, no subprocess, no
-network and no lock. There is no `--timeout`, no interval, no poll, no `gh`
-and no `git`: it waits only on the filesystem, and every verb measured
-returned **under 0.30 s** — inside the two-minute rule by two orders of
-magnitude, so it is the one that can be run between edits.
+The six record-layer checks are the tool measured here, and they have no
+clock, no subprocess, no network and no lock. There is no `--timeout`, no
+interval, no poll, no `gh` and no `git` on that path: they wait only on the
+filesystem, and every verb measured returned **under 0.30 s** — inside the
+two-minute rule by two orders of magnitude, so this is the tool that can be run
+between edits.
+
+`dogfood` (2026-09-18) is the exception, and it is stated rather than papered
+over: `record` reads the clock, because a receipt is a dated record, and
+`ledger`/`gate` run one `git log` per verb **only when `--repo` is given**,
+under `--git-timeout` (60 s). With `--authors`, or with neither, the verb waits
+only on the filesystem like the six. The card's measurement stands for the six;
+`dogfood --repo` over a 71-verb reference is the one invocation of this binary
+that can take seconds, and it says so on stderr while it does.
 
 ### Red tests
 

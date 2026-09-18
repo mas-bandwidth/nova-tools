@@ -8,8 +8,14 @@ two lines:
 
 ```
 PROGRESS cards=<n> rc0=<n> wall_p50_s=<n> wall_p90_s=<n> usd_per_card=<x.xxxx> span_h=<n> effective_parallelism=<n.n> cards_per_hour=<n>
-ESTIMATE remaining_cards=<n> hours=<n>
+ESTIMATE remaining_cards=<n> hours=<n.n> pending=<n> launched=<n> prs=<n> issues=<n> wall_p90_s=<n> parallelism=<n.n> rate=<n.n>/h factor=1.5
 ```
+
+**The estimate names its terms.** `remaining_cards` and `hours` are the answer; `pending`,
+`launched`, `prs`, `issues` and the three rates behind them are how it was reached, and they
+reconstruct it exactly: `remaining = pending + launched + prs + 2 x issues` and `hours =
+remaining x wall_p90_s / parallelism x factor`. An estimate a reader cannot check is one
+nobody acts on, which is why `bin/progress.sh` printed the terms from the first day.
 
 `effective_parallelism` is busy card-seconds over span seconds — what the benches did, not
 what they had. `remaining_cards` is pending + launched + open PRs needing a read + 2 x open

@@ -29,7 +29,25 @@ STATUS CONTRACTION day cards=<cut/done> prs=<opened/merged> issues=<filed/closed
 STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
 STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
 STATUS TOOLS merged_since_adoption=<n> <names>
+STATUS SWARM first_attempt=<x.xx|-> done=<n> abstain=<n> batches=<n> hedge=<none|opus-on-critical-path|->
+STATUS FAULT reason=<token> count=<n>
+STATUS PIT-STOP reason=<token> count=<n> remedy=fix the machinery before more cards
 ```
+
+**The swarm's own health is a flag, never a guess** (`--batches <dir>`, `bin/status.sh`'s
+last two lines). With `--batches` status folds the newest 60 `batch-*.out` outputs in that
+directory, by modification time with the name as the tie-break: `done=` and `abstain=` summed
+over their `BATCH` lines give `first_attempt`, and every `<label> slot=<n>: ABSTAIN
+reason=<token>` line is counted by reason. `hedge` is `opus-on-critical-path` below 0.90 —
+the coordinator's model stays on the critical path until the rate holds above it for a day
+(Glenn, 2026-09-15) — and `none` at or above it. One `STATUS FAULT` line per reason prints
+loudest first, capped by `--max`, and a reason recurring five times or more in the window is
+`STATUS PIT-STOP`: when one small fault recurs, fixing it beats continuing (Glenn,
+2026-09-16), because more cards through a broken machine is the most expensive thing the
+fleet does. Without `--batches` none of the three lines print — the verb claims nothing about
+a swarm it was not shown — and a `--batches` that cannot be read is refused with one remedy
+line rather than folded as a swarm with no faults. The `BATCH` line's own
+`uniform-abstain=<reason>` field is a label and is never counted.
 
 **The verdict is the health metric** (Glenn, 2026-09-15, #549, #553). Contraction is tracked
 every tick, and the `CONTRACTION` line's `verdict` is `CONVERGING`, or `EXPANDING` when any one
@@ -38,3 +56,27 @@ stream's ratio — cards `cut/done`, prs `opened/merged`, issues `filed/closed` 
 the engineering practice is lax, and the coordinator names which, on the record, before another
 implementation card goes out. The same verdict belongs on nova-work `check`, from the journal,
 under #500. Replay: `status-expanding-after-two-hours-above-one`.
+
+### The fleet page
+
+`nova-pulse status --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s>]`
+is the fleet page as a verb (`bin/status-page.sh`). It reads every bench in `--benches` over
+`ssh <target> bash -s`, in parallel and bounded by `--timeout`, counting live cards from
+running card processes — a process whose command line names a job directory, or whose cwd is
+under the slot, the authoritative shape `bench-hygiene.sh`'s `live_slot` uses — and never from
+log age, which called a silently dead card alive and a long card dead. It writes the page to
+`--html`, appends one seven-column row to `metrics.tsv` beside it — `<RFC3339> live queue
+merged opened launched free-disk-per-bench` — and prints one line:
+
+```
+STATUS HTML wrote=<path> live=<n> queue=<n> down=<n>
+```
+
+**A bench that does not answer says DOWN.** Its row is `DOWN (no answer over ssh)`, its disk
+is a dash in the metrics row, it adds nothing to `live`, and it is counted in `down=`. A row
+of zeros reads as a bench with nothing to do, which is how a fleet nobody could see looked
+healthy on 2026-09-17; an answer that cannot be parsed is no answer and says DOWN too. The
+page draws the `metrics.tsv` series it writes beside itself, so a reader sees the fleet
+widening or stalling rather than only this instant. **Counts only ever reach the page**: no
+card id, branch name or label, because the page is served to whoever can reach the host. The
+verb writes locally and ships nothing; the caller copies the file where it is served.

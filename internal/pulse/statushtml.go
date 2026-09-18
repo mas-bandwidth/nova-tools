@@ -35,6 +35,12 @@ type BenchReading struct {
 	FreeGB  int
 	MemGB   int
 	Allowed int
+	// Down is the bench that did not answer. It is NOT a bench with nothing to do, and the
+	// difference is what the 2026-09-17 pit stop cost: a row of zeros reads as an idle
+	// bench, so a fleet nobody could see looked like a fleet with nothing to do. The page
+	// says DOWN, the metrics row writes a dash for its disk rather than a number the bench
+	// never gave, and the STATUS HTML line counts it.
+	Down bool
 }
 
 // FleetReader reads every bench's numbers in file order. The production reader reads them
@@ -91,11 +97,21 @@ func StatusHTML(in StatusHTMLInput) int {
 		}
 	}
 	now := in.Now()
+	// Reading the fleet is the slow step: every bench over ssh, bounded by --timeout. A
+	// verb that takes seconds says what it is doing while it takes them.
+	fmt.Fprintf(in.Stderr, "STATUS reading %d benches, up to %s each\n", len(benches), in.Timeout)
 	readings := reader(benches, now)
 
-	liveTotal := 0
+	liveTotal, downTotal := 0, 0
 	var freeDisk []string
 	for _, r := range readings {
+		if r.Down {
+			// A bench that did not answer contributes no live cards and no disk figure:
+			// the series must not carry a number nobody measured.
+			downTotal++
+			freeDisk = append(freeDisk, "-")
+			continue
+		}
 		liveTotal += r.Live
 		freeDisk = append(freeDisk, strconv.Itoa(r.FreeGB))
 	}
@@ -129,7 +145,7 @@ func StatusHTML(in StatusHTMLInput) int {
 	}
 	f.Close()
 
-	fmt.Fprintf(in.Stdout, "STATUS HTML wrote=%s live=%d queue=%d\n", in.HTML, liveTotal, queueDepth)
+	fmt.Fprintf(in.Stdout, "STATUS HTML wrote=%s live=%d queue=%d down=%d\n", in.HTML, liveTotal, queueDepth, downTotal)
 	return 0
 }
 
@@ -148,14 +164,39 @@ func fleetPage(now time.Time, merged, opened, queueDepth, ready, launched, refus
 	b.WriteString("<h3>slots</h3>\n")
 	b.WriteString("<table><tr><th>bench</th><th>live cards</th><th>cores</th><th>load</th><th>free disk</th><th>free mem</th><th>allowed</th></tr>\n")
 	for _, r := range readings {
+		if r.Down {
+			fmt.Fprintf(&b, "<tr><td>%s</td><td colspan=\"6\"><b>DOWN</b> (no answer over ssh)</td></tr>\n",
+				oneline.Field(r.Name))
+			continue
+		}
 		fmt.Fprintf(&b, "<tr><td>%s</td><td>%d</td><td>%d</td><td>%d</td><td>%d GB</td><td>%d GB</td><td>%d</td></tr>\n",
 			oneline.Field(r.Name), r.Live, r.Cores, r.Load, r.FreeGB, r.MemGB, r.Allowed)
 	}
 	b.WriteString("</table>\n")
-	b.WriteString("<p>live cards are running card processes per bench. allowed = min(cores*1.5 - load, (free_gb - 25)/2, memfree_gb/2). Page rewritten every minute; refreshes itself every minute.</p>\n")
+	b.WriteString("<p>live cards are running card processes per bench. allowed = min(cores*1.5 - load, (free_gb - 25)/2, memfree_gb/2). A bench that does not answer says DOWN: a row of zeros would read as a bench with nothing to do. Page rewritten every minute; refreshes itself every minute.</p>\n")
+	b.WriteString(timeSeries)
 	b.WriteString("</body></html>\n")
 	return b.String()
 }
+
+// timeSeries draws metrics.tsv, the file the verb writes beside the page, as the two charts
+// bin/status-page.sh drew. The page that writes a series and draws nothing loses the one
+// view that shows the fleet widening or stalling rather than its state at this instant.
+// The columns are the seven the metrics row writes: stamp, live, queue depth, merged,
+// opened, launched, free disk per bench. A row whose live column is a dash (a bench that
+// did not answer) still plots the rest of its numbers.
+const timeSeries = `<h3>time series (one row per page write)</h3>
+<canvas id="c1" height="90"></canvas><canvas id="c2" height="90"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>fetch('metrics.tsv').then(r=>r.text()).then(t=>{
+const rows=t.trim().split('\n').map(l=>l.split('\t')).filter(r=>r.length>=6);
+const L=rows.map(r=>r[0].slice(11,16));
+const n=(v)=>{const x=parseFloat(v);return isNaN(x)?null:x;};
+const mk=(id,ds)=>new Chart(document.getElementById(id),{type:'line',data:{labels:L,datasets:ds},options:{animation:false,scales:{y:{beginAtZero:true}}}});
+mk('c1',[{label:'live cards',data:rows.map(r=>n(r[1]))},{label:'queue depth',data:rows.map(r=>n(r[2]))},{label:'PRs opened, last hour',data:rows.map(r=>n(r[4]))}]);
+mk('c2',[{label:'merged today',data:rows.map(r=>n(r[3]))},{label:'cards launched by the fill loop (cumulative)',data:rows.map(r=>n(r[5]))}]);
+});</script>
+`
 
 // countFillLog counts the fill log's lines carrying a token; a missing log is zero.
 func countFillLog(queue, token string) int {
@@ -194,11 +235,12 @@ func readOneBench(ssh string, b FleetBench, timeout time.Duration) BenchReading 
 	defer cancel()
 	out, err := fleetSSH(ctx, ssh, b.SSH, fleetStatusScript(b.Home))
 	if err != nil {
-		return BenchReading{Name: b.Name}
+		return BenchReading{Name: b.Name, Down: true}
 	}
 	live, cores, load, free, mem, allowed, ok := parseFleetStatus(out)
 	if !ok {
-		return BenchReading{Name: b.Name}
+		// An answer nobody can parse is no answer: it says DOWN, never a quiet zero.
+		return BenchReading{Name: b.Name, Down: true}
 	}
 	return BenchReading{Name: b.Name, Live: live, Cores: cores, Load: load, FreeGB: free, MemGB: mem, Allowed: allowed}
 }

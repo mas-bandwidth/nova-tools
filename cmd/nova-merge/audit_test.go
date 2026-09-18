@@ -78,6 +78,12 @@ var mergeAudit = audit.Config{
 		// result is rendered through oneline.Field at its print site.
 		`"net/url"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		// goenv holds no writer of its own: Clean is a pure transform over a slice of
+		// environment strings -- it drops GOFLAGS and the rest of its documented list
+		// and returns what is left -- and it prints nothing. simulate hands its result
+		// to each check's Env so that a caller's GOFLAGS cannot reshape the output
+		// SIMULATE POISON quotes.
+		`"github.com/mas-bandwidth/nova-tools/internal/goenv"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/merge"`,
 		// safepath holds no writer of its own: RemoveUnder only decides whether a path
 		// may be removed and returns an os error, which every caller renders through
@@ -109,6 +115,11 @@ var mergeAudit = audit.Config{
 		// react.go publishes and reads through internal/ci, whose values are rendered
 		// through oneline before this package prints them.
 		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
+		// internal/ci/slowtests is batch's reader of a `go test -json` stream, and it is
+		// THE SAME DECODER cmd/nova-ci reads CI's own stream with. It holds no writer:
+		// Parse decodes newline-delimited JSON into structs and returns them, and the
+		// package and test names it returns reach a line through oneline.Field.
+		`"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"`,
 	},
 	MinClassified: 60,
 }

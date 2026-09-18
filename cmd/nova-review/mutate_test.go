@@ -85,6 +85,27 @@ func TestMutateVerbPrintsOneLineAndExitsZeroWhenTheTestIsRed(t *testing.T) {
 	}
 }
 
+// The same range, judged with GOFLAGS=-json in the environment the verb was
+// started in. CI's `make test` exports exactly that, and on 2026-09-18 the
+// inner `go test` inherited it: the run came back as a JSON stream with no
+// `--- PASS:` line in it, the parser counted the green run as red, and
+// `red=1 green=1` was reported as `red=2 green=0` on three legs of
+// integration-4. The verb's answer is a property of the range, never of the
+// caller's environment.
+func TestMutateVerbIgnoresTheCallersGOFLAGS(t *testing.T) {
+	t.Setenv("GOFLAGS", "-json")
+	dir := mutateLab(t, true)
+	var out, errb bytes.Buffer
+	code := run([]string{"mutate", "--repo", dir, "--base", "main", "--head", "HEAD"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+	want := "MUTATE " + head8(t, dir) + " red=1 green=1 PASS\n"
+	if out.String() != want {
+		t.Fatalf("stdout = %q, want %q (stderr %q)", out.String(), want, errb.String())
+	}
+}
+
 func TestMutateVerbExitsOneAndNamesTheGreenTest(t *testing.T) {
 	dir := mutateLab(t, false)
 	var out, errb bytes.Buffer

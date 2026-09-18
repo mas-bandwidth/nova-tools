@@ -380,11 +380,16 @@ nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
+nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--dry-run] [--timeout <d>]
+nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>] [--timeout <d>]
+nova-update release install --from <dir> --version <v> --bin <dir> [--platform <goos-goarch>] [--timeout <d>]
+nova-update release adopt --version <v> --machines <file> --ssh <path> --from <dir> --bin <dir> --dest <dir> [--platform <goos-goarch>] [--timeout <d>]
 nova-update help
 ```
 
-Those five usage lines are the string `nova-update help` prints, byte for byte: one string
-in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19. No
+Those nine usage lines are the string `nova-update help` prints, byte for byte: one string
+in the binary, so the spec and the help cannot drift apart; the four `release` lines are
+`release.Verbs`, spliced into that one string rather than copied beside it. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version snapshot …` reads the adopted manifest and reports its count on one line,
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
@@ -393,6 +398,52 @@ the adopted manifest, not every executable on PATH (the opening paragraph);
 its `help` prints those three lines the same way.
 `nova-version report --as x --to y` prints the inventory and composes nothing (rule 26);
 Emma's ready-to-send draft (#121) is `nova-version report --draft …`, the flag typed.
+
+## The release verb
+
+`check`, `report` and `adoption` all ask the same question from one end: what is installed
+here, and is it what it should be. `release` is that question from the other end — it is
+what MAKES the thing they read. It replaces two shell scripts the coordinator ran by hand,
+`fleet-install-tools.sh` and the install half of `adopt.sh`, and it replaces them for the
+reason the pit stop of 2026-09-17 gave: those scripts built, copied, installed and verified
+inside one nested `ssh` quoting, so when four benches ran six-hour-old tools while the
+coordinator believed they were current, nothing in the loop could say which step had not
+happened.
+
+Four verbs, and each one can refuse:
+
+- **`cut`** resolves `--from` on the forge, reads every check run on that commit, and
+  REFUSES unless all of them completed and none failed — a commit no run has judged is not
+  green either. It then reads the highest existing version tag, compares it to the head,
+  writes a new `--changelog` section from the pull requests merged since (their numbers,
+  their titles, and for an integration batch the members named in its own body, so a batch
+  does not hide ten pieces of work behind one number), creates the tag, and prints
+  `RELEASE CUT version=… sha=… prs=…`. `--dry-run` decides everything and writes nothing.
+  A version that could not survive `-X main.version=`, a printf format or the field law —
+  whitespace, `%`, `=` — is refused here, the same refusal
+  `.github/scripts/release-ldflags.sh` makes for the same reasons.
+- **`build`** compiles every `cmd/nova-*` in `--source` for one platform (this host unless
+  `--platform` says otherwise) with `-trimpath` and the one composed stamp, into
+  `<out>/<version>/<goos>-<goarch>/`, and writes `SHA256SUMS` over the whole set LAST, in
+  the step that finished it. A tool that does not compile means no checksum file at all: a
+  `SHA256SUMS` over a half-built directory agrees with itself and with nothing.
+- **`install`** verifies every artifact against `SHA256SUMS` BEFORE the first rename, then
+  installs each one temp-and-rename into `--bin` — a running process keeps its own inode —
+  and skips a tool whose installed binary already answers the version, asked of the BINARY
+  rather than of a marker file. `RELEASE INSTALLED version=… tools=… skipped=…`.
+- **`adopt`** does that install on every machine in `--machines`, over the `--ssh` binary:
+  the artifact directory goes over as a tar stream written here, and the command that runs
+  on the far side is the `nova-update` JUST SENT, so a bench with no nova-tools at all
+  adopts with the same command as one a version behind. One `RELEASE ADOPTED machine=…`
+  receipt per machine, read from what the remote SAID and not from its exit code, or one
+  `RELEASE REFUSED machine=… : <cause> (<remedy>)`, and a final count. Exit 1 if any
+  machine refused: the other machines are still reported.
+
+Rule 1 governs throughout — every path is a flag, no default path, no cwd, no `$HOME` —
+and rule 3's no-shell rule governs the child processes. No secret is read, logged or
+passed: `gh` and `ssh` each carry their own credential. The three edges to the world
+outside the process — the forge, ssh, the Go toolchain — are interfaces, so no unit test
+here touches the network or a real machine (Glenn's hard rule, 2026-09-17).
 
 ## Exit codes and the output grammar
 

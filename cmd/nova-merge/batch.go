@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -48,23 +50,73 @@ const batchBase = "dev"
 const batchTimeout = "30m"
 
 // batchStep is one step of the gate: the word its progress line carries, the command it
-// runs in the merged tree, the program that must be on PATH for it to mean anything, and
-// the file of the checkout it runs.
+// runs in the merged tree, the program that must be on PATH for it to mean anything, the
+// file of the checkout it runs, and whether its output is a `go test -json` stream.
 type batchStep struct {
 	name    string
 	command string
 	needs   string
 	file    string
+	stream  bool
 }
 
-// batchGate is the suite, in order, exactly as the shell script ran it. A step whose
-// program or file is missing is SKIPPED OUT LOUD: a gate that quietly ran three of its
-// four steps and printed OK is a gate that says green about a thing it did not check.
+// batchGate is the suite, in order. A step whose program or file is missing is SKIPPED
+// OUT LOUD: a gate that quietly ran three of its four steps and printed OK is a gate that
+// says green about a thing it did not check.
 var batchGate = []batchStep{
 	{name: "build", command: "go build ./...", needs: "go"},
 	{name: "vet", command: "go vet ./...", needs: "go"},
-	{name: "test", command: "go test ./...", needs: "go"},
+	{name: "test", command: strings.Join(ciTestArgs(), " "), needs: "go", stream: true},
 	{name: "lisp", command: "sh tools/ci/lisp-test.sh", needs: "sbcl", file: "tools/ci/lisp-test.sh"},
+}
+
+// ciTestArgs IS THE ONE LIST: the test command CI runs, mirrored here so that the gate
+// tests the way CI tests.
+//
+// WHERE THAT COMMAND LIVES MOVED IN integration-4. It used to be written out inline in
+// the `test` step of the `test` job in .github/workflows/ci.yml; that step now reads
+//
+//	run: make test PKGS="${{ matrix.entry.packages }}"
+//
+// and the command itself is the Makefile's `test` target, which is
+//
+//	GOFLAGS=-json $(GO) test -count=1 $(PKGS) | tee $RUNNER_TEMP/test.json
+//	$(GO) run ./cmd/nova-ci slowtests --budget "$budget" < $RUNNER_TEMP/test.json
+//
+// and every flag on it is on the gate for a reason:
+//
+//	-json        CI reads that stream with cmd/nova-ci slowtests, so every leg runs its
+//	             tests under -json -- which turns the verbose stream on in every test
+//	             binary and changes what a tool under test sees. integration-4 went green
+//	             on hulk under a plain `go test ./...` and three CI legs then failed. CI
+//	             delivers it as GOFLAGS=-json on the OUTER command; the gate writes it as
+//	             an argv flag, which is the same thing for that command and survives the
+//	             goenv.Clean environment every step runs in -- Clean strips GOFLAGS on
+//	             purpose, so that an INNER go command a test spawns cannot inherit it.
+//	-count=1     no cached result may stand in for a run; a gate reading a cache from
+//	             before the merge is a gate reading the wrong tree.
+//
+// THERE IS NO -timeout HERE ANY MORE. The old inline step carried `-timeout 5m` and the
+// gate carried it too; the Makefile's `test` target does not, so neither does the gate --
+// the per-package deadline is go's own default and this verb's --timeout still bounds the
+// whole step. A gate that kept a 5 m package deadline CI does not set is a gate that can
+// go red on a tree CI passes, which is the divergence this list exists to prevent.
+//
+// ./... stands where CI writes ${{ matrix.entry.packages }}: CI splits the tree across a
+// matrix and the union of those legs is the tree, which one gate run covers in one
+// command.
+//
+// WHAT IS DELIBERATELY NOT MIRRORED is the fair-share step's GOMAXPROCS. That is the
+// MACHINE's fact -- its cores divided by NOVA_RUNNERS_PER_MACHINE, which the runner
+// service exports -- and row 9 of #828 is what writing such a divisor into a file costs:
+// it stayed 4 the day the fleet went to 8. This package reads no environment variable
+// (rule 13), so the share is --gomaxprocs, passed by the caller on a bench that is also
+// running CI.
+//
+// TestTheGateTestsTheWayCIDoes reads ci.yml, the Makefile and this list together, so the
+// day any one of them moves is the day it goes red.
+func ciTestArgs() []string {
+	return []string{"go", "test", "-json", "-count=1", "./..."}
 }
 
 // batchTempVars are the variables a child reads to find its temp directory, and this ONE
@@ -107,6 +159,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	repo := f.fs.String("repo", "", "")
 	reference := f.fs.String("reference", "", "")
 	timeoutRaw := f.fs.String("timeout", batchTimeout, "")
+	gomaxprocs := f.fs.Int("gomaxprocs", 0, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -137,30 +190,38 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if terr != nil || timeout <= 0 {
 		f.problem(fmt.Sprintf("--timeout is a duration per step like 30m, got %q", *timeoutRaw))
 	}
+	// --gomaxprocs is CI's fair-share number, which is the machine's fact rather than this
+	// file's (see ciTestArgs). Zero is "take the machine", which is right on a bench doing
+	// nothing else and wrong on one that is also running CI.
+	if *gomaxprocs < 0 {
+		f.problem(fmt.Sprintf("--gomaxprocs is the share of the machine this batch takes, the way CI divides its cores by the runners on it; 0 is all of them, and a negative one is a typo, got %d", *gomaxprocs))
+	}
 	if !f.done(stderr) {
 		return 2
 	}
 	return runBatch(batchRun{
-		name:      *name,
-		base:      *base,
-		root:      *root,
-		repo:      *repo,
-		reference: *reference,
-		prs:       prs,
-		timeout:   timeout,
+		name:       *name,
+		base:       *base,
+		root:       *root,
+		repo:       *repo,
+		reference:  *reference,
+		prs:        prs,
+		timeout:    timeout,
+		gomaxprocs: *gomaxprocs,
 	}, stdout, stderr, deps)
 }
 
 // batchRun is one batch's whole invocation, checked, so the run below reads as the steps
 // it performs rather than as a second pass over the flags.
 type batchRun struct {
-	name      string
-	base      string
-	root      string
-	repo      string
-	reference string
-	prs       []int
-	timeout   time.Duration
+	name       string
+	base       string
+	root       string
+	repo       string
+	reference  string
+	prs        []int
+	timeout    time.Duration
+	gomaxprocs int
 }
 
 func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
@@ -223,7 +284,7 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		oneline.Field(in.name), oneline.Field(baseSHA), oneline.Field(headSHA),
 		oneline.Field(numberList(members)), oneline.Field(numberList(dropped)))
 
-	env := privateTempEnv(os.Environ(), tmp)
+	env := ciTestEnv(tmp, in.gomaxprocs)
 	for _, step := range batchGate {
 		if why := stepUnavailable(step, clone); why != "" {
 			fmt.Fprintf(stderr, "BATCH SKIP %s reason=%q t=%.1fs\n", oneline.Field(step.name), why, since(start))
@@ -234,10 +295,10 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		if err == nil {
 			continue
 		}
-		pkgs, tests := failuresIn(out)
+		pkgs, tests, reason := stepFailure(step, out, err)
 		fmt.Fprintf(stdout, "BATCH FAIL %s step=%s packages=%s tests=%s reason=%q\n",
 			line, oneline.Field(step.name), oneline.Field(numberOrNone(pkgs)), oneline.Field(numberOrNone(tests)),
-			oneline.Cap(firstLine(out, err), oneline.TailBytes))
+			oneline.Cap(reason, oneline.TailBytes))
 		return 1
 	}
 	fmt.Fprintf(stdout, "BATCH OK %s\n", line)
@@ -323,6 +384,85 @@ func parsePRList(raw string) ([]int, error) {
 		return nil, fmt.Errorf("--pr names no pull request; a batch of nothing is not a batch")
 	}
 	return prs, nil
+}
+
+// ciTestEnv is the environment every step runs in: a temp directory inside the batch's
+// own working directory, and CI's fair share of the machine when the caller named one.
+// GOMAXPROCS is what ci.yml's fair-share step sets and the only environment variable that
+// step sets; a zero share is this process's own, which is every core.
+func ciTestEnv(tmp string, gomaxprocs int) []string {
+	// goenv.Clean FIRST: every step below is a go command whose output this verb
+	// parses into packages and test names, and a caller's GOFLAGS=-json -- which CI's
+	// own `make test` exports -- would turn that output into a JSON stream the parser
+	// reads as a different result. The temp directory and GOMAXPROCS are appended
+	// after Clean, where the last value wins.
+	env := privateTempEnv(goenv.Clean(os.Environ()), tmp)
+	if gomaxprocs > 0 {
+		env = append(env, "GOMAXPROCS="+strconv.Itoa(gomaxprocs))
+	}
+	return env
+}
+
+// stepFailure is what a red step says: the failing packages, the failing tests, and the
+// one line a reader is pointed at.
+//
+// A step whose output is a `go test -json` stream is read as one; a step whose output is
+// text is read as text. The fallback is not a nicety: a build failure writes plain text on
+// stderr, runCheck captures both streams together, and a stream read as JSON-or-nothing
+// would name no failing package at all on exactly the run that has one.
+func stepFailure(step batchStep, out string, err error) (pkgs, tests []string, reason string) {
+	if step.stream {
+		if pkgs, tests, ok := testFailures(out); ok {
+			return pkgs, tests, firstFailure(pkgs, tests)
+		}
+	}
+	pkgs, tests = failuresIn(out)
+	return pkgs, tests, firstLine(out, err)
+}
+
+// testFailures reads a `go test -json` stream for the packages and tests that failed,
+// decoded by internal/ci/slowtests -- THE SAME DECODER cmd/nova-ci slowtests reads CI's
+// stream with, so the gate and the budget check cannot disagree about what a stream said.
+// ok is false when the output is not all JSON, which is the caller's signal to read it as
+// text instead.
+func testFailures(out string) (pkgs, tests []string, ok bool) {
+	events, err := slowtests.Parse(strings.NewReader(out))
+	if err != nil {
+		return nil, nil, false
+	}
+	seenPkg, seenTest := map[string]bool{}, map[string]bool{}
+	for _, ev := range events {
+		if ev.Action != "fail" || ev.Package == "" {
+			continue
+		}
+		if ev.Test == "" {
+			if !seenPkg[ev.Package] {
+				seenPkg[ev.Package] = true
+				pkgs = append(pkgs, ev.Package)
+			}
+			continue
+		}
+		if !seenTest[ev.Test] {
+			seenTest[ev.Test] = true
+			tests = append(tests, ev.Test)
+		}
+	}
+	return pkgs, tests, true
+}
+
+// firstFailure is the one line a -json stream is reduced to: the first failing test and
+// where it lives, or the first failing package when the failure named no test -- which is
+// what a package that would not build looks like inside the stream.
+func firstFailure(pkgs, tests []string) string {
+	switch {
+	case len(tests) > 0 && len(pkgs) > 0:
+		return tests[0] + " failed in " + pkgs[0]
+	case len(tests) > 0:
+		return tests[0] + " failed"
+	case len(pkgs) > 0:
+		return pkgs[0] + " failed with no test named, which is a package that would not build"
+	}
+	return "go test exited non-zero and its stream named no failure"
 }
 
 // failuresIn reads a go test run's own output for the packages that failed and the tests

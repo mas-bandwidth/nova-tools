@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -87,7 +88,11 @@ func TestBatchDropsTheConflictAndGoesRedOnTheFailingMember(t *testing.T) {
 	contains(t, stderr, "BATCH MERGED #1 t=")
 	contains(t, stderr, "BATCH MERGED #3 t=")
 	contains(t, stderr, "BATCH STEP build ")
-	contains(t, stderr, "BATCH STEP test ")
+	// AND THE TEST STEP RAN THE WAY CI RUNS IT: the failing test is still named on the
+	// FAIL line above, out of a -json stream rather than out of go test's text output.
+	// The command is quoted from ciTestArgs rather than spelled again here, so that this
+	// assertion follows CI the day TestTheGateTestsTheWayCIDoes says the command moved.
+	contains(t, stderr, "BATCH STEP test command=\""+strings.Join(ciTestArgs(), " ")+"\"")
 
 	// NOTHING IS PUSHED. The caller pushes the branch and opens the pull request; the
 	// verb has no path to a push at all, and the fixture's update hook recorded none.
@@ -191,6 +196,103 @@ func TestPrivateTempEnvPointsEveryTempVariableAtTheBatchsOwnDirectory(t *testing
 		if seen[key] != 1 {
 			t.Errorf("the child environment holds %s %d times, want exactly one", key, seen[key])
 		}
+	}
+}
+
+// makeRecipe returns the tab-indented recipe lines of one Makefile target, joined by
+// newlines, or "" when the target has none. A target may be written more than once -- the
+// CL test is a `test: PKGS := ...` line and then a `test:` with the recipe -- so every
+// recipe line under any occurrence of the name belongs to it.
+func makeRecipe(makefile, target string) string {
+	var out []string
+	in := false
+	for _, line := range strings.Split(makefile, "\n") {
+		if strings.HasPrefix(line, "\t") {
+			if in {
+				out = append(out, strings.TrimPrefix(line, "\t"))
+			}
+			continue
+		}
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		in = strings.HasPrefix(line, target+":")
+	}
+	return strings.Join(out, "\n")
+}
+
+// THE GATE TESTS THE WAY CI TESTS, and this reads every side so it goes red the day any
+// of them moves. integration-4 ran green on hulk under a plain `go test ./...` and three
+// CI legs then failed, because CI does not run a plain `go test ./...`; a gate that tests
+// differently from CI is a gate that passes what CI fails.
+//
+// integration-4 also moved the command itself: ci.yml's `test` step is now `make test
+// PKGS=...` and the Makefile's `test` target holds the flags. So this reads BOTH -- that
+// ci.yml still delegates to `make test`, and what that target actually runs -- and
+// ciTestArgs must mirror the target.
+func TestTheGateTestsTheWayCIDoes(t *testing.T) {
+	t.Parallel()
+	yml, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(yml), "make test PKGS=") {
+		t.Fatal("ci.yml's test step no longer runs `make test PKGS=...`; the gate mirrors whatever CI runs, so find the command CI runs now and update ciTestArgs in batch.go with it")
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe := makeRecipe(string(raw), "test")
+	if !strings.Contains(recipe, "test") {
+		t.Fatalf("the Makefile's `test` target has no recipe, but ci.yml runs `make test`; update ciTestArgs in batch.go with whatever CI runs now\nrecipe: %q", recipe)
+	}
+	got := strings.Join(ciTestArgs(), " ")
+	// -json travels as GOFLAGS=-json on CI's outer command and as an argv flag on the
+	// gate's, which is the same thing for that command; both spellings contain "-json".
+	for _, flag := range []string{"-json", "-count=1"} {
+		if !strings.Contains(recipe, flag) {
+			t.Errorf("the Makefile's `test` target no longer carries %q; whatever it carries now is what ciTestArgs must mirror\nrecipe: %s", flag, recipe)
+		}
+		if !strings.Contains(got, flag) {
+			t.Errorf("the gate's test command is %q and does not carry %q, which the Makefile's `test` target does", got, flag)
+		}
+	}
+	// A -timeout the gate sets and CI does not is a gate that can go red on a tree CI
+	// passes, which is the same divergence from the other side.
+	if strings.Contains(got, "-timeout") && !strings.Contains(recipe, "-timeout") {
+		t.Errorf("the gate's test command is %q and sets a per-package -timeout the Makefile's `test` target does not:\n%s", got, recipe)
+	}
+	if !strings.HasPrefix(got, "go test ") || !strings.HasSuffix(got, " ./...") {
+		t.Errorf("the gate's test command is %q; it is `go test <the Makefile's flags> ./...`, the whole merged tree in one run where CI splits it across the matrix", got)
+	}
+}
+
+// The -json stream is read with the SAME decoder cmd/nova-ci slowtests reads it with, so
+// the gate and the budget check cannot disagree about what the stream said.
+func TestTestFailuresReadsTheJSONStream(t *testing.T) {
+	t.Parallel()
+	stream := `{"Action":"run","Package":"example.com/batch/pkg/c","Test":"TestBroken"}
+{"Action":"output","Package":"example.com/batch/pkg/c","Test":"TestBroken","Output":"    c_test.go:5: the poison\n"}
+{"Action":"fail","Package":"example.com/batch/pkg/c","Test":"TestBroken","Elapsed":0}
+{"Action":"pass","Package":"example.com/batch/pkg/a","Elapsed":0.01}
+{"Action":"fail","Package":"example.com/batch/pkg/c","Elapsed":0.123}
+`
+	pkgs, tests, ok := testFailures(stream)
+	if !ok {
+		t.Fatal("a stream that is all JSON must read as JSON")
+	}
+	if len(pkgs) != 1 || pkgs[0] != "example.com/batch/pkg/c" {
+		t.Errorf("packages = %v, want [example.com/batch/pkg/c]", pkgs)
+	}
+	if len(tests) != 1 || tests[0] != "TestBroken" {
+		t.Errorf("tests = %v, want [TestBroken]", tests)
+	}
+	// A build failure writes plain text on stderr and runCheck captures both streams, so
+	// a stream that is not all JSON is NOT read as an empty one -- it falls back to the
+	// text reader, and a gate that read it as empty would print no failing package at all.
+	if _, _, ok := testFailures("# example.com/batch/pkg/c\nc.go:3: undefined: X\nFAIL\texample.com/batch/pkg/c [build failed]\n"); ok {
+		t.Error("a build failure's plain text read as a JSON stream; it must fall back to the text reader")
 	}
 }
 
