@@ -73,7 +73,10 @@ func TestCapacityReadsItsOwnHost(t *testing.T) {
 		if code != 2 {
 			t.Fatalf("capacity exit = %d on %s, want 2: the host read is linux-only", code, runtime.GOOS)
 		}
-		for _, want := range []string{"--load1", "--free-gb", "--memfree-gb"} {
+		// The two /proc reads are the ones that cannot answer off linux whatever else
+		// is on the bench; --free-gb is not asserted because `df` is a program and a
+		// windows runner with git-bash on PATH has a GNU df that takes -BG fine.
+		for _, want := range []string{"--load1", "--memfree-gb"} {
 			if !strings.Contains(errb.String(), want) {
 				t.Errorf("the refusal does not name %s, so a caller cannot fix it:\n%s", want, errb.String())
 			}
