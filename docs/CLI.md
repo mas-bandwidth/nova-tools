@@ -1312,6 +1312,7 @@ nova-pulse hygiene delete-job <slot> <job>  --home <dir>
 nova-pulse hygiene delete-slot <slot>       --home <dir>
 nova-pulse hygiene drop-cache               --home <dir>
 nova-pulse hygiene log [n]                  --home <dir>
+nova-pulse hygiene --lane-dirs <root>       [--dry-run] [--older-than <n>d] [--max <n>]
 ```
 
 `run` is the timer's verb — the ten-minute `nova-hygiene.timer` on every bench — and prints
@@ -1355,6 +1356,55 @@ ceiling that is never reached is the point of a ceiling.
 
 Both flags refuse a value that is not a whole number of at least 1 — exit 2, naming the flag.
 A prune never runs on a guess.
+
+**The lane-clone sweep** (`--lane-dirs <root>`) is the one flag-form mode: no subcommand, and
+`--home` means nothing to it. It walks the **immediate children** of `<root>` — one level, never
+recursively — and removes the lane clones whose work is finished and elsewhere. A child is a
+candidate when it holds a `.git` entry, or when exactly one directory inside it does
+(`<root>/lane-foo/repo`, which is the shape today's lane workers write); a child holding **more
+than one** checkout is kept, because two checkouts are two branches and it would have to remove
+both to remove either. A `.git` file counts as much as a `.git` directory, so a worktree is a
+candidate too.
+
+A clone goes only when **all four** questions answer yes, asked in this order:
+
+| # | question | how |
+| --- | --- | --- |
+| 1 | does the path stay inside the root? | `internal/safepath`: strictly below the resolved `<root>`, never a symlink |
+| 2 | is the checkout clean? | `git status --porcelain` says nothing |
+| 3 | is every commit somewhere else? | `git rev-list --branches --not --remotes` says nothing |
+| 4 | is the pull request settled? | the PR whose head is the checked-out branch is `MERGED` or `CLOSED` |
+
+Anything else is one `HYGIENE KEEP dir=<d> reason=<token>` line, and **a read that failed is a
+keep**: this verb never removes on a guess, and the git reads come before the forge read so a
+merged pull request cannot talk it past an uncommitted file. The reasons are
+`unsafe` (left the root), `many-checkouts`, `fresh` (inside the `--older-than` window), `dirty`,
+`unpushed`, `detached` (no branch, so no PR to ask about), `git` and `forge` (a read failed),
+`no-pr`, `open`, and `unknown-state`.
+
+Each clone it acts on is one line, and then one summary:
+
+```
+HYGIENE LANE dir=<d> pr=<n> state=<MERGED|CLOSED> removed=<yes|no>
+HYGIENE LANES root=<r> candidates=<n> remove=<n> removed=<n> kept=<n> dry-run=<yes|no>
+```
+
+`remove` is what it decided to take and `removed` is what actually went, so a `--dry-run` — which
+prints the **same** lines with `removed=no` and touches nothing — reads `remove=3 removed=0`.
+Dry run is **off** by default: a plain invocation really removes. `--older-than` has one
+spelling, a whole number of days with a `d` suffix (`--older-than 2d`), and refuses anything else
+— hours, weeks, a bare number — exit 2, naming the flag; the age read is the candidate's own
+mtime, the directory the verb would remove. `--max` caps the per-candidate lines at 20 by
+default and `0` prints them all; `--older-than` and `--max` outside `--lane-dirs` are refused
+rather than ignored. The sweep writes **no** action log — it has no `--home` — so its record is
+the lines above.
+
+The mistake it removes, measured on the Studio on 2026-09-18: **92** `lane-*` and `dogfood-*`
+clone directories under `~/rowan-working/tmp`, one per lane worker of the day, and nothing in the
+fleet that ever took one away. `hygiene run` does not: those are swarm slots, with a jobs
+directory and a liveness rule, and a lane clone is neither. Nor can a lane clone be swept the way
+scratch is swept, by age or by name — it holds a branch, and a branch may be the only copy of
+somebody's work. That is why the rule is the narrowest one still worth having.
 
 ### status
 
