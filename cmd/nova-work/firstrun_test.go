@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
@@ -20,7 +21,7 @@ const firstRunPlan = "(:plan :version 1 (:node :id \"n1\" :kind docs))\n"
 func runCLI(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := run(args, &stdout, &stderr)
+	code := run(args, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	return code, stdout.String(), stderr.String()
 }
 

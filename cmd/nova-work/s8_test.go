@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 // queryFriendsOK is a representative QUERY OK response for --ask friends
@@ -19,7 +20,7 @@ func TestQueryFriendsOverSocket(t *testing.T) {
 	socket, requests := fakeSession(t, reply)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 0 {
 		t.Fatalf("query friends exit = %d, stderr = %s", code, stderr.String())
 	}
@@ -39,7 +40,7 @@ func TestQueryFriendsWithOwner(t *testing.T) {
 	socket, requests := fakeSession(t, reply)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--owner", "Rowan Jr"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--owner", "Rowan Jr"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 0 {
 		t.Fatalf("query friends --owner exit = %d, stderr = %s", code, stderr.String())
 	}
@@ -56,7 +57,7 @@ func TestQueryFriendsWithRepo(t *testing.T) {
 	socket, requests := fakeSession(t, reply)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--repo", "mas-bandwidth/nova-tools"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--repo", "mas-bandwidth/nova-tools"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 0 {
 		t.Fatalf("query friends --repo exit = %d, stderr = %s", code, stderr.String())
 	}
@@ -73,7 +74,7 @@ func TestQueryFriendsWithMax(t *testing.T) {
 	socket, requests := fakeSession(t, reply)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--max", "50"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--max", "50"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 0 {
 		t.Fatalf("query friends --max exit = %d, stderr = %s", code, stderr.String())
 	}
@@ -88,7 +89,7 @@ func TestQueryFriendsWithMax(t *testing.T) {
 func TestQueryRefusesWithoutAsk(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--branch", "open"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--branch", "open"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query without --ask exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -103,7 +104,7 @@ func TestQueryRefusesWithoutAsk(t *testing.T) {
 func TestQueryRefusesWithoutBranch(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "friends"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "friends"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query without --branch exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -118,7 +119,7 @@ func TestQueryRefusesWithoutBranch(t *testing.T) {
 func TestQueryRefusesInvalidAskKind(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "bogus", "--branch", "open"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "bogus", "--branch", "open"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query invalid --ask exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -133,7 +134,7 @@ func TestQueryRefusesInvalidAskKind(t *testing.T) {
 func TestQueryRefusesInvalidBranch(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "bogus"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "bogus"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query invalid --branch exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -147,7 +148,7 @@ func TestQueryRefusesInvalidBranch(t *testing.T) {
 
 func TestQueryRefusesSessionAndSnapshotTogether(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", "a.sock", "--snapshot", "b.sexp", "--max-bytes", "1000", "--max-depth", "10", "--max-nodes", "100", "--cache", "c.cache", "--ask", "friends", "--branch", "open"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", "a.sock", "--snapshot", "b.sexp", "--max-bytes", "1000", "--max-depth", "10", "--max-nodes", "100", "--cache", "c.cache", "--ask", "friends", "--branch", "open"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query --session and --snapshot exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -161,7 +162,7 @@ func TestQueryRefusesSessionAndSnapshotTogether(t *testing.T) {
 
 func TestQueryRefusesSnapshotWithoutBounds(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--snapshot", "snap.sexp", "--ask", "friends", "--branch", "open", "--cache", "c.cache"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--snapshot", "snap.sexp", "--ask", "friends", "--branch", "open", "--cache", "c.cache"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query snapshot without bounds exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -176,7 +177,7 @@ func TestQueryRefusesSnapshotWithoutBounds(t *testing.T) {
 func TestQueryRefusesBranchOpenWithFromTo(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--from", "2026-09-01T00:00:00Z", "--to", "2026-09-14T00:00:00Z"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--from", "2026-09-01T00:00:00Z", "--to", "2026-09-14T00:00:00Z"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query --branch open with --from/--to exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -191,7 +192,7 @@ func TestQueryRefusesBranchOpenWithFromTo(t *testing.T) {
 func TestQueryRefusesBranchClosedWithoutFromTo(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "done", "--branch", "closed"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "done", "--branch", "closed"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query --branch closed without --from/--to exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -206,7 +207,7 @@ func TestQueryRefusesBranchClosedWithoutFromTo(t *testing.T) {
 func TestQueryRefusesWhoWithoutWindow(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "who", "--branch", "open"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "who", "--branch", "open"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query who without --window exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -221,7 +222,7 @@ func TestQueryRefusesWhoWithoutWindow(t *testing.T) {
 func TestQueryRefusesStaleWithoutWindow(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "stale", "--branch", "open"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "stale", "--branch", "open"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query stale without --window exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -236,7 +237,7 @@ func TestQueryRefusesStaleWithoutWindow(t *testing.T) {
 func TestQueryRefusesOrderPriorityOnNonReady(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--order", "priority"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--order", "priority"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query --order priority on friends exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -251,7 +252,7 @@ func TestQueryRefusesOrderPriorityOnNonReady(t *testing.T) {
 func TestQueryWhoBranchOpenOnly(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "who", "--branch", "closed", "--window", "5m", "--from", "2026-09-01T00:00:00Z", "--to", "2026-09-14T00:00:00Z"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "who", "--branch", "closed", "--window", "5m", "--from", "2026-09-01T00:00:00Z", "--to", "2026-09-14T00:00:00Z"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query who --branch closed exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -268,7 +269,7 @@ func TestQueryOrderPriorityOnReady(t *testing.T) {
 	socket, requests := fakeSession(t, reply)
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "ready", "--branch", "open", "--order", "priority"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "ready", "--branch", "open", "--order", "priority"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 0 {
 		t.Fatalf("query ready --order priority exit = %d, stderr = %s", code, stderr.String())
 	}
@@ -283,7 +284,7 @@ func TestQueryOrderPriorityOnReady(t *testing.T) {
 func TestQueryAxisRefusedOnNonPercent(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--axis", "rowan"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "friends", "--branch", "open", "--axis", "rowan"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query --axis on friends exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -298,7 +299,7 @@ func TestQueryAxisRefusedOnNonPercent(t *testing.T) {
 func TestQueryHandoffsBranchOpenOnly(t *testing.T) {
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "handoffs", "--branch", "root", "--from", "2026-09-01T00:00:00Z", "--to", "2026-09-14T00:00:00Z"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "handoffs", "--branch", "root", "--from", "2026-09-01T00:00:00Z", "--to", "2026-09-14T00:00:00Z"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query handoffs --branch root exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -312,7 +313,7 @@ func TestQueryHandoffsBranchOpenOnly(t *testing.T) {
 
 func TestQueryWithoutSessionOrSnapshot(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--ask", "friends", "--branch", "open"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--ask", "friends", "--branch", "open"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query without --session or --snapshot exit = %d, want 2, stderr = %s", code, stderr.String())
 	}
@@ -343,7 +344,7 @@ func TestQueryEscalationsRefusesAsk(t *testing.T) {
 	// belongs to nova-pulse. The client refuses it at exit 2.
 	socket, _ := fakeSession(t, queryFriendsOK)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"query", "--session", socket, "--ask", "escalations", "--branch", "open"}, &stdout, &stderr, "")
+	code := run([]string{"query", "--session", socket, "--ask", "escalations", "--branch", "open"}, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("query escalations exit = %d, want 2, stderr = %s", code, stderr.String())
 	}

@@ -10,23 +10,48 @@
 // spelled them and the session validates every one.
 //
 // The bounded reader: `plan check` reads one plan under --max-bytes, --max-depth and
-// --max-nodes, refuses a `#.` dispatch macro at the byte offset that owes it, refuses any
-// input past a bound whole rather than truncated, and refuses an unknown `:kind` by field
-// name. The job graph: typed needs and blocks edges, refused acyclic at seed by validator
-// rule 3, and the mechanical ready set launch reads. Every path comes from a flag: there is
-// no default file and no discovery.
+// --max-nodes, refuses a `#.` dispatch macro at the byte offset that owes it, refuses
+// any input past a bound whole rather than truncated, and refuses an unknown `:kind` by
+// field name. It then closes the plan's needs/blocks graph at load: `:needs` is the
+// reference edge and `:blocks` its inverse, an absent need is refused naming the field
+// and the id, and a `:needs` cycle is refused by validator rule 3 before publication. A
+// well-formed plan prints one line; a refusal is exit 2 with one remedy line.
+//
+// The job graph: typed needs and blocks edges, refused acyclic at seed by validator rule
+// 3, and the mechanical ready set launch reads. A node is ready only when every need is
+// terminal accepted. Every row that cannot proceed prints its exact blocker and its
+// resolver; a card whose need is an open PR is never on a slot. This slice owns the
+// in-process graph and the ready reading only: no Redis, no network, no launch, no lease.
+//
+// nova-work also pushes a card into the ready set (docs/SPEC-JOBS.md, "Redis ready
+// set (the pull)"). A bench pulls from the ready set itself; nothing is pushed
+// to a bench by hand. This verb is the producer half: it validates the card,
+// appends one entry to the `cards:ready` stream, and prints its stream id.
+//
+// Every path comes from a flag. There is no default file and no discovery: a missing
+// flag is a refusal, never a guess. Output is one line per verb. Exit 0 ran and passed;
+// exit 2 could not run -- a missing flag, an unreadable graph or plan, a :deps cycle, an
+// unknown node, a refusal.
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/redisq"
 	"github.com/mas-bandwidth/nova-tools/internal/workclient"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
@@ -35,9 +60,9 @@ import (
 var version string
 
 // usage is what help prints and what docs/CLI.md's nova-work section carries byte for byte.
-// The session verb lines are the spec's own verbs block (docs/SPEC-WORK.md) and the graph
-// and plan verb lines are docs/SPEC-JOBS.md and docs/SPEC-WORKLANG.md.
-const usage = `nova-work: the thin client, the job graph and the bounded .work reader (see docs/SPEC-WORK.md, docs/SPEC-JOBS.md, docs/SPEC-WORKLANG.md)
+// The session verb lines are the spec's own verbs block (docs/SPEC-WORK.md) and the graph,
+// plan and push verb lines are docs/SPEC-JOBS.md and docs/SPEC-WORKLANG.md.
+const usage = `nova-work: the thin client, the job graph, the bounded .work reader, and the card verbs that feed the ready set (see docs/SPEC-WORK.md, docs/SPEC-JOBS.md, docs/SPEC-WORKLANG.md)
 
 usage:
   nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --cache <path> --repo <path> --remote <name> --branch <name>
@@ -58,6 +83,7 @@ usage:
   nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work push --redis <addr> --card <file> [--priority <n>] [--needs <id,...>]
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -76,6 +102,7 @@ verbs:
   nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
   nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
   nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
+  nova-work push           appends one card to the Redis ` + "`cards:ready`" + ` stream
 
 A node is ready only when every need is terminal accepted, and every row that cannot
 proceed prints its exact blocker and its resolver. A :deps cycle is refused before
@@ -87,6 +114,16 @@ and an unknown :kind is refused naming the field. :needs is the reference edge a
 :blocks its inverse, so the kernel derives whichever a node did not give; an absent
 need is refused naming the field and the id, and a :needs cycle is refused by validator
 rule 3, both at load before the graph is published.
+
+push reads one card file and appends it to the Redis ` + "`cards:ready`" + ` stream with
+the fields id, label, body, priority, needs and pushed-at. It refuses a card
+whose first line is not a RESULT line or whose label is not [A-Za-z0-9._-]+.
+The label is the card file's name without its extension.
+
+NO GUESSED ANYTHING. --redis is required because there is no default instance,
+and --card is required because a card in an argument is a card in the process
+table. A bench pulls work from the ready set under its own lease; this verb only
+makes the card available.
 
 flags:
   --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
@@ -142,11 +179,23 @@ var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 	"plan":         cmdPlan,
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, version)) }
+// labelRe is the label grammar: the characters a stream entry's label may use,
+// so a label can also name a directory and a card file.
+var labelRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-func run(args []string, stdout, stderr io.Writer, stamp ...string) int {
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
+}
+
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time, stamp ...string) int {
 	if len(args) == 0 {
 		return refused(stderr, "a verb is required")
+	}
+	// push is the card verb: it needs the ready set at --redis and the card file,
+	// so it is dispatched beside the socket verbs but out of the switch the help
+	// test reads, exactly as the in-process graph and plan verbs are.
+	if args[0] == "push" {
+		return cmdPush(args[1:], stdout, stderr, now)
 	}
 	if h, ok := legacyVerbs[args[0]]; ok {
 		return h(args[1:], stdout, stderr)
@@ -573,4 +622,95 @@ func printReply(line string, stdout, stderr io.Writer) int {
 	default:
 		return refused(stderr, "the session's reply carries no verdict the grammar spells: "+line)
 	}
+}
+
+func cmdPush(args []string, stdout, stderr io.Writer, now time.Time) int {
+	fs := flag.NewFlagSet("push", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	redisAddr := fs.String("redis", "", "")
+	cardPath := fs.String("card", "", "")
+	priority := fs.Int("priority", 0, "")
+	needs := fs.String("needs", "", "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, " push", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "nova-work push: takes no positional arguments, got %d (flags come before arguments)\n", fs.NArg())
+		return 2
+	}
+	if strings.TrimSpace(*redisAddr) == "" {
+		fmt.Fprintln(stderr, "nova-work push: --redis is required; it wants the address of the Redis instance that holds the ready set; run: nova-work help")
+		return 2
+	}
+	if strings.TrimSpace(*cardPath) == "" {
+		fmt.Fprintln(stderr, "nova-work push: --card is required; it wants a FILE holding the card text; run: nova-work help")
+		return 2
+	}
+	body, err := os.ReadFile(*cardPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-work push: --card wants a readable file: %s\n", oneline.Err(err))
+		return 2
+	}
+	label := strings.TrimSuffix(filepath.Base(*cardPath), filepath.Ext(*cardPath))
+	if !labelRe.MatchString(label) {
+		fmt.Fprintf(stderr, "PUSH REFUSED: the label %s is not [A-Za-z0-9._-]+, so it cannot name a card\n", oneline.Field(label))
+		return 2
+	}
+	if first := firstLine(body); !strings.HasPrefix(first, "RESULT:") {
+		fmt.Fprintf(stderr, "PUSH REFUSED: the card %s does not open with a RESULT: line; its first line is %s\n",
+			oneline.Field(label), oneline.Field(oneline.Cap(first, oneline.TailBytes)))
+		return 2
+	}
+	if *priority < 0 {
+		fmt.Fprintf(stderr, "PUSH REFUSED: --priority is 0 or more, got %d; a negative priority is a typo with two readings\n", *priority)
+		return 2
+	}
+	needList := strings.TrimSpace(*needs)
+	if needList == "" {
+		needList = "-"
+	}
+
+	client, err := redisq.Open(*redisAddr)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-work push: the ready set at %s is not reachable: %s\n", oneline.Field(*redisAddr), oneline.Err(err))
+		return 2
+	}
+	defer client.Close()
+	ctx := context.Background()
+	if err := client.EnsureGroup(ctx, redisq.ReadyStream, redisq.Group, "0"); err != nil {
+		fmt.Fprintf(stderr, "nova-work push: the %s group could not be made on %s: %s\n",
+			oneline.Field(redisq.Group), oneline.Field(redisq.ReadyStream), oneline.Err(err))
+		return 2
+	}
+	fields := map[string]string{
+		"id": newCardID(), "label": label, "body": string(body),
+		"priority": strconv.Itoa(*priority), "needs": needList,
+		"pushed-at": now.UTC().Format(time.RFC3339),
+	}
+	streamID, err := client.Add(ctx, redisq.ReadyStream, fields)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-work push: the card %s could not be added to %s: %s\n",
+			oneline.Field(label), oneline.Field(redisq.ReadyStream), oneline.Err(err))
+		return 2
+	}
+	fmt.Fprintf(stdout, "PUSH OK id=%s label=%s\n", oneline.Field(streamID), oneline.Field(label))
+	return 0
+}
+
+// firstLine is the card's first line with a trailing CR removed, so a CRLF card
+// is not refused for its line ending.
+func firstLine(body []byte) string {
+	line, _, _ := strings.Cut(string(body), "\n")
+	return strings.TrimRight(line, "\r")
+}
+
+// newCardID is the card's own id: random hex, so two pushes of one label are
+// two cards and a slot directory can carry both.
+func newCardID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("card-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
 }
