@@ -32,7 +32,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -52,9 +55,12 @@ usage:
   nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>] [--decide [--floor <0-1>] [--card <file>] [--key-env <var>] [--base-url <url>]]
   nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
   nova-merge stop       --lane <dir>
+  nova-merge classify   --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
+  nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
+  nova-merge react      --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
   nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>]
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
@@ -182,8 +188,18 @@ type Deps struct {
 	// NewQueue reads the live merge queue for `simulate --entries`-less runs. It is a
 	// field so the tests hand it a fake queue and reach no network.
 	NewQueue func(repo string, timeout time.Duration) QueueReader
+	// NewRebaseList is the gh seam the rebase verb reads the open list through; the
+	// production one is the same GH the merge pass uses, which implements both edges.
+	NewRebaseList func(repo string, timeout time.Duration) merge.RebaseList
+	// Launcher starts one rebase card on a bench. The tests inject a fake.
+	Launcher merge.Launcher
 	Runner   merge.Runner
 	BuildID  func() string
+	// Dial and Forge are the react verb's two edges: the pub/sub instance it subscribes
+	// to, and the forge it asks which PRs a base move made DIRTY. They are injected so a
+	// test drives a miniredis and a fake forge and reaches no network.
+	Dial  func(addr string) *redis.Client
+	Forge func(repo, base string, timeout time.Duration) ci.Forge
 }
 
 func production() Deps {
@@ -200,7 +216,15 @@ func production() Deps {
 		NewQueue: func(repo string, timeout time.Duration) QueueReader {
 			return newGHQueue(repo, timeout, nil)
 		},
-		BuildID: buildID,
+		NewRebaseList: func(repo string, timeout time.Duration) merge.RebaseList {
+			return merge.NewGH(repo, timeout, nil)
+		},
+		Launcher: merge.BenchLauncher{},
+		BuildID:  buildID,
+		Dial:     func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Forge: func(repo, base string, timeout time.Duration) ci.Forge {
+			return ci.NewGHForge(repo, base, timeout)
+		},
 	}
 }
 
@@ -271,12 +295,18 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdPacket(rest, stdout, stderr, deps)
 	case "stop":
 		return cmdStop(rest, stdout, stderr, deps)
+	case "classify":
+		return cmdClassify(rest, stdout, stderr, deps)
 	case "wait":
 		return cmdWait(rest, stdout, stderr, deps)
 	case "sweep":
 		return cmdSweep(rest, stdout, stderr, deps)
 	case "simulate":
 		return cmdSimulate(rest, stdout, stderr, deps)
+	case "rebase":
+		return cmdRebase(rest, stdout, stderr, deps)
+	case "react":
+		return cmdReact(rest, stdout, stderr, deps)
 	case "batch":
 		return cmdBatch(rest, stdout, stderr, deps)
 	}
@@ -296,11 +326,12 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 	}
 	creation := verb == "init" || verb == "quickstart"
 	// `wait` watches one pull request by polling the host, `sweep` reads a repository's
-	// merge queue, `simulate` names the repository it makes a scratch worktree from, and
-	// `batch` names the one it clones, so all four name the repository outright rather
-	// than reading it from the lane's state, like `init` does; every other verb reads the
-	// lane's.
-	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "batch"
+	// merge queue, `simulate` names the repository it makes a scratch worktree from,
+	// `batch` names the one it clones, and `rebase` is not a lane verb at all -- it reads
+	// the open list from a repository and cuts cards into a directory -- so all five name
+	// the repository outright rather than reading it from the lane's state, like `init`
+	// does; every other verb reads the lane's.
+	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
 		if name == "repo" && namesRepo {
 			continue
@@ -316,6 +347,9 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		case "simulate", "batch":
 			// simulate predicts a queue onto a base branch and batch builds an
 			// integration branch on top of one; neither owns a lane's.
+		case "rebase":
+			// rebase cuts a card per open pull request against a base branch it names
+			// outright; it is not a lane verb, so it does not own a lane's --base either.
 		default:
 			return refuse(stderr, " "+verb, "--base belongs to `init`, which writes it into the lane once; a --base here would let two invocations disagree about where the lane lands"), true
 		}

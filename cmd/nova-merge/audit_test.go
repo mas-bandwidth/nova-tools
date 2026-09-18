@@ -55,7 +55,11 @@ var mergeAudit = audit.Config{
 	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
 	// a release stamp holding a newline, which is the one field of that line that comes
 	// from outside the toolchain.
-	Escapers: []string{"buildinfo.Line"},
+	//
+	// classifyLine is `classify`'s whole line: every value from outside -- the kind,
+	// rerun, park and the raw answer -- is rendered through oneline.Field inside it, and
+	// the rest are the numeric run id, pull request, confidence and floor.
+	Escapers: []string{"buildinfo.Line", "classifyLine"},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
@@ -82,13 +86,29 @@ var mergeAudit = audit.Config{
 		// safepath removes the scratch worktree this verb computed; it holds no writer.
 		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
 		// context carries no writer: it is the deadline the typed-decision call runs under
-		// (context.Background here, and decide.Client applies its own 10 s timeout), and it
-		// prints nothing.
-		`"context"`,
-		// internal/decide is the typed-decision route: it builds one JSON request and
-		// parses the answers, and it never prints. Its one line is rendered back here
-		// through oneline/decide.Line, whose every field is escaped.
+		// (context.Background in classify.go, and decide.Client applies its own 10 s
+		// timeout), the deadline simulate runs each check under, and react.go's CancelFunc
+		// plumbing. It prints nothing. It is already named with simulate's imports above.
+		//
+		// internal/decide is the typed-decision route, used by both classifications here:
+		// it builds one JSON request and parses the answers, and it never prints. Its one
+		// line comes back through decide.Line, whose every field is escaped, and
+		// classify_run.go's own line through classifyLine, an escaper above.
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// bytes is a Buffer and not a stream: CutKind's one line is captured into it and
+		// parsed for the card's name, never handed to stdout as it stands.
+		`"bytes"`,
+		// pulse's cut kind writes a card FILE and prints its one line into the Buffer
+		// above; its stderr is this binary's own stderr, so no line of its reaches the
+		// one line this verb prints.
+		`"github.com/mas-bandwidth/nova-tools/internal/pulse"`,
+		// react.go's redis client edge writes nothing itself; it is read through its own
+		// API and this package prints only the escaped lines below, so it cannot write
+		// past oneline.
+		`"github.com/redis/go-redis/v9"`,
+		// react.go publishes and reads through internal/ci, whose values are rendered
+		// through oneline before this package prints them.
+		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
 	},
 	MinClassified: 60,
 }
