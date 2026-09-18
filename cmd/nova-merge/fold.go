@@ -23,6 +23,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // foldForge is the fold's narrow view of the forge: opening the one pull request and
@@ -455,13 +456,11 @@ func foldCloseFolded(forge foldForge, host merge.Host, pr int, stdout, stderr io
 
 // removeUnder removes a computed path only when it is genuinely under base: the scratch
 // clone is empty of anything a person made, and a path that escaped would be a path this
-// tool must not delete (rule 13).
+// tool must not delete (rule 13). The refusal is safepath.RemoveUnder's, the one guarded
+// helper for a computed path: it resolves symlinks on both sides, so a path that only
+// looks under base but resolves outside it, or is itself a symlink, is refused.
 func removeUnder(base, target string) error {
-	rel, err := filepath.Rel(base, target)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
-		return fmt.Errorf("refusing to remove %s: it is not under %s", oneline.Field(target), oneline.Field(base))
-	}
-	return os.RemoveAll(target)
+	return safepath.RemoveUnder(base, target)
 }
 
 // realTestTree runs the package test the repository names for the tree: the nova-work
