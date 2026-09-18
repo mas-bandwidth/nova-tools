@@ -118,6 +118,20 @@ if [ "$APPLY" = "1" ] && [ -n "$STRAY_PIDS" ]; then
   echo "NOTE stray runner listeners killed:$STRAY_PIDS"
 fi
 
+# (3a) THE TOOLCHAIN ROOTS the sandbox wall grants a card read and execute on. This list and
+# internal/swarm/toolchain.go are ONE list: internal/ci's class test fails when they drift
+# apart, because a literal in two places is exactly how the standard and the wall came to
+# contradict each other -- the standard put Go under ~/sdk, the wall named no toolchain root,
+# and every Go card on hulk died on `go.mod requires go >= 1.26 (running go 1.22.2)`.
+# NOVA_TOOLCHAIN_ROOTS BEGIN
+NOVA_TOOLCHAIN_ROOTS="sdk go/bin go/pkg/mod"
+# NOVA_TOOLCHAIN_ROOTS END
+for tcroot in $NOVA_TOOLCHAIN_ROOTS; do
+  if [ ! -d "$HOME_DIR/$tcroot" ]; then
+    drift "toolchain root $HOME_DIR/$tcroot missing; the sandbox wall grants this path and a card's go lives under it"
+  fi
+done
+
 # (3) go version, sbcl, harness.
 if command -v go >/dev/null 2>&1; then
   goout="$(go version 2>&1 || true)"

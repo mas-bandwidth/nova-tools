@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // THE NATIVE OPENCODE PATH (issue #296, slice 2). A frozen run configuration is executed
@@ -86,6 +87,77 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 		}
 	} else if hasFlagPair(argv, "--read", "/opt/homebrew") {
 		t.Errorf("the wall argv reads /opt/homebrew, which is absent:\n%s", strings.Join(argv, " "))
+	}
+}
+
+// TestNativeArgvReadsTheBenchToolchainRoots is the edge the schema dogfood loop found on
+// 2026-09-18, and it is the whole bug in one assertion: the provisioning standard puts Go
+// and sbcl under `~/sdk` with `~/go/bin` on PATH and the module cache at `~/go/pkg/mod`,
+// the wall named none of them, and `nova-swarm native` pins GOTOOLCHAIN=local -- so every
+// Go card on hulk got `Permission denied` on the bench's own go and then
+// `go.mod requires go >= 1.26 (running go 1.22.2)` from the only one the wall left it.
+// The roots are read-only and come from ONE list (swarm.ToolchainRoots).
+func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
+	bin := nativeHarness(t)
+	_, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "a-label")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A home of the test's own, with the standard's shape under it, so the assertion is
+	// about the argv and not about the machine the test happens to run on.
+	home := t.TempDir()
+	for _, name := range swarm.ToolchainRootNames() {
+		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Paths that are NOT the toolchain, made before the argv so an argv that named the
+	// home or globbed it would carry them.
+	var others []string
+	for _, name := range []string{".config/nova-secrets", ".ssh"} {
+		other := filepath.Join(home, filepath.FromSlash(name))
+		if err := os.MkdirAll(other, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		others = append(others, other)
+	}
+	cfg := nativeRunConfig{slotDir: slot, benchHome: home}
+	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	for _, name := range swarm.ToolchainRootNames() {
+		root := filepath.Join(home, filepath.FromSlash(name))
+		if !hasFlagPair(argv, "--read", root) {
+			t.Errorf("the wall argv does not read the toolchain root %s:\n%s", root, strings.Join(argv, " "))
+		}
+		if hasFlagPair(argv, "--write", root) {
+			t.Errorf("the toolchain root %s is a WRITE; it is read-only:\n%s", root, strings.Join(argv, " "))
+		}
+	}
+	// NOTHING ELSE UNDER HOME. The wall gained the toolchain and not the home: the key
+	// store and an ssh directory beside it stay outside every named path.
+	for _, other := range append(others, home) {
+		if hasFlagPair(argv, "--read", other) || hasFlagPair(argv, "--write", other) {
+			t.Errorf("the wall argv names %s, which is not a toolchain root:\n%s", other, strings.Join(argv, " "))
+		}
+	}
+}
+
+// TestNativeArgvSkipsAToolchainRootThatIsNotThere: rule 5 of the wall REFUSES a --read
+// naming a path that does not exist, so a bench without the standard's layout -- a darwin
+// bench has no ~/sdk -- loses the root rather than refusing the run.
+func TestNativeArgvSkipsAToolchainRootThatIsNotThere(t *testing.T) {
+	bin := nativeHarness(t)
+	_, slot := aSlot(t)
+	jobDir := filepath.Join(slot, "jobs", "a-label")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir() // empty: not one root exists under it
+	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot, benchHome: home}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	for i, a := range argv {
+		if a == "--read" && i+1 < len(argv) && strings.HasPrefix(argv[i+1], home) {
+			t.Errorf("the wall argv reads %s under a home with no toolchain:\n%s", argv[i+1], strings.Join(argv, " "))
+		}
 	}
 }
 

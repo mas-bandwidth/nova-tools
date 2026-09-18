@@ -2213,6 +2213,20 @@ must already have the Go toolchain the task requires. `--no-shared-caches`
 omits these settings and restores per-slot defaults. Retain shared caches when
 retiring an individual slot; they are separate from its job evidence.
 
+### The bench toolchain inside the wall
+
+Because `GOTOOLCHAIN=local` is pinned, the bench's own Go must be reachable
+inside the wall. `nova-swarm native` therefore adds the provisioning standard's
+toolchain directories to the wall's read set, one `--read` each — `~/sdk` (Go
+and sbcl), `~/go/bin` (the standard's `PATH` entry), and `~/go/pkg/mod` (the
+bench's module cache) — read-only, and skipped when a directory is not there.
+A `--read` root carries execute, so `~/sdk/go1.26.5/bin/go` runs; without these
+roots a card was denied the bench's `go` and fell back to `/usr/bin/go`, which
+`go.mod` refuses. No other path under your home is granted: not
+`~/.config/nova-secrets`, not `~/.ssh`. The list lives in
+`internal/swarm/toolchain.go` and is checked against `tools/bench-standard.sh`
+by a test, so provisioning and the wall cannot drift apart.
+
 ## nova-sandbox
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS

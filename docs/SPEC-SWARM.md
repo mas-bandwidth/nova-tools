@@ -915,6 +915,25 @@ pin. `--no-shared-caches` restores the old behaviour exactly, with no names set 
 caches under `HOME`, for a bench that wants one slot's caches isolated; the slot's data home
 layout is otherwise untouched.
 
+**The wall reads the bench's toolchain roots, because the standard puts the toolchain in a
+user directory.** The bench provisioning standard installs Go and sbcl under `~/sdk`, puts
+`~/go/bin` on the runner units' `PATH`, and leaves the bench's module cache at
+`~/go/pkg/mod`. The wall named none of them, so a card inside it was denied EXECUTION of the
+bench's own `go` (`Permission denied`), the only reachable Go was the distribution's
+`/usr/bin/go` under the `/usr` root, and `GOTOOLCHAIN=local` — which is right, and stays —
+turned that into `go: go.mod requires go >= 1.26 (running go 1.22.2; GOTOOLCHAIN=local)` on
+every Go card on hulk (found by the schema dogfood loop, 2026-09-18). Two contracts
+contradicted each other. So `native`'s implicit worker description now names those three
+roots exactly as `read_roots` names them for an explicit one: one `--read` each, which
+carries execute on both bodies, **read-only**, and **skipped if absent** — rule 5 refuses a
+`--read` naming a path that is not there, and a darwin bench has no `~/sdk`. The list is
+written ONCE, in `internal/swarm/toolchain.go`; `tools/bench-standard.sh` carries the same
+names between its `NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one, and a class
+test in `internal/ci` fails when the two lists disagree. Nothing else under `HOME` is named:
+not `~/.config/nova-secrets`, not `~/.ssh`, not the home itself. The card's WRITABLE Go
+caches are still the bench-shared pair under `<root>/cache`; `~/go/pkg/mod` is the bench's
+own copy and is read-only inside the wall.
+
 **The harness's own fence is configured by the run, never left to its
 defaults** (issue #644). OpenCode asks before a tool touches a path it calls
 external, and a `run` with no terminal answers every such question by rejecting
