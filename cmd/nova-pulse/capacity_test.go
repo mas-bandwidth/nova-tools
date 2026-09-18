@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -59,9 +60,30 @@ func TestCapacityAllowedFormula(t *testing.T) {
 // A bare `nova-pulse capacity` reads this host's own cores, load, free disk and free
 // memory, so it prints a CAPACITY line even with no bench and no numeric flags. The
 // value is whatever this bench is; only the shape is the contract.
+//
+// The local read is /proc and `df -BG`, which is a LINUX fact. On a bench without
+// them the verb REFUSES AND NAMES THE FLAG to pass rather than inventing a number:
+// a capacity line built out of guesses is the one line a launcher must be able to
+// trust. Both arms are held here, because the fleet is linux, darwin and windows and
+// a test that only ran on linux is how this reached CI red.
 func TestCapacityReadsItsOwnHost(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := run([]string{"capacity"}, &out, &errb, time.Now().UTC()); code != 0 {
+	code := run([]string{"capacity"}, &out, &errb, time.Now().UTC())
+	if runtime.GOOS != "linux" {
+		if code != 2 {
+			t.Fatalf("capacity exit = %d on %s, want 2: the host read is linux-only", code, runtime.GOOS)
+		}
+		for _, want := range []string{"--load1", "--free-gb", "--memfree-gb"} {
+			if !strings.Contains(errb.String(), want) {
+				t.Errorf("the refusal does not name %s, so a caller cannot fix it:\n%s", want, errb.String())
+			}
+		}
+		if out.Len() != 0 {
+			t.Errorf("a refused run printed a CAPACITY line: %q", out.String())
+		}
+		return
+	}
+	if code != 0 {
 		t.Fatalf("capacity exit = %d, want 0; stderr=%q", code, errb.String())
 	}
 	line := strings.TrimSpace(out.String())

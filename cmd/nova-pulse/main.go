@@ -686,6 +686,13 @@ func cmdProgress(args []string, stdout, stderr io.Writer) int {
 // cores, load, free disk and free memory, so a bench can ask itself instead of shelling a
 // remote script. A number passed on the command line wins over the local read; that is what
 // lets a test fix all four and touch neither /proc nor df.
+//
+// THE LOCAL READ IS LINUX. /proc/loadavg, /proc/meminfo and `df -BG` are what cap() reads
+// and they are a linux bench's facts; darwin has no /proc and its df has no -BG. On such a
+// host the verb REFUSES and names the flag that was not given, rather than standing a
+// number up out of nothing: every launcher in the fleet acts on this one line, and a guess
+// here is a guess about how much work a machine can take. The fleet's own capacity still
+// comes from the remote script in fill.go, which runs on the linux benches.
 func cmdCapacity(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("capacity")
 	bench := f.fs.String("bench", "", "")
