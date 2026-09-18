@@ -1385,7 +1385,7 @@ refusal, because it is far more likely a typo than a fleet fact. The example reg
 
 ```
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
-nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
+nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 ```
 
 The first form folds one pulse's cards under a local root: it pushes and opens a PR for
@@ -1406,6 +1406,13 @@ nova-pulse harvest --bench hulk --root '~/rowan-swarm-root' --clone ~/rowan-work
 pushed from there by explicit refspec — a bench holds no forge credential and never will.
 `--clone <dir>` is the clone for any repo and `--clone <owner>/<name>=<dir>` binds one,
 which is the two-repo table the script hardcoded. `--clone` is required with `--bench`.
+
+**`--machines` holds `--bench` against the machines registry before the first ssh.**
+A harvest opens a connection to the machine it names, and runner hosts are CI-only, so the
+NAME is resolved at the verb's edge: an unknown machine, a runner host, the coordination
+bench or a services host is refused with `HARVEST REFUSED bench=... reason=... remedy="..."`
+and nothing is connected to. An unnamed registry leaves the verb unguarded, which is what a
+by-hand run against a bench not in the file yet wants; name it on every real invocation.
 
 **A bench harvest wants no `--id`, no `--sources` and no `--templates`**: there is no pulse
 packet to name and no relaunch to feed, and a `cut --rows` produces none of the three.

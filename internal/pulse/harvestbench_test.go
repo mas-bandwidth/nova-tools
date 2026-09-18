@@ -418,3 +418,83 @@ func TestHarvestReleasesTheLaneOfAFinishedCard(t *testing.T) {
 		t.Errorf("the card whose job is gone was not moved to the failed directory: %v", err)
 	}
 }
+
+// TestHarvestBenchRefusesARunnerHostBeforeTheFirstSSH: Glenn's lock of 2026-09-18 -- runner
+// hosts are CI-only. A bench harvest opens an ssh to the machine it names, so the NAME is
+// held against the machines registry at the verb's own edge, before any connection. The
+// refusal names the machine, the reason and the remedy, and the shell is never opened: the
+// four helpers below that guard (prTitle, benchPRBody, benchRepoURL, markHarvested) are
+// reached through nothing else, which is why they are narrowings in the bench-name list.
+func TestHarvestBenchRefusesARunnerHostBeforeTheFirstSSH(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	benchGit(t, specs, arglog, nil)
+	shell := &fakeShell{answer: func(bench, script string) (string, error) {
+		t.Errorf("an ssh was opened to %q; the registry guard runs BEFORE the first connection", bench)
+		return "", nil
+	}}
+	forge := &fakeForge{}
+	in := benchHarvestInput(t, root, shell, forge)
+	in.Bench = "batman"
+	in.Machines = machinesFile(t, t.TempDir(), []string{"hulk"}, []string{"batman"})
+	code, out, errb := runBenchHarvest(t, in)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 for a runner host\nstdout=%s\nstderr=%s", code, out, errb)
+	}
+	if !strings.Contains(errb, "HARVEST REFUSED bench=batman reason=runner-host") {
+		t.Errorf("the refusal is not the registry's line under this verb's token: %q", errb)
+	}
+	if len(forge.opened) != 0 {
+		t.Errorf("PRs opened = %d, want 0: nothing runs past the refusal", len(forge.opened))
+	}
+}
+
+// TestHarvestBenchHarvestsABenchInTheRegistry: the same registry, the bench beside the
+// runner host, and the verb runs exactly as it did -- the guard refuses what it must and
+// nothing else.
+func TestHarvestBenchHarvestsABenchInTheRegistry(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	benchGit(t, specs, arglog, nil)
+	job := "/home/gaffer/rowan-swarm-root/0/jobs/card-9601"
+	shell := &fakeShell{answer: func(bench, script string) (string, error) {
+		if strings.Contains(script, "touch") {
+			return "", nil
+		}
+		return benchJobListing(job, []string{
+			"RESULT card-9601 sha=abc",
+			"DONE",
+			"BRANCH rowan/card-9601",
+			"REPO mas-bandwidth/nova-tools",
+		}), nil
+	}}
+	forge := &fakeForge{}
+	in := benchHarvestInput(t, root, shell, forge)
+	in.Machines = machinesFile(t, t.TempDir(), []string{"hulk"}, []string{"batman"})
+	code, out, errb := runBenchHarvest(t, in)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout=%s\nstderr=%s", code, out, errb)
+	}
+	if len(forge.opened) != 1 {
+		t.Fatalf("PRs opened = %d, want 1: the guard let the bench through", len(forge.opened))
+	}
+}
+
+// TestHarvestBenchRefusesAMachineTheRegistryDoesNotCarry: an unknown name is a refusal too,
+// not a guess -- the registry answers what it knows and never more.
+func TestHarvestBenchRefusesAMachineTheRegistryDoesNotCarry(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	benchGit(t, specs, arglog, nil)
+	shell := &fakeShell{answer: func(bench, script string) (string, error) {
+		t.Errorf("an ssh was opened to %q; an unknown name never reaches a machine", bench)
+		return "", nil
+	}}
+	in := benchHarvestInput(t, root, shell, &fakeForge{})
+	in.Bench = "nowhere"
+	in.Machines = machinesFile(t, t.TempDir(), []string{"hulk"}, nil)
+	code, out, errb := runBenchHarvest(t, in)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 for a name the registry does not carry\nstdout=%s\nstderr=%s", code, out, errb)
+	}
+	if !strings.Contains(errb, "reason=unknown") {
+		t.Errorf("the refusal does not say the name is unknown: %q", errb)
+	}
+}

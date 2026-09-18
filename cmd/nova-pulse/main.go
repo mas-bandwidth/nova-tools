@@ -435,6 +435,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 	keyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "")
 	baseURL := f.fs.String("base-url", decide.DefaultBaseURL, "")
 	bench := f.fs.String("bench", "", "")
+	machines := f.fs.String("machines", "", "")
 	ssh := f.fs.String("ssh", "", "")
 	session := f.fs.String("session", "", "")
 	branchPrefix := f.fs.String("branch-prefix", pulse.DefaultBranchPrefix, "")
@@ -494,6 +495,7 @@ func cmdHarvest(args []string, stdout, stderr io.Writer) int {
 		Stdout:       stdout,
 		Stderr:       stderr,
 		Bench:        *bench,
+		Machines:     *machines,
 		SSH:          *ssh,
 		Clones:       []string(clones),
 		Session:      *session,

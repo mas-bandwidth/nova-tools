@@ -30,7 +30,9 @@ package pulse
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,8 +41,38 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
+
+// requireBench holds a bench NAME against the machines registry before the verb opens an
+// ssh to it. Glenn's lock of 2026-09-18: runner hosts are CI-only, and a harvest's ssh --
+// the job listing, the `.harvested` touch, the fetch over ssh://<bench> -- is exactly the
+// reach a runner host may not take. The name is resolved ONCE, here, at the verb's edge;
+// everything below this line is reached only through it.
+//
+// An unnamed registry is the one narrowing, the same one the fleet verbs carry: the verb is
+// driven in tests, and by hand against a bench not in the registry yet, without one.
+// cmd/nova-pulse names the registry on every real invocation.
+func requireBench(stderr io.Writer, machines, bench, verb string) int {
+	if strings.TrimSpace(machines) == "" {
+		return 0
+	}
+	reg, err := fleet.ReadRegistry(machines)
+	if err != nil {
+		return refusal(stderr, verb, err)
+	}
+	err = reg.RequireBench(bench)
+	var r *fleet.Refusal
+	switch {
+	case errors.As(err, &r):
+		fmt.Fprintln(stderr, r.Line(verb))
+		return 2
+	case err != nil:
+		return refusal(stderr, verb, err)
+	}
+	return 0
+}
 
 // DefaultBranchPrefix is the branch prefix a bench harvest takes when the caller names
 // none: this line's own branches and nobody else's.
@@ -85,6 +117,11 @@ func harvestBench(in HarvestInput) int {
 	started := in.Now()
 	if strings.TrimSpace(in.Root) == "" {
 		return refusal(in.Stderr, "HARVEST", fmt.Errorf("missing --root; refusing to guess (name the swarm root ON the bench, comma separated for more than one)"))
+	}
+	// The one place this verb's bench name is resolved. Everything below reaches the
+	// machine only through what this guard let past.
+	if code := requireBench(in.Stderr, in.Machines, in.Bench, "HARVEST"); code != 0 {
+		return code
 	}
 	shell := in.Shell
 	if shell == nil {

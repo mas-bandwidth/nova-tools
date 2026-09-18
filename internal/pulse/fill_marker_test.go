@@ -23,7 +23,8 @@ func TestFillWritesTheLaunchedMarkerCarryingTheLaneAndSession(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched, Lanes: lanes,
-		Benches: []string{"bench-a"}, Once: true, Session: "s-42",
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
+		Benches:  []string{"bench-a"}, Once: true, Session: "s-42",
 		Stdout: &out, Stderr: &errb,
 		Capacity: laneCap{"bench-a": 10}, Launcher: &laneLauncher{},
 	})
@@ -62,7 +63,8 @@ func TestFillReadsTheLiveLaneFromTheMarkerNotTheCard(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched, Lanes: lanes,
-		Benches: []string{"bench-a"}, Once: true,
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
+		Benches:  []string{"bench-a"}, Once: true,
 		Stdout: &out, Stderr: &errb,
 		Capacity: laneCap{"bench-a": 10}, Launcher: l,
 	})
@@ -87,7 +89,8 @@ func TestFillRemovesTheLaunchedMarkerWhenTheLauncherFails(t *testing.T) {
 	var out, errb bytes.Buffer
 	Fill(FillInput{
 		Ready: ready, Launched: launched, Lanes: lanes,
-		Benches: []string{"bench-a"}, Once: true,
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
+		Benches:  []string{"bench-a"}, Once: true,
 		Stdout: &out, Stderr: &errb,
 		Capacity: laneCap{"bench-a": 10}, Launcher: &failingLauncher{err: fmt.Errorf("exit status 7")},
 	})

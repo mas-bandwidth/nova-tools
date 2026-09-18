@@ -42,7 +42,12 @@ type HarvestInput struct {
 	// root ON the bench (comma separated for more than one). A bench harvest
 	// wants no --sources, no --templates and no --id -- which a `cut --rows`
 	// never produces -- and never relaunches: it folds what is there.
-	Bench        string
+	Bench string
+	// Machines is the machines registry --bench is held against before the first ssh
+	// (Glenn's lock of 2026-09-18: runner hosts are CI-only). An empty path leaves the
+	// verb unguarded, which is what a test and a by-hand run want; cmd/nova-pulse names
+	// the registry on every real invocation.
+	Machines     string
 	SSH          string   // the ssh program the shipped shell runs; "" is "ssh"
 	Clones       []string // <owner>/<name>=<dir>, or a bare <dir> for any repo
 	Session      string   // only jobs whose RESULT.md names this session
