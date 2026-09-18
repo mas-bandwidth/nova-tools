@@ -220,8 +220,13 @@ func TestTheWaitIsTypedOnTheLine(t *testing.T) {
 	}
 }
 
-// (R3) Security and an unresolved timeout are both true at once: the designated
-// owner stands AND the work waits. Neither answer may hide the other.
+// (R3) Security and an unresolved timeout are both true at once: the security
+// READ is attached AND the work waits. Neither answer may hide the other.
+//
+// The first fact used to be "the designated owner stands", meaning rung=johnny.
+// Since 2026-09-18 the designation is a READ -- a reserved mind takes no work --
+// so what must survive the wait is the reader, and the rung is the one the
+// attempt left occupied.
 func TestSecurityAndWaitTogether(t *testing.T) {
 	reg := testRegistry(t)
 	for name, u := range map[string]Unit{
@@ -233,8 +238,8 @@ func TestSecurityAndWaitTogether(t *testing.T) {
 			Attempts: []Attempt{{Rung: "johnny", Outcome: OutcomeTimeout, Terminated: true}}},
 	} {
 		res := mustRoute(t, reg, u, DefaultFloor)
-		if res.Rung.Name != "johnny" {
-			t.Errorf("%s: the designated owner stands, got %s", name, res.Rung.Name)
+		if res.ReadField() != "johnny" {
+			t.Errorf("%s: the security read stands through a wait, got read=%s", name, res.ReadField())
 		}
 		wantWait := name != "terminated ok"
 		if got := res.Wait == WaitAwaitingTermination; got != wantWait {

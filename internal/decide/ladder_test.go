@@ -66,8 +66,15 @@ func TestDeepSeekIsSkippedForKindsThatAreNotMechanical(t *testing.T) {
 }
 
 // Security is a kind, not a height: a guard, secrets, the sandbox, sudo, deploy
-// keys or the network is Johnny's always, even where the evidence is one file.
-func TestSecurityIsJohnnysByKindNotHeight(t *testing.T) {
+// keys or the network reaches Johnny always, even where the evidence is one
+// file.
+//
+// This test used to assert rung=johnny, and that assertion is what the routing
+// of 2026-09-18 proved wrong: Johnny is RESERVED -- a read and the STOP a read
+// can call, never the work -- and answering rung=johnny sent seven of the day's
+// twenty units to a mind that does not take work. He reaches every one of them
+// still, as the READER, and the work goes to the rung the evidence supports.
+func TestSecurityAlwaysReachesJohnnyAsTheReader(t *testing.T) {
 	reg := testRegistry(t)
 	for _, u := range []Unit{
 		{ID: "g1", Kind: KindGuard, Files: 1, Packages: 1},
@@ -75,30 +82,40 @@ func TestSecurityIsJohnnysByKindNotHeight(t *testing.T) {
 		{ID: "g3", Kind: KindRebase, Files: 1, Packages: 1, Secrets: true},
 	} {
 		res := mustRoute(t, reg, u, DefaultFloor)
-		if res.Rung.Name != "johnny" {
-			t.Errorf("%s: security is Johnny's always, got %s (%s)", u.ID, res.Rung.Name, res.Reason)
+		if res.ReadField() != "johnny" {
+			t.Errorf("%s: security reaches Johnny always, got read=%s (%s)", u.ID, res.ReadField(), res.Reason)
 		}
-		if res.Confidence < DefaultFloor {
-			t.Errorf("%s: a designation is machinery, not a judgment; confidence %.2f", u.ID, res.Confidence)
+		if res.Rung.Name == "johnny" {
+			t.Errorf("%s: a reserved mind takes no work (%s)", u.ID, res.Reason)
+		}
+		if !res.Rung.Usable() {
+			t.Errorf("%s: the work went to %s, which is not on the ladder", u.ID, res.Rung.Name)
 		}
 	}
 }
 
-// A fresh take is Johnny's too: the rungs below failed, or a design with one
-// author.
-func TestFreshTakeIsJohnnys(t *testing.T) {
+// A fresh take reaches Johnny too -- the rungs below failed, or a design with
+// one author -- and by the same rule it reaches him as a READ, because the mind
+// designated for it is the reserved one.
+func TestFreshTakeReachesJohnnyAsTheReader(t *testing.T) {
 	reg := testRegistry(t)
 	res := mustRoute(t, reg, Unit{ID: "f1", Kind: KindDesign, Files: 3, Packages: 1, FreshTake: true}, DefaultFloor)
-	if res.Rung.Name != "johnny" {
-		t.Errorf("a design with one author is Johnny's, got %s (%s)", res.Rung.Name, res.Reason)
+	if res.ReadField() != "johnny" {
+		t.Errorf("a design with one author reaches Johnny, got read=%s (%s)", res.ReadField(), res.Reason)
+	}
+	if res.Rung.Name == "johnny" {
+		t.Errorf("a reserved mind takes no work (%s)", res.Reason)
 	}
 	twoLineages := Unit{ID: "f2", Kind: KindNewVerb, Files: 3, Packages: 1, Attempts: []Attempt{
 		{Rung: "opus", Outcome: OutcomeFailed, Reason: "the test stayed red"},
 		{Rung: "sol", Outcome: OutcomeFailed, Reason: "the same red"},
 	}}
 	res = mustRoute(t, reg, twoLineages, DefaultFloor)
-	if res.Rung.Name != "johnny" {
-		t.Errorf("two lineages failed: that is a fresh take, got %s (%s)", res.Rung.Name, res.Reason)
+	if res.ReadField() != "johnny" {
+		t.Errorf("two lineages failed: that is a fresh take, got read=%s (%s)", res.ReadField(), res.Reason)
+	}
+	if res.Rung.Name == "johnny" {
+		t.Errorf("two lineages failed, but the work still goes to a mind that takes work (%s)", res.Reason)
 	}
 }
 
@@ -329,8 +346,8 @@ func TestJevIsNotAskedForADesignation(t *testing.T) {
 	if fake.calls != 0 {
 		t.Errorf("security is the machinery's word: %d provider calls made", fake.calls)
 	}
-	if res.Rung.Name != "johnny" || res.Source != SourceRules {
-		t.Errorf("got %s from %s, want johnny from the rules", res.Rung.Name, res.Source)
+	if res.ReadField() != "johnny" || res.Source != SourceRules {
+		t.Errorf("got read=%s from %s, want johnny from the rules", res.ReadField(), res.Source)
 	}
 }
 

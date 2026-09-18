@@ -519,11 +519,20 @@ Who does this unit of work. The rungs come from a registry — a data file of mi
 
 The answer is the **lowest rung the evidence supports** with confidence that the first attempt is right. Below the floor it steps **up** a rung, never down. A failed attempt re-enters the decision carrying its evidence — `--attempt opus:failed:missed the cause` — and the answer is the next rung automatically: **sideways first**, where the same height holds another lineage, then up. The ladder is the retry policy.
 
-Two rungs are chosen by **kind** and not by height, and by machinery rather than by the provider, so no provider call is made for either: security — a guard, secrets, the sandbox, sudo, deploy keys, the network — is Johnny's always, and so is a fresh take (the rungs below failed in two lineages, or a design with one author). Friends first: the DeepSeek rungs take mechanical kinds only (`rebase`, `stack`, `fixture-retarget`, `fleet-chore`).
+Two rungs are chosen by **kind** and not by height, and by machinery rather than by the provider, so no provider call is made for either: security — a guard, secrets, the sandbox, sudo, deploy keys, the network — reaches Johnny always, and so does a fresh take (the rungs below failed in two lineages, or a design with one author). Friends first: the DeepSeek rungs take mechanical kinds only (`rebase`, `stack`, `fixture-retarget`, `fleet-chore`).
 
-**Security never falls through.** `--guard`, `--secrets`, `--kind guard` and each `--touches` value resolve to the designated rung on every path — Jev on or off, at any floor, after any attempt, including an attempt by that rung itself. It is a kind and not a height, so sideways, up, the floor and never-down do not apply to it. If no mind is designated, or every designated one is asleep, the work **waits**: that is a refusal, not a route to somebody else.
+**A designation on a reserved mind is a READ, never the work.** Johnny is `reserved`: a read, and the STOP a read can call, not the work itself. The rule used to answer `rung=johnny`, and routing the twenty real units of 2026-09-18 showed what that meant — **seven** units, six of them owned in the work set by `rowan-child`, dispatched to a mind that does not take work. The answer is now `rung=<the rung the evidence supports> read=johnny`: the work goes where the evidence puts it, and the security read rides beside it, on the line and in the log row. Every line carries the field, as `read=-` where there is none.
 
-**A timeout is not a death, and a wait is not permission.** `--attempt opus:timeout` says the attempt fell silent; its expiry is UNKNOWN until something proves it dead, so the answer is the **same** rung with `wait=awaiting_termination` on the line, the floor does not move it and the provider is not asked. The same rung is an answer about who owns the work, **not permission to retry**: establish what happened to the attempt first. The exit code says it too — **1 is the verb saying NOT YET**, and only exit 0 is permission to dispatch. A security unit whose designated rung timed out carries both facts: `rung=johnny` *and* the wait. `--attempt opus:timeout-terminated:killed at 10m` is the proof of death, and only then does the ladder move on; `failed` and `abandoned` are confirmed failures and move it as before.
+**Security never falls through.** `--guard`, `--secrets`, `--kind guard` and each `--touches` value attach the designated reader on every path — Jev on or off, at any floor, after any attempt. It is a kind and not a height, so no floor and no step-up touches the read. If no mind is designated, or every designated one is asleep, the decision is **refused**: security work is not dispatched with nobody reading it. Each touch is named **once** in the reason, in the order the enumeration puts it — `--secrets` beside `--touches secrets` is one fact, not `"secrets, secrets"`.
+
+**The floor is per kind, and measured.** One floor for every kind is one number standing in for ten different questions. On 2026-09-18 it was 0.90 for everything, and all 13 provider-answered units came back between 0.70 and 0.78 and stepped up — a 100% escalation rate, against `tune`'s own 0.7 cap, and the end of "the lowest rung the evidence supports". The registry now carries a `floors` table: one row per kind, each the **p25 of the provider answers that stood**, each with the measurement in `from`. `--floor` on the command line still wins; a kind with no row keeps the built-in 0.9. Every line says which it was, as `floor_from=flag|kind|built-in`.
+
+```
+$ nova-decide route --unit-id sec --kind fleet-chore --files 1 --secrets --touches secrets --touches network --no-jev
+ROUTE unit=sec rung=flash confidence=0.90 floor=0.70 floor_from=kind read=johnny wait=- next=- steps=1 reason="security is a kind and not a height: secrets, network, so a security READ by johnny is attached to this unit at any height, at any floor and after any attempt -- johnny is reserved for reads and for the STOP a read can call, and the WORK goes to the rung the evidence supports; kind fleet-chore starts at rung flash" ask=card
+```
+
+**A timeout is not a death, and a wait is not permission.** `--attempt opus:timeout` says the attempt fell silent; its expiry is UNKNOWN until something proves it dead, so the answer is the **same** rung with `wait=awaiting_termination` on the line, the floor does not move it and the provider is not asked. The same rung is an answer about who owns the work, **not permission to retry**: establish what happened to the attempt first. The exit code says it too — **1 is the verb saying NOT YET**, and only exit 0 is permission to dispatch. A security unit whose rung timed out carries both facts: `read=johnny` *and* the wait, and the rung named is the one the attempt left occupied. `--attempt opus:timeout-terminated:killed at 10m` is the proof of death, and only then does the ladder move on; `failed` and `abandoned` are confirmed failures and move it as before.
 
 `--no-jev` answers by the rules alone — no key, no network, the same answer every time — so the loop runs on a bench with no API. With Jev, the provider is offered only the eligible rungs at the supported height and the one above it, so it can advise sideways or up but never down; an answer below the floor steps up, and a provider error, or a rung nobody offered, leaves the rules' answer standing.
 
@@ -544,15 +553,15 @@ Presence is tracked **per counter**: a 200 with a valid answer and no `usage` ob
 
 ```
 $ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 floor_from=built-in read=- wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card
 
 $ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:failed:missed the cause --no-jev
-ROUTE unit=card-41 rung=sol confidence=0.95 floor=0.90 wait=- next=- steps=1 reason="kind fix-with-red-test starts at rung opus/sol; 1 prior attempt(s) burned rung opus/sol: sideways before up" ask=child
+ROUTE unit=card-41 rung=sol confidence=0.95 floor=0.73 floor_from=kind read=- wait=- next=- steps=1 reason="kind fix-with-red-test starts at rung opus/sol; 1 prior attempt(s) burned rung opus/sol: sideways before up" ask=child
 ```
 
 ```
 $ nova-decide route --unit-id t-1 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:timeout --no-jev ; echo "exit=$?"
-ROUTE unit=t-1 rung=opus confidence=1.00 floor=0.90 wait=awaiting_termination next=- steps=1 reason="the attempt on opus timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=child
+ROUTE unit=t-1 rung=opus confidence=1.00 floor=0.73 floor_from=kind read=- wait=awaiting_termination next=- steps=1 reason="the attempt on opus timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=child
 exit=1
 ```
 
@@ -560,11 +569,11 @@ exit=1
 
 ```
 $ nova-decide route --unit-id thin --kind new-verb --no-jev ; echo "exit=$?"
-ROUTE unit=thin rung=emma confidence=0.60 floor=0.90 wait=- next=astra steps=1 reason="kind new-verb starts at rung opus/sol; below the floor on opus, so the answer steps UP a rung to emma, never down" ask=bus
+ROUTE unit=thin rung=emma confidence=0.60 floor=0.75 floor_from=kind read=- wait=- next=astra steps=1 reason="kind new-verb starts at rung opus/sol; below the floor on opus, so the answer steps UP a rung to emma, never down" ask=bus
 exit=3
 
 $ nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl ; echo "exit=$?"
-ROUTE unit=thin rung=astra confidence=0.60 floor=0.90 wait=- next=all-friends steps=3 reason="step 3: 2 rungs answered below the floor and emma, freddy excluded from the criteria; kind new-verb starts at rung opus/sol; below the floor on opus, so the answer steps UP a rung to astra, never down" ask=bus
+ROUTE unit=thin rung=astra confidence=0.60 floor=0.75 floor_from=kind read=- wait=- next=all-friends steps=3 reason="step 3: 2 rungs answered below the floor and emma, freddy excluded from the criteria; kind new-verb starts at rung opus/sol; below the floor on opus, so the answer steps UP a rung to astra, never down" ask=bus
 exit=3
 ```
 
@@ -602,12 +611,36 @@ exit=2
 nova-decide log --log <path> --summary [--registry <path>]
 ```
 
-`route --log <path>` appends one JSON object per decision: the evidence, the rung tried, its confidence and floor, whether it stepped up, the source, the outcome and the rung that succeeded when they are known — and, beside all of it, `rowan_pick`, what the rules alone would have chosen. `log --summary` reads the rows back: the escalations per kind, and the starting rung **regenerated** from the rows — the lowest rung carrying its own weight, with at least as many successes as failures. A kind with no success keeps the rung the table started from.
+`route --log <path>` appends one JSON object per decision: the evidence, the rung tried, its confidence and floor, **where that floor came from**, **who reads the work**, whether it stepped up, the source, the outcome and the rung that succeeded when they are known — and, beside all of it, `rowan_pick`, what the rules alone would have chosen. `log --summary` reads the rows back: the escalations per kind, the starting rung **regenerated** from the rows — the lowest rung carrying its own weight, with at least as many successes as failures — and, per kind, the **shape of the provider's answers** against the floor they were gated on.
+
+The histogram counts provider rows only: the rules' own confidences are the machinery's numbers, and mixing them in hides the thing it exists to show. `below_floor` is that kind's escalation, counted rather than felt, and `defeated=true` says the floor is above **every** answer the provider has ever given for that kind — the step-up is then not a policy, it is the only outcome. A kind the provider has never answered prints dashes, never zeroes nobody measured.
 
 ```
 $ nova-decide log --log ./decide.jsonl --summary
-LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false
-LOG OK rows=1 kinds=1 escalations=0
+LOG kind=fix-with-red-test decisions=6 escalations=5 successes=0 failures=0 start_rung=opus/sol start_height=2 default_rung=opus/sol regenerated=false floor=0.73 floor_from=kind provider_rows=5 conf_min=0.72 conf_max=0.78 conf_p25=0.73 below_floor=1 defeated=false hist=0.0-0.5:0,0.5-0.6:0,0.6-0.7:0,0.7-0.8:5,0.8-0.9:0,0.9-1.0:0
+LOG kind=guard decisions=1 escalations=0 successes=0 failures=0 start_rung=emma/freddy/johnny start_height=3 default_rung=emma/freddy/johnny regenerated=false floor=0.90 floor_from=built-in provider_rows=0 conf_min=- conf_max=- conf_p25=- below_floor=0 defeated=false hist=0.0-0.5:0,0.5-0.6:0,0.6-0.7:0,0.7-0.8:0,0.8-0.9:0,0.9-1.0:0
+LOG OK rows=20 kinds=6 escalations=13 defeated=0
+```
+
+### tune --propose-floors — a floor per kind, measured
+
+```
+nova-decide tune --propose-floors --log <jsonl> [--registry <path>]
+                 [--write <path>] [--floor-for <kind>=<floor>]
+```
+
+The floor is re-tuned from rows, never from a feeling about the model. For each kind this reads the **provider** answers the log holds, keeps the ones no failure was recorded against, and proposes their **p25** — a floor three answers in four would have cleared. A kind with fewer than two such answers is not proposed a floor at all and keeps the built-in 0.9; the row says so rather than leaving a reader to infer it from a missing line.
+
+A floor **above the provider's observed maximum** for its kind is refused with the remedy, and nothing is written. Such a floor does not gate a decision, it deletes it — which is exactly what 0.90 against a measured 0.78 was doing on 2026-09-18 — and it does not get written back into the file it came from.
+
+`--write <path>` merges the proposal into a registry, leaving every other field of the file as it was, comments included; with no `--registry` it starts from the embedded ladder, so a bench that has never had a registry file gets one.
+
+```
+$ nova-decide tune --propose-floors --log ./decide.jsonl --write ./registry.json
+TUNE FLOOR kind=fix-with-red-test rows=5 stood=5 failed=0 max=0.78 p25=0.73 current=0.73 current_from=kind floor=0.73 proposed=true defeated=false note=""
+TUNE FLOOR kind=guard rows=0 stood=0 failed=0 max=- p25=- current=0.90 current_from=built-in floor=- proposed=false note="no provider answer for guard stood; a floor with no rows behind it is untuned"
+TUNE FLOORS OK rows=20 kinds=6 proposed=5 defeated=0
+TUNE FLOORS WRITTEN floors=5 path=./registry.json
 ```
 
 ## Build

@@ -78,11 +78,22 @@ Every rule here is normative. Each has one line in **red tests** near the end.
    quoted a rule the repo had never held.)
 8. **A decision is logged beside the outcome it predicted.** A decision is
    logged beside the outcome it predicted so the floor is re-tuned from data:
-   the answers, the confidences, the floor, and what happened next, in one
-   row. Floors are re-tuned from those rows, never from a feeling about the
-   model.
+   the answers, the confidences, the floor, where that floor came from, and
+   what happened next, in one row. Floors are re-tuned from those rows, never
+   from a feeling about the model.
+   **The floor is PER KIND.** One floor standing in for every kind is one
+   number answering ten different questions. Each kind's floor is the p25 of
+   the provider answers that STOOD for it, carries the measurement it was read
+   off, and a kind with too few answers keeps the built-in default and says so
+   (`floor_from=built-in`). A floor above the provider's observed maximum for
+   its kind is REFUSED with the remedy: it cannot gate a decision, only delete
+   it. `log --summary` reports, per kind, the confidence histogram, the
+   observed minimum, maximum and p25, how many answers fell below the floor,
+   and `defeated` where the floor is above all of them.
    (The hurt: a floor of 0.9 nobody could defend, because no row joined a
-   confidence to what followed.)
+   confidence to what followed. Then, on 2026-09-18, that same 0.9 against
+   thirteen live answers of 0.70–0.78: a 100% escalation rate, against tune's
+   own 0.7 cap, and the end of "the lowest rung the evidence supports".)
 9. **Tests use an httptest fake, never the network.** Tests use an httptest fake,
    never the network: the fake speaks the Jev body-and-response shape of rule
    2 and asserts the header carries the key the environment gave. No test
@@ -139,13 +150,24 @@ deploy keys, the network — is Johnny's always, and so is a fresh take, where t
 in two lineages or a design has one author. Friends first: the DeepSeek rungs are eligible for
 mechanical kinds only.
 
+**A designation on a RESERVED mind is a READ, never the work.** A reserved mind is off the height
+ladder: it takes a read, and the STOP a read can call, not the work itself. A kind designation that
+names a reserved mind therefore attaches it as the READER, and the work goes to the rung the
+evidence supports — `rung=<that rung> read=<the reserved mind>`, on the line and in the log row,
+with `read=-` where there is none. It holds for both designations: security, and a fresh take whose
+designate is reserved.
+(The hurt, 2026-09-18: the rule answered `rung=johnny`, and routing the day's twenty real units
+sent SEVEN of them — six owned in the work set by `rowan-child` — to a mind that is reserved for
+reads and takes no work at all.)
+
 **Security never falls through.** A unit that touches a guard, secrets, the sandbox, sudo, deploy
-keys or the network resolves to the designated rung on EVERY path: with the provider on or off, at
-any floor, and after any prior attempt, including an attempt by the designated rung itself. It is a
-kind and not a height, so the height rules — sideways, up, the floor, never down — do not apply to
-it at all. Where no mind is designated, or every designated mind is asleep, the work WAITS for one
-of them, and that is a refusal: handing a guard, a secret or a deploy key to another mind because
-the right one is busy is the failure this rule exists to prevent.
+keys or the network reaches the designated mind on EVERY path: with the provider on or off, at any
+floor, and after any prior attempt. It is a kind and not a height, so the height rules — sideways,
+up, the floor, never down — do not touch the read. Where no mind is designated, or every designated
+mind is asleep, the decision is REFUSED: dispatching a guard, a secret or a deploy key with nobody
+reading it because the right mind is busy is the failure this rule exists to prevent. Each touch is
+named ONCE in the reason, in enumeration order — `--secrets` beside `touches: ["secrets"]` is one
+fact, and `"secrets, secrets, network"` read like two findings where the evidence held one.
 
 **A timeout is not a death.** An attempt that timed out with no proof it terminated leaves its
 expiry UNKNOWN (Stella's lease rule), and a rung whose attempt may still be running is not a rung
@@ -210,6 +232,13 @@ written with, so `nova-tokens` reads a decision's spend the way it reads everyth
 that FAILED is a row too, with a non-zero `rc`: its cost is real and unmeasured. A decision that
 made no call writes no row, because an empty row would be a claim that a call was made.
 
+**A row carries a cost, not only a count.** The `usd` column was a dash on every rc=0 row, so the
+ledger counted tokens and never a cent. The tokens are priced from a RATE TABLE in the registry —
+data, one row per model, in US dollars per million tokens, carrying the published rate it was
+copied from — and a model the table does not hold is a dash and a `NOTE` naming the model and the
+row to add. A price nobody published is not invented by the tool, and a counter the provider did
+not report leaves the cost a dash too: an unmeasured cost is an absence, never a zero.
+
 **Accounting is not optional.** Token spend reporting is an obligation and every decision is
 logged (Glenn), so the route verb REFUSES to ask the provider at all unless it has been told where
 both records go: `--usage` and `--log` are required whenever jev is asked, and the refusal comes
@@ -264,7 +293,9 @@ The second decision, `help`, answers continue | ask-all-friends | ask-glenn over
 problem, retries on one rung, failures in the last hour and how many were self-inflicted, a class
 recurring, whether landing moved, and stated uncertainty. Ask-glenn only ever follows
 ask-all-friends. Red tests: `a-failed-attempt-steps-sideways-before-up`,
-`below-the-floor-steps-up-never-down`, `security-is-johnnys-by-kind-not-by-height`,
+`below-the-floor-steps-up-never-down`, `a-designation-on-a-reserved-mind-is-a-read-not-the-work` (the seven security units of
+2026-09-18 as fixtures, each with the rung the evidence supports and `read=johnny`),
+`the-reason-names-each-touch-once`,
 `a-designation-makes-no-provider-call`, `ask-glenn-only-after-ask-all-friends`,
 `the-provider-sees-only-typed-enumerated-evidence`, `security-never-falls-through` (a table over
 the provider on and off, every floor and every prior attempt), `a-timeout-does-not-advance-the-rung`,
@@ -280,6 +311,13 @@ synthetic private markers, checked over the state AND the questions),
 `the-line-names-the-next-rung-below-the-floor`,
 `step-up-re-asks-with-the-below-floor-rung-excluded`,
 `every-step-is-a-logged-decision` and `a-sub-verb-refuses-an-unknown-flag-by-name`,
+`the-floor-is-per-kind-and-the-line-says-where-it-came-from`,
+`the-one-floor-was-above-every-provider-answer` and `the-per-kind-floors-cut-the-escalation`
+(both counted over the 2026-09-18 log: 13 of 13 below, then 1 of 13),
+`the-shipped-floors-are-what-tune-proposes-from-the-log`,
+`a-floor-above-the-observed-max-is-refused`, `the-summary-carries-a-confidence-histogram-per-kind`,
+`the-usage-row-is-priced-from-the-rate-table-or-a-dash-and-a-note` and
+`every-sub-verb-answers-help`,
 all against a fake decider, with no network and no key on disk.
 
 ### manager abstain / needs_human

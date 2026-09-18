@@ -12,6 +12,16 @@
 // deploy keys, the network -- is Johnny's always; and so is a fresh take, where
 // the rungs below failed or a design has one author.
 //
+// A designation on a RESERVED mind is a READ and not the work (2026-09-18). The
+// security rule used to answer rung=johnny, and on the day's twenty real units
+// that sent seven -- units the work set owns as rowan-child -- to a mind
+// reserved for reads and for the STOP a read can call. The rule now answers
+// rung=<the rung the evidence supports> read=johnny: the work goes where the
+// evidence puts it, and the security read is attached beside it. Nothing else
+// about security changes -- it is still answered HERE and never by the provider,
+// and a security unit with no reader available is still a refusal rather than a
+// unit that quietly goes unread.
+//
 // Friends first: the DeepSeek rungs take MECHANICAL kinds and nothing else.
 //
 // Jev advises and the machinery decides (SPEC-DECIDE rules 5, 6 and 7): the
@@ -373,6 +383,45 @@ type RouteResult struct {
 	// Steps is how many decisions this answer took: 1 for an ordinary route,
 	// and one more for each re-ask --step-up made.
 	Steps int
+	// Reads are the minds a KIND designation attached to this unit as READERS
+	// rather than as the rung: a reserved mind takes no work, so security --
+	// and a fresh take where the designate is reserved -- reaches the unit as a
+	// read beside the rung the evidence supports. The work is dispatched to the
+	// rung; the read goes out with it.
+	Reads []string
+	// FloorFrom says where the floor came from: the caller's flag, this kind's
+	// measured row, or the built-in default with no rows behind it. A floor
+	// nobody can trace is a feeling with a number on it.
+	FloorFrom string
+}
+
+// ReadField renders the readers as one field: the names in order, or the dash,
+// so every line carries it and no reader has to tell an absent field from an
+// absent read.
+func (r RouteResult) ReadField() string {
+	if len(r.Reads) == 0 {
+		return "-"
+	}
+	out := make([]string, 0, len(r.Reads))
+	for _, name := range r.Reads {
+		out = append(out, oneline.Field(name))
+	}
+	return strings.Join(out, ",")
+}
+
+// addRead attaches one reader, once. Security and a fresh take can both name
+// the same reserved mind, and it is one read, not two.
+func (r *RouteResult) addRead(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	for _, have := range r.Reads {
+		if have == name {
+			return
+		}
+	}
+	r.Reads = append(r.Reads, name)
 }
 
 // refuse populates the result with the refusal that ended it and returns both.
@@ -395,11 +444,12 @@ func (r RouteResult) AwaitingTermination() bool { return r.Wait == WaitAwaitingT
 func (r RouteResult) Dispatchable() bool { return r.Wait == WaitNone || r.Wait == "" }
 
 // Line is the one line a route decision prints: the unit (the evidence
-// pointer), the rung, the confidence, the floor it was gated on, the rung ABOVE
-// it where the answer fell below that floor, how many steps the answer took,
-// the reason and how that rung is asked. Every field is on every line: next is
-// the dash where there is nothing above and nothing to step to, so no reader
-// has to infer an absence.
+// pointer), the rung, the confidence, the floor it was gated on, where that
+// floor came from, the reader a kind designation attached, the rung ABOVE it
+// where the answer fell below that floor, how many steps the answer took, the
+// reason and how that rung is asked. Every field is on every line: next and
+// read are the dash where there is nothing above and nobody reading, so no
+// reader has to infer an absence.
 func (r RouteResult) Line() string {
 	wait := r.Wait
 	if wait == "" {
@@ -413,8 +463,13 @@ func (r RouteResult) Line() string {
 	if steps < 1 {
 		steps = 1
 	}
-	return fmt.Sprintf("ROUTE unit=%s rung=%s confidence=%.2f floor=%.2f wait=%s next=%s steps=%d reason=%s ask=%s",
+	from := r.FloorFrom
+	if strings.TrimSpace(from) == "" {
+		from = FloorFromBuiltIn
+	}
+	return fmt.Sprintf("ROUTE unit=%s rung=%s confidence=%.2f floor=%.2f floor_from=%s read=%s wait=%s next=%s steps=%d reason=%s ask=%s",
 		oneline.Field(r.Unit), oneline.Field(r.Rung.Name), r.Confidence, r.Floor,
+		oneline.Field(from), r.ReadField(),
 		oneline.Field(wait), next, steps, oneline.Quote(oneline.Escape(r.Reason)), oneline.Field(r.Rung.Ask))
 }
 
@@ -464,29 +519,37 @@ func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) 
 	res.Escalated = len(u.Attempts) > 0
 	open, openRung, hasOpen := openAttempt(reg, u)
 
-	// Security first, and absolutely. It is a KIND and not a height, so the
-	// height rules -- sideways, up, the floor, never down -- do not apply to it
-	// at all: the designated rung answers on every path, and where that rung
-	// cannot, the work WAITS for it rather than spilling onto another mind.
+	// Security first, and absolutely -- but as a READ. It is a KIND and not a
+	// height: the designated mind is attached to this unit on every path, at any
+	// height, at any floor and after any attempt, and where no designated mind
+	// can be attached the decision is REFUSED rather than made without one.
 	//
-	// The owner and the wait are two different facts, and neither hides the
-	// other: where an attempt on this unit is still open, the answer names the
-	// designated owner AND waits.
+	// What it is not any more is the rung. The designated mind is reserved: it
+	// takes reads and the STOP a read can call, not the work, and answering
+	// rung=johnny sent seven of the day's twenty units to a mind that does not
+	// take work. The work goes to the rung the evidence supports, below, and the
+	// read rides beside it on the same line and the same log row.
+	//
+	// notes are prefixed onto whatever reason the ladder gives, so a security
+	// unit says WHY it is security work whichever path answers it.
+	var notes []string
 	if u.Security() {
-		m, err := securityRung(reg, u)
+		reader, err := securityReader(reg, u)
 		if err != nil {
 			return res.refuse(err)
 		}
-		res.Rung = m
-		res.Confidence = confDesignated
-		res.Designated = true
-		res.Reason = fmt.Sprintf("security is a kind and not a height: %s is %s's always, at any height, at any floor and after any attempt", u.securityWhy(), m.Name)
-		res.RulesRung = m.Name
-		if hasOpen {
-			res.Wait = WaitAwaitingTermination
-			res.Reason += "; " + waitReason(open, openRung)
+		res.addRead(reader.Name)
+		notes = append(notes, fmt.Sprintf(
+			"security is a kind and not a height: %s, so a security READ by %s is attached to this unit at any height, at any floor and after any attempt -- %s is reserved for reads and for the STOP a read can call, and the WORK goes to the rung the evidence supports",
+			u.securityWhy(), reader.Name, reader.Name))
+	}
+	// finish carries the designation notes onto the answer the ladder gives, so
+	// every return below says what was attached and why.
+	finish := func(r RouteResult) RouteResult {
+		if len(notes) > 0 {
+			r.Reason = strings.Join(append(append([]string{}, notes...), r.Reason), "; ")
 		}
-		return res, nil
+		return r
 	}
 
 	// An attempt that timed out with no proof it died leaves its rung occupied.
@@ -498,24 +561,31 @@ func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) 
 		res.Wait = WaitAwaitingTermination
 		res.Reason = waitReason(open, openRung)
 		res.RulesRung = openRung.Name
-		return res, nil
+		return finish(res), nil
 	}
 
-	// The fresh-take designation: by KIND, never by height.
+	// The fresh-take designation: by KIND, never by height -- and, where the
+	// designated mind is reserved, by READ. A reserved mind takes no work, so it
+	// is attached as a reader here too and the ladder answers the rung.
 	if m, why, ok := designation(reg, u, burned, tried); ok {
-		res.Rung = m
-		res.Confidence = confDesignated
-		res.Designated = true
-		res.Reason = why
-		res.RulesRung = m.Name
-		return res, nil
+		if !m.Usable() {
+			res.addRead(m.Name)
+			notes = append(notes, fmt.Sprintf("%s, but %s is reserved: the designation is a READ and the work goes to the rung the evidence supports", why, m.Name))
+		} else {
+			res.Rung = m
+			res.Confidence = confDesignated
+			res.Designated = true
+			res.Reason = why
+			res.RulesRung = m.Name
+			return finish(res), nil
+		}
 	}
 
 	height, reasons := supportedHeight(reg, u, burned)
 	m, err := pick(reg, u, height, tried, failedAt)
 	if err != nil {
 		res.Reason = strings.Join(reasons, "; ")
-		return res.refuse(err)
+		return finish(res).refuse(err)
 	}
 	conf := confSized
 	switch {
@@ -529,7 +599,7 @@ func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) 
 		up, why, err := stepUp(reg, u, m, tried, failedAt)
 		if err != nil {
 			res.Reason = strings.Join(reasons, "; ")
-			return res.refuse(err)
+			return finish(res).refuse(err)
 		}
 		res.Rung = up
 		res.SteppedUp = true
@@ -538,7 +608,7 @@ func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) 
 	res.Reason = strings.Join(reasons, "; ")
 	res.RulesRung = res.Rung.Name
 	res.Next = nextRung(reg, u, res, tried, failedAt)
-	return res, nil
+	return finish(res), nil
 }
 
 // nextRung is the rung ABOVE the one answered: where the work goes if this
@@ -583,16 +653,16 @@ func burnedHeight(reg *Registry, u Unit) (burned int, tried map[string]bool, fai
 	return burned, tried, failedAt
 }
 
-// securityRung is the rung security work goes to, and there is no other answer.
-// The designated mind takes it whatever its height, whatever the floor, and
-// however many attempts have already been made -- including its own. Where no
-// mind is designated, or the designated one is asleep, the work WAITS: handing
-// a guard, a secret or a deploy key to another mind because the right one is
-// busy is the failure this rule exists to prevent.
-func securityRung(reg *Registry, u Unit) (Mind, error) {
+// securityReader is the mind that READS security work, and there is no other
+// answer. The designated mind is attached whatever its height, whatever the
+// floor, and however many attempts have already been made. Where no mind is
+// designated, or every designated one is asleep, the decision is REFUSED:
+// dispatching a guard, a secret or a deploy key with nobody reading it because
+// the right mind is busy is the failure this rule exists to prevent.
+func securityReader(reg *Registry, u Unit) (Mind, error) {
 	designated := reg.DesignatedFor(KindGuard)
 	if len(designated) == 0 {
-		return Mind{}, fmt.Errorf("decide: unit %s is security work (%s) and no mind in the registry is designated for %s; refusing to route it to another rung",
+		return Mind{}, fmt.Errorf("decide: unit %s is security work (%s) and no mind in the registry is designated for %s; refusing to dispatch it with nobody reading it",
 			u.ID, u.securityWhy(), KindGuard)
 	}
 	for _, m := range designated {
@@ -600,23 +670,37 @@ func securityRung(reg *Registry, u Unit) (Mind, error) {
 			return m, nil
 		}
 	}
-	return Mind{}, fmt.Errorf("decide: unit %s is security work (%s) and every mind designated for %s is asleep; it waits for one of them rather than going to another rung",
+	return Mind{}, fmt.Errorf("decide: unit %s is security work (%s) and every mind designated for %s is asleep; it waits for one of them rather than going out unread",
 		u.ID, u.securityWhy(), KindGuard)
 }
 
 // securityWhy names, in enumerated words, what makes this unit security work.
+// The same touch can be named twice -- --secrets beside touches: ["secrets"],
+// or kind guard beside --guard -- and the reason said "secrets, secrets,
+// network", which reads like two findings where there is one. Each token is
+// named ONCE, in the order the enumeration puts it.
 func (u Unit) securityWhy() string {
 	var why []string
+	seen := map[string]bool{}
+	add := func(token string) {
+		if token == "" || seen[token] {
+			return
+		}
+		seen[token] = true
+		why = append(why, token)
+	}
 	if u.Kind == KindGuard {
-		why = append(why, "kind "+KindGuard)
+		add("kind " + KindGuard)
 	}
 	if u.Guard {
-		why = append(why, TouchGuard)
+		add(TouchGuard)
 	}
 	if u.Secrets {
-		why = append(why, TouchSecrets)
+		add(TouchSecrets)
 	}
-	why = append(why, u.Touches...)
+	for _, touch := range u.Touches {
+		add(touch)
+	}
 	if len(why) == 0 {
 		return "no touch named"
 	}

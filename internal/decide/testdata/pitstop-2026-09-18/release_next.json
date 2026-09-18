@@ -1,0 +1,16 @@
+{
+  "id": "release:next",
+  "kind": "fleet-chore",
+  "files": 0,
+  "packages": 1,
+  "lanes": 1,
+  "lane_owner": "pulse",
+  "guard": false,
+  "secrets": false,
+  "touches": [
+    "deploy-keys",
+    "network"
+  ],
+  "attempts": [],
+  "fresh_take": false
+}

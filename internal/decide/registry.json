@@ -1,5 +1,5 @@
 {
-  "comment": "The ladder of minds (Glenn 2026-09-18). Height is the rung; two minds at one height are the same rung in two lineages, and sideways comes before up. kinds is the by-KIND designation, never a height: security and a fresh take are Johnny's. lanes are the lanes that mind owns. availability is available | asleep | reserved; a reserved mind is off the height ladder and reached only by a designation.",
+  "comment": "The ladder of minds (Glenn 2026-09-18). Height is the rung; two minds at one height are the same rung in two lineages, and sideways comes before up. kinds is the by-KIND designation, never a height: security and a fresh take are Johnny's. lanes are the lanes that mind owns. availability is available | asleep | reserved; a reserved mind is off the height ladder, takes no work, and is reached only by a designation -- which is a READ and a STOP, never the work itself.",
   "minds": [
     {"name": "flash", "lineage": "deepseek", "height": 0, "kinds": [], "lanes": [], "availability": "available", "ask": "card"},
     {"name": "pro", "lineage": "deepseek", "height": 1, "kinds": [], "lanes": [], "availability": "available", "ask": "card"},
@@ -12,5 +12,15 @@
     {"name": "fable", "lineage": "rowan", "height": 4, "kinds": [], "lanes": ["writing"], "availability": "available", "ask": "bus"},
     {"name": "all-friends", "lineage": "friends", "height": 5, "kinds": [], "lanes": [], "availability": "available", "ask": "bus"},
     {"name": "glenn", "lineage": "glenn", "height": 6, "kinds": [], "lanes": [], "availability": "available", "ask": "bus"}
-  ]
+  ],
+  "floors_comment": "The confidence floor PER KIND, measured. One floor for every kind put 13 of 13 provider answers below it on 2026-09-18 (0.70-0.78 against 0.90) and made the step-up universal, which defeats 'the lowest rung the evidence supports'. Each row is the p25 of the answers that stood for that kind, as `nova-decide tune --propose-floors --log <log>` computes it, and `from` is the run it was read off. A kind with NO row keeps the built-in 0.9 -- a floor with no rows behind it, and every line that uses one says floor_from=built-in.",
+  "floors": [
+    {"kind": "fleet-chore", "floor": 0.70, "from": "p25 of 2 provider answers that stood, pitstop 2026-09-18 (max 0.70)"},
+    {"kind": "stack", "floor": 0.70, "from": "p25 of 2 provider answers that stood, pitstop 2026-09-18 (max 0.73)"},
+    {"kind": "fix-with-red-test", "floor": 0.73, "from": "p25 of 5 provider answers that stood, pitstop 2026-09-18 (max 0.78)"},
+    {"kind": "new-verb", "floor": 0.75, "from": "p25 of 2 provider answers that stood, pitstop 2026-09-18 (max 0.78)"},
+    {"kind": "spec", "floor": 0.75, "from": "p25 of 2 provider answers that stood, pitstop 2026-09-18 (max 0.77)"}
+  ],
+  "rates_comment": "What a model's tokens cost, in US dollars per MILLION tokens, so a usage row carries usd rather than a dash. TypeSafe publishes no rate for jev-latest that we have been given, so the table is empty and every jev usage row is a dash with a NOTE naming the model: a made-up price is worse than an honest absence. Add {\"model\": \"jev-latest\", \"provider\": \"typesafe\", \"input_usd_per_mtok\": <n>, \"output_usd_per_mtok\": <n>, \"from\": \"<where it is published>\"} when the rate is known.",
+  "rates": []
 }
