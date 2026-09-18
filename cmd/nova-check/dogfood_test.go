@@ -77,9 +77,9 @@ func TestDogfoodLedgerPrintsOneRowPerVerbAndOneSummary(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
 	want := []string{
-		"DOGFOOD tool=nova-example verb=quickstart by=nobody at=- ok=- issue=-",
-		"DOGFOOD tool=nova-example verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=1301",
-		"DOGFOOD tool=nova-example verb=nocode by=nobody at=- ok=- issue=-",
+		"DOGFOOD tool=nova-example verb=quickstart by=nobody at=- ok=- issue=- open=0",
+		"DOGFOOD tool=nova-example verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=1301 open=0",
+		"DOGFOOD tool=nova-example verb=nocode by=nobody at=- ok=- issue=- open=0",
 		"DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0",
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {

@@ -24,7 +24,7 @@ func TestLedgerSaysNobodyForAVerbNoOneHasRun(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows %d, want one per verb", len(rows))
 	}
-	want := "DOGFOOD tool=nova-check verb=links by=nobody at=- ok=- issue=-"
+	want := "DOGFOOD tool=nova-check verb=links by=nobody at=- ok=- issue=- open=0"
 	if rows[0].Line() != want {
 		t.Fatalf("row:\n got %q\nwant %q", rows[0].Line(), want)
 	}
@@ -83,7 +83,7 @@ func TestTheRowCarriesTheIssueWhenAnEdgeWasFiled(t *testing.T) {
 	rows, summary := Ledger(verbs("nova-check links"), []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", false, 1301),
 	}, nil)
-	want := "DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=no issue=1301"
+	want := "DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=no issue=1301 open=1"
 	if rows[0].Line() != want {
 		t.Fatalf("row:\n got %q\nwant %q", rows[0].Line(), want)
 	}
@@ -95,22 +95,38 @@ func TestTheRowCarriesTheIssueWhenAnEdgeWasFiled(t *testing.T) {
 	}
 }
 
-// Feedback filed is not feedback applied: the edge stays open until somebody
-// runs the verb again and it does what they needed.
+// Feedback filed is not feedback applied: the edge stays open until it is
+// ANSWERED — by the person who found it running the verb again, or by a receipt
+// that names it.
+//
+// DOGFOOD ROUND 5, EDGE 2 CHANGED THE CLOSER. This test used to close Stella's
+// edge with EMMA's later pass, and that is the hole: on a bench where two people
+// dogfood the same verb, the second one happening to find nothing put the first
+// one's finding out of the gate's sight, unread and unfiled. A pass is evidence
+// about the passer's run, not an answer to somebody else's.
 func TestALaterPassClosesAnEdgeAndAnEarlierOneDoesNot(t *testing.T) {
 	_, closed := Ledger(verbs("nova-check links"), []Receipt{
 		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", false, 1301),
-		receipt("nova-check links", "Emma", "2026-09-18T11:00:00Z", true, 0),
+		receipt("nova-check links", "Stella", "2026-09-18T11:00:00Z", true, 0),
 	}, nil)
 	if closed.OpenEdges != 0 {
-		t.Fatalf("open-edges=%d after a later pass, want 0", closed.OpenEdges)
+		t.Fatalf("open-edges=%d after the finder ran it again and it worked, want 0", closed.OpenEdges)
 	}
 	_, stillOpen := Ledger(verbs("nova-check links"), []Receipt{
-		receipt("nova-check links", "Emma", "2026-09-18T09:00:00Z", true, 0),
+		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0),
 		receipt("nova-check links", "Stella", "2026-09-18T11:00:00Z", false, 1301),
 	}, nil)
 	if stillOpen.OpenEdges != 1 {
 		t.Fatalf("open-edges=%d after an edge filed later than the pass, want 1", stillOpen.OpenEdges)
+	}
+	// The same pair with two different people leaves it open, which is the whole
+	// of the edge.
+	_, other := Ledger(verbs("nova-check links"), []Receipt{
+		receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", false, 1301),
+		receipt("nova-check links", "Emma", "2026-09-18T11:00:00Z", true, 0),
+	}, nil)
+	if other.OpenEdges != 1 {
+		t.Fatalf("open-edges=%d; Emma's pass closed Stella's finding, which nobody read", other.OpenEdges)
 	}
 }
 
@@ -234,14 +250,24 @@ func TestNotesThatMerelyUseTheWordEdgeAreNotAnEdge(t *testing.T) {
 	}
 }
 
+// An edge named only in the notes closes the same way any other does: the
+// person who wrote it runs the verb again and writes nothing (round 5, edge 2 —
+// this used to be Emma's clean run closing Stella's note).
 func TestALaterCleanRunClosesAnEdgeNamedInTheNotes(t *testing.T) {
 	first := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
 	first.Notes = "Edges: (1) the refusal names no remedy"
-	later := receipt("nova-check links", "Emma", "2026-09-18T11:00:00Z", true, 0)
+	later := receipt("nova-check links", "Stella", "2026-09-18T11:00:00Z", true, 0)
 	later.Notes = "ran it again on the same tree; clean"
 	_, summary := Ledger(verbs("nova-check links"), []Receipt{first, later}, nil)
 	if summary.OpenEdges != 0 {
-		t.Fatalf("open-edges=%d after a later clean run, want 0", summary.OpenEdges)
+		t.Fatalf("open-edges=%d after the finder's own later clean run, want 0", summary.OpenEdges)
+	}
+	// And a third party's clean run does not, however late it is.
+	byOther := receipt("nova-check links", "Emma", "2026-09-18T12:00:00Z", true, 0)
+	byOther.Notes = "ran it again on the same tree; clean"
+	_, stillOpen := Ledger(verbs("nova-check links"), []Receipt{first, byOther}, nil)
+	if stillOpen.OpenEdges != 1 {
+		t.Fatalf("open-edges=%d; somebody else's clean run closed Stella's note", stillOpen.OpenEdges)
 	}
 }
 
