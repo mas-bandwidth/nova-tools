@@ -1558,3 +1558,58 @@ func isIPv4Literal(v string) bool {
 	}
 	return true
 }
+
+// AnswerToken is the word a class SPEAKS IN, read off its expect: `^SERVICES OK` is the
+// class that says SERVICES, and every line it writes -- the pass and each of its refusals --
+// begins with that word.
+//
+// It is how "the machine answered" is told from "nobody reached the machine". A workload's
+// own evidence may carry ssh's exact words -- `Could not connect to Redis at
+// 69.67.149.151:6379: Connection refused` was written by redis-cli on the M2 Air, through an
+// ssh that worked perfectly -- and the marker scan read it as the transport failing and threw
+// the verdict away.
+//
+// An expect that is not anchored, or whose first word is not a plain literal, has no token:
+// this promises something about the START OF A LINE, so it is read only from `^` followed by
+// letters. Nothing is guessed.
+func AnswerToken(re *regexp.Regexp) string {
+	if re == nil {
+		return ""
+	}
+	src := strings.TrimPrefix(re.String(), "(?m)")
+	if !strings.HasPrefix(src, "^") {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range src[1:] {
+		if r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' {
+			b.WriteRune(r)
+			continue
+		}
+		break
+	}
+	token := b.String()
+	// The token must be the whole first word of the pattern: `^[A-Z]+ OK` starts with a
+	// character class and `^GO(OD)? OK` is not the literal `GO`.
+	rest := src[1+len(token):]
+	if token == "" || (rest != "" && rest[0] != ' ') {
+		return ""
+	}
+	return token
+}
+
+// MachineSpoke says whether any line of the answer begins with the class's own token, which
+// means the body ran and wrote it.
+func MachineSpoke(re *regexp.Regexp, out string) bool {
+	token := AnswerToken(re)
+	if token == "" {
+		return false
+	}
+	for _, raw := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == token || strings.HasPrefix(line, token+" ") {
+			return true
+		}
+	}
+	return false
+}
