@@ -158,14 +158,27 @@
 (defun short-socket-base (prefix)
   "Create and answer a directory short enough to hold an AF_UNIX socket path.
 The kernel bounds a Unix-domain socket path (108 bytes on Linux), which a long
-TMPDIR can exceed, so try short roots first and create the first that works."
+TMPDIR can exceed, so try short roots first and create the first that works.
+Within each root the name is trimmed until <root>/<name>/l/w fits, because the
+sandbox's writable directory can itself sit far into a long path. A stale
+directory from an earlier run is cleared first so a rerun binds fresh."
   (flet ((try-root (root)
            (when root
              (let* ((trimmed (string-right-trim "/" (namestring (pathname root))))
-                    (base (concatenate 'string trimmed "/" prefix)))
-               (when (< (+ (length base) 4) 108)
-                 (when (or (probe-file base)
-                           (ignore-errors (sb-posix:mkdir base #o700) t))
+                    ;; base + "/l/w" must stay inside the 108-byte sun_path
+                    (budget (- 103 (length trimmed) 1))
+                    (clean (remove-if-not #'alphanumericp prefix))
+                    (name (if (plusp budget)
+                              (subseq clean 0 (min (length clean) budget))
+                              ""))
+                    (base (concatenate 'string trimmed "/" name)))
+               (when (and (plusp (length name))
+                          (< (+ (length base) 4) 108))
+                 (ignore-errors
+                   (uiop:delete-directory-tree
+                    (uiop:ensure-directory-pathname base)
+                    :validate nil :if-does-not-exist :ignore))
+                 (when (ignore-errors (sb-posix:mkdir base #o700) t)
                    base))))))
     (or (some #'try-root
               (list "/dev/shm"
@@ -194,7 +207,9 @@ TMPDIR can exceed, so try short roots first and create the first that works."
   (let* ((tmp (namestring (uiop:temporary-directory)))
          (cwd (sb-posix:getcwd))
          (*default-pathname-defaults* (pathname tmp))
-         (base (or (short-socket-base (format nil "nw-~D" (random 1000000)))
+         (base (or (if (< (length tmp) 80)
+                       (concatenate 'string tmp (format nil "nw-~D" (random 1000000)))
+                       (short-socket-base (format nil "nw-~D" (random 1000000))))
                    (if (< (length tmp) 80)
                        (concatenate 'string tmp (format nil "n~D" (random 99999)))
                        (format nil "nw-~D-~D" (sb-posix:getpid) (random 1000000)))))

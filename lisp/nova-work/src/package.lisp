@@ -588,6 +588,21 @@
     #:session-clip-line
     #:session-stop-lifecycle
     #:session-handoff
+   ;; `session export` / `session replay`: the request bundle, the one bus
+   ;; between two owners (SPEC-WORK.md:423-440, :2210-2251)
+   #:request-bundle
+   #:request-bundle-p
+   #:make-request-bundle
+   #:request-bundle-base
+   #:request-bundle-clipped-revision
+   #:request-bundle-requests
+   #:request-bundle-form
+   #:request-bundle-string
+   #:read-request-bundle
+   #:journal-accepted-records
+   #:export-request-bundle
+   #:replay-request-bundle
+   #:session-replay
    ;; wire codec, protocol handshake, pipelined correlation, disconnect
    ;; reconciliation and the long-operation registry (nova-tools card 8608)
    #:wire-encode-integer
