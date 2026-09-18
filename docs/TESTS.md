@@ -147,10 +147,11 @@ Fixture: a throwaway secrets store git working copy and age private key, as in [
 
 ```
 $ nova-secrets keygen --as rowan --key /Users/me/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen --store ./secrets
-SECRETS KEYGEN OK as=rowan key=/Users/me/.config/nova-secrets/rowan.key mode=0600 pub=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
 SECRETS RULE   creation_rules:
 SECRETS RULE     - path_regex: ^rowan\.yaml$
 SECRETS RULE       age: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk,age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata
+SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)
+SECRETS KEYGEN OK as=rowan key=/Users/me/.config/nova-secrets/rowan.key mode=0600 pub=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
 
 $ nova-secrets check --store ./secrets --as other --key /Users/me/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops
 SECRETS CHECK OK  as=other recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=9750ba9
