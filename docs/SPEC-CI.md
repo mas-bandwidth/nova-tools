@@ -930,6 +930,34 @@ with the reason`.
 are read; a bench name that arrives as a different type, or through a package
 outside them, is the compiler's rule, not this one.
 
+### `prmerge` — nothing reaches the dev merge queue but a batch
+
+**The rule.** Glenn, 2026-09-18: "Nothing reaches the dev merge queue but a
+batch." `gh pr merge` in any spelling, and any `--auto` flag to it, is refused in
+every non-test Go file under `cmd/` and `internal/` and in every file under
+`.github/`. Admission to a merge queue is `internal/merge.Enqueuer.Enqueue`, the
+`enqueuePullRequest` mutation, and nothing else.
+**The hurt.** Four pull requests landed on dev that morning that nobody
+enqueued: each carried GitHub's auto-merge, switched on hours earlier by a
+`gh pr merge` call made while the pull request was red, and the forge enqueued
+them itself as their checks went green. Twenty-seven open pull requests were
+carrying the same instruction when the sweep found them; the enqueuer in
+`internal/pulse/ledger.go` was doing it in code.
+**The test.** `TestNoGhPrMergeSpellingInTheToolsGo` and
+`TestNoGhPrMergeSpellingUnderDotGithub` (`internal/ci/prmerge_class_test.go`).
+The Go walk reads string literals in source order per function, so a command
+built in a slice is seen as well as one passed inline, and a refusal message
+that mentions the spelling is one literal, not an argument list.
+**Its allowlist.** `internal/ci/testdata/prmerge_allowlist.txt`, `<path>:<func>`
+per line, checked in both directions so it only shrinks. Today: the audit's
+`--disable-auto`, which takes an auto-merge OFF.
+**Its remedy line.** `<path>:<line>: gh pr merge (or --auto) is refused; enqueue
+through internal/merge.Enqueuer.Enqueue, or take the auto-merge off with the
+audit's --disable-auto`.
+**Its narrowings.** Test files are not read; a comment may still say auto-merge
+— the rule is about what runs. A spelling assembled at run time from separate
+words is not seen.
+
 ### `selection` — `internal/ci` is always in the selected packages
 
 **The rule.** `./internal/ci` is added to the package set on every selection —
