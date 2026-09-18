@@ -26,10 +26,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// PullCard is one card as the puller reads it from queue/: its label, the kind and repo
+// PullBatchCard is one card as the puller reads it from queue/: its label, the kind and repo
 // that decide which cards may share a batch, and its :effort, the turn bound above which
 // the card stops the batch.
-type PullCard struct {
+type PullBatchCard struct {
 	Label  string
 	Kind   string
 	Repo   string
@@ -49,10 +49,10 @@ type PullInput struct {
 
 	// Run runs one card on the kept clone and reports the turns it used. A turn past the
 	// card's :effort stops the batch.
-	Run func(c PullCard) (turns int, err error)
+	Run func(c PullBatchCard) (turns int, err error)
 	// Clip commits the card, harvests its RESULT.md to result, and resets the clone to
 	// base, so the next Run starts from a clean tree.
-	Clip func(c PullCard, result string) error
+	Clip func(c PullBatchCard, result string) error
 
 	Stdout io.Writer
 	Stderr io.Writer
@@ -94,7 +94,7 @@ func PullBatch(in PullInput) int {
 	if err := os.MkdirAll(takenDir, 0o755); err != nil {
 		return pullRefuse(in.Stderr, oneline.Err(err))
 	}
-	taken := make([]PullCard, 0, len(selected))
+	taken := make([]PullBatchCard, 0, len(selected))
 	for _, c := range selected {
 		dst := filepath.Join(takenDir, filepath.Base(c.Path))
 		if err := os.Rename(c.Path, dst); err != nil {
@@ -149,7 +149,7 @@ func pullRefuse(stderr io.Writer, what string) int {
 // readPullQueue lists queue/*.card in name order -- the source order the lanes keep -- and
 // reads each card's kind, repo and :effort. A card that cannot be read is named, never
 // guessed at.
-func readPullQueue(queue string) ([]PullCard, error) {
+func readPullQueue(queue string) ([]PullBatchCard, error) {
 	entries, err := os.ReadDir(queue)
 	if err != nil {
 		return nil, err
@@ -162,7 +162,7 @@ func readPullQueue(queue string) ([]PullCard, error) {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
-	cards := make([]PullCard, 0, len(names))
+	cards := make([]PullBatchCard, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(queue, name)
 		raw, err := os.ReadFile(path)
@@ -176,8 +176,8 @@ func readPullQueue(queue string) ([]PullCard, error) {
 
 // parsePullCard reads a card's pull fields: :kind, :repo and :effort. The label is the
 // file's name without the .card suffix.
-func parsePullCard(path, name, body string) PullCard {
-	c := PullCard{Label: strings.TrimSuffix(name, ".card"), Path: path}
+func parsePullCard(path, name, body string) PullBatchCard {
+	c := PullBatchCard{Label: strings.TrimSuffix(name, ".card"), Path: path}
 	for _, line := range strings.Split(body, "\n") {
 		fields := strings.Fields(line)
 		for i := 0; i+1 < len(fields); i++ {
@@ -198,8 +198,8 @@ func parsePullCard(path, name, body string) PullCard {
 
 // selectPull takes up to batch cards of one kind and one repo: the first card in queue
 // order sets both, and the cards behind it that share them follow.
-func selectPull(cards []PullCard, kind, repo string, batch int) []PullCard {
-	eligible := make([]PullCard, 0, len(cards))
+func selectPull(cards []PullBatchCard, kind, repo string, batch int) []PullBatchCard {
+	eligible := make([]PullBatchCard, 0, len(cards))
 	for _, c := range cards {
 		if kind != "" && c.Kind != kind {
 			continue
@@ -213,7 +213,7 @@ func selectPull(cards []PullCard, kind, repo string, batch int) []PullCard {
 		return nil
 	}
 	first := eligible[0]
-	selected := []PullCard{first}
+	selected := []PullBatchCard{first}
 	for _, c := range eligible[1:] {
 		if len(selected) >= batch {
 			break
@@ -227,7 +227,7 @@ func selectPull(cards []PullCard, kind, repo string, batch int) []PullCard {
 
 // requeuePull returns taken cards to queue/ by the same rename that took them. It reports
 // how many moved back.
-func requeuePull(queue string, cards []PullCard) int {
+func requeuePull(queue string, cards []PullBatchCard) int {
 	n := 0
 	for _, c := range cards {
 		from := filepath.Join(queue, "taken", filepath.Base(c.Path))

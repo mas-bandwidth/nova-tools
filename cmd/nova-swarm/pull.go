@@ -73,10 +73,10 @@ func cmdPull(args []string, stdout, stderr io.Writer) int {
 			Batch:   *batch,
 			Kind:    strings.TrimSpace(*kind),
 			Repo:    strings.TrimSpace(*repo),
-			Run: func(c swarm.PullCard) (int, error) {
+			Run: func(c swarm.PullBatchCard) (int, error) {
 				return runPullCard(*runner, c, *clone)
 			},
-			Clip: func(c swarm.PullCard, result string) error {
+			Clip: func(c swarm.PullBatchCard, result string) error {
 				return clipPullClone(*clone, baseRev, c.Label, result)
 			},
 			Stdout: stdout,
@@ -109,7 +109,7 @@ func cmdPull(args []string, stdout, stderr io.Writer) int {
 }
 
 // runPullCard runs one card's turn on the kept clone and reads the trailing TURNS <n> line.
-func runPullCard(runner string, c swarm.PullCard, clone string) (int, error) {
+func runPullCard(runner string, c swarm.PullBatchCard, clone string) (int, error) {
 	cmd := exec.Command("sh", "-c", runner)
 	cmd.Env = append(os.Environ(),
 		"PULL_CARD="+c.Path,

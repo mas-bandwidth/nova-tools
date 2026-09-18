@@ -35,7 +35,7 @@ func TestABatchClipsBetweenCards(t *testing.T) {
 		Clone:   clone,
 		Harvest: harvest,
 		Batch:   2,
-		Run: func(c PullCard) (int, error) {
+		Run: func(c PullBatchCard) (int, error) {
 			if dirty {
 				return 0, fmt.Errorf("card %s saw card n's uncommitted diff", c.Label)
 			}
@@ -43,7 +43,7 @@ func TestABatchClipsBetweenCards(t *testing.T) {
 			dirty = true
 			return 1, nil
 		},
-		Clip: func(c PullCard, result string) error {
+		Clip: func(c PullBatchCard, result string) error {
 			clipped = append(clipped, c.Label)
 			dirty = false
 			return os.WriteFile(result, []byte("RESULT: "+c.Label+"\n"), 0o644)
@@ -88,14 +88,14 @@ func TestACardOverEffortReturnsTheRemainder(t *testing.T) {
 		Clone:   clone,
 		Harvest: harvest,
 		Batch:   3,
-		Run: func(c PullCard) (int, error) {
+		Run: func(c PullBatchCard) (int, error) {
 			ran = append(ran, c.Label)
 			if c.Label == "b" {
 				return 2, nil // past b's :effort 1
 			}
 			return 1, nil
 		},
-		Clip: func(c PullCard, result string) error {
+		Clip: func(c PullBatchCard, result string) error {
 			return os.WriteFile(result, []byte("RESULT: "+c.Label+"\n"), 0o644)
 		},
 		Stdout: &stdout,
