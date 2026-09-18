@@ -28,3 +28,4 @@ by `lisp/nova-work/tests/acceptance.lisp` (WORKER-CARDS.md practice 26).
 - [CI wall](spec-pulse/15-ci-wall.md)
 - [Layout](spec-pulse/16-layout.md)
 - [The beat](spec-pulse/17-the-beat.md)
+- [The learned admission checklist](spec-pulse/18-learned-admission-checklist.md)

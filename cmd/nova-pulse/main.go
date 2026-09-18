@@ -560,6 +560,9 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	out := f.fs.String("out", "", "")
 	root := f.fs.String("root", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
+	probe := f.fs.Bool("probe", false, "")
+	history := f.fs.String("history", "", "")
+	probeBudget := f.fs.Int("probe-budget", 0, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -579,6 +582,9 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 		Out:       *out,
 		Root:      *root,
 		Max:       *max,
+		Probe:     *probe,
+		History:   *history,
+		Budget:    *probeBudget,
 		Stdout:    stdout,
 		Stderr:    stderr,
 	})
