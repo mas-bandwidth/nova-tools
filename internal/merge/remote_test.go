@@ -113,6 +113,47 @@ func TestRemoteScriptRunsAndLeavesPATHUsableWithoutAnSDK(t *testing.T) {
 	}
 }
 
+// A STEP WITH NO DIRECTORY OF ITS OWN EMITS NO cd, and this is the vision defect of
+// 2026-09-18 rather than a nicety.
+//
+// The gate's FIRST step is the one that MAKES the working directory, so there is nowhere to
+// cd to yet and it passes dir="". This function used to write `cd ” && mkdir -p ...`, and
+// `cd ”` is UNSPECIFIED in POSIX: the Studio's bash 3.2 and hulk's take it as a no-op,
+// vision's bash 5.3.9 refuses it with `bash: line 1: cd: null directory`. The same script,
+// on the same fleet, made a directory on one bench and exit 1 on another -- and the gate
+// there never got past its first step.
+//
+// The assertion is on the SCRIPT and not on a shell, because no shell on this machine
+// reproduces vision's reading: what is wrong is emitting a construct whose meaning is the
+// far side's to choose.
+func TestRemoteScriptWithNoDirectoryNeverEmitsACd(t *testing.T) {
+	t.Parallel()
+	script := RemoteScript("", nil, "mkdir -p '/a/b'")
+	if strings.Contains(script, "cd ") {
+		t.Errorf("a step with no directory of its own must cd nowhere; `cd ''` is unspecified and vision's bash refuses it:\n%s", script)
+	}
+	if !strings.HasSuffix(script, "mkdir -p '/a/b'") {
+		t.Errorf("the command must be the end of the script, with nothing in front of it but the prelude:\n%s", script)
+	}
+	// It still RUNS, which is the other half: a script that cds nowhere runs where the
+	// machine put it, and that is where `mkdir -p <absolute>` wants to be.
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no POSIX shell on this machine; the remote script is one")
+	}
+	dir := filepath.Join(t.TempDir(), "made", "by", "the", "script")
+	cmd := exec.Command("sh", "-c", RemoteScript("", nil, "mkdir -p "+RemoteQuote(dir)))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the no-directory script did not run: %v\n%s", err, out)
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		t.Errorf("the no-directory script must still make the directory: %v", err)
+	}
+	// And a step WITH a directory still cds into it.
+	if !strings.Contains(RemoteScript("/a/b", nil, "true"), "cd '/a/b' && true") {
+		t.Error("a step with a directory must cd into it")
+	}
+}
+
 // RemoteQuote takes every character literally EXCEPT a leading ~, which is the whole reason
 // it is not strconv.Quote: a bench root is `~/nova-bench/...` and the home it names is the
 // bench's, never the /Users/glenn this process would expand it to.

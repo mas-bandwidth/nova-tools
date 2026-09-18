@@ -32,6 +32,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
@@ -170,9 +171,51 @@ func remoteTestEnv(tmp string, gomaxprocs int) []string {
 
 func (s *remoteSite) On() string { return s.remote.Name() }
 
-// run is one command in one directory on the machine, under the run's --timeout.
-func (s *remoteSite) run(dir, command string) (string, error) {
+// exec is one command in one directory on the machine, under the run's --timeout, RAW: the
+// output and the error exactly as the machine gave them. The suite's steps take this one,
+// because a red step's OUTPUT is the news and stepFailure reads it for the failing packages
+// and tests.
+func (s *remoteSite) exec(dir, command string) (string, error) {
 	return s.remote.Exec(merge.RemoteScript(dir, s.env, command), s.in.timeout)
+}
+
+// run is exec for every CONTROL command -- the clone, the fetches, the merges, the bundle,
+// the probe -- and it folds THE COMMAND AND WHAT THE FAR SIDE SAID into the error.
+//
+// 2026-09-18, measured against vision: the first step of a remote gate failed and the whole
+// refusal a caller got was
+//
+//	BATCH REFUSED: vision could not make the batch's working directory ~/...: exit status 1
+//
+// The machine had said `bash: line 1: cd: null directory` and nobody could see it, so the
+// reader was left with an exit code and a path that was perfectly fine -- `mkdir -p` on it
+// by hand worked. An error from another machine that does not carry that machine's own words
+// is a refusal somebody has to reproduce by hand before they can read it, which is the whole
+// cost this verb exists to remove. The command goes in beside them, so the reader can run
+// the thing themselves without rebuilding it from the source.
+func (s *remoteSite) run(dir, command string) (string, error) {
+	out, err := s.exec(dir, command)
+	if err == nil {
+		return out, nil
+	}
+	return out, fmt.Errorf("%w; the command was %q; %s said: %s",
+		err, command, s.On(), oneline.Cap(remoteSaid(out), oneline.TailBytes))
+}
+
+// remoteSaid is what a machine printed, as ONE line: every line that says anything, joined,
+// and a plain sentence when it said nothing at all. An empty reason field reads as a tool
+// that forgot to fill it in, which is how this defect hid.
+func remoteSaid(out string) string {
+	var said []string
+	for _, line := range strings.Split(out, "\n") {
+		if s := strings.TrimSpace(line); s != "" {
+			said = append(said, s)
+		}
+	}
+	if len(said) == 0 {
+		return "(nothing at all, which is a command that failed silently)"
+	}
+	return strings.Join(said, " / ")
 }
 
 // Start rebuilds the working directory on the machine and clones into it.
@@ -185,7 +228,9 @@ func (s *remoteSite) Start(base, branch string) (string, error) {
 	prepare := "mkdir -p " + merge.RemoteQuote(s.in.root) +
 		" && rm -rf " + merge.RemoteQuote(s.work) +
 		" && mkdir -p " + merge.RemoteQuote(s.tmp)
-	if _, err := s.remote.Exec(merge.RemoteScript("", nil, prepare), s.in.timeout); err != nil {
+	// No directory to run in: this step is the one that MAKES it. run's empty dir emits no
+	// cd, which is the vision defect above, and its error carries what the machine said.
+	if _, err := s.run("", prepare); err != nil {
 		return "", fmt.Errorf("%s could not make the batch's working directory %s: %w", s.On(), s.work, err)
 	}
 	clone := "git clone --quiet"
@@ -195,23 +240,23 @@ func (s *remoteSite) Start(base, branch string) (string, error) {
 		clone += " --reference " + merge.RemoteQuote(ref)
 	}
 	clone += " -- " + merge.RemoteQuote(s.deps.RepoURL(s.in.repo)) + " " + merge.RemoteQuote(s.clone)
-	if out, err := s.run(s.work, clone); err != nil {
-		return "", fmt.Errorf("%s could not clone %s: %w: %s", s.On(), s.in.repo, err, firstLine(out, err))
+	if _, err := s.run(s.work, clone); err != nil {
+		return "", fmt.Errorf("%s could not clone %s: %w", s.On(), s.in.repo, err)
 	}
 	start := "git fetch --quiet origin " + merge.RemoteQuote(base) +
 		" && git checkout --quiet -B " + merge.RemoteQuote(branch) + " FETCH_HEAD" +
 		" && git rev-parse HEAD"
 	out, err := s.run(s.clone, start)
 	if err != nil {
-		return "", fmt.Errorf("%s could not start %s at origin/%s: %w: %s", s.On(), branch, base, err, firstLine(out, err))
+		return "", fmt.Errorf("%s could not start %s at origin/%s: %w", s.On(), branch, base, err)
 	}
 	return remoteSHA(out)
 }
 
 func (s *remoteSite) Merge(n int, message string) (bool, error) {
 	fetch := "git fetch --quiet origin " + merge.RemoteQuote("pull/"+strconv.Itoa(n)+"/head")
-	if out, err := s.run(s.clone, fetch); err != nil {
-		return false, fmt.Errorf("could not fetch pull/%d/head on %s: %w: %s", n, s.On(), err, firstLine(out, err))
+	if _, err := s.run(s.clone, fetch); err != nil {
+		return false, fmt.Errorf("could not fetch pull/%d/head on %s: %w", n, s.On(), err)
 	}
 	// The identity is nova-merge's own, exactly as the local site passes it: a machine with
 	// no git identity anywhere dies on `git merge --no-ff` with "Committer identity unknown".
@@ -227,10 +272,10 @@ func (s *remoteSite) Merge(n int, message string) (bool, error) {
 		return false, fmt.Errorf("the merge of pull/%d on %s failed and its index could not be read: %w", n, s.On(), err)
 	}
 	if strings.TrimSpace(unmerged) == "" {
-		return false, fmt.Errorf("the merge of pull/%d on %s failed and left no conflicting file: %s", n, s.On(), firstLine(unmerged, nil))
+		return false, fmt.Errorf("the merge of pull/%d on %s failed and left no conflicting file, so it is a merge that could not run rather than a member to drop", n, s.On())
 	}
-	if out, err := s.run(s.clone, "git merge --abort"); err != nil {
-		return false, fmt.Errorf("the conflicting merge of pull/%d on %s could not be aborted: %w: %s", n, s.On(), err, firstLine(out, err))
+	if _, err := s.run(s.clone, "git merge --abort"); err != nil {
+		return false, fmt.Errorf("the conflicting merge of pull/%d on %s could not be aborted: %w", n, s.On(), err)
 	}
 	return false, nil
 }
@@ -238,13 +283,13 @@ func (s *remoteSite) Merge(n int, message string) (bool, error) {
 func (s *remoteSite) Head() (string, error) {
 	out, err := s.run(s.clone, "git rev-parse HEAD")
 	if err != nil {
-		return "", fmt.Errorf("%s could not say what the batch's head is: %w: %s", s.On(), err, firstLine(out, err))
+		return "", fmt.Errorf("%s could not say what the batch's head is: %w", s.On(), err)
 	}
 	return remoteSHA(out)
 }
 
 func (s *remoteSite) Read(rel string) (string, bool) {
-	out, err := s.run(s.clone, "cat -- "+merge.RemoteQuote(rel))
+	out, err := s.exec(s.clone, "cat -- "+merge.RemoteQuote(rel))
 	if err != nil {
 		return "", false
 	}
@@ -252,7 +297,7 @@ func (s *remoteSite) Read(rel string) (string, bool) {
 }
 
 func (s *remoteSite) Probe(command string) (string, bool) {
-	out, err := s.run(s.clone, command)
+	out, err := s.exec(s.clone, command)
 	return out, err == nil
 }
 
@@ -320,7 +365,7 @@ func (s *remoteSite) Step(step batchStep) (string, error) {
 	if len(step.env) > 0 {
 		command = strings.Join(step.env, " ") + " " + command
 	}
-	return s.run(s.clone, command)
+	return s.exec(s.clone, command)
 }
 
 // Bring carries the green batch back, as a git bundle.
@@ -333,8 +378,8 @@ func (s *remoteSite) Step(step batchStep) (string, error) {
 func (s *remoteSite) Bring(branch, baseSHA, headSHA string) (string, int64, error) {
 	create := "git bundle create " + merge.RemoteQuote(s.bundle) + " " +
 		merge.RemoteQuote(baseSHA) + ".." + merge.RemoteQuote(branch)
-	if out, err := s.run(s.clone, create); err != nil {
-		return "", 0, fmt.Errorf("%s could not bundle %s: %w: %s", s.On(), branch, err, firstLine(out, err))
+	if _, err := s.run(s.clone, create); err != nil {
+		return "", 0, fmt.Errorf("%s could not bundle %s: %w", s.On(), branch, err)
 	}
 	local := filepath.Join(s.localWork, batchBundle)
 	if err := s.remote.Get(s.bundle, local, s.in.timeout); err != nil {

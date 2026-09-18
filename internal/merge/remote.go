@@ -165,6 +165,17 @@ const RemotePrelude = `PATH="$(ls -d "$HOME"/sdk/*/bin 2>/dev/null | sort -r | t
 // so nothing a caller typed reaches the machine's shell unquoted. env is "NAME=value", and
 // the value is quoted the same way -- which is how the batch's private temp directory and
 // CI's fair share of the cores get there.
+//
+// AN EMPTY dir EMITS NO cd AT ALL, and that is a fix rather than a convenience (measured
+// against vision, 2026-09-18). The gate's FIRST step makes the working directory, so there
+// is nowhere to cd to yet and it passed dir="". This function wrote `cd ” && mkdir -p ...`,
+// and `cd ”` is UNSPECIFIED in POSIX: bash 3.2 on the Studio and hulk's bash take it as a
+// no-op and vision's bash 5.3.9 refuses it --
+//
+//	bash: line 1: cd: null directory
+//
+// -- so the same script, on the same fleet, made a directory on one bench and exit 1 on
+// another. A step with no directory of its own runs where the machine put it.
 func RemoteScript(dir string, env []string, command string) string {
 	var b strings.Builder
 	b.WriteString(RemotePrelude)
@@ -175,7 +186,10 @@ func RemoteScript(dir string, env []string, command string) string {
 		}
 		b.WriteString(name + "=" + RemoteQuote(value) + "; export " + name + "; ")
 	}
-	b.WriteString("cd " + RemoteQuote(dir) + " && " + command)
+	if strings.TrimSpace(dir) != "" {
+		b.WriteString("cd " + RemoteQuote(dir) + " && ")
+	}
+	b.WriteString(command)
 	return b.String()
 }
 

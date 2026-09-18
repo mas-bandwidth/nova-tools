@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -33,6 +34,10 @@ type fakeBench struct {
 	// refuse, when set, answers a script whose text contains its key instead of running it,
 	// so a test can make one step of the seam fail without a broken machine.
 	refuse map[string]string
+	// fail, when set, answers a script whose text contains its key the way a machine that
+	// REFUSED it answers: that output, and a non-zero exit. It is how a test stands in for
+	// vision's `bash: line 1: cd: null directory` without a bench that has that bash.
+	fail map[string]string
 }
 
 func newFakeBench(name string) *fakeBench { return &fakeBench{name: name} }
@@ -42,8 +47,13 @@ func (b *fakeBench) Name() string { return b.name }
 func (b *fakeBench) Exec(script string, _ time.Duration) (string, error) {
 	b.mu.Lock()
 	b.scripts = append(b.scripts, script)
-	refuse := b.refuse
+	refuse, fail := b.refuse, b.fail
 	b.mu.Unlock()
+	for needle, answer := range fail {
+		if strings.Contains(script, needle) {
+			return answer, errors.New("exit status 1")
+		}
+	}
 	for needle, answer := range refuse {
 		if strings.Contains(script, needle) {
 			return answer, nil
@@ -446,6 +456,52 @@ func TestTheHelpNamesEveryFlagBatchTakes(t *testing.T) {
 // batchFlagRe matches one flag registration on the verb's own flag set:
 // `f.fs.String("local-root", "", "")`.
 var batchFlagRe = regexp.MustCompile(`f\.fs\.(?:String|Bool|Int|Duration)\("([a-z0-9-]+)"`)
+
+// A REFUSAL FROM ANOTHER MACHINE CARRIES THAT MACHINE'S OWN WORDS, and the command.
+//
+// Measured against vision, 2026-09-18. The gate's first step failed there and the whole
+// refusal a caller got was
+//
+//	BATCH REFUSED: vision could not make the batch's working directory ~/...: exit status 1
+//
+// The machine had said `bash: line 1: cd: null directory` -- the `cd ”` of the test above --
+// and none of it reached the reader, who was left with an exit code and a path that was
+// perfectly fine: `mkdir -p` on it by hand worked. An error from another machine that does
+// not carry that machine's words is a refusal somebody has to reproduce by hand before they
+// can read it, which is the cost this verb exists to remove.
+func TestBatchOnRefusalCarriesTheCommandAndWhatTheMachineSaid(t *testing.T) {
+	o := newOnLab(t)
+	o.bench.fail = map[string]string{"mkdir -p": "bash: line 1: cd: null directory"}
+
+	exit, stdout, stderr := o.on("integration-said", "--pr", "1")
+
+	if exit != 2 {
+		t.Fatalf("a step the machine refused is exit 2, got %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "BATCH REFUSED")
+	// The three things a reader needs and had none of: what failed, WHAT THE MACHINE SAID,
+	// and the command to run themselves.
+	contains(t, stderr, "could not make the batch's working directory")
+	contains(t, stderr, "bench1 said: bash: line 1: cd: null directory")
+	contains(t, stderr, "the command was")
+	contains(t, stderr, "mkdir -p")
+	absent(t, stdout, "BATCH OK")
+}
+
+// A machine that failed and said NOTHING says so in those words, because an empty reason
+// field reads as a tool that forgot to fill it in -- which is how the defect above hid.
+func TestBatchOnRefusalSaysSoWhenTheMachineSaidNothing(t *testing.T) {
+	o := newOnLab(t)
+	o.bench.fail = map[string]string{"mkdir -p": ""}
+
+	exit, stdout, stderr := o.on("integration-silent", "--pr", "1")
+
+	if exit != 2 {
+		t.Fatalf("a step the machine refused is exit 2, got %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "bench1 said: (nothing at all")
+	absent(t, stdout, "BATCH OK")
+}
 
 // WHAT COMES BACK IS CHECKED AT THE SEAM. A `cat` over ssh answers with whatever the far
 // side wrote on its stdout -- an empty file, a shell's complaint, half a transfer -- and
