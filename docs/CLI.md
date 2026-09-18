@@ -1533,6 +1533,7 @@ usage:
   nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work heartbeat --store <dir> --owner <o> --label <card> --for <duration>
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -1551,6 +1552,9 @@ verbs:
   nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
   nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
   nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
+  nova-work heartbeat renews the slot lease a pull worker holds while its card runs
+    (docs/SPEC-JOBS.md section 3): --owner and --label name the lease, --for is the new
+    term from now.
 
 A node is ready only when every need is terminal accepted, and every row that cannot
 proceed prints its exact blocker and its resolver. A :deps cycle is refused before
