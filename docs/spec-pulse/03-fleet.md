@@ -141,8 +141,13 @@ The class is the FILE'S NAME and never a key, so two cards cannot claim one clas
 **The shipped classes.** bench: `go-test`, `c-build`, `cpp-build`, `sbcl`, `git-push` (a bare
 repository made on the machine for the run and deleted after it, never a real remote),
 `wall-toolchain`, `go-on-path`, `path-resolves`, `git-identity`, `services-reach`,
-`registry-truth`. runner: `runner-online`, `runner-path`, `path-resolves`, `registry-truth`,
-`diag-size`. services: `loki-ready`, `redis-ping`, `postgres-ready`. coordination:
+`registry-truth`. runner: `runner-online`, `runner-path` (both systemd scopes, both unit
+namings, and the listener count held against the unit count, so a double registration is a
+FAIL naming it), `path-resolves`, `registry-truth`, `diag-size` (MB, the age of the oldest
+log and the rate; report-only). `services-reach` tells `refused` from `denied (protected
+mode)` from `PONG`, and only `PONG` is OK: the three have three remedies, and one word for
+all of them sends a person to the wrong machine. A name must RESOLVE, by whatever the
+machine has -- no tailnet address is required, since the Studio has none. services: `loki-ready`, `redis-ping`, `postgres-ready`. coordination:
 `bus-push`, `release-path`. `path-resolves` and `registry-truth` apply to every role.
 
 **One certificate row per machine per class**, appended to `--certs`, seven tab-separated

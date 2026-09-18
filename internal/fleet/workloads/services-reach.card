@@ -3,11 +3,20 @@ expect: ^SERVICES OK
 
 # A plain ssh from the BENCH, by the NAME the design uses, because that is what failed.
 #
-# On 2026-09-18 redis on space bound 127.0.0.1 only, so a PING from hulk was refused; `getent
-# hosts space` was empty on hulk and vision (no MagicDNS -- the name works only through
-# ~/.ssh/config); and Loki and Grafana answered on the tailnet address and nowhere else. The
-# evidence NAMES the address tried, because "connection refused" without one sends a person
-# to the wrong machine.
+# The evidence NAMES the address tried and DISTINGUISHES the three answers, because they
+# have three different remedies and "connection refused" for all of them sends a person to
+# the wrong machine:
+#
+#   refused                -- nothing is listening on that address (redis bound 127.0.0.1)
+#   denied (protected mode) -- the path and the name work and the password gate remains;
+#                              Redis 8 enforces protected mode even with an explicit bind,
+#                              so this is the state space is in until requirepass lands
+#                              through nova-secrets
+#   PONG                   -- and only PONG is OK
+#
+# The name must RESOLVE, by whatever the machine has: /etc/hosts carries the tailnet
+# addresses on the Linux benches, and a LAN address is as good an answer. No tailnet address
+# is required -- the Studio has none (tailscaled is not running there) and is not a bench.
 set -eu
 HOST="${NOVA_SERVICES_HOST:-space}"
 ADDR=$(getent hosts "$HOST" 2>/dev/null | awk 'NR==1{print $1}' || true)
@@ -23,8 +32,17 @@ if [ -z "$CLI" ]; then
 fi
 PING=$("$CLI" -h "$ADDR" -p "${NOVA_REDIS_PORT:-6379}" ping 2>&1 || true)
 case "$PING" in
-  *PONG*) ;;
-  *) echo "SERVICES FAIL redis $TRIED:${NOVA_REDIS_PORT:-6379} $PING"; exit 1 ;;
+  *PONG*)
+    REDIS="PONG" ;;
+  *DENIED*|*"protected mode"*|*NOAUTH*|*WRONGPASS*)
+    echo "SERVICES FAIL redis $TRIED:${NOVA_REDIS_PORT:-6379} denied (protected mode): the address and the name work and the password gate remains; set requirepass and give the bench the key through nova-secrets -- $PING"
+    exit 1 ;;
+  *refused*|*"Connection refused"*)
+    echo "SERVICES FAIL redis $TRIED:${NOVA_REDIS_PORT:-6379} refused: nothing is listening on that address (check the bind line, not the name) -- $PING"
+    exit 1 ;;
+  *)
+    echo "SERVICES FAIL redis $TRIED:${NOVA_REDIS_PORT:-6379} $PING"
+    exit 1 ;;
 esac
 CURL=$(command -v curl 2>/dev/null || true)
 if [ -z "$CURL" ]; then
@@ -36,4 +54,4 @@ case "$LOKI" in
   *ready*) ;;
   *) echo "SERVICES FAIL loki $TRIED:${NOVA_LOKI_PORT:-3100} $LOKI"; exit 1 ;;
 esac
-echo "SERVICES OK $TRIED redis=PONG loki=ready"
+echo "SERVICES OK $TRIED redis=$REDIS loki=ready"
