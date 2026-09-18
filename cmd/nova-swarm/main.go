@@ -55,7 +55,7 @@ usage:
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--max <n>]
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity
-  nova-swarm cost      --pool <dir> [--since <stamp>] [--max <n>]
+  nova-swarm cost      --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
@@ -1189,6 +1189,8 @@ func cmdCost(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("cost")
 	pool := f.fs.String("pool", "", "")
 	since := f.fs.String("since", "", "")
+	by := f.fs.String("by", "", "")
+	summaryOnly := f.fs.Bool("summary-only", false, "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -1202,7 +1204,7 @@ func cmdCost(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	return swarm.Cost(p, *since, *max, stdout, stderr)
+	return swarm.Cost(p, *since, *max, *by, *summaryOnly, stdout, stderr)
 }
 
 // cmdProfile folds the per-turn timelines a glob names into a card's minutes per phase. It
