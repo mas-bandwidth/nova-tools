@@ -32,9 +32,9 @@ nova-check nocode --dir <dir>                      # no code, executables, scrip
 nova-check nocode --print-deny-list                # both floors actually in force: the extension list and the name list
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
-nova-check dogfood ledger --cli <docs/CLI.md> --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
-nova-check dogfood record --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>   # append one receipt: I ran this verb, on real work, and here is how it went
-nova-check dogfood gate --cli <docs/CLI.md> --receipts <dir> [--require-all]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
+nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>   # append one receipt, refusing a verb the list does not declare
+nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--require-all]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
 ```
 
 ### First run
@@ -66,8 +66,8 @@ A tool is not finished until it is tested, dogfooded by a non-author on real
 work with the edges filed, the feedback applied, documented and released
 (Glenn, 2026-09-18). Nothing tracked the middle of that sentence, so the claim
 was whatever the last person to speak said it was. `dogfood` makes it a record:
-the verbs come from this file, the runs come from receipts, and the gate is one
-exit code a release lane can call.
+the verbs come from the binaries or from this file, the runs come from
+receipts, and the gate is one exit code a release lane can call.
 
 ```
 $ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
@@ -78,22 +78,62 @@ DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z o
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=-
 DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=-
-DOGFOOD OK verbs=71 dogfooded=1 by-nonauthor=1 open-edges=0
+DOGFOOD OK verbs=106 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
 DOGFOOD GATE FAIL tool=nova-check verb=quickstart: not dogfooded by a non-author; a tool is done when somebody who did not write it has run it on real work
-DOGFOOD GATE FAIL verbs=71 findings=70 shown=20
+DOGFOOD GATE FAIL verbs=106 findings=105 shown=20 unmatched=0
 ```
 
-**Reading it.** `ledger` prints one row per verb this file declares, in this
-file's order, and never elides one: a ledger that capped its rows would hide
-exactly the verbs nobody has run. The summary is the bounded read —
-`dogfooded=` counts verbs with any receipt, `by-nonauthor=` counts the ones a
-non-author ran and said ok, `open-edges=` counts receipts that said NO and that
-no later run has cleared. `gate` is the same read with an exit code: 1 on an
-open edge always, and with `--require-all` on every verb no non-author has
-passed. A receipt the tool cannot parse is exit 1 and a named `DOGFOOD FAIL`
-line, never a quietly shorter ledger.
+**Reading it.** `ledger` prints one row per verb, in the list's order, and
+never elides one: a ledger that capped its rows would hide exactly the verbs
+nobody has run. The summary is the bounded read — `dogfooded=` counts verbs
+with any receipt, `by-nonauthor=` counts the ones a non-author ran and said ok,
+`open-edges=` counts the edges no later run has cleared, `unfiled=` how many
+of those nobody has filed an issue for, and `unmatched=` how many receipts named
+a verb the list does not declare. `gate` is the same read with an exit
+code: 1 on an open edge always, 1 on any **unmatched not-ok receipt**, and with
+`--require-all` on every verb no
+non-author has passed. A receipt the tool cannot parse is exit 1 and a named
+`DOGFOOD FAIL` line, never a quietly shorter ledger. A receipt naming a verb
+the list does not declare is named one by one — its file, what it claimed and
+the nearest declared verb — by `ledger` AND by `gate`, because a release lane
+must not be able to pass or fail without learning that the evidence it read was
+thrown away.
+
+**Evidence that matched nothing is counted, and a not-ok one is a failure.**
+`record` takes any `--tool`/`--verb` pair the list declares and refuses the rest,
+but receipts written before it did that — `harvest`, `ledger` for `dogfood
+ledger`, every `nova-sandbox` verb, `nova-merge batch` and `nova-merge queue` at
+65e23fb0 — are still in the directory, and they used to leave the arithmetic
+entirely: the gate reported `open-edges=0` at exit 0 with not-ok receipts sitting
+in the directory it had just read, and `findings=1` while three more sat
+unmatched beside it. So `unmatched=<n>` is on **every** line both reads print,
+zero or not, and the gate FAILS on any unmatched receipt that says not-ok,
+naming the receipt's file and the verb it claimed. An unmatched receipt that says
+**ok** is counted and named and is not a failure: a wrong spelling, or a document
+that has gone stale, is not a reason to stop a release nobody found anything
+wrong with. The unmatched findings are printed first, before anything derived
+from the receipts that did match.
+
+**Where the verbs come from.** `--tools <dir>` is a directory of built `nova-*`
+binaries: each is asked for its own `help`, and what it answers is the
+authoritative list for that tool. `--cli <file>` is this document, and it is the
+fallback for the tools the directory does not hold. Either flag answers and at
+least one is required — a spelling checked against nothing is how nine real
+receipts were lost on the day this verb was first dogfooded. The reference is
+read in every shape it actually uses: fenced command lines at any indentation,
+a pasted indented `usage:` block, a worked `$` transcript, and a `### verb`
+heading under a `## nova-tool` section. A synopsis line with no verb at all —
+`nova-decide --questions <file>` — declares that tool's **bare invocation**,
+which is a unit like any other and prints as `verb=-`; `--verb -` names it.
+
+**An edge is what the run found, not only what it failed at.** A receipt records
+an edge when the verb did not do what the run needed (`--not-ok`) **or** when
+its notes name one in the shape the family writes them: `Edge:` or `Edges:`
+before the finding. It stays open until somebody runs the verb again, later, and
+records neither. An edge with no `--issue` is counted separately as `unfiled=`,
+because an edge nobody has filed is one nobody else can act on.
 
 **Who counts as the author.** `--authors <file>` maps `<tool> <verb> = <who
 wrote it>`, one per line, and is exact. `--repo <dir>` is the second-best
@@ -105,8 +145,11 @@ dogfooding their own verb is recorded and does not count.
 
 **The receipts are files.** One JSON line each — `tool`, `verb`, `by`, `at`,
 `ok`, `notes`, `issue` — one file per receipt, written to a temporary name and
-renamed, so two benches recording at once never interleave. Keep the directory
-in a repository: it is the record, and it should outlive the bench.
+renamed, so two benches recording at once never interleave. `record` refuses a
+`--tool`/`--verb` pair the list does not declare and names the nearest verb it
+does, so a receipt is stranded at the moment it is written rather than found
+months later in a count. Keep the directory in a repository: it is the record,
+and it should outlive the bench.
 
 ## nova-self-talk
 
