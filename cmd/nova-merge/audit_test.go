@@ -47,7 +47,8 @@ var mergeAudit = audit.Config{
 		"classify.go|classifyPacketEntry|mergePacketEvidence(e)":        "pr#<n> is digits, and branch#<name> renders the name through oneline.Field inside mergePacketEvidence",
 		// The two batch sites are the shape this walk cannot see: a value built above the
 		// print site. Each has a behavioral test of its own in batch_test.go.
-		"batch.go|runBatch|line":        "the five fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field where the line is built a few lines above; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
+		"batch.go|runBatch|batchLine(in, baseSHA, headSHA, members, dropped, append(skipped, step.name))": "the same six fields as `line` below, rendered through oneline.Field inside batchLine, built at the --require-lisp refusal with the step that could not run appended to the skipped list; TestBatchRequireLispFailsWhenTheStepCannotRun asserts the whole line",
+		"batch.go|runBatch|line":        "the six fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field inside batchLine; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
 		"batch.go|mergeMembers|in.name": "the batch's own --name, inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
@@ -120,6 +121,16 @@ var mergeAudit = audit.Config{
 		// Parse decodes newline-delimited JSON into structs and returns them, and the
 		// package and test names it returns reach a line through oneline.Field.
 		`"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"`,
+		// regexp holds no writer of its own: batch.go uses it to read a go.mod's `go`
+		// directive, the version `go version` printed, and the `go: downloading ...`
+		// notices it drops off the front of a failing step's output. Match and
+		// FindStringSubmatch are pure reads that return strings, and every one of them
+		// reaches a line through oneline.Escape or oneline.Field.
+		`"regexp"`,
+		// sort holds no writer of its own: queue.go uses it to put `queue status`'s
+		// skipped set in one deterministic order, so two reads of one file print the
+		// same lines. It returns nothing and prints nothing.
+		`"sort"`,
 	},
 	MinClassified: 60,
 }

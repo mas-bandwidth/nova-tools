@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 )
 
@@ -135,6 +138,9 @@ type lab struct {
 	// urlFor, when set, is what RepoURL answers -- so a test can point init at a
 	// repository that is not there.
 	urlFor func(string) string
+	// heads is the batch fixture's pull request heads by number, so a batch test can
+	// say what the FORGE thinks of one member's own head (edge 25).
+	heads map[int]string
 }
 
 func newLab(t *testing.T) *lab {
@@ -359,6 +365,12 @@ func (l *lab) deps() Deps {
 		NewRebaseList: func(string, time.Duration) merge.RebaseList { return l.host },
 		Launcher:      l.launcher,
 		BuildID:       func() string { return l.build },
+		// react's two edges. Dial is the caller's own address -- every react test
+		// hands it a miniredis of its own -- and the forge is the fake.
+		Dial: func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Forge: func(string, string, time.Duration) ci.Forge {
+			return &reactFakeForge{}
+		},
 	}
 }
 
