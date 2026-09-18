@@ -39,16 +39,44 @@ func mainPackageSource(t *testing.T) map[string]string {
 	return out
 }
 
+// tempEnvAllowance is the ONE line in this package allowed to name a temp-directory
+// variable, and it is a SET rather than a read: `batch` hands every check it runs a temp
+// directory inside the batch's own working directory under --root, which is rule 13
+// carried into the subprocesses rather than an exception to it. A `go test` or an sbcl
+// suite that keys off the ambient one writes into /tmp instead, and two gates on one host
+// wrecked each other's state that way on 2026-09-18 (tools/ci/lisp-test.sh).
+//
+// The allowance is ONE EXACT LINE and it must match exactly once, so it cannot quietly
+// cover a second site written beside it; and nothing in this package may READ such a
+// variable, which is what the os.Getenv clause below holds.
+var tempEnvAllowance = struct{ file, line string }{
+	file: "batch.go",
+	line: `var batchTempVars = []string{"TMPDIR", "GOTMPDIR", "LISP_TEST_TMPROOT", "TMP", "TEMP"}`,
+}
+
 // Rule 13: nothing under /tmp, and the tool never matches a process by its own command
-// line. Every path this binary writes is under --lane, which a person gave it.
+// line. Every path this binary writes is under --lane or --root, which a person gave it.
 func TestTheBinaryReachesNoTmpAndNoProcessTable(t *testing.T) {
 	t.Parallel()
+	allowed := 0
 	for name, src := range mainPackageSource(t) {
-		for _, forbidden := range []string{`"/tmp`, "os.TempDir", "pgrep", `"ps"`, "/proc/", "TMPDIR"} {
-			if strings.Contains(src, forbidden) {
-				t.Errorf("%s carries %q; every path this tool writes is under --lane, and a loop that matches a process by its own command line matches itself (19 orphaned shells, 2026-09-09)", name, forbidden)
+		if strings.Contains(src, "os.Getenv") {
+			t.Errorf("%s reads the environment; every path this tool writes comes from a flag a person gave it, never from a variable the shell happened to carry", name)
+		}
+		for i, line := range strings.Split(src, "\n") {
+			if name == tempEnvAllowance.file && strings.TrimSpace(line) == tempEnvAllowance.line {
+				allowed++
+				continue
+			}
+			for _, forbidden := range []string{`"/tmp`, "os.TempDir", "pgrep", `"ps"`, "/proc/", "TMPDIR"} {
+				if strings.Contains(line, forbidden) {
+					t.Errorf("%s:%d carries %q; every path this tool writes is under --lane or --root, and a loop that matches a process by its own command line matches itself (19 orphaned shells, 2026-09-09)", name, i+1, forbidden)
+				}
 			}
 		}
+	}
+	if allowed != 1 {
+		t.Errorf("the temp-variable allowance matched %d lines of %s, want exactly one; a stale allowance is a claim nothing checks and it would cover the next site written in its place", allowed, tempEnvAllowance.file)
 	}
 }
 

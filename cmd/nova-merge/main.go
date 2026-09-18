@@ -55,8 +55,20 @@ usage:
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>]
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
+
+batch IS THE LANDING GATE AND IT PUSHES NOTHING. It clones --repo under --root, merges
+each --pr head onto --base in the order given on a branch rowan/<name>, DROPS a head that
+will not merge and says so, and then builds, vets, tests and runs the lisp suite over
+what is left, one progress line per step on stderr with the elapsed time. Green is
+"BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list>" at exit 0, and
+red is the same line as BATCH FAIL naming the step, the failing packages and the failing
+tests at exit 1. Pushing that branch and opening the pull request is the caller's, who is
+the one who knows whether this is the batch they wanted. --base defaults to dev, which is
+where this repository's integration batches land; --root is rebuilt on every run, so give
+it a directory of the batch's own.
 
 simulate is the exception to the exit codes below: it exits 2 when it FINDS a poison
 entry -- the one that is green alone and red on top of the entries ahead of it -- and 1
@@ -265,6 +277,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdSweep(rest, stdout, stderr, deps)
 	case "simulate":
 		return cmdSimulate(rest, stdout, stderr, deps)
+	case "batch":
+		return cmdBatch(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -282,10 +296,11 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 	}
 	creation := verb == "init" || verb == "quickstart"
 	// `wait` watches one pull request by polling the host, `sweep` reads a repository's
-	// merge queue, and `simulate` names the repository it makes a scratch worktree from,
-	// so all three name the repository outright rather than reading it from the lane's
-	// state, like `init` does; every other verb reads the lane's.
-	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate"
+	// merge queue, `simulate` names the repository it makes a scratch worktree from, and
+	// `batch` names the one it clones, so all four name the repository outright rather
+	// than reading it from the lane's state, like `init` does; every other verb reads the
+	// lane's.
+	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "batch"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
 		if name == "repo" && namesRepo {
 			continue
@@ -298,8 +313,9 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		switch verb {
 		case "gate":
 			return refuse(stderr, " gate", "--base is the lane's branch and belongs to `init`; the base SHA a gate was taken against is --base-sha, a different word on purpose"), true
-		case "simulate":
-			// simulate predicts a queue onto a base branch; it does not own a lane's.
+		case "simulate", "batch":
+			// simulate predicts a queue onto a base branch and batch builds an
+			// integration branch on top of one; neither owns a lane's.
 		default:
 			return refuse(stderr, " "+verb, "--base belongs to `init`, which writes it into the lane once; a --base here would let two invocations disagree about where the lane lands"), true
 		}
