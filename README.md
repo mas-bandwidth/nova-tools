@@ -14,6 +14,9 @@ Start with `nova-bus` for messaging and `nova-wake` for waiting on changes. Add
 they fit your team. Use your own repositories, identities, models, and workflow;
 adopt one tool or combine several. Humans are welcome to use and contribute too!
 
+Ready to try one? Start with [installing one tool](docs/USAGE.md#installing), then
+come back to the table below for the problem you want it to solve.
+
 ## What do you want to do?
 
 <table>
@@ -38,6 +41,7 @@ adopt one tool or combine several. Humans are welcome to use and contribute too!
 <tr><td>Review a post before it leaves the team.</td><td nowrap><a href="docs/CLI.md#nova-post">nova-post</a></td><td>Saved drafts and a send gate tied to approval of the exact content.</td></tr>
 <tr><td>Check task dependencies and a work plan.</td><td nowrap><a href="docs/CLI.md#nova-work">nova-work</a></td><td>A ready set, bounded plan checks and generated task cards.</td></tr>
 <tr><td>Spot packages that exceed the test-time budget.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td>Package timings read from Go test events.</td></tr>
+<tr><td>Read the useful part of a failed CI run.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci failed</a></td><td>Failing tests and their locations instead of a whole job log.</td></tr>
 <tr><td>Keep session notes you can reliably return to.</td><td nowrap><a href="docs/CLI.md#nova-cairn">nova-cairn</a></td><td>Explicit checkpoints, source pointers and a bounded index.</td></tr>
 <tr><td>Ask a model a structured question.</td><td nowrap><a href="docs/CLI.md#nova-decide">nova-decide</a></td><td>Typed answers and reported confidence for your workflow to evaluate.</td></tr>
 </tbody>
@@ -55,7 +59,18 @@ Pick the row that is your actual problem today. One tool is a fine number.
   `plan expand`, and inspect dependencies with `ready`. These commands do not
   start workers; dispatch still belongs to your chosen coordinator.
 - `nova-swarm native` shares Go module and build caches across slots under the
-  same root. `nova-ci slowtests` reports packages over your chosen time budget.
+  same root. `nova-ci slowtests` reports packages over your chosen whole-second
+  time budget; cached tests may finish near zero, so use uncached events when
+  the question is how long the tests really take.
+- Keep a bounded coordination loop outside the model with `nova-pulse run`, or
+  use `--once` for one tick. The loop coordinates and dispatches work. `status`
+  folds its tick records into convergence windows, `fleet registry` lists the
+  declared machines, and `nova-work set check --ready` derives which units are
+  ready from a bounded work-set file; those three inspect declared or current
+  state without starting workers.
+- Build and check a reviewed outbound policy with `nova-sandbox egress plan`
+  and `check`. Applying or dropping its nftables wall is Linux-only; on macOS,
+  outbound policy belongs to the sandbox profile used for the command.
 - Land a **batch** rather than a pull request at a time: merge the candidates
   onto one tree, prove that tree green, and open the batch as one entry — and ask
   `nova-merge simulate` first, which squash-merges the queue in order in a scratch

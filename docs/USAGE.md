@@ -103,8 +103,8 @@ feature works on that platform** — see `nova-sandbox`'s limits below.
 With **Go 1.26 or newer**, install only the tools you want, pinned to a release:
 
 ```sh
-go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v0.15.1
-go install github.com/mas-bandwidth/nova-tools/cmd/nova-wake@v0.15.1
+go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v0.15.2
+go install github.com/mas-bandwidth/nova-tools/cmd/nova-wake@v0.15.2
 nova-bus version
 nova-wake help
 ```
@@ -165,9 +165,24 @@ bus reads the one roster. `--bus`, `--remote` and `--branch` have no defaults.
 
 **First trial.** **`send` writes a file and pushes to the repository you name.**
 Create a local Git repository of your own and use that as the bus for a first
-run — not a shared one. `nova-bus help` lists the verbs and ends in runnable
-example lines. See [nova-bus in the command reference](CLI.md#nova-bus) for the
-output grammar, the identity rules and what each verb refuses.
+run — not a shared one. The first send needs the push remote and branch you
+choose. This example creates an owned bare repository, names the remote
+`origin`, commits the bus roster, and establishes the branch before sending:
+
+```sh
+git init --bare ../bus-origin.git
+git remote add origin ../bus-origin.git
+git add participants.json
+git commit -m "Start local bus"
+git push -u origin HEAD
+```
+
+Run those lines inside your new bus checkout after writing its
+`participants.json`; the bare repository is only your local push target.
+`nova-bus help` then lists the draft and send lines. Drafting writes the template
+to stdout and its next-step hint to stderr, so redirect only stdout when saving a
+draft. See [nova-bus in the command reference](CLI.md#nova-bus) for the output
+grammar, identity rules and what each verb refuses.
 
 **It worked if** a note you sent from one checkout turns up in your friend's
 inbox. One thing to know: `inbox` reads from your **cursor** and does not
@@ -202,6 +217,17 @@ needs no bus:
 ```sh
 nova-wake quickstart --state ./wake.json --reports <dir>
 ```
+
+Point `<dir>` at a directory containing worker `RESULT.md` files. `quickstart`
+records and prints that first view once. Then wait for the next change with the
+same report directory and state file:
+
+```sh
+nova-wake watch --state ./wake.json --reports <dir> --max 5m --interval 5s --on-deadline report
+```
+
+Use one state file per watch. Bus refresh is a separate mode, not part of this
+local two-step trial.
 
 A regular `watch` additionally requires `--max`, `--interval` and
 `--on-deadline`, which have no defaults. The [first-run transcript](TESTS.md#nova-wake) is
@@ -282,7 +308,11 @@ each result and the evidence behind it.
 **Limits and side effects.** It runs other programs, writes job directories, and
 spends real tokens once workers start. A worker exiting `0` means the process
 succeeded, **not** that the requested work is complete — read the evidence. A
-free worker helps only if its capabilities fit the task.
+free worker helps only if its capabilities fit the task. On macOS, starting
+`nova-sandbox run` from inside an existing sandbox may fail while creating its
+APFS volume because the outer wall does not permit the mount. Use the existing
+wall, or start the disposable volume from outside it; retrying the same nested
+command does not grant the missing mount access.
 
 **It may not help if** your work is mostly sequential, or you have no worker setup
 to point it at yet.
@@ -373,7 +403,11 @@ more than a tidy one that quietly guessed.
 
 **Limits and side effects.** It writes report files. **Missing counters stay
 missing**, and declaring a copied transcript twice can double-count it. Coverage
-is limited to the sources it supports today. Retained records, broader adapters,
+is limited to the sources it supports today. For transcript-backed sources the
+reader scans the supplied transcript tree even when `--day` selects only one
+day's output, so a broad tree can still make a one-day report expensive. A
+reported `usd=0` may mean no price was available for those measured tokens; it
+does not by itself prove the calls were free. Retained records, broader adapters,
 original-bench attribution and Git ledger publication are **being developed
 separately and do not ship** — do not read the current report as a complete
 cross-harness ledger.
@@ -410,7 +444,10 @@ refuses when the running kernel cannot provide it; Windows has no backend and
 refuses rather than pretending. Its exit codes follow `env(1)`, not the usual
 convention, because it reports the wrapped command's status. Read the
 [security guidance](SECURITY.md) and test your policy before trusting it with
-real work.
+real work. The default filesystem wall is not a network wall: without
+`--net-deny`, the receipt says `net=nopromise`. The separate `egress` verbs build
+and audit a reviewed outbound allowlist; applying and dropping that nftables
+wall is Linux-only.
 
 **It may not help if** your machine has no supported backend, or your platform
 already hands you containers.
@@ -509,7 +546,9 @@ mind**: it matches patterns in text, and the writer decides what any of it means
 It catches known **shapes** only — register, irony and quoted-specimen context
 are invisible to grammar, so a quoted verdict is a true positive on the grammar
 and a false one on the meaning. As the tool says on every run, a green clears the
-known shapes, never the file.
+known shapes, never the file. By default it scans every file you name with both
+classes of pattern: `--skip` and `--rule-doc` are empty until you name basenames,
+and it never walks a directory for you.
 
 **It may not help if** you are not writing about yourself.
 
@@ -608,3 +647,9 @@ go test -race ./...
 Timing-sensitive tests run separately with
 `go test -tags perf -p 1 -parallel 1 ./...`; see the
 [build reference](CLI.md#build) for context.
+
+`nova-ci slowtests --budget <seconds>` accepts a whole number at least 1. Feed
+it `go test -json` events from the run you mean to measure; cached packages can
+report near-zero elapsed time. `nova-ci failed` handles the other question by
+reading a named run, pull request, merge-group run or branch through `gh` and
+printing the failing tests and locations instead of the full logs.
