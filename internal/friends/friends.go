@@ -154,105 +154,46 @@ func firstByte(raw []byte) byte {
 	return 0
 }
 
-// parseLisp reads a work set in the SPEC-WORKLANG grammar with the SAME bounded
-// reader `nova-work plan check` uses -- nothing here is evaluated, a dispatch macro
-// is still a refusal at its byte offset, and the three bounds still hold.
+// parseLisp reads a work set in the SPEC-WORKLANG grammar. It does NOT read it: it
+// hands the bytes to worklang.ParseWorkSet, THE reader of that form, and maps what
+// comes back onto this package's Unit.
 //
-// The shape is the one a coordinator writes:
-//
-//	(work-set "id" :title "..." :units ((unit "id" :owner "Stella" :lane "work"
-//	                                           :needs ("a") :deadline "2026-09-18T18:00Z"
-//	                                           :title "...") ...))
-//
-// A key this package does not know is left where it is rather than refused: the work
-// set is a document that outgrows any one reader of it, and a unit with a :pr or a
-// :budget is still a unit an owner can be asked about.
+// There used to be two readers of one grammar -- `nova-work set check` had worklang's
+// and `nova-work ask` had its own, each with its own key list, its own idea of what a
+// unit is and its own stamp parser. A unit one of them read and the other did not was
+// a unit one verb could check and the other could not ask about, and nothing in either
+// file said so. The reader is the language's; everything below is a mapping.
 func parseLisp(path string, raw []byte, maxBytes int64) (*WorkSet, error) {
 	limits := worklang.DefaultLimits()
 	if maxBytes > 0 {
 		limits.MaxBytes = int(maxBytes)
 	}
-	root, err := worklang.Read(path, raw, limits)
+	set, err := worklang.ParseWorkSet(path, raw, limits)
 	if err != nil {
 		return nil, err
 	}
-	if root.Kind != worklang.List || len(root.List) == 0 || !isSymbol(root.List[0], "work-set") {
-		return nil, fmt.Errorf("%s is not a work set: the top form must be (work-set \"id\" ... :units (...))", path)
-	}
-	var units []worklang.Form
-	body := root.List[1:]
-	for i := 0; i < len(body); i++ {
-		if body[i].IsKeyword("units") {
-			if i+1 >= len(body) || body[i+1].Kind != worklang.List {
-				return nil, fmt.Errorf("%s: :units has no list of units; refusing to guess", path)
-			}
-			units = body[i+1].List
-			break
-		}
-	}
-	if units == nil {
-		return nil, fmt.Errorf("%s: the work set carries no :units", path)
-	}
 	ws := &WorkSet{Lisp: true}
-	for _, form := range units {
-		if form.Kind != worklang.List || len(form.List) < 2 || !isSymbol(form.List[0], "unit") {
+	for _, u := range set.Units {
+		if u.ID == "" {
+			// A member that is not a (unit "id" ...) is a FINDING of `set check`, which is the
+			// verb that reports on the content of a set. Here it is skipped: an ask needs a
+			// unit to name, and there is no name.
 			continue
 		}
-		u := Unit{ID: form.List[1].Text(), Source: path}
-		rest := form.List[2:]
-		for i := 0; i+1 < len(rest); i += 2 {
-			key, val := rest[i], rest[i+1]
-			if key.Kind != worklang.Keyword {
-				break
-			}
-			switch key.Value {
-			case "title":
-				u.Title = val.Text()
-			case "owner":
-				u.Owner = val.Text()
-			case "lane":
-				u.Lane = val.Text()
-			case "branch":
-				u.Branch = val.Text()
-			case "needs":
-				u.Needs = texts(val)
-			case "acceptance":
-				u.Acceptance = texts(val)
-			case "deadline":
-				at, err := ParseStamp(val.Text())
-				if err != nil {
-					return nil, fmt.Errorf("%s: unit %q has a :deadline this reader cannot read: %w", path, u.ID, err)
-				}
-				u.Deadline = Stamp{Time: at}
-			}
+		unit := Unit{
+			ID: u.ID, Title: u.Title, Owner: u.Owner, Lane: u.Lane,
+			Branch: u.Branch, Needs: u.Needs, Acceptance: u.Acceptance, Source: path,
 		}
-		if u.ID != "" {
-			ws.Units = append(ws.Units, u)
+		if u.Deadline != "" {
+			at, err := ParseStamp(u.Deadline)
+			if err != nil {
+				return nil, fmt.Errorf("%s: unit %q has a :deadline this reader cannot read: %w", path, u.ID, err)
+			}
+			unit.Deadline = Stamp{Time: at}
 		}
+		ws.Units = append(ws.Units, unit)
 	}
 	return ws, nil
-}
-
-func isSymbol(f worklang.Form, name string) bool {
-	return (f.Kind == worklang.Symbol || f.Kind == worklang.Keyword) && f.Value == name
-}
-
-// texts is a form's strings: one string is one item, a list is its string members,
-// and anything else contributes nothing rather than a guess at its text.
-func texts(f worklang.Form) []string {
-	switch f.Kind {
-	case worklang.String:
-		return []string{f.Value}
-	case worklang.List:
-		var out []string
-		for _, el := range f.List {
-			if el.Kind == worklang.String && el.Value != "" {
-				out = append(out, el.Value)
-			}
-		}
-		return out
-	}
-	return nil
 }
 
 // Stamp is an instant written the way a person writes one. The work set carries
@@ -260,23 +201,11 @@ func texts(f worklang.Form) []string {
 // the full spelling refused a real unit, so both are read and the full one is written.
 type Stamp struct{ time.Time }
 
-// stampForms are what ParseStamp accepts, longest first.
-var stampForms = []string{time.RFC3339, "2006-01-02T15:04Z07:00", "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02"}
-
-// ParseStamp reads any of the spellings above as UTC, and refuses anything else
-// naming what it accepts rather than falling back to a clock.
-func ParseStamp(s string) (time.Time, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Time{}, errors.New("empty stamp")
-	}
-	for _, form := range stampForms {
-		if t, err := time.Parse(form, s); err == nil {
-			return t.UTC(), nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("%q is not an instant; write it as 2026-09-18T18:00:00Z or 2026-09-18T18:00Z", s)
-}
+// ParseStamp is worklang's own, named here so a caller of this package does not have
+// to import the language to read a stamp this package handed it. There is one list of
+// spellings and one parser: a second copy is how the work set came to have two
+// readers that disagreed about which instants were instants.
+func ParseStamp(s string) (time.Time, error) { return worklang.ParseStamp(s) }
 
 // MarshalJSON writes the full RFC3339 spelling, and nothing at all for a zero stamp.
 func (s Stamp) MarshalJSON() ([]byte, error) {
@@ -485,7 +414,20 @@ func Render(spec AskSpec) (string, []string, error) {
 	} else {
 		where = "Reply on the bus"
 	}
-	b.WriteString("\nThis ask was routed to you by machinery, not cut as a card: it is yours because\nthe unit names you as its owner. " + where + " by the deadline above; if it\ncannot be done by then, say so before it rather than after it.\n")
+	// WHY it is yours is a claim about the file, and the person least able to check the
+	// file is the person being told. A unit that carries no :owner -- which is most of
+	// the real work set -- was still told "the unit names you as its owner", which was
+	// not true of any of them. The sentence now says which of the two it is.
+	why := "the unit names you as its owner"
+	switch owner := strings.TrimSpace(spec.Unit.Owner); {
+	case owner == "":
+		why = "it was assigned by " + strings.TrimSpace(spec.From)
+		notices = append(notices, fmt.Sprintf("unit %q names no owner; the note says it was assigned by %s rather than claiming the unit named you", spec.Unit.ID, strings.TrimSpace(spec.From)))
+	case !strings.EqualFold(owner, strings.TrimSpace(spec.Owner)):
+		why = "it was assigned by " + strings.TrimSpace(spec.From)
+		notices = append(notices, fmt.Sprintf("unit %q names %s as its owner, not %s; the note says it was assigned by %s", spec.Unit.ID, owner, strings.TrimSpace(spec.Owner), strings.TrimSpace(spec.From)))
+	}
+	b.WriteString("\nThis ask was routed to you by machinery, not cut as a card: it is yours because\n" + why + ". " + where + " by the deadline above; if it\ncannot be done by then, say so before it rather than after it.\n")
 
 	sk := bus.Skeleton{From: spec.From, To: spec.Owner, Cc: cc, Subject: subject}
 	return sk.RenderWith(b.String()), notices, nil
@@ -614,26 +556,43 @@ const askSubject = "ask "
 // carries its id on a Re line. Nothing here fetches, pushes or reaches the network:
 // what is on disk is what this run has.
 //
-// owner may be empty, which is every friend the sender has an ask out to. max bounds
-// the files read per lane; 0 is all of them.
-func OnBus(busDir, as, owner string, now time.Time, max int) ([]Row, error) {
+// owner may be empty, which is every friend the sender has an ask out to.
+//
+// maxNotes bounds the FILES READ per lane and 0 -- the default -- is every one of
+// them. It is NOT the row bound: `asks --max` says how many rows are printed, and
+// passing it here read the OLDEST fifty files of a 1,734-note lane, found no open ask
+// among them and printed `ASKS n=0`. A bound that hides open asks is worse than a
+// long read, so the bound is separate, it takes the NEWEST notes, and every lane it
+// actually bit is reported so the caller can say so in one line.
+func OnBus(busDir, as, owner string, now time.Time, maxNotes int) ([]Row, []Bounded, error) {
 	c, err := bus.LoadConfig(busDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	me, ok := c.Lookup(as)
 	if !ok {
-		return nil, fmt.Errorf("the roster at %s does not know %q; its names are %s", busDir, as, strings.Join(c.KnownNames(), ", "))
+		return nil, nil, fmt.Errorf("the roster at %s does not know %q; its names are %s", busDir, as, strings.Join(c.KnownNames(), ", "))
 	}
 	var them bus.Participant
 	if owner != "" {
 		if them, ok = c.Lookup(owner); !ok {
-			return nil, fmt.Errorf("the roster at %s does not know %q; its names are %s", busDir, owner, strings.Join(c.KnownNames(), ", "))
+			return nil, nil, fmt.Errorf("the roster at %s does not know %q; its names are %s", busDir, owner, strings.Join(c.KnownNames(), ", "))
 		}
 	}
-	mine, err := laneNotes(busDir, me.Lane, max)
+	var bounds []Bounded
+	read := func(lane string) ([]bus.Note, error) {
+		notes, bound, err := laneNotes(busDir, lane, maxNotes)
+		if err != nil {
+			return nil, err
+		}
+		if bound != nil {
+			bounds = append(bounds, *bound)
+		}
+		return notes, nil
+	}
+	mine, err := read(me.Lane)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// The replies that close an ask: the owner's own lane, or every lane when no owner
 	// was named. A Re naming the ask's id is the answer.
@@ -646,9 +605,9 @@ func OnBus(busDir, as, owner string, now time.Time, max int) ([]Row, error) {
 		if lane == "" || lane == me.Lane {
 			continue
 		}
-		replies, err := laneNotes(busDir, lane, max)
+		replies, err := read(lane)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, n := range replies {
 			for _, re := range n.Header.Re {
@@ -690,43 +649,72 @@ func OnBus(busDir, as, owner string, now time.Time, max int) ([]Row, error) {
 		rows = append(rows, row)
 	}
 	SortOldestFirst(rows)
-	return rows, nil
+	return rows, bounds, nil
 }
 
-// laneNotes parses every note file in one lane directory. A file that will not parse
-// is skipped rather than fatal: a bus with one bad note stays readable, which is the
-// rule every other reader of this bus already keeps.
-func laneNotes(busDir, lane string, max int) ([]bus.Note, error) {
+// Bounded is one lane whose notes were read only to a bound: which lane it was, how
+// many note files it holds and how many of them this run read. A caller prints one
+// line per bound, the way nova-bus's own since-walk names --max-commits, so a short
+// count is never mistaken for a quiet bus.
+//
+// It says the bound BIT, and nothing else. A note that would not parse is skipped by
+// every reader of this bus and is not a bound: reporting one made three lanes of the
+// real bus claim they had been cut short when nobody had asked for a bound at all.
+type Bounded struct {
+	Lane  string
+	Notes int
+	Read  int
+}
+
+// laneNotes parses the note files in one lane directory and answers them with HOW MANY
+// the lane holds, so a caller can tell a bounded read from a complete one. A file that
+// will not parse is skipped rather than fatal: a bus with one bad note stays readable,
+// which is the rule every other reader of this bus already keeps.
+//
+// max is the NEWEST max files, not the first max: a lane's names carry their stamp, so
+// the directory's own order is oldest first and taking the head of it is taking the
+// notes that have already been answered. 0 is every file.
+func laneNotes(busDir, lane string, max int) ([]bus.Note, *Bounded, error) {
 	if lane == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	dir := filepath.Join(busDir, lane)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
-	var out []bus.Note
+	var names []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		if max > 0 && len(out) >= max {
-			break
-		}
-		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		names = append(names, e.Name())
+	}
+	// ReadDir sorts by name and a note's name opens with its stamp, so the tail is the
+	// newest. A bounded read takes that tail, in the same order the whole lane is read in.
+	var bound *Bounded
+	if max > 0 && len(names) > max {
+		bound = &Bounded{Lane: lane, Notes: len(names), Read: max}
+		names = names[len(names)-max:]
+	}
+	var out []bus.Note
+	for _, name := range names {
+		raw, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
-			return nil, err
+			return nil, bound, err
 		}
-		n, err := bus.ParseNote(lane+"/"+e.Name(), string(raw))
+		n, err := bus.ParseNote(lane+"/"+name, string(raw))
 		if err != nil {
+			// A note this reader cannot parse is skipped, as every other reader of this bus
+			// skips it. It is NOT a bound: the run read the whole lane.
 			continue
 		}
 		out = append(out, n)
 	}
-	return out, nil
+	return out, bound, nil
 }
 
 // askKind reads the kind out of an ask's subject, and says no to anything that is not

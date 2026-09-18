@@ -21,7 +21,10 @@ var workAudit = audit.Config{
 	// oneline.Quote is the pasteable third rendering in that package: the resolver is
 	// a command a person can copy out of the READY row and type back in, and Field
 	// would render its space as \x20 and make it unpasteable.
-	Escapers: []string{"oneline.Quote"},
+	// field is set check's own thin wrapper over oneline.Field: the same escape,
+	// with an absent value rendered `-` so that every SET line of one run has the
+	// same shape. It cannot return an unescaped string, so the tripwire counts it.
+	Escapers: []string{"oneline.Quote", "field"},
 	Imports: []string{
 		// buildinfo answers which build this is; its Line renders every field through
 		// oneline.Field itself, and the version print site wraps the result in
@@ -60,6 +63,11 @@ var workAudit = audit.Config{
 		`"context"`,
 		`"github.com/redis/go-redis/v9"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
+		// encoding/json reads set check's --minds registry, which is written in one of
+		// the two JSON shapes a registry of minds already has. It decodes bytes into
+		// names and prints nothing: every name it yields reaches stdout only through an
+		// oneline field on a SET line in this package.
+		`"encoding/json"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,

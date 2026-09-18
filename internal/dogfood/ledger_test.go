@@ -28,7 +28,7 @@ func TestLedgerSaysNobodyForAVerbNoOneHasRun(t *testing.T) {
 	if rows[0].Line() != want {
 		t.Fatalf("row:\n got %q\nwant %q", rows[0].Line(), want)
 	}
-	if summary.Line() != "DOGFOOD OK verbs=1 dogfooded=0 by-nonauthor=0 open-edges=0" {
+	if summary.Line() != "DOGFOOD OK verbs=1 dogfooded=0 by-nonauthor=0 open-edges=0 unfiled=0 unmatched=0" {
 		t.Fatalf("summary %q", summary.Line())
 	}
 }
@@ -121,8 +121,8 @@ func TestLedgerCountsAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
 	if len(rows) != 1 || rows[0].By != "nobody" {
 		t.Fatalf("a receipt for an undeclared verb landed on a row: %q", rows[0].Line())
 	}
-	if summary.Unknown != 1 {
-		t.Fatalf("unknown=%d, want 1; docs drift is a finding, not a silent drop", summary.Unknown)
+	if summary.Unmatched != 1 {
+		t.Fatalf("unmatched=%d, want 1; docs drift is a finding, not a silent drop", summary.Unmatched)
 	}
 }
 
@@ -190,5 +190,125 @@ func TestGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
 	}
 	if summary.ByNonAuthor != 1 || summary.OpenEdges != 0 {
 		t.Fatalf("summary %q", summary.Line())
+	}
+}
+
+// Edge 5 of the 2026-09-18 dogfood pass: `open-edges=0` on a bench whose
+// receipts were full of edges. Every one of them had been written with --ok,
+// because the verb did work, and the edges were in the notes where the family
+// writes them — "Edges: (1) … (2) …" — with no issue filed. A ledger that
+// counts only ok=false says a clean number about a bench that found six things.
+func TestAnEdgeNamedInTheNotesIsAnOpenEdge(t *testing.T) {
+	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
+	r.Notes = "Ran it over the lane's own docs. Edges: (1) it reads only --dir, so one file cannot be checked alone."
+	rows, summary := Ledger(verbs("nova-check links"), []Receipt{r}, nil)
+	if summary.OpenEdges != 1 {
+		t.Fatalf("open-edges=%d, want 1: the notes name an edge", summary.OpenEdges)
+	}
+	if summary.Unfiled != 1 {
+		t.Fatalf("unfiled=%d, want 1: nobody can act on an edge with no issue", summary.Unfiled)
+	}
+	if rows[0].OK != "yes" {
+		t.Fatalf("the verdict was rewritten: %q", rows[0].Line())
+	}
+	if !strings.Contains(summary.Line(), "open-edges=1 unfiled=1") {
+		t.Fatalf("the summary hides the unfiled edges: %q", summary.Line())
+	}
+}
+
+func TestAnEdgeWithAnIssueIsOpenButFiled(t *testing.T) {
+	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 1301)
+	r.Notes = "worked; Edge: the refusal names no remedy"
+	_, summary := Ledger(verbs("nova-check links"), []Receipt{r}, nil)
+	if summary.OpenEdges != 1 || summary.Unfiled != 0 {
+		t.Fatalf("summary %q, want one open edge, filed", summary.Line())
+	}
+}
+
+func TestNotesThatMerelyUseTheWordEdgeAreNotAnEdge(t *testing.T) {
+	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
+	r.Notes = "ran it on the edge of the release; nothing to report"
+	_, summary := Ledger(verbs("nova-check links"), []Receipt{r}, nil)
+	if summary.OpenEdges != 0 {
+		t.Fatalf("open-edges=%d: the marker is `Edge:` or `Edges:`, not the word", summary.OpenEdges)
+	}
+}
+
+func TestALaterCleanRunClosesAnEdgeNamedInTheNotes(t *testing.T) {
+	first := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
+	first.Notes = "Edges: (1) the refusal names no remedy"
+	later := receipt("nova-check links", "Emma", "2026-09-18T11:00:00Z", true, 0)
+	later.Notes = "ran it again on the same tree; clean"
+	_, summary := Ledger(verbs("nova-check links"), []Receipt{first, later}, nil)
+	if summary.OpenEdges != 0 {
+		t.Fatalf("open-edges=%d after a later clean run, want 0", summary.OpenEdges)
+	}
+}
+
+func TestGateSaysNoToAnEdgeNamedOnlyInTheNotes(t *testing.T) {
+	r := receipt("nova-check links", "Stella", "2026-09-18T09:00:00Z", true, 0)
+	r.Notes = "Edge: the refusal names no remedy"
+	findings, _ := Gate(verbs("nova-check links"), []Receipt{r}, nil, false)
+	if len(findings) != 1 || findings[0].Kind != "open-edge" {
+		t.Fatalf("findings %+v, want the open edge", findings)
+	}
+	if !strings.Contains(findings[0].Line(), "no issue filed") {
+		t.Fatalf("the finding does not say the edge was never filed: %q", findings[0].Line())
+	}
+}
+
+// Edge 3: the NOTE said nine receipts matched nothing and named none of them,
+// so nobody could tell which receipt was stranded or how it should have been
+// spelled.
+func TestStrandedReceiptsAreNamedOneByOneWithTheNearestVerb(t *testing.T) {
+	declared := verbs("nova-check dogfood ledger", "nova-check links")
+	got := []Receipt{
+		receipt("nova-check ledger", "Stella", "2026-09-18T09:00:00Z", true, 0),
+		receipt("nova-check links", "Emma", "2026-09-18T09:00:00Z", true, 0),
+	}
+	got[0].File = "/receipts/a.json"
+	strands := Stranded(declared, got)
+	if len(strands) != 1 {
+		t.Fatalf("stranded %+v, want the one receipt naming no declared verb", strands)
+	}
+	if strands[0].File != "/receipts/a.json" {
+		t.Fatalf("the strand does not name its file: %+v", strands[0])
+	}
+	if strands[0].Nearest != "nova-check dogfood ledger" {
+		t.Fatalf("nearest = %q, want the verb it was probably meant to be", strands[0].Nearest)
+	}
+	line := strands[0].Line()
+	for _, want := range []string{"/receipts/a.json", "tool=nova-check", "verb=ledger", "nova-check dogfood ledger"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the strand line %q is missing %q", line, want)
+		}
+	}
+}
+
+func TestNearestPrefersTheSameTool(t *testing.T) {
+	declared := verbs("nova-bus check", "nova-check nocode")
+	if got := Nearest(declared, "nova-check", "nocdoe"); got != "nova-check nocode" {
+		t.Fatalf("nearest = %q, want nova-check nocode", got)
+	}
+	// Nothing close enough is no guess at all: a remedy that named a verb from
+	// a different tool would send a reader further away than silence.
+	if got := Nearest(declared, "nova-elsewhere", "wildly-different-verb"); got != "" {
+		t.Fatalf("nearest = %q, want no guess", got)
+	}
+}
+
+func TestTheBareInvocationPrintsAsADash(t *testing.T) {
+	rows, _ := Ledger([]Verb{{Tool: "nova-decide", Verb: "", Line: 1}}, nil, nil)
+	if !strings.Contains(rows[0].Line(), "verb=- ") {
+		t.Fatalf("a tool with no verb prints as %q; the bare invocation is a unit like any other", rows[0].Line())
+	}
+}
+
+func TestAReceiptCanNameTheBareInvocation(t *testing.T) {
+	declared := []Verb{{Tool: "nova-decide", Verb: "", Line: 1}}
+	r := Receipt{Tool: "nova-decide", Verb: "-", By: "Stella", At: "2026-09-18T09:00:00Z", OK: true, Notes: "one real decision"}
+	_, summary := Ledger(declared, []Receipt{r}, nil)
+	if summary.Dogfooded != 1 {
+		t.Fatalf("a receipt for the bare invocation was stranded: %q", summary.Line())
 	}
 }

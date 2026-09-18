@@ -129,6 +129,8 @@ func hintFor(name string) string {
 		return "  " + rootHint + "\n"
 	case "cli":
 		return "  " + cliHint + "\n"
+	case "tools":
+		return "  " + toolsHint + "\n"
 	case "receipts":
 		return "  " + receiptsHint + "\n"
 	case "tool":

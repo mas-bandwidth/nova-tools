@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -26,10 +27,47 @@ type Receipt struct {
 	OK    bool   `json:"ok"` // did the verb do what the run needed
 	Notes string `json:"notes"`
 	Issue int    `json:"issue,omitempty"` // the edge filed, when there is one
+
+	// File is where this receipt was read from. It is not part of the record —
+	// a receipt does not know its own path — and it is here so a strand can be
+	// NAMED: the dogfood pass of 2026-09-18 was told nine receipts matched
+	// nothing and which nine was left to the reader to work out.
+	File string `json:"-"`
 }
 
-// Key is the verb this receipt is about, in the ledger's identity.
-func (r Receipt) Key() string { return r.Tool + " " + r.Verb }
+// Key is the verb this receipt is about, in the ledger's identity. `--verb -`
+// is the tool's bare invocation and normalizes to the empty verb, so a receipt
+// can name a tool that has no verbs at all.
+func (r Receipt) Key() string { return NormalizeKey(r.Tool, r.Verb) }
+
+// edgeMarker is how the family writes an edge in a note: the word, then a
+// colon. The 2026-09-18 pass wrote "Edges: (1) … (2) …" in six receipts and
+// every one of them was recorded with --ok, because the verb DID work and the
+// edges were beside it. Counting only ok=false said open-edges=0 about a bench
+// that had found six things.
+var edgeMarker = regexp.MustCompile(`(?i)(^|[^a-z])edges?:`)
+
+// RecordsAnEdge reports whether this receipt found something: the verb did not
+// do what the run needed, or the notes name an edge in the shape the family
+// writes them. The prose is not read any further than that marker — what the
+// edge IS stays a human's to read.
+func (r Receipt) RecordsAnEdge() bool {
+	return !r.OK || edgeMarker.MatchString(r.Notes)
+}
+
+// Filed reports whether the edge this receipt records has an issue somebody
+// can act on.
+func (r Receipt) Filed() bool { return r.Issue > 0 }
+
+// Spelling is the verb as a line prints it, with the bare marker for a tool
+// that has no verbs.
+func (r Receipt) Spelling() string {
+	v := strings.TrimSpace(r.Verb)
+	if v == "" || v == BareVerb {
+		return BareVerb
+	}
+	return v
+}
 
 // Time parses At. A receipt that has been through Validate always parses.
 func (r Receipt) Time() time.Time {
@@ -238,6 +276,7 @@ func ReadReceipts(dir string) ([]Receipt, []Failure, error) {
 				failures = append(failures, Failure{Subject: subject, Reason: errs[0].Error()})
 				continue
 			}
+			r.File = subject
 			receipts = append(receipts, r)
 		}
 	}

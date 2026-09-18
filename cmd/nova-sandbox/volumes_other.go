@@ -22,6 +22,7 @@ func noBody() error {
 
 func (noVolumes) Container() (string, error)  { return "", noBody() }
 func (noVolumes) Exists(string) (bool, error) { return false, noBody() }
+func (noVolumes) List() ([]diskVolume, error) { return nil, noBody() }
 func (noVolumes) Create(string, string, string) (diskVolume, error) {
 	return diskVolume{}, noBody()
 }

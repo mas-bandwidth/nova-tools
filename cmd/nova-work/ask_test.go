@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -371,5 +372,114 @@ func TestAsksTakesEitherSourceAndRefusesNeither(t *testing.T) {
 	stderr.Reset()
 	if code := cmdAsks([]string{"--bus", "../../internal/friends/testdata/bus", "--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("--bus without --as must be exit 2, got %d", code)
+	}
+}
+
+// bigLane writes one lane of n notes, of which the newest asks are asks. It is the
+// shape of the real bus that broke `asks` on 2026-09-18: 1,734 notes in one lane, of
+// which everything open was near the end, and a --max that capped the FILES READ read
+// the oldest fifty and printed n=0.
+func bigLane(t *testing.T, notes, asks int) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "participants.json"), []byte(
+		`{"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"},`+
+			`{"name":"Bo","lane":"from-bo","git_name":"Bo","git_email":"bo@example.com"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lane := filepath.Join(dir, "from-ada")
+	if err := os.MkdirAll(lane, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "from-bo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < notes; i++ {
+		// The names sort by their stamp, which is how the lane is ordered on disk: the
+		// newest notes are last, and the asks are among them.
+		at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i) * time.Hour)
+		subject := fmt.Sprintf("a plain note %d", i)
+		slug := "plain"
+		if i >= notes-asks {
+			subject = fmt.Sprintf("ask work: unit %d", i)
+			slug = "ask-work"
+		}
+		body := fmt.Sprintf("Unit: u%d\nKind: work\nDeadline: 2026-12-01T00:00:00Z\n", i)
+		note := fmt.Sprintf("From: Ada\nTo: Bo\nCc: Ada\nDate: %s\nId: ada-%04d\nSubject: %s\n\n%s",
+			at.Format(time.UnixDate), i, subject, body)
+		name := fmt.Sprintf("%s-%s-ada%04d.md", at.Format("2006-01-02T1504Z"), slug, i)
+		if err := os.WriteFile(filepath.Join(lane, name), []byte(note), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func TestAsksMaxBoundsTheRowsPrintedAndNeverTheNotesRead(t *testing.T) {
+	// 60 notes, the newest 10 of which carry 4 asks. At the DEFAULT --max -- which is
+	// smaller than 60 -- every note is still read, so the count is 4 and not 0.
+	bus := bigLane(t, 60, 4)
+	var stdout, stderr bytes.Buffer
+	code := cmdAsks([]string{"--bus", bus, "--as", "Ada", "--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "ASKS n=4 open=4 overdue=0") {
+		t.Fatalf("--max must bound the rows printed, never the notes read:\n%s", out)
+	}
+}
+
+func TestAsksMaxStillBoundsTheRowsWithAMoreLine(t *testing.T) {
+	bus := bigLane(t, 60, 4)
+	var stdout, stderr bytes.Buffer
+	code := cmdAsks([]string{"--bus", bus, "--as", "Ada", "--max", "2", "--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	if strings.Count(out, "ASK id=") != 2 {
+		t.Fatalf("--max 2 prints two rows:\n%s", out)
+	}
+	if !strings.Contains(out, "MORE 2\n") || !strings.Contains(out, "ASKS n=4 open=4 overdue=0") {
+		t.Fatalf("the MORE line and the count must both be right:\n%s", out)
+	}
+}
+
+func TestAsksMaxNotesReadsTheNewestAndSaysItWasBounded(t *testing.T) {
+	// The other half of the rule: a caller may bound the FILES too, but then the files
+	// are the NEWEST ones and one line on stderr names the bound and its remedy, the way
+	// nova-bus inbox names --max-commits.
+	bus := bigLane(t, 60, 4)
+	var stdout, stderr bytes.Buffer
+	code := cmdAsks([]string{"--bus", bus, "--as", "Ada", "--max-notes", "10", "--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "ASKS n=4 open=4 overdue=0") {
+		t.Fatalf("the newest ten notes hold all four asks:\n%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), `ASKS BOUNDED lane=from-ada notes=60 read=10 remedy="raise --max-notes or drop it to read every note"`) {
+		t.Fatalf("a bounded read says so on stderr: %q", stderr.String())
+	}
+	// and the oldest-first bound is what hid them: read the OLDEST ten and there are none.
+	stdout.Reset()
+	stderr.Reset()
+	if code := cmdAsks([]string{"--bus", bus, "--as", "Ada", "--max-notes", "1", "--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "ASKS n=1 ") {
+		t.Fatalf("--max-notes 1 reads the NEWEST note, which is an ask:\n%s", stdout.String())
+	}
+}
+
+func TestAsksRefusesAMaxNotesThatIsNotACount(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := cmdAsks([]string{"--bus", "../../internal/friends/testdata/bus", "--as", "Ada",
+		"--max-notes", "-1", "--now", "2026-09-18T12:00:00Z"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("--max-notes -1 must be exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "max-notes") {
+		t.Fatalf("the refusal must name the flag: %q", stderr.String())
 	}
 }
