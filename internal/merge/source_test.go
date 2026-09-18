@@ -57,6 +57,12 @@ func TestNothingWritesIntoTheClonesWorkTree(t *testing.T) {
 		"state.go":   {{"os.OpenFile(filepath.Join(lane, LogName)", "the lane's log, append-only and never rotated"}},
 		"lock.go":    {{"os.OpenFile(path, os.O_RDWR|os.O_CREATE", "the lock file, whose content is the holder's pid for a waiter's refusal"}},
 		"rebase.go":  {{"os.WriteFile(marker, nil, 0o644)", "the rebase pass's marker, one empty file per pull request already cut, written under --markers and never into a clone"}},
+		// `batch --on` gates on a bench, and the batch comes back over the ssh seam as a
+		// git bundle. This is the one site that writes it down: the path is the caller's
+		// --local-root and never a work tree, and what it holds is a git TRANSPORT file
+		// that git itself then reads into a clone -- so no code here has edited an
+		// entry's content either.
+		"remote.go": {{"f, err := os.Create(localPath)", "SSH.Get: the one file a machine sends back, written where the caller said"}},
 	}
 	used := map[string]int{}
 	for name, src := range packageSource(t) {

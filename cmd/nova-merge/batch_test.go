@@ -129,7 +129,10 @@ func TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember(t *testing.T) {
 	clone := filepath.Join(root, "integration-2", "repo")
 	base := l.git(l.work, "rev-parse", "dev")
 	head := l.git(clone, "rev-parse", "refs/heads/rowan/integration-2")
-	want := fmt.Sprintf("BATCH OK name=integration-2 base=%s head=%s members=1 dropped=2 skipped=lisp checks=required\n", base, head)
+	// `on=local` is the machine the gate ran on: this one. A gate a bench ran carries that
+	// bench's name there instead (`--on hulk`, batchon.go), and a receipt that did not say
+	// which machine judged the tree would be evidence about a run nobody can place.
+	want := fmt.Sprintf("BATCH OK name=integration-2 base=%s head=%s members=1 dropped=2 skipped=lisp checks=required on=local\n", base, head)
 	if !strings.Contains(stdout, want) {
 		t.Errorf("want the one-line shape\n\t%s\ngot:\n%s", want, stdout)
 	}

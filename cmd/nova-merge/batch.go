@@ -221,6 +221,12 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	halves := f.fs.Int("halves", batchPlanHalves, "")
 	maxMembers := f.fs.Int("max-members", batchPlanMaxMembers, "")
 	asJSON := f.fs.Bool("json", false, "")
+	// --on IS THE SEAM (batchon.go): the clone, the merges and the whole suite run on that
+	// machine over ssh, and every step that touches the forge stays here, where the
+	// credential is. Without it this verb is what it has always been, on this machine.
+	on := f.fs.String("on", "", "")
+	machines := f.fs.String("machines", batchMachines, "")
+	localRoot := f.fs.String("local-root", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -316,6 +322,27 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 			}
 		}
 	}
+	// --on AND ITS TWO COMPANIONS. The machine is a name in the registry and nothing else
+	// (batchon.go reads it); what is checked here is that the three flags go together, and
+	// that a caller who named a machine also named where the batch comes back to.
+	if strings.TrimSpace(*on) != "" {
+		if *plan {
+			f.problem("--plan and --on do not go together: the plan asks git which diffs go together and runs no step of the suite, so it needs no bench; run the PLAN here and the gate it prints --on the machine")
+		}
+		if !safepath.NameOK(strings.TrimSpace(*on)) {
+			f.problem(fmt.Sprintf("--on is one machine's name as the registry writes it, like hulk or vision, got %q", *on))
+		}
+		f.require("local-root", *localRoot, "the directory ON THIS MACHINE the batch comes back to: --root is a path on the machine the gate runs on, and its home is not this one's")
+	} else {
+		for _, bad := range []struct{ name, why string }{
+			{"local-root", "--local-root is where a batch built on another machine comes back to, and a gate on this machine never leaves it"},
+			{"machines", "--machines is the registry --on looks a machine's ssh target and roles up in, and without --on no machine is looked up"},
+		} {
+			if given[bad.name] {
+				f.problem("--" + bad.name + " belongs to --on: " + bad.why)
+			}
+		}
+	}
 	if !f.done(stderr) {
 		return 2
 	}
@@ -349,6 +376,9 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		flakes:       flakes,
 		interval:     interval,
 		rounds:       *maxRounds,
+		on:           strings.TrimSpace(*on),
+		machines:     strings.TrimSpace(*machines),
+		localRoot:    strings.TrimSpace(*localRoot),
 	}, stdout, stderr, deps)
 }
 
@@ -371,55 +401,30 @@ type batchRun struct {
 	flakes   merge.Flakes
 	interval time.Duration
 	rounds   int
+	// The seam (--on), which is empty for a gate on this machine. machines is the registry
+	// the name is looked up in and localRoot is where the batch comes back to; both are
+	// meaningless without it and are refused beside a run without it.
+	on        string
+	machines  string
+	localRoot string
 }
 
 func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	start := time.Now()
-	rootAbs, err := filepath.Abs(in.root)
+	// WHERE THE GATE RUNS IS SETTLED FIRST, and after this line the run below reads the
+	// same whichever machine that is (batchsite.go). Everything the site does is the clone,
+	// the merges and the suite; every forge call in this function is on THIS machine.
+	site, err := newBatchSite(in, deps)
 	if err != nil {
 		return batchRefused(stderr, err)
-	}
-	if err := os.MkdirAll(rootAbs, 0o755); err != nil {
-		return batchRefused(stderr, err)
-	}
-	// THE WORKING DIRECTORY IS REBUILT EVERY RUN, so a batch never merges on top of a
-	// tree an earlier one left half-merged. It is a path this tool COMPUTED, so its
-	// removal is safepath's and nobody else's: Glenn, 2026-09-17, "it is just one mistake
-	// away from deleting the whole disk".
-	work := filepath.Join(rootAbs, in.name)
-	if err := safepath.RemoveUnder(rootAbs, work); err != nil {
-		return batchRefused(stderr, err)
-	}
-	tmp := filepath.Join(work, "tmp")
-	if err := os.MkdirAll(tmp, 0o755); err != nil {
-		return batchRefused(stderr, err)
-	}
-	clone := filepath.Join(work, "repo")
-	cloneArgs := []string{"clone", "--quiet"}
-	if strings.TrimSpace(in.reference) != "" {
-		// A mirror on this bench makes the clone local rather than a download. It is an
-		// optimisation and never a requirement: without it the clone is an ordinary one.
-		cloneArgs = append(cloneArgs, "--reference", in.reference)
-	}
-	// `--` before the URL, so a URL beginning with a dash is a URL and not an option.
-	cloneArgs = append(cloneArgs, "--", deps.RepoURL(in.repo), clone)
-	if _, err := merge.NewGit(work, in.timeout, deps.Runner).Run(cloneArgs...); err != nil {
-		return batchRefused(stderr, err)
-	}
-	g := merge.NewGit(clone, in.timeout, deps.Runner)
-	if _, err := g.Run("fetch", "--quiet", "origin", in.base); err != nil {
-		return batchRefused(stderr, fmt.Errorf("could not fetch origin/%s: %w", in.base, err))
 	}
 	branch := "rowan/" + in.name
-	if _, err := g.Run("checkout", "--quiet", "-B", branch, "FETCH_HEAD"); err != nil {
-		return batchRefused(stderr, fmt.Errorf("could not start %s at origin/%s: %w", branch, in.base, err))
-	}
-	baseSHA, err := g.Out("rev-parse", "HEAD")
+	baseSHA, err := site.Start(in.base, branch)
 	if err != nil {
 		return batchRefused(stderr, err)
 	}
-	fmt.Fprintf(stderr, "BATCH START name=%s base=%s prs=%d t=%.1fs\n",
-		oneline.Field(in.name), oneline.Field(baseSHA), len(in.prs), since(start))
+	fmt.Fprintf(stderr, "BATCH START name=%s base=%s prs=%d t=%.1fs on=%s\n",
+		oneline.Field(in.name), oneline.Field(baseSHA), len(in.prs), since(start), oneline.Field(site.On()))
 
 	// EDGE 1: THE TOOLCHAIN IS CHECKED BEFORE THE FIRST MERGE, NOT DISCOVERED IN A STEP.
 	// With go1.22 on PATH and a go.mod asking for 1.26 the whole gate ran, the build step
@@ -427,7 +432,7 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	// go1.26 (linux/amd64)"` -- a NOTICE, not an error, naming no remedy, after minutes
 	// of merging. The requirement is a fact of the tree, so this is the earliest point it
 	// can be known at all: the base is checked out and nothing has been merged yet.
-	if code := checkToolchain(clone, stderr); code != 0 {
+	if code := checkToolchain(site, stderr); code != 0 {
 		return code
 	}
 
@@ -435,32 +440,27 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	if code != 0 {
 		return code
 	}
-	members, dropped, code := mergeMembers(g, in, prs, stderr, start)
+	members, dropped, code := mergeMembers(site, in, prs, stderr, start)
 	if code != 0 {
 		return code
 	}
 	dropped = append(prechecked, dropped...)
-	headSHA, err := g.Out("rev-parse", "HEAD")
+	headSHA, err := site.Head()
 	if err != nil {
 		return batchRefused(stderr, err)
 	}
 
-	env := ciTestEnv(tmp, in.gomaxprocs)
 	// EDGE 2: THE SKIPPED STEPS ARE ON THE VERDICT LINE. `BATCH SKIP lisp reason="sbcl is
 	// not on this machine"` went to stderr and `BATCH OK` said nothing about it, so the
 	// one line a caller parses claimed a green gate over a suite that ran three of its
 	// four steps. Every skip is named on the verdict line, green or red, and
 	// --require-lisp turns the skip into a failure for a caller who needs that step run.
 	var skipped []string
-	type ready struct {
-		step batchStep
-		bin  string
-	}
-	var plan []ready
+	var plan []batchStep
 	for _, step := range batchGate {
-		why, bin := stepUnavailable(step, clone)
+		why := site.Unavailable(step)
 		if why == "" {
-			plan = append(plan, ready{step: step, bin: bin})
+			plan = append(plan, step)
 			continue
 		}
 		if step.name == "lisp" && in.requireLisp {
@@ -470,13 +470,14 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 			return 1
 		}
 		skipped = append(skipped, step.name)
-		fmt.Fprintf(stderr, "BATCH SKIP %s reason=%q t=%.1fs\n", oneline.Field(step.name), why, since(start))
+		fmt.Fprintf(stderr, "BATCH SKIP %s reason=%q t=%.1fs on=%s\n",
+			oneline.Field(step.name), why, since(start), oneline.Field(site.On()))
 	}
 	line := batchLine(in, baseSHA, headSHA, members, dropped, skipped)
-	for _, r := range plan {
-		step := r.step
-		fmt.Fprintf(stderr, "BATCH STEP %s command=%q t=%.1fs\n", oneline.Field(step.name), step.command, since(start))
-		out, err := runCheck(clone, step.command, in.timeout, append(withBin(env, r.bin), step.env...))
+	for _, step := range plan {
+		fmt.Fprintf(stderr, "BATCH STEP %s command=%q t=%.1fs on=%s\n",
+			oneline.Field(step.name), step.command, since(start), oneline.Field(site.On()))
+		out, err := site.Step(step)
 		if err == nil {
 			continue
 		}
@@ -486,14 +487,29 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 			oneline.Cap(reason, oneline.TailBytes))
 		return 1
 	}
+	// THE BATCH COMES BACK BEFORE THE VERDICT IS PRINTED, when it was built somewhere else.
+	// A green line about a tree this machine cannot reach is a receipt nobody can act on,
+	// and the run that finds that out should be the run that built it.
+	bundle, size, err := site.Bring(branch, baseSHA, headSHA)
+	if err != nil {
+		return batchRefused(stderr, err)
+	}
+	if bundle != "" {
+		fmt.Fprintf(stderr, "BATCH BUNDLE name=%s head=%s bytes=%d file=%s t=%.1fs on=%s\n",
+			oneline.Field(in.name), oneline.Field(headSHA), size, oneline.Field(bundle), since(start), oneline.Field(site.On()))
+	}
 	fmt.Fprintf(stdout, "BATCH OK %s\n", line)
 	if !in.land {
 		return 0
 	}
 	// THE GATE IS GREEN AND THE RECEIPT IS PRINTED. Everything after this point touches the
 	// forge, and it is the same run rather than a second verb precisely so that the receipt
-	// handed to the one door is the line above, over the tree in this clone, and not a line
-	// somebody retyped.
+	// handed to the one door is the line above, over the tree the gate built, and not a line
+	// somebody retyped. The clone it pushes from is on THIS machine whatever the site was.
+	clone, err := site.Clone()
+	if err != nil {
+		return batchRefused(stderr, err)
+	}
 	return runBatchLand(landPhase{
 		in:       in,
 		receipt:  "BATCH OK " + line,
@@ -509,11 +525,24 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 }
 
 // batchLine is the fields every verdict line carries, green or red.
+// THE MACHINE IS ON THE VERDICT LINE for edge 2's reason carried one step further: the
+// green says this tree built, vetted, tested and ran the lisp suite ON ONE MACHINE, and
+// which machine is part of what was checked. `on=local` is a gate on the machine that
+// printed it; `on=hulk` is a gate a bench ran and this machine only read.
 func batchLine(in batchRun, baseSHA, headSHA string, members, dropped []int, skipped []string) string {
-	return fmt.Sprintf("name=%s base=%s head=%s members=%s dropped=%s skipped=%s checks=%s",
+	return fmt.Sprintf("name=%s base=%s head=%s members=%s dropped=%s skipped=%s checks=%s on=%s",
 		oneline.Field(in.name), oneline.Field(baseSHA), oneline.Field(headSHA),
 		oneline.Field(numberList(members)), oneline.Field(numberList(dropped)),
-		oneline.Field(numberOrNone(skipped)), oneline.Field(checksWord(in)))
+		oneline.Field(numberOrNone(skipped)), oneline.Field(checksWord(in)), oneline.Field(batchOn(in)))
+}
+
+// batchOn is what the lines call the machine the gate ran on: the registry name --on
+// carries, and the literal "local" when the gate ran here.
+func batchOn(in batchRun) string {
+	if in.on == "" {
+		return localOn
+	}
+	return in.on
 }
 
 // checksWord is what the verdict line says about edge 25's admission: `required` when
@@ -673,33 +702,21 @@ func withBin(env []string, bin string) []string {
 // is the order they will land. A head that will not merge is dropped and said out loud,
 // and the members after it are still judged -- on the tree without it, which is the tree
 // that would land.
-func mergeMembers(g *merge.Git, in batchRun, prs []int, stderr io.Writer, start time.Time) (members, dropped []int, code int) {
+func mergeMembers(site batchSite, in batchRun, prs []int, stderr io.Writer, start time.Time) (members, dropped []int, code int) {
 	for _, n := range prs {
-		if _, err := g.Run("fetch", "--quiet", "origin", "pull/"+strconv.Itoa(n)+"/head"); err != nil {
-			return nil, nil, batchRefused(stderr, fmt.Errorf("could not fetch pull/%d/head: %w", n, err))
-		}
-		// The merge writes a commit object, so it carries nova-merge's own identity: a CI
-		// runner has no git identity anywhere and `git merge --no-ff` there dies with
-		// "Committer identity unknown" (the Ubuntu leg of #57).
 		message := fmt.Sprintf("merge pull request #%d into %s", n, in.name)
-		_, err := g.Run(merge.Identity("merge", "--no-ff", "--no-edit", "-m", message, "FETCH_HEAD")...)
-		if err == nil {
+		merged, err := site.Merge(n, message)
+		if err != nil {
+			return nil, nil, batchRefused(stderr, err)
+		}
+		if merged {
 			members = append(members, n)
-			fmt.Fprintf(stderr, "BATCH MERGED #%d t=%.1fs\n", n, since(start))
+			fmt.Fprintf(stderr, "BATCH MERGED #%d t=%.1fs on=%s\n", n, since(start), oneline.Field(site.On()))
 			continue
 		}
-		unmerged, cerr := hasConflicts(g)
-		if cerr != nil {
-			return nil, nil, batchRefused(stderr, cerr)
-		}
-		if !unmerged {
-			return nil, nil, batchRefused(stderr, fmt.Errorf("the merge of pull/%d failed and left no conflicting file: %w", n, err))
-		}
-		if _, aerr := g.Run("merge", "--abort"); aerr != nil {
-			return nil, nil, batchRefused(stderr, aerr)
-		}
 		dropped = append(dropped, n)
-		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", n, "the merge conflicts with the members ahead", since(start))
+		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs on=%s\n", n,
+			"the merge conflicts with the members ahead", since(start), oneline.Field(site.On()))
 	}
 	return members, dropped, 0
 }
@@ -718,25 +735,35 @@ var goVersionLine = regexp.MustCompile(`go([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
 // fetched another one is a gate whose answer nobody can reproduce. A tree with no go.mod,
 // no `go` directive, or a `go` this tool could not run at all is left alone: this check
 // refuses what it KNOWS is wrong and never guesses.
-func checkToolchain(clone string, stderr io.Writer) int {
-	raw, err := os.ReadFile(filepath.Join(clone, "go.mod"))
-	if err != nil {
+// IT IS THE SITE'S MACHINE THAT IS CHECKED, not this one. With --on, the go that matters is
+// the bench's -- this machine's go is not going to build anything -- so both halves of the
+// question are asked through the site: the tree's own go.mod, and what `go version` says
+// where the steps will run.
+func checkToolchain(site batchSite, stderr io.Writer) int {
+	raw, ok := site.Read("go.mod")
+	if !ok {
 		return 0
 	}
-	m := goDirective.FindStringSubmatch(string(raw))
+	m := goDirective.FindStringSubmatch(raw)
 	if m == nil {
 		return 0
 	}
 	want := m[1]
-	cmd := exec.Command("go", "version")
-	// goenv.Clean like every other go command this binary runs: a caller's GOFLAGS can
-	// change what an inner go command prints, and this reads what it printed.
-	cmd.Env = goenv.Clean(os.Environ())
-	out, err := cmd.Output()
-	if err != nil {
+	// goenv.Clean like every other go command this binary runs -- the site's own
+	// environment does it, locally in Go and on a bench in the prelude -- because a
+	// caller's GOFLAGS can change what an inner go command prints, and this reads what it
+	// printed.
+	// GOTOOLCHAIN=local ON THE PROBE ITSELF, because the probe runs IN THE CHECKOUT and the
+	// checkout is the very tree whose go.mod asks for a version this machine may not have.
+	// Without it the go command reads that directive, tries to become that toolchain, and
+	// answers `go: invalid GOTOOLCHAIN "go99.1"` -- so the one question this check exists to
+	// ask, which go is here, would go unanswered on exactly the tree that needed asking.
+	// It is also the answer: the gate never downloads a toolchain.
+	out, ok := site.Probe("GOTOOLCHAIN=local go version")
+	if !ok {
 		return 0
 	}
-	v := goVersionLine.FindStringSubmatch(string(out))
+	v := goVersionLine.FindStringSubmatch(out)
 	if v == nil {
 		return 0
 	}
@@ -745,8 +772,8 @@ func checkToolchain(clone string, stderr io.Writer) int {
 		return 0
 	}
 	return batchRefused(stderr, fmt.Errorf(
-		"this machine's go is go%s and %s asks for go%s; put a go%s or newer on PATH -- on this fleet that is ~/sdk/go%s*/bin -- and run this again. The gate does not download a toolchain: a verdict a bench reached with a compiler it fetched mid-run is a verdict nobody can reproduce",
-		have, filepath.Join(clone, "go.mod"), want, want, want))
+		"the go on %s is go%s and this tree's go.mod asks for go%s; put a go%s or newer on that machine's PATH -- on this fleet that is ~/sdk/go%s*/bin -- and run this again. The gate does not download a toolchain: a verdict a bench reached with a compiler it fetched mid-run is a verdict nobody can reproduce",
+		site.On(), have, want, want, want))
 }
 
 // olderThan compares two dotted go versions numerically, so go1.9 is older than go1.22

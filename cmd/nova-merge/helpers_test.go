@@ -144,6 +144,9 @@ type lab struct {
 	// heads is the batch fixture's pull request heads by number, so a batch test can
 	// say what the FORGE thinks of one member's own head (edge 25).
 	heads map[int]string
+	// bench is the machine `batch --on` reaches, when a test named one: a fake bench that
+	// answers the same scripts a real one answers, without an ssh (batchon_test.go).
+	bench merge.Remote
 }
 
 func newLab(t *testing.T) *lab {
@@ -372,8 +375,12 @@ func (l *lab) deps() Deps {
 			return nil
 		},
 		NewRebaseList: func(string, time.Duration) merge.RebaseList { return l.host },
-		Launcher:      l.launcher,
-		BuildID:       func() string { return l.build },
+		// `batch --on`'s machine. A test that named no bench gets none: the seam is only
+		// ever reached through --on, and a nil here would be a test that asked for a
+		// remote gate without saying where.
+		NewRemote: func(string, string) merge.Remote { return l.bench },
+		Launcher:  l.launcher,
+		BuildID:   func() string { return l.build },
 		// react's two edges. Dial is the caller's own address -- every react test
 		// hands it a miniredis of its own -- and the forge is the fake.
 		Dial: func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },

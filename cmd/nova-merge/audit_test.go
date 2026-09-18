@@ -138,6 +138,13 @@ var mergeAudit = audit.Config{
 		// Parse decodes newline-delimited JSON into structs and returns them, and the
 		// package and test names it returns reach a line through oneline.Field.
 		`"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"`,
+		// internal/fleet is `batch --on`'s reading of the machines registry: which machine
+		// a name is, whether it may take work at all (the lock of 2026-09-18 -- a runner
+		// host is CI-only), and its ssh target. It holds no writer of its own --
+		// ReadRegistry parses a TSV into structs and RequireBench returns a *Refusal -- and
+		// that error reaches a line through oneline.Err at the one place this verb prints
+		// it, which is BATCH REFUSED.
+		`"github.com/mas-bandwidth/nova-tools/internal/fleet"`,
 		// regexp holds no writer of its own: batch.go uses it to read a go.mod's `go`
 		// directive, the version `go version` printed, and the `go: downloading ...`
 		// notices it drops off the front of a failing step's output. Match and

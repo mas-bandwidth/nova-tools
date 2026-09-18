@@ -290,6 +290,12 @@ type Deps struct {
 	// NewEnqueueHost and Enqueuer.Enqueue, and a seam that cannot enqueue cannot be talked
 	// into enqueueing.
 	NewLandForge func(repo string, timeout time.Duration) merge.LandForge
+	// NewRemote is `batch --on`'s edge: the machine the gate's clone, merges and suite run
+	// on, reached over ssh. It is a seam so that the tests drive a FAKE BENCH -- one that
+	// answers the same scripts on this machine, out of a bare fixture repository -- and no
+	// test of this binary opens an ssh connection. It reaches NO FORGE and it cannot: the
+	// credential half of a batch stays on the machine this process runs on.
+	NewRemote func(machine, target string) merge.Remote
 	// NewQueue reads the live merge queue for `simulate --entries`-less runs. It is a
 	// field so the tests hand it a fake queue and reach no network.
 	NewQueue func(repo string, timeout time.Duration) QueueReader
@@ -326,6 +332,9 @@ func production() Deps {
 		},
 		NewLandForge: func(repo string, timeout time.Duration) merge.LandForge {
 			return merge.NewGH(repo, timeout, nil)
+		},
+		NewRemote: func(machine, target string) merge.Remote {
+			return merge.NewSSH(machine, target)
 		},
 		NewQueue: func(repo string, timeout time.Duration) QueueReader {
 			return newGHQueue(repo, timeout, nil)

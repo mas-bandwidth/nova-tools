@@ -1070,7 +1070,7 @@ skip and every parked poison**.
 ### batch
 
 ```
-nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>] [--land [--flakes <file>] [--max-rounds <n>] [--interval <duration>]]
+nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--on <machine> --local-root <dir> [--machines <file>]] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>] [--land [--flakes <file>] [--max-rounds <n>] [--interval <duration>]]
 nova-merge batch --plan --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--halves <k>] [--max-members <n>] [--json]
 ```
 
@@ -1080,12 +1080,13 @@ nova-merge batch --plan --name <name> --pr <list> --repo <owner>/<name> --root <
 `build`, `vet`, `vet-windows`, `test`, `lisp` — over what is left.
 
 ```
-BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived>
+BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived> on=<machine|local>
 BATCH FAIL <the same fields> step=<name> packages=<list> tests=<list> reason="<the first line that is not a notice>"
 BATCH DROP #<n> reason="the merge conflicts with the members ahead"
 BATCH DROP #<n> reason="head <sha> has no green ci-ok (state=<pending|failure|none>)"
 BATCH SKIP <step> reason="<why it could not run>"
 BATCH STEP <step> command="<what it runs>"
+BATCH BUNDLE name=<name> head=<sha> bytes=<n> file=<path>
 BATCH NOTE checks=waived reason="<what the caller took on>"
 BATCH NOTE #<n> checks=<batch-branch|receipt> reason="<the gate's own evidence for this member>"
 BATCH REFUSED: <reason>
@@ -1119,6 +1120,56 @@ member of the next one. `--no-require-checks` waives the whole check and says so
 build-level half of the same class on the bench, in seconds, with no second machine; it
 does not catch a windows-only **test** failure, which is what the forge's own windows
 leg is for.
+
+**Every line carries `on=<machine>`**, and so does the verdict: `on=local` is a gate this
+machine ran, and `on=hulk` is one a bench ran and this machine only read. A receipt that
+did not say which machine judged the tree would be evidence about a run nobody can place.
+
+#### `--on <machine>`: the gate on a bench, the forge here
+
+```
+nova-merge batch --on <machine> --local-root <dir> [--machines <file>] …
+```
+
+**The gate wants cores and the forge wants a credential, and they are not on one machine.**
+hulk has 64 cores and the fleet toolchain under `~/sdk`; the Studio's 32 are Glenn's. But a
+bench holds **no forge credential and no `gh`** — secrets are sealed once in the store and
+never copied between machines — so on a bench `--plan`, `checks=required` and `--land` all
+refuse. On 2026-09-18 every landing child ran the gate over ssh by hand, read the `BATCH OK`
+line off a terminal, and did the forge half from the Studio. Eight times.
+
+`--on` is that dance as one verb, split exactly where the hand split it:
+
+| on the machine | on this machine |
+| --- | --- |
+| the clone, the merges in order, `build`, `vet`, `vet-windows`, `test`, `lisp`, the bundle | every member's own `ci-ok`, `--plan`, the push, the pull request, the one door, the queue watch, the members' closes |
+
+- **`--root` is a path on THAT machine** and may be written `~/…` for its home, which the
+  machine's own shell answers — the tilde crosses the seam unexpanded, because the home it
+  names is the bench's and not this one's. It is held to a strict shape: absolute or `~/`,
+  at least two elements deep, no `..`, and letters, digits, dot, dash, underscore and slash
+  only. The gate **removes** its own working directory there before it rebuilds it.
+- **`--local-root` is where the batch comes back to**, on this machine, and it is required
+  with `--on`: `--root` names a directory on another machine's disk.
+- **`--machines`** is the fleet registry (default `queue/control/machines.tsv`), read for
+  the machine's ssh target and its roles. A name that is not a machine, or one that may not
+  take work — the lock of 2026-09-18: a runner host is CI-only — is `BATCH REFUSED` **on the
+  name, before any ssh**, so a refused machine is never connected to.
+- **The batch crosses back as a git bundle**, which is what the landing children carried by
+  hand: the batch's own commits, prerequisite the base the gate started from. It comes over
+  on **every** green gate and not only before a landing — a batch that cannot cross the seam
+  is a batch nobody can push — and what comes back is checked to be a bundle at the seam
+  rather than ten minutes later by `git fetch`. `--land` then clones here, feeds that bundle
+  in, and pushes from this machine.
+- **The machine's own toolchain is used**: every step runs under a prelude that puts
+  `~/sdk/*/bin` in front of `PATH`, newest by name, and unsets `GOFLAGS` and the `GOTEST*`
+  family (internal/goenv's `Clean`, written as the shell). A non-interactive ssh gets
+  whatever the machine's rc file happens to export, and a gate that ran against the
+  distribution's go1.22 because a login shell was not involved is a gate that refuses a tree
+  CI builds. Edge 1's toolchain check asks **that** machine's `go`.
+- `--on` and `--plan` do not go together: the plan asks git which diffs go together and runs
+  no step of the suite, so it needs no bench. Run the plan here and the gate it prints
+  `--on` the machine.
 
 #### `--plan`: the arithmetic in front of the gate
 
