@@ -32,6 +32,16 @@ type ManagerInput struct {
 	As     string // the name this shift waits and receipts as
 	Hours  float64
 	Max    int
+	// Once runs exactly one cycle and ends the shift. --hours 0 was the only one-cycle
+	// door and it is a DURATION, so a reader had to know that 0 hours means one cycle
+	// rather than none (the manager dogfood, edge 6).
+	Once bool
+	// DryRun reads everything and changes nothing: no bus advance, no receipt, no push,
+	// no PR, no lane, no card moved, cut or released. The counts are what the cycle WOULD
+	// have done, and the line carries dry-run=yes.
+	DryRun bool
+	// Locked says this shift runs inside a caller already holding the queue's lock.
+	Locked bool
 	Stdout io.Writer
 	Stderr io.Writer
 	Now    func() time.Time
@@ -140,9 +150,14 @@ type manager struct {
 	// per-cycle
 	out                                                         *boundedList
 	notes, receipts, harvested, prs, merged, requeued, refilled int
+	released, gated                                             int
 	escalatedNow                                                int
 	called                                                      bool // any child ran this cycle beyond the bus wait
 }
+
+// writes says whether this cycle may change anything. Under --dry-run it never may, and
+// every door a change goes through asks here first.
+func (m *manager) writes() bool { return !m.in.DryRun }
 
 // Manager runs one bounded shift: 0 when it ended by itself, 2 on a refusal that never started.
 func Manager(in ManagerInput) int {
@@ -164,7 +179,7 @@ func Manager(in ManagerInput) int {
 		}
 	}
 	if in.Hours < 0 {
-		return refusal(in.Stderr, "MANAGER", fmt.Errorf("--hours is 0 or more, got %v (0 runs exactly one cycle)", in.Hours))
+		return refusal(in.Stderr, "MANAGER", fmt.Errorf("--hours is 0 or more, got %v (0 runs exactly one cycle, as --once does)", in.Hours))
 	}
 	pol, err := readPolicy(in.Policy)
 	if err != nil {
@@ -175,6 +190,16 @@ func Manager(in ManagerInput) int {
 		if err := os.MkdirAll(filepath.Join(in.Queue, d), 0o755); err != nil {
 			return refusal(in.Stderr, "MANAGER", fmt.Errorf("cannot make %s: %s", filepath.Join(in.Queue, d), oneline.Err(err)))
 		}
+	}
+	// ONE WRITER PER QUEUE (queuelock.go). The shift hands out card numbers from
+	// <queue>/NEXT with a read-modify-write and moves cards between the directories; two
+	// shifts on one queue hand the same number to two cards.
+	if !in.Locked && m.writes() {
+		lock, err := LockQueue(in.Queue, "manager")
+		if err != nil {
+			return refusal(in.Stderr, "MANAGER", err)
+		}
+		defer lock.Release()
 	}
 	return m.shift()
 }
@@ -193,7 +218,7 @@ func (m *manager) shift() int {
 		} else {
 			failures = 0
 		}
-		if !m.now().Before(end) {
+		if m.in.Once || !m.now().Before(end) {
 			break
 		}
 	}
@@ -207,22 +232,91 @@ func (m *manager) shift() int {
 func (m *manager) cycle() bool {
 	m.out = bound(m.in.Stdout, m.in.Max)
 	m.notes, m.receipts, m.harvested, m.prs, m.merged, m.requeued, m.refilled = 0, 0, 0, 0, 0, 0, 0
+	m.released, m.gated = 0, 0
 	m.escalatedNow, m.called = 0, false
 
 	waited := m.waitBus()
 	m.handleNotes(waited)
 	m.harvest()
 	m.mergeApproved()
+	// The gate is released BEFORE the refill: a card whose PR landed this cycle is ready
+	// this cycle, so the floor counts it and the refill does not cut a neighbour for the
+	// slot it already has (SPEC-PULSE rule 1, a card never waits for a tick to start).
+	m.releaseGates()
 	m.refill()
 
 	m.out.More()
 	pending := len(m.cardsIn("pending"))
-	line := fmt.Sprintf("MANAGER cycle=%d notes=%d receipts=%d harvested=%d prs=%d merged=%d requeued=%d refilled=%d escalated=%d pending=%d quiet=%t",
-		m.cycles, m.notes, m.receipts, m.harvested, m.prs, m.merged, m.requeued, m.refilled, m.escalatedNow, pending, !m.called && m.notes == 0)
+	line := fmt.Sprintf("MANAGER cycle=%d notes=%d receipts=%d harvested=%d prs=%d merged=%d requeued=%d refilled=%d released=%d gated=%d escalated=%d pending=%d quiet=%t",
+		m.cycles, m.notes, m.receipts, m.harvested, m.prs, m.merged, m.requeued, m.refilled, m.released, m.gated, m.escalatedNow, pending, !m.called && m.notes == 0)
+	if m.in.DryRun {
+		line += " dry-run=yes"
+	}
 	fmt.Fprintln(m.in.Stdout, line)
 	m.log(line)
 	return waited != nil
 }
+
+// releaseGates is the other half of SPEC-PULSE rule 4, and the half nobody had written: a
+// pending card carrying `AFTER: PR<n> merged` has its gate taken off by the first cycle in
+// which the forge says that PR is merged, and is ready from that moment -- never by a person
+// noticing. `fill` holds the card while the line is on it (cardgate.go); this is what takes
+// the line off. One gh call per DISTINCT pull request, however many cards wait on it.
+func (m *manager) releaseGates() {
+	repo := m.repo()
+	merged := map[int]bool{}
+	state := map[int]string{}
+	for _, card := range m.cardsIn("pending") {
+		path := filepath.Join(m.in.Queue, "pending", card)
+		text := readCard(path)
+		pr := cardGateOf(text)
+		if pr == 0 {
+			continue
+		}
+		if repo == "" {
+			m.gated++
+			m.event("MANAGER NOTE card=%s after=PR%d: no %s, so nobody can be asked whether it merged (write owner/name there)",
+				oneline.Field(card), pr, oneline.Field(filepath.Join(m.in.Queue, "REPO")))
+			continue
+		}
+		if _, asked := merged[pr]; !asked {
+			merged[pr], state[pr] = m.prMerged(repo, pr)
+			m.called = true
+		}
+		if !merged[pr] {
+			m.gated++
+			continue
+		}
+		if m.writes() {
+			if err := os.WriteFile(path, []byte(releaseCardGate(text)), 0o644); err != nil {
+				m.event("MANAGER NOTE card=%s: the gate could not be taken off: %s", oneline.Field(card), oneline.Err(err))
+				m.gated++
+				continue
+			}
+		}
+		m.released++
+		m.decisions++
+		m.event("MANAGER RELEASED card=%s after=PR%d state=%s", oneline.Field(card), pr, oneline.Field(state[pr]))
+	}
+}
+
+// prMerged asks the forge whether one pull request is merged, and names the state it gave.
+// Anything it cannot read is NOT merged: a gate whose answer is unknown stays shut, which
+// is what the card was gated for.
+func (m *manager) prMerged(repo string, pr int) (bool, string) {
+	out, err := m.sh("", 60*time.Second, "gh", "pr", "view", strconv.Itoa(pr), "-R", repo, "--json", "state")
+	if err != nil {
+		return false, "unread"
+	}
+	var v prView
+	if json.Unmarshal([]byte(strings.TrimSpace(out)), &v) != nil || strings.TrimSpace(v.State) == "" {
+		return false, "unread"
+	}
+	return strings.EqualFold(v.State, "MERGED"), strings.ToUpper(strings.TrimSpace(v.State))
+}
+
+// repo is the repository this queue is about: <queue>/REPO, the same file `status` reads.
+func (m *manager) repo() string { return firstLine(filepath.Join(m.in.Queue, "REPO")) }
 
 // waitBus blocks on nova-bus wait in the foreground: the one call a quiet cycle makes.
 func (m *manager) waitBus() []string {
@@ -231,7 +325,9 @@ func (m *manager) waitBus() []string {
 	if err != nil {
 		d = 3 * time.Minute
 	}
-	out, err := m.sh("", d+time.Minute, "nova-bus", "wait", "--bus", m.in.Bus, "--as", m.in.As,
+	// The wait ADVANCES the bus cursor, which is a change, so a dry run does not wait at
+	// all: it reads no notes rather than reading them and forgetting where it got to.
+	out, err := m.change("wait on the bus", "", d+time.Minute, "nova-bus", "wait", "--bus", m.in.Bus, "--as", m.in.As,
 		"--timeout", m.pol.WaitTimeout, "--advance")
 	if err != nil {
 		m.event("MANAGER NOTE bus wait failed: %s", oneline.Cap(strings.TrimSpace(out), 120))
@@ -259,7 +355,7 @@ func (m *manager) handleNotes(lines []string) {
 		}
 		m.notes++
 		if u := strings.ToUpper(l); strings.Contains(u, "START") || strings.Contains(u, "DONE") {
-			if _, err := m.sh("", 60*time.Second, "nova-bus", "receipt", "--bus", m.in.Bus, "--as", m.in.As, "--note", id); err != nil {
+			if _, err := m.change("receipt the note", "", 60*time.Second, "nova-bus", "receipt", "--bus", m.in.Bus, "--as", m.in.As, "--note", id); err != nil {
 				m.event("MANAGER NOTE receipt failed note=%s", oneline.Field(id))
 				continue
 			}
@@ -378,7 +474,7 @@ func (m *manager) recordVerdict(card string, v *verdict) {
 	m.move(card, "done")
 	ref := fmt.Sprintf("%s#%d", v.Repo, v.PR)
 	if v.Say == "HOLD" {
-		appendLine(filepath.Join(m.in.Queue, "HOLD"), ref)
+		m.appendQueue("HOLD", ref)
 		m.escalate("HOLD", ref, "a read held this PR; a repair card must quote the HOLD lines")
 		return
 	}
@@ -386,7 +482,7 @@ func (m *manager) recordVerdict(card string, v *verdict) {
 		m.escalate("READ-NO-HEAD", ref, "the read named no head=<sha>; nothing is merged on a read that cannot be revalidated")
 		return
 	}
-	appendLine(filepath.Join(m.in.Queue, "APPROVED"), fmt.Sprintf("%s %d %s", oneline.Field(v.Repo), v.PR, oneline.Field(v.Head)))
+	m.appendQueue("APPROVED", fmt.Sprintf("%s %d %s", oneline.Field(v.Repo), v.PR, oneline.Field(v.Head)))
 	m.decisions++
 }
 
@@ -410,7 +506,7 @@ func (m *manager) openPR(card, job string, lines []string) {
 		m.event("MANAGER REFUSED card=%s branch=%s: a fix without its reproducing test is not admitted (add the red: line or a test file to the diff)", oneline.Field(card), oneline.Field(branch))
 		return
 	}
-	if out, err := m.sh(dir, 120*time.Second, "git", "push", pushURL(repo), "+"+branch+":"+branch); err != nil {
+	if out, err := m.change("push the branch", dir, 120*time.Second, "git", "push", pushURL(repo), "+"+branch+":"+branch); err != nil {
 		m.event("MANAGER NOTE push failed card=%s branch=%s: %s", oneline.Field(card), oneline.Field(branch), oneline.Cap(strings.TrimSpace(out), 120))
 		return
 	}
@@ -421,7 +517,7 @@ func (m *manager) openPR(card, job string, lines []string) {
 		if len(body) > 4096 {
 			body = body[:4096]
 		}
-		out, err := m.sh(dir, 120*time.Second, "gh", "pr", "create", "-R", repo, "--head", branch, "--base", "main", "--title", title, "--body", body)
+		out, err := m.change("open the pull request", dir, 120*time.Second, "gh", "pr", "create", "-R", repo, "--head", branch, "--base", "main", "--title", title, "--body", body)
 		if err != nil {
 			m.event("MANAGER NOTE pr failed card=%s: %s", oneline.Field(card), oneline.Cap(strings.TrimSpace(out), 120))
 			return
@@ -515,7 +611,7 @@ func (m *manager) triageAbstain(card, root, reason string) {
 	}
 	bench := m.otherBench(root)
 	name := fmt.Sprintf("card-%d.md", m.nextNumber())
-	if err := os.WriteFile(filepath.Join(m.in.Queue, "pending", name), []byte(reissue(string(body), bench, attempts)), 0o644); err != nil {
+	if err := m.writeCard(name, reissue(string(body), bench, attempts)); err != nil {
 		m.escalate("ABSTAIN", ref, "the requeued card could not be written; requeue it by hand")
 		return
 	}
@@ -600,7 +696,9 @@ func (m *manager) mergeApproved() {
 			keep = append(keep, row)
 		}
 	}
-	writeLines(path, keep)
+	if m.writes() {
+		writeLines(path, keep)
+	}
 }
 
 type prView struct {
@@ -642,7 +740,7 @@ func (m *manager) mergeOne(repo string, pr int, head, ref string) (keep bool) {
 		m.event("MANAGER NOTE ref=%s: no lane in the policy; nothing is merged (set lane=<dir> to make nova-merge the merge queue)", oneline.Field(ref))
 		return true
 	}
-	if out, err := m.sh("", 120*time.Second, "nova-merge", "add", "--lane", m.pol.Lane, "--pr", strconv.Itoa(pr)); err != nil {
+	if out, err := m.change("hand it to the merge lane", "", 120*time.Second, "nova-merge", "add", "--lane", m.pol.Lane, "--pr", strconv.Itoa(pr)); err != nil {
 		m.event("MANAGER NOTE add failed ref=%s: %s", oneline.Field(ref), oneline.Cap(strings.TrimSpace(out), 100))
 		return true
 	}
@@ -746,12 +844,21 @@ func (m *manager) cutCard(c Candidate, gate int) string {
 			b.WriteString(strings.TrimRight(string(raw), "\n") + "\n")
 		}
 	}
-	if err := os.WriteFile(filepath.Join(m.in.Queue, "pending", name), []byte(b.String()), 0o644); err != nil {
+	if err := m.writeCard(name, b.String()); err != nil {
 		m.event("MANAGER NOTE cannot cut %s: %s", oneline.Field(name), oneline.Err(err))
 		return ""
 	}
 	m.event("MANAGER CARD card=%s id=%s", oneline.Field(name), oneline.Field(c.ID))
 	return name
+}
+
+// writeCard writes one card into pending. It is the manager's only door to a new card, so
+// --dry-run closes it and the cycle still counts the card it would have cut.
+func (m *manager) writeCard(name, body string) error {
+	if !m.writes() {
+		return nil
+	}
+	return os.WriteFile(filepath.Join(m.in.Queue, "pending", name), []byte(body), 0o644)
 }
 
 // queueState counts the ready (ungated) pending cards and indexes every card by its dedup keys.
@@ -817,7 +924,7 @@ func normalizeContract(s string) string {
 // escalate is the one line a decision outside the policy costs: no reply, no model call.
 func (m *manager) escalate(kind, ref, line string) {
 	stamp := m.now().UTC().Format("2006-01-02T15:04:05Z")
-	appendLine(filepath.Join(m.in.Queue, "ESCALATE"), fmt.Sprintf("ESCALATE %s %s %s: %s", stamp, kind, ref, line))
+	m.appendQueue("ESCALATE", fmt.Sprintf("ESCALATE %s %s %s: %s", stamp, kind, ref, line))
 	m.escalations++
 	m.escalatedNow++
 	m.event("MANAGER ESCALATE %s %s: %s", oneline.Field(kind), oneline.Field(ref), line)
@@ -826,11 +933,32 @@ func (m *manager) escalate(kind, ref, line string) {
 func (m *manager) event(format string, a ...any) { m.out.Line(fmt.Sprintf(format, a...)) }
 
 func (m *manager) log(line string) {
-	appendLine(filepath.Join(m.in.Queue, "MANAGER.log"), m.now().UTC().Format("15:04:05Z")+" "+line)
+	m.appendQueue("MANAGER.log", m.now().UTC().Format("15:04:05Z")+" "+line)
 }
 
 // sha12 is a head as a line carries it: twelve characters, enough to tell two heads apart.
 func sha12(s string) string { return s[:min(12, len(s))] }
+
+// change runs one bounded child that CHANGES something outside this process -- the bus
+// cursor, a branch, a pull request, the merge lane. Under --dry-run it runs nothing, names
+// what it would have run on one line, and answers as an empty success, so the rest of the
+// cycle reads on and counts what the shift would have done.
+func (m *manager) change(what, dir string, timeout time.Duration, name string, args ...string) (string, error) {
+	if !m.writes() {
+		m.event("MANAGER DRY-RUN would %s: %s", what, oneline.Cap(name+" "+strings.Join(args, " "), 160))
+		return "", nil
+	}
+	return m.sh(dir, timeout, name, args...)
+}
+
+// appendQueue appends one line to a file in the queue. It is the manager's only door to
+// the record files, so --dry-run closes all of them at once.
+func (m *manager) appendQueue(name, line string) {
+	if !m.writes() {
+		return
+	}
+	appendLine(filepath.Join(m.in.Queue, name), line)
+}
 
 // sh runs one bounded child and returns its combined output. Nothing here runs a shell.
 func (m *manager) sh(dir string, timeout time.Duration, name string, args ...string) (string, error) {
@@ -864,6 +992,9 @@ func (m *manager) jobFor(card string) (job, root string) {
 }
 
 func (m *manager) move(card, to string) {
+	if !m.writes() {
+		return
+	}
 	_ = os.Rename(filepath.Join(m.in.Queue, "launched", card), filepath.Join(m.in.Queue, to, card))
 }
 
@@ -877,7 +1008,9 @@ func (m *manager) nextNumber() int {
 			n = v
 		}
 	}
-	_ = os.WriteFile(path, []byte(strconv.Itoa(n+1)+"\n"), 0o644)
+	if m.writes() {
+		_ = os.WriteFile(path, []byte(strconv.Itoa(n+1)+"\n"), 0o644)
+	}
 	return n
 }
 

@@ -121,10 +121,13 @@ type FillInput struct {
 	Launched string        // the queue/launched directory they are moved into; its cards are live
 	Lanes    string        // the lanes file: <name>\t<path prefixes> per line; empty names no lane
 	Machines string        // the machines registry; a bench whose roles lack `bench` is refused
+	Queue    string        // the queue directory whose .lock this fill takes; empty is --launched's parent
+	Repo     string        // owner/name the `AFTER: PR<n> merged` gate is asked about
 	Session  string        // the session id stamped into every launched card's marker
 	Benches  []string      // the benches to fill, in order
 	Only     []string      // glob patterns over a card's filename; empty takes every ready card
 	Once     bool          // true runs exactly one tick and returns
+	DryRun   bool          // count what this tick would do and change nothing
 	Interval time.Duration // how long between ticks; 0 takes FillInterval
 	Stdout   io.Writer
 	Stderr   io.Writer
@@ -132,6 +135,12 @@ type FillInput struct {
 	Sleep    func(time.Duration)
 	Launcher CardLauncher
 	Capacity Capacity
+	// Forge answers whether the PR a gated card names is merged (SPEC-PULSE rule 4). A nil
+	// forge is not an open gate: every gated card is held and says `state=no-forge`.
+	Forge PRSource
+	// Locked says this fill runs inside a caller that already holds the queue's lock (the
+	// `loop` verb), so it takes none of its own.
+	Locked bool
 }
 
 // Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
@@ -189,6 +198,16 @@ func Fill(in FillInput) int {
 			return refusal(in.Stderr, "FILL", fmt.Errorf("cannot open %s: %s (name a writable directory)", oneline.Field(dir), oneline.Err(err)))
 		}
 	}
+	// ONE WRITER PER QUEUE. A fill moves cards and writes the markers that hold a lane, so
+	// a second one on the same queue is a race over both (queuelock.go). A dry run writes
+	// nothing and takes nothing.
+	if !in.Locked && !in.DryRun {
+		lock, err := LockQueue(fillQueue(in), "fill")
+		if err != nil {
+			return refusal(in.Stderr, "FILL", err)
+		}
+		defer lock.Release()
+	}
 
 	for tick := 1; ; tick++ {
 		lines, res := fillTick(in, tick)
@@ -215,6 +234,10 @@ type tickResult struct {
 	benches int
 	failed  int
 	err     error
+
+	// what the tick placed, and what it did not: the counts the `loop` verb folds into its
+	// own LOOP TICK line without re-reading the directories.
+	launched, held, gated int
 }
 
 // allBenchesFailed says whether the tick reached no bench at all: every named bench either
@@ -232,11 +255,14 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // returns the FILL line first and then one FILL HELD line per held card.
 func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	cards := selectedCards(readyCards(in.Ready), in.Only)
-	lanes := laneTable(in.Lanes)
-	live := liveLanes(in.Launched)
+	guard, gerr := newPlacement(in.Machines, in.Lanes, in.Launched, in.Repo, in.Forge)
+	if gerr != nil {
+		return nil, tickResult{benches: len(in.Benches), failed: len(in.Benches), err: gerr}
+	}
 	idx := 0
 	res := tickResult{benches: len(in.Benches)}
 	var held []string
+	gated := 0
 
 	if strays := strayCards(in.Ready); len(strays) > 0 {
 		fmt.Fprintf(in.Stderr, "FILL REFUSED ready=%s file=%s more=%d remedy=%q\n",
@@ -245,6 +271,7 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	}
 
 	parts := make([]string, 0, len(in.Benches))
+	launchedAll := 0
 	for _, bench := range in.Benches {
 		want := 0
 		capacityFailed := false
@@ -267,19 +294,38 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 		for want > 0 && idx < len(cards) {
 			card := cards[idx]
 			idx++
-			lane := cardLane(card)
-			if lane != "" {
-				if _, known := lanes[lane]; !known {
-					refuseLane(in, card, lane)
-					continue
-				}
-				if holder, isLive := live[lane]; isLive {
-					held = append(held, fmt.Sprintf("FILL HELD card=%s lane=%s live=%s",
-						oneline.Field(filepath.Base(card)), oneline.Field(lane), oneline.Field(holder)))
-					continue
-				}
+			// THE ONE GUARD (placement.go): the lane, then the gate. It is the same value
+			// wire.go's launcher takes a card through, so a card refused on one road into a
+			// bench is refused on every road.
+			v := guard.admit(card)
+			switch v.Kind {
+			case "lane-unknown":
+				refuseLane(in, card, v.Lane)
+				continue
+			case "lane-held":
+				held = append(held, heldLine("FILL", card, v))
+				continue
+			case "gated":
+				gated++
+				held = append(held, gatedLine("FILL", card, v))
+				continue
 			}
+			if v.Opened && !in.DryRun {
+				// Merged: the gate is spent. The line comes off as the card goes out, so
+				// nothing asks the forge about it again.
+				_ = os.WriteFile(card, []byte(v.Text), 0o644)
+			}
+			lane := v.Lane
 			base := filepath.Base(card)
+			if in.DryRun {
+				// A dry run counts what the tick would do and changes nothing: no move,
+				// no marker, no launcher. The lane is still taken, so the second card of
+				// a lane is reported HELD exactly as it would be.
+				guard.take(lane, base)
+				want--
+				launched++
+				continue
+			}
 			moved := filepath.Join(in.Launched, base)
 			if err := os.Rename(card, moved); err != nil {
 				// Another tick or another hand took it first: the card is in exactly
@@ -287,13 +333,12 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 				continue
 			}
 			writeLaunchedMarker(in, moved, base, lane, bench)
-			if lane != "" {
-				live[lane] = base
-			}
+			guard.take(lane, base)
 			want--
 			if err := in.Launcher.Launch(bench, moved); err != nil {
 				failed++
-				failLaunch(in, moved, base, lane, live, err)
+				guard.release(lane, base)
+				failLaunch(in, moved, base, err)
 				if res.err == nil {
 					res.err = fmt.Errorf("launch %s on %s: %w", field(base), field(bench), err)
 				}
@@ -304,6 +349,7 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 		if capacityFailed || (launched == 0 && failed > 0) {
 			res.failed++
 		}
+		launchedAll += launched
 		parts = append(parts, fmt.Sprintf("%s:launched=%d,failed=%d", oneline.Field(bench), launched, failed))
 	}
 
@@ -316,6 +362,15 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	}
 	b.WriteString(" ready=")
 	b.WriteString(strconv.Itoa(len(readyCards(in.Ready))))
+	// gated= is a FIXED field and prints its zero: a count that appears only when it is
+	// not zero is a count nobody can grep for, and this one is the answer to "why is the
+	// queue not moving" (Glenn: fixed tables write every field).
+	b.WriteString(" gated=")
+	b.WriteString(strconv.Itoa(gated))
+	if in.DryRun {
+		b.WriteString(" dry-run=yes")
+	}
+	res.launched, res.held, res.gated = launchedAll, len(held)-gated, gated
 	lines := append([]string{b.String()}, held...)
 	return lines, res
 }
@@ -324,10 +379,10 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 // released so the lane is not held by a card that never ran, and a `.failed-<n>` marker
 // beside it carries the attempt number and the reason. The card is ready again on the next
 // tick, and the markers are the count of how often it has failed.
-func failLaunch(in FillInput, moved, base, lane string, live map[string]string, cause error) {
-	if lane != "" && live[lane] == base {
-		delete(live, lane)
-	}
+func failLaunch(in FillInput, moved, base string, cause error) {
+	// The lane is given back by the guard (placement.release) before this is called: a lane
+	// held by a card that never ran is a lane nobody can use.
+	//
 	// The marker is what holds the lane, so it goes with the card: a marker left beside a
 	// card that went back to --ready holds a lane nobody is running.
 	_ = os.Remove(launchedMarker(in.Launched, base))
@@ -495,6 +550,17 @@ func readLaunchedMarker(dir, base string) map[string]string {
 		}
 	}
 	return out
+}
+
+// fillQueue is the directory whose lock this fill takes: --queue when it is named, else the
+// parent of --launched, which is the queue's own layout (queue/launched, queue/ready). It is
+// the layout and not a guess about meaning: a fill that moves queue/ready/card-9.md into
+// queue/launched/ is writing that queue, whatever the caller calls it.
+func fillQueue(in FillInput) string {
+	if q := strings.TrimSpace(in.Queue); q != "" {
+		return q
+	}
+	return filepath.Dir(strings.TrimRight(in.Launched, string(os.PathSeparator)))
 }
 
 // isDir says whether a path is a directory that is there.

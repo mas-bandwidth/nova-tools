@@ -101,7 +101,7 @@ func TestFillLaunchesCapacityPerBench(t *testing.T) {
 		t.Fatalf("ready holds %d cards, want 3", got)
 	}
 	line := strings.TrimSpace(out.String())
-	want := "FILL tick=1 bench-a:launched=3,failed=0 bench-b:launched=2,failed=0 ready=3"
+	want := "FILL tick=1 bench-a:launched=3,failed=0 bench-b:launched=2,failed=0 ready=3 gated=0"
 	if line != want {
 		t.Fatalf("FILL line = %q, want %q", line, want)
 	}
@@ -132,7 +132,7 @@ func TestFillCapsAtThirty(t *testing.T) {
 		t.Fatalf("launcher calls = %d, want 30 (the cap)", len(l.calls))
 	}
 	line := strings.TrimSpace(out.String())
-	want := "FILL tick=1 bench-x:launched=30,failed=0 ready=10"
+	want := "FILL tick=1 bench-x:launched=30,failed=0 ready=10 gated=0"
 	if line != want {
 		t.Fatalf("FILL line = %q, want %q", line, want)
 	}
@@ -166,7 +166,7 @@ func TestFillNeverLaunchesACardTwice(t *testing.T) {
 	if len(l.calls) != 4 {
 		t.Fatalf("launcher calls = %d, want 4 (no card launched twice): %q", len(l.calls), l.calls)
 	}
-	want := "FILL tick=1 bench-a:launched=0,failed=0 ready=0"
+	want := "FILL tick=1 bench-a:launched=0,failed=0 ready=0 gated=0"
 	if line := strings.TrimSpace(out2.String()); line != want {
 		t.Fatalf("second FILL line = %q, want %q", line, want)
 	}

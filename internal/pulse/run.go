@@ -110,6 +110,9 @@ type RunInput struct {
 	Max    int
 	Bus    string // a nova-bus clone; empty sends notes to <queue>/ESCALATE
 	As     string // the name notes are sent to
+	// Locked says this shift runs inside a caller that already holds the queue's lock (the
+	// `loop` verb), so it takes none of its own.
+	Locked bool
 	Stdout io.Writer
 	Stderr io.Writer
 
@@ -124,6 +127,10 @@ type RunInput struct {
 	// Configured, when set, is handed the configuration after every re-read, so the seams
 	// run on the same values this loop does and pulse.toml has ONE reader per tick.
 	Configured func(Config)
+
+	// Load is the machine's one-minute load average, the WIDTH line's load= field. It is a
+	// seam so a test's line is the same on every machine; nil takes the host's own.
+	Load func() int
 
 	Gate     Gater
 	Harvest  Harvester
@@ -156,6 +163,11 @@ type runner struct {
 
 	ticks, shift, sent, reds, stops, undecided, gateRuns int
 	seamed                                               map[string]bool
+
+	// starve counts the consecutive ticks with an empty pool and an almost empty bench --
+	// the script's STARVED escalation, which only `status` still knew how to say.
+	starve    int
+	starvedAt time.Time
 }
 
 // Run holds the loop for --hours and prints one WIDTH line per tick. It returns 0 when the
@@ -195,6 +207,15 @@ func Run(in RunInput) int {
 	state, err := LoadState(in.Queue)
 	if err != nil {
 		return refusal(in.Stderr, "RUN", err)
+	}
+	// ONE WRITER PER QUEUE (queuelock.go). A shift moves cards, writes the state file and
+	// cuts cards under <queue>/NEXT; two shifts on one queue race all three.
+	if !in.Locked {
+		lock, err := LockQueue(in.Queue, "run")
+		if err != nil {
+			return refusal(in.Stderr, "RUN", err)
+		}
+		defer lock.Release()
 	}
 
 	r := &runner{
@@ -308,6 +329,7 @@ func (r *runner) tick() {
 		t.noted = 1
 	}
 
+	r.width(&t)
 	r.writeTicks(t)
 	fmt.Fprintln(r.in.Stdout, t.line())
 	r.saveState()
@@ -390,6 +412,22 @@ type tickCounts struct {
 	stopped                                                bool
 	harvested, swept, requeued, failed, refilled, launched int
 	free, undecided, noted                                 int
+
+	// THE SEVEN THE SCRIPT CARRIED AND THIS LINE LOST (the manager dogfood, edge 9).
+	// bin/pulse-loop.sh's WIDTH answered "is the machine full, and is there work for it" in
+	// one line: the load it is under, what is waiting, what is waiting on a PR, what is
+	// finished, what failed, the fraction of the bench in use and the cached estimate. The
+	// twelve-field line answered only what the tick itself did, so the two questions a
+	// person actually asks -- is it saturated, is it starved -- needed `status` and a second
+	// window. Every field prints its zero (Glenn: fixed tables write every field).
+	//
+	// failed-cards= and not failed=: failed= is what THIS TICK's reap failed, and the
+	// script's was the standing count of queue/failed. Two counts, two names.
+	load                            int
+	pending, gated, done, failedDir int
+	slots                           int    // every bench's slots added up; util= is (slots-free)/slots
+	est                             string // the cached ESTIMATE line, or "-"
+	marks                           []string
 }
 
 func (t tickCounts) line() string {
@@ -397,8 +435,85 @@ func (t tickCounts) line() string {
 	if t.stopped {
 		stop = "yes"
 	}
-	return fmt.Sprintf("PULSE WIDTH tick=%d benches=%d stop=%s harvested=%d swept=%d requeued=%d failed=%d refilled=%d launched=%d free=%d undecided=%d noted=%d",
-		t.n, t.benches, stop, t.harvested, t.swept, t.requeued, t.failed, t.refilled, t.launched, t.free, t.undecided, t.noted)
+	line := fmt.Sprintf("PULSE WIDTH tick=%d benches=%d stop=%s harvested=%d swept=%d requeued=%d failed=%d refilled=%d launched=%d free=%d undecided=%d noted=%d load=%d pending=%d gated=%d done=%d failed-cards=%d util=%d/%d est=%s",
+		t.n, t.benches, stop, t.harvested, t.swept, t.requeued, t.failed, t.refilled, t.launched, t.free, t.undecided, t.noted,
+		t.load, t.pending, t.gated, t.done, t.failedDir, t.slots-t.free, t.slots, nonEmpty(t.est, "-"))
+	for _, m := range t.marks {
+		line += " " + m
+	}
+	return line
+}
+
+// width fills the seven standing fields and the three markers. It counts DIRECTORIES, which
+// is what the script counted: the tick's own numbers say what happened, and these say what
+// is there.
+func (r *runner) width(t *tickCounts) {
+	queue := r.in.Queue
+	t.load = r.load()
+	// pending= is EVERY pending card, gated ones included, exactly as the script counted
+	// it: gated= then says how many of them are waiting on a pull request. (status.go's own
+	// pending excludes them, which is the right number for a different question.)
+	t.pending = countCards(queue, "pending")
+	t.gated = countGated(queue, "pending")
+	t.done = countCards(queue, "done")
+	t.failedDir = countCards(queue, "failed")
+	for _, root := range r.roots {
+		t.slots += r.cfg.Slots[benchOf(root)]
+	}
+	t.est = estField(filepath.Join(queue, "EST"))
+	inflight := t.slots - t.free
+	switch {
+	case t.pending == 0:
+		t.marks = append(t.marks, "POOL-EMPTY")
+	case inflight < t.slots:
+		t.marks = append(t.marks, "UNDER-WIDTH")
+	}
+	// STARVED: an empty pool AND an almost empty bench, three ticks running. It is the one
+	// state nothing mechanical can fix -- there is no work -- so it is the one that reaches
+	// a person, and no more than once every ten minutes.
+	if t.pending == 0 && inflight < starveFloor {
+		r.starve++
+	} else {
+		r.starve = 0
+	}
+	if r.starve >= starveTicks {
+		t.marks = append(t.marks, "STARVED")
+		now := r.in.Now()
+		if now.Sub(r.starvedAt) >= starveQuiet {
+			r.starvedAt = now
+			appendLine(filepath.Join(queue, "ESCALATE"), fmt.Sprintf(
+				"%s STARVED in-flight=%d pending=0 for %d ticks: the queue is empty and slots are free; refill to the floor now",
+				now.UTC().Format(time.RFC3339), inflight, r.starve))
+		}
+	}
+}
+
+// The STARVED rule, as bin/pulse-loop.sh settled it: fewer than eight cards in flight with
+// nothing pending, for three ticks, and never told to a person more than once in ten minutes.
+const (
+	starveFloor = 8
+	starveTicks = 3
+	starveQuiet = 10 * time.Minute
+)
+
+// estField is the cached estimate as ONE field. The estimate is refreshed in the background
+// by `status` and `progress` (progress blocked a tick for fifteen seconds when the loop
+// computed it inline), and it arrives as several words: they are joined with commas rather
+// than escaped, because est=remaining_cards\x3d12\x20hours\x3d3.5 is a field nobody reads.
+func estField(path string) string {
+	fields := strings.Fields(firstLine(path))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Join(fields, ",")
+}
+
+// load is the machine's one-minute load average, through the seam.
+func (r *runner) load() int {
+	if r.in.Load != nil {
+		return r.in.Load()
+	}
+	return hostLoad()
 }
 
 // gate answers two things: is work stopped this tick, and did a red arrive that nobody has

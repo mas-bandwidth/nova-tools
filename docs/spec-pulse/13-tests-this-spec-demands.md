@@ -147,7 +147,10 @@ handoff (rule **The manager tier**).
     exactly three rows in one cycle, deduplicated on PR number, issue number and contract line.
 43. `gated-card-launches-on-merge`: a card carrying `AFTER: PR7 merged` is `gated=1` while the
     fixture `gh` reports PR 7 open and is in the batch argv of the first cycle after the
-    fixture reports it merged, with no other input.
+    fixture reports it merged, with no other input. Both halves:
+    `TestGatedCardLaunchesOnMerge` (the placement road, `internal/pulse/cardgate_spec_test.go`)
+    and `TestManagerReleasesTheGateWhenItSeesTheMerge` (the release,
+    `internal/pulse/manager_gate_test.go`).
 44. `contraction-phase-cards-bugs-only`: with `verdict=EXPANDING`, a candidate whose issue
     carries the label `next-push` is `skipped` on the `CUT` line and never cut; a fix candidate
     with a `red:` line is cut.
@@ -173,3 +176,50 @@ handoff (rule **The manager tier**).
     draft yields `prs=2` on the `POOL` line and two `pool.tsv` rows of kind `read`, template
     `read`, one candidate per PR — the draft is nowhere, and the read candidate is the same
     shape harvest's own read card has (rule 13).
+51. `second-writer-refuses-naming-the-holder`: with one writer holding `<queue>/.lock`, a
+    second `fill`, `run`, `manager` or `loop` on that queue exits 2 and its line carries the
+    holder's `pid=`, `verb=` and `since=`; a lock whose holder is not running is taken over
+    once, with no wait. `TestSecondWriterRefusesNamingTheHolder`,
+    `TestSecondFillOnALockedQueueExitsTwo` and `TestStaleLockIsTakenOver`
+    (`internal/pulse/queuelock_test.go`).
+52. `loop-tick-is-run-fill-manager-in-order`: one `nova-pulse loop --once` calls `run`, `fill`
+    and `manager` once each in that order, under one lock, and answers exactly one
+    `LOOP TICK n=<i> ran=… filled=… harvested=… held=… refused=… dead=…` line on the console
+    with each verb's own line in `<queue>/pulse.log`. `TestLoopTickIsRunFillManagerInOrder`
+    (`internal/pulse/loop_test.go`).
+53. `launch-dead-releases-the-lane`: a card under `launched` whose marker is older than the
+    launch grace and whose job directory never appeared is moved back to `pending` with its
+    marker removed, so its lane is free; a card whose job directory is there, and one still
+    inside its grace, are untouched. `TestLoopLaunchDeadRequeuesAndReleasesTheLane`
+    (`internal/pulse/loop_test.go`).
+54. `loop-stops-dependent-steps-and-exits-non-zero`: a tick whose run step exits non-zero runs
+    neither fill, manager nor the launch-dead probe, counts `failed=1` on its line, names the
+    skip in `pulse.log`, and the loop exits non-zero; a failed fill is counted and the manager
+    still runs. `TestLoopStopsDependentStepsAndExitsNonZero`,
+    `TestLoopCountsAFailedFillAndStillRunsTheManager` (`internal/pulse/loop_test.go`).
+55. `dry-run-touches-nothing-through-the-cli`: `fill --dry-run` and `manager --dry-run`, run
+    through the real command line against an isolated queue, leave every file in it
+    byte-for-byte identical and never reach the launcher; `loop --dry-run` is refused, exit 2,
+    naming the two verbs that do have a read-only mode; and the same snapshot helper DOES
+    catch the same fill without the flag, so the guarantee is not vacuous.
+    `TestFillDryRunTouchesNothingThroughTheCLI`,
+    `TestManagerDryRunTouchesNothingThroughTheCLI`, `TestLoopRefusesDryRunThroughTheCLI`,
+    `TestTheSnapshotCatchesARealRun` (`cmd/nova-pulse/dryrun_test.go`).
+56. `lock-is-atomic-and-identity-checked`: an empty lock file is never handed out half-written,
+    an old owner's release never deletes its replacement's lock, two writers never recover one
+    stale lock at once, and a lock is never entered on a pid match alone.
+    `TestPausedPublisherIsNeverRobbed`, `TestOldOwnerReleaseDoesNotDeleteItsReplacement`,
+    `TestCompetingTakeoverIsSerialized`, `TestReentrancyIsByNonceNotByPid`
+    (`internal/pulse/queuelock_test.go`).
+57. `paused-taker-is-never-robbed`: a `<queue>/.lock.take` whose owner is ALIVE is never
+    cleared, however old the file is; one whose owner is gone is cleared by that record and
+    not by the clock; and a recovery releases only the take it wrote.
+    `TestPausedTakerIsNeverRobbed`, `TestDeadTakerIsClearedByIdentity`,
+    `TestRecoveryReleasesOnlyItsOwnTake` (`internal/pulse/queuelock_test.go`).
+58. `racing-recoverers-never-remove-a-live-record`: with one recoverer PAUSED between its
+    claim and its judgement and a second running for real, the second's live record survives;
+    a claimed record whose owner turns out to be alive is put back; a release that meets a
+    record published in its own window removes nothing. No sleeps: the two are sequenced by
+    channels, and the assertion holds under `-race`. `TestRacingRecoverersNeverRemoveALiveRecord`,
+    `TestAClaimedLiveRecordIsPutBack`, `TestReleaseClaimsBeforeItUnlinks`
+    (`internal/pulse/queuelock_test.go`).

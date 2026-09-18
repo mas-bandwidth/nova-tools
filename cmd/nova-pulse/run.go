@@ -30,6 +30,9 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	timeout := f.fs.Int("timeout", 120, "")
 	tempGlob := f.fs.String("temp-glob", "", "")
 	tempRoot := f.fs.String("temp-root", "", "")
+	machines := f.fs.String("machines", "", "")
+	lanes := f.fs.String("lanes", "", "")
+	ghConfig := f.fs.String("gh-config", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 
 	if !f.parse(args, stderr) {
@@ -55,6 +58,10 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if f.refused(stderr) {
 		return 2
 	}
+	if err := applyGhConfig(*ghConfig); err != nil {
+		fmt.Fprintf(stderr, "nova-pulse run: --gh-config %s: %s\n", *ghConfig, err)
+		return 2
+	}
 	h := *hours
 	if h < 0 {
 		h = 0
@@ -74,6 +81,10 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	in.Configured = func(c pulse.Config) { cfg = c }
 	pulse.Wire(&in, pulse.NewWiring(pulse.WiringInput{
 		Queue: *queue, Roots: *roots, Repo: *repo, Branch: *branch,
+		// EVERY placement reads the registry and the lanes (internal/pulse/placement.go).
+		// Without --machines the launcher says so once per shift rather than guessing which
+		// hosts are benches; the `loop` verb requires it.
+		Machines: *machines, Lanes: *lanes,
 		Deadline: time.Duration(*deadline) * time.Second,
 		Timeout:  time.Duration(*timeout) * time.Second,
 		Max:      *max,
