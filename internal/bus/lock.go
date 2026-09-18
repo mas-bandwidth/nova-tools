@@ -41,6 +41,21 @@ const LockName = "nova-bus.lock"
 // ErrLockHeld indicates that the requested lock could not be acquired within the wait duration.
 var ErrLockHeld = errors.New("lock held")
 
+// lockClock is the lock's view of time: the deadline it reads and the poll it waits
+// between attempts. It is a seam so a test drives the whole bounded wait with no wall
+// time -- the fake's Sleep advances Now, so a 500ms budget is over in a few instant
+// polls. Production passes realLockClock; a nil clock takes it too.
+type lockClock interface {
+	Now() time.Time
+	Sleep(time.Duration)
+}
+
+// realLockClock is the production clock: the machine's.
+type realLockClock struct{}
+
+func (realLockClock) Now() time.Time        { return time.Now() }
+func (realLockClock) Sleep(d time.Duration) { time.Sleep(d) }
+
 // LockFile takes an exclusive advisory lock on path, waiting up to wait for it, and returns the
 // release function. The release is safe to call more than once.
 //
@@ -53,15 +68,18 @@ var ErrLockHeld = errors.New("lock held")
 // If wait > 0, LockFile polls every 25ms until the deadline.
 // If the lock cannot be acquired within wait, it returns an error wrapping ErrLockHeld.
 func LockFile(path string, wait time.Duration) (func(), error) {
-	return lockFile(path, wait, tryLockFile)
+	return lockFile(path, wait, tryLockFile, nil)
 }
 
-func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, retryable bool, err error)) (func(), error) {
+func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, retryable bool, err error), clk lockClock) (func(), error) {
+	if clk == nil {
+		clk = realLockClock{}
+	}
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("the lock at %s could not be opened: %w", path, err)
 	}
-	deadline := time.Now().Add(wait)
+	deadline := clk.Now().Add(wait)
 	var lastErr error
 	for {
 		ok, retryable, lockErr := try(f)
@@ -86,7 +104,7 @@ func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, re
 				f.Close()
 			}, nil
 		}
-		if wait == 0 || !time.Now().Before(deadline) {
+		if wait == 0 || !clk.Now().Before(deadline) {
 			f.Close()
 			if lastErr != nil {
 				return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lastErr)
@@ -94,7 +112,7 @@ func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, re
 			holder := ReadLockHolder(path)
 			return nil, fmt.Errorf("the lock at %s is held by process %s; waited %s: %w", path, holder, wait, ErrLockHeld)
 		}
-		time.Sleep(jitter(lockPoll))
+		clk.Sleep(jitter(lockPoll))
 	}
 }
 
@@ -148,12 +166,18 @@ func ReadLockHolder(path string) string {
 // verbs that reach one are the full reads, which write nothing, and refusing them for the
 // want of a `.git` would be refusing a bus for a reason that is not about the bus.
 func LockCheckout(busDir string, wait time.Duration) (func(), error) {
+	return lockCheckoutAt(busDir, wait, nil)
+}
+
+// lockCheckoutAt is LockCheckout with the clock injected, so a test can drive the wait
+// for a held lock to its end without spending the machine's time doing it.
+func lockCheckoutAt(busDir string, wait time.Duration, clk lockClock) (func(), error) {
 	gd, err := GitDir(busDir)
 	if err != nil {
 		return func() {}, nil
 	}
 	path := filepath.Join(gd, LockName)
-	release, err := LockFile(path, wait)
+	release, err := lockFile(path, wait, tryLockFile, clk)
 	if err != nil {
 		if errors.Is(err, ErrLockHeld) {
 			return nil, fmt.Errorf("another nova-bus is already running on this checkout and still holds %s; this run waited %s for it and will not work beside it, because two runs on one checkout write one OPEN list and one index -- run this again when that one has finished", path, wait)
