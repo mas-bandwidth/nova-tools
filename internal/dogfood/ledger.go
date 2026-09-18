@@ -61,13 +61,21 @@ type Summary struct {
 	ByNonAuthor int // verbs a non-author has run and said ok
 	OpenEdges   int // edges nobody has since cleared
 	Unfiled     int // of those, the ones with no issue anybody can act on
-	Unknown     int // receipts naming a verb the reference does not declare
+
+	// Unmatched is the receipts naming a verb the list does not declare. It is
+	// a COUNT ON THE LINE, not a note beside it: on 2026-09-18 the gate
+	// reported open-edges=0 at exit 0 with not-ok receipts sitting in the
+	// directory it had just read, and findings=1 while three more sat
+	// unmatched, because a receipt that matched nothing simply left the
+	// arithmetic. A count that silently leaves evidence out is worse than no
+	// count, so every read prints this one whether it is zero or not.
+	Unmatched int
 }
 
 // Line is the summary as the ledger prints it.
 func (s Summary) Line() string {
-	return fmt.Sprintf("DOGFOOD OK verbs=%d dogfooded=%d by-nonauthor=%d open-edges=%d unfiled=%d",
-		s.Verbs, s.Dogfooded, s.ByNonAuthor, s.OpenEdges, s.Unfiled)
+	return fmt.Sprintf("DOGFOOD OK verbs=%d dogfooded=%d by-nonauthor=%d open-edges=%d unfiled=%d unmatched=%d",
+		s.Verbs, s.Dogfooded, s.ByNonAuthor, s.OpenEdges, s.Unfiled, s.Unmatched)
 }
 
 // Ledger reads the receipts against the verbs and returns one row per verb, in
@@ -93,7 +101,7 @@ func Ledger(verbs []Verb, receipts []Receipt, authors Authors) ([]Row, Summary) 
 	for _, r := range receipts {
 		key := normalizeKey(r.Key())
 		if !declared[key] {
-			summary.Unknown++
+			summary.Unmatched++
 			continue
 		}
 		byVerb[key] = append(byVerb[key], r)
@@ -329,8 +337,17 @@ func (f GateFinding) Line() string {
 	return fmt.Sprintf("DOGFOOD GATE FAIL tool=%s verb=%s: %s", f.Tool, f.Verb, f.Reason)
 }
 
-// Gate is what the release lane calls. It says no on two grounds:
+// Gate is what the release lane calls. It says no on three grounds:
 //
+//   - an UNMATCHED not-ok receipt: somebody ran something, it did not do what
+//     they needed, and the verb they named is not one the list declares. The
+//     gate used to drop it entirely — `open-edges=0` at exit 0 with not-ok
+//     receipts sitting in the very directory it had just read, and `findings=1`
+//     while three more sat unmatched beside it. A lane must not be able to pass
+//     on a bench where the only thing anybody found is unreadable. An unmatched
+//     receipt that says OK is counted and named and is NOT a failure: a wrong
+//     spelling or a stale document is not a reason to stop a release nobody
+//     found anything wrong with.
 //   - an open edge: somebody ran the verb, it did not do what they needed, and
 //     nobody has run it since and said it did. Feedback filed is not feedback
 //     applied.
@@ -338,8 +355,10 @@ func (f GateFinding) Line() string {
 //     definition of done as Glenn wrote it on 2026-09-18, made mechanical:
 //     the author's own pass is not evidence the tool works for anybody else.
 //
-// Findings come back in the reference's order, verb by verb, so the list a
-// release reads is the list the ledger printed.
+// The unmatched findings come FIRST — a lane reads what was thrown away before
+// it reads anything derived from what was kept — and the rest come back in the
+// reference's order, verb by verb, so the list a release reads is the list the
+// ledger printed.
 func Gate(verbs []Verb, receipts []Receipt, authors Authors, requireAll bool) ([]GateFinding, Summary) {
 	if authors == nil {
 		authors = Authors{}
@@ -358,6 +377,27 @@ func Gate(verbs []Verb, receipts []Receipt, authors Authors, requireAll bool) ([
 	}
 
 	var findings []GateFinding
+	// What was thrown away is said first, and only a NOT-OK one is a failure.
+	for _, s := range Stranded(verbs, receipts) {
+		if s.Receipt.OK {
+			continue
+		}
+		where := s.File
+		if where == "" {
+			where = "(receipt)"
+		}
+		nearest := "nothing close enough to suggest"
+		if s.Nearest != "" {
+			nearest = "nearest declared: " + s.Nearest
+		}
+		findings = append(findings, GateFinding{
+			Kind: "unmatched",
+			Tool: s.Receipt.Tool,
+			Verb: s.Receipt.Spelling(),
+			Reason: fmt.Sprintf("not-ok receipt %s from %s at %s names no verb the list declares (%s), so it counts for nothing: %s",
+				where, s.Receipt.By, s.Receipt.At, nearest, s.Receipt.Notes),
+		})
+	}
 	for _, v := range verbs {
 		key := normalizeKey(v.Key())
 		got := byVerb[key]
@@ -398,12 +438,12 @@ func (s Summary) GateLine(requireAll bool) string {
 	if requireAll {
 		require = "yes"
 	}
-	return fmt.Sprintf("DOGFOOD GATE OK verbs=%d by-nonauthor=%d open-edges=%d unfiled=%d require-all=%s",
-		s.Verbs, s.ByNonAuthor, s.OpenEdges, s.Unfiled, require)
+	return fmt.Sprintf("DOGFOOD GATE OK verbs=%d by-nonauthor=%d open-edges=%d unfiled=%d unmatched=%d require-all=%s",
+		s.Verbs, s.ByNonAuthor, s.OpenEdges, s.Unfiled, s.Unmatched, require)
 }
 
 // GateCountLine is the gate's red count line: the total, and how much of it was
 // printed under the ceiling.
 func (s Summary) GateCountLine(findings, shown int) string {
-	return fmt.Sprintf("DOGFOOD GATE FAIL verbs=%d findings=%d shown=%d", s.Verbs, findings, shown)
+	return fmt.Sprintf("DOGFOOD GATE FAIL verbs=%d findings=%d shown=%d unmatched=%d", s.Verbs, findings, shown, s.Unmatched)
 }

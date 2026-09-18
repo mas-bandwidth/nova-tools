@@ -80,7 +80,7 @@ func TestDogfoodLedgerPrintsOneRowPerVerbAndOneSummary(t *testing.T) {
 		"DOGFOOD tool=nova-example verb=quickstart by=nobody at=- ok=- issue=-",
 		"DOGFOOD tool=nova-example verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=1301",
 		"DOGFOOD tool=nova-example verb=nocode by=nobody at=- ok=- issue=-",
-		"DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0",
+		"DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0",
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("ledger:\n got:\n%s\nwant:\n%s", stdout, strings.Join(want, "\n"))
@@ -101,7 +101,7 @@ func TestDogfoodLedgerDoesNotCountAnAuthorRunningTheirOwnVerb(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, want 0\n%s", code, stderr)
 	}
-	if !strings.Contains(stdout, "DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=0 open-edges=0 unfiled=0") {
+	if !strings.Contains(stdout, "DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=0 open-edges=0 unfiled=0 unmatched=0") {
 		t.Fatalf("the author's own run counted as a dogfood:\n%s", stdout)
 	}
 }
@@ -289,7 +289,7 @@ func TestDogfoodGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, want 0\n%s", code, stderr)
 	}
-	if !strings.Contains(stdout, "DOGFOOD GATE OK verbs=3 by-nonauthor=3 open-edges=0 unfiled=0 require-all=yes") {
+	if !strings.Contains(stdout, "DOGFOOD GATE OK verbs=3 by-nonauthor=3 open-edges=0 unfiled=0 unmatched=0 require-all=yes") {
 		t.Fatalf("gate line:\n%s", stdout)
 	}
 }

@@ -28,7 +28,7 @@ func TestLedgerSaysNobodyForAVerbNoOneHasRun(t *testing.T) {
 	if rows[0].Line() != want {
 		t.Fatalf("row:\n got %q\nwant %q", rows[0].Line(), want)
 	}
-	if summary.Line() != "DOGFOOD OK verbs=1 dogfooded=0 by-nonauthor=0 open-edges=0 unfiled=0" {
+	if summary.Line() != "DOGFOOD OK verbs=1 dogfooded=0 by-nonauthor=0 open-edges=0 unfiled=0 unmatched=0" {
 		t.Fatalf("summary %q", summary.Line())
 	}
 }
@@ -121,8 +121,8 @@ func TestLedgerCountsAReceiptForAVerbTheReferenceDoesNotDeclare(t *testing.T) {
 	if len(rows) != 1 || rows[0].By != "nobody" {
 		t.Fatalf("a receipt for an undeclared verb landed on a row: %q", rows[0].Line())
 	}
-	if summary.Unknown != 1 {
-		t.Fatalf("unknown=%d, want 1; docs drift is a finding, not a silent drop", summary.Unknown)
+	if summary.Unmatched != 1 {
+		t.Fatalf("unmatched=%d, want 1; docs drift is a finding, not a silent drop", summary.Unmatched)
 	}
 }
 

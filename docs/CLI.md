@@ -78,26 +78,43 @@ DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z o
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=-
 DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=-
-DOGFOOD OK verbs=106 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0
+DOGFOOD OK verbs=106 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
 DOGFOOD GATE FAIL tool=nova-check verb=quickstart: not dogfooded by a non-author; a tool is done when somebody who did not write it has run it on real work
-DOGFOOD GATE FAIL verbs=106 findings=105 shown=20
+DOGFOOD GATE FAIL verbs=106 findings=105 shown=20 unmatched=0
 ```
 
 **Reading it.** `ledger` prints one row per verb, in the list's order, and
 never elides one: a ledger that capped its rows would hide exactly the verbs
 nobody has run. The summary is the bounded read — `dogfooded=` counts verbs
 with any receipt, `by-nonauthor=` counts the ones a non-author ran and said ok,
-`open-edges=` counts the edges no later run has cleared and `unfiled=` how many
-of those nobody has filed an issue for. `gate` is the same read with an exit
-code: 1 on an open edge always, and with `--require-all` on every verb no
+`open-edges=` counts the edges no later run has cleared, `unfiled=` how many
+of those nobody has filed an issue for, and `unmatched=` how many receipts named
+a verb the list does not declare. `gate` is the same read with an exit
+code: 1 on an open edge always, 1 on any **unmatched not-ok receipt**, and with
+`--require-all` on every verb no
 non-author has passed. A receipt the tool cannot parse is exit 1 and a named
 `DOGFOOD FAIL` line, never a quietly shorter ledger. A receipt naming a verb
 the list does not declare is named one by one — its file, what it claimed and
 the nearest declared verb — by `ledger` AND by `gate`, because a release lane
 must not be able to pass or fail without learning that the evidence it read was
 thrown away.
+
+**Evidence that matched nothing is counted, and a not-ok one is a failure.**
+`record` takes any `--tool`/`--verb` pair the list declares and refuses the rest,
+but receipts written before it did that — `harvest`, `ledger` for `dogfood
+ledger`, every `nova-sandbox` verb, `nova-merge batch` and `nova-merge queue` at
+65e23fb0 — are still in the directory, and they used to leave the arithmetic
+entirely: the gate reported `open-edges=0` at exit 0 with not-ok receipts sitting
+in the directory it had just read, and `findings=1` while three more sat
+unmatched beside it. So `unmatched=<n>` is on **every** line both reads print,
+zero or not, and the gate FAILS on any unmatched receipt that says not-ok,
+naming the receipt's file and the verb it claimed. An unmatched receipt that says
+**ok** is counted and named and is not a failure: a wrong spelling, or a document
+that has gone stale, is not a reason to stop a release nobody found anything
+wrong with. The unmatched findings are printed first, before anything derived
+from the receipts that did match.
 
 **Where the verbs come from.** `--tools <dir>` is a directory of built `nova-*`
 binaries: each is asked for its own `help`, and what it answers is the
