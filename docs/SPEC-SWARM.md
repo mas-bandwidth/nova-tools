@@ -787,6 +787,19 @@ config still carries the variable's NAME, never the value (the key section
 below). The wall's probe has no key file to prove it cannot read, and runs its
 other checks without one (SPEC-SANDBOX rule 10).
 
+**`worker check <description.json>`** validates a description before any launch and
+starts nothing. It loads the file with the same strict loader `run` and `native` use,
+then asks what the loader does not: the harness is a name on `PATH` or a path that
+exists and this machine will execute; `harness_args` carries both `{model}` and
+`{prompt}`; with `--env`, a description's `secret` is present and non-empty in this
+process's own environment (the variable is named and the value is never read into a
+line); `worker_dir` exists or its nearest existing ancestor is a writable directory;
+every `read_roots` entry exists; the deadline parses; `class`, when present, is `public`
+or `paid`; and `max_cache_read` and `max_turns`, when present, are positive. It prints
+one `WORKER OK <name> model=<m> provider=<p> class=<c>` line when the description can
+launch, or one `WORKER DRIFT <field>: <why>` per problem, exit 2. `--max <n>` caps the
+drift lines, 0 for all. No worker, provider or network call is made.
+
 **`version`** prints the Conventions' one line — `nova-swarm <build identity>
 <goos>/<goarch> <go version>`, exit 0 — from `internal/buildinfo`, the same
 resolution every binary here uses. It takes no flags and no arguments.
