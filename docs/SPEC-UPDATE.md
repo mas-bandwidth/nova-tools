@@ -380,10 +380,10 @@ nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--dry-run] [--timeout <d>]
+nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>] [--timeout <d>]
-nova-update release install --from <dir> --version <v> --bin <dir> [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt --version <v> --machines <file> --ssh <path> --from <dir> --bin <dir> --dest <dir> [--platform <goos-goarch>] [--timeout <d>]
+nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
+nova-update release adopt --version <v> --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update help
 ```
 
@@ -438,6 +438,45 @@ Four verbs, and each one can refuse:
   receipt per machine, read from what the remote SAID and not from its exit code, or one
   `RELEASE REFUSED machine=… : <cause> (<remedy>)`, and a final count. Exit 1 if any
   machine refused: the other machines are still reported.
+
+### What adopt will never do
+
+Johnny's security read, 2026-09-18. `adopt` runs on the one host that holds ssh keys to the
+whole fleet and pushes executables to every machine on it, so the interesting question is
+not what it does but what it must never be talked into. Each rule below is a line of code
+and a test, not a note.
+
+- **Never grant the build host an identity the benches trust.** The adopting host is the one
+  that already has the trust; the release travels to it, not the keys to the release. That is
+  why `--from host:dir` exists (above).
+- **Never verify a fetched release with the checksum file that came with it.** Anybody who
+  could change the bits could change the `SHA256SUMS` beside them. A remote `--from` requires
+  `--expect-sums <sha256>`, the digest of `SHA256SUMS` that `cut --sums` recorded in the
+  CHANGELOG entry — it reaches the adopting host through **git**, not through the machine
+  being read. It is checked before the checksum file is so much as parsed, and a mismatch
+  refuses naming **both** digests, because which one is wrong is the whole question.
+- **Never run a far-side binary found on `$PATH`.** The remote command names the
+  `nova-update` this verb just sent and verified, by absolute (or `~/`-rooted) path.
+- **Never interpolate an unvalidated host or path into a remote command.** `--bin`, `--dest`,
+  `--retire` and the machines file's columns are checked against `ValidRemotePath` — absolute
+  or `~/`-rooted, no `..`, and none of the characters a shell reads as syntax — **before any
+  remote command is composed**, and the whole machines file is validated before the first
+  machine is touched, so a bad line does not leave half a fleet adopted.
+- **Never forward the agent, and never put a key on argv.** `SSHOptions` says
+  `ForwardAgent=no` out loud rather than trusting a default or the host's `~/.ssh/config`:
+  forwarding this host's agent to a bench would put the fleet's trust inside a machine the
+  release is being pushed *to*. There is no `-i`: a key named on argv is a key in every `ps`.
+- **Never eval what the far side said.** The receipt is matched by a regexp; a machine that
+  answers with shell syntax is refused, not executed.
+- **Never copy whatever happens to be in the directory.** `Send` ships only the names
+  `SHA256SUMS` lists, so a key or a token dropped beside the binaries is not couriered to
+  every machine by a verb nobody thinks of as a file transfer.
+- **Never install before the checksum**, and **never retire the live stamp**: `--retire`
+  refuses `--bin`, refuses the release's own artifact tree in either direction, and removes
+  only `nova-*` regular files this run installed, through `safepath.RemoveUnder`.
+
+Containers are not part of this verb, so `--network=host` and mounting `~/.config/nova-secrets`
+have nothing here to apply to; if `adopt` ever grows a container step, they belong in this list.
 
 Rule 1 governs throughout — every path is a flag, no default path, no cwd, no `$HOME` —
 and rule 3's no-shell rule governs the child processes. No secret is read, logged or

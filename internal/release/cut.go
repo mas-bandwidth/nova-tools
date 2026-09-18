@@ -138,7 +138,7 @@ func lessVersion(a, b []int) bool {
 // Section renders one changelog section. It is exported and pure so that the
 // shape of what a release says about itself is asserted by a test rather than
 // by reading a file somebody wrote by hand afterwards.
-func Section(version, sha, previous string, when time.Time, prs []PR) string {
+func Section(version, sha, previous, sumsDigest string, when time.Time, prs []PR) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s — %s\n\n", version, when.UTC().Format("2006-01-02"))
 	since := "this repository's first commit"
@@ -146,6 +146,16 @@ func Section(version, sha, previous string, when time.Time, prs []PR) string {
 		since = previous
 	}
 	fmt.Fprintf(&b, "Cut from %s. %s since %s.\n\n", sha, plural(len(prs), "pull request"), since)
+	// THE DIGEST GOES IN THE CHANGELOG, WHICH TRAVELS BY GIT. `adopt` fetching
+	// a release from another machine cannot verify it with the checksum file
+	// that came with it -- anybody who could change one could change the other
+	// -- so it is given this digest instead, which reached the adopting host
+	// through the repository rather than through the machine being read
+	// (Johnny, 2026-09-18). It is written in the form the check wants, so
+	// nobody has to transcribe it.
+	if sumsDigest != "" {
+		fmt.Fprintf(&b, "%s%s\n\nAdopt this release with `--expect-sums %s`.\n\n", SumsDigestPrefix, sumsDigest, sumsDigest)
+	}
 	for _, pr := range prs {
 		fmt.Fprintf(&b, "- #%d %s\n", pr.Number, pr.Title)
 		if len(pr.Members) > 0 {
@@ -169,6 +179,11 @@ func plural(n int, noun string) string {
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
 }
+
+// SumsDigestPrefix is how the changelog names the digest of a release's
+// SHA256SUMS, in one place so that what `cut` writes and what a person copies
+// into `adopt --expect-sums` are the same string.
+const SumsDigestPrefix = "SHA256SUMS digest: "
 
 // prependSection puts the new section above every other section and below the
 // file's title, and creates the file with a title when there is none. The new
@@ -237,10 +252,19 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 	}
 	prs := PullRequests(commits)
-	section := Section(o.version, sha, previous, deps.Now(), prs)
+	// --sums names a SHA256SUMS this release's build already wrote; its digest
+	// is recorded in the section so that an adopt on another host can check a
+	// fetched release against something that did not travel with the bits.
+	sumsDigest := ""
+	if o.sums != "" {
+		if sumsDigest, err = fileSum(o.sums); err != nil {
+			return refusal(errs, "CUT", fmt.Errorf("cannot read %s: %w (name the SHA256SUMS that `release build` wrote, or leave --sums out)", o.sums, err))
+		}
+	}
+	section := Section(o.version, sha, previous, sumsDigest, deps.Now(), prs)
 	if o.dryRun {
-		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s dry-run=yes\n",
-			field(o.version), field(sha), len(prs), field(previous), field(o.changelog))
+		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dry-run=yes\n",
+			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest))
 		fmt.Fprint(errs, section)
 		return 0
 	}
@@ -255,7 +279,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			field(o.version), field(sha), oneline.Err(err), field(o.changelog))
 		return 1
 	}
-	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s dry-run=no\n",
-		field(o.version), field(sha), len(prs), field(previous), field(o.changelog))
+	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dry-run=no\n",
+		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest))
 	return 0
 }

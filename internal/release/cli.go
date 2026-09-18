@@ -15,10 +15,18 @@ import (
 // four lines docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
 // default path: SPEC-UPDATE rule 1 (no search of the cwd, no $HOME) is why a
 // release cut from a laptop and a release cut from a bench are the same release.
-const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--dry-run] [--timeout <d>]
+const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--dry-run] [--timeout <d>]
 nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>] [--timeout <d>]
-nova-update release install --from <dir> --version <v> --bin <dir> [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt --version <v> --machines <file> --ssh <path> --from <dir> --bin <dir> --dest <dir> [--platform <goos-goarch>] [--timeout <d>]`
+nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
+nova-update release adopt --version <v> --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --expect-sums <sha256>] [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]`
+
+// AdoptNote is what a person needs before their first adopt, and every sentence
+// of it is something the first dogfood pass had to find out by failing.
+const AdoptNote = "adopt runs FROM the host that has ssh to every machine and fans out from there; it never needs the machines to reach each other. " +
+	"When the release was built elsewhere, --from may name that machine as host:dir, --stage <dir> says where to fetch it first, and --expect-sums <sha256> is the digest the cut recorded -- a release fetched from a machine is never verified by the checksum file that came with it. " +
+	"--machines is " + MachinesShape + ". " + RemotePathsNote + ". " +
+	"--retire <dir> removes this release's own nova-* files from a second directory nobody should still be running from (~/go/bin); it refuses to be --bin or the live stamp. " +
+	"--bin, --dest and --retire must be absolute or ~/-rooted and free of shell metacharacters; they are validated before any remote command is composed."
 
 // Deps are the seams. A zero Deps is the production one: the forge is gh, the
 // remote is ssh, the compiler is go, the clock is the machine's. A test fills in
@@ -38,6 +46,7 @@ type Deps struct {
 // share --version, --from and --timeout and a reader should see that once.
 type options struct {
 	repo, from, version, changelog, out, source, bin, machines, ssh, dest, platform string
+	stage, retire, expectSums, sums                                                 string
 	dryRun                                                                          bool
 	timeout                                                                         time.Duration
 }
@@ -75,6 +84,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	case "cut", "build", "install", "adopt":
 	case "help", "--help", "-h":
 		fmt.Fprintln(out, Verbs)
+		fmt.Fprintln(out, AdoptNote)
 		return 0
 	default:
 		return refusal(errs, "RELEASE", fmt.Errorf("unknown release verb %s (use cut, build, install or adopt)", verb))
@@ -94,6 +104,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.from, "from", "", "branch")
 		f.StringVar(&o.changelog, "changelog", "", "CHANGELOG.md path")
 		f.BoolVar(&o.dryRun, "dry-run", false, "decide and print, write nothing")
+		f.StringVar(&o.sums, "sums", "", "a built SHA256SUMS whose digest the section records")
 		required = []string{"repo", "from", "version", "changelog"}
 	case "build":
 		f.StringVar(&o.out, "out", "", "artifact root")
@@ -103,14 +114,18 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	case "install":
 		f.StringVar(&o.from, "from", "", "artifact root")
 		f.StringVar(&o.bin, "bin", "", "install directory")
+		f.StringVar(&o.retire, "retire", "", "second directory to clear of this release's tools")
 		f.StringVar(&o.platform, "platform", "", "goos-goarch (default: this host)")
 		required = []string{"version", "from", "bin"}
 	case "adopt":
-		f.StringVar(&o.from, "from", "", "artifact root")
+		f.StringVar(&o.from, "from", "", "artifact root, or host:dir on another machine")
 		f.StringVar(&o.bin, "bin", "", "install directory on each machine")
-		f.StringVar(&o.machines, "machines", "", "one machine per line")
+		f.StringVar(&o.machines, "machines", "", MachinesShape)
 		f.StringVar(&o.ssh, "ssh", "", "the ssh binary")
 		f.StringVar(&o.dest, "dest", "", "artifact root on each machine")
+		f.StringVar(&o.stage, "stage", "", "where to fetch a host:dir --from to")
+		f.StringVar(&o.expectSums, "expect-sums", "", "sha256 of SHA256SUMS, as the cut recorded it")
+		f.StringVar(&o.retire, "retire", "", "second directory on each machine to clear")
 		f.StringVar(&o.platform, "platform", "", "goos-goarch (default: this host)")
 		required = []string{"version", "from", "bin", "machines", "ssh", "dest"}
 	}
