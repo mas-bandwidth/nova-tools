@@ -108,6 +108,14 @@ func newRemoteSite(in batchRun, deps Deps, remote merge.Remote) (*remoteSite, er
 	if err := merge.ValidRemotePath(in.root); err != nil {
 		return nil, fmt.Errorf("--root is the directory this batch clones and builds under ON %s: %w", remote.Name(), err)
 	}
+	// --reference is a mirror on the machine that CLONES, which with --on is that machine
+	// and not this one. It is held to the same shape as --root for the same reason: it
+	// reaches that machine's shell.
+	if ref := strings.TrimSpace(in.reference); ref != "" {
+		if err := merge.ValidRemotePath(ref); err != nil {
+			return nil, fmt.Errorf("--reference is a git mirror ON %s, which is the machine doing the cloning: %w", remote.Name(), err)
+		}
+	}
 	work := merge.RemoteJoin(in.root, in.name)
 	localRoot, err := filepath.Abs(in.localRoot)
 	if err != nil {

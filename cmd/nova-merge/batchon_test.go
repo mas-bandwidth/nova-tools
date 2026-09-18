@@ -358,6 +358,13 @@ func TestBatchOnRefusesARootThatCouldNotSafelyBeRemoved(t *testing.T) {
 	if len(o.bench.scripts) != 0 {
 		t.Errorf("a refused root is never sent; the bench ran %d scripts", len(o.bench.scripts))
 	}
+	// --reference names a mirror on the machine that CLONES, which with --on is the bench.
+	// It reaches that machine's shell, so it is held to the same shape.
+	exit, _, stderr := o.on("integration-no", "--pr", "1", "--reference", "~/mirror; rm -rf ~")
+	if exit != 2 {
+		t.Errorf("a --reference that is not a safe path on the machine is exit 2, got %d\n%s", exit, stderr)
+	}
+	contains(t, stderr, "--reference is a git mirror ON bench1")
 }
 
 // A FLAG THAT DOES NOTHING IS A FLAG THAT LIED to whoever typed it: --local-root and
