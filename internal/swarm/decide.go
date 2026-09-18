@@ -225,12 +225,37 @@ func canonicalUsagePath(p string) string {
 	return abs
 }
 
+// hasUsageRow reports whether path already carries a usage row for the stable
+// call identity (job, attempt), ensuring projection idempotency if interrupted
+// before completion persistence.
+func hasUsageRow(path, job string, attempt int) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	attStr := strconv.Itoa(attempt)
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		cols := strings.Split(line, "\t")
+		if len(cols) >= 2 && cols[0] == job && cols[1] == attStr {
+			return true
+		}
+	}
+	return false
+}
+
+
 type retainedDecideCall struct {
-	Answers map[string]decide.Answer `json:"answers"`
-	Usage   decide.Usage             `json:"usage"`
-	Failed  bool                     `json:"failed"`
-	Start   time.Time                `json:"start"`
-	End     time.Time                `json:"end"`
+	Answers   map[string]decide.Answer `json:"answers"`
+	Usage     decide.Usage             `json:"usage"`
+	Failed    bool                     `json:"failed"`
+	Start     time.Time                `json:"start"`
+	End       time.Time                `json:"end"`
+	AllDone   bool                     `json:"all_done,omitempty"`
+	Completed map[string]bool          `json:"completed,omitempty"`
 }
 
 // taskDecider carries one triage run's Decide call, floor and the set of
@@ -287,6 +312,17 @@ func (d *taskDecider) retainedCallPath(id string, attempt int) string {
 	return d.pool.Path(Usage, fmt.Sprintf("%s-%d.decide.json", id, attempt))
 }
 
+func (d *taskDecider) saveRetainedCall(path string, call *retainedDecideCall) error {
+	if path == "" {
+		return nil
+	}
+	raw, err := json.Marshal(call)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(path, raw, 0o644)
+}
+
 func (d *taskDecider) destinations(sc Sidecar) ([]string, error) {
 	var candidates []string
 	if d.usagePath != "" {
@@ -331,21 +367,35 @@ func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok boo
 		return suffix, true
 	}
 
-	dests, err := d.destinations(sc)
-	if err != nil {
-		d.lastErr = err
-		return "", false
-	}
-
 	var call retainedDecideCall
 	retainedPath := d.retainedCallPath(sc.ID, attempt)
 	hasRetained := false
 	if retainedPath != "" {
-		if raw, rerr := os.ReadFile(retainedPath); rerr == nil {
-			if jerr := json.Unmarshal(raw, &call); jerr == nil {
-				hasRetained = true
+		raw, rerr := os.ReadFile(retainedPath)
+		if rerr == nil {
+			if jerr := json.Unmarshal(raw, &call); jerr != nil {
+				d.lastErr = fmt.Errorf("corrupt retained call %s: %w", retainedPath, jerr)
+				return "", false
 			}
+			hasRetained = true
+			if call.Completed == nil {
+				call.Completed = make(map[string]bool)
+			}
+		} else if !os.IsNotExist(rerr) {
+			d.lastErr = fmt.Errorf("read retained call %s: %w", retainedPath, rerr)
+			return "", false
 		}
+	}
+
+	if hasRetained && call.AllDone && call.Failed {
+		d.seenUsage[key] = true
+		return "", false
+	}
+
+	dests, err := d.destinations(sc)
+	if err != nil {
+		d.lastErr = err
+		return "", false
 	}
 
 	if !hasRetained {
@@ -354,22 +404,26 @@ func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok boo
 		answers, usage, err := d.do(context.Background(), state, decideQuestions())
 		end := d.now()
 		call = retainedDecideCall{
-			Answers: answers,
-			Usage:   usage,
-			Failed:  err != nil,
-			Start:   start,
-			End:     end,
+			Answers:   answers,
+			Usage:     usage,
+			Failed:    err != nil,
+			Start:     start,
+			End:       end,
+			Completed: make(map[string]bool),
 		}
 		if retainedPath != "" {
-			if raw, jerr := json.Marshal(call); jerr == nil {
-				_ = os.WriteFile(retainedPath, raw, 0o644)
+			if err := d.saveRetainedCall(retainedPath, &call); err != nil {
+				d.lastErr = fmt.Errorf("persist retained call: %w", err)
+				return "", false
 			}
 		}
 	}
 
-	if err := d.recordUsage(sc, dests, call.Start, call.End, call.Usage, call.Failed); err != nil {
-		d.lastErr = err
-		return "", false
+	if !call.AllDone {
+		if err := d.recordUsage(sc, dests, &call, retainedPath); err != nil {
+			d.lastErr = err
+			return "", false
+		}
 	}
 	if call.Failed {
 		return "", false
@@ -402,38 +456,66 @@ func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok boo
 // recordUsage appends one row to each unique usage TSV destination for this
 // provider call through the card-usage contract (AppendCardUsage), matching
 // nova-decide route.
-func (d *taskDecider) recordUsage(sc Sidecar, dests []string, start, end time.Time, usage decide.Usage, failed bool) error {
+func (d *taskDecider) recordUsage(sc Sidecar, dests []string, call *retainedDecideCall, retainedPath string) error {
 	attempt := decideAttempt(d.pool, sc)
 	key := fmt.Sprintf("%s\x00%d", sc.ID, attempt)
 	if d.seenUsage[key] {
 		return nil
 	}
+	if call.Completed == nil {
+		call.Completed = make(map[string]bool)
+	}
 	row := UsageRow{
 		"job":      sc.ID,
 		"attempt":  strconv.Itoa(attempt),
-		"started":  Stamp(start),
-		"ended":    Stamp(end),
+		"started":  Stamp(call.Start),
+		"ended":    Stamp(call.End),
 		"rc":       "0",
 		"provider": usageProvider,
 		"model":    decide.DefaultModel,
 	}
-	if usage.HasInput || usage.InputTokens > 0 {
-		row["tokens_in"] = strconv.Itoa(usage.InputTokens)
+	if call.Usage.HasInput || call.Usage.InputTokens > 0 {
+		row["tokens_in"] = strconv.Itoa(call.Usage.InputTokens)
 	}
-	if usage.HasOutput || usage.OutputTokens > 0 {
-		row["tokens_out"] = strconv.Itoa(usage.OutputTokens)
+	if call.Usage.HasOutput || call.Usage.OutputTokens > 0 {
+		row["tokens_out"] = strconv.Itoa(call.Usage.OutputTokens)
 	}
-	if failed {
+	if call.Failed {
 		row["rc"] = "2"
 	}
 	var writeErrs []error
 	for _, dst := range dests {
+		canonical := canonicalUsagePath(dst)
+		if call.Completed[canonical] {
+			continue
+		}
+		if hasUsageRow(dst, sc.ID, attempt) {
+			call.Completed[canonical] = true
+			if retainedPath != "" {
+				_ = d.saveRetainedCall(retainedPath, call)
+			}
+			continue
+		}
 		if err := AppendCardUsage(dst, row); err != nil {
 			writeErrs = append(writeErrs, fmt.Errorf("%s: %w", dst, err))
+			continue
+		}
+		call.Completed[canonical] = true
+		if retainedPath != "" {
+			if err := d.saveRetainedCall(retainedPath, call); err != nil {
+				writeErrs = append(writeErrs, fmt.Errorf("update retained call: %w", err))
+				break
+			}
 		}
 	}
 	if len(writeErrs) > 0 {
 		return fmt.Errorf("append usage: %v", writeErrs)
+	}
+	call.AllDone = true
+	if retainedPath != "" {
+		if err := d.saveRetainedCall(retainedPath, call); err != nil {
+			return fmt.Errorf("persist retained call completion: %w", err)
+		}
 	}
 	d.seenUsage[key] = true
 	return nil
