@@ -46,12 +46,14 @@ usage:
   nova-work ready --node X --graph <file>
   nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
 
 verbs:
   nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)
   nova-work ready --node X is the ready set
   nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
-  nova-work plan check     reads a .work plan as data and closes its needs/blocks graph
+  nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
+  nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
 
 A node is ready only when every need is terminal accepted, and every row that cannot
 proceed prints its exact blocker and its resolver. A :deps cycle is refused before
@@ -72,8 +74,11 @@ flags:
                   it, ready prints one row per node in seed order.
   --needs <ids>   a comma-separated list of needs for --node. --needs needs --node;
                   --node alone creates a node needing nothing.
-  --file <path>   plan check: the plan to read. Required, always: there is no default
-                  file and no discovery from the working directory.
+  --file <path>   plan check and plan expand: the plan to read. Required, always:
+                  there is no default file and no discovery from the working directory.
+  --out <dir>     plan expand: the directory to write one card per node into. Required;
+                  a card already there is left byte-identical, so a re-expansion appends
+                  only the new card and mints no id.
   --max-bytes <n> plan check: the byte ceiling (default 65536). A file past it is
                   refused before a byte is parsed, never truncated.
   --max-depth <n> plan check: the nesting ceiling (default 64). A form past it is
@@ -265,8 +270,11 @@ func writeRow(stdout io.Writer, n jobs.Node, g *jobs.Graph) {
 }
 
 func cmdPlan(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "check" {
-		return refuse(stderr, " plan", "the only verb is plan check --file <path.work>")
+	if len(args) == 0 || (args[0] != "check" && args[0] != "expand") {
+		return refuse(stderr, " plan", "the verbs are plan check --file <path.work> and plan expand --file <path.work> --out <dir>")
+	}
+	if args[0] == "expand" {
+		return cmdPlanExpand(args[1:], stdout, stderr)
 	}
 	fs := flag.NewFlagSet("plan check", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -302,5 +310,53 @@ func cmdPlan(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "PLAN OK file=%s bytes=%d version=%d nodes=%d edges=%d\n",
 		oneline.Field(*file), len(data), plan.Version, len(plan.Nodes), graph.Edges())
+	return 0
+}
+
+// cmdPlanExpand is the smallest first slice of SPEC-WORKLANG's expander: it
+// reads hand-written :nodes, builds the needs/blocks graph, refuses a cycle or
+// an absent need, and writes one card directory per node under --out. Output is
+// one line; a refusal is exit 2 with one remedy line.
+func cmdPlanExpand(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("plan expand", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	file := fs.String("file", "", "the plan to expand (required)")
+	out := fs.String("out", "", "the directory to write one card per node into (required)")
+	def := worklang.DefaultLimits()
+	maxBytes := fs.Int("max-bytes", def.MaxBytes, "byte ceiling")
+	maxDepth := fs.Int("max-depth", def.MaxDepth, "nesting depth ceiling")
+	maxNodes := fs.Int("max-nodes", def.MaxNodes, "atom ceiling")
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, " plan expand", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if fs.NArg() > 0 {
+		return refuse(stderr, " plan expand", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	}
+	if *file == "" {
+		return refuse(stderr, " plan expand", "--file is required; refusing to guess")
+	}
+	if *out == "" {
+		return refuse(stderr, " plan expand", "--out is required; refusing to guess")
+	}
+	limits := worklang.Limits{MaxBytes: *maxBytes, MaxDepth: *maxDepth, MaxNodes: *maxNodes}
+	data, err := os.ReadFile(*file)
+	if err != nil {
+		return refuse(stderr, " plan expand", oneline.Err(err))
+	}
+	plan, err := worklang.ParsePlan(*file, data, limits)
+	if err != nil {
+		return refuse(stderr, " plan expand", oneline.Err(err))
+	}
+	cards, err := worklang.ExpandPlan(plan)
+	if err != nil {
+		return refuse(stderr, " plan expand", oneline.Err(err))
+	}
+	written, err := worklang.ExpandDir(*out, cards)
+	if err != nil {
+		return refuse(stderr, " plan expand", oneline.Err(err))
+	}
+	fmt.Fprintf(stdout, "PLAN EXPANDED file=%s out=%s nodes=%d cards=%d\n",
+		oneline.Field(*file), oneline.Field(*out), len(cards), written)
 	return 0
 }

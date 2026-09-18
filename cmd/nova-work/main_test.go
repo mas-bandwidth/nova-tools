@@ -211,3 +211,78 @@ func TestPlanCheckRefusesAMissingFile(t *testing.T) {
 		t.Errorf("missing --file refusal does not name it: %s", errb.String())
 	}
 }
+
+const expandPlan = `(:plan :version 1
+ (:node :id "n1" :kind docs :repo "o/r" :base "dev"
+  :inputs ((:spec "docs/a.md:1-2"))
+  :output (:branch "rowan/n1-a" :green ("test:a"))
+  :budget (:minutes 30 :tokens 120000 :model-floor sonnet)
+  :affinity (:bench verify :route "deepseek-flash"))
+ (:node :id "n2" :kind go-fix :repo "o/r" :base "dev" :needs ("n1")
+  :output (:branch "rowan/n2-b" :green ("test:b"))
+  :budget (:minutes 45 :tokens 180000 :model-floor opus)
+  :affinity (:bench local :route "deepseek-flash"))
+ (:clip :per-node))`
+
+// plan expand writes one card directory per node and prints exactly one line.
+func TestPlanExpandWritesACardPerNode(t *testing.T) {
+	path := writePlan(t, expandPlan)
+	out := t.TempDir()
+	code, stdout, stderr := invoke("plan", "expand", "--file", path, "--out", out)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(stdout), "PLAN EXPANDED") {
+		t.Fatalf("expand line = %q, want a PLAN EXPANDED line", stdout)
+	}
+	if strings.Count(strings.TrimSpace(stdout), "\n") != 0 {
+		t.Fatalf("plan expand printed more than one line: %q", stdout)
+	}
+	for _, id := range []string{"n1", "n2"} {
+		card, err := os.ReadFile(filepath.Join(out, id, "card"))
+		if err != nil {
+			t.Fatalf("read %s card: %v", id, err)
+		}
+		if !strings.Contains(string(card), "card "+id) {
+			t.Errorf("card %s does not carry its node: %s", id, card)
+		}
+	}
+}
+
+// plan expand refuses a missing --out, never guessing a directory.
+func TestPlanExpandRefusesAMissingOut(t *testing.T) {
+	path := writePlan(t, expandPlan)
+	code, _, stderr := invoke("plan", "expand", "--file", path)
+	if code != 2 || !strings.Contains(stderr, "--out is required") {
+		t.Fatalf("exit = %d stderr=%q, want 2 naming --out", code, stderr)
+	}
+}
+
+// plan expand refuses a needs cycle before any card is written.
+func TestPlanExpandRefusesANeedsCycle(t *testing.T) {
+	body := `(:plan :version 1
+ (:node :id "a" :kind docs :repo "o/r" :base "dev" :needs ("b")
+  :output (:branch "rowan/a-a" :green ("t"))
+  :budget (:minutes 1 :tokens 1 :model-floor sonnet)
+  :affinity (:bench verify :route "r"))
+ (:node :id "b" :kind docs :repo "o/r" :base "dev" :needs ("a")
+  :output (:branch "rowan/b-b" :green ("t"))
+  :budget (:minutes 1 :tokens 1 :model-floor sonnet)
+  :affinity (:bench verify :route "r"))
+ (:clip :per-node))`
+	path := writePlan(t, body)
+	out := t.TempDir()
+	code, stdout, stderr := invoke("plan", "expand", "--file", path, "--out", out)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2; stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "cycle") || !strings.Contains(stderr, "run: nova-work help") {
+		t.Fatalf("cycle refusal = %q, want the cycle named and the remedy", stderr)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("a refused cycle wrote to stdout: %q", stdout)
+	}
+	if entries, _ := os.ReadDir(out); len(entries) != 0 {
+		t.Fatalf("a refused cycle wrote %d cards", len(entries))
+	}
+}
