@@ -1071,6 +1071,7 @@ skip and every parked poison**.
 
 ```
 nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>] [--land [--flakes <file>] [--max-rounds <n>] [--interval <duration>]]
+nova-merge batch --plan --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--halves <k>] [--max-members <n>] [--json]
 ```
 
 `batch` is the landing gate and **without `--land` it pushes nothing**. It clones `--repo` under
@@ -1118,6 +1119,65 @@ member of the next one. `--no-require-checks` waives the whole check and says so
 build-level half of the same class on the bench, in seconds, with no second machine; it
 does not catch a windows-only **test** failure, which is what the forge's own windows
 leg is for.
+
+#### `--plan`: the arithmetic in front of the gate
+
+```
+nova-merge batch --plan --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--halves <k>] [--max-members <n>] [--json]
+```
+
+**Every batch gate on 2026-09-18 ran two and three rounds.** The gate merges the members
+in the order given and drops the **first** head that will not merge, so a candidate list
+holding five pairwise conflicts costs five rounds to whittle down — and a round is a
+clone, a merge of everything ahead, a build, two vets, the whole test suite and the lisp
+suite. Five of those to learn five facts about five pairs of diffs, none of which needed a
+test run to know. The lists that did finish were then split by hand, because the darwin
+shards overflowed on the big ones.
+
+`--plan` is that arithmetic, done once and up front. It clones **once**, merges each
+candidate onto `--base`, and then merges every other candidate onto **that** — one
+`git merge-tree` per pair, in the object database, with no working tree and no checkout —
+and prints the pairs and the halves:
+
+```
+BATCH PLAN half=<n> members=<list>
+BATCH PLAN CONFLICT #<a> #<b> files=<paths>
+BATCH PLAN OK halves=<k> members=<n> conflicts=<m> dropped=<list>
+BATCH PLAN START name=<name> base=<sha> prs=<n> halves=<k> max_members=<n>
+BATCH PLAN HEAD #<n> head=<sha> branch=<name> base=<name>
+BATCH PLAN ROW #<n> conflicts=<list>
+BATCH PLAN STACK members=<list> reason="<why they travel together>"
+BATCH PLAN DROP #<n> reason="<why no half could take it>"
+BATCH PLAN REFUSED: <reason>
+```
+
+**A half never holds a conflicting pair.** That is the round this verb exists to save, so
+a candidate that conflicts with a member of every half is **dropped by name with the
+reason** rather than left in a list whose gate run is already lost. A candidate that will
+not merge onto `--base` **on its own** is dropped before the matrix is measured at all —
+otherwise the same one fact is reported once per partner.
+
+**A stack travels together and in order.** A member whose base branch is another member's
+head branch is stacked on it; split across halves, the upper one lands into a branch that
+is not there. `BATCH PLAN STACK` says which members those were.
+
+`--halves` defaults to 2 — the thing this replaces is a person cutting one overlong list
+in half. `--max-members` defaults to **8, which is a stated number and not a derived one**,
+and it is worth saying so plainly: the honest derivation is #1372's, the darwin merge leg
+dealing each changed package off `testdata/ci/package-sizes-darwin.tsv` against a
+ten-minute ceiling, and reaching it here needs a changed-file read per candidate and both
+platforms' tables. Eight is chosen against those same measurements — the five largest
+darwin packages are 390.4 s between them against a 600 s leg — and it is a flag because it
+is stated: a caller who has measured their own list says otherwise with it.
+
+`--json` prints the same answer as **one document** for a landing child, in place of the
+lines. **It pushes nothing, opens nothing and writes nothing to the forge**: the only
+thing it asks the forge is each candidate's head branch and base branch, which is all a
+stack is, and both are data. Every flag of the gate and of the landing is **refused beside
+`--plan` by name** — `--land`, `--flakes`, `--require-lisp`, `--receipt-file`,
+`--no-require-checks`, `--gomaxprocs`, `--max-rounds`, `--interval` — and the plan's own
+three are refused without it, because a flag that does nothing is a flag that lied to
+whoever typed it.
 
 #### `--land`: the seven steps after `BATCH OK`
 

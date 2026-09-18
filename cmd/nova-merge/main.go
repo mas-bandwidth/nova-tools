@@ -62,6 +62,7 @@ usage:
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
   nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>] [--land [--flakes <file>] [--max-rounds <n>] [--interval <duration>]]
+  nova-merge batch --plan --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--halves <k>] [--max-members <n>] [--json]
   nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
 
   nova-merge queue    --lane <dir> (status|hold <reason> --who <name>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
@@ -96,6 +97,28 @@ branch and opening the pull request is the caller's, who is
 the one who knows whether this is the batch they wanted. --base defaults to dev, which is
 where this repository's integration batches land; --root is rebuilt on every run, so give
 it a directory of the batch's own.
+
+--plan IS THE ARITHMETIC IN FRONT OF THE GATE, and it is the same list of candidates from
+the other end. On 2026-09-18 every batch gate ran two and three rounds: the gate merges in
+the order given and drops the FIRST head that will not merge, so five pairwise conflicts
+cost five rounds to find -- five clones, five builds, five whole test suites -- and the
+lists that did finish were then split by hand because the darwin shards overflowed. --plan
+clones ONCE, merges each head onto --base and then every other head onto that, and prints
+which pairs will never go together plus the halves to run the gate over:
+
+  BATCH PLAN half=<n> members=<list>
+  BATCH PLAN CONFLICT #<a> #<b> files=<paths>
+  BATCH PLAN OK halves=<k> members=<n> conflicts=<m> dropped=<list>
+
+A half NEVER holds a conflicting pair -- that is the round this verb exists to save -- so a
+candidate that conflicts with every half is dropped by name with the reason, as is one that
+will not merge onto --base on its own. A member whose base branch is another member's head
+is STACKED on it: the two go in one half and in that order, or the upper one lands into a
+branch that is not there. --halves defaults to 2 and --max-members to 8, which is a STATED
+number and not a derived one: the derivation is the darwin shard budget of #1372, and
+reaching it needs a changed-file read per candidate. --json is the same answer as one
+document for a child to read. It pushes nothing, opens nothing and writes nothing to the
+forge; the two fields it reads from the forge are each candidate's head and base branch.
 
 --land IS THE SEVEN STEPS AFTER BATCH OK, which Rowan ran by hand eight times on
 2026-09-18. With it the same run goes on to (1) push rowan/<name> -- a plain push when the

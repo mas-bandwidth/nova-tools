@@ -59,6 +59,14 @@ var mergeAudit = audit.Config{
 		"batchland.go|landBody|numberList(p.dropped)": "digits and commas, or the literal \"none\" -- numberList renders a list of ints",
 		"batchland.go|say|fields":                     "the fields of one BATCH LAND STEP line, built at every call site in batchland.go out of oneline.Field values and literal key= words -- the same shape batch.go|runBatch|line is exempted for; TestBatchLandPushesOpensEnqueuesWatchesAndClosesTheMembers reads those lines",
 		"batch.go|mergeMembers|in.name":               "the batch's own --name, inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
+		// `batch --plan --json` prints a DOCUMENT rather than a line of the grammar, and
+		// encoding/json is its escaper: the marshaller quotes and escapes every string in
+		// it -- the drop reasons, the conflicting paths, the branch names -- so a newline
+		// inside one is a \n and never a second line. Running it through oneline as well
+		// would leave a document that no longer parses.
+		// TestBatchPlanJSONCarriesTheHalvesTheConflictsAndTheReasons unmarshals the whole
+		// of what this site printed, which is the assertion that it stayed one document.
+		"batchplan.go|printPlanJSON|raw": "the JSON document encoding/json marshalled, whose every string field that encoder already quoted and escaped; escaping it again would stop it being JSON",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -212,6 +213,14 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	flakesFile := f.fs.String("flakes", "", "")
 	maxRounds := f.fs.Int("max-rounds", batchLandRounds, "")
 	intervalRaw := f.fs.String("interval", batchLandInterval, "")
+	// --plan IS THE ARITHMETIC IN FRONT OF THE GATE (see batchplan.go). It is a mode of
+	// this verb rather than a verb of its own because it takes the same candidate list, the
+	// same --repo, --root and --base, and answers the question the gate's caller is about
+	// to ask it: which of these go together, and in what sizes.
+	plan := f.fs.Bool("plan", false, "")
+	halves := f.fs.Int("halves", batchPlanHalves, "")
+	maxMembers := f.fs.Int("max-members", batchPlanMaxMembers, "")
+	asJSON := f.fs.Bool("json", false, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -266,8 +275,63 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if !*land && strings.TrimSpace(*flakesFile) != "" {
 		f.problem("--flakes is the list --land reruns a known flake from; without --land nothing here reaches the forge, so the list would be read and never used")
 	}
+	// A FLAG THAT DOES NOTHING IS A FLAG THAT LIED to whoever typed it. --plan runs no step
+	// of the suite and reaches no write on the forge, so every flag belonging to the gate or
+	// to the landing is refused beside it BY NAME, and the plan's own three are refused
+	// without it. What was actually given is read off the flag set rather than guessed from
+	// a value, so a caller who typed the default on purpose is still told.
+	given := map[string]bool{}
+	f.fs.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
+	if *plan {
+		for _, bad := range []struct{ name, why string }{
+			{"land", "landing is what follows a gate's verdict over a tree, and a plan has judged no tree; --plan writes nothing to the forge at all"},
+			{"flakes", "--flakes is the list --land reruns a known flake from, and --plan runs no test to be flaky"},
+			{"require-lisp", "--plan runs no step of the suite, so there is no lisp step for it to require"},
+			{"receipt-file", "--receipt-file is the evidence the gate admits a member on; --plan admits nobody and merges nothing onto a branch"},
+			{"no-require-checks", "--plan never reads a member's own checks; what it measures is whether the diffs go together"},
+			{"gomaxprocs", "--gomaxprocs is CI's fair share of the machine for the test step, and --plan runs no test step"},
+			{"max-rounds", "--max-rounds bounds --land's wait for ci-ok, and --plan waits for nothing"},
+			{"interval", "--interval is how long --land waits between polls of the forge, and --plan polls nothing"},
+		} {
+			if given[bad.name] {
+				// Both halves are literals of the table above, joined rather than
+				// formatted: nothing a caller typed reaches this line.
+				f.problem("--plan and --" + bad.name + " do not go together: " + bad.why)
+			}
+		}
+		if *halves < 1 || *halves > batchPlanHalvesCeiling {
+			f.problem(fmt.Sprintf("--halves is how many lists the candidates are cut into, from 1 to %d; a plan cut more ways than that is a gate run more times than the rounds it was meant to save, got %d", batchPlanHalvesCeiling, *halves))
+		}
+		if *maxMembers < 1 || *maxMembers > batchPlanCeiling {
+			f.problem(fmt.Sprintf("--max-members is the ceiling on ONE half, from 1 to %d; it is what keeps a half inside the darwin merge leg's shard budget (#1372), and a ceiling with no ceiling is not one, got %d", batchPlanCeiling, *maxMembers))
+		}
+	} else {
+		for _, bad := range []struct{ name, why string }{
+			{"halves", "the halves are what --plan cuts a candidate list into; the gate runs over the list it was given"},
+			{"max-members", "--max-members is the ceiling --plan keeps a half under; the gate merges every member it was given"},
+			{"json", "--json is the plan as a document for the landing child; the gate's verdict is the one line it prints"},
+		} {
+			if given[bad.name] {
+				f.problem("--" + bad.name + " belongs to --plan: " + bad.why)
+			}
+		}
+	}
 	if !f.done(stderr) {
 		return 2
+	}
+	if *plan {
+		return runBatchPlan(batchPlanRun{
+			name:       *name,
+			base:       *base,
+			root:       *root,
+			repo:       *repo,
+			reference:  *reference,
+			prs:        prs,
+			timeout:    timeout,
+			halves:     *halves,
+			maxMembers: *maxMembers,
+			asJSON:     *asJSON,
+		}, stdout, stderr, deps)
 	}
 	return runBatch(batchRun{
 		name:         *name,

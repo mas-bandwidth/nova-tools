@@ -1572,6 +1572,32 @@ The forge seam is `merge.LandForge` — open or update the pull request, read a 
 
 **The class rule.** `TestNoGhPrMergeSpellingInTheToolsGo` and `TestNoGhPrMergeSpellingUnderDotGithub` (internal/ci) refuse a `pr merge` argument list or an `--auto` flag in every non-test Go file under `cmd/` and `internal/` and in every file under `.github/`. The exceptions are a shrink-only list in `internal/ci/testdata/prmerge_allowlist.txt`, checked in both directions: the guard that names `--auto` in order to refuse it, the audit's `--disable-auto` (the one spelling that unmerges), and the secrets store's own squash merge in a repository that has no merge queue.
 
+## The plan in front of the gate (2026-09-18)
+
+**The mistake it removes, in one sentence.** Every batch gate that day ran two and three rounds, because the gate merges the members IN ORDER and drops the FIRST head that will not merge — so a candidate list holding five pairwise conflicts costs five rounds to whittle down, and a round is a clone, a merge of everything ahead, a build, two vets, the whole test suite and the lisp suite. Five of those to learn five facts about five pairs of diffs, and not one of those facts needed a test run to know. On top of it the lists that did finish were split by hand afterwards, because the darwin shards overflowed on the big ones.
+
+```
+nova-merge batch --plan --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--halves <k>] [--max-members <n>] [--json]
+```
+
+**One clone, and the pairs measured without a working tree.** The plan clones once, merges each candidate onto `--base` with `git merge-tree --write-tree`, turns each result into a commit with `git commit-tree`, and then merges every other candidate onto THAT — which is exactly what the gate will do to them, one round later and after a test suite. Nothing is checked out, no worktree is made or cleaned up, and every object it writes lives and dies with the clone under `--root`. git's exit code is the answer and it has three values: 0 clean, 1 conflicted with the files named, and anything else the merge could not be done at all — the third is a refusal and never a conflict, because a planner that reported "these conflict" about a pair git declined to consider sends a reader looking for a conflicting file that is not there.
+
+**A half never holds a conflicting pair.** That is the round the verb exists to save, so the partition is not a best effort at fewer conflicts: a unit goes into a half only when it conflicts with nothing already there and the half has room, and a unit that fits nowhere is **dropped by name with the reason**. A candidate that will not merge onto `--base` on its own is dropped BEFORE the matrix, because otherwise that one fact is reported once per partner.
+
+**A stack travels together and in order.** A member whose base branch is another member's head branch is stacked on it. Split across halves, the upper one lands into a branch that is not there; named out of order, it lands before the thing it is based on. `PlanUnits` groups them parent first and the greedy places the unit, never a member of one.
+
+**The answer is deterministic to the last tie-break.** The exact partition is NP-hard and the input is a handful of pull requests a person picked, so the placement is greedy in the caller's order — but the tie-breaks are total (fewest members, then the lower-numbered half) and the matrix is normalised (lower number first, one entry per pair, sorted). A plan that came out differently on two runs over the same inputs is a plan nobody can diff, which is the whole use a caller has for one.
+
+**`--max-members` is a stated number, and the spec says so rather than implying a derivation.** The honest derivation is the darwin merge leg of the ci spec: each changed package is dealt off `testdata/ci/package-sizes-darwin.tsv` against a ten-minute ceiling, and the members that fit are the ones whose changed packages sum under it. Reaching that here needs a changed-file read per candidate and both platforms' tables, which is a second verb's worth of machinery inside this one. The default is 8, chosen against those same measurements — the five largest darwin packages are 120.3, 82.7, 68.8, 64.4 and 54.2 s, 390.4 s between them against a 600 s leg — and it is a flag precisely because it is stated.
+
+```
+BATCH PLAN half=<n> members=<list>
+BATCH PLAN CONFLICT #<a> #<b> files=<paths>
+BATCH PLAN OK halves=<k> members=<n> conflicts=<m> dropped=<list>
+```
+
+`--json` prints the same answer as one document for a landing child, in place of those lines and never beside them. **It pushes nothing, opens nothing and writes nothing to the forge.** The two fields it reads from the forge — each candidate's head branch and base branch — come through the same `merge.Host` seam the rest of this binary reads, so its tests drive `merge.FakeHost` and none opens a socket; and both fields are DATA, compared only with another member's. Every flag of the gate and of the landing is refused beside `--plan` by name, and the plan's own three are refused without it: a flag that does nothing is a flag that lied to whoever typed it.
+
 ## Lessons — the dogfood pass of 2026-09-18
 
 A non-author drove `nova-merge batch`, `nova-merge queue` and `nova-merge react` against this repository at `dev` 65e23fb0 and wrote down every edge they fell off. **A friend's first-run stumble is a gift, and the repair is the tool.** Sixteen of them are in this section by their own numbers, with the thing each one cost; every one has a test that was seen red before it was trusted.
