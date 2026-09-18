@@ -21,6 +21,7 @@ const usage = `nova-pulse — one tool, five verbs, no model call
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> [--bench <name>]... [--once]
@@ -36,6 +37,7 @@ nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hour
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
+nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
 nova-pulse fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
@@ -600,6 +602,9 @@ func isDeadlineSeconds(s string) bool {
 func cmdCut(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("cut")
 	pool := f.fs.String("pool", "", "")
+	issue := f.fs.String("issue", "", "")
+	rows := f.fs.String("rows", "", "")
+	branchFrom := f.fs.String("branch-from", "", "")
 	templates := f.fs.String("templates", "", "")
 	out := f.fs.String("out", "", "")
 	root := f.fs.String("root", "", "")
@@ -610,7 +615,17 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	f.want(*pool, "pool", "the pool.tsv of candidates to cut")
+	sources := 0
+	for _, s := range []string{*pool, *issue, *rows, *branchFrom} {
+		if strings.TrimSpace(s) != "" {
+			sources++
+		}
+	}
+	if sources == 0 {
+		f.problems = append(f.problems, "cut wants one source; it wants --pool, --issue, --rows or --branch-from")
+	} else if sources > 1 {
+		f.problems = append(f.problems, "cut reads one source; pass only one of --pool, --issue, --rows or --branch-from")
+	}
 	f.want(*templates, "templates", "the directory holding the typed templates and benches.tsv (or routes.tsv)")
 	f.want(*out, "out", "the directory the cut cards go into")
 	f.want(*root, "root", "the state root; skipped.tsv is written here")
@@ -619,6 +634,23 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	}
 	if f.refused(stderr) {
 		return 2
+	}
+	switch {
+	case *issue != "":
+		return pulse.CutValidated(pulse.CutValidatedInput{
+			Source: "issue", Issue: *issue, Templates: *templates, Out: *out, Root: *root,
+			Max: *max, Stdout: stdout, Stderr: stderr,
+		})
+	case *rows != "":
+		return pulse.CutValidated(pulse.CutValidatedInput{
+			Source: "rows", Rows: *rows, Templates: *templates, Out: *out, Root: *root,
+			Max: *max, Stdout: stdout, Stderr: stderr,
+		})
+	case *branchFrom != "":
+		return pulse.CutValidated(pulse.CutValidatedInput{
+			Source: "branch-from", BranchFrom: *branchFrom, Templates: *templates, Out: *out, Root: *root,
+			Max: *max, Stdout: stdout, Stderr: stderr,
+		})
 	}
 	return pulse.Cut(pulse.CutInput{
 		Pool:      *pool,
