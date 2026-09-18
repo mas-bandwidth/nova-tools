@@ -64,8 +64,10 @@ func TestStatusHTMLWritesPageAndMetricsFromRunningProcesses(t *testing.T) {
 		t.Fatalf("status --html exit = %d, want 0; stderr=%s", exit, stderr)
 	}
 	// down= counts the benches that did not answer: a fleet partly unseen is not a fleet
-	// with nothing to do, and the one line says which of the two this is.
-	if want := "STATUS HTML wrote=" + out + " live=4 queue=1 down=0\n"; stdout != want {
+	// with nothing to do, and the one line says which of the two this is. merged= and
+	// published= are dashes here: this queue names no repo, so nobody asked the forge, and
+	// nothing was shipped because nothing asked for it.
+	if want := "STATUS HTML wrote=" + out + " live=4 queue=1 down=0 merged=- published=-\n"; stdout != want {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
 	}
 
@@ -94,7 +96,7 @@ func TestStatusHTMLWritesPageAndMetricsFromRunningProcesses(t *testing.T) {
 	if len(fields) != 7 {
 		t.Fatalf("the metrics row has %d fields, want 7: %q", len(fields), line)
 	}
-	for i, want := range []string{"2026-09-16T12:00:00Z", "4", "1", "0", "0", "2", "80,40"} {
+	for i, want := range []string{"2026-09-16T12:00:00Z", "4", "1", "-", "-", "2", "80,40"} {
 		if fields[i] != want {
 			t.Errorf("metrics field %d = %q, want %q (row %q)", i, fields[i], want, line)
 		}

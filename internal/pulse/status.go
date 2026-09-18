@@ -455,24 +455,47 @@ func readGh(repo string, timeout time.Duration) ([]ghPR, []ghIssueStatus) {
 	}
 	var prs []ghPR
 	var issues []ghIssueStatus
-	if out := runGh(timeout, "pr", "list", "-R", repo, "--state", "all", "--json", "number,title,createdAt,mergedAt"); out != "" {
+	// --limit is not optional. gh's own default is THIRTY, so a fleet that merges more than
+	// that in the window reads as a fleet that merged thirty, every tick, for the rest of
+	// the day -- a flat line that looks like a steady rate rather than a missing one. The
+	// page said 30 where the script said 273, and that is what the adoption attempt found.
+	if out := runGh(timeout, "pr", "list", "-R", repo, "--state", "all", "--limit", ghLimit, "--json", "number,title,createdAt,mergedAt"); out != "" {
 		_ = json.Unmarshal([]byte(out), &prs)
 	}
-	if out := runGh(timeout, "issue", "list", "-R", repo, "--state", "all", "--json", "number,title,createdAt,closedAt"); out != "" {
+	if out := runGh(timeout, "issue", "list", "-R", repo, "--state", "all", "--limit", ghLimit, "--json", "number,title,createdAt,closedAt"); out != "" {
 		_ = json.Unmarshal([]byte(out), &issues)
 	}
 	return prs, issues
 }
 
 func runGh(timeout time.Duration, args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return runGhEnv(timeout, nil, args...)
+}
+
+// runGhEnv is runGh with the child's environment named. nil is the caller's own, which is
+// what every verb but `status --html` wants; --gh-config is the one place a caller says
+// which forge identity gh should answer as.
+func runGhEnv(timeout time.Duration, env []string, args ...string) string {
+	ctx, cancel := contextWithTimeout(timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", args...)
+	if env != nil {
+		cmd.Env = env
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// contextWithTimeout bounds a child, treating a missing bound as the fleet default rather
+// than as no bound at all: an unbounded child is how a one-minute page becomes a hang.
+func contextWithTimeout(timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		timeout = fleetDefaultTimeout
+	}
+	return context.WithTimeout(context.Background(), timeout)
 }
 
 func prsOpenedMerged(prs []ghPR, start, end time.Time) (opened, merged int) {
