@@ -105,6 +105,14 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		// The pool ledger's own `<ledger>.tsv.tmp` for fold-pool, same shape: this run's
 		// staged ledger landing by one rename.
 		"internal/tokens/foldpool.go": {"os.WriteFile("},
+		// ExpandDir, nova-work's card writer: it makes a card directory and writes the
+		// card INSIDE it, and returns early on a directory that already exists, so it
+		// never truncates a file this tool or anybody else was given. nova-tokens imports
+		// internal/worklang for ParseWorkSet alone -- `fold --units` reads a work set and
+		// writes nothing -- and reaches ExpandDir from no code path in this binary. The
+		// carve-out is by FILE and by NAME, so a second writer appearing in that package
+		// is still a red run here.
+		"internal/worklang/expand.go": {"os.WriteFile("},
 		// In package staging, the publisher's own-run temporary marker batch.json.tmp
 		// unlinked via syscall.Unlink after successful atomic no-replace link to batch.json.
 		"internal/tokens/package.go": {"syscall.Unlink("},

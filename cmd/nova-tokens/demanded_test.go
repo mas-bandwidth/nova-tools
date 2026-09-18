@@ -88,12 +88,19 @@ func TestRule2EveryRowNamesItsSources(t *testing.T) {
 	if row == "" {
 		t.Fatalf("no row for fable/schema:\n%s", day)
 	}
+	// The sources column is the ELEVENTH and is no longer the last: `units` sits after it.
+	// Reading it from the end was reading whichever column happened to be last, which is
+	// what made this test red on the day one was appended rather than on the day the rule
+	// it pins was broken.
 	cols := strings.Split(row, "\t")
-	if got := cols[len(cols)-1]; got != "bus:emma,claude:glenn" {
+	if len(cols) != len(tokens.Columns) {
+		t.Fatalf("the row has %d columns, want %d: %q", len(cols), len(tokens.Columns), row)
+	}
+	if got := cols[10]; got != "bus:emma,claude:glenn" {
 		t.Errorf("sources column is %q, want both labels sorted", got)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(day), "\n")[2:] {
-		if c := strings.Split(line, "\t"); c[len(c)-1] == "" {
+		if c := strings.Split(line, "\t"); len(c) != len(tokens.Columns) || c[10] == "" {
 			t.Errorf("a row has an empty sources column: %q", line)
 		}
 	}

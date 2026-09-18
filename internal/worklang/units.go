@@ -13,6 +13,7 @@ package worklang
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -811,6 +812,22 @@ func (u Unit) Branch() string {
 		return atomText(f)
 	}
 	return ""
+}
+
+// PR is the :pr a unit's work lands as, as written -- `1412`, `#1412` or `"1412"`.
+// It is read HERE with Branch and Lane, for the reason Branch names: there is ONE
+// reader of this form, and a key only the token ledger read would be the second
+// reader of the work set growing back. An Integer form carries no Value, so the
+// number is rendered from Int.
+func (u Unit) PR() string {
+	f, ok := u.Fields["pr"]
+	if !ok {
+		return ""
+	}
+	if f.Kind == Integer {
+		return strconv.FormatInt(f.Int, 10)
+	}
+	return atomText(f)
 }
 
 // Acceptance returns the unit's acceptance criteria in A14's schema: the
