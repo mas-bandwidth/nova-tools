@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // childCap is the ceiling on one child's captured output, the same 64 KiB the
@@ -202,7 +203,13 @@ func (GoBuild) Build(ctx context.Context, source, pkg, out, goos, goarch string,
 	cmd.Dir = source
 	cmd.Stdout = capture
 	cmd.Stderr = capture
-	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
+	// THE CALLER'S GOFLAGS DOES NOT REACH THE RELEASE BUILD (#1333). CI's
+	// `make test` exports GOFLAGS=-json, and the same inheritance made
+	// `nova-review mutate` read a green unit as red. A release is the one
+	// artifact where flags nobody chose are least acceptable: the binaries
+	// carry a version somebody will trust for months. The three variables this
+	// build DOES choose are appended after Clean, where the last value wins.
+	cmd.Env = append(goenv.Clean(os.Environ()), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
 	err := cmd.Run()
 	return string(capture.Bytes()), err
 }
