@@ -1,0 +1,10 @@
+# Workloads allowed to carry a spelling the portability class refuses.
+#
+# `<class> <spelling>` per line, matched by CLASS AND SPELLING and NEVER by line: a
+# line-matched list turns dev red the first time an edit above it shifts a line, which is
+# SPEC-CI's shared convention.
+#
+# It is SHRINK-ONLY. Nothing is added here without the reason on the line beside it, and an
+# entry nothing matches is a failure, not a comment.
+#
+# It is empty.

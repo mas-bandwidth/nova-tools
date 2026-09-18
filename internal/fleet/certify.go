@@ -501,7 +501,12 @@ type CertifyInput struct {
 	// transport it does not need.
 	Local     Remote
 	LocalHost string // this machine's hostname; "" never matches anything
-	Forge     Forge
+	// LocalAddrs is every address this machine answers on. A registry row may name a machine
+	// by ADDRESS rather than by name -- the Air is `air<TAB>glenn@100.117.59.68` and calls
+	// itself `macbook` -- and without this the Air certifying the Air opened an ssh to its
+	// own tailnet address and reported twelve of its fourteen classes UNREACHABLE.
+	LocalAddrs []string
+	Forge      Forge
 	Now       func() time.Time
 	Stdout    io.Writer
 	Stderr    io.Writer
@@ -1322,10 +1327,18 @@ func runHere(in CertifyInput, class, script string) (string, error) {
 // machine, ssh otherwise. It answers whether it chose the local one, so the run can say so
 // on a line -- "it ran here" is the kind of thing a person needs told once, not guessed.
 func (in CertifyInput) remoteFor(m Machine) (Remote, bool) {
-	if in.Local != nil && IsLocalMachine(m, in.LocalHost) {
+	if in.Local != nil && IsLocalMachineAt(m, in.LocalHost, in.LocalAddrs) {
 		return in.Local, true
 	}
 	return in.Remote, false
+}
+
+// IsLocalMachineAt is IsLocalMachine plus the addresses this machine answers on.
+//
+// TODO(rowan/certify-darwin): this is the pass-through it replaced, so the Air's own test
+// is RED before the fix. The next commit compares the row's ssh host against localAddrs.
+func IsLocalMachineAt(m Machine, localHost string, localAddrs []string) bool {
+	return IsLocalMachine(m, localHost)
 }
 
 // IsLocalMachine says whether a registry machine is the machine this process runs on. The
