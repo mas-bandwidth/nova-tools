@@ -12,19 +12,41 @@
 // The bounded reader: `plan check` reads one plan under --max-bytes, --max-depth and
 // --max-nodes, refuses a `#.` dispatch macro at the byte offset that owes it, refuses any
 // input past a bound whole rather than truncated, and refuses an unknown `:kind` by field
-// name. The job graph: typed needs and blocks edges, refused acyclic at seed by validator
-// rule 3, and the mechanical ready set launch reads. Every path comes from a flag: there is
-// no default file and no discovery.
+// name. It then closes the plan's needs/blocks graph at load: `:needs` is the reference
+// edge and `:blocks` its inverse, an absent need is refused naming the field and the id,
+// and a `:needs` cycle is refused by validator rule 3 before publication. A well-formed
+// plan prints one line; a refusal is exit 2 with one remedy line.
+//
+// The job graph: typed needs and blocks edges, refused acyclic at seed by validator rule
+// 3, and the mechanical ready set launch reads. A node is ready only when every need is
+// terminal accepted. Every row that cannot proceed prints its exact blocker and its
+// resolver; a card whose need is an open PR is never on a slot. This slice owns the
+// in-process graph and the ready reading only: no Redis, no network, no launch, no lease.
+//
+// Every path comes from a flag. There is no default file and no discovery: a missing flag
+// is a refusal, never a guess. Output is one line per verb. Exit 0 ran and passed; exit 2
+// could not run -- a missing flag, an unreadable graph or plan, a :deps cycle, an unknown
+// node, a refusal.
+//
+// nova-work is also the work layer's event bridge. This binary's shipped verb, events,
+// turns the cards:done stream and the gh fallback poll into the pub/sub messages the
+// merge layer reacts to (docs/SPEC-JOBS.md, "Events, not ticks"). It makes no model call
+// and writes no record: every message is a signal, and git stays the record.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/workclient"
@@ -58,6 +80,7 @@ usage:
   nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] (--once | --deadline <duration>)
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -76,6 +99,7 @@ verbs:
   nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
   nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
   nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
+  nova-work events         bridges the events, not ticks (cards:done stream + gh fallback poll)
 
 A node is ready only when every need is terminal accepted, and every row that cannot
 proceed prints its exact blocker and its resolver. A :deps cycle is refused before
@@ -87,6 +111,15 @@ and an unknown :kind is refused naming the field. :needs is the reference edge a
 :blocks its inverse, so the kernel derives whichever a node did not give; an absent
 need is refused naming the field and the id, and a :needs cycle is refused by validator
 rule 3, both at load before the graph is published.
+
+events publishes the family's three event channels from two sources: the cards:done
+stream (consumer group events) becomes card-done, and a poll of gh every --gh-poll
+becomes pr-checks-done on a changed check-suite conclusion and dev-moved on a changed
+base head. The poll is the fallback heartbeat until the forge pushes a webhook; a quiet
+poll publishes nothing. Without --repo only the stream is bridged.
+
+--once reads the stream and polls the forge once, then exits. The loop form requires
+--deadline and returns when it is reached.
 
 flags:
   --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
@@ -116,6 +149,7 @@ example:
   nova-work dependencies --graph ./deps.json --node a --needs b
   nova-work ready --node a --graph ./deps.json
   nova-work plan check --file ./work.work --max-bytes 65536
+  nova-work events --redis 127.0.0.1:6379 --once
 `
 
 // refuse is what an unusable invocation or an unreadable plan costs: one line naming
@@ -142,14 +176,60 @@ var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 	"plan":         cmdPlan,
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, version)) }
+// Deps is everything this binary reaches outside itself, injected so the tests drive a
+// miniredis and a fake forge and reach no network.
+type Deps struct {
+	Now   func() time.Time
+	Dial  func(addr string) *redis.Client
+	Forge func(repo, base string, timeout time.Duration) ci.Forge
+}
 
-func run(args []string, stdout, stderr io.Writer, stamp ...string) int {
+func production() Deps {
+	return Deps{
+		Now:  func() time.Time { return time.Now().UTC() },
+		Dial: func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Forge: func(repo, base string, timeout time.Duration) ci.Forge {
+			return ci.NewGHForge(repo, base, timeout)
+		},
+	}
+}
+
+// eventVerbs are the pub/sub verbs, dispatched beside legacyVerbs -- and off the verb
+// switch the reader walks -- because they reach the injected Deps. Keeping them out of
+// the switch leaves it holding exactly the socket verbs.
+var eventVerbs = map[string]func([]string, io.Writer, io.Writer, Deps) int{
+	"events": cmdEvents,
+}
+
+// runOpts carries the optional injections the tests pass: a release stamp for version and
+// the Deps the events verb reaches. run accepts either as a trailing argument.
+type runOpts struct {
+	stamp    string
+	hasStamp bool
+	deps     Deps
+}
+
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, production(), version)) }
+
+func run(args []string, stdout, stderr io.Writer, opts ...any) int {
+	o := runOpts{deps: production()}
+	for _, opt := range opts {
+		switch v := opt.(type) {
+		case string:
+			o.stamp, o.hasStamp = v, true
+		case Deps:
+			o.deps = v
+		}
+	}
+	d := o.deps
 	if len(args) == 0 {
 		return refused(stderr, "a verb is required")
 	}
 	if h, ok := legacyVerbs[args[0]]; ok {
 		return h(args[1:], stdout, stderr)
+	}
+	if h, ok := eventVerbs[args[0]]; ok {
+		return h(args[1:], stdout, stderr, d)
 	}
 	verb, rest := args[0], args[1:]
 	switch verb {
@@ -164,8 +244,8 @@ func run(args []string, stdout, stderr io.Writer, stamp ...string) int {
 			return refused(stderr, "version takes no arguments")
 		}
 		shown := version
-		if len(stamp) > 0 {
-			shown = stamp[0]
+		if o.hasStamp {
+			shown = o.stamp
 		}
 		fmt.Fprintln(stdout, oneline.Escape(buildinfo.Line("nova-work", shown)))
 		return 0
@@ -573,4 +653,87 @@ func printReply(line string, stdout, stderr io.Writer) int {
 	default:
 		return refused(stderr, "the session's reply carries no verdict the grammar spells: "+line)
 	}
+}
+
+// cmdEvents is the events verb. Its flags are parsed with flag's usage dump discarded, so
+// a bad value is one refusal line and not a banner.
+func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
+	fs := flag.NewFlagSet("events", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	addr := fs.String("redis", "", "")
+	repo := fs.String("repo", "", "")
+	base := fs.String("base", "dev", "")
+	ghPoll := fs.String("gh-poll", "60s", "")
+	deadline := fs.String("deadline", "", "")
+	consumer := fs.String("consumer", "", "")
+	once := fs.Bool("once", false, "")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(stderr, "nova-work events: %s; run: nova-work help\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "nova-work events: takes no positional arguments, got %d; run: nova-work help\n", fs.NArg())
+		return 2
+	}
+	if *addr == "" {
+		fmt.Fprintf(stderr, "nova-work events: --redis is required; it wants the address of the pub/sub instance; run: nova-work help\n")
+		return 2
+	}
+	poll, err := time.ParseDuration(*ghPoll)
+	if err != nil || poll <= 0 {
+		fmt.Fprintf(stderr, "nova-work events: --gh-poll is a positive duration such as 60s, got %q; run: nova-work help\n", oneline.Escape(*ghPoll))
+		return 2
+	}
+	var bound time.Duration
+	if *deadline != "" {
+		if bound, err = time.ParseDuration(*deadline); err != nil || bound <= 0 {
+			fmt.Fprintf(stderr, "nova-work events: --deadline is a positive duration, got %q; run: nova-work help\n", oneline.Escape(*deadline))
+			return 2
+		}
+	}
+	if !*once && bound <= 0 {
+		fmt.Fprintf(stderr, "nova-work events: the loop form requires --deadline; a loop with no deadline is a process nobody can tell from a stuck one; run: nova-work help\n")
+		return 2
+	}
+
+	rdb := deps.Dial(*addr)
+	defer rdb.Close()
+
+	var forge ci.Forge
+	if *repo != "" {
+		forge = deps.Forge(*repo, *base, poll)
+	}
+	p := ci.NewProducer(rdb, forge, *consumer, stderr)
+
+	ctx := context.Background()
+	if bound > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, bound)
+		defer cancel()
+	}
+
+	if *once {
+		cards, err := p.PublishCardsDone(ctx)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
+			return 1
+		}
+		polls := 0
+		if forge != nil {
+			polls, err = p.PollOnce(ctx)
+			if err != nil {
+				fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
+				return 1
+			}
+		}
+		fmt.Fprintf(stdout, "EVENTS OK once=true card-done=%d published=%d\n", cards, polls)
+		return 0
+	}
+	if err := p.Run(ctx, poll); err != nil && err != context.DeadlineExceeded {
+		fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
+		return 1
+	}
+	fmt.Fprintf(stdout, "EVENTS OK once=false deadline=%s\n", oneline.Field(bound.String()))
+	return 0
 }

@@ -32,7 +32,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -55,6 +58,7 @@ usage:
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
+  nova-merge react      --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
 
@@ -172,6 +176,11 @@ type Deps struct {
 	NewQueue func(repo string, timeout time.Duration) QueueReader
 	Runner   merge.Runner
 	BuildID  func() string
+	// Dial and Forge are the react verb's two edges: the pub/sub instance it subscribes
+	// to, and the forge it asks which PRs a base move made DIRTY. They are injected so a
+	// test drives a miniredis and a fake forge and reaches no network.
+	Dial  func(addr string) *redis.Client
+	Forge func(repo, base string, timeout time.Duration) ci.Forge
 }
 
 func production() Deps {
@@ -189,6 +198,10 @@ func production() Deps {
 			return newGHQueue(repo, timeout, nil)
 		},
 		BuildID: buildID,
+		Dial:    func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Forge: func(repo, base string, timeout time.Duration) ci.Forge {
+			return ci.NewGHForge(repo, base, timeout)
+		},
 	}
 }
 
@@ -265,6 +278,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdSweep(rest, stdout, stderr, deps)
 	case "simulate":
 		return cmdSimulate(rest, stdout, stderr, deps)
+	case "react":
+		return cmdReact(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }

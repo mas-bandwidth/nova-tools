@@ -85,6 +85,13 @@ var mergeAudit = audit.Config{
 		// parses the answers, and it never prints. Its one line is rendered back here
 		// through oneline/decide.Line, whose every field is escaped.
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// react.go's two edges. context is CancelFunc plumbing and writes nothing; the
+		// redis client and internal/ci are read and published through their own APIs and
+		// this package prints only the escaped lines below, so neither writes past
+		// oneline.
+		`"context"`,
+		`"github.com/redis/go-redis/v9"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
 	},
 	MinClassified: 60,
 }
