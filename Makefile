@@ -12,7 +12,8 @@ GO ?= go
 PKGS ?= ./...
 CL_PKGS := ./cmd/... ./internal/...
 
-# PR_TIMEOUT is the per-package ceiling on the hosted Windows PR leg, and it is a
+# WINDOWS_TIMEOUT is the per-package ceiling on EVERY hosted Windows leg — the PR
+# leg and the merge group's windows leg both — and it is a
 # MEASUREMENT, not the Linux number copied across. The leg carried the hosted
 # convention of 100 s until 2026-09-18, when its first real run (#1332,
 # integration-4) found four git-fixture packages ON that ceiling even under
@@ -24,10 +25,20 @@ CL_PKGS := ./cmd/... ./internal/...
 # shards rather than run whole, and it still fires well inside the leg's
 # six-minute job cap, so Go names the slow package instead of the runner killing
 # the job silently. testdata/ci/package-sizes-windows.tsv carries the
-# measurements this number comes from.
-PR_TIMEOUT ?= 180s
+# measurements this number comes from. It reached the merge group's windows leg
+# on 2026-09-18 too, when that leg's shard 0 of 3 for cmd/nova-bus was killed at
+# 100 s running the package FULL: the same ceiling, the same cause, one tier
+# later.
+WINDOWS_TIMEOUT ?= 180s
 
-.PHONY: help build fmt vet lint test test-full test-short test-pr test-merge test-race test-e2e test-lisp check clean
+# MERGE_TIMEOUT is the per-package ceiling on the merge group's legs. 100 s is
+# the linux and darwin number and is what those legs have always used; the
+# windows leg exports MERGE_TIMEOUT=$(make -s windows-timeout) so the Windows
+# ceiling lives in ONE place — WINDOWS_TIMEOUT above — instead of being written
+# again in the workflow. `?=` is what makes that environment value win.
+MERGE_TIMEOUT ?= 100s
+
+.PHONY: help build fmt vet lint test test-full test-short test-pr test-merge test-race test-e2e test-lisp check clean windows-timeout
 
 help:
 	@echo "make help        this list"
@@ -38,8 +49,8 @@ help:
 	@echo "make test        go test -count=1 PKGS plus the 60s slowtests budget (the fast tier)"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
 	@echo "make test-short  go test -short -count=1 -timeout 12m PKGS"
-	@echo "make test-pr     go test -short -count=1 -timeout PR_TIMEOUT -run RUN PKGS (the hosted PR legs)"
-	@echo "make test-merge  go test -count=1 -timeout 100s -run RUN PKGS"
+	@echo "make test-pr     go test -short -count=1 -timeout WINDOWS_TIMEOUT -run RUN PKGS (the hosted PR legs)"
+	@echo "make test-merge  go test -count=1 -timeout MERGE_TIMEOUT -run RUN PKGS"
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
 	@echo "make test-lisp   ./lisp/nova-work/run-tests.sh"
@@ -97,17 +108,24 @@ test-short:
 # ordinary unit tests and are not gated behind testing.Short(). RUN is the
 # shard's test-name regex, empty meaning every test in PKGS, exactly as
 # test-merge takes it: -short alone was not enough, and #1332 measured four
-# packages that must be dealt across shards rather than run whole. PR_TIMEOUT is
+# packages that must be dealt across shards rather than run whole. WINDOWS_TIMEOUT is
 # the measured ceiling above. The merge group still runs these same packages FULL
 # (test-merge), so nothing is traded away, only moved earlier.
 test-pr:
-	$(GO) test -short -count=1 -timeout $(PR_TIMEOUT) -run "$(RUN)" $(PKGS)
+	$(GO) test -short -count=1 -timeout $(WINDOWS_TIMEOUT) -run "$(RUN)" $(PKGS)
 
-# The merge-group hosted leg: full tests (no -short) for the packages the group
+# The merge-group hosted legs: full tests (no -short) for the packages the group
 # changes, one shard at a time. RUN is the shard's test-name regex; empty means
-# every test in PKGS, and -timeout 100s is the per-package ceiling.
+# every test in PKGS. MERGE_TIMEOUT is the per-package ceiling — 100 s for linux
+# and darwin, and WINDOWS_TIMEOUT on the windows leg, which exports it.
 test-merge:
-	$(GO) test -count=1 -timeout 100s -run "$(RUN)" $(PKGS)
+	$(GO) test -count=1 -timeout $(MERGE_TIMEOUT) -run "$(RUN)" $(PKGS)
+
+# windows-timeout prints WINDOWS_TIMEOUT and nothing else, so the workflow's
+# windows legs can take the ceiling FROM HERE rather than carry a second copy of
+# the number. `make -s windows-timeout` is the whole interface.
+windows-timeout:
+	@echo $(WINDOWS_TIMEOUT)
 
 test-race:
 	$(GO) test -race $(PKGS)

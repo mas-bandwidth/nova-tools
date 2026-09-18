@@ -90,6 +90,70 @@ const windowsSizesPath = "testdata/ci/package-sizes-windows.tsv"
 // package runs whole in one.
 const windowsShardBudget = 60.0
 
+// windowsSize is one row's reading of a size column: the number, and whether the
+// run that produced it was CENSORED (it hit its timeout, so the true size is at
+// least this) or absent altogether. Both plans deal a censored or missing size
+// across every slot the group opened, because an unknown size must never be
+// guessed downward — that is the mistake that dropped integration-4's group.
+type windowsSize struct {
+	secs     float64
+	measured bool
+	censored bool
+}
+
+// readWindowsSizes parses testdata/ci/package-sizes-windows.tsv into its two
+// columns, keyed by import path, reporting every malformed row. It is the same
+// reading ci.yml's two shard plans do in awk, so a row that would confuse them
+// is a red run here first.
+func readWindowsSizes(t *testing.T, root string) (short, full map[string]windowsSize) {
+	t.Helper()
+	raw := readFile(t, filepath.Join(root, "testdata", "ci", "package-sizes-windows.tsv"))
+	short, full = map[string]windowsSize{}, map[string]windowsSize{}
+	read := func(n int, field string) (windowsSize, bool) {
+		if field == "-" {
+			return windowsSize{}, true
+		}
+		censored := strings.HasSuffix(field, "+")
+		secs, err := strconv.ParseFloat(strings.TrimSuffix(field, "+"), 64)
+		if err != nil {
+			t.Errorf("%s:%d: %q is neither a number of seconds, a censored number ending in +, nor - for unmeasured: %v", windowsSizesPath, n+1, field, err)
+			return windowsSize{}, false
+		}
+		return windowsSize{secs: secs, measured: true, censored: censored}, true
+	}
+	for n, line := range strings.Split(raw, "\n") {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 3 {
+			t.Errorf("%s:%d: want exactly three tab-separated fields (import path, short, full), got %d: %q", windowsSizesPath, n+1, len(fields), line)
+			continue
+		}
+		pkg := fields[0]
+		if !strings.HasPrefix(pkg, modulePath) {
+			t.Errorf("%s:%d: %q is not an import path in this module; the table is keyed the way `go list` prints, like its Linux sibling", windowsSizesPath, n+1, pkg)
+			continue
+		}
+		if _, dup := short[pkg]; dup {
+			t.Errorf("%s:%d: %s is measured twice; the plans read the first row and the second is a silent lie", windowsSizesPath, n+1, pkg)
+		}
+		// A measured package must still exist. A row for a package that has
+		// left is a row the plans will never read and nobody will ever correct.
+		dir := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(pkg, modulePath)))
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("%s:%d: %s is in the table but not in the tree; delete the row", windowsSizesPath, n+1, pkg)
+		}
+		if v, ok := read(n, fields[1]); ok {
+			short[pkg] = v
+		}
+		if v, ok := read(n, fields[2]); ok {
+			full[pkg] = v
+		}
+	}
+	return short, full
+}
+
 // TestWindowsPRShardPlanIsDerivedFromMeasurements keeps the three numbers that
 // decide this leg's cost — the measurements, the shard budget, and the
 // per-package timeout — in one place and in step with each other.
@@ -98,83 +162,115 @@ const windowsShardBudget = 60.0
 // real run (#1332) found four packages ON that ceiling under -short: 100.0 and
 // 100.1 are not sizes but the timeout, so their true sizes are unknown and at
 // least that. A ceiling a tree's packages sit on is not naming a hang, it IS the
-// hang, so the ceiling became the measured PR_TIMEOUT in the Makefile. This test
-// holds that it can never drop back below a size actually observed.
+// hang, so the ceiling became the measured WINDOWS_TIMEOUT in the Makefile. This
+// test holds that it can never drop back below a size actually observed.
 func TestWindowsPRShardPlanIsDerivedFromMeasurements(t *testing.T) {
 	root := repoRoot(t)
-	raw := readFile(t, filepath.Join(root, "testdata", "ci", "package-sizes-windows.tsv"))
-
-	const modulePath = "github.com/mas-bandwidth/nova-tools/"
-	sizes := map[string]float64{}
-	largest := 0.0
-	for n, line := range strings.Split(raw, "\n") {
-		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Split(line, "\t")
-		if len(fields) != 2 {
-			t.Errorf("%s:%d: want exactly two tab-separated fields (import path, seconds), got %d: %q", windowsSizesPath, n+1, len(fields), line)
-			continue
-		}
-		pkg := fields[0]
-		if !strings.HasPrefix(pkg, modulePath) {
-			t.Errorf("%s:%d: %q is not an import path in this module; the table is keyed the way `go list` prints, like its idle-Linux sibling", windowsSizesPath, n+1, pkg)
-			continue
-		}
-		secs, err := strconv.ParseFloat(fields[1], 64)
-		if err != nil {
-			t.Errorf("%s:%d: %q is not a number of seconds: %v", windowsSizesPath, n+1, fields[1], err)
-			continue
-		}
-		if _, dup := sizes[pkg]; dup {
-			t.Errorf("%s:%d: %s is measured twice; the plan reads the first row and the second is a silent lie", windowsSizesPath, n+1, pkg)
-		}
-		sizes[pkg] = secs
-		if secs > largest {
-			largest = secs
-		}
-		// A measured package must still exist. A row for a package that has
-		// left is a row the plan will never read and nobody will ever correct.
-		dir := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(pkg, modulePath)))
-		if _, err := os.Stat(dir); err != nil {
-			t.Errorf("%s:%d: %s is in the table but not in the tree; delete the row", windowsSizesPath, n+1, pkg)
-		}
-	}
-	if len(sizes) == 0 {
+	short, _ := readWindowsSizes(t, root)
+	if len(short) == 0 {
 		t.Fatalf("%s carries no measurements; the shard plan would guess at every package", windowsSizesPath)
+	}
+	largest := 0.0
+	for _, v := range short {
+		if v.measured && v.secs > largest {
+			largest = v.secs
+		}
 	}
 
 	// The four packages #1332 measured at the ceiling are the reason the leg is
 	// sharded at all. If they ever fall out of the table the plan silently stops
 	// dealing them, so they are named here.
-	for _, pkg := range []string{"cmd/nova-bus", "cmd/nova-merge", "cmd/nova-review", "cmd/nova-wake"} {
-		secs, ok := sizes[modulePath+pkg]
-		if !ok {
-			t.Errorf("%s has no row for %s, the package whose Windows size (#1332) is the reason this leg is sharded", windowsSizesPath, pkg)
+	for _, pkg := range windowsForcingPackages {
+		v, ok := short[modulePath+pkg]
+		if !ok || !v.measured {
+			t.Errorf("%s has no -short row for %s, the package whose Windows size (#1332) is the reason this leg is sharded", windowsSizesPath, pkg)
 			continue
 		}
-		if secs < windowsShardBudget {
-			t.Errorf("%s says %s is %.1fs, under the %.0fs shard budget, so the plan would run it whole; #1332 measured it at or over 100 s on windows-latest under -short", windowsSizesPath, pkg, secs, windowsShardBudget)
+		if !v.censored && v.secs < windowsShardBudget {
+			t.Errorf("%s says %s is %.1fs, under the %.0fs shard budget, so the plan would run it whole; #1332 measured it at or over 100 s on windows-latest under -short", windowsSizesPath, pkg, v.secs, windowsShardBudget)
 		}
 	}
 
-	// The per-package ceiling lives in the Makefile, where `make test-pr` reads
-	// it, and must be above every size this tree has been SEEN to have on
-	// Windows — the censored rows included, since their true size is at least
-	// what was recorded.
+	// The per-package ceiling lives in the Makefile, where `make test-pr` and
+	// the windows merge leg both read it, and must be above every size this tree
+	// has been SEEN to have on Windows — the censored rows included, since their
+	// true size is at least what was recorded.
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
-	raw, ok := mk.vars["PR_TIMEOUT"]
+	raw, ok := mk.vars["WINDOWS_TIMEOUT"]
 	if !ok {
-		t.Fatal("the Makefile declares no PR_TIMEOUT; the Windows PR leg's per-package ceiling has nowhere to live but a workflow line nobody can run")
+		t.Fatal("the Makefile declares no WINDOWS_TIMEOUT; the Windows per-package ceiling has nowhere to live but a workflow line nobody can run")
 	}
 	d, err := time.ParseDuration(strings.TrimSpace(raw))
 	if err != nil {
-		t.Fatalf("PR_TIMEOUT = %q is not a Go duration: %v", raw, err)
+		t.Fatalf("WINDOWS_TIMEOUT = %q is not a Go duration: %v", raw, err)
 	}
 	if d.Seconds() <= largest {
-		t.Errorf("PR_TIMEOUT = %s, at or under the largest measured Windows size (%.1fs in %s); a ceiling a package sits on is the hang, not the detector — that is what #1332 found at 100 s", d, largest, windowsSizesPath)
+		t.Errorf("WINDOWS_TIMEOUT = %s, at or under the largest measured Windows size (%.1fs in %s); a ceiling a package sits on is the hang, not the detector — that is what #1332 found at 100 s", d, largest, windowsSizesPath)
 	}
 	if !strings.Contains(readFile(t, filepath.Join(root, "Makefile")), "#1332") {
-		t.Error("the Makefile does not say where PR_TIMEOUT's number comes from; a ceiling is a claim about the machine and belongs in the repository with its measurement")
+		t.Error("the Makefile does not say where WINDOWS_TIMEOUT's number comes from; a ceiling is a claim about the machine and belongs in the repository with its measurement")
 	}
 }
+
+// TestMergeGateWindowsLegDealsFromTheWindowsTable is integration-4's lesson, held
+// shut. The merge group's windows leg dealt its shards from the LINUX table:
+// cmd/nova-bus at 6.4 s bought three shards, and shard 0 was killed at the 100 s
+// ceiling with three tests still running, so one third of that package is over
+// 100 s on windows-latest. Linux could not have said so — cmd/nova-bus is 10.0 s
+// on hulk and at least 100 s there, cmd/nova-swarm 51.0 s on hulk and 37 s
+// there — so the windows leg reads the Windows table, and its ceiling is the
+// Makefile's WINDOWS_TIMEOUT rather than the linux and darwin 100 s.
+func TestMergeGateWindowsLegDealsFromTheWindowsTable(t *testing.T) {
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	step := stepBody(src, "test (full, the packages this group changes, shard ${{ matrix.shard }} of ${{ needs.plan-merge.outputs.slots }})")
+	if strings.TrimSpace(step) == "" {
+		t.Fatal("no merge-gate test step in ci.yml; the shard plan moved and this test is looking in the wrong place")
+	}
+	if !strings.Contains(step, windowsSizesPath) {
+		t.Errorf("the merge gate's shard plan never reads %s; its windows leg would deal from the Linux column again, which is how integration-4's group was dropped", windowsSizesPath)
+	}
+	// The leg must be told apart by name, and the Windows branch must read the
+	// FULL column ($3) rather than the -short one the PR leg uses.
+	if !strings.Contains(step, `leg=${{ matrix.leg.name }}`) || !strings.Contains(step, `[ "$leg" = "windows" ]`) {
+		t.Error("the merge gate's shard plan does not branch on the windows leg; linux and darwin must keep the Linux table, which is their measurement")
+	}
+	if !strings.Contains(step, "print $3") {
+		t.Error("the merge gate's windows branch does not read the FULL column of the Windows table; the merge group runs without -short, and the -short column is a different measurement")
+	}
+	// Censored and unmeasured both get every slot the group opened.
+	for _, want := range []string{"''|'-')", "*+)"} {
+		if !strings.Contains(step, want) {
+			t.Errorf("the merge gate's windows branch does not handle %s (unmeasured or censored); an unknown Windows size must be dealt across every slot, never guessed downward", want)
+		}
+	}
+	if !strings.Contains(step, "make -s windows-timeout") {
+		t.Error("the merge gate's windows leg does not take its ceiling from `make -s windows-timeout`; the Windows number would be written twice and drift")
+	}
+	if !strings.Contains(step, "MERGE_TIMEOUT") {
+		t.Error("the merge gate's windows leg does not export MERGE_TIMEOUT; the Makefile's `?=` is what lets the Windows ceiling win over the linux and darwin default")
+	}
+
+	// And the Makefile end of that handshake: a target that prints the number,
+	// and a merge target that reads MERGE_TIMEOUT rather than a literal.
+	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
+	if got := strings.Join(mk.recipeFor("windows-timeout"), "\n"); !strings.Contains(got, "echo 180s") {
+		t.Errorf("`make windows-timeout` does not print the Windows ceiling, it runs %q; the workflow reads the number from here", got)
+	}
+	if got := strings.Join(mk.recipeFor("test-merge"), "\n"); !strings.Contains(got, "-timeout 100s") {
+		t.Errorf("make test-merge does not carry the 100 s linux and darwin ceiling: %q", got)
+	}
+	if _, ok := mk.vars["MERGE_TIMEOUT"]; !ok {
+		t.Error("the Makefile declares no MERGE_TIMEOUT; the windows leg has no variable to override")
+	}
+}
+
+// windowsForcingPackages are the four git-fixture packages whose Windows sizes
+// forced both the PR leg's sharding (#1332, -short, all four on the 100 s
+// ceiling) and the merge leg's move off the Linux table (integration-4, full,
+// one third of cmd/nova-bus over 100 s). Naming them here means a table that
+// quietly loses one is a red run.
+var windowsForcingPackages = []string{"cmd/nova-bus", "cmd/nova-merge", "cmd/nova-review", "cmd/nova-wake"}
+
+// modulePath is this module, the prefix both size tables are keyed by.
+const modulePath = "github.com/mas-bandwidth/nova-tools/"

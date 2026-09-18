@@ -707,24 +707,77 @@ jobs:
         # -short PR leg skips. Each shard runs the tests whose zero-based index
         # in its package's sorted test list is congruent to the shard, so a
         # loaded Studio or windows-latest answers inside the two-minute cap;
-        # -timeout 100s is the per-package ceiling, not the target. How many
+        # MERGE_TIMEOUT is the per-package ceiling, not the target. How many
         # shards a package gets is not fixed: testdata/ci/package-sizes.tsv
-        # records its measured idle-Linux size, and a package over 40 s gets
-        # six shards where the rest get three. cmd/nova-swarm is the one that
+        # records its measured Linux size, and a package over 40 s gets six
+        # shards where the rest get three. cmd/nova-swarm is the one that
         # needed six; on the six-slot matrix the extra slots have no tests for
         # a fast package and say so rather than run it again.
+        #
+        # THE WINDOWS LEG READS ITS OWN TABLE, and integration-4 is the receipt.
+        # That leg was dealing from the Linux column — cmd/nova-bus at 6.4 s,
+        # so three shards — and its shard 0 was killed at the 100 s ceiling with
+        # three tests still running: one THIRD of that package is over 100 s on
+        # windows-latest, and Linux had no way to say so. cmd/nova-bus is 10.0 s
+        # on hulk and at least 100 s there; cmd/nova-swarm is 51.0 s on hulk and
+        # 37 s there. A table that is wrong in both directions is not a
+        # predictor, so the windows leg deals from
+        # testdata/ci/package-sizes-windows.tsv's FULL column and takes its
+        # ceiling from the Makefile's WINDOWS_TIMEOUT (180 s, measured), while
+        # the linux and darwin legs keep the table and the 100 s that are theirs.
+        # A Windows size that is censored ("100.0+", the run hit its timeout) or
+        # missing ("-", never measured) gets the MAXIMUM shard count this group
+        # opened: an unknown size must never be guessed downward, which is the
+        # one mistake that dropped the group.
+        #
+        # WHAT TO WATCH NEXT: how many slots a group opens is still plan-merge's
+        # decision off the Linux table, so "the maximum" is 1, 3 or 6 and a
+        # censored package can get no more than that. A third of cmd/nova-bus
+        # full is over 100 s and its true size is not known, so if a windows
+        # shard is still killed at 180 s the next move is plan-merge opening six
+        # slots for a group whose changed package has no Windows full
+        # measurement — which costs every leg, and so waits for the measurement
+        # that says it is needed.
         shell: bash
         run: |
           set -euo pipefail
           shard=${{ matrix.shard }}
           slots=${{ needs.plan-merge.outputs.slots }}
           sizes=$(cat testdata/ci/package-sizes.tsv)
+          windows=$(cat testdata/ci/package-sizes-windows.tsv)
+          leg=${{ matrix.leg.name }}
+          if [ "$leg" = "windows" ]; then
+            # One place holds the Windows ceiling: the Makefile. `?=` there lets
+            # this exported value win over the linux/darwin default of 100 s.
+            MERGE_TIMEOUT=$(make -s windows-timeout)
+            export MERGE_TIMEOUT
+            echo "windows leg: per-package ceiling $MERGE_TIMEOUT, shards dealt from testdata/ci/package-sizes-windows.tsv"
+          fi
           for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
-            secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
-            if [ -n "$secs" ] && awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then
-              n=6
+            if [ "$leg" = "windows" ]; then
+              # Column 3 is the FULL size, which is what this leg runs.
+              secs=$(printf '%s\n' "$windows" | awk -F '\t' -v p="$pkg" '$1 == p { print $3; exit }')
+              case "$secs" in
+                ''|'-')
+                  echo "$pkg: no full windows measurement, dealt across all $slots slot(s)"
+                  n=$slots
+                  ;;
+                *+)
+                  echo "$pkg: windows full ${secs} (censored: at least that), dealt across all $slots slot(s)"
+                  n=$slots
+                  ;;
+                *)
+                  if awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then n=6; else n=3; fi
+                  echo "$pkg: windows full ${secs}s, $n shard(s)"
+                  ;;
+              esac
             else
-              n=3
+              secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
+              if [ -n "$secs" ] && awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then
+                n=6
+              else
+                n=3
+              fi
             fi
             # Never deal over more slots than the plan opened, or tests would
             # land in a slot that does not exist and never run.
@@ -1020,17 +1073,30 @@ jobs:
           small=0
           for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
             imp="$mod/${pkg#./}"
+            # Column 2 is the -short size, which is what this leg runs. A "-" is
+            # never measured and a trailing "+" is censored (the run hit its
+            # timeout, so the true size is at least that): neither may be
+            # guessed downward, so both are dealt across every slot.
             secs=$(awk -F '\t' -v p="$imp" '$1 == p { print $2; exit }' "$sizes")
-            if [ -z "$secs" ]; then
-              echo "$pkg: never measured on windows, dealt across $slots slots"
-              n=$slots
-            elif awk -v s="$secs" -v b="$budget" 'BEGIN { exit !(s >= b) }'; then
-              echo "$pkg: ${secs}s measured, dealt across $slots slots"
-              n=$slots
-            else
-              echo "$pkg: ${secs}s measured, runs whole in one slot"
-              n=1
-            fi
+            case "$secs" in
+              ''|'-')
+                echo "$pkg: never measured on windows, dealt across $slots slots"
+                n=$slots
+                ;;
+              *+)
+                echo "$pkg: ${secs} measured (censored: at least that), dealt across $slots slots"
+                n=$slots
+                ;;
+              *)
+                if awk -v s="$secs" -v b="$budget" 'BEGIN { exit !(s >= b) }'; then
+                  echo "$pkg: ${secs}s measured, dealt across $slots slots"
+                  n=$slots
+                else
+                  echo "$pkg: ${secs}s measured, runs whole in one slot"
+                  n=1
+                fi
+                ;;
+            esac
             if [ "$n" -eq 1 ]; then
               if [ $((small % slots)) -ne "$shard" ]; then
                 small=$((small + 1))
