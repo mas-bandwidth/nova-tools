@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
@@ -62,7 +63,9 @@ func realBus(t *testing.T) {
 		// checkout receives mail" these tests are what says so.
 		stamp := buildVersion()
 		build := []string{"build", "-ldflags", "-X main.version=" + stamp, "-o", out, "../nova-bus"}
-		if raw, err := exec.Command("go", build...).CombinedOutput(); err != nil {
+		buildCmd := exec.Command("go", build...)
+		buildCmd.Env = goenv.Clean(os.Environ())
+		if raw, err := buildCmd.CombinedOutput(); err != nil {
 			busBuild = fmt.Errorf("building nova-bus from this tree: %v\n%s", err, raw)
 			return
 		}
@@ -118,7 +121,9 @@ func realBus(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			out += ".exe"
 		}
-		if raw, err := exec.Command("go", "build", "-o", out, "./testdata/recordbus").CombinedOutput(); err != nil {
+		build := exec.Command("go", "build", "-o", out, "./testdata/recordbus")
+		build.Env = goenv.Clean(os.Environ())
+		if raw, err := build.CombinedOutput(); err != nil {
 			recordBuild = fmt.Errorf("building the recording nova-bus: %v\n%s", err, raw)
 			return
 		}

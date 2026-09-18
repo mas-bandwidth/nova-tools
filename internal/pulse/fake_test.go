@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // The fakes every test in this package puts in front of PATH.
@@ -81,6 +83,7 @@ func fakeBins(t *testing.T) string {
 			return
 		}
 		cmd := exec.Command("go", "build", "-o", build, "./testdata/fakebin")
+		cmd.Env = goenv.Clean(os.Environ())
 		if raw, err := cmd.CombinedOutput(); err != nil {
 			fakeBinErr = fmt.Errorf("building the fake: %v\n%s", err, raw)
 			return
