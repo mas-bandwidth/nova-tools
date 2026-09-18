@@ -18,7 +18,18 @@ import (
 var (
 	hygieneProcs pulse.HygieneProcs = pulse.OSProcs{}
 	hygieneDisk                     = func(home string) pulse.HygieneDisk { return pulse.OSDisk{Home: home} }
+
+	// The two doors of --lane-dirs: the git reads over a checkout and the forge
+	// read over a branch. Tests replace both, so no test of the lane sweep runs
+	// git or reaches the network.
+	hygieneGit pulse.LaneGit      = pulse.OSLaneGit{Timeout: hygieneLaneTimeout}
+	hygienePRs pulse.LanePRSource = pulse.GHLanePRs{Timeout: hygieneLaneTimeout}
 )
+
+// hygieneLaneTimeout bounds every git and gh read the lane sweep makes. Glenn's
+// two-minute rule: anything we call out to that costs real time answers well
+// inside a minute or is not waited on.
+const hygieneLaneTimeout = 30 * time.Second
 
 // The runner `_diag` prune's defaults under the names their flags carry, so a
 // change to either is a change to one line and the test that pins it.
