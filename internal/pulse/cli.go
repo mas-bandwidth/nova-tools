@@ -17,6 +17,8 @@ nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <di
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
+nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
+nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help`

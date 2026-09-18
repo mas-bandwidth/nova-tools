@@ -411,6 +411,55 @@ seat the key names. It never prints a value. The benches run in parallel under
 or found no seat, and 3 when any bench was unreachable. ssh comes from `--ssh` (default
 `ssh`), so a test fakes it and no test reaches a machine.
 
+## Mac bench power
+
+The Mac benches (batman, superman) draw 100 W each and the fleet runs on solar, so an idle
+Mac sleeps and is woken on demand (Glenn 2026-09-17). `nova-pulse wake` and
+`nova-pulse sleep` are the Go verbs that replace `scripts/coordination/fleet-wake.sh` and
+`fleet-sleep.sh` (#1142); the shell's case table, its python heredoc over `ssh` and its
+swallowed errors are not carried over. Both take the benches as a repeatable
+`--bench <name>` or as bare arguments.
+
+The verb lines, as `nova-pulse help` carries them:
+
+```
+nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
+nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
+```
+
+`--registry` is one `name,mac,lan-bench` per line, blank lines and `#` comments skipped.
+The file is validated whole before any ssh: a row with the wrong field count, an empty or
+non-alias name, a mac that does not parse as six bytes, an empty `lan-bench`, or a duplicate
+name refuses the verb, and an unknown `--bench` refuses the whole invocation rather than
+waking the ones it knows.
+
+To wake a bench the magic packet is built in Go -- six `0xFF` bytes then the six-byte mac
+sixteen times -- and sent three times from the named `lan-bench` to the all-ones UDP
+broadcast on port 9. Then ssh is polled for up to ninety seconds; a user-activity assertion
+(`sudo -n pmset -a sleep 0; /usr/bin/caffeinate -u -t 5`) turns the dark wake a magic packet
+gives (ssh answers, runners stay offline) into a full one; and the bench is awake only when
+the runners whose names start with the bench show `online` in GitHub inside `--timeout`. The
+line is `WAKE <bench> up after <s>s runners=<n>` or
+`WAKE FAIL <bench> <stage> <reason>`, the stage one of `registry`, `packet`, `ssh`,
+`assert`, `runners`; a bench a test already sees online prints `up after 0s`.
+
+`sleep` refuses while any runner of the bench is busy (`SLEEP REFUSED <bench> busy=<n>`;
+`busy=unknown` when GitHub cannot be read, refusing rather than guessing), and otherwise
+sets idle sleep with `sudo -n pmset -a sleep <m> displaysleep 1 womp 1`, printing
+`SLEEP <bench> idle=<m>`. A failure to reach the bench is `SLEEP FAIL <bench> <reason>`.
+
+Red tests, one per behaviour: `power-wake-registry-refused-before-ssh` and
+`power-wake-unknown-bench-refused-before-ssh` (no runner call before validation);
+`power-wake-sends-packet-asserts-and-waits` (the packet goes from the `lan-bench` first,
+then ssh, then the assertion, then the runner wait); `power-wake-fails-with-the-stage-that-did`
+(no ssh inside ninety seconds is `WAKE FAIL ... ssh`); `power-wake-fails-when-no-runner-comes-online`;
+`sleep-refuses-a-busy-bench` (a busy runner is never told to sleep);
+`sleep-sets-idle-sleep`; the `power-registry-*` shape cases; and
+`power-runner-timeout-kills-the-group` (a cancelled ssh child takes its whole process group
+with it). Every remote step goes through one runner interface (`ssh <target> bash -s`, the
+script on stdin) and the GitHub runner list is a second interface, so every test drives
+fakes and no test opens a socket or reaches a machine.
+
 ## Fleet hygiene
 
 `nova-pulse fleet hygiene --install` starts mechanical clean-as-we-work on the bench it runs
@@ -499,6 +548,8 @@ nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <di
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
+nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
+nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
 nova-pulse help
