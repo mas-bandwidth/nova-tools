@@ -67,6 +67,17 @@ func fakeBenchBin(t *testing.T, dir string, f benchFake) (sshLog, scpLog string)
 	return sshLog, scpLog
 }
 
+// stepClock is the pull's clock in the tests: Now stands still until Sleep moves it, so a
+// bounded wait reaches its deadline in as many polls as it would in real time and not one
+// wall-clock millisecond. The production clock is realClock.
+type stepClock struct{ now time.Time }
+
+func newStepClock() *stepClock { return &stepClock{now: time.Unix(1_700_000_000, 0)} }
+
+func (c *stepClock) Now() time.Time { return c.now }
+
+func (c *stepClock) Sleep(d time.Duration) { c.now = c.now.Add(d) }
+
 func writeAt(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -101,7 +112,7 @@ func TestPullWaitsForResult(t *testing.T) {
 	var notes strings.Builder
 	if err := pullFromBench(benchPull{
 		host: "b2", remoteJob: remoteJob, localJob: localJob,
-		wait: 30 * time.Second, poll: 50 * time.Millisecond, notes: &notes,
+		wait: 30 * time.Second, poll: 50 * time.Millisecond, notes: &notes, clock: newStepClock(),
 	}); err != nil {
 		t.Fatalf("the pull failed on a bench that answered: %v", err)
 	}
@@ -175,7 +186,7 @@ func TestPullCopiesResultUpFromRepo(t *testing.T) {
 	var notes strings.Builder
 	if err := pullFromBench(benchPull{
 		host: "b2", remoteJob: remoteJob, localJob: localJob, label: "a",
-		wait: 200 * time.Millisecond, poll: 50 * time.Millisecond, notes: &notes,
+		wait: 200 * time.Millisecond, poll: 50 * time.Millisecond, notes: &notes, clock: newStepClock(),
 	}); err != nil {
 		t.Fatalf("the pull failed on a bench that answered: %v", err)
 	}
