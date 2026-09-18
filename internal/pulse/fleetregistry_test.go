@@ -39,7 +39,7 @@ func TestFleetRegistryPrintsOneLinePerMachineInFileOrder(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("printed %d lines, want 3: %q", len(lines), out.String())
 	}
-	want := "MACHINE hulk ssh=hulk os=linux/x64 roles=bench,runner seat=swarm-hulk cores=64 notes="
+	want := "MACHINE hulk ssh=hulk os=linux/x64 roles=bench,runner seat=swarm-hulk cores=64 provider=self mac=- notes="
 	if !strings.HasPrefix(lines[0], want) {
 		t.Errorf("first line = %q, want it to start %q", lines[0], want)
 	}

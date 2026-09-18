@@ -15,11 +15,13 @@ package main
 // environment variable --authkey-env names, which nova-secrets exec fills.
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
@@ -156,9 +158,22 @@ func cmdFleetSleep(args []string, stdout, stderr io.Writer) int {
 	})
 }
 
-// cmdFleetRegistry lists the machines registry: the reading verb that answers "what is this
-// machine, and may work go on it?" without touching a machine.
+// registryColumns is the machines file's shape, as every one of these verbs' refusals
+// spells it. One string, so the reader and the three verbs cannot drift apart.
+const registryColumns = "the machines registry: name, ssh, os/arch, roles, seat, cores, notes, provider, mac, tab separated"
+
+// cmdFleetRegistry lists the machines registry -- the reading verb that answers "what is
+// this machine, and may work go on it?" without touching a machine -- and dispatches the
+// two verbs that write it.
 func cmdFleetRegistry(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		switch args[0] {
+		case "add":
+			return cmdFleetRegistryAdd(args[1:], stdout, stderr)
+		case "set":
+			return cmdFleetRegistrySet(args[1:], stdout, stderr)
+		}
+	}
 	f := newFlags("fleet registry")
 	machines := f.fs.String("machines", "", "")
 	role := f.fs.String("role", "", "")
@@ -166,7 +181,7 @@ func cmdFleetRegistry(args []string, stdout, stderr io.Writer) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	f.want(*machines, "machines", "the machines registry: name, ssh, os/arch, roles, seat, cores, notes, tab separated")
+	f.want(*machines, "machines", registryColumns)
 	if *max < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
 	}
@@ -175,6 +190,110 @@ func cmdFleetRegistry(args []string, stdout, stderr io.Writer) int {
 	}
 	return pulse.FleetRegistry(pulse.FleetRegistryInput{
 		Machines: *machines, Role: *role, Max: *max,
+		Stdout: stdout, Stderr: stderr,
+	})
+}
+
+// cmdFleetRegistryAdd adds one machine. Every column is a flag with no default, because a
+// guessed column in a control file is how a card reaches a CI runner host; the two columns
+// that may honestly be empty are given as `-`.
+func cmdFleetRegistryAdd(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("fleet registry add")
+	machines := f.fs.String("machines", "", "")
+	name := f.fs.String("name", "", "")
+	ssh := f.fs.String("ssh", "", "")
+	osArch := f.fs.String("os", "", "")
+	roles := f.fs.String("roles", "", "")
+	seat := f.fs.String("seat", "", "")
+	cores := f.fs.Int("cores", 0, "")
+	notes := f.fs.String("notes", "", "")
+	provider := f.fs.String("provider", "self", "")
+	mac := f.fs.String("mac", "-", "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*machines, "machines", registryColumns)
+	f.want(*name, "name", "the machine's name, which is what every verb's --bench takes")
+	f.want(*ssh, "ssh", "the ssh target: an alias in ~/.ssh/config, or user@host")
+	f.want(*osArch, "os", "the machine's os/arch, such as linux/x64 or darwin/arm64")
+	f.want(*roles, "roles", "the roles set, comma separated, from bench, runner, coordination, services")
+	f.want(*seat, "seat", "the machine's nova-secrets seat, or `-` when it carries none")
+	f.want(*notes, "notes", "what a reader needs to know about the machine, or `-`; a bench+runner machine says `allow-shared=<YYYY-MM-DD> <why>` here")
+	if *cores < 1 {
+		f.add(fmt.Sprintf("--cores wants whole cores above zero, got %d; ask the machine with nproc or sysctl -n hw.ncpu", *cores))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.FleetRegistryAdd(pulse.FleetRegistryAddInput{
+		Machines: *machines,
+		Draft: fleet.Draft{
+			Name: *name, SSH: *ssh, OSArch: *osArch, Roles: *roles, Seat: *seat,
+			Cores: *cores, Notes: *notes, Provider: *provider, MAC: *mac,
+		},
+		Stdout: stdout, Stderr: stderr,
+	})
+}
+
+// cmdFleetRegistrySet changes columns of one machine. A flag the command line did not give
+// is not a change: the row keeps what the file already says, so `set --notes` writes a note
+// and not a rebuilt machine.
+func cmdFleetRegistrySet(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("fleet registry set")
+	machines := f.fs.String("machines", "", "")
+	name := f.fs.String("name", "", "")
+	ssh := f.fs.String("ssh", "", "")
+	osArch := f.fs.String("os", "", "")
+	roles := f.fs.String("roles", "", "")
+	seat := f.fs.String("seat", "", "")
+	cores := f.fs.Int("cores", 0, "")
+	notes := f.fs.String("notes", "", "")
+	provider := f.fs.String("provider", "", "")
+	mac := f.fs.String("mac", "", "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*machines, "machines", registryColumns)
+	f.want(*name, "name", "the machine to change; run nova-pulse fleet registry --machines <file> to list them")
+
+	var change fleet.Change
+	given := map[string]bool{}
+	f.fs.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
+	if given["ssh"] {
+		change.SSH = ssh
+	}
+	if given["os"] {
+		change.OSArch = osArch
+	}
+	if given["roles"] {
+		change.Roles = roles
+	}
+	if given["seat"] {
+		change.Seat = seat
+	}
+	if given["cores"] {
+		change.Cores = cores
+	}
+	if given["notes"] {
+		change.Notes = notes
+	}
+	if given["provider"] {
+		change.Provider = provider
+	}
+	if given["mac"] {
+		change.MAC = mac
+	}
+	if !change.Any() {
+		f.add("name a column to change: one of --ssh, --os, --roles, --seat, --cores, --notes, --provider, --mac")
+	}
+	if given["cores"] && *cores < 1 {
+		f.add(fmt.Sprintf("--cores wants whole cores above zero, got %d; ask the machine with nproc or sysctl -n hw.ncpu", *cores))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	return pulse.FleetRegistrySet(pulse.FleetRegistrySetInput{
+		Machines: *machines, Name: *name, Change: change,
 		Stdout: stdout, Stderr: stderr,
 	})
 }

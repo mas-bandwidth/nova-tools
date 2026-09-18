@@ -40,6 +40,8 @@ nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evide
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
 nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
+nova-pulse fleet registry add --machines <file> --name <n> --ssh <user@host> --os <goos/goarch> --roles <a,b> --seat <s|-> --cores <n> --notes <text> [--provider <p>] [--mac <addr@lan-bench>]
+nova-pulse fleet registry set --machines <file> --name <n> [--ssh <t>] [--os <goos/goarch>] [--roles <a,b>] [--seat <s|->] [--cores <n>] [--notes <text>] [--provider <p>] [--mac <addr@lan-bench|->]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
 nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>]
 nova-pulse hygiene reap <slot> --home <dir>
@@ -56,7 +58,7 @@ nova-pulse fleet   standard --benches <file> --bench <name> [--machines <file>] 
 nova-pulse fleet   mirror --benches <file> --bench <name> [--machines <file>] --repo <url> --path <remote path> [--ssh <path>] [--timeout <s>]
 nova-pulse fleet   join --benches <file> --bench <name> [--machines <file>] --tailscale <path> --authkey-env <NAME> [--ssh <path>] [--timeout <s>]
 nova-pulse fleet   sleep --benches <file> --bench <name> [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
-nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
+nova-pulse wake    --bench <name>... --machines <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
@@ -222,9 +224,19 @@ UNREACHABLE <error>). --max caps the lines; 0 means all.
 example:
   nova-pulse fleet survey --benches ./fleet.tsv
 
+fleet registry lists the machines file; fleet registry add and set are the only
+two verbs that WRITE it. Every row they write is handed back to the registry's
+own reader before a byte reaches the disk -- a duplicate name, an unknown role, a
+bench+runner row with no allow-shared=<YYYY-MM-DD> note, a provider outside the
+set or a wake address that is not six bytes is refused and the file is left
+exactly as it was -- and the write itself is a temp file renamed over the
+original. They print REGISTRY ADDED|SET name=<n> and then the machine's row.
+
 wake and sleep are the Mac benches' power verbs (Glenn 2026-09-17: each iMac Pro
-draws 100 W and the fleet runs on solar). --registry is one name,mac,lan-bench
-per line, validated whole before any ssh. To wake a bench the magic packet is
+draws 100 W and the fleet runs on solar). --machines is the machines registry:
+a bench that sleeps carries its wake address in the mac column, written
+<hardware-address>@<lan-bench>. (--registry, the old name,mac,lan-bench
+wake-registry.csv, still reads for one release and says so.) To wake a bench the magic packet is
 built in Go and sent three times from the named lan-bench to UDP broadcast port
 9; then ssh is polled for up to ninety seconds, a user-activity assertion turns
 the dark wake into a full one, and the bench is awake only when its runners show

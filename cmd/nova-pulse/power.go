@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -301,18 +302,38 @@ type powerWakeResult struct {
 	failed bool
 }
 
+// powerBenchesFromMachines reads the wake table out of the machines registry: every machine
+// whose `mac` column carries a `<hardware-address>@<lan-bench>`. It is the same file every
+// other fleet verb resolves a bench through, read by the same reader, so a machine cannot
+// be a bench in one file and absent from another -- which is exactly what the separate
+// wake-registry.csv allowed.
+func powerBenchesFromMachines(path string) (map[string]powerBench, error) {
+	reg, err := fleet.ReadRegistry(path)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]powerBench{}
+	for _, m := range reg.Machines() {
+		if !m.Sleeps() {
+			continue
+		}
+		out[m.Name] = powerBench{Name: m.Name, MAC: m.MAC, LAN: m.LAN}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no machine in %s carries a wake address; give one its mac (run: nova-pulse fleet registry set --machines %s --name <n> --mac <hardware-address>@<lan-bench>)", path, path)
+	}
+	return out, nil
+}
+
 // powerWake sends each named bench's magic packet from its lan-bench, waits for ssh, runs
 // the user-activity assertion and waits for the runners to come online. It prints exactly
-// one WAKE or WAKE FAIL line per bench. Every input is validated before any ssh.
-func powerWake(names []string, registryPath string, timeout time.Duration, stdout, stderr io.Writer) int {
-	benches, err := readPowerRegistry(registryPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-pulse wake: --registry %s: %s; refusing to guess\n", oneline.Field(registryPath), oneline.Err(err))
-		return 2
-	}
+// one WAKE or WAKE FAIL line per bench. Every input is validated before any ssh: the table
+// is already read and whole by the time this is called.
+func powerWake(names []string, benches map[string]powerBench, source string, timeout time.Duration, stdout, stderr io.Writer) int {
 	for _, name := range names {
 		if _, ok := benches[name]; !ok {
-			fmt.Fprintf(stderr, "nova-pulse wake: bench %s is not in %s; refusing to wake anything\n", oneline.Field(name), oneline.Field(registryPath))
+			fmt.Fprintf(stderr, "nova-pulse wake: bench %s is not in %s; refusing to wake anything (run: nova-pulse fleet registry --machines %s to list the machines)\n",
+				oneline.Field(name), oneline.Field(source), oneline.Field(source))
 			return 2
 		}
 	}
@@ -452,10 +473,15 @@ func powerReason(out string, err error) string {
 	return "no answer"
 }
 
+// wakeRegistryNote is the one release `--registry` gets. The wake table is a column of the
+// machines registry now, and two files naming the same machines is how they disagree.
+const wakeRegistryNote = "NOTE nova-pulse wake --registry is the retired wake-registry.csv and goes in the next release; run: nova-pulse wake --machines queue/control/machines.tsv"
+
 func cmdWake(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("wake")
 	var benchFlags powerMultiFlag
 	f.fs.Var(&benchFlags, "bench", "")
+	machines := f.fs.String("machines", "", "")
 	registry := f.fs.String("registry", "", "")
 	timeout := f.fs.String("timeout", "8m", "")
 	if !f.parseAny(args, stderr) {
@@ -463,7 +489,12 @@ func cmdWake(args []string, stdout, stderr io.Writer) int {
 	}
 	names := append([]string{}, benchFlags...)
 	names = append(names, f.fs.Args()...)
-	f.want(*registry, "registry", "the bench registry: name,mac,lan-bench per line")
+	switch {
+	case strings.TrimSpace(*machines) != "" && strings.TrimSpace(*registry) != "":
+		f.add("--machines and --registry are the same table; give --machines alone (--registry is the retired wake-registry.csv)")
+	case strings.TrimSpace(*machines) == "" && strings.TrimSpace(*registry) == "":
+		f.add("--machines is required; it wants the machines registry: name, ssh, os/arch, roles, seat, cores, notes, provider, mac, tab separated; refusing to guess")
+	}
 	if len(names) == 0 {
 		f.add("--bench is required; name at least one bench to wake")
 	}
@@ -479,7 +510,24 @@ func cmdWake(args []string, stdout, stderr io.Writer) int {
 	if f.refused(stderr) {
 		return 2
 	}
-	return powerWake(names, *registry, whole, stdout, stderr)
+
+	// The table is read WHOLE before any ssh, from whichever file named it. The old CSV
+	// still reads for one release, and says so every time it is used.
+	source := strings.TrimSpace(*machines)
+	var benches map[string]powerBench
+	if source != "" {
+		benches, err = powerBenchesFromMachines(source)
+	} else {
+		source = strings.TrimSpace(*registry)
+		fmt.Fprintln(stderr, wakeRegistryNote)
+		benches, err = readPowerRegistry(source)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-pulse wake: %s: %s; refusing to guess (run: nova-pulse fleet registry --machines %s)\n",
+			oneline.Field(source), oneline.Err(err), oneline.Field(source))
+		return 2
+	}
+	return powerWake(names, benches, source, whole, stdout, stderr)
 }
 
 func cmdSleep(args []string, stdout, stderr io.Writer) int {

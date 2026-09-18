@@ -180,11 +180,11 @@ func TestWithRoleAndMachinesReadInFileOrder(t *testing.T) {
 	for _, m := range reg.WithRole(RoleBench) {
 		names = append(names, m.Name)
 	}
-	if strings.Join(names, ",") != "hulk,vision,space" {
-		t.Errorf("the benches are %v, want hulk, vision, space in file order", names)
+	if strings.Join(names, ",") != "hulk,vision,space,air" {
+		t.Errorf("the benches are %v, want hulk, vision, space, air in file order", names)
 	}
-	if got := len(reg.Machines()); got != 7 {
-		t.Errorf("the fleet has %d machines, want 7", got)
+	if got := len(reg.Machines()); got != 8 {
+		t.Errorf("the fleet has %d machines, want 8", got)
 	}
 	if reg.WithRole("builder") != nil {
 		t.Error("an unknown role listed machines")
@@ -200,10 +200,11 @@ func TestTheExampleIsTheFleetWeHave(t *testing.T) {
 		"studio":   "coordination,runner",
 		"hulk":     "bench,runner",
 		"vision":   "bench,runner",
-		"space":    "bench,services",
+		"space":    "bench,runner,services",
 		"mini":     "runner",
 		"batman":   "runner",
 		"superman": "runner",
+		"air":      "bench,runner",
 	}
 	for name, roles := range want {
 		m, ok := reg.Lookup(name)

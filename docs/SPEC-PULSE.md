@@ -305,8 +305,14 @@ is a tab-separated file, one bench per line: `name`, `ssh target`, `home`,
 
 **The machines registry.** `--machines <file>` is the second file, and it says
 what each machine IS: `name`, `ssh`, `os/arch`, `roles`, `seat`, `cores`,
-`notes`, tab separated, where `roles` is a set from `{bench, runner,
-coordination, services}`. THE LOCK (Glenn, 2026-09-18): **runner hosts are
+`notes`, `provider`, `mac`, tab separated, where `roles` is a set from `{bench,
+runner, coordination, services}`, `provider` is who runs the machine (`self`,
+which is what a line that does not say means, or one of `aws`, `azure`,
+`digitalocean`, `gcp`, `hetzner`, `oracle`) and `mac` is the wake address as
+`<hardware-address>@<lan-bench>`, or `-` when the machine never sleeps. The last
+two columns arrived after the first seven, so the reader takes a 7, 8 or 9
+column line for one release and the writer always writes nine.
+THE LOCK (Glenn, 2026-09-18): **runner hosts are
 CI-only** — no card, no probe and no load may be placed on a machine that
 serves the merge group's shards. Every verb that puts work on a machine
 resolves its `--bench` through the registry and refuses a machine whose roles
@@ -324,6 +330,53 @@ take it optionally and keep their older guard without it. A machine that is
 both `runner` and `bench` must carry a dated exception in its notes,
 `allow-shared=<YYYY-MM-DD> <why>`; hulk and vision carry one until the pull
 worker runs cards in containers. `nova-pulse fleet registry` lists the file.
+
+**Writing it.** `nova-pulse fleet registry add` and `nova-pulse fleet registry
+set` are the only two verbs that write the registry, and nothing edits it by
+hand. The hurt: on 2026-09-18 the file was edited three times by hand — `sed`
+twice and a python one-liner once — and each edit was a control file changed by
+a tool that knows nothing about it, so a `bench,runner` row with no dated
+exception, a role spelt `benhc` or a name written twice would have reached
+`nova-pulse fill` and put a card on a CI runner host.
+
+```
+nova-pulse fleet registry add --machines <file> --name <n> --ssh <user@host> --os <goos/goarch> --roles <a,b> --seat <s|-> --cores <n> --notes <text> [--provider <p>] [--mac <addr@lan-bench>]
+nova-pulse fleet registry set --machines <file> --name <n> [--ssh <t>] [--os <goos/goarch>] [--roles <a,b>] [--seat <s|->] [--cores <n>] [--notes <text>] [--provider <p>] [--mac <addr@lan-bench|->]
+```
+
+A row is **rendered, handed back to the registry's own reader, and written only
+if the reader takes the whole file back** — so a row a verb writes is held to
+exactly the rules a row a person writes is held to, by the same code. A refusal
+leaves the file byte for byte as it was. The write is a temp file in the file's
+own directory, synced and renamed over the original, so a reader racing it sees
+the whole old file or the whole new one and never half of either; the file's
+header, comments, blank lines and untouched rows come through verbatim, because
+the header is where the lock is written down. `add` takes every column as a flag
+with no default (`-` where there is honestly nothing), and `set` changes only the
+columns it names. Both print the event line and then the machine's row:
+
+```
+REGISTRY ADDED name=<n> machines=<file>
+MACHINE <n> ssh=… os=… roles=… seat=… cores=… provider=… mac=… notes="…"
+REGISTRY SET name=<n> fields=<a,b> machines=<file>
+```
+
+Exit 0 when the row was written, 2 on `REGISTRY REFUSED: …`: a duplicate name,
+an unknown role, a shared row with no dated exception, a provider outside the
+set, a wake address that is not six bytes, a lan-bench this file does not name,
+a `set` naming no column, a `set` on a machine that is not there.
+
+Red tests, one per behaviour:
+`registry-add-writes-the-row-and-keeps-the-header`,
+`registry-add-refuses-a-duplicate-name-and-writes-nothing`,
+`registry-add-refuses-an-unknown-role`,
+`registry-add-refuses-a-shared-machine-with-no-dated-exception`,
+`registry-add-refuses-a-provider-outside-the-set`,
+`registry-set-changes-only-the-columns-it-names`,
+`registry-set-refuses-a-row-the-reader-would-refuse-and-writes-nothing`,
+`registry-save-leaves-no-temporary-file-behind`,
+`registry-reader-takes-seven-eight-and-nine-column-lines`,
+`registry-migrated-example-carries-every-row-of-the-old-wake-registry`.
 
 The fleet rule: every fleet verb prints one `FLEET <name>` line per bench,
 runs the benches in parallel under `--timeout <s>` (default 120), exits
@@ -514,15 +567,24 @@ swallowed errors are not carried over. Both take the benches as a repeatable
 The verb lines, as `nova-pulse help` carries them:
 
 ```
-nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
+nova-pulse wake    --bench <name>... --machines <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 ```
 
-`--registry` is one `name,mac,lan-bench` per line, blank lines and `#` comments skipped.
-The file is validated whole before any ssh: a row with the wrong field count, an empty or
-non-alias name, a mac that does not parse as six bytes, an empty `lan-bench`, or a duplicate
-name refuses the verb, and an unknown `--bench` refuses the whole invocation rather than
-waking the ones it knows.
+`--machines` is the machines registry, the same file every other fleet verb resolves a bench
+through, read by the same reader: a bench that sleeps carries its wake address in the `mac`
+column, written `<hardware-address>@<lan-bench>`. The table is read whole before any ssh,
+and an unknown `--bench` refuses the whole invocation rather than waking the ones it knows.
+Folding the wake table into the registry is what makes the lan-bench checkable at all: it
+must be a machine this same file names, which two separate files could never hold each other
+to. A registry that wakes nothing is a refusal that names the `set --mac` that would fix it.
+
+`--registry`, the retired `wake-registry.csv` of one `name,mac,lan-bench` per line, still
+reads for **one release** and prints `NOTE nova-pulse wake --registry is the retired
+wake-registry.csv and goes in the next release; run: nova-pulse wake --machines
+queue/control/machines.tsv` every time it is used. Giving both flags is a refusal — they are
+the same table, and two files naming the same machines is how they come to disagree. Giving
+neither is `--machines is required … refusing to guess`.
 
 To wake a bench the magic packet is built in Go -- six `0xFF` bytes then the six-byte mac
 sixteen times -- and sent three times from the named `lan-bench` to the all-ones UDP
@@ -654,7 +716,7 @@ nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <di
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n>
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
-nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
+nova-pulse wake    --bench <name>... --machines <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 nova-pulse version
