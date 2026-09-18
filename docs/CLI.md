@@ -1646,6 +1646,51 @@ to the read set — `GOROOT` and `GOMODCACHE`, as `go env` reports them — so t
 neither has to be named by hand in every argv. `nova-sandbox run --help` prints
 the verb's own usage.
 
+**Two runs at once are safe, and the tool is what makes them so.** Creating the
+volume is the one step that cannot be shared: two `diskutil apfs addVolume`
+running at the same time leave the new volume's root owned by `root:wheel`
+instead of you, it never settles, and the run dies at `mkdir` with `permission
+denied` before its card starts — measured in a 20-run soak on the Studio,
+2026-09-18, three of four concurrent runs and then four of four. `run`
+serializes creation across processes with a lock file under your own cache
+directory, and checks the new root is yours and writable before it hands it to
+anything. Nothing else is serialized: the runs themselves overlap freely.
+
+**A `--timeout` that passes prints `SANDBOX TIMEOUT after=<d>`** and asks the
+operating system nothing. A deadline is not a path the wall refused, so the
+`SANDBOX DENIED` query below is skipped for it.
+
+### Clearing up after a `SIGKILL`
+
+`run` deletes its volume on every path out it can take. `SIGKILL` is not one of
+them — the tool is gone before it can delete anything, so the volume stays
+mounted and the command's own children are reparented to PID 1 **still holding
+it open**, which is why a later `diskutil apfs deleteVolume` will not clear it
+either. Nothing survives to print `SANDBOX LEAK`, and `check` does not look:
+`check` asks what the backend can enforce, not what the machine is still
+holding.
+
+`nova-sandbox reap` is the verb that looks. It lists every `nova-*` volume —
+that prefix is the whole of its authority — kills whatever holds each one open
+(`SIGTERM`, then `SIGKILL` after a short grace) and deletes it, one line each:
+
+```
+$ nova-sandbox reap
+SANDBOX REAP volume=nova-j1 procs=1 deleted=yes
+SANDBOX REAP OK volumes=1
+
+$ nova-sandbox reap --dry-run
+SANDBOX REAP OK volumes=0
+```
+
+It **never takes a volume from a live run**: `run` leaves a
+`.nova-sandbox-owner` marker at its volume root carrying its pid and that
+process's start time — both, because a pid is a number the OS hands out again —
+and a volume whose marker names a running tool is reported and left alone. Exit
+is **0** when the machine is clean and **3** when anything remained, including
+every `--dry-run` that found something, which is what makes `reap --dry-run` a
+gate a card can end on. `--dry-run` prints and touches nothing.
+
 **When a contained command exits non-zero**, the tool asks the operating system
 what it refused and prints one line per path, with the flag that would have
 allowed it:

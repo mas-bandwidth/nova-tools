@@ -402,6 +402,7 @@ nova-sandbox grant   --name <container> [--read <dir>]... [--write <dir>]...
 nova-sandbox release --name <container> [--read <dir>]... [--write <dir>]...
 nova-sandbox check   [--max <n>]
 nova-sandbox run     --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] -- <command> <args...>
+nova-sandbox reap    [--dry-run]
 nova-sandbox version
 nova-sandbox help
 ```
@@ -602,6 +603,130 @@ error: measured, a `log show` for a three-second window took over ten seconds an
 found nothing, and a card whose test suite fails would have paid that on every
 run.
 
+### Four lessons from the 20-run soak (Studio, macOS 26, arm64, 2026-09-18)
+
+Twenty runs of `nova-sandbox run` against the real disposable-volume body, on the
+machine eight CI runners share. The cleanup contract held everywhere it was
+reached. Three of these are the edges it was not, each one measured and each one
+now a test; the fourth is a defect in the fix for the second, and it was found by
+dogfooding that fix rather than by any test — which is the fifth lesson and does
+not need a number.
+
+1. **Two `diskutil apfs addVolume` may not run at once, so `Create` takes an
+   inter-process lock.** Four concurrent runs: three of four, then four of four,
+   died before their card ran with
+
+   ```
+   SANDBOX REFUSED reason=volume_failed: /Volumes/nova-conc-N/work could not be
+   made on the disposable volume: mkdir ...: permission denied
+   ```
+
+   exit 125. The cause is **outside this tool**, and was isolated without it: an
+   `addVolume` that runs while another one is running leaves the new volume's
+   root `root:wheel drwxr-xr-x` instead of the caller's `glenn:staff
+   drwxrwxr-x`, and it **does not settle** — still denied two seconds later.
+   Uncontended, the root is the caller's and writable the instant `diskutil
+   info` reports a mount point. The same four runs staggered twelve seconds
+   apart all passed **with their execution overlapping**, so it is *creation*
+   alone that cannot be shared, not the volumes and not the runs.
+
+   The old `Create` returned as soon as `diskutil info` named a mount point,
+   which assumed the answer to a question it never asked. It now takes an
+   exclusive `flock` on one file under the **caller's own cache directory**
+   (`os.UserCacheDir()/nova-sandbox/volume-create.lock` — never `/tmp` and never
+   a path a contained command could write, because a lock anyone can write is a
+   lock anyone can take), and after the mount it asks: is this root **mine**, and
+   can I **write** it. There is no repair to apply — `chown` on another user's
+   directory needs root, which rule 2 does not have — so a root that is not the
+   caller's means the volume is **deleted and made again**, up to three times,
+   and then the tool **refuses and names it** rather than letting the run die at
+   `mkdir` with `permission denied` and no cause. The lock waits, with a
+   deadline; a wait with no deadline is how a fleet ends up holding a file.
+
+2. **A `SIGKILL`ed run leaks the volume *and* the process inside it, so there is
+   a `reap` verb.** `run` deletes its volume on every path out it can take —
+   clean, error, catchable signal, `--timeout` — and a delete that fails prints
+   `SANDBOX LEAK`. `SIGKILL` is none of those: the tool is gone between one
+   instruction and the next, so there is no path out and **no line is printed**.
+   Both halves then leak. The volume stays mounted, and the contained command's
+   own `sleep 60` is reparented to PID 1 **with its working directory on that
+   volume**, which holds it open against every unmount — so it is not a leak a
+   later `diskutil apfs deleteVolume` clears by itself. `check` says nothing
+   about it: `check` asks what the backend can *enforce*, not what this machine
+   is still *holding*.
+
+   ```
+   nova-sandbox reap [--dry-run]
+   SANDBOX REAP volume=<n> procs=<n> deleted=<yes|no>
+   SANDBOX REAP OK volumes=<n>
+   ```
+
+   `reap` lists every `nova-*` volume — the prefix is the whole of its authority,
+   exactly as the run verb's delete is — finds the processes holding each one
+   open, sends them `SIGTERM` and then `SIGKILL` after a short grace, and deletes
+   the volume through the same delete path `run` uses. Exit **0** when the machine
+   is clean and **3** when anything remained, which includes every `--dry-run`
+   that found something: that is what makes `nova-sandbox reap --dry-run` a gate
+   a card can end on. `--dry-run` prints and **touches nothing** — no signal, no
+   delete.
+
+   And the half without which the verb is unusable: `run` now writes
+   `.nova-sandbox-owner` at its volume root, carrying the tool's **pid and the
+   moment that process started**, and `reap` never takes a volume whose marker
+   names a live run. Both fields, because a pid is a small number the operating
+   system hands out again and a guard on the number alone would keep an orphan
+   for as long as some unrelated process wore it. Every uncertainty resolves to
+   *orphan* — no marker, an unreadable one, a pid that is gone — because the
+   alternative is a volume kept forever, which is the leak the verb exists to
+   end; the one exception is a pid that **is** alive whose start time cannot be
+   read, where the process is real and only the evidence is missing. A reaper
+   that cannot tell a working card from an orphan is a reaper nobody dares run,
+   and a reaper nobody runs is the same as no reaper at all.
+
+3. **A reaper is tested against the real listing, never an assumed one.** Found by
+   dogfooding lesson 2 rather than by any test: `reap` answered
+   `SANDBOX REAP OK volumes=0` at a machine that was holding `/Volumes/nova-kill2`
+   with three processes on it. `diskutil apfs list` draws a tree, and the cutset
+   the existing field reader trims it with — `|`, `+`, `-`, `<` and a space — has
+   no `>`, so the line that OPENS each record,
+
+   ```
+   |   +-> Volume disk3s7 6CD8025B-76B4-4336-918B-04FEE498F9BD
+   ```
+
+   trimmed to `> Volume disk3s7 …` and nothing ever matched. The field reader had
+   never met a `>`, because the lines IT reads carry only `|` and spaces. **A
+   reaper that reports a dirty machine clean is worse than no reaper**, so the
+   listing is parsed against a fixture copied off the Studio verbatim — the tree
+   characters are the whole point — and that fixture holds `Macintosh HD` one
+   record above the leaked volume, so the test that proves the parser reads is the
+   same test that proves it never returns a volume this tool did not make.
+
+   Proved end to end afterwards, which is the only reason it was found at all: a
+   run `SIGKILL`ed with `sleep 120` inside it left its volume mounted and three
+   processes holding it open; `reap --dry-run` reported `procs=3 deleted=no` and
+   exit 3 while touching nothing, and `reap` killed all three, deleted the volume
+   and exited 0.
+
+4. **A timeout is not a denial.** A run that hit its `--timeout` paid the bounded
+   two-second seatbelt-denials query and was then told
+
+   ```
+   SANDBOX NOTE the command failed and this OS reported no seatbelt denials for
+   it; ... add a --read, or --go
+   ```
+
+   Nothing had been refused. The command was still working when its deadline
+   passed, and a hint pointing at the read set sends the reader to widen a wall
+   that was never in the way — on this macOS, where the query finds nothing
+   anyway (see above), it is two seconds spent to print a wrong remedy. The probe
+   is skipped when the exit was the timeout kill, and the one true line is
+   printed instead:
+
+   ```
+   SANDBOX TIMEOUT after=<d> name=<n>
+   ```
+
 ### `run --help`
 
 `nova-sandbox run --help`, `-h` or `help` prints the verb's own usage on stdout
@@ -761,10 +886,13 @@ which is the thing asked for and goes to stdout.
 SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|acl_missing|no_name|no_container|no_command|not_found|not_executable|volume_exists|volume_failed>: <text>
-SANDBOX STEP name=<container|look|create|delete|denials> state=<start|done> [ms=<n>]
+SANDBOX STEP name=<container|look|create|delete|denials|list> state=<start|done> [ms=<n>]
 SANDBOX DENIED path=<p> op=<read|write> remedy="--read <dir>"
+SANDBOX TIMEOUT after=<d> name=<n>
 SANDBOX DONE name=<n> exit=<code> wall=<s> freed=<bytes>
 SANDBOX LEAK name=<n> volume=<disk> remedy="diskutil apfs deleteVolume <disk>"
+SANDBOX REAP volume=<n> procs=<n> deleted=<yes|no>
+SANDBOX REAP OK volumes=<n>
 PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
 PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise> gpu=<none|metal>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>

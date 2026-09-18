@@ -47,6 +47,7 @@ usage:
   nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]...
                [--container <disk>] -- <command> <args...>          (darwin)
   nova-sandbox run --help
+  nova-sandbox reap [--dry-run]                                   (darwin)
   nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
   nova-sandbox worktree --repo <dir> --scratch <dir> --prune
   nova-sandbox version
@@ -102,6 +103,14 @@ with the one command that removes it and exits 3.
                   wants this; nova-sandbox run --help says why.
   --container <d> run only: the APFS container to make the volume in. Default:
                   the container the boot volume is in.
+  --dry-run       reap only: print what a reap would take and touch NOTHING.
+
+reap clears what a SIGKILL left: a run killed outright has no path out to delete
+its volume on, so the volume stays mounted and the command's own children are
+reparented to PID 1 still holding it open. reap lists every nova-* volume, kills
+what holds each one (SIGTERM, then SIGKILL) and deletes it -- except a volume a
+LIVE run owns, which it reports and leaves alone. Exit 0 clean, 3 when anything
+remained, so nova-sandbox reap --dry-run is a gate a card can end on.
 
 Every path is yours and none is guessed: a --read, a --write, a --cwd or a --tmp
 that does not exist is a refusal and is NOT created. HOME must resolve inside a
@@ -144,6 +153,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return checkVerb(stdout)
 	case "run":
 		return runVerb(args[1:], stdin, stdout, stderr, env)
+	case "reap":
+		return reapVerb(args[1:], stdout, stderr)
 	case "worktree":
 		return worktreeVerb(args[1:], stdout, stderr, env)
 	case "policy":

@@ -77,6 +77,11 @@ type volumeManager interface {
 	Container() (string, error)
 	// Exists reports whether a volume of this name is already on the machine.
 	Exists(name string) (bool, error)
+	// List is every volume on this machine whose name begins with the run verb's own
+	// prefix, with the disk and the mount point of each. It is what the reap verb reads,
+	// and it is on this interface rather than beside it because one seam means one fake
+	// and one place where a volume can be named.
+	List() ([]diskVolume, error)
 	// Create exports a new volume with a quota and returns it mounted.
 	Create(container, name, size string) (diskVolume, error)
 	// Used is the bytes the volume holds, asked BEFORE the delete, because after it
@@ -472,6 +477,13 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 			return refuse("volume_failed", "%s could not be made on the disposable volume: %s", oneline.Escape(d), oneline.Err(err))
 		}
 	}
+	// The owner marker, before the command starts. It is what lets `nova-sandbox reap`
+	// tell this volume — a run that is working — from the one a SIGKILLed run left
+	// mounted with its orphaned children still holding it open. A reaper that cannot make
+	// that distinction is one nobody dares to run.
+	if err := writeOwnerMarker(vol.Mount, os.Getpid()); err != nil {
+		return refuse("volume_failed", "the owner marker could not be written at %s: %s", oneline.Escape(vol.Mount), oneline.Err(err))
+	}
 
 	// The wall: the volume is the ONE --write, so the only place on this machine the
 	// command may write is the place that is about to be deleted. Rule 8's temp directory
@@ -520,8 +532,15 @@ func runInVolume(f runFlags, vol diskVolume, deadline time.Duration, stdin io.Re
 	defer stop()
 
 	code, timedOut := supervise(done, deadlineC, grace.C, sigs, killGroup)
+	// A TIMEOUT IS NOT A DENIAL, and this is the difference between the two sentences a
+	// failed run can be told. Measured in the 20-run soak (Studio, 2026-09-18): a run that
+	// passed its --timeout paid the bounded two-second denials query and was then told
+	// "this OS reported no seatbelt denials ... add a --read, or --go" — a remedy for a
+	// wall that was never in the way. The command was still working when its deadline
+	// passed; nothing refused it. So the probe is skipped and the one true line is printed.
 	if timedOut {
-		fmt.Fprintf(stderr, "SANDBOX NOTE the command did not finish inside --timeout %s; its whole process group was killed and the volume goes with it\n", oneline.Field(f.timeout))
+		fmt.Fprintf(stderr, "SANDBOX TIMEOUT after=%s name=%s\n", oneline.Field(deadline.String()), oneline.Field(f.name))
+		return code
 	}
 	if code != 0 {
 		reportDenials(stderr, p, started.pid, runNow().Sub(startedAt))
