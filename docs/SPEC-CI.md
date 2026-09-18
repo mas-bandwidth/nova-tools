@@ -195,6 +195,136 @@ verb end to end:
 5. The slowest list is sorted and capped at three.
 6. More than one package over budget prints one line each, worst first, an order
    that does not depend on map iteration.
+## The failing tests of a run
+
+**The verb.** The second verb of `cmd/nova-ci` is `failed`:
+
+```
+failed  read a run's failing jobs; print the failing tests, their file and line
+```
+
+It runs as
+`nova-ci failed --repo <owner/name> (--run <id> | --pr <n> [--merge-group] | --branch <name>) [--job <text>] [--max-lines <n>]`,
+and it is the pipeline Rowan typed six times on 2026-09-18 made a verb:
+
+```sh
+gh api repos/.../actions/jobs/<id>/logs --allow-escape-sequences \
+  | tr -d '\033' | sed 's/\[[0-9;]*m//g' | grep -E -- '--- FAIL|_test.go:[0-9]+:|panic:'
+```
+
+That pipeline has to be retyped for every leg of a matrix, it loses the package
+and the job, it drops the continuation lines a test printed under its own
+`t.Errorf`, and it reads a cancellation as silence. A pipeline is not a tool.
+
+**The invariant.** The verb reads and never writes: it resolves one run, reads
+the log of every job of that run whose conclusion is not `success` or `skipped`,
+and says what those logs said. Everything it gets back is DATA from a host — a
+job name, a step name, log text — never an instruction, and every line it prints
+goes through `internal/oneline`. The forge is a seam: `ci.FailForge` has three
+methods (`ResolveRun`, `Jobs`, `JobLog`), `ci.GHFailForge` is the one
+implementation that shells to `gh`, and the tests hand the verb a fake, so no
+test here touches the network.
+
+**What it parses.** Both shapes this repository's CI produces, in one pass,
+after stripping the three things a GitHub Actions log wraps every line in: the
+runner timestamp, the ANSI colour and the carriage return.
+
+- Plain `go test` output, as the self-hosted and Windows legs produce it. A
+  `--- FAIL: <Test> (<d>)` opens a block; the indented lines under it are that
+  test's own words, including the continuations under a `t.Errorf`; the first
+  `<file>_test.go:<n>:` in them is the position; and the `FAIL <pkg> <d>` line
+  that closes the run gives every block before it its package.
+- `go test -json` frames, as the hosted legs produce them. These are read BY
+  FRAME, never by position: the go command interleaves parallel tests, so a
+  failing test's one message line routinely sits between two other tests' lines.
+  A frame whose `Test` is empty is package output and is read as plain text with
+  the package the frame already named.
+- `panic: test timed out after <d>` with its `running tests:` list, which is not
+  a failing test and is not reported as one.
+
+A `--- FAIL: TestX` that printed nothing of its own, beside a reported
+`TestX/case`, is the go command repeating itself and is dropped.
+
+**Its output.** One block per failing test — a `FAILED` line, then that test's
+own message lines indented as it printed them — then one line per cancellation
+and per timeout, then the closing count:
+
+```
+FAILED job="<name>" pkg=<pkg> test=<Test> at=<file:line>
+    <the test's own message lines>
+    ...+<n> more lines
+CANCELLED job="<name>" step="<name>" after=<d>
+TIMEOUT job="<name>" pkg=<pkg> running=<TestA,TestB,TestC,+<n>>
+FAILED OK jobs=<n> tests=<n>
+```
+
+A job name and a step name are QUOTED rather than escaped as fields: `test (3/4
+studio)` is what a reader pastes back into `--job`, and `oneline.Field` would
+hand them `test\x20(3/4\x20studio)`, which the forge has never heard of. A
+package, a test name and a `file:line` hold no space and stay bare, so one grep
+reads a column. `at=` is omitted, never guessed, when the test printed no
+position. A test's own words are bounded by `--max-lines` (default 8) and the
+rest are COUNTED, the same cap-and-count rule `slowtests` uses; the `running=`
+list is capped at three the same way. The closing `FAILED OK` line always
+prints, and its counts are the truth about the run whether or not every line
+printed. `running=none` is said out loud rather than left blank.
+
+**Its exit codes.** 0 when the run said nothing red, 1 when it said something,
+2 on a refusal. `failed` is a READER, so a red run is exit 1 — the caller asked
+what broke and got an answer — while exit 2 stays what it is everywhere else in
+this family: the invocation could not run.
+
+**Its refusals (exit 2, one line each, ending at the door).** A `--repo` that is
+not `<owner>/<name>`, and there is no default. Naming no run, or more than one of
+`--run`, `--pr` and `--branch`. `--merge-group` without `--pr`, since the merge
+queue's run belongs to a pull request. A `--job` that matched none of the run's
+failing jobs, naming up to three of them. A `--max-lines` of zero or less and a
+`--timeout` of zero or less, refused rather than read as unlimited. A stray
+argument or an unknown flag. A forge that could not answer, in its own words.
+
+**How a run is resolved.** `--run` is the run. `--pr` reads the pull request's
+head branch and sha and takes the newest run of that sha, falling back to the
+newest run of the branch, so a stale run of an older push is never read as this
+one. `--merge-group` takes the newest `merge_group` run whose head branch holds
+`/pr-<n>-` — GitHub names a queue branch
+`gh-readonly-queue/<base>/pr-<n>-<sha>`, so the pull request number is in the
+branch and nothing has to be guessed. `--branch` is the newest run on it.
+`--job <text>` keeps the jobs whose name contains that text AND reads no other
+job's log, so a forty-leg matrix costs one call rather than forty; a `--job` that
+matches no failing job is a refusal naming the jobs that did fail, never a green
+report.
+
+**The mistake it removes.** Six times in one day, the same four commands, by
+hand, to turn four megabytes of log into five lines — and the sixth time still
+missed the cancelled siblings of a failed leg, because a cancellation leaves
+nothing in the text. It is read here off the job's own steps instead.
+
+**Red tests.** `internal/ci/failed_test.go` parses four real job logs, cut from
+the runs of 2026-09-18 and committed under `internal/ci/testdata/failed/` with
+their timestamps, ANSI and CRLF intact — `windows-sandbox.log` (job
+105673713280, plain output, five failing tests), `studio-review.log` (job
+105673768922, `-json` frames), `pulse-flake.log` (job 105696546293, `-json`
+frames) and `merge-darwin-timeout.log` (job 105698657603 of run 35375346271, the
+`1m40s` timeout). `cmd/nova-ci/failed_test.go` runs the verb over them through a
+fake forge:
+
+1. The plain log yields five failing tests, each with its package from the `FAIL`
+   trailer and its `file:line` from the test's own first message.
+2. A test's continuation lines come back whole, the part a `grep '_test.go:'`
+   drops.
+3. The `-json` log attributes a message line to the test whose frame carried it,
+   not to the test whose line happens to precede it.
+4. The timeout is a `TIMEOUT` naming the package and the ten tests still running,
+   and is not counted as a failing test.
+5. A cancelled step is read off the job, with how long it had been running.
+6. `--max-lines` bounds a test's words and counts the rest; the closing count
+   does not move.
+7. Only the jobs that did not succeed are read, `--job` reads exactly one, and a
+   `--job` matching none of them refuses with their names rather than reporting
+   a green run.
+8. Every refusal above exits 2, writes nothing on stdout and ends at the door,
+   and `failed --help` opens the verb's own door without asking a forge anything.
+
 ## The CI class test against a real network host on the CI path
 
 **The help line.** The class test is entered in the CI check roster and in help
@@ -494,6 +624,42 @@ kept, sorted worst first and capped at three, purely so a finding can say where
 the time went. It sees one run on one machine, so a package that is fast on hulk
 and slow on windows-latest is two measurements, which is why the Windows sizes
 table exists. Full section: *The per-package test time budget*.
+
+### `failed` — a run's failing tests, not its log
+
+**The rule.** A red run is read as the failing tests it holds — job, package,
+test, `file:line` and the test's own words — never as four megabytes of log
+scrolled by eye.
+**The hurt.** Rowan retyped the same `gh api … | tr | sed | grep` pipeline six
+times on 2026-09-18. It has to be retyped per matrix leg, it loses the package
+and the job, it drops the continuation lines under a `t.Errorf`, and it reads a
+cancelled sibling as silence.
+**The test.** `TestAPlainGoTestLogNamesEveryFailingTestWithItsFileAndLine`,
+`TestATestsOwnWordsComeBackWhole`,
+`TestAJSONLogAttributesLinesByFrameNotByPosition`,
+`TestTheSecondJSONLogReadsTheSameWay`,
+`TestATimeoutNamesThePackageAndTheTestsStillRunning`,
+`TestACancelledStepIsReadFromTheJobNotTheLog`,
+`TestTheMessageLinesAreCappedAndTheRestCounted`,
+`TestACleanRunIsOneLineAndExitZero`,
+`TestTheRunningListIsCappedAndCounted`,
+`TestStripLogLineTakesTheWrapperAndNothingElse`,
+`TestARunReadsOnlyTheJobsThatDidNotSucceed`,
+`TestTheJobFilterReadsOnlyThatJobsLog`,
+`TestAJobFilterThatMatchesNothingSaysWhichJobsFailed` and
+`TestTheSelectorReachesTheForgeUntouched` (`internal/ci/failed_test.go`), over
+four real job logs in `internal/ci/testdata/failed/`, with the verb run end to
+end in `cmd/nova-ci/failed_test.go`.
+**Its allowlist.** None: it reports what a run said, and there is nothing to
+excuse.
+**Its remedy lines.** None; its refusals are the verb's own, each naming what the
+input wants — `--repo` as `<owner>/<name>`, exactly one of `--run`, `--pr` and
+`--branch`, `--merge-group` with `--pr`, a positive `--max-lines` and `--timeout`.
+**Its narrowings.** It reads only the jobs whose conclusion is not `success` or
+`skipped`, and only the two shapes `go test` prints; a failure that is neither a
+`--- FAIL`, a `-json` fail frame nor a timeout panic — a compile error, a
+runner that died — is left to the log, which `--job` then narrows to one. Full
+section: *The failing tests of a run*.
 
 ### `removeall` — no `os.RemoveAll` of a computed path
 

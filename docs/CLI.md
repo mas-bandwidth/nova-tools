@@ -2026,7 +2026,8 @@ through the child environment. Drafting and showing do not authorize a send.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-a budget. It also reports its own build with `nova-ci version`.
+a budget, and reads a CI run's failing jobs and reports the failing tests they
+held. It also reports its own build with `nova-ci version`.
 
 ```sh
 nova-ci slowtests --budget 60 < ./test-events.jsonl
@@ -2038,6 +2039,36 @@ separately. `slowtests` checks timing, not whether the tests passed. The default
 budget is 60 seconds per package; exit 2 means an over-budget package or unusable
 input, and exit 0 means no package exceeded the budget. CI exceptions belong in
 the dated project policy, not in an assumed higher tool default.
+
+The `failed` verb reads the other end of the same run: it asks a forge, through
+`gh`, for the jobs of one run that did not succeed, and prints the failing tests
+those jobs held instead of their logs.
+
+```sh
+nova-ci failed --repo owner/name --run 35375346271
+nova-ci failed --repo owner/name --pr 1375 --merge-group
+nova-ci failed --repo owner/name --branch dev --job "test (3/4 studio)" --max-lines 4
+nova-ci failed --help
+```
+
+Name exactly one run: `--run <id>`, `--pr <n>` (the newest run of that pull
+request's head commit, or `--merge-group` for the newest merge-queue run of its
+queue branch) or `--branch <name>`. `--repo` is required and has no default.
+`--job <text>` keeps the jobs whose name contains that text and reads no other
+job's log, which is what turns a forty-leg matrix into one call; if it matches no
+failing job it refuses, naming the jobs that did fail, rather than printing a
+green report. `--max-lines`
+(default 8) bounds each test's own message lines and counts the rest; `--gh`
+names the executable and `--timeout` (default 2m) budgets one call to it.
+
+Each failing test is one `FAILED job="<name>" pkg=<pkg> test=<Test>
+at=<file:line>` line with that test's own words indented under it; a cancelled
+step is `CANCELLED job="<name>" step="<name>" after=<d>`, read off the job rather
+than its log, and a timed-out package is `TIMEOUT job="<name>" pkg=<pkg>
+running=<tests>`. The closing `FAILED OK jobs=<n> tests=<n>` always prints. It is
+a reader, so exit 1 means the run said something red, exit 0 means it said
+nothing, and exit 2 is a refusal — a bad flag, no such run, or a `gh` that could
+not answer. It runs `gh` for reading only and never merges, enqueues or comments.
 See [SPEC-CI.md](SPEC-CI.md).
 
 ## nova-work
