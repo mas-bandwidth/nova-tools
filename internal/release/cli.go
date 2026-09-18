@@ -78,8 +78,8 @@ type options struct {
 	// The three that turn on certification after an adopt. They are named together or
 	// not at all: a certificates file with no registry names no machine's roles, and a
 	// registry with no standard has no hash to write.
-	certify, certs, standard                                                        string
-	noCertify                                                                       bool
+	certify, certs, standard string
+	noCertify                bool
 }
 
 // namedHalf is the flags that WERE given, as a refusal spells them: the complement of the
