@@ -203,6 +203,39 @@ would have chosen, which is how the route is measured against the coordinator's 
 `nova-decide log --summary` regenerates the starting rung per kind from those rows, and a kind with
 no success keeps the rung it started from.
 
+**The log has two sinks and one contract.** Glenn, 2026-09-18: *the decision and escalation log
+lives in Postgres beside card results; every Jev decision — the evidence, the rung, the outcome,
+the rung that succeeded — is a row, and the token report and the routing table read it.* So `--log`
+takes either a **path**, which is the append-only JSON lines file it has always been, or the literal
+word **`postgres`**, which is the table `decide_log` in the same database as `card_results`
+(SPEC-STATE.md, *the record: card results*) — one join from a decision to the card result it
+produced. Both sinks are the same interface and the same rows: `log --summary` reads either one and
+prints the same lines, because the summary is a projection of the rows and never of a file format.
+The required-accounting rule below stands for both, and it is now checked by OPENING the sink
+before the call: a table that will not open is nowhere to record the decision, so the refusal still
+comes before the provider is asked.
+
+**The table's columns** are the decision: `ts`, `unit_id`, `kind`, the size buckets `files`,
+`packages` and `lanes`, `lane`, `rung_tried`, `height`, `confidence`, `floor`, `stepped_up`,
+`escalated`, `designated`, `source`, `rowan_pick`, `reason`, `wait`, `awaiting_termination`,
+`refusal`, `outcome`, `rung_succeeded`, `calls`, `tokens_in`, `tokens_out`, `usage_failed`, and the
+whole `evidence` as JSONB so the summary reads the attempts off the table as it does off the file.
+`tokens_in` and `tokens_out` are **SQL NULL** where the provider did not report that counter — the
+presence rule below, in the table's own vocabulary: an absence is not a zero, and a reported zero is
+stored as a zero. The migration is `internal/decide/migrations/0001_decide_log.sql`, plain
+idempotent SQL applied in one transaction by `nova-decide log migrate --dsn-env <NAME>`, safe to
+run on every start.
+
+**The DSN never appears on argv.** There is no `--dsn` flag on `route` or on `log`: a connection
+string carries a password, and a password in a process listing is a leak. The DSN arrives in the
+**environment**, under the name `--dsn-env` gives (default `NOVA_DECIDE_LOG_DSN`), put there by
+`nova-secrets exec --store <store> --as <seat> --only NOVA_DECIDE_LOG_DSN -- nova-decide ...`. A
+verb told `--log postgres` with that variable unset refuses in one line naming the variable and the
+remedy, and an error that must print a DSN prints it with the password redacted. The unit tests run
+on an in-memory sink over the same interface and never open a socket; the real server is one
+integration test behind the `postgres` build tag and a `DECIDE_TEST_PG` DSN, which is what keeps
+the fake honest.
+
 **What a call spent is kept, not dropped.** A routing decision that called the provider records its
 usage: the call count and the tokens in the log row, and one row of the fleet's own usage TSV at
 `--usage` — the same columns, written through the same appender, that a swarm card's usage is

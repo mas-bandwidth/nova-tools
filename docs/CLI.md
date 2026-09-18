@@ -501,11 +501,12 @@ DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
 ### route — the ladder of minds
 
 ```
-nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+nova-decide route --unit <json file|inline json> --usage <path> --log <path|postgres>
+                  [--dsn-env NOVA_DECIDE_LOG_DSN]
                   [--registry <path>] [--floor 0.9] [--base-url <url>] [--key-env JEV_API_KEY]
                   (--usage and --log are REQUIRED whenever jev is asked)
 nova-decide route --unit <json file|inline json> --no-jev [--registry <path>]
-                  [--usage <path>] [--log <path>] [--floor 0.9]
+                  [--usage <path>] [--log <path|postgres>] [--floor 0.9]
 nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lanes n]
                   [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
                   [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
@@ -599,7 +600,8 @@ exit=2
 ### log — the escalation log
 
 ```
-nova-decide log --log <path> --summary [--registry <path>]
+nova-decide log --log <path|postgres> --summary [--dsn-env NOVA_DECIDE_LOG_DSN] [--registry <path>]
+nova-decide log migrate [--dsn-env NOVA_DECIDE_LOG_DSN]
 ```
 
 `route --log <path>` appends one JSON object per decision: the evidence, the rung tried, its confidence and floor, whether it stepped up, the source, the outcome and the rung that succeeded when they are known — and, beside all of it, `rowan_pick`, what the rules alone would have chosen. `log --summary` reads the rows back: the escalations per kind, and the starting rung **regenerated** from the rows — the lowest rung carrying its own weight, with at least as many successes as failures. A kind with no success keeps the rung the table started from.
@@ -610,9 +612,27 @@ LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flas
 LOG OK rows=1 kinds=1 escalations=0
 ```
 
+`--log postgres` is the same log as the table `decide_log`, in the same database as `card_results` (`nova-work record`), so a decision and the card result it produced are one join apart. The summary is a projection of the rows, so it prints the same lines off either sink. The DSN is **never** a flag: it arrives in the environment under the name `--dsn-env` gives (default `NOVA_DECIDE_LOG_DSN`), and `log migrate` installs the table from `internal/decide/migrations/`, idempotently, so it is safe on every start.
+
+```
+$ nova-secrets exec --store ~/nova-bench/secrets --as swarm-hulk --only NOVA_DECIDE_LOG_DSN -- \
+    nova-decide log migrate
+MIGRATE OK table=decide_log version=1 dsn_env=NOVA_DECIDE_LOG_DSN
+
+$ nova-secrets exec --store ~/nova-bench/secrets --as swarm-hulk --only NOVA_DECIDE_LOG_DSN -- \
+    nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 \
+    --usage ./usage.tsv --log postgres
+ROUTE unit=card-41 kind=rebase rung=flash ...
+
+$ nova-decide log --log postgres --summary   # with the DSN in the environment
+LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false
+LOG OK rows=1 kinds=1 escalations=0
+```
+
 ## Build
 
-Go 1.26 or newer, standard library only.
+Go 1.26 or newer. The standard library, plus the one Postgres driver the durable records share
+(`github.com/jackc/pgx/v5`, linked by `nova-work record` and by `nova-decide`'s decision log).
 
 ```
 go build ./...

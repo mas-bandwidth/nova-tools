@@ -1294,6 +1294,15 @@ from those files``.
 reaches `go test`: whole-line YAML comments are dropped first, so prose ABOUT a
 tag never stands in for a job that runs it. A tag assembled at run time, or
 passed through a variable the step does not expand inline, is not seen.
+**A leg that needs a service.** `postgres` — `internal/decide`'s decision log
+against a real server, which is what keeps the in-memory fake the unit suite runs
+on honest — is a JOB of its own in `nightly-slow.yml` rather than a row of the
+shared matrix, because it carries a `services:` container and service containers
+run on Linux runners only: a `services:` block on the shared job would be
+inherited by its macOS legs and fail them for a reason that is not the code. It
+is still declared as `tag: postgres` in a matrix, so the class test reads it
+exactly as it reads the others, and it is in the `report` job's `needs:` so a red
+night is still one issue in the morning.
 
 ### `selection` — `internal/ci` is always in the selected packages
 
