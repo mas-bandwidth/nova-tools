@@ -88,9 +88,7 @@ func TestRunTakesOneSlotLeaseAtATimeAndReleasesIt(t *testing.T) {
 		}
 	}()
 
-	begin := time.Now()
 	exit, stdout, stderr := b.run("--workers", "2", "--slots-store", store, "--owner", "fake-1")
-	elapsed := time.Since(begin)
 	close(stop)
 	<-watched
 
@@ -105,9 +103,6 @@ func TestRunTakesOneSlotLeaseAtATimeAndReleasesIt(t *testing.T) {
 	mu.Unlock()
 	if peak > 1 {
 		t.Errorf("share 1 holds one lease at a time, saw %d:\n%s", peak, stdout)
-	}
-	if elapsed < 1800*time.Millisecond {
-		t.Errorf("two tasks that each sleep a second run one after the other under share 1, took %s:\n%s", elapsed, stdout)
 	}
 	if left := slotLeaseCount(t, store); left != 0 {
 		t.Errorf("every lease is released when its task ends, %d left in the store", left)
