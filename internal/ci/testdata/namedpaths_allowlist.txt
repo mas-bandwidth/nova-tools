@@ -2,13 +2,7 @@
 #
 # One `<name> <reason>` per line. TestEveryNamedRepoPathExists checks this list in BOTH
 # directions: a name that is missing from the tree and not listed here is a red run, and a
-# name listed here that nothing writes any more is a stale entry and also a red run. So the
-# list only ever gets shorter, and a row parks nothing.
+# listed name that nothing writes any more -- or that is IN the tree now -- is also a red
+# run. So the list only ever gets shorter, and a row parks nothing.
 #
-# There are only two honest reasons to be here: the name is an INVENTED example (a
-# specification showing the shape of a path), or the name is written down so a test can
-# prove the existence check answers no.
-
-cmd/nova-foo the invented tool docs/SPEC-*.md use to show the shape of a command's path; there is no such tool and there must not be
-internal/ci/no-such-file.go a name TestTheNamedPathExistenceCheckReadsTheTree requires to be absent, so a check that answered yes to everything could not pass
-internal/ci/doc.go/ the same, as a directory: a real file named with a trailing slash must still read as absent
+# The honest reasons to be here are three, and they are the three sections below.

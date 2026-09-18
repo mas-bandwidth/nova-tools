@@ -62,9 +62,12 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 		t.Fatal("no Go source or docs to read; this test is looking in the wrong place")
 	}
 
-	// seen is every allowlisted name this run actually found, so the stale half below can
-	// tell a narrowing that is still earning its row from one that is not.
-	seen := map[string]bool{}
+	// earning is every allowlisted name this run found MISSING, so the stale half below
+	// can tell a narrowing that is still doing work from one that is not. A listed name
+	// that is in the tree now is in realNow instead, and is the good kind of red: the
+	// planned file was written, so the row goes.
+	earning := map[string]bool{}
+	realNow := map[string]bool{}
 	// sites is the first place each missing name is written, so the failure points at the
 	// line to fix rather than at the name alone.
 	sites := map[string]string{}
@@ -77,11 +80,14 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 		}
 		for line, text := range strings.Split(string(raw), "\n") {
 			for _, name := range namedPathsIn(text) {
-				if allow[name] {
-					seen[name] = true
+				if namedPathExists(root, name) {
+					if allow[name] {
+						realNow[name] = true
+					}
 					continue
 				}
-				if namedPathExists(root, name) {
+				if allow[name] {
+					earning[name] = true
 					continue
 				}
 				if _, already := sites[name]; already {
@@ -101,12 +107,17 @@ func TestEveryNamedRepoPathExists(t *testing.T) {
 
 	var stale []string
 	for name := range allow {
-		if !seen[name] {
+		if !earning[name] {
 			stale = append(stale, name)
 		}
 	}
 	sort.Strings(stale)
 	for _, name := range stale {
+		if realNow[name] {
+			t.Errorf("%s lists %s, and it is in the tree now; delete the entry -- the name is a real path and the rule should hold it (the list only shrinks)",
+				namedPathsAllowlistPath, name)
+			continue
+		}
 		t.Errorf("%s lists %s, and nothing names it any more; delete the stale entry (the list only shrinks)",
 			namedPathsAllowlistPath, name)
 	}
@@ -126,6 +137,9 @@ func namedPathsIn(text string) []string {
 		}
 		name := namedPathTrimmed(text[start:end])
 		if name == "" || !strings.Contains(name, "/") {
+			continue
+		}
+		if namedPathIsSymbol(name) {
 			continue
 		}
 		found = append(found, name)
@@ -168,6 +182,26 @@ func namedPathIsTemplate(text string, start, end int) bool {
 	return false
 }
 
+// namedPathIsSymbol reports whether the token names a Go SYMBOL rather than a file. This
+// package writes `internal/merge.Enqueuer.Enqueue`, `internal/bus.IsProgress` and
+// `internal/lockfile/TestLockRule1` all the time -- a package directory, then the exported
+// thing inside it -- and none of them is a path a friend opens. The signal is Go's own: an
+// exported identifier begins with an upper-case letter, and no file extension we write
+// does. So a last element whose first rune after the package name is upper case, or which
+// is upper case outright, is a symbol.
+func namedPathIsSymbol(name string) bool {
+	last := name[strings.LastIndex(name, "/")+1:]
+	if last == "" {
+		return false
+	}
+	if _, ident, ok := strings.Cut(last, "."); ok {
+		r, _ := utf8.DecodeRuneInString(ident)
+		return unicode.IsUpper(r)
+	}
+	r, _ := utf8.DecodeRuneInString(last)
+	return unicode.IsUpper(r)
+}
+
 // namedPathTrimmed drops the punctuation a sentence leaves on the end of a path: the full
 // stop of "see docs/SPEC-CI.md.", the dash of a range, the separator of a list. A trailing
 // slash is kept -- it says the name is a directory, which is a thing we can check.
@@ -195,9 +229,10 @@ func namedPathExists(root, name string) bool {
 }
 
 // namedPathSources lists what the rule reads, repo-relative and slash-separated: every
-// `.go` file in the tree, and every `.md` file under `docs/`. Fixtures under a `testdata/`
-// directory are not read -- a fixture's whole job is to be an invented tree -- and neither
-// is anything under `.git`.
+// non-test `.go` file in the tree, and every `.md` file under `docs/`. Test files and
+// fixtures under a `testdata/` directory are not read -- their whole job is to be an
+// invented tree, and `internal/check/nocode_test.go` alone writes eight of them -- and
+// neither is anything under `.git`.
 func namedPathSources(t *testing.T, root string) []string {
 	t.Helper()
 	var files []string
@@ -218,7 +253,7 @@ func namedPathSources(t *testing.T, root string) []string {
 			return nil
 		}
 		switch {
-		case strings.HasSuffix(rel, ".go"):
+		case strings.HasSuffix(rel, ".go") && !strings.HasSuffix(rel, "_test.go"):
 			files = append(files, rel)
 		case strings.HasSuffix(rel, ".md") && strings.HasPrefix(rel, "docs/"):
 			files = append(files, rel)
@@ -321,6 +356,19 @@ func TestTheNamedPathHeuristicReadsWhatItClaims(t *testing.T) {
 			name: "a word that merely ends in a root name",
 			text: "// the subcommand is in mycmd/nova-foo",
 		},
+		{
+			name: "a package-qualified symbol is not a file",
+			text: "// admission is internal/merge.Enqueuer.Enqueue and nothing else",
+		},
+		{
+			name: "an exported name under a package directory is not a file",
+			text: "// the rule is internal/lockfile/TestLockRule1",
+		},
+		{
+			name: "a file whose name is upper case is still a file",
+			text: "// see docs/SPEC-CI.md for the rule",
+			want: []string{"docs/SPEC-CI.md"},
+		},
 	}
 	for _, tc := range cases {
 		got := namedPathsIn(tc.text)
@@ -349,7 +397,7 @@ func TestTheNamedPathExistenceCheckReadsTheTree(t *testing.T) {
 			t.Errorf("namedPathExists(%q) = false, want true", name)
 		}
 	}
-	for _, name := range []string{"internal/ci/no-such-file.go", "internal/ci/doc.go/", "cmd/nova-foo"} {
+	for _, name := range []string{"internal/ci/no-such-file.go", "internal/ci/doc.go/", "cmd/no-such-tool"} {
 		if namedPathExists(root, name) {
 			t.Errorf("namedPathExists(%q) = true, want false", name)
 		}
