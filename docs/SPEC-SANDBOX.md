@@ -419,6 +419,10 @@ nova-sandbox release --name <container> [--read <dir>]... [--write <dir>]...
 nova-sandbox check   [--max <n>]
 nova-sandbox run     --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] -- <command> <args...>
 nova-sandbox reap    [--dry-run]
+nova-sandbox egress plan  --run <id> --policy <file> --model-host <host> --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>] --out <file>
+nova-sandbox egress apply --plan <file> --run <id>
+nova-sandbox egress check --plan <file>
+nova-sandbox egress drop  --run <id>
 nova-sandbox version
 nova-sandbox help
 ```
@@ -751,6 +755,121 @@ measured by a non-author dogfooding the verb): one for the missing `--name`, one
 for the missing `--size`, one for `--help` not being a flag of the verb, one for
 the missing `--`. ONBOARDING.md point 2 puts the banner behind `help` rather than
 in front of every mistake — and asking how to use a verb is not a mistake.
+## The egress verbs — the card's outbound wall, on linux
+
+```
+nova-sandbox egress plan  --run <id> --policy <file> --model-host <host> --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>] --out <file>
+nova-sandbox egress apply --plan <file> --run <id>
+nova-sandbox egress check --plan <file>
+nova-sandbox egress drop  --run <id>
+```
+
+Every other verb in this document says what a command may **read and write**.
+These four say what it may **talk to**. The design is Johnny's page of
+2026-09-18, and its first sentence is the one that fixes the shape: the wall is
+*nftables on the bench*, applied to the card's own traffic — **not an env list
+the worker applies, because the worker is the adversary**, and **not
+`--network=host`**, which would hand a card the bench's whole namespace.
+
+**The allowlist is a file in git**: `infra/image/egress.txt`, one hostname per
+line, `#` comments, **default deny**. A card reaches those names on **TCP 443**
+and nothing else. Adding a name is **a PR to that file, reviewed by the security
+lane — never a runtime flag**.
+
+What a run allows, and it is the whole list:
+
+| | |
+|---|---|
+| `github.com`, `api.github.com`, `objects.githubusercontent.com` | TCP 443, to the addresses they resolved to **at plan time**, pinned for the run |
+| the **one** model host `--model-host` names | TCP 443, pinned the same way |
+| the resolver `--resolver` names | **UDP 53 only** |
+| everything else | dropped |
+
+Denied outright, before any allow is considered: `169.254.169.254/32` (the
+metadata address, **by name**, so a reader finds it without arithmetic), the rest
+of `169.254.0.0/16`, `127.0.0.0/8` as a destination, `::1/128` and `fe80::/10`,
+and every `--bench-cidr` — the other benches.
+
+**Three silences in the page, read the safer way**, and said here because a
+silence read the loose way is a hole:
+
+1. **`--model-host` may only name a host the policy file already carries.** The
+   page says an update is "a PR to `egress.txt` … Not a runtime flag", and a flag
+   that could name *any* host would be exactly that flag. The file is the
+   reviewed universe; the flag picks the one model host out of it for this run,
+   so a file that grows a second model host does not widen any existing run.
+2. **A pinned address inside a denied range refuses the whole plan**
+   (`reason=bad_address`). The answer came from a resolver, the resolver is not
+   ours, and a name that resolves to `127.0.0.1` or to a bench is a poisoned
+   answer or a rebinding. Fail closed; the same holds for a `--resolver` that is
+   itself inside a denied range (`reason=bad_resolver`), which would otherwise
+   leave DNS silently dropped by a rule above it.
+3. **Every rule is scoped to the card's own traffic** — `meta skuid <n>` for
+   rootless podman's slirp/pasta, `iifname "<veth>"` for the forward path — and a
+   plan with neither selector **refuses** (`reason=no_selector`). The chain's base
+   policy stays `policy accept` and the **default deny is the bare selector
+   `drop` at the bottom of the chain**: an unscoped `policy drop` in the output
+   hook would firewall the bench itself, which is a worse failure than the one it
+   prevents.
+
+**The shape of a plan.** One table per run, `nova_egress_<run>`, denies first,
+then the one DNS allow and the pinned TCP 443 allows, then the default deny:
+
+```
+table inet nova_egress_j1 {
+	chain output {
+		type filter hook output priority 0; policy accept;
+		meta skuid 10001 ip daddr 169.254.169.254/32 drop
+		meta skuid 10001 ip daddr 127.0.0.0/8 drop
+		meta skuid 10001 ip daddr 10.1.0.0/24 drop
+		meta skuid 10001 ip daddr 10.9.0.53 udp dport 53 accept
+		meta skuid 10001 ip daddr 140.82.121.4 tcp dport 443 accept
+		meta skuid 10001 drop
+	}
+}
+```
+
+**`check` is the test of the tests.** It parses a plan back — it does not trust
+the renderer that wrote it — and asserts: exactly one `nova_egress_` table, every
+chain based on `policy accept` in the output or forward hook, **every** rule
+carrying that chain's selector, **every** `accept` naming ONE address (a prefix
+is how a wall becomes a suggestion) and port 443/TCP or 53/UDP, the metadata
+address denied by name, and the **last** rule of every chain the bare selector
+`drop`. Anything the grammar does not cover is a refusal, not a shrug: a line
+whose effect the audit cannot judge is a line nobody has checked. `plan` runs the
+same audit over what it just rendered, and **`apply` runs it before nft ever sees
+the file** — a plan that cannot pass it is never applied, whoever wrote it.
+
+**A blocked destination.** The card is told in exactly one line on **its own
+stdout**, and the run exits non-zero — fail closed, and **no retry to a different
+host**:
+
+```
+EGRESS DENIED host=<name>
+```
+
+**Who calls what, and when.** The card runner, on the bench, around one
+`podman run`: `egress plan` → `egress apply` → the run → `egress drop`, with the
+drop on **every** path out, the way the `run` verb deletes its volume. `drop`
+names one table — the one this tool made — and touches nothing else on the
+bench's ruleset.
+
+**`apply` and `drop` are linux's**, because nftables is: on darwin they refuse
+with `reason=not_linux` and the refusal says where the outbound wall is there
+instead — the seatbelt profile this binary already generates, with `--net-deny`
+for a card that needs no network at all. **`plan` and `check` run everywhere**: a
+plan is text and an audit is a read, so a reviewer on a Mac builds and checks the
+ruleset a bench will apply. A bench with no `nft` refuses `reason=no_nft` with one
+remedy line, and nothing is applied and nothing is dropped.
+
+**No root, one binary.** The privileged step is `sudo -n nft …` — `-n` because a
+card runner's shell has no tty and a password prompt there is a hang nobody sees.
+It is the one command these verbs execute, behind one interface, which is why the
+whole contract above is unit-tested with **no packet, no `nft` and no `sudo`**:
+the resolver is a fake table and the privileged command is a recorder. Johnny's
+page asks for exactly that ("unit test feeds a fake resolver + a fake connect"),
+and the one real probe — `github.com:443` connects, `example.com:443` is denied —
+is nightly, on a bench, never in this suite.
 
 ## The worktree verb
 
@@ -888,10 +1007,14 @@ remedy is printed where it can be printed on all three — the usage banner and
 the `--read` paragraph of the roots section — and a reader diagnosing a `126`
 compares it with the same command run without the wrap.
 
-The `probe`, `policy`, `fence` and `check` verbs are not wrappers and use
-SPEC.md's grammar unchanged: **0** the verb ran and passed, **1** the verb ran
+The `probe`, `policy`, `fence`, `check` and `egress` verbs are not wrappers and
+use SPEC.md's grammar unchanged: **0** the verb ran and passed, **1** the verb ran
 and said NO, **2** could not run (a missing flag, an unreadable path,
-`--secret` inside a named path, bad invocation).
+`--secret` inside a named path, bad invocation). For the egress verbs the split
+is: a plan whose invariants fail, and an `nft` that refused the ruleset, are
+**1** — the verb ran and the answer is no; a flag that cannot be read, a policy
+file that is not there, a plan that belongs to another run, a bench with no `nft`
+and a platform with no nftables are **2**.
 
 ## Output grammar
 
@@ -916,6 +1039,12 @@ POLICY OK backend=<name> read=<n> write=<n> bytes=<n> gpu=<none|metal>
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
 CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> hosts=none note=<one clause|->
 nova-sandbox <build identity> <goos>/<goarch> <go version> backend=<name> platform=<os>
+EGRESS PLAN run=<id> allow=<n> deny=<n> names=<name,name,...>
+EGRESS CHECK table=<nova_egress_<run>> chains=<n> rules=<n> allow=<n> deny=<n>
+EGRESS OK verb=<apply|drop> run=<id> table=<nova_egress_<run>>
+EGRESS STEP name=<resolve|apply|drop> state=<start|done> [ms=<n>]
+EGRESS REFUSED reason=<bad_policy|bad_model_host|bad_resolver|bad_cidr|bad_address|bad_uid|bad_veth|bad_out|bad_plan|bad_table|bad_chain|bad_rule|no_name|no_selector|no_command|no_nft|not_linux|resolve_failed|plan_mismatch|allow_any|allow_port|unscoped_rule|no_default_deny|no_metadata_deny|nft_failed>: <text>
+EGRESS DENIED host=<name>
 ```
 
 `version` is SPEC.md's Conventions line, not a shape of its own: the four tokens
@@ -951,6 +1080,19 @@ wall, on any platform.
 `net=nopromise` is rule 7: the caller did not ask for network denial and the
 tool is not implying one. There is no `net=unenforced`; a denial that cannot be
 enforced is a refusal, not a word in a line.
+
+**`EGRESS DENIED host=<name>` is the card's line, not the tool's**, and it is the
+one place in this grammar where the line goes to **stdout** — the card's own,
+where the worker's transcript is — because it is what the card is told when it
+reaches for a destination the wall denies. Everything else the egress verbs print
+is the bench's and goes to stderr like every other line here. A card that sees it
+exits non-zero and does **not** try another host.
+
+`EGRESS PLAN` is one plan's receipt: `allow=` and `deny=` are the accept and drop
+rules the file actually holds (the default deny counted among the drops), and
+`names=` is the allow set in order, so the receipt and the ruleset can be
+compared without reading the ruleset. `EGRESS CHECK` is the same shape read back
+out of a file by the audit.
 
 `SANDBOX STEP`, `SANDBOX DONE`, `SANDBOX LEAK` and `SANDBOX DENIED` are the `run`
 verb's alone. `SANDBOX DENIED` is the one line this tool prints about a failure

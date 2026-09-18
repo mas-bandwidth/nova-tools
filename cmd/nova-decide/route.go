@@ -62,6 +62,8 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	logPath := fs.String("log", "", "append the decision to this log (JSON lines)")
 	usagePath := fs.String("usage", "", "append what a provider call spent to this usage TSV, in the fleet's own columns")
 	floor := fs.Float64("floor", decide.DefaultFloor, "confidence floor; below it the answer steps UP a rung")
+	stepUp := fs.Bool("step-up", false, "below the floor, re-ask the same question with that rung excluded from the criteria; every step is a logged decision")
+	maxSteps := fs.Int("max-steps", decide.DefaultMaxSteps, "how many decisions --step-up makes before it stops")
 	useJev := fs.Bool("jev", true, "ask Jev among the eligible rungs")
 	noJev := fs.Bool("no-jev", false, "answer by the rules alone: no key, no network, deterministic")
 	baseURL := fs.String("base-url", decide.DefaultBaseURL, "Jev endpoint")
@@ -99,6 +101,17 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "ROUTE", "bad-floor",
 			fmt.Sprintf("--floor %v is not a confidence; it wants a number between 0 and 1, such as --floor 0.9", *floor))
 	}
+	// The step count is a count, and it means something only where there is a
+	// step to take: a --max-steps on its own is a caller who thinks they asked
+	// for the step-up and did not, which is worse than a refusal.
+	if set["max-steps"] && !*stepUp {
+		return refuse(stderr, "ROUTE", "bad-flags",
+			fmt.Sprintf("--max-steps %d has nothing to cap without --step-up; pass --step-up, or drop --max-steps", *maxSteps))
+	}
+	if *stepUp && *maxSteps < 1 {
+		return refuse(stderr, "ROUTE", "bad-flags",
+			fmt.Sprintf("--max-steps %d asks nothing; it wants at least 1, such as --max-steps %d", *maxSteps, decide.DefaultMaxSteps))
+	}
 	// Accounting is not optional. Token spend reporting is an obligation and
 	// every decision is logged (Glenn), so a route that is going to call the
 	// provider says where the spend and the decision will be written BEFORE it
@@ -134,22 +147,44 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	ask := *useJev && !*noJev
 	var res decide.RouteResult
 	var routeErr error
+	var steps []decide.RouteResult
+	var client decide.Decider
 	if ask {
-		client, err := deciderOpener(*baseURL, *keyEnv)
+		opened, err := deciderOpener(*baseURL, *keyEnv)
 		if err != nil {
 			return refuse(stderr, "ROUTE", "no-key", oneline.Cap(err.Error(), oneline.TailBytes))
 		}
+		client = opened
 		fmt.Fprintf(stderr, "nova-decide route: asking jev about unit %s (kind %s, floor %.2f)\n", oneline.Field(unit.ID), oneline.Field(unit.Kind), *floor)
+	}
+	switch {
+	case *stepUp:
+		// The step-up is a SEQUENCE of decisions, and the caller gets all of
+		// them: the last is the answer, and every one of them is a row.
+		steps, routeErr = decide.RouteStepUp(context.Background(), client, reg, unit, *floor, *maxSteps)
+		if len(steps) > 0 {
+			res = steps[len(steps)-1]
+		}
+	case ask:
 		res, routeErr = decide.RouteJev(context.Background(), client, reg, unit, *floor)
-		fmt.Fprintf(stderr, "nova-decide route: jev answered for unit %s\n", oneline.Field(unit.ID))
-	} else {
+	default:
 		res, routeErr = decide.RouteRules(reg, unit, *floor)
+	}
+	if ask {
+		fmt.Fprintf(stderr, "nova-decide route: jev answered for unit %s\n", oneline.Field(unit.ID))
 	}
 	// The record is written BEFORE the refusal is returned. A call that has
 	// already been made has already been paid for, and a decision that could
 	// not be made is still evidence: neither is unspent or unmade by an error
 	// on the way out (Stella, #1327). The exit code stays the refusal's own.
-	persisted := persist(res, unit, *logPath, *usagePath)
+	// Every step is a logged decision: the rows go down in the order they were
+	// made, and the last one is the answer the line prints.
+	var persisted error
+	if *stepUp {
+		persisted = persistSteps(steps, unit, *logPath, *usagePath)
+	} else {
+		persisted = persist(res, unit, *logPath, *usagePath)
+	}
 	if routeErr != nil {
 		detail := oneline.Cap(routeErr.Error(), oneline.TailBytes)
 		if persisted != nil {
@@ -171,6 +206,23 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		return 3
 	}
 	return 0
+}
+
+// persistSteps writes every step of a step-up, in the order they were made. A
+// step-up is not one decision with a bigger number on it: it is N decisions,
+// each asked, each answered, each paid for, and the record says so -- so the
+// log can be read back and the spend adds up whichever step landed.
+func persistSteps(steps []decide.RouteResult, u decide.Unit, logPath, usagePath string) error {
+	var failures []string
+	for i, step := range steps {
+		if err := persist(step, u, logPath, usagePath); err != nil {
+			failures = append(failures, fmt.Sprintf("step %d: %s", i+1, err))
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s", strings.Join(failures, "; "))
 }
 
 // persist writes the decision's record: the log row for any decision that got

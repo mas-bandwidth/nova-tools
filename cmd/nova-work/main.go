@@ -88,7 +88,7 @@ usage:
                  [--nova-bus <path>] [--attempts <n>] [--timeout <duration>] [--max-bytes <n>] [--now <stamp>]
   nova-work asks (--units <file> | --bus <dir> --as <name>) [--owner <friend>] [--max <n>] [--max-notes <n>]
                  [--max-bytes <n>] [--now <stamp>]
-  nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] (--once | --deadline <duration>)
+  nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] [--bench <name>] [--log <path>] (--once | --deadline <duration>)
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -172,6 +172,15 @@ poll publishes nothing. Without --repo only the stream is bridged.
 --once reads the stream and polls the forge once, then exits. The loop form requires
 --deadline and returns when it is reached.
 
+Every event events publishes is also written as one structured JSON line (SPEC-LOGS.md
+Part 2): the same five labels on every line -- source=nova-work, verb=events, bench, the
+event kind (start, card-done, pr-checks-done, dev-moved, done) and level -- plus the
+fixed fields ts, guid, card, pr, msg, dur_ms and err. The line goes to stderr, which
+under systemd is the unit's journal and so a source Alloy already reads, or to the file
+--log names, which Alloy tails on every bench. A secret value never reaches the line:
+the emitter redacts anything credential-shaped before it leaves the process. The stdout
+EVENTS OK line is unchanged; the JSON line is written beside it, never instead of it.
+
 flags:
   --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
                   Required on both graph verbs; there is no default and no discovery.
@@ -224,6 +233,11 @@ flags:
   --now <stamp>   ask and asks: the instant deadlines and ages are measured against;
                   the default is this run's clock and an unparsable one is a refusal
                   rather than a silent fall back to it.
+  --bench <name>  events: the fleet name of this machine, the bench label on every
+                  structured line. Without it, $NOVA_BENCH, else the short hostname.
+  --log <path>    events: append the structured JSON lines to this file instead of
+                  stderr. The file is the one Alloy tails; a path that cannot be opened
+                  is refused naming --log, never a silent run with no log.
 
 exit codes: 0 ran and passed; 1 set check read the file whole and found something wrong
 with its content, one SET line per finding; 2 could not run (bad invocation, an
@@ -741,6 +755,8 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 	ghPoll := fs.String("gh-poll", "60s", "")
 	deadline := fs.String("deadline", "", "")
 	consumer := fs.String("consumer", "", "")
+	bench := fs.String("bench", "", "")
+	logPath := fs.String("log", "", "")
 	once := fs.Bool("once", false, "")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "nova-work events: %s; run: nova-work help\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
@@ -771,6 +787,23 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return 2
 	}
 
+	// The structured sink of SPEC-LOGS.md Part 2. Its default is stderr, which under
+	// systemd is the unit's journal and so a source Alloy already reads without a new
+	// agent; --log names the file Alloy tails instead, for a bench whose supervisor is
+	// not systemd. A path that cannot be opened is a refusal here and not a silent run
+	// with no log: a bench whose lines never reach Loki must say why, at the start.
+	events := stderr
+	if *logPath != "" {
+		f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-work events: --log %s cannot be opened for append: %s; run: nova-work help\n",
+				oneline.Field(*logPath), oneline.Err(err))
+			return 2
+		}
+		defer f.Close()
+		events = f
+	}
+
 	rdb := deps.Dial(*addr)
 	defer rdb.Close()
 
@@ -779,6 +812,15 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 		forge = deps.Forge(*repo, *base, poll)
 	}
 	p := ci.NewProducer(rdb, forge, *consumer, stderr)
+	p.Events = events
+	p.Bench = benchName(*bench)
+	if deps.Now != nil {
+		p.Clock = deps.Now
+	}
+
+	started := time.Now()
+	p.Announce(ci.EventStart, fmt.Sprintf("events: bridging %s with gh-poll %s",
+		oneline.Field(ci.StreamCardsDone), oneline.Field(poll.String())), 0, nil)
 
 	ctx := context.Background()
 	if bound > 0 {
@@ -791,6 +833,7 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 		cards, err := p.PublishCardsDone(ctx)
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
+			p.Announce(ci.EventRefuse, "events: the stream could not be read", time.Since(started), err)
 			return 1
 		}
 		polls := 0
@@ -798,16 +841,42 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 			polls, err = p.PollOnce(ctx)
 			if err != nil {
 				fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
+				p.Announce(ci.EventRefuse, "events: the forge could not be polled", time.Since(started), err)
 				return 1
 			}
 		}
 		fmt.Fprintf(stdout, "EVENTS OK once=true card-done=%d published=%d\n", cards, polls)
+		p.Announce(ci.EventDone, fmt.Sprintf("events: one pass, card-done %d, published %d", cards, polls), time.Since(started), nil)
 		return 0
 	}
 	if err := p.Run(ctx, poll); err != nil && err != context.DeadlineExceeded {
 		fmt.Fprintf(stderr, "nova-work events: %s\n", oneline.Err(err))
+		p.Announce(ci.EventRefuse, "events: the bridge stopped before its deadline", time.Since(started), err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "EVENTS OK once=false deadline=%s\n", oneline.Field(bound.String()))
+	p.Announce(ci.EventDone, fmt.Sprintf("events: the bridge reached its deadline %s",
+		oneline.Field(bound.String())), time.Since(started), nil)
 	return 0
+}
+
+// benchName is the bench label on every structured line: the flag when given, else
+// $NOVA_BENCH, else the short hostname. It is the fleet's name for this machine, which is
+// what a LogQL query selects on, and it is read here rather than in internal/ci so a test
+// of the producer injects it and never reads the environment.
+func benchName(flagValue string) string {
+	if s := strings.TrimSpace(flagValue); s != "" {
+		return s
+	}
+	if s := strings.TrimSpace(os.Getenv("NOVA_BENCH")); s != "" {
+		return s
+	}
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	if i := strings.Index(h, "."); i > 0 {
+		h = h[:i]
+	}
+	return strings.TrimSpace(h)
 }

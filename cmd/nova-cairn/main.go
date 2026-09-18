@@ -52,7 +52,13 @@ flags:
                     environment variable and no discovery from the working
                     directory. The store is plain files; a note is fsync-durable
                     before success is reported, independently of Redis and of
-                    any remote.
+                    any remote. Two shapes are read: this tool's own
+                    (sessions/<id>.md, entries/, log.jsonl) and a bench store of
+                    one markdown file per session directly under the store
+                    (<id>.md), appended by hand. On the second, open is a no-op
+                    and append lands a dated "## <stamp> - <entry>" section at
+                    the end of the file; no index and no directory appear
+                    beside it.
   --session <id>    the stable session identifier. Required: retries and
                     recoveries address the same record by this name.
   --entry <id>      the stable entry identifier. Required on append and receipt:

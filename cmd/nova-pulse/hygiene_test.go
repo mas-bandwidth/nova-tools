@@ -70,7 +70,7 @@ func hygieneRun(t *testing.T, now time.Time, args ...string) (int, string, strin
 	return code, out.String(), errb.String()
 }
 
-var hygieneLogLine = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z (reap|delete-job|delete-slot|drop-cache|HYGIENE) .+$`)
+var hygieneLogLine = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z (reap|delete-job|delete-slot|delete-diag|drop-cache|HYGIENE) .+$`)
 
 // hygiene-run-reaps-dead-and-leaves-live: a fake bench tree with a live slot, a
 // slot a process names, a dead slot and an empty slot. `run` reaps the dead,
@@ -114,7 +114,10 @@ func TestHygieneRunReapsDeadAndLeavesLive(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("hygiene run exit = %d, stderr=%s", code, errb)
 	}
-	wantLine := "HYGIENE bench slots=6 reaped=2 jobs-deleted=3 slots-deleted=4 cache=kept(0G) free 40G -> 40G"
+	// diag-deleted and diag-freed join the line with the runner `_diag` prune:
+	// this fixture has no runner directory, so both are zero and every field is
+	// still named.
+	wantLine := "HYGIENE bench slots=6 reaped=2 jobs-deleted=3 slots-deleted=4 diag-deleted=0 diag-freed=0 cache=kept(0G) free 40G -> 40G"
 	if got := strings.TrimSpace(out); got != wantLine {
 		t.Fatalf("the one HYGIENE line:\n got: %s\nwant: %s", got, wantLine)
 	}

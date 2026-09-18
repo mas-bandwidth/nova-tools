@@ -214,6 +214,15 @@ func (c *Client) Decide(ctx context.Context, state string, qs map[string]Questio
 	if err != nil {
 		return nil, Usage{}, err
 	}
+	// A typed decision is typed at BOTH ends: an answer that is not one of the
+	// question's own criteria is the provider failing to answer, and not a
+	// decision with a confidence on it. It is refused HERE, before anything
+	// records it as a decision or a floor is applied to it (edges 22 and 23).
+	// The usage travels with the refusal: the call was made and it cost what it
+	// cost, and a refusal cannot unspend it.
+	if err := ValidateAnswers(qs, answers); err != nil {
+		return nil, usage, err
+	}
 	c.record(state, qs, answers)
 	return answers, usage, nil
 }
