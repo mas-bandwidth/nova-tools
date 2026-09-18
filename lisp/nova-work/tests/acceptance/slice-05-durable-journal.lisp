@@ -186,7 +186,13 @@ TMPDIR can exceed, so try short roots first and create the first that works."
   ;; the session's directory created 0700 and its socket 0600, both owned
   ;; by the running account; a pre-existing directory or socket with wider
   ;; modes refused rather than reused; no listener on any network address.
-  (let* ((base (short-socket-base (format nil "nw-~D" (random 1000000))))
+  ;; A short relative base: the AF_UNIX sun_path is capped near 107 bytes and a
+  ;; deep TMPDIR (the card sandbox) overflows it, so the endpoint cannot bind.
+  (let* ((base (or (short-socket-base (format nil "nw-~D" (random 1000000)))
+                   (let ((tmp (namestring (uiop:temporary-directory))))
+                     (if (< (length tmp) 80)
+                         (concatenate 'string tmp (format nil "n~D" (random 99999)))
+                         (format nil "n~D" (random 99999))))))
          (dir (concatenate 'string base "/s"))
          (sock (concatenate 'string dir "/w")))
     (unwind-protect
