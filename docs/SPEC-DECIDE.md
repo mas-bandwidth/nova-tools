@@ -138,6 +138,19 @@ Triage an inbox into carry / receipt / noise on public material. Opt-in per
 bus, public buses only — rule 4 bars private bus notes from the state. Below
 the floor the note stays unclassified and today's reader handles it.
 
+### nova-bus inbox --decide (subject-line triage)
+
+`nova-bus inbox --decide` asks one `choice` question per new note, named
+`class`, whose options are `act-now`, `read-later` and `receipt-only`; the state
+is the subject line, the From name, the addr (`to` or `cc`) and whether the
+subject starts with `ADOPTED`, `HOLD`, `APPROVE`, `STOP`, `GREEN` or a PR
+number, and never the body, which is private. Each INBOX NOTE line prints
+`class=<kind> conf=<c>`; with `--only-act-now`, above the floor only the
+act-now notes print and a `wait` wakes only for them. `STOP` and `HOLD` are
+act-now by deterministic machinery and are never sent. The floor is 0.9: below
+it the note prints `class=unknown` with `below=class` and today's listing runs
+unchanged, so the decision advises and the machinery decides.
+
 ### nova-pulse gate flaky-vs-real
 
 Gate a failing pulse as flaky or real before paging. Below the floor the gate
