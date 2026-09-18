@@ -23,6 +23,7 @@ The fold scripts wrote two intermediate tables and a collator merged them. `nova
 ## nova-check
 
 ```
+nova-check version                                 # print this build identity (--version also accepted)
 nova-check quickstart --dir <dir> [--fail-max <n>] # the first run: links, then nocode, both run even if the first says NO
 nova-check attest --home <dir> --manifest <file>   # did the full self load: count + bytes + sha256, pasteable at session start
 nova-check links  --dir <dir> [--file <path>]      # every relative inline link resolves; --file (repeatable) checks just those files, not the whole tree
@@ -154,6 +155,7 @@ and it should outlive the bench.
 ## nova-self-talk
 
 ```
+nova-self-talk version                                                          print this build identity (--version also accepted)
 nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
 nova-self-talk help
 ```
@@ -188,6 +190,7 @@ SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to
 ## nova-fuse
 
 ```
+nova-fuse version                                        print this build identity (--version also accepted)
 nova-fuse status --box <path> [--max <n>]                what is blown, and since when (reports; never gate on it)
 nova-fuse check --box <path> [surface]                   may I read? -- act only on exit 0
 nova-fuse lockdown --box <path> "<reason>"               blow the one hard fuse: all untrusted reads stop
@@ -229,6 +232,7 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 ## nova-memory
 
 ```
+nova-memory version                                                      print this build identity (--version also accepted)
 nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>]  the first run: stats, one search, one check, each with the line that ran it
 nova-memory stats  --root <dir>...                                       measure m: files, chunks, bytes, vocab, build time, classes
 nova-memory search --root <dir>... --channels <list> --k <n> <words>...  one query, k receipted hits (for work retrieval)
@@ -303,7 +307,23 @@ MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=note
 
 ## nova-bus
 
-A bus is an ordinary git repository where several lines, people and minds alike, send notes to each other. One directory per sender, called a lane and named `from-<slug>`; one markdown file per note; a short header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; a thread is a note whose `Re:` line names another note's id. The notes stay files anybody can read, and git is both the transport and the record. `nova-bus` is seven verbs over that. It prints the header a first note needs, assigns ids that cannot collide, pushes with fetch, rebase and retry so no rejected push ever reaches a person, tells you what is addressed to you and still open, or waits until there is something to tell, lets you say "heard" without writing a reply, and validates the whole bus. It has no opinion about what a note says.
+A bus is an ordinary git repository where several lines, people and minds alike, send notes to each other. One directory per sender, called a lane and named `from-<slug>`; one markdown file per note; a short header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; a thread is a note whose `Re:` line names another note's id. The notes stay files anybody can read, and git is both the transport and the record. `nova-bus` is ten verbs over that. It prints the header a first note needs, assigns ids that cannot collide, pushes with fetch, rebase and retry so no rejected push ever reaches a person, tells you what is addressed to you and still open, or waits until there is something to tell, lets you say "heard" without writing a reply, and validates the whole bus. It has no opinion about what a note says.
+
+```
+nova-bus draft   --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>] [--file <path> | > <file>]
+nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
+nova-bus send    --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push] [--dry-run] [--git-timeout <seconds>]
+nova-bus send    --bus <dir> (--prepared <path>|--prepared-stdin) --as <name> --remote <name> --branch <name> [--attempts <n>] [--git-timeout <seconds>]
+nova-bus reply   --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run] [--attempts <n>] [--git-timeout <seconds>]
+nova-bus inbox   --bus <dir> --as <name> --receipt-max-words <n> [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]] [--full] [--open [--open-max <n>]] [--open-warn <n>] [--max-commits <n>] [--advance --remote <name> --branch <name>] [--diagnostics]
+nova-bus wait    --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name> [--interval <duration>] [--bodies] [--open [--open-max <n>]] [--advance] [--quiet-beats] [--diagnostics]
+nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
+nova-bus close   --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
+nova-bus check   --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
+nova-bus names   --bus <dir>
+```
+
+Every verb that runs git also takes `[--git-timeout <seconds>]`, default 60. `prepare` is the first half of `send`: it computes the note's deterministic id and assigns its `Date` before any bus mutation and writes that self-contained JSON artifact to standard output, and `send --prepared` confirms or publishes that exact saved artifact with bounded recovery. Do not prepare again while one is pending — retry the saved artifact, because two preparations at different instants can assign different dates and ids to the same draft. `reply` is one note answering one note, with every header the tool fills taken from the original: it reads the body from `--file`, resolves `--re` after fetching `--remote`/`--branch`, and writes one reply note into your lane; `--advance` moves your cursor in the same commit. `close` is the other end of `--legacy-before`: every open note addressed to you and dated before `--before` is answered by one receipt note each, batched in one commit, where `--advance` would have drawn a line past that history and left the notes behind it.
 
 ### First run
 
@@ -676,6 +696,18 @@ is that cycle inverted — one call that returns the moment something moved, and
 otherwise at a deadline you named, so the window pays one turn per **change**
 rather than one turn per **tick**.
 
+```
+nova-wake watch --state <file> --max <duration> --on-deadline <word> --interval <duration> [--max-lines <n>] [--baseline] <at least one source, named>
+nova-wake probe --bus <dir> --line <name> --state <file> [--silent-after <d>] [--answer-within <d>] [--rest <file>] [--refresh --remote <name> --branch <name> --interval <duration>] [--ping-draft <file> --as <name>]
+nova-wake probe --here [--quiet-load <x>]
+nova-wake serve --bus <dir> --as <name> --receipt-max-words <n> --on-note <command> --interval <duration> --state <file> --hours <h> --remote <name> --branch <name> [--receipt] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
+nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> [--on-note-idempotent]
+nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]
+nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>] [--reports <dir> ...] [--bus <dir> --as <name> --receipt-max-words <n>]
+nova-wake version
+nova-wake help
+```
+
 It watches **seven** sources — a bus inbox, the checks on a set of entries,
 `RESULT.md` files written by other lines and, since the amendment of
 2026-09-13, the comments and reviews on named or owned pull requests (`--pr`,
@@ -877,6 +909,26 @@ lane's own branch**, so a reader on another machine records a verdict where ever
 lane folds it; a conflict that is `BLOCKED` with its file list and the exact hand
 command, because the lane never edits an entry's content.
 
+```
+nova-merge version                                                 print this build identity (--version also accepted)
+nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
+nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
+nova-merge add        --lane <dir> --pr <n> [--needs-read]
+nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
+nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>]
+nova-merge gate       --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base-sha <sha> --merge <sha> --verdict green|red --summary <path>
+nova-merge run        --lane <dir> (--once | --loop <duration> --hours <h>) [--planned-red <text>] [--admin] [--max <n>]
+nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
+nova-merge dry-run    --lane <dir> [--max <n>]
+nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>] [--decide [--floor <0-1>] [--card <file>] [--key-env <var>] [--base-url <url>]]
+nova-merge stop       --lane <dir>
+nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
+nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
+nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
+```
+
+Every verb that runs git or gh also takes `[--timeout <seconds>]`, default 120. `init` makes the lane and its record branch; `add` and `add-branch` queue an entry; `read` and `gate` write the two immutable records a merge rests on; `run` is the pass, once or on a loop with a deadline; `status` and `dry-run` report without writing; `packet` is one reader's bounded read of the lane; `stop` writes the stop file, so the lane starts nothing new and exits; `wait` blocks on one pull request's checks; `sweep` is one pass over a repository's own merge queue — enqueue the open pull requests whose checks completed green, rerun a failed or cancelled head run while the queue is short, dequeue what the forge reports unmergeable — and names its repository and branch outright, because a sweep is a property of a forge rather than of a lane on one; and `simulate` is the exception to the exit codes — it exits 2 when it **finds** a poison entry, the one that is green alone and red on top of the entries ahead of it, and 1 when it could not run at all, because a tool that could not run is not a red queue.
+
 ### First run
 
 Make a lane, queue an entry, and look at it. Every path is a flag; there is no
@@ -1029,12 +1081,10 @@ nova-merge react    --redis <addr> [--lane <dir>] (--once | --deadline <seconds>
 nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
 ```
 
-**These three land with nova-tools #1308, which is now a member of batch 6
-(#1335, `rowan/integration-6`, open), and they are not on `dev` yet.** The lines below
-are read off their source and are what the verbs print; until that batch merges, this
-section describes a binary your bench does not have. `#1308` was batch 3's whole
-content; it conflicted with `dev` after batch 4 and was rebased into the lane chain
-`#1308 → #1315 → #1206` that batch 6 carries.
+**These three are on `dev`** — nova-tools #1308, which was batch 3's whole content, then
+conflicted with `dev` after batch 4 and landed through the lane chain
+`#1308 → #1315 → #1206` that batch 6 (#1335) carried. The lines below are read off their
+source and are what the verbs print.
 
 `rebase --once` is the hand rebase loop's tick as a verb: one pass over the
 repository's open pull requests, and for each one the host calls `DIRTY` whose head
@@ -1115,6 +1165,7 @@ risk; never a merge*.
 
 ```
 nova-merge queue --lane <dir> (status | hold "<reason>" --who <name> | release | skip <pr>... | unskip <pr>... | front <pr> | sweep --window <duration>) [--timeout <seconds>] [--max <n>]
+nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
 nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--head <sha>] [--pr <n>|--branch <name>] [--test <name>] [--note <text>] [--who <name>]
 ```
 
@@ -1163,6 +1214,13 @@ every real invocation answered `QUEUE REFUSED: this host cannot list open pull r
 the file.** The error used to be swallowed, which left the walk order empty — and an
 empty walk order meant "walk everything", so a corrupt file **silently un-skipped every
 skip and every parked poison**.
+
+**`queue audit`** is the other half of the lock `land` closes: it lists every open pull
+request in `--repo` carrying GitHub's **auto-merge** and takes it off, because auto-merge
+is not an enqueue — it is a standing instruction the forge executes later with nobody in
+the room. Twenty-seven were standing on 2026-09-18 and four had already landed
+themselves. `--dry-run` lists and writes nothing. It asks the forge and never a lane, so
+it takes `--repo` and no `--lane`.
 
 **`queue classify` and the top-level `classify` are two asks, one word each way
 round.** `queue classify` **records** a verdict somebody already reached, as one
@@ -1222,10 +1280,76 @@ build-level half of the same class on the bench, in seconds, with no second mach
 does not catch a windows-only **test** failure, which is what the forge's own windows
 leg is for.
 
+### land — the one entrance to the merge queue
+
+```
+nova-merge land --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
+```
+
+**Nothing reaches the `dev` merge queue but a batch** (Glenn, 2026-09-18), and `land` is
+where that rule is enforced. It reads the pull request back from the forge and enqueues it
+**at the front** — through the `enqueuePullRequest` mutation, never a `pr merge` call and
+never auto-merge — after three refusals: a pull request that is not open, a pull request
+whose own checks are not green, and **a head that is not a batch's**.
+
+A head is a batch's when its branch is `rowan/integration-*`, the shape `batch` builds, or
+when **`--receipt`** carries that head's own `BATCH OK` line; **`--receipt-file`** reads it
+from a file and takes the **last** line, so a caller may hand it the gate's whole output.
+That is the same receipt `batch`'s `--receipt-file` writes and the same parser reads.
+Everything else — a card's branch, a green swarm result, a revert — is a member of a batch
+somebody has yet to build, and this verb says so and stops. `--no-jump` enqueues in the
+ordinary position instead of at the front.
+
+```
+LAND OK pr=<n> head=<sha> branch=<name> checks=<state> members=<list> jump=<true|false>
+LAND REFUSED: <reason>
+```
+
 ## nova-pulse
 
 One tool for parallel work: enumerate bounded work, cut cards, admit them
 through `nova-swarm batch`, and fold what comes back. It makes no model call.
+
+```
+nova-pulse pool     --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
+nova-pulse cut      --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
+nova-pulse cut      --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
+nova-pulse launch   --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
+nova-pulse fill     --ready <dir> --launched <dir> [--lanes <file>] [--bench <name>]... [--once]
+nova-pulse harvest  --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse beat     --queue <dir> --cairn <file> --title <text> [--resume <text>]
+nova-pulse watch    --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
+nova-pulse manager  --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
+nova-pulse status   --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
+nova-pulse status   --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s>]
+nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
+nova-pulse gate     --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse run      --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--max <n>]
+nova-pulse triage   --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-pulse sweep    --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
+nova-pulse reap     --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
+nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
+nova-pulse fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
+nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   reboot --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   secrets --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>]
+nova-pulse hygiene reap <slot> --home <dir>
+nova-pulse hygiene delete-job <slot> <job> --home <dir>
+nova-pulse hygiene delete-slot <slot> --home <dir>
+nova-pulse hygiene drop-cache --home <dir>
+nova-pulse hygiene log [n] --home <dir>
+nova-pulse wake     --bench <name>... --registry <file> [--timeout <duration, default 8m>]
+nova-pulse sleep    --bench <name>... [--idle <duration, default 30m>]
+nova-pulse version
+nova-pulse help
+```
+
+`run` holds the loop so a coordinator's turns are decisions and never ticks: each tick is `gate`, `harvest`, `sweep`, `reap`, refill, `launch` and one `PULSE WIDTH` line, all mechanical, and `--once` runs exactly one. Each of those steps is the verb of the same name, wired, and each can be run alone. `gate` reads the branch's latest CI run and writes, holds or lifts the STOP, printing exactly one line — `GATE RED` (exit 1), `GATE HELD` or `GATE GREEN` (exit 0), or `GATE REFUSED` (exit 2) when the source could not answer, because a dead source is never green. `sweep` walks every open ledger row once and prints one `SWEEP` line; `reap` runs one collection over the roots and the queue and prints one `REAP` line. `triage` is the escalation that does not come back as a transcript: when a rule cannot decide, it cuts one bounded packet — the `RESULT` lines the case is about, the refusal line the harness printed, and the candidate rows of `<queue>/RULES.tsv` — to a card file, and the answer comes back as one line. `watch` waits on the queue, the bus and the job roots and prints one line per change, starting from the state of its first poll so a backlog is never printed: a named `--until` event ends it at the poll that sees it with `WATCH OK`, and the `--cap` prints `WATCH CAP` and exits 3. `beat` appends one section to the cairn file, commits it when the cairn lives in a git repository (`git add` and one commit, never a push), and prints the cairn's line count and the restart command the next window reads.
+
+`fleet` is the bench family over a `--benches` registry, and a bare `nova-pulse fleet` names its six sub-verbs rather than guessing one: `add` declares one bench to a queue and its roots, `survey` runs the bench standard on each and folds the `STANDARD OK`/`DRIFT` lines, `suspend` sleeps the idle benches (solar: an idle bench sleeps instead of burning the afternoon), `wake` wakes by magic packet to the bench's `mac`, `reboot` reboots each and waits for the runners to listen again, and `secrets` runs the seat check on every bench and prints one `FLEET <name>` line per bench with the seat name and the store head, reading no value. `wake` and `sleep` at the top level are the same two moves against a `--registry`. `hygiene` is the housekeeping family, every path hanging under one `--home`: `run` is the whole pass (with `--dry-run`), `reap` clears one slot, `delete-job` and `delete-slot` remove one job or one slot by name, `drop-cache` clears the build cache, and `log` prints the action log.
+
 `pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
 `status` below is the one-verb answer to the all-day questions. `width`, the
 drift alarm rule 16 of [SPEC-PULSE.md](SPEC-PULSE.md) names, is planned but
@@ -1876,12 +2000,15 @@ the rules the diff touches, the prior verdicts and the open findings — and it
 never forms an opinion about code and never merges anything.
 
 ```
-nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>]
+nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>] [--decide] [--floor 0.9] [--card <file>] [--key-env JEV_API_KEY] [--base-url <url>]
+nova-review port   --lane <dir> --table <section> --pr <n> [--head <sha>] [--out <file>] [--max <n>] [--timeout <seconds>]
+nova-review mutate --repo <dir> --base <ref> --head <ref> [--timeout <seconds>] [--max <n>]
 nova-review version
 nova-review help
+nova-review --version
 ```
 
-The verbs are `packet`, `version` and `help`. `packet` is the one that works:
+The verbs are `packet`, `port`, `mutate`, `version` and `help`. `packet` is the one that builds a read:
 it reads one entry on a lane at one head and writes one bounded file, capped at
 `--max-bytes` (default 131072), past which the packet holds the hunk list and
 the command that prints the rest; `--max` (default 20) caps the prior-verdicts
@@ -1905,6 +2032,22 @@ naming the head it moved to. Every refusal is one `PACKET REFUSED: …` line,
 exit 2, and a `--reuse` candidate built for another (entry, head, range) is a
 `PACKET REUSE` line naming what it was built for.
 
+**`port`** is the packet for a porting table: `--table <section>` names a section of
+`docs/PORTING.md`, and the verb reads one pull request at one head and asserts that the
+rule's **positive** witness (the test or case showing the ported behaviour runs in the
+target language) and its **negative** witness (the control that fails without the gate)
+are both there. Success is one `PORT OK table=… pr=… head=… base=…@… positive=…
+negative=… witnesses=… files=… bytes=… out=…` line; a missing witness is a refusal that
+names which one and what would satisfy it. `--max` (default 20) caps the witness lines
+with one `PORT MORE` line carrying the command that prints the rest.
+
+**`mutate`** is the mechanical half of a read, taken off the reader. It reverts every
+non-test hunk in a throwaway worktree at `--head` and runs the tests the change touched:
+**they must fail**. A changed test that still passes with the change reverted is a test
+that was not testing the change, and the harvest runs this before any reader is spawned,
+so the reader judges spec fit and nothing else. It reads `--repo` on disk; it forms no
+opinion about code and merges nothing, like every other verb here.
+
 ## nova-board
 
 ```
@@ -1915,6 +2058,7 @@ nova-board take  (--issue ... | --dir ...) --as <name> --card <id> --stale <dura
 nova-board close (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
 nova-board check (--issue ... | --dir ...) --words <text> [--max <n>] [--all]     # EXIT 1 WHEN IT MATCHES
 nova-board quickstart (--issue ... | --dir ...) --stale <duration>
+nova-board version                                                               # which build this is: <version> <goos>/<goarch> <go version>
 ```
 
 A **board** is the list of things a group of lines owes: one **card** per item, appended
@@ -2003,8 +2147,12 @@ the natural `&&` chain would file exactly the duplicates.
 ## nova-swarm
 
 ```
+nova-swarm version                                                                          # print this build identity (--version also accepted)
+nova-swarm doctor   [--path <file>] [--local <file>]                                         # refuse a launch under a SHADOWED nova-swarm: the PATH build stamp against ~/.local/bin's
+nova-swarm quickstart --pool <dir>                                                          # the first run: make the pool's structure and name the three commands that follow
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--max-input <bytes>]   # queue one task from a file, never from an argument
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--max-input <bytes>]           # queue a directory of them under one batch id
+nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]   # the card form: the only form that runs a card
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sandbox <path>] [--no-sandbox]   # the dispatcher: one slot, one data home, one deadline, one WALL per worker
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
@@ -2014,7 +2162,51 @@ nova-swarm cost     --pool <dir> [--max <n>]                                    
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
+nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--max-input <bytes>]   # queue a descendant of one task by hand: REQUEUE OK id=<new> from=<old>, and it ADDS rather than replaces
+nova-swarm finalize --pool <dir> --task <id>                                                # the verb for a person, for one ended job whose runner died before finalizing it; REFUSED while its process group is alive
+nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>        # a reader's counts for one task, recorded by a person (rule 8)
+nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   # spawned by run; typed by hand it is refused
+nova-swarm verify   --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]   # line 1 of the job's RESULT.md must equal the card's contract line exactly
+nova-swarm lint     --card <file> [--max <n>]                                               # read the card mechanically before any spend — no model, no probe — and name each defect by check, line and excerpt
+nova-swarm profile  --jobs <glob>                                                           # fold the per-turn timelines a glob names into minutes per phase: one PROFILE line per job, one mean summary
+nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]   # the native opencode path: one child, bound to a configuration handed over complete
+nova-swarm publish  --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]   # push a job's clone by explicit refspec and open a draft pull request; never a bare git push
+nova-swarm route    --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]   # pick the worker by a typed decision behind a floor; below the floor the worker is --default and the exit is 3
+nova-swarm reap     --root <dir> [--older <duration>] [--dry-run]                           # free the finished slots under a swarm root: data/, tmp/ and jobs/*/scratch go, RESULT.md, usage.tsv and the logs stay
+nova-swarm pull     --slot <dir> --queue <dir> --mirror <path>                              # take the next card into one slot, preferring the card whose repo the bench already holds warm
+nova-swarm slots take    --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] # bench-wide leases with shares, reserve, expiry and live-pid fencing: take grants
+nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)                 # release frees
+nova-swarm slots list    --store <dir>                                                      # list prints one line per lease
+nova-swarm worker   check <description.json> [--env] [--max <n>]                            # every reason this worker description cannot launch, named by the field it belongs to
 ```
+
+### doctor, route and reap
+
+**`doctor`** is the refusal that belongs *before* a launch. On 2026-09-17 `PATH` put
+`~/go/bin` ahead of `~/.local/bin`, `~/go/bin` held a nova-swarm from an earlier build,
+and for 25 minutes every card a rebuilt swarm started silently ran the **stale** binary —
+with a private build cache rather than the shared one, so nothing downstream could say
+which build had run. The comparison is deliberately narrow: the one `version` line the
+nova-swarm found first on `PATH` prints, against the one the literal `~/.local/bin/nova-swarm`
+prints. `DOCTOR OK stamp=<line>` says the two agree, or that there is only one to read; a
+mismatch is exit 2 with **both** stamps and one remedy, because a refusal that does not say
+which line is stale sends the reader back to run the check by hand. `--path` and `--local`
+name the two binaries outright for a caller who does not want the resolver's answer.
+
+**`route`** picks the worker by a typed decision behind a floor. It sends the card's first
+1500 characters as the state with four questions — kind, complexity, needs_strong,
+touches_private — reads a `--routes` table of `kind<TAB>complexity<TAB>worker<TAB>class`
+rows, and prints one `ROUTE` line. A **public**-class worker is skipped for private
+material. **A decision below the floor is a suggestion, never an authorization**: below the
+kind floor the worker is `--default` and the exit is **3**, so a caller can tell a routed
+card from a defaulted one without parsing prose.
+
+**`reap`** frees the finished slots under a swarm root (#1048): for every slot whose job
+published a `RESULT.md`, or whose newest harness log is older than `--older`, the slot's
+`data/`, `tmp/` and `jobs/*/scratch` are removed, while **`RESULT.md`, `usage.tsv` and the
+logs are kept** — the record outlives the bench. One line, `REAP OK slots=<n> freed=<n>`,
+and `--dry-run` counts what it would free and removes nothing. It is the verb an operator
+runs over hulk and vision when the runners have filled a bench.
 
 ### native and batch
 
@@ -2497,12 +2689,11 @@ on this OS the line is usually silent and a `SANDBOX NOTE` naming the size of th
 allowed set is printed instead. [SPEC-SANDBOX.md](SPEC-SANDBOX.md) has the whole
 measurement.
 
-### egress — the outbound wall, not on `dev` yet
+### egress — the outbound wall
 
-**These four land with nova-tools #1330 — *the card's outbound wall*, Johnny's design —
-which is open and is in none of batches 4, 5 or 6.** The lines below are read off that
-branch and are what the verbs print; until it merges, this section describes a binary
-your bench does not have.
+**These four are on `dev`**, landed by nova-tools #1330 — *the card's outbound wall*,
+Johnny's design — through integration-10b. The lines below are read off the source and
+are what the verbs print.
 
 ```
 nova-sandbox egress plan  --run <id> --policy <file> --model-host <host> --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>] --out <file>
@@ -2609,6 +2800,26 @@ This ledger is distinct from the `sum --swarm-root` daily ledger above. See
 
 `nova-update` checks declared versions and applies one chosen update: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
+```
+nova-update check  --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update apply  --file <path> <name> [--version <v>] [--timeout <d>]
+nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update watch  --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
+nova-update adoption --file <path> [--as <friend>] [--max <n>]
+nova-update version (or --version)
+nova-update help
+```
+
+`check` reads, prints and exits — a verdict is not an action, so it writes no file and
+never runs the `apply` command of a STALE entry. `apply` installs the one update you name
+and nothing else. `report` prints the status body and needs no bus or network. `watch
+--adopt <checks.tsv>` runs the coordinator's own adoption pass after a rebuild and hands
+every REFUSED check to the duty tier on an `ESCALATE` line naming its owner. `adoption`
+prints the matrix of each friend's own choice with its provenance, where declined,
+equivalent and unknown are answers rather than failures.
+Defaults are `--max 20` (`0` is all), `--timeout 5s` and `--budget 60s`, and `--kind` repeats
+to select kinds. The release family is below.
+
 ### First run
 
 ```sh
@@ -2700,6 +2911,21 @@ the date and `--reason`. `--dry-run` says what would be deleted and deletes noth
 
 `nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional prepared bus delivery. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
 
+```
+nova-version snapshot --bin <dir> --out <file.tsv>
+nova-version diff --from <a.tsv> --to <b.tsv>
+nova-version report --file <manifest> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-version send --file <manifest> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
+nova-version version (or --version)
+nova-version help
+```
+
+The manifest is one line per tool, six tab-separated fields — `name`, `kind`, `installed`,
+`latest`, `apply`, `owner` — written by hand. `send` is `report` delivered: it prepares the
+note and pushes it to the bus, and cross-process delivery recovery needs `--snapshot`, so
+without one each send is a new intention. Defaults are `--max 20` (`0` is all),
+`--timeout 5s` and `--budget 60s`, and `--kind` repeats to select kinds.
+
 ### First run
 
 ```sh
@@ -2762,6 +2988,25 @@ Stores encrypted credentials for named seats and delivers selected values to a
 child command. Use `nova-secrets help` for store setup, checks and `exec`; the
 contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).
 
+```
+nova-secrets version                                                                        # print this build identity (--version also accepted)
+nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]            # make this seat's age identity; the private key is written at mode 0600
+nova-secrets names  --store <dir> --as <name> [--max <n>]                                   # the key NAMES this seat carries, never a value
+nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]        # can this seat still decrypt its own file, and do its recipients match .sops.yaml
+nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]   # deliver the named values into one child's environment and nowhere else
+nova-secrets gate   --store <dir> --base <git ref> --head <git ref>                         # the seat-rule gate the store's workflow calls: it diffs base..head with git and prints GATE APPROVE or GATE REFUSE rule=<n>
+nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>]   # copy one key to one fleet machine over ssh and write a receipt
+nova-secrets placed --machine <name> [--receipts <dir>]                                     # what has been placed on that machine, from the receipts
+nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]   # seal a replacement value; the prompt is hidden and the value never reaches the command line
+nova-secrets help
+```
+
+`--max` is 20 by default and `0` is unlimited, one `MORE` line standing for the rest.
+`--path` defaults to `<home>/.config/nova-secrets/<secret>.env` on the machine, `--receipts`
+to `~/.config/nova-secrets/placed`, and `--ssh` to `ssh`; `--machines` is the fleet registry
+file, one `name`, ssh target and home per line, tab separated. Every other path comes from
+a flag.
+
 ### Seal a replacement value
 
 ```sh
@@ -2813,6 +3058,18 @@ Prepares outward messages for Ghost, Bluesky, email or Discord. `draft` saves th
 payload, `show` displays those saved bytes, and `send` checks the approval receipt
 before contacting the provider. See [SPEC-OUTBOUND.md](SPEC-OUTBOUND.md).
 
+```
+nova-post draft --channel <ghost|bsky|email|discord> --target <t> --file <body.md> --drafts <dir> --allowlist <file> [--title <t>] [--link <url>] [--digest <YYYY-MM-DD>] [--cairn <file>] [--fleet <file>]
+nova-post show  --draft <hash> --drafts <dir>
+nova-post send  --draft <hash> --approval <receipt-id> --drafts <dir> --bus <dir> --allowlist <file>
+nova-post version
+nova-post help
+```
+
+A credential is read only from the environment `nova-secrets exec` delivers, and is never
+printed. Exit 0 is the verb ran, 1 is the gate or a provider saying NO, and 2 is an
+invocation that could not run.
+
 ```sh
 nova-post draft --channel email --target team --file ./message.md \
   --drafts ./drafts --allowlist ./targets.tsv
@@ -2838,6 +3095,7 @@ held. It also reports its own build with `nova-ci version`.
 ```sh
 nova-ci slowtests --budget 60 < ./test-events.jsonl
 nova-ci version
+nova-ci help
 ```
 
 Save `go test -json` output in the input file and check that test run's exit status
@@ -3111,6 +3369,7 @@ nova-cairn append --store ./checkpoints --session session-1 --entry note-1 \
   --file ./checkpoint.md --publish never
 nova-cairn index --store ./checkpoints --max 20
 nova-cairn receipt --store ./checkpoints --session session-1 --entry note-1
+nova-cairn version
 ```
 
 Reuse stable session and entry IDs for retries. The same ID and bytes are a
