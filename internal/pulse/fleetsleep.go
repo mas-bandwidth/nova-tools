@@ -1,6 +1,6 @@
 package pulse
 
-// `fleet sleep` is scripts/fleet-sleep.sh as a verb: put one bench to sleep, and refuse
+// `fleet sleep` is the retired fleet-sleep.sh as a verb: put one bench to sleep, and refuse
 // while it is working.
 //
 // It is deliberately NOT a second implementation of that decision. `fleet suspend` already

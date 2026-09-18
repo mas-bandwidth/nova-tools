@@ -1,8 +1,71 @@
-# The names that look like a path into this repository and are not one.
+# The names that LOOK like a path into this repository and are not one.
 #
 # One `<name> <reason>` per line. TestEveryNamedRepoPathExists checks this list in BOTH
 # directions: a name that is missing from the tree and not listed here is a red run, and a
 # listed name that nothing writes any more -- or that is IN the tree now -- is also a red
 # run. So the list only ever gets shorter, and a row parks nothing.
 #
-# The honest reasons to be here are three, and they are the three sections below.
+# There are three honest reasons to be here, and they are the three sections below. The
+# first is by far the largest, and it is the one worth reading as a list: it is every file
+# a specification has PLANNED and nobody has written yet. Shrink-only means the row is
+# deleted on the day the file appears, by the test, out loud.
+
+# --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
+
+cmd/nova-chat/ SPEC-CHAT's plan; nova-chat is specified and unbuilt
+cmd/nova-chat/main.go SPEC-CHAT's plan, item 10: the verbs and the poll loop
+cmd/nova-chat/testdata/fakeharness SPEC-CHAT's plan: the fake harness onboarding will require the day cmd/nova-chat exists
+cmd/nova-local SPEC-LOCAL's plan; nova-local is specified and unbuilt
+cmd/nova-local/main.go SPEC-LOCAL's plan: the command's entry point
+cmd/nova-wake/quickstart SPEC-WAKE's plan, item 7: the quickstart verb's own file
+docs/roadmap.sexp SPEC-WORK's plan: the state input the roadmap projection will read
+internal/chat/allow.go SPEC-CHAT's plan, item 1: the allow-file parser
+internal/chat/discord.go SPEC-CHAT's plan, item 5: the Discord adapter
+internal/chat/fuse.go SPEC-CHAT's plan, item 7: the nova-fuse calls before each cycle
+internal/chat/prompt.go SPEC-CHAT's plan, item 8: the open frame and the turn block
+internal/chat/run.go SPEC-CHAT's plan, item 9: the nova-sandbox child and its deadline
+internal/chat/session.go SPEC-CHAT's plan, item 2: open, resume, the idleness clock
+internal/chat/standing.go SPEC-CHAT's plan, item 6: rule 9's three conditions
+internal/chat/state.go SPEC-CHAT's plan, item 3: session ids, cursors, the turn states
+internal/chat/transport.go SPEC-CHAT's plan, item 4: the six-capability adapter interface
+internal/chat/ws SPEC-CHAT's plan, item 11: the gateway, explicitly not v1
+internal/local/box.go SPEC-LOCAL's plan: the box
+internal/local/ds4.go SPEC-LOCAL's plan: the ds4 leg
+internal/local/engine.go SPEC-LOCAL's plan: the engine
+internal/local/ollama.go SPEC-LOCAL's plan: the ollama adapter
+internal/local/worker.go SPEC-LOCAL's plan: the worker
+internal/merge/parity_test.go SPEC-MERGE's plan, item 4: the gate runner's parity test
+internal/pkgvalid PROPOSAL-TOKENS-RECORDS-185's plan: the package the proposal would add
+internal/review/findings.go SPEC-REVIEW's plan, item 2: the findings-file parser
+internal/review/fold.go SPEC-REVIEW's plan: the fold
+internal/review/packet.go SPEC-REVIEW's plan: the packet
+internal/review/rules.go SPEC-REVIEW's plan: the rules
+internal/sandbox/exec.go SPEC-SANDBOX's plan: the exec seam
+internal/sandbox/wrap_windows.go SPEC-SANDBOX's plan: the Windows wrapper
+internal/tokens/message.go SPEC-TOKENS' plan: the message record
+internal/tokens/publish.go SPEC-TOKENS' plan: the publish step
+internal/wake/serve.go SPEC-WAKE's plan: the serve verb's own file
+
+# --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
+
+cmd/nova-foo the invented tool docs/SPEC-*.md use to show the shape of a command's path; there is no such tool and there must not be
+.github/dependabot.yml SPEC.md's example of a name that exact-name matching would and would not reach
+.github/scripts/foo.sh SPEC-CI.md's invented script in `x=$(bash ...)`, shown as something that is not a producer
+.github/seat-rule-gate.sh SPEC-SECRETS.md names the workflow script that is deliberately NOT here: the rule lives in the tool instead
+docs/bus internal/bus/git.go's failure narrative: a bus directory pointed inside a larger repository
+docs/bus/from-bo/x.md the path that same narrative says git reports from the repository root
+docs/history SPEC.md's `--allow docs/history` example for subdirectory enumeration
+internal/secretsanta/ SPEC-RELEASE.md's example of what prefix matching on `internal/secrets` would also catch
+
+# --- 3. A path in another tree: another repository, another branch, or a retired file. ---
+
+docs/FIXED-FORM-OWED-ROWS.md SPEC-BOARD.md cites it in the SCHEMA repository, not here
+docs/PORTING.md the file `nova-review port` reads out of the pull request's own head, not out of this tree
+docs/nova-lessons.md the lessons file lives in the self repository; internal/pulse/watch.go cites it as the source of its rules
+docs/SPEC-DELEGATION.md the draft SPEC-WORK folded in on 2026-09-15; the draft itself is gone
+docs/SPEC-WORK-CLOSED.md SPEC-WORK cites it at a named commit on another branch, not in this tree
+docs/SPEC-WORK-PILOT.md the same: a named commit on codex/, not in this tree
+docs/SPEC-WORK-VALIDATION.md the same: a named commit on codex/, not in this tree
+fleet/macos/provision-mac-bench.sh the Mac provisioning script lives in the self repository; there is no fleet/ here
+scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
+scripts/coordination/fleet-wake.sh SPEC-PULSE.md names the retired script the Go power verbs replaced
