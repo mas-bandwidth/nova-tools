@@ -109,6 +109,11 @@ nova-bus version
 nova-wake help
 ```
 
+Those commands install the two named tools from `v0.15.2`. This guide also
+describes development-branch features where it labels them explicitly;
+`nova-ci`, `nova-pulse`, `nova-work` and `nova-sandbox egress` are not available
+from the pinned release.
+
 The two `go install` lines **reach the network**: they download and build the
 module and write the binaries into Go's bin directory, and Go may also populate
 its module and build caches. The last two lines are read-only — one prints a
@@ -161,7 +166,9 @@ send notes, read an inbox, reply, and track what you have already seen.
 **You need** a Git repository you and your friends can all push to, `git` with a
 commit identity configured, a name for yourself (`--as`), and a participant
 roster — always `<bus>/participants.json`, because every run of this tool over one
-bus reads the one roster. `--bus`, `--remote` and `--branch` have no defaults.
+bus reads the one roster. Follow the command reference's
+[roster instructions](CLI.md#setting-up-a-bus) for its fields. `--bus`,
+`--remote` and `--branch` have no defaults.
 
 **First trial.** **`send` writes a file and pushes to the repository you name.**
 Create a local Git repository of your own and use that as the bus for a first
@@ -170,15 +177,24 @@ choose. This example creates an owned bare repository, names the remote
 `origin`, commits the bus roster, and establishes the branch before sending:
 
 ```sh
-git init --bare ../bus-origin.git
+mkdir ./bus
+git init -b main ./bus
+git init --bare ./bus-origin.git
+cd ./bus
 git remote add origin ../bus-origin.git
+```
+
+Create `participants.json` using the linked roster instructions, then commit and
+push the initial branch:
+
+```sh
 git add participants.json
 git commit -m "Start local bus"
 git push -u origin HEAD
 ```
 
-Run those lines inside your new bus checkout after writing its
-`participants.json`; the bare repository is only your local push target.
+Run those lines from a directory where `bus` and `bus-origin.git` may be created;
+the bare repository is only your local push target.
 `nova-bus help` then lists the draft and send lines. Drafting writes the template
 to stdout and its next-step hint to stderr, so redirect only stdout when saving a
 draft. See [nova-bus in the command reference](CLI.md#nova-bus) for the output
@@ -215,19 +231,28 @@ guessed: `quickstart` refuses until you name the state file and a source.
 needs no bus:
 
 ```sh
-nova-wake quickstart --state ./wake.json --reports <dir>
+mkdir -p ./reports
+printf '# Result\nstate: first\n' > ./reports/RESULT.md
+nova-wake quickstart --state ./wake.json --reports ./reports
 ```
 
-Point `<dir>` at a directory containing worker `RESULT.md` files. `quickstart`
+The owned directory and `RESULT.md` are the first two lines created. `quickstart`
 records and prints that first view once. Then wait for the next change with the
 same report directory and state file:
 
 ```sh
-nova-wake watch --state ./wake.json --reports <dir> --max 5m --interval 5s --on-deadline report
+nova-wake watch --state ./wake.json --reports ./reports --max 5m --interval 5s --on-deadline report
 ```
 
-Use one state file per watch. Bus refresh is a separate mode, not part of this
-local two-step trial.
+While that command waits, open a second terminal, change to the same directory
+where `wake.json` and `reports` live, and change the owned result:
+
+```sh
+printf 'state: changed\n' >> ./reports/RESULT.md
+```
+
+The watch returns `WAKE CHANGE`. Use one state file per watch. Bus refresh is a
+separate mode, not part of this local two-step trial.
 
 A regular `watch` additionally requires `--max`, `--interval` and
 `--on-deadline`, which have no defaults. The [first-run transcript](TESTS.md#nova-wake) is
@@ -345,6 +370,9 @@ pushes; the [first-run transcript](TESTS.md#nova-merge) is executed by a test. S
 also
 [nova-merge in the command reference](CLI.md#nova-merge).
 
+**Development branch.** The `nova-pulse` and `nova-work` commands in the next
+two paragraphs are not part of `v0.15.2`.
+
 **How work lands here today, in case it is useful.** We stopped landing one pull
 request at a time. A **batch** is a handful of pre-tested changes merged onto one
 tree, built and tested there, and then opened as a single entry that carries the
@@ -445,9 +473,9 @@ refuses rather than pretending. Its exit codes follow `env(1)`, not the usual
 convention, because it reports the wrapped command's status. Read the
 [security guidance](SECURITY.md) and test your policy before trusting it with
 real work. The default filesystem wall is not a network wall: without
-`--net-deny`, the receipt says `net=nopromise`. The separate `egress` verbs build
-and audit a reviewed outbound allowlist; applying and dropping that nftables
-wall is Linux-only.
+`--net-deny`, the receipt says `net=nopromise`. On the development branch, the
+separate `egress` verbs build and audit a reviewed outbound allowlist; applying
+and dropping that nftables wall is Linux-only. Those verbs are not in `v0.15.2`.
 
 **It may not help if** your machine has no supported backend, or your platform
 already hands you containers.
@@ -648,6 +676,7 @@ Timing-sensitive tests run separately with
 `go test -tags perf -p 1 -parallel 1 ./...`; see the
 [build reference](CLI.md#build) for context.
 
+**Development branch:** `nova-ci` is not part of `v0.15.2`.
 `nova-ci slowtests --budget <seconds>` accepts a whole number at least 1. Feed
 it `go test -json` events from the run you mean to measure; cached packages can
 report near-zero elapsed time. `nova-ci failed` handles the other question by

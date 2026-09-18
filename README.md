@@ -37,11 +37,11 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Review how you write about yourself.</td><td nowrap><a href="docs/CLI.md#nova-self-talk">nova-self-talk</a></td><td>Flagged sentence patterns for you to judge.</td></tr>
 <tr><td>Mark a source you have decided to stop reading.</td><td nowrap><a href="docs/CLI.md#nova-fuse">nova-fuse</a></td><td>A recorded decision a cooperating harness can honor.</td></tr>
 <tr><td>Give a command the credentials it needs.</td><td nowrap><a href="docs/CLI.md#nova-secrets">nova-secrets</a></td><td>Encrypted storage and selected credentials delivered to a child command.</td></tr>
-<tr><td>Keep AI workers supplied with ready tasks.</td><td nowrap><a href="docs/SPEC-PULSE.md">nova-pulse</a></td><td>A work queue that starts tasks as workers become available and gathers the results for review.</td></tr>
+<tr><td>Keep AI workers supplied with ready tasks.</td><td nowrap><a href="docs/SPEC-PULSE.md">nova-pulse</a></td><td><strong>Development branch:</strong> a work queue that starts tasks as workers become available and gathers the results for review.</td></tr>
 <tr><td>Review a post before it leaves the team.</td><td nowrap><a href="docs/CLI.md#nova-post">nova-post</a></td><td>Saved drafts and a send gate tied to approval of the exact content.</td></tr>
-<tr><td>Check task dependencies and a work plan.</td><td nowrap><a href="docs/CLI.md#nova-work">nova-work</a></td><td>A ready set, bounded plan checks and generated task cards.</td></tr>
-<tr><td>Spot packages that exceed the test-time budget.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td>Package timings read from Go test events.</td></tr>
-<tr><td>Read the useful part of a failed CI run.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci failed</a></td><td>Failing tests and their locations instead of a whole job log.</td></tr>
+<tr><td>Check task dependencies and a work plan.</td><td nowrap><a href="docs/CLI.md#nova-work">nova-work</a></td><td><strong>Development branch:</strong> a ready set, bounded plan checks and generated task cards.</td></tr>
+<tr><td>Spot packages that exceed the test-time budget.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td><strong>Development branch:</strong> package timings read from Go test events.</td></tr>
+<tr><td>Read the useful part of a failed CI run.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci failed</a></td><td><strong>Development branch:</strong> failing tests and their locations instead of a whole job log.</td></tr>
 <tr><td>Keep session notes you can reliably return to.</td><td nowrap><a href="docs/CLI.md#nova-cairn">nova-cairn</a></td><td>Explicit checkpoints, source pointers and a bounded index.</td></tr>
 <tr><td>Ask a model a structured question.</td><td nowrap><a href="docs/CLI.md#nova-decide">nova-decide</a></td><td>Typed answers and reported confidence for your workflow to evaluate.</td></tr>
 </tbody>
@@ -50,6 +50,10 @@ come back to the table below for the problem you want it to solve.
 Pick the row that is your actual problem today. One tool is a fine number.
 
 ## Useful workflows
+
+The `nova-pulse`, `nova-work` and `nova-ci` workflows below, and
+`nova-sandbox egress`, are available on the development branch and are not part
+of the pinned `v0.15.2` release shown in the install guide.
 
 - Prepare an outward message with `nova-post draft`, inspect it with `show`, then
   release that exact draft with an approved `send`.
@@ -76,7 +80,7 @@ Pick the row that is your actual problem today. One tool is a fine number.
   `nova-merge simulate` first, which squash-merges the queue in order in a scratch
   worktree, checks the growing batch after each successful merge, and reports its
   first failing step. Cards that touch the same area of the code declare a **lane**
-  (`LANE: <name>`); `nova-pulse fill` keeps at most one card per lane live and
+  (`LANE: <name>`); the development-branch `nova-pulse fill` keeps at most one card per lane live and
   holds the rest in order, which is what stops a batch from being a pile of
   conflicts. `nova-merge batch` builds and checks the combined tree without
   pushing it; `queue`, `rebase` and `react` carry the lane forward after the
