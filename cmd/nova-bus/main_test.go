@@ -107,9 +107,10 @@ const noMaintenanceConfig = "[gc]\n\tauto = 0\n\tautoDetach = false\n" +
 // What stays serial, and must: a test that writes PROCESS-WIDE state. That is the whole
 // list, and every one of them is serial for a named reason --
 //
-//	bus.NoteParses          one counter for the process, so a sibling parsing a note
-//	                        while it counts makes the count somebody else's work
-//	                        (TestInboxParsesOnlyWhatIsNewSinceTheCursor, TestHeardSurvivesTheCursor)
+//	bus.NoteParses,         one counter each for the process, so a sibling parsing a note
+//	bus.CommitsWalked       or counting commits while one of these counts makes the count
+//	                        somebody else's work (TestInboxParsesOnlyWhatIsNewSinceTheCursor,
+//	                        TestHeardSurvivesTheCursor, TestAStaleCursorCostsTheBoundAndNotTheDistance)
 //	refreshCheckout,        package variables taken out at the seam and put back
 //	publishDraft,           (withoutFetch, and the two tests that stand in for a
 //	checkoutLockWait,       filesystem, a held lock and a stamp)
