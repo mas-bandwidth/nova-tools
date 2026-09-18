@@ -34,7 +34,9 @@ sudo visudo -cf /etc/sudoers.d/nova || { echo "sudoers file did not validate; re
 
 say "installing the Studio's public SSH key for nova"
 sudo mkdir -p /Users/nova/.ssh
-echo "$KEY" | sudo tee /Users/nova/.ssh/authorized_keys >/dev/null
+sudo touch /Users/nova/.ssh/authorized_keys
+# append, never overwrite: a second run, or a nova account that already had keys, must keep them (Stella, #1263 F22)
+sudo grep -qF "$KEY" /Users/nova/.ssh/authorized_keys || echo "$KEY" | sudo tee -a /Users/nova/.ssh/authorized_keys >/dev/null
 sudo chown -R nova:staff /Users/nova/.ssh; sudo chmod 700 /Users/nova/.ssh; sudo chmod 600 /Users/nova/.ssh/authorized_keys
 
 say "power settings: never sleep, display off after 1 min, restart after power loss, wake on network"

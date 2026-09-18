@@ -56,7 +56,7 @@ zmodload zsh/datetime 2>/dev/null || true   # EPOCHREALTIME, for the per-step ti
 KIT=${0:A:h}
 WORKING=${LOCAL_GATE_WORKING:-$HOME/rowan-working}
 GATES_DIR=${LOCAL_GATE_DIR:-$WORKING/merge-lane/gates}
-SCRATCH_ROOT=${CHILD_SCRATCH:-/private/tmp/claude-501/-Users-glenn-rowan-new/349e5152-f719-4496-b740-73cccb87f927/scratchpad}
+SCRATCH_ROOT=${CHILD_SCRATCH:-$HOME/rowan-working/tmp/children} # same root as child-clone.sh; the old default was a dead session scratchpad
 RUSTUP_BIN_LOCAL=${RUSTUP_BIN_LOCAL:-/opt/homebrew/opt/rustup/bin}
 
 PR=''
@@ -74,7 +74,7 @@ while (( $# )); do
   case "$1" in
     --base) BASE="${2-}"; shift 2 || die '--base needs a branch' ;;
     --gc)   GC=1; shift ;;
-    -h|--help) sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '3,53p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) die "unknown flag $1" ;;
     *)  [[ -z $TARGET ]] || die "two targets given ($TARGET, $1)"; TARGET="$1"; shift ;;
   esac
@@ -105,7 +105,7 @@ HOME_DIR="$SCRATCH_ROOT/$NAME"
 # dead is reclaimed; mkdir decides who gets it.
 SLOTS=${LOCAL_GATE_SLOTS:-2}; SLOT_DIR=$GATES_DIR/slots; SLOT=''
 mkdir -p $SLOT_DIR
-slot_release() { [[ -n $SLOT ]] && rmdir $SLOT 2>/dev/null; SLOT='' }
+slot_release() { [[ -n $SLOT ]] && { rm -f -- $SLOT/pid; rmdir $SLOT 2>/dev/null }; SLOT='' } # the pid file must go first: rmdir on a non-empty slot failed silently and the slot stayed held until its owner died (pit stop 2026-09-17)
 slot_acquire() {
   local i p waited=0
   while true; do

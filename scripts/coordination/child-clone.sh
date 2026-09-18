@@ -19,7 +19,7 @@ SCHEMA_REMOTE='git@github.com:mas-bandwidth/schema.git'
 DEFAULT_BASE='fixed-table-form'
 WORKING='/Users/glenn/rowan-working'
 DIST='/Users/Shared/schema-dist'          # the target repo/dist must point at
-SCRATCH_DEFAULT='/private/tmp/claude-501/-Users-glenn-rowan-new/349e5152-f719-4496-b740-73cccb87f927/scratchpad'
+SCRATCH_DEFAULT="$HOME/rowan-working/tmp/children" # was a long-dead session scratchpad, outside the roots safe_rm may delete in
 SERIALIZE_C_CURRENT="$HOME/rowan-working/serialize.c-current"
 SERIALIZE_C_REMOTE='git@github.com:mas-bandwidth/serialize.c.git'
 
@@ -60,7 +60,7 @@ while (( $# )); do
     --new)    NEWBRANCH="${2-}"; shift 2 || die '--new needs a branch';;
     --legs)   LEGS="${2-}";      shift 2 || die '--legs needs a list';;
     -h|--help)
-      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'
       return 0;;
     -*) die "unknown flag $1";;
     *)  [[ -z "$NAME" ]] || die "two names given ($NAME, $1)"; NAME="$1"; shift;;
@@ -83,7 +83,8 @@ if (( GC )); then
     "$SCRATCH_ROOT"/*) ;;
     *) die "refusing to remove $HOME_DIR: not under $SCRATCH_ROOT";;
   esac
-  [ -n "$SCRATCH_ROOT" ] && [ -n "$NAME" ] || exit 2; safe_rm "$HOME_DIR"
+  [ -n "$SCRATCH_ROOT" ] && [ -n "$NAME" ] || exit 2
+  safe_rm "$HOME_DIR" && [[ ! -e "$HOME_DIR" ]] || die "could NOT remove $HOME_DIR (safe_rm only deletes below ~/rowan-working or ~/rowan-swarm-root; set CHILD_SCRATCH under one of them)"
   print -- "child-clone: removed $HOME_DIR"
   return 0
 fi

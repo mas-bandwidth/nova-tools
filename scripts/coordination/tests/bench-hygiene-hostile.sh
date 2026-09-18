@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Hostile-input test of bench-hygiene.sh inside a fake HOME. A canary outside the roots must survive every case.
-set -u; H=$(mktemp -d /tmp/hygtest.XXXXXX)/home; mkdir -p "$H"; S=$HOME/.local/bin/bench-hygiene.sh
+set -u; H=$(mktemp -d /tmp/hygtest.XXXXXX)/home; mkdir -p "$H"; S=${HYGIENE_SCRIPT:-$HOME/.local/bin/bench-hygiene.sh} # HYGIENE_SCRIPT=<path> tests a copy in a worktree (Emma, #1263)
 R1=$H/rowan-swarm-root; R2=$H/rowan-working/tmp; mkdir -p "$R1" "$R2" "$H/canary/keep" "$H/.cache/go-build/x"; echo precious > "$H/canary/keep/file"
 mk() { mkdir -p "$1/jobs/$2"; echo log > "$1/jobs/$2/harness-output.log"; }
 mk "$R2/slot-ok" job1; echo "RESULT: x" > "$R2/slot-ok/jobs/job1/RESULT.md"; touch "$R2/slot-ok/jobs/job1/.harvested"; mkdir -p "$R2/slot-ok/data"
@@ -19,4 +19,4 @@ echo "-- dry run changes nothing"; before=$(find "$H" | wc -l); run run --dry-ru
 echo "-- real run"; out=$(run run); echo "  $out"; chk "harvested job deleted" gone "$([ -d "$R2/slot-ok/jobs/job1" ] && echo there || echo gone)"; chk "unread fresh job kept" there "$([ -d "$R2/slot-unread/jobs/jobX" ] && echo there || echo gone)"; chk "canary after run" alive "$(canary)"; chk "symlink slot untouched" yes "$([ -L "$R2/slot-symlink" ] && echo yes || echo no)"
 echo "-- bad HOME"; for bad in "" "/" "relative/home" "/onlyone"; do out=$(HOME="$bad" bash "$S" run --dry-run 2>&1 | head -1); chk "HOME=[$bad] refused" yes "$(echo "$out" | grep -q REFUSE && echo yes || echo "no:$out")"; done
 echo "-- log written"; chk "hygiene.log has lines" yes "$([ -s "$H/hygiene.log" ] && echo yes || echo no)"; echo "  refusals logged: $(grep -c REFUSE "$H/hygiene.log")"
-echo "RESULT pass=$pass fail=$fail"; chmod -R u+w "$(dirname "$H")"; rm -rf -- "$(dirname "$H")"
+echo "RESULT pass=$pass fail=$fail"; chmod -R u+w "$(dirname "$H")"; rm -rf -- "$(dirname "$H")"; exit $(( fail > 0 ))

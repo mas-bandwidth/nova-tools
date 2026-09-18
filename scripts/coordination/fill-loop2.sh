@@ -15,8 +15,8 @@ for tick in $(seq 1 ${1:-12}); do
       case $b in hulk) a=$ah;; vision) a=$av;; space) a=$as;; esac
       [ "$a" -gt 0 ] || continue
       f=$(ls "$READY"/card-*.md 2>/dev/null | head -1); [ -n "$f" ] || break 2
-      l=$(basename "$f" .md); mv "$f" "$LAUNCHED/"
-      ( "$B/$LAUNCHER" "$b" "swarm-$b" "$LAUNCHED/$(basename "$f")" "$l" 2400 2>&1 | grep -E 'attempt=|REFUSED' | cut -c1-120 >> "$QD/fill.log" ) &
+      l=$(basename "$f" .md); mv "$f" "$LAUNCHED/" 2>/dev/null || continue # the claim: whoever wins the mv owns the card (two loops could both list it; Stella F04)
+      ( out=$("$B/$LAUNCHER" "$b" "swarm-$b" "$LAUNCHED/$(basename "$f")" "$l" 2400 2>&1); echo "$out" | grep -E 'attempt=|REFUSED' | cut -c1-120 >> "$QD/fill.log"; case "$out" in *"LAUNCH REFUSED"*) mv "$LAUNCHED/$(basename "$f")" "$READY/" 2>/dev/null; echo "$(date -u +%H:%MZ) RETURNED $l to ready after refusal on $b" >> "$QD/fill.log";; esac ) & # a refused launch returns the card (Stella F05)
       case $b in hulk) ah=$((ah-1)); nh=$((nh+1));; vision) av=$((av-1)); nv=$((nv+1));; space) as=$((as-1)); ns=$((ns+1));; esac
       progress=1; sleep 1
     done

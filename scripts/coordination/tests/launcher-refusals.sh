@@ -11,4 +11,4 @@ for L in flash-native-bench.sh muse-native-bench.sh; do S=$HOME/rowan-working/bi
   out=$(cd / && perl -e 'alarm 40; exec @ARGV' "$S" nosuchbench swarm-x /tmp/tiny-card.md card-x 60 2>&1); chk "$L unreachable bench exit" 3 "$?"; echo "$out" | grep -q UNREACHABLE || { fail=$((fail+1)); echo "  FAIL: unreachable message: $out"; }
 done
 art=$(ssh -n space 'ls -d /tmp/PWNED-by-label ~/rowan-working/evil ~/rowan-working/tmp/evil 2>/dev/null | wc -l'); chk "no artefacts on the bench" 0 "$(echo $art)"
-echo "RESULT pass=$pass fail=$fail"
+echo "RESULT pass=$pass fail=$fail"; exit $(( fail > 0 ))

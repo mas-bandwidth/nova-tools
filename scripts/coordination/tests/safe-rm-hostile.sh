@@ -12,5 +12,11 @@ go "$H/rowan-working/deep"; chk "dir containing a symlink removed" gone "$([ -e 
 go "$H/rowan-working/a"; chk "normal delete works" gone "$([ -e "$H/rowan-working/a" ] && echo there || echo gone)"
 ( cd "$H/rowan-working" && HOME="$H" safe_rm "../rowan-swarm-root/s" ) >/dev/null 2>&1; chk "relative path inside roots (allowed or refused, never outside)" alive "$(canary)"
 for bad in "" "/" "rel/home"; do ( HOME="$bad"; safe_rm "$H/rowan-working" ) >/dev/null 2>&1; chk "bad HOME [$bad] deletes nothing" yes "$([ -d "$H/rowan-working" ] && echo yes || echo no)"; done
+rcof() { ( HOME="$H"; cd "$H" && safe_rm "$@" ) >/dev/null 2>&1; echo $?; }
+mkdir -p "$H/rowan-working/rc1"; chk "return 0 on a real delete" 0 "$(rcof "$H/rowan-working/rc1")"
+chk "return 0 when the path does not exist" 0 "$(rcof "$H/rowan-working/never-existed")"
+chk "return 1 on a refusal outside the roots" 1 "$(rcof "$H/canary")"
+chk "return 1 on a symlink" 1 "$(rcof "$H/rowan-working/link-out")"
+mkdir -p "$H/rowan-working/rc2"; chk "return 1 when one of several is refused, and the good one is still deleted" "1 gone" "$(rcof "$H/rowan-working/rc2" "$H/canary") $([ -e "$H/rowan-working/rc2" ] && echo there || echo gone)"
 chk "log written" yes "$([ -s "$H/hygiene.log" ] && echo yes || echo no)"
-echo "RESULT pass=$pass fail=$fail"; rm -rf -- "$T"
+echo "RESULT pass=$pass fail=$fail"; rm -rf -- "$T"; exit $(( fail > 0 ))

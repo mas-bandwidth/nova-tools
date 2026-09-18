@@ -17,4 +17,4 @@ seed 0; out=$(run "hulk=5 vision=5 space=5"); chk "empty ready: no launches" 0 "
 seed 9; out=$(run "hulk=-3 vision=abc space=2"); chk "negative and junk allowances treated as zero" 2 "$(wc -l < $T/launches.txt | tr -d ' ')"
 seed 200; out=$(run "hulk=500 vision=500 space=500" 60); chk "per-bench cap 60 holds" 60 "$(count hulk)"; chk "total 180" 180 "$(wc -l < $T/launches.txt | tr -d ' ')"
 seed 4; out=$(run "hulk=9 vision=9 space=9"); dup=$(awk '{print $2}' $T/launches.txt | sort | uniq -d | wc -l | tr -d ' '); chk "no card launched twice" 0 "$dup"
-echo "RESULT pass=$pass fail=$fail"; rm -rf -- "$T"
+echo "RESULT pass=$pass fail=$fail"; rm -rf -- "$T"; exit $(( fail > 0 ))

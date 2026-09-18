@@ -15,4 +15,4 @@ mkgh ''
 chk "nothing dirty: nothing cut" 3 "$(run)"
 touch $T/q/pr-555; mkgh '555\trowan/old\tdddddddddddd\told bare marker\n'
 chk "an old bare-flag marker does not block forever" 4 "$(run)"
-echo "RESULT pass=$pass fail=$fail"; rm -rf -- "$T"
+echo "RESULT pass=$pass fail=$fail"; rm -rf -- "$T"; exit $(( fail > 0 ))

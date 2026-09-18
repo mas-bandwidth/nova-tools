@@ -21,6 +21,9 @@ ls -d $HOME/nova-bench/build/*/ 2>/dev/null | head -n -5 | while read -r old; do
 REMOTE
 FULL=$(ssh -n -o BatchMode=yes "$BUILD" "cd ~/nova-bench/src/nova-tools && git rev-parse $SHA^{commit}") || exit 1
 rc=0; for b in $BENCHES; do
+  cur=$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$b" '~/.local/bin/nova-swarm version 2>/dev/null | head -1; [ -x ~/go/bin/nova-swarm ] && ~/go/bin/nova-swarm version | head -1' 2>/dev/null | grep -c "${FULL:0:12}")
+  want=$(ssh -n -o BatchMode=yes "$b" '[ -x ~/go/bin/nova-swarm ] && echo 2 || echo 1' 2>/dev/null)
+  if [ -n "$cur" ] && [ "$cur" = "$want" ]; then echo "FLEET-INSTALL OK $b already at ${FULL:0:12} (nothing copied)"; continue; fi
   if [ "$b" != "$BUILD" ]; then say "copying the cached build to $b"; ssh -n -o BatchMode=yes "$BUILD" "tar -C ~/nova-bench/build/$FULL -cf - ." | ssh -o BatchMode=yes -o ConnectTimeout=10 "$b" "mkdir -p ~/nova-bench/build/$FULL && tar -C ~/nova-bench/build/$FULL -xf -" || { echo "FLEET-INSTALL FAIL $b copy"; rc=1; continue; }; fi
   say "installing on $b (atomic rename per tool; running processes keep their old inode)"
   line=$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$b" "set -u; B=~/nova-bench/build/$FULL; n=0; for f in \$B/nova-*; do t=\$(basename \$f); for dir in ~/.local/bin ~/go/bin; do [ -d \$dir ] || continue; [ \$dir = ~/go/bin ] && [ ! -e \$dir/\$t ] && continue; cp -p \$f \$dir/.\$t.new && mv -f \$dir/.\$t.new \$dir/\$t; done; n=\$((n+1)); done; echo \"\$n \$(~/.local/bin/nova-swarm version | head -1) | go-bin: \$([ -x ~/go/bin/nova-swarm ] && ~/go/bin/nova-swarm version | head -1 | grep -oE '[0-9a-f]{12}' | tail -1 || echo none)\"") || { echo "FLEET-INSTALL FAIL $b install"; rc=1; continue; }

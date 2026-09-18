@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-. "$HOME/rowan-working/bin/safe-rm.sh"
+[ -f "$HOME/.local/bin/safe-rm.sh" ] && . "$HOME/.local/bin/safe-rm.sh" # benches keep the helper in ~/.local/bin
 # bench-standard.sh: assert the bench standard (memory bench-provisioning-standard) and fix what it can.
 # One FIX/DRIFT line per item, one STANDARD OK|DRIFT line per bench. The shape of nova-work `fleet survey --enforce`.
 # Runs ON the Linux bench it checks, with no arguments: `ssh <bench> bash -s < bench-standard.sh` (no -n: ssh -n swallows the script).
@@ -9,6 +9,10 @@
 [ $# -eq 0 ] || { echo "STANDARD REFUSED: takes no arguments (got: $*); run it ON the bench: ssh <bench> bash -s < bench-standard.sh"; exit 2; }
 export PATH=$HOME/.local/bin:$HOME/go/bin:/usr/local/go/bin:$PATH; drift=0; host=$(hostname | cut -d. -f1)
 say() { echo "$host: $*"; }
+# probe_rm DIR: remove one of THIS script's own probe directories and nothing else: it must be a direct child of ~/nova-bench named
+# netprobe.XXXX or goprobe.XXXX, not a symlink. Emma's read of #1263: the old cleanup only matched /tmp paths while the probes live under
+# ~/nova-bench, so every run leaked one; the go probe used a bare rm -rf that failed on Go's read-only telemetry dirs.
+probe_rm() { local d=$1; case "$d" in "$HOME"/nova-bench/netprobe.????|"$HOME"/nova-bench/goprobe.????) ;; *) say "REFUSE probe_rm $d"; return 1;; esac; [ -d "$d" ] && [ ! -L "$d" ] || return 0; chmod -R u+w -- "$d" 2>/dev/null; rm -rf -- "$d"; }
 descendants() { local set="$1" gen more k; for gen in 1 2 3 4; do more=""; for k in $set; do more="$more $(ps -eo pid,ppid | awk -v P="$k" '$2==P {print $1}' | tr '\n' ' ')"; done; set="$set $more"; done; echo "$set"; }
 # 1. exactly one listener per runner dir, and it belongs to its unit (user or system); Linux benches only (the Studio runs no runner units)
 [ "$(uname)" = Linux ] && for d in $HOME/runner-nova-tools-*/; do d=${d%/}; i=${d##*-}
@@ -27,7 +31,7 @@ done
 free=$(df -BG "$HOME" 2>/dev/null | awk 'NR==2{gsub("G","",$4); print $4}'); [ "${free:-0}" -ge 15 ] || { say "DRIFT free space ${free}G under HOME (want >= 15G); largest: $(du -xs $HOME/*/ 2>/dev/null | sort -rn | head -2 | awk '{printf "%s=%dM ", $2, $1/1024}')"; drift=1; }
 command -v sqlite3 >/dev/null 2>&1 || { say "DRIFT no sqlite3 on PATH (usage rows read opencode.db through it)"; drift=1; }
 gv=$(go version 2>/dev/null | cut -d' ' -f3); [ "$gv" = go1.26.5 ] || { say "DRIFT go=$gv want go1.26.5"; drift=1; }
-NOVA_WANT=${NOVA_WANT:-97ada57b91fd}; nv=$(nova-swarm version 2>/dev/null | head -1); case "$nv" in *"$NOVA_WANT"*) ;; *) say "DRIFT nova bins $nv want $NOVA_WANT"; drift=1;; esac
+NOVA_WANT=${NOVA_WANT:-$("$HOME/.local/bin/nova-swarm" version 2>/dev/null | head -1 | grep -oE "[0-9a-f]{12}" | tail -1)}; # default: what nova-swarm reports, so the check is "every tool agrees"; pass NOVA_WANT=<sha> to assert a specific build (the old default was a sha pinned on 2026-09-16 and reported DRIFT forever) nv=$(nova-swarm version 2>/dev/null | head -1); case "$nv" in *"$NOVA_WANT"*) ;; *) say "DRIFT nova bins $nv want $NOVA_WANT"; drift=1;; esac
 for b in $(ls ~/.local/bin 2>/dev/null | grep "^nova-"); do v=$($HOME/.local/bin/$b version 2>/dev/null | head -1); case "$v" in *"$NOVA_WANT"*) ;; *) say "DRIFT $b at ${v:-?} want $NOVA_WANT"; drift=1;; esac; done
 command -v sbcl >/dev/null || { say "DRIFT no sbcl"; drift=1; }
 [ -x "$HOME/nova-bench/harness-v1.18.20/opencode" ] || { say "DRIFT no harness"; drift=1; }
@@ -35,11 +39,11 @@ nb=$(ls "$HOME"/.local/bin/nova-* 2>/dev/null | wc -l); [ "$nb" -ge 16 ] || { sa
 # 3b. the real sandbox can resolve and reach the provider catalog (#880 item 19; tonight a host probe passed while every card died inside the wall)
 if [ "$(uname)" = Linux ] && [ -x "$HOME/.local/bin/nova-sandbox" ]; then t=$(mktemp -d "$HOME/nova-bench/netprobe.XXXX"); mkdir -p "$t/home"
   code=$(HOME="$t/home" "$HOME/.local/bin/nova-sandbox" --read "$HOME/nova-bench" --write "$t" --cwd "$t" -- curl -s -o /dev/null -w '%{http_code}' https://models.opencode.ai/api.json 2>/dev/null | tail -c 3)
-  [ -n "$t" ] && [ -d "$t" ] && case "$t" in /tmp/*|/private/tmp/*|/var/*) rm -rf -- "$t";; esac; [ "$code" = 200 ] || { say "DRIFT sandbox-network: curl inside nova-sandbox got http=${code:-none} (want 200)"; drift=1; }
+  probe_rm "$t"; [ "$code" = 200 ] || { say "DRIFT sandbox-network: curl inside nova-sandbox got http=${code:-none} (want 200)"; drift=1; }
 fi
 # 3c. the toolchain the cards need is readable INSIDE the sandbox (2026-09-17: the Go SDK lived at ~/sdk, outside the nova-bench read root; cards on vision could not run go test)
 if [ "$(uname)" = Linux ] && [ -x "$HOME/.local/bin/nova-sandbox" ]; then t=$(mktemp -d "$HOME/nova-bench/goprobe.XXXX"); mkdir -p "$t/home"
-  gv2=$(HOME="$t/home" "$HOME/.local/bin/nova-sandbox" --read "$HOME/nova-bench" --write "$t" --cwd "$t" -- "$HOME/go/bin/go" version 2>/dev/null | tail -1); rm -rf "$t"
+  gv2=$(HOME="$t/home" "$HOME/.local/bin/nova-sandbox" --read "$HOME/nova-bench" --write "$t" --cwd "$t" -- "$HOME/go/bin/go" version 2>/dev/null | tail -1); probe_rm "$t"
   case "$gv2" in *go1.26.5*) ;; *) say "DRIFT sandbox-go: go inside nova-sandbox says [${gv2:-nothing}] (the SDK must live under ~/nova-bench)"; drift=1;; esac
 fi
 # 4. secrets: a seat that opens; no plaintext key file; no literal key in a harness config

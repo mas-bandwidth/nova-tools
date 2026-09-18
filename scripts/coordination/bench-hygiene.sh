@@ -10,6 +10,7 @@
 # it is the join of one of two literal roots under $HOME, a slot name and a job name that match [A-Za-z0-9._-]+, resolved, checked for symlinks,
 # and checked to sit strictly below its root. Nothing else can be removed by this script.
 set -u; set -o pipefail
+[ "$(uname -s)" = Linux ] || { echo "HYGIENE REFUSED: this script is for the Linux benches (GNU stat, df -BG, du -BG, /proc); on $(uname -s) it would abort half way (Emma, #1263)"; exit 2; }
 LOG=$HOME/hygiene.log; DRY=0; case "${2:-}${3:-}${4:-}" in *--dry-run*) DRY=1;; esac; [ "${1:-}" = run ] && [ "${2:-}" = --dry-run ] && DRY=1
 [ -n "${HOME:-}" ] && [ "${HOME#/}" != "$HOME" ] && [ "$(printf %s "$HOME" | tr -cd / | wc -c)" -ge 2 ] || { echo "REFUSE: HOME is not an absolute path with at least two components: '${HOME:-}'"; exit 2; }
 ROOT1=$HOME/rowan-swarm-root; ROOT2=$HOME/rowan-working/tmp

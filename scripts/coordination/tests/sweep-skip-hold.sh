@@ -21,4 +21,4 @@ printf '# poison tonight\n102  # redeclared type\n101\n' > $T/skip; chk "comment
 printf 'rm -rf /tmp/SHOULD-NOT-RUN; touch %s/EXECUTED\n102\n' $T > $T/skip; run >/dev/null; chk "skip file is never executed" no "$([ -e $T/EXECUTED ] && echo yes || echo no)"
 rm -f $T/skip; echo "pit stop" > $T/hold; chk "hold flag: nothing enqueued" "" "$(run)"
 rm -f $T/hold; run >/dev/null; chk "red PR with a deep queue is not rerun (queue depth 1 <= 5 so it is)" "777" "$(cat $T/reruns.txt 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
-echo "RESULT pass=$pass fail=$fail"; rm -rf -- "$T"
+echo "RESULT pass=$pass fail=$fail"; rm -rf -- "$T"; exit $(( fail > 0 ))
