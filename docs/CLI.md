@@ -1161,6 +1161,8 @@ nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [-
 ```
 BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived>
 BATCH FAIL <the same fields> step=<name> packages=<list> tests=<list> reason="<the first line that is not a notice>"
+BATCH FAIL <the same fields> step=none packages=none tests=none reason="every member dropped"
+BATCH DROP #<n> reason="the merge conflicts with the base"
 BATCH DROP #<n> reason="the merge conflicts with the members ahead"
 BATCH DROP #<n> reason="head <sha> has no green ci-ok (state=<pending|failure|none>)"
 BATCH SKIP <step> reason="<why it could not run>"
@@ -1176,6 +1178,19 @@ about it. **`--require-lisp`** turns a skipped lisp step into `BATCH FAIL` for a
 who needs it run. A program that is not on `PATH` is also looked for under
 `~/sdk/<toolchain>/bin` — this fleet's toolchains live there — before its step is
 skipped.
+
+**A batch with no members left is `BATCH FAIL` before the first step.** Every member was
+dropped, so the head IS the base and the gate was about to spend two minutes proving that
+`dev` is green — which `dev`'s own CI proved before it got there — and then print
+`BATCH OK`. That receipt is the one thing `nova-merge land` takes, so a caller pushed a
+branch identical to `dev`, opened a pull request, waited for CI and was refused at the end
+for the reason this line now gives at the start. It carries the same fields as every other
+verdict, with `members=none` and `reason="every member dropped"`, at exit 1.
+
+**A drop names what it really conflicts with.** The reason was always `"the merge conflicts
+with the members ahead"` — but the FIRST member has no members ahead of it, so the line
+named an empty set and sent a reader looking for a member that was not there. With nothing
+merged yet the tree is the base, and the base is what the line says.
 
 **The toolchain is checked against the tree's `go.mod` before the first merge.** With
 `go1.22` on `PATH` and a `go.mod` asking for 1.26 the whole gate ran and the failure
@@ -1198,6 +1213,52 @@ member of the next one. `--no-require-checks` waives the whole check and says so
 build-level half of the same class on the bench, in seconds, with no second machine; it
 does not catch a windows-only **test** failure, which is what the forge's own windows
 leg is for.
+
+### land and queue audit
+
+```
+nova-merge land        --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
+nova-merge queue audit --repo <owner>/<name> [--apply] [--dry-run] [--timeout <seconds>]
+```
+
+`land` is the **one caller of the one door**: it reads the batch's pull request back from
+the forge, refuses it unless its head is a batch's (`rowan/integration-*`, or a `BATCH OK`
+receipt naming this very head), refuses it unless the pull request's OWN checks are green,
+and enqueues it at the front.
+
+```
+LAND OK pr=<n> head=<sha> branch=<ref> checks=<field> members=<list> jump=<true|false>
+LAND REFUSED: <why>    exit 1 — the verb ran and this does not enter the queue
+LAND ERROR: <why>      exit 2 — the forge could not be read; retry this one
+```
+
+**The two words are the point.** Both exits used to print `LAND REFUSED`, so "this does not
+enter the queue" and "the forge could not be read" were one line to anything reading the
+stream, and the exit code was the only thing that told them apart — over an answer a caller
+retries in one case and never in the other.
+
+**The rule costs the reads it needs and no more.** Everything the invocation settles on its
+own — a `--receipt` that is not a `BATCH OK` line, or one whose `members=none` — is refused
+with the forge **untouched**. The rest is asked the moment the forge has named the head,
+**before** the check rollup is read: "this head is not a batch's" is a fact of a branch
+NAME, and it used to arrive after the slowest read in the verb.
+
+`queue audit` lists every open pull request carrying GitHub's auto-merge and, when asked,
+takes it off — the hand sweep that cleared 27 of them on 2026-09-18, as a verb.
+
+```
+QUEUE AUDIT entry=<n> branch=<ref> title=<title>
+QUEUE AUDIT repo=<owner>/<name> found=<n> disabled=<n> failed=<n> mode=<dry-run|apply>
+QUEUE AUDIT REFUSED: the forge would not clear <list>; they still carry an auto-merge
+```
+
+**The read is the default.** *Audit* is a reading word, and `--dry-run` used to default to
+false: a non-author typed the obvious `queue audit --repo o/n` to SEE what was armed and
+disarmed the whole forge instead, learning it from the counts afterwards. **`--apply`**
+performs the disable; a bare invocation writes nothing. `--dry-run` still works and is a
+spelling of the default, so a script carrying it means what it always meant; `--apply
+--dry-run` together are two answers to one question and are refused at exit 2. The mode is
+a **word** on the verdict line, not a boolean whose polarity a reader has to remember.
 
 ## nova-pulse
 

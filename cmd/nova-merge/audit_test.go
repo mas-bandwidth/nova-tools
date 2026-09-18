@@ -48,6 +48,8 @@ var mergeAudit = audit.Config{
 		// The two batch sites are the shape this walk cannot see: a value built above the
 		// print site. Each has a behavioral test of its own in batch_test.go.
 		"batch.go|runBatch|batchLine(in, baseSHA, headSHA, members, dropped, append(skipped, step.name))": "the same six fields as `line` below, rendered through oneline.Field inside batchLine, built at the --require-lisp refusal with the step that could not run appended to the skipped list; TestBatchRequireLispFailsWhenTheStepCannotRun asserts the whole line",
+		"batch.go|runBatch|batchLine(in, baseSHA, headSHA, members, dropped, nil)": "the same six fields again, rendered through oneline.Field inside batchLine, built at the empty-batch refusal with an empty skipped list because no step ran; TestBatchWithEveryMemberDroppedFailsBeforeTheSuiteRuns asserts the line",
+		"queueaudit.go|cmdQueueAudit|mode":                                         "one of the two literals \"dry-run\" and \"apply\", assigned from --apply in the three lines immediately above the site",
 		"batch.go|runBatch|line":        "the six fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field inside batchLine; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
 		"batch.go|mergeMembers|in.name": "the batch's own --name, inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
 	},
