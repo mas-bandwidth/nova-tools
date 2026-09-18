@@ -70,12 +70,14 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	lanes := fs.Int("lanes", 0, "size: lanes touched")
 	laneOwner := fs.String("lane-owner", "", "the lane this unit belongs to, whose owner is preferred at equal height")
 	platform := fs.String("platform", "", "a platform need, such as windows")
-	guard := fs.Bool("guard", false, "a guard, the sandbox, sudo, deploy keys or the network is touched")
+	guard := fs.Bool("guard", false, "a guard is touched")
 	secrets := fs.Bool("secrets", false, "secrets are touched")
 	freshTake := fs.Bool("fresh-take", false, "this wants a fresh take: a design with one author")
 	deadline := fs.String("deadline", "", "the deadline, as a duration such as 45m")
 	attempts := &stringList{}
-	fs.Var(attempts, "attempt", "a prior attempt as rung:outcome[:reason]; repeatable, in order")
+	fs.Var(attempts, "attempt", "a prior attempt as rung:outcome[:reason]; outcome is "+strings.Join(attemptOutcomes(), " | ")+"; repeatable, in order")
+	touches := &stringList{}
+	fs.Var(touches, "touches", "security this unit touches: "+strings.Join(decide.Touches, " | ")+"; repeatable")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
@@ -87,10 +89,17 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
+	// The floor is refused here, with the one remedy, before anything else
+	// reads it: NaN compares false against every bound, so a bare range check
+	// lets it through and a decision is gated on a number that is not one.
+	if err := decide.ValidFloor(*floor); err != nil {
+		return refuse(stderr, "ROUTE", "bad-floor",
+			fmt.Sprintf("--floor %v is not a confidence; it wants a number between 0 and 1, such as --floor 0.9", *floor))
+	}
 	unit, code := buildUnit(*unitPath, set, stderr, decide.Unit{
 		ID: *id, Kind: *kind, Files: *files, Packages: *packages, Lanes: *lanes,
 		LaneOwner: *laneOwner, Platform: *platform, Guard: *guard, Secrets: *secrets,
-		FreshTake: *freshTake, Deadline: *deadline,
+		Touches: *touches, FreshTake: *freshTake, Deadline: *deadline,
 	}, *attempts)
 	if code != 0 {
 		return code
@@ -133,7 +142,7 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 // buildUnit reads the evidence: a --unit file (or inline JSON), or the unit
 // flags, never both. It returns the unit and 0, or a refusal's exit code.
 func buildUnit(path string, set map[string]bool, stderr io.Writer, fromFlags decide.Unit, attempts []string) (decide.Unit, int) {
-	unitFlags := []string{"unit-id", "kind", "files", "packages", "lanes", "lane-owner", "platform", "guard", "secrets", "fresh-take", "deadline", "attempt"}
+	unitFlags := []string{"unit-id", "kind", "files", "packages", "lanes", "lane-owner", "platform", "guard", "secrets", "touches", "fresh-take", "deadline", "attempt"}
 	given := make([]string, 0, len(unitFlags))
 	for _, name := range unitFlags {
 		if set[name] {
@@ -169,12 +178,26 @@ func buildUnit(path string, set map[string]bool, stderr io.Writer, fromFlags dec
 				fmt.Sprintf("--attempt %s wants rung:outcome[:reason], such as opus:failed:missed the cause", oneline.Field(a)))
 		}
 		att := decide.Attempt{Rung: strings.TrimSpace(parts[0]), Outcome: strings.TrimSpace(parts[1])}
+		// A timeout is a silence, not a death: `timeout` leaves the rung
+		// occupied, and `timeout-terminated` is the proof that it is free.
+		if att.Outcome == outcomeTimeoutTerminated {
+			att.Outcome, att.Terminated = decide.OutcomeTimeout, true
+		}
 		if len(parts) == 3 {
 			att.Reason = strings.TrimSpace(parts[2])
 		}
 		fromFlags.Attempts = append(fromFlags.Attempts, att)
 	}
 	return fromFlags, 0
+}
+
+// outcomeTimeoutTerminated is the one spelling that carries termination proof
+// on the command line, where an attempt has no field of its own.
+const outcomeTimeoutTerminated = "timeout-terminated"
+
+// attemptOutcomes is what --attempt accepts, for the flag's own help.
+func attemptOutcomes() []string {
+	return []string{decide.OutcomeOK, decide.OutcomeFailed, decide.OutcomeTimeout, outcomeTimeoutTerminated, decide.OutcomeAbandoned}
 }
 
 // runHelp is the help verb: continue, ask all friends, or ask Glenn.

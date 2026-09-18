@@ -182,8 +182,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if *questions == "" {
 		return refuse(stderr, *prefix, "bad-questions", "--questions is required; refusing to guess")
 	}
-	if *floor < 0 || *floor > 1 {
-		return refuse(stderr, *prefix, "bad-floor", fmt.Sprintf("floor must be between 0 and 1 (got %g)", *floor))
+	// NaN compares false against both bounds, so a bare range check gates a
+	// decision on a number that is not one. One refusal, with one remedy.
+	if err := decide.ValidFloor(*floor); err != nil {
+		return refuse(stderr, *prefix, "bad-floor",
+			fmt.Sprintf("--floor %v is not a confidence; it wants a number between 0 and 1, such as --floor 0.9", *floor))
 	}
 	raw, err := os.ReadFile(*questions)
 	if err != nil {
@@ -348,8 +351,8 @@ func parseFloors(list string) ([]float64, error) {
 		if err != nil {
 			return nil, fmt.Errorf("bad floor %q", part)
 		}
-		if f < 0 || f > 1 {
-			return nil, fmt.Errorf("floor must be between 0 and 1 (got %g)", f)
+		if err := decide.ValidFloor(f); err != nil {
+			return nil, fmt.Errorf("--floors %v is not a confidence; each wants a number between 0 and 1, such as 0.9", f)
 		}
 		out = append(out, f)
 	}

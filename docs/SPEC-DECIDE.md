@@ -139,15 +139,42 @@ deploy keys, the network — is Johnny's always, and so is a fresh take, where t
 in two lineages or a design has one author. Friends first: the DeepSeek rungs are eligible for
 mechanical kinds only.
 
+**Security never falls through.** A unit that touches a guard, secrets, the sandbox, sudo, deploy
+keys or the network resolves to the designated rung on EVERY path: with the provider on or off, at
+any floor, and after any prior attempt, including an attempt by the designated rung itself. It is a
+kind and not a height, so the height rules — sideways, up, the floor, never down — do not apply to
+it at all. Where no mind is designated, or every designated mind is asleep, the work WAITS for one
+of them, and that is a refusal: handing a guard, a secret or a deploy key to another mind because
+the right one is busy is the failure this rule exists to prevent.
+
+**A timeout is not a death.** An attempt that timed out with no proof it terminated leaves its
+expiry UNKNOWN (Stella's lease rule), and a rung whose attempt may still be running is not a rung
+to step off: the answer is the SAME rung until there is termination proof, the decision is recorded
+as an await (`awaiting_termination`), the floor does not move it, and the provider is not asked —
+there is no choice to make while an attempt may be alive. Only a CONFIRMED failure — `failed`,
+`abandoned`, or a `timeout` marked terminated — moves the ladder on, and only confirmed failures
+are counted when the starting rung is regenerated.
+
 The evidence is bounded and public (rules 1 and 4): kind — one of `rebase`, `stack`,
 `fixture-retarget`, `fleet-chore`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
 `cause-to-find` — size (files, packages, lanes), lane
-owner, prior attempts, platform need, whether a guard or secrets are touched, and the deadline —
-metadata, never a body, never a secret. The provider is offered only the eligible rungs at the
+owner, prior attempts, platform need, what security it touches (`guard`, `secrets`, `sandbox`,
+`sudo`, `deploy-keys`, `network`), and the deadline — metadata, never a body, never a secret.
+
+**What the provider sees is typed and enumerated**, and it is less than the evidence: a kind, size
+buckets, the lane (only ever a lane the registry itself holds, else `other`), an attempt-count
+bucket, a platform flag (`ordinary` or `named`, never which platform), a security flag and a
+deadline bucket — one `field: value` line each, every value a token from a closed set. The unit's
+id, its lane's spelling, its platform's name, its deadline and every attempt reason stay in this
+process, so no title, path, branch name or error text can ride out on a state line.
+
+The provider is offered only the eligible rungs at the
 supported height and the one above it, so a typed answer can advise sideways or up but never down;
 an answer below the floor steps up, and a provider error or a rung nobody offered leaves the rules'
-answer standing (rule 5). `--no-jev` answers by the rules alone, with no key and no network, so the
-loop runs where the API does not.
+answer standing (rule 5). A floor that is not a number between 0 and 1 — NaN, an infinity, a
+negative, anything above one — is refused with one remedy line, because NaN compares false against
+every bound and would otherwise gate a decision on a number that is not one. `--no-jev` answers by
+the rules alone, with no key and no network, so the loop runs where the API does not.
 
 Every decision is logged (rule 8): the evidence, the rung tried, the confidence and floor, the
 outcome and the rung that succeeded — and beside it `rowan_pick`, what the rules alone would have
@@ -160,8 +187,11 @@ problem, retries on one rung, failures in the last hour and how many were self-i
 recurring, whether landing moved, and stated uncertainty. Ask-glenn only ever follows
 ask-all-friends. Red tests: `a-failed-attempt-steps-sideways-before-up`,
 `below-the-floor-steps-up-never-down`, `security-is-johnnys-by-kind-not-by-height`,
-`a-designation-makes-no-provider-call` and `ask-glenn-only-after-ask-all-friends`, all against a
-fake decider, with no network and no key on disk.
+`a-designation-makes-no-provider-call`, `ask-glenn-only-after-ask-all-friends`,
+`the-provider-sees-only-typed-enumerated-evidence`, `security-never-falls-through` (a table over
+the provider on and off, every floor and every prior attempt), `a-timeout-does-not-advance-the-rung`
+and `a-floor-that-is-not-a-number-is-refused`, all against a fake decider, with no network and no
+key on disk.
 
 ### manager abstain / needs_human
 

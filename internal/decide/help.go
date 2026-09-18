@@ -12,6 +12,7 @@ package decide
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -61,6 +62,10 @@ func ParseHelpState(data []byte) (HelpState, error) {
 // Validate refuses a state that cannot be, rather than answering over it.
 func (s HelpState) Validate() error {
 	switch {
+	case math.IsNaN(s.Hours) || math.IsInf(s.Hours, 0):
+		return fmt.Errorf("decide: help state has %v hours; it wants a number, such as 2", s.Hours)
+	case math.IsNaN(s.Uncertainty) || math.IsInf(s.Uncertainty, 0):
+		return fmt.Errorf("decide: help state has uncertainty %v; it wants a number between 0 and 1, such as 0.5", s.Uncertainty)
 	case s.Hours < 0:
 		return fmt.Errorf("decide: help state has %g hours", s.Hours)
 	case s.RetriesOnRung < 0:

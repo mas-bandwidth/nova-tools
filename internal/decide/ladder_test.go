@@ -238,10 +238,12 @@ type fakeDecider struct {
 	err     error
 	options []string
 	calls   int
+	state   string
 }
 
 func (f *fakeDecider) Decide(_ context.Context, state string, qs map[string]Question) (map[string]Answer, Usage, error) {
 	f.calls++
+	f.state = state
 	if f.err != nil {
 		return nil, Usage{}, f.err
 	}

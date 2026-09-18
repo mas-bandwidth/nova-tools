@@ -40,11 +40,17 @@ type Entry struct {
 	Floor         float64 `json:"floor"`
 	SteppedUp     bool    `json:"stepped_up"`
 	Escalated     bool    `json:"escalated"`
+	Designated    bool    `json:"designated,omitempty"`
 	Source        string  `json:"source"`
 	RowanPick     string  `json:"rowan_pick"`
 	Reason        string  `json:"reason,omitempty"`
 	Outcome       string  `json:"outcome,omitempty"`
 	RungSucceeded string  `json:"rung_succeeded,omitempty"`
+
+	// AwaitingTermination says this decision is an await, not a move: the rung
+	// named is the one an attempt may still be running on, and the lease rule
+	// keeps its expiry UNKNOWN until there is termination proof.
+	AwaitingTermination bool `json:"awaiting_termination,omitempty"`
 }
 
 // EntryFor is the row one route decision writes. The outcome and the rung that
@@ -62,9 +68,12 @@ func EntryFor(res RouteResult, u Unit, now time.Time) Entry {
 		Floor:      res.Floor,
 		SteppedUp:  res.SteppedUp,
 		Escalated:  res.Escalated,
+		Designated: res.Designated,
 		Source:     res.Source,
 		RowanPick:  res.RulesRung,
 		Reason:     res.Reason,
+
+		AwaitingTermination: res.AwaitingTermination,
 	}
 }
 

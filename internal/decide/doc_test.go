@@ -59,6 +59,13 @@ func TestSpecDecideNamesTheLadder(t *testing.T) {
 		"a fresh take",
 		"rowan_pick",
 		"regenerates the starting rung",
+		// Stella's four findings on #1327 at 78620ba3, each a rule of its own.
+		"typed and enumerated",
+		"Security never falls through",
+		"A timeout is not a death",
+		"expiry UNKNOWN",
+		"awaiting_termination",
+		"NaN compares false against",
 	} {
 		if !strings.Contains(doc, phrase) {
 			t.Errorf("SPEC-DECIDE.md does not name the ladder rule keyed by %q", phrase)
@@ -67,6 +74,11 @@ func TestSpecDecideNamesTheLadder(t *testing.T) {
 	for _, kind := range Kinds {
 		if !strings.Contains(doc, kind) && !strings.Contains(doc, strings.ReplaceAll(kind, "-", " ")) {
 			t.Errorf("SPEC-DECIDE.md names no kind %q; the evidence's kinds are the log's key", kind)
+		}
+	}
+	for _, touch := range Touches {
+		if !strings.Contains(doc, touch) {
+			t.Errorf("SPEC-DECIDE.md names no touch %q; the six are what make a unit security work", touch)
 		}
 	}
 }

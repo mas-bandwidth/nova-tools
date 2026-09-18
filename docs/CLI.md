@@ -393,7 +393,8 @@ nova-decide route --unit <json file|inline json> [--registry <path>] [--log <pat
                   [--floor 0.9] [--jev|--no-jev] [--base-url <url>] [--key-env JEV_API_KEY]
 nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lanes n]
                   [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
-                  [--guard] [--secrets] [--fresh-take] [--deadline 45m] [--no-jev]
+                  [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
+                  [--fresh-take] [--deadline 45m] [--no-jev]
 ```
 
 Who does this unit of work. The rungs come from a registry — a data file of minds (`name`, `lineage`, `height`, the `kinds` it is designated for, the `lanes` it owns, `availability`, and how it is `ask`ed) — and the embedded default is the ladder Glenn named: Flash and Pro on the DeepSeek lineage at the bottom, the child rungs Opus (Rowan's) and Sol (Stella's) at **one** height in two lineages, the friends above them each owning a lane, Astra and Fable as the top pair, then all friends at once, then Glenn.
@@ -402,7 +403,13 @@ The answer is the **lowest rung the evidence supports** with confidence that the
 
 Two rungs are chosen by **kind** and not by height, and by machinery rather than by the provider, so no provider call is made for either: security — a guard, secrets, the sandbox, sudo, deploy keys, the network — is Johnny's always, and so is a fresh take (the rungs below failed in two lineages, or a design with one author). Friends first: the DeepSeek rungs take mechanical kinds only (`rebase`, `stack`, `fixture-retarget`, `fleet-chore`).
 
+**Security never falls through.** `--guard`, `--secrets`, `--kind guard` and each `--touches` value resolve to the designated rung on every path — Jev on or off, at any floor, after any attempt, including an attempt by that rung itself. It is a kind and not a height, so sideways, up, the floor and never-down do not apply to it. If no mind is designated, or every designated one is asleep, the work **waits**: that is a refusal, not a route to somebody else.
+
+**A timeout is not a death.** `--attempt opus:timeout` says the attempt fell silent; its expiry is UNKNOWN until something proves it dead, so the answer is the **same** rung, the row is marked `awaiting_termination`, the floor does not move it and the provider is not asked. `--attempt opus:timeout-terminated:killed at 10m` is the proof, and only then does the ladder move on. `failed` and `abandoned` are confirmed failures and move it as before.
+
 `--no-jev` answers by the rules alone — no key, no network, the same answer every time — so the loop runs on a bench with no API. With Jev, the provider is offered only the eligible rungs at the supported height and the one above it, so it can advise sideways or up but never down; an answer below the floor steps up, and a provider error, or a rung nobody offered, leaves the rules' answer standing.
+
+**What Jev is told is typed and enumerated**, and it is less than the evidence: one `field: value` line each for the kind, size buckets, the lane (only ever a lane the registry holds, else `other`), an attempt-count bucket, a platform flag (`ordinary` or `named`), a security flag and a deadline bucket — every value a token from a closed set. The unit's id, its lane's spelling, its platform's name, its deadline and every attempt reason stay in the process, so no title, path or error text rides out on a state line. `--floor` refuses NaN, an infinity, a negative and anything above one, with one remedy line.
 
 ```
 $ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev

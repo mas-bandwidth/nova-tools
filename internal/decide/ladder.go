@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -135,24 +136,58 @@ func StartHeight(kind string) (int, bool) {
 	return h, ok
 }
 
-// Attempt is one prior attempt on this unit: the rung, what happened, and why.
-// It is what makes the ladder a retry policy -- a failure re-enters the
-// decision carrying its own evidence.
-type Attempt struct {
-	Rung    string `json:"rung"`
-	Outcome string `json:"outcome"`
-	Reason  string `json:"reason,omitempty"`
+// The six things that make a unit security work. They are an enumeration and
+// not free text: a touch the table does not hold is a refusal.
+const (
+	TouchGuard      = "guard"
+	TouchSecrets    = "secrets"
+	TouchSandbox    = "sandbox"
+	TouchSudo       = "sudo"
+	TouchDeployKeys = "deploy-keys"
+	TouchNetwork    = "network"
+)
+
+// Touches is every touch a unit may name.
+var Touches = []string{TouchGuard, TouchSecrets, TouchSandbox, TouchSudo, TouchDeployKeys, TouchNetwork}
+
+// knownTouches is the same set, for the lookup.
+var knownTouches = map[string]bool{
+	TouchGuard: true, TouchSecrets: true, TouchSandbox: true,
+	TouchSudo: true, TouchDeployKeys: true, TouchNetwork: true,
 }
 
-// Failed reports whether this attempt is one the ladder must step past.
+// Attempt is one prior attempt on this unit: the rung, what happened, why, and
+// -- for a timeout -- whether the attempt is known to have TERMINATED. It is
+// what makes the ladder a retry policy: a confirmed failure re-enters the
+// decision carrying its own evidence.
+//
+// Terminated is the lease rule (Stella): a timeout is a silence, not a death.
+// Until something proves the attempt is dead, its expiry is UNKNOWN, and a rung
+// whose attempt may still be running is not a rung to step off.
+type Attempt struct {
+	Rung       string `json:"rung"`
+	Outcome    string `json:"outcome"`
+	Reason     string `json:"reason,omitempty"`
+	Terminated bool   `json:"terminated,omitempty"`
+}
+
+// Failed reports whether this attempt is a CONFIRMED failure -- one the ladder
+// may step past. A timeout counts only once termination is proved: an attempt
+// that may still be running has not failed, it has not finished.
 func (a Attempt) Failed() bool {
 	switch a.Outcome {
-	case OutcomeFailed, OutcomeTimeout, OutcomeAbandoned:
+	case OutcomeFailed, OutcomeAbandoned:
 		return true
+	case OutcomeTimeout:
+		return a.Terminated
 	default:
 		return false
 	}
 }
+
+// Open reports whether this attempt timed out with no proof that it died. The
+// answer for an open attempt is the same rung, not the next one.
+func (a Attempt) Open() bool { return a.Outcome == OutcomeTimeout && !a.Terminated }
 
 // Unit is the evidence for one unit of work: its kind, its size (files,
 // packages, lanes), the lane's owner, the prior attempts, any platform need,
@@ -170,8 +205,16 @@ type Unit struct {
 	Platform  string    `json:"platform,omitempty"`
 	Guard     bool      `json:"guard,omitempty"`
 	Secrets   bool      `json:"secrets,omitempty"`
+	Touches   []string  `json:"touches,omitempty"`
 	FreshTake bool      `json:"fresh_take,omitempty"`
 	Deadline  string    `json:"deadline,omitempty"`
+}
+
+// Security reports whether this unit is security work: a guard, secrets, the
+// sandbox, sudo, deploy keys or the network. It is a KIND and not a height, and
+// it is answered here rather than by any provider.
+func (u Unit) Security() bool {
+	return u.Guard || u.Secrets || u.Kind == KindGuard || len(u.Touches) > 0
 }
 
 // ParseUnit reads one unit of evidence from JSON. Anything that is not an
@@ -220,8 +263,23 @@ func (u Unit) Validate() error {
 				u.ID, i+1, a.Rung, a.Outcome, OutcomeOK, OutcomeFailed, OutcomeTimeout, OutcomeAbandoned)
 		}
 	}
+	for _, touch := range u.Touches {
+		if !knownTouches[touch] {
+			return fmt.Errorf("decide: unit %s touches %q, want one of %s", u.ID, touch, strings.Join(Touches, ", "))
+		}
+	}
 	if _, err := u.deadline(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ValidFloor refuses a floor that is not a number between 0 and 1, with the one
+// remedy in the message. NaN compares false against every bound, so a bare
+// `floor < 0 || floor > 1` lets it through -- which is exactly how it got in.
+func ValidFloor(floor float64) error {
+	if math.IsNaN(floor) || math.IsInf(floor, 0) || floor < 0 || floor > 1 {
+		return fmt.Errorf("decide: floor %v is not a confidence; it wants a number between 0 and 1, such as 0.9", floor)
 	}
 	return nil
 }
@@ -253,17 +311,19 @@ func (u Unit) thin() bool {
 // applied to, the floor, why, and -- for the log -- what the rules alone would
 // have picked.
 type RouteResult struct {
-	Unit       string
-	Kind       string
-	Rung       Mind
-	Confidence float64
-	Floor      float64
-	Reason     string
-	SteppedUp  bool
-	Escalated  bool
-	Source     string
-	RulesRung  string
-	Offered    []string
+	Unit                string
+	Kind                string
+	Rung                Mind
+	Confidence          float64
+	Floor               float64
+	Reason              string
+	SteppedUp           bool
+	Escalated           bool
+	Designated          bool
+	AwaitingTermination bool
+	Source              string
+	RulesRung           string
+	Offered             []string
 }
 
 // Line is the one line a route decision prints: the unit (the evidence
@@ -293,8 +353,8 @@ func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
 	if reg == nil || len(reg.Minds) == 0 {
 		return RouteResult{}, fmt.Errorf("decide: no registry; a ladder with no rungs is not a ladder")
 	}
-	if floor < 0 || floor > 1 {
-		return RouteResult{}, fmt.Errorf("decide: floor must be between 0 and 1 (got %g)", floor)
+	if err := ValidFloor(floor); err != nil {
+		return RouteResult{}, err
 	}
 	if err := u.Validate(); err != nil {
 		return RouteResult{}, err
@@ -309,10 +369,41 @@ func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
 	burned, tried, failedAt := burnedHeight(reg, u)
 	res.Escalated = len(u.Attempts) > 0
 
-	// The two designations: by KIND, never by height.
+	// Security first, and absolutely. It is a KIND and not a height, so the
+	// height rules -- sideways, up, the floor, never down -- do not apply to it
+	// at all: the designated rung answers on every path, and where that rung
+	// cannot, the work WAITS for it rather than spilling onto another mind.
+	if u.Security() {
+		m, err := securityRung(reg, u)
+		if err != nil {
+			return RouteResult{}, err
+		}
+		res.Rung = m
+		res.Confidence = confDesignated
+		res.Designated = true
+		res.Reason = fmt.Sprintf("security is a kind and not a height: %s is %s's always, at any height, at any floor and after any attempt", u.securityWhy(), m.Name)
+		res.RulesRung = m.Name
+		return res, nil
+	}
+
+	// An attempt that timed out with no proof it died leaves its rung occupied.
+	// The lease rule: expiry stays UNKNOWN until termination, so the answer is
+	// the SAME rung -- not the next one -- until the attempt is known dead.
+	if a, m, ok := openAttempt(reg, u); ok {
+		res.Rung = m
+		res.Confidence = confDesignated
+		res.AwaitingTermination = true
+		res.Reason = fmt.Sprintf("the attempt on %s timed out and is not known to have terminated: its expiry is UNKNOWN, so the answer is the same rung until there is termination proof (%s)",
+			m.Name, oneline.Field(a.Outcome))
+		res.RulesRung = m.Name
+		return res, nil
+	}
+
+	// The fresh-take designation: by KIND, never by height.
 	if m, why, ok := designation(reg, u, burned, tried); ok {
 		res.Rung = m
 		res.Confidence = confDesignated
+		res.Designated = true
 		res.Reason = why
 		res.RulesRung = m.Name
 		return res, nil
@@ -372,19 +463,65 @@ func burnedHeight(reg *Registry, u Unit) (burned int, tried map[string]bool, fai
 	return burned, tried, failedAt
 }
 
-// designation answers the two rungs chosen by kind. Security is absolute: a
-// guard, secrets, the sandbox, sudo, deploy keys or the network is Johnny's
-// always, at any height. A fresh take is honoured only where it does not step
-// DOWN past a rung the evidence already burned.
-func designation(reg *Registry, u Unit, burned int, tried map[string]bool) (Mind, string, bool) {
-	if u.Guard || u.Secrets || u.Kind == KindGuard {
-		for _, m := range reg.DesignatedFor(KindGuard) {
-			if tried[m.Name] || m.Availability == AvailabilityAsleep {
-				continue
-			}
-			return m, fmt.Sprintf("security is a kind and not a height: a guard, secrets, the sandbox, sudo, deploy keys or the network is %s's always", m.Name), true
+// securityRung is the rung security work goes to, and there is no other answer.
+// The designated mind takes it whatever its height, whatever the floor, and
+// however many attempts have already been made -- including its own. Where no
+// mind is designated, or the designated one is asleep, the work WAITS: handing
+// a guard, a secret or a deploy key to another mind because the right one is
+// busy is the failure this rule exists to prevent.
+func securityRung(reg *Registry, u Unit) (Mind, error) {
+	designated := reg.DesignatedFor(KindGuard)
+	if len(designated) == 0 {
+		return Mind{}, fmt.Errorf("decide: unit %s is security work (%s) and no mind in the registry is designated for %s; refusing to route it to another rung",
+			u.ID, u.securityWhy(), KindGuard)
+	}
+	for _, m := range designated {
+		if m.Availability != AvailabilityAsleep {
+			return m, nil
 		}
 	}
+	return Mind{}, fmt.Errorf("decide: unit %s is security work (%s) and every mind designated for %s is asleep; it waits for one of them rather than going to another rung",
+		u.ID, u.securityWhy(), KindGuard)
+}
+
+// securityWhy names, in enumerated words, what makes this unit security work.
+func (u Unit) securityWhy() string {
+	var why []string
+	if u.Kind == KindGuard {
+		why = append(why, "kind "+KindGuard)
+	}
+	if u.Guard {
+		why = append(why, TouchGuard)
+	}
+	if u.Secrets {
+		why = append(why, TouchSecrets)
+	}
+	why = append(why, u.Touches...)
+	if len(why) == 0 {
+		return "no touch named"
+	}
+	return strings.Join(why, ", ")
+}
+
+// openAttempt is the most recent attempt that timed out with no proof it
+// terminated, and the rung it is still occupying.
+func openAttempt(reg *Registry, u Unit) (Attempt, Mind, bool) {
+	for i := len(u.Attempts) - 1; i >= 0; i-- {
+		a := u.Attempts[i]
+		if !a.Open() {
+			continue
+		}
+		if m, ok := reg.ByName(a.Rung); ok {
+			return a, m, true
+		}
+	}
+	return Attempt{}, Mind{}, false
+}
+
+// designation answers the rung chosen by kind that is left once security has
+// been answered: a fresh take, honoured only where it does not step DOWN past a
+// rung the evidence already burned.
+func designation(reg *Registry, u Unit, burned int, tried map[string]bool) (Mind, string, bool) {
 	fresh, why := freshTake(reg, u)
 	if !fresh {
 		return Mind{}, "", false
@@ -514,15 +651,17 @@ type Decider interface {
 }
 
 // RouteJev asks the provider which rung, among the eligible ones the rules
-// offer, and keeps the machinery's word everywhere it matters: a designation is
-// never asked, a choice below the floor steps up, and a provider error or a
-// rung nobody offered leaves the rules' answer standing.
+// offer, and keeps the machinery's word everywhere it matters: security and a
+// designation are never asked, a rung that may still be running is never asked
+// (there is no choice to make while an attempt is alive), a choice below the
+// floor steps up, and a provider error or a rung nobody offered leaves the
+// rules' answer standing.
 func RouteJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float64) (RouteResult, error) {
 	rules, err := RouteRules(reg, u, floor)
 	if err != nil {
 		return RouteResult{}, err
 	}
-	if d == nil || rules.Confidence == confDesignated {
+	if d == nil || rules.Designated || rules.AwaitingTermination || u.Security() {
 		return rules, nil
 	}
 	_, tried, failedAt := burnedHeight(reg, u)
@@ -532,7 +671,7 @@ func RouteJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 		rules.Reason += "; one eligible rung, so no decision to ask"
 		return rules, nil
 	}
-	answers, _, err := d.Decide(ctx, unitState(u), map[string]Question{RungQuestion: rungQuestion(offered)})
+	answers, _, err := d.Decide(ctx, unitState(reg, u), map[string]Question{RungQuestion: rungQuestion(offered)})
 	if err != nil {
 		rules.Reason += fmt.Sprintf("; the provider refused (%s), so the rules answer stands", oneline.Err(err))
 		return rules, nil
@@ -606,31 +745,139 @@ func rungQuestion(offered []Mind) Question {
 	}
 }
 
-// unitState renders the evidence as the public, bounded state text the provider
-// sees. It is metadata only -- a kind, sizes, lane, attempts, a deadline --
-// never a secret, never a private body (SPEC-DECIDE rule 4).
-func unitState(u Unit) string {
+// The buckets the evidence is reduced to before any of it leaves this process.
+// They are ENUMERATIONS: every value the provider ever sees is one of these
+// tokens, so no title, path, branch name, error text or attempt reason can ride
+// out on a state line (SPEC-DECIDE rule 4).
+var (
+	// SizeBuckets are the buckets a file, package or lane count falls into.
+	SizeBuckets = []string{"none", "1-3", "4-9", "10-19", "20+"}
+	// AttemptBuckets are the buckets a prior-attempt count falls into.
+	AttemptBuckets = []string{"0", "1", "2", "3+"}
+	// PlatformBuckets say whether a platform need is one of the benches we run
+	// all day, or one outside them -- never which.
+	PlatformBuckets = []string{"ordinary", "named"}
+	// DeadlineBuckets are the buckets a deadline falls into.
+	DeadlineBuckets = []string{"none", "under-10m", "under-2h", "over-2h"}
+)
+
+// shapeFields is the order the enumerated evidence is rendered in. The set is
+// closed: a field added here is a field the provider starts seeing, which is a
+// decision about rule 4 and belongs in the spec first.
+var shapeFields = []string{"kind", "files", "packages", "lanes", "lane", "attempts", "platform", "security", "deadline"}
+
+// EvidenceShape reduces a unit to the typed, enumerated evidence the provider
+// is given: the kind, size buckets, the lane (only ever a lane the registry
+// itself holds, else "other"), an attempt count bucket, a platform flag, a
+// security flag and a deadline bucket. Nothing else about the unit is
+// representable here, which is the point -- the unit's id, its lane's spelling,
+// its platform's name and every attempt reason stay in this process.
+func EvidenceShape(reg *Registry, u Unit) map[string]string {
+	return map[string]string{
+		"kind":     u.Kind,
+		"files":    sizeBucket(u.Files),
+		"packages": sizeBucket(u.Packages),
+		"lanes":    sizeBucket(u.Lanes),
+		"lane":     laneBucket(reg, u.LaneOwner),
+		"attempts": attemptBucket(len(u.Attempts)),
+		"platform": platformBucket(u.Platform),
+		"security": yesNo(u.Security()),
+		"deadline": deadlineBucket(u),
+	}
+}
+
+// unitState renders the enumerated evidence as the bounded state text, one
+// `field: value` line per field, in a fixed order.
+func unitState(reg *Registry, u Unit) string {
+	shape := EvidenceShape(reg, u)
 	var b strings.Builder
-	fmt.Fprintf(&b, "unit: %s\nkind: %s\nsize: %d files, %d packages, %d lanes\n", u.ID, u.Kind, u.Files, u.Packages, u.Lanes)
-	if u.LaneOwner != "" {
-		fmt.Fprintf(&b, "lane owner: %s\n", u.LaneOwner)
-	}
-	if u.Platform != "" {
-		fmt.Fprintf(&b, "platform need: %s\n", u.Platform)
-	}
-	if u.Deadline != "" {
-		fmt.Fprintf(&b, "deadline: %s\n", u.Deadline)
-	}
-	fmt.Fprintf(&b, "guard or secrets touched: %v\n", u.Guard || u.Secrets)
-	if len(u.Attempts) == 0 {
-		b.WriteString("prior attempts: none\n")
-		return b.String()
-	}
-	b.WriteString("prior attempts:\n")
-	for _, a := range u.Attempts {
-		fmt.Fprintf(&b, "- %s: %s (%s)\n", a.Rung, a.Outcome, a.Reason)
+	for _, field := range shapeFields {
+		fmt.Fprintf(&b, "%s: %s\n", field, shape[field])
 	}
 	return b.String()
+}
+
+// sizeBucket puts a count in its bucket.
+func sizeBucket(n int) string {
+	switch {
+	case n <= 0:
+		return SizeBuckets[0]
+	case n <= 3:
+		return SizeBuckets[1]
+	case n <= 9:
+		return SizeBuckets[2]
+	case n <= 19:
+		return SizeBuckets[3]
+	default:
+		return SizeBuckets[4]
+	}
+}
+
+// attemptBucket puts a prior-attempt count in its bucket.
+func attemptBucket(n int) string {
+	switch {
+	case n <= 0:
+		return AttemptBuckets[0]
+	case n == 1:
+		return AttemptBuckets[1]
+	case n == 2:
+		return AttemptBuckets[2]
+	default:
+		return AttemptBuckets[3]
+	}
+}
+
+// laneBucket answers with a lane the REGISTRY holds, so the value is one of a
+// closed set the registry defines rather than whatever a caller typed. A lane
+// nobody owns is "other", and no lane at all is "none".
+func laneBucket(reg *Registry, lane string) string {
+	lane = strings.TrimSpace(lane)
+	if lane == "" {
+		return "none"
+	}
+	if reg != nil {
+		for _, m := range reg.Minds {
+			for _, owned := range m.Lanes {
+				if strings.EqualFold(owned, lane) {
+					return owned
+				}
+			}
+		}
+	}
+	return "other"
+}
+
+// platformBucket says whether a platform need is ordinary or named, never which
+// platform it is.
+func platformBucket(platform string) string {
+	if ordinaryPlatforms[strings.ToLower(strings.TrimSpace(platform))] {
+		return PlatformBuckets[0]
+	}
+	return PlatformBuckets[1]
+}
+
+// deadlineBucket puts a deadline in its bucket. An unparseable deadline never
+// reaches here -- Validate refused it first -- and is reported as none.
+func deadlineBucket(u Unit) string {
+	d, err := u.deadline()
+	switch {
+	case err != nil || d <= 0:
+		return DeadlineBuckets[0]
+	case d < 10*time.Minute:
+		return DeadlineBuckets[1]
+	case d < 2*time.Hour:
+		return DeadlineBuckets[2]
+	default:
+		return DeadlineBuckets[3]
+	}
+}
+
+// yesNo renders a flag as one of two tokens.
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }
 
 // findMind finds one offered mind by name.
