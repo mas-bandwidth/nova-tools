@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -21,6 +22,11 @@ import (
 
 // fakeSQLite3 builds the stand-in sqlite3 and puts it first on PATH. It returns the bin
 // directory so a test can take the program away again.
+// fakeFlushMarker is FlushMarker in testdata/fakesqlite/main.go, repeated here because a
+// testdata `package main` cannot be imported. The two are pinned together by
+// TestFakeSQLite3FlushMarkerMatchesTheFake.
+const fakeFlushMarker = ".flush-on-refusal"
+
 func fakeSQLite3(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -136,6 +142,98 @@ func TestNoSQLiteOnPathIsAnError(t *testing.T) {
 	}
 }
 
+// writeDBAt writes the lines a real `sqlite3 -tabs` would print to an explicit path, so a
+// test can plant the store at each location OpenCode may choose.
+func writeDBAt(t *testing.T, path, body string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// THE STORE IS UNDER THE JOB'S DATA HOME, WHICHEVER NAME OPENCODE GAVE IT (rule 12).
+//
+// The dispatcher exports HOME and XDG_DATA_HOME to the same per-job data home, and OpenCode
+// on Linux derives its data directory from HOME -- `$HOME/.local/share/opencode`, beside the
+// `auth.json` the bench carries -- while on the Studio it honours XDG_DATA_HOME. The reader
+// looked only at the XDG spelling, so on hulk, vision, mini and space a run that exited 0
+// with a RESULT wrote an all-dash usage row: the database was there, one directory over,
+// and the reader never opened it. Both spellings must answer, primary first.
+func TestOpenCodeSourceFindsTheLocalShareStore(t *testing.T) {
+	fakeSQLite3(t)
+	dataHome := t.TempDir()
+	fallback := filepath.Join(dataHome, ".local", "share", "opencode", "opencode.db")
+	writeDBAt(t, fallback, "deepseek\tdeepseek-chat\t100\t50\t\t\t\n")
+
+	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
+	if err != nil {
+		t.Fatalf("a store under the data home's .local/share is readable: %v", err)
+	}
+	if !usage.Observed {
+		t.Fatal("a store with message rows has been observed")
+	}
+	if got := usage.Values["tokens_in"]; got != "100" {
+		t.Errorf("tokens_in is %q, want 100 read from %s", got, fallback)
+	}
+	if got := usage.Values["tokens_out"]; got != "50" {
+		t.Errorf("tokens_out is %q, want 50 read from %s", got, fallback)
+	}
+}
+
+// A WRITE-AHEAD LOG THE HARNESS HAS NOT FLUSHED IS WAITED OUT, up to five seconds (rule 13).
+//
+// OpenCode checks the writer's connection down as it exits, and this read lands in that
+// window: the database is there, a -wal sits beside it, and `sqlite3 -readonly` answers
+// `database is locked`. The read is retried until the flush lands rather than recording a
+// dash for tokens the harness did spend.
+func TestOpenCodeSourceWaitsOutAWriteAheadLog(t *testing.T) {
+	fakeSQLite3(t)
+	dataHome := t.TempDir()
+	db := writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\n")
+	wal := db + "-wal"
+	if err := os.WriteFile(wal, []byte("unflushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The flush lands on the reader's first refusal, not after a sleep: the fake takes the
+	// -wal with it when it answers `database is locked`, so the retry reads a checkpointed
+	// database. The test turns on no clock of its own.
+	if err := os.WriteFile(wal+fakeFlushMarker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	usage, err := ReadProviderUsage(UsageOpenCode, dataHome)
+	if err != nil {
+		t.Fatalf("the read waits out the flush instead of failing: %v", err)
+	}
+	if got := usage.Values["tokens_in"]; got != "100" {
+		t.Errorf("tokens_in is %q, want 100 read after the -wal was flushed", got)
+	}
+}
+
+// A SOURCE WITH NO READER IS A NAMED REFUSAL, NEVER A SILENT DASH (rule 13).
+//
+// The usage source is `sqlite3`, and a bench without it used to record dashes with nothing
+// said -- the caller saw a completed job and a token row of `-`, and no line named the
+// program the read needed. The refusal carries the literal line
+// `USAGE REFUSED reason=no_sqlite` so the missing reader is a fact on the record.
+func TestOpenCodeSourceWithoutSQLiteIsANamedRefusal(t *testing.T) {
+	dataHome := t.TempDir()
+	writeDB(t, dataHome, "deepseek\tdeepseek-chat\t100\t50\t\t\t\n")
+	t.Setenv("PATH", t.TempDir())
+
+	_, err := ReadProviderUsage(UsageOpenCode, dataHome)
+	if err == nil {
+		t.Fatal("no sqlite3 on PATH is a usage source that cannot be read")
+	}
+	if !strings.Contains(err.Error(), "USAGE REFUSED reason=no_sqlite") {
+		t.Errorf("the refusal names the missing reader: %v", err)
+	}
+}
+
 // `usage: none` reports nothing and is never an error: only `--tokens unmetered` tasks run
 // under it, and that refusal is made before the first worker.
 func TestTheNoneSourceReportsNothing(t *testing.T) {
@@ -145,5 +243,18 @@ func TestTheNoneSourceReportsNothing(t *testing.T) {
 	}
 	if usage.Observed || len(usage.Values) != 0 {
 		t.Errorf("`usage: none` observes nothing: %+v", usage)
+	}
+}
+
+// TestFakeSQLite3FlushMarkerMatchesTheFake keeps the copied constant honest: the fake's own
+// source is read and the literal it declares must be the one the tests append.
+func TestFakeSQLite3FlushMarkerMatchesTheFake(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("testdata", "fakesqlite", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "const FlushMarker = " + strconv.Quote(fakeFlushMarker)
+	if !strings.Contains(string(src), want) {
+		t.Errorf("testdata/fakesqlite/main.go does not declare %s", want)
 	}
 }

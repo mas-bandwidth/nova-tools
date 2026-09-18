@@ -390,6 +390,15 @@ failing unless the fetch answers 200, so a bench enters the loop only after the
 SANDBOXED probe is green. A host probe is never the evidence: #893 is the night
 one passed while every sandboxed card died.
 
+The sandbox network probe is Linux only and runs after the toolchain checks: it
+makes a temp dir under `$HOME/nova-bench`, then runs `$HOME/.local/bin/nova-sandbox
+--read $HOME/nova-bench --write <tmp> --cwd <tmp> -- curl -s -o /dev/null -w
+'%{http_code}' https://models.opencode.ai/api.json` with `HOME=<tmp>/home`,
+expecting `200`; any other code, including an empty reply, is `DRIFT
+sandbox-network: curl inside nova-sandbox got http=<code> (want 200)`.
+`NOVA_PROBE_URL` overrides the URL, so the test fakes the sandbox and the `curl`
+behind it and no test touches the network.
+
 The hurts, one line each: tonight's 97 ssh turns in the window is the cost
 this section exists to remove; the bins drift Stella found is what `fleet
 survey` catches before a card does; the resolver defect a host probe missed

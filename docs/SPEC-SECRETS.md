@@ -1076,3 +1076,18 @@ accepted*).
 *Rowan, 2026-09-12. No credential value was read, written, printed or named anywhere in this
 work; the real store was read only through its `.sops.yaml`, its README, its ruleset and its
 collaborator permissions, and no `sops` or `age` command was run against it.*
+
+## Future additions from the first adoption (2026-09-16, Glenn and Stella dogfooding; nova-tools #881)
+
+The first real adoption ran on the studio seat, then Stella's, then four bench seats, by hand. Glenn's verdict: "It should be a single step then 'yes'." Each item below is a hurt from that night and the verb or rule that removes it; each lands with its red test.
+
+1. **`adopt` is one verb.** `nova-secrets adopt --as <seat> [--store <url>] [--bench <ssh host>]` installs sops and age if absent, generates the deploy key and the age identity in place, registers the deploy key by API, clones the store, opens the rule PR (seat key + recovery.pub), waits for the seat-rule gate, merges, pulls, re-seals the calling seat's swarm values into the new file through a pipe when the seat is a swarm seat, proves the seat (`check` OK, `exec` by length) and prints `ADOPT OK seat=<name> store=<sha>`. A human gives "yes" once; a person's value is entered once by `set`. A partial adoption rolls back; every refusal is one remedy line.
+2. **`set` and `rotate`.** `nova-secrets set --as <seat> --name NAME` reads the value from a prompt or stdin, seals it through a pipe (never argv, disk or history), commits and pushes a PR. `rotate` is `set` plus the note that revocation at the provider is the human's step. Ingest is rotate: every value enters fresh.
+3. **The recovery key is generated off-bench, enforced.** `keygen --recovery` refuses on a bench that holds any seat key, or prints the off-bench instruction and stops.
+4. **A seat's `check` and `exec` fail only on the seat's own files.** Other files are reported as foreign, never fatal (a stale rule on one file blocked every seat).
+5. **Remedy lines name the seat that can act,** never a command the caller cannot run (`sops updatekeys` on a bench that cannot decrypt).
+6. **The seat-rule gate is the second pair of eyes** for the one shape a seat PR has (two recipients with recovery.pub second; ciphertext only; no other file); it lives in the store (`.github/seat-rule-gate.sh`) and approves; anything else a human reads.
+7. **A worker description names its secret,** `secret: NAME`, delivered by `exec` into the environment; `key_file` is the legacy shape; `nova-swarm native` never copies an auth file into a job and refuses a `--model` other than the description's (a key may be authorized for one model).
+8. **Harness configs hold `{env:NAME}`, never a literal;** `fleet survey` reports a literal key or a key-shaped file on a bench as DRIFT.
+9. **One seat per OS user.** Two lines on one user share the key ("wouldn't", not "can't"); the survey reports it.
+10. **Keys are for swarms, not people.** A swarm seat holds model keys; a person's own keys are that line's seat, entered by that line.
