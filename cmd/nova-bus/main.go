@@ -72,6 +72,7 @@ usage:
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
         [--diagnostics]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
+        [--until <instant>] [--idle-exit <n>]
         [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]]
         [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--carry-history]
@@ -203,8 +204,35 @@ so the second wait is a real wait:
 that is only beats and cursors -- a lane's BEAT or CURSOR moving, no note --
 never wakes a wait; a beat is not news, exactly as before.
 
-  nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
+--until <instant> is an absolute deadline beside --timeout, an RFC 3339 UTC
+instant, and the wait ends at whichever of the two comes first: a caller whose
+own limit is a MOMENT rather than a duration does not have to work out how long
+is left. --idle-exit <n> is the exit code a TIMEOUT returns instead of 0, so a
+harness can branch on the code without parsing anything; 1 and 2 are refused,
+because they are this tool's own -- a refusal, and an invocation that could not
+run -- and a harness that got one back could not tell a quiet bus from a broken
+one.
+
+A HARNESS THAT CANNOT LOOP -- OpenCode's, and every harness like it -- runs this
+exact sequence and nothing else. Once, to clear the backlog:
+
+  nova-bus inbox --bus ~/bus --as Freddy --receipt-max-words 40 \
     --advance --remote origin --branch main
+
+Then one wait per turn:
+
+  nova-bus wait --bus ~/bus --as Freddy --receipt-max-words 40 --timeout 25m \
+    --until 2026-09-18T18:00:00Z --idle-exit 3 \
+    --advance --remote origin --branch main
+
+Exit 0 is a note: the listing is on stdout, answer it, then issue the same wait
+again. Exit 3 is the one line WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
+idle-exit=3 and nothing came: issue the same wait again, or stop if your own
+deadline has passed. Exit 1 is a refusal and exit 2 is an invocation that could
+not run, both with the reason on stderr, and neither is re-armed until somebody
+has read it. The harness keeps no clock and runs no loop of its own: every call
+ends by itself, at the note or at the deadline, and the WAIT DONE ...
+next=<command> line is the command to issue again.
 
 A FIRST SEND, end to end. draft prints a skeleton and NOTHING else, so its
 standard output is a file:
@@ -1661,16 +1689,24 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			// one `rev-list --count` and one line rather than the walk. The line carries the
 			// remedy and the run is exit 0: refusing to read is not this verb's business,
 			// saying what the read would cost is.
+			//
+			// THE COUNT IS BOUNDED TOO, which is the half that was missing. `rev-list --count`
+			// walks the whole distance before it can answer, so the run that reads NOTHING --
+			// the over-bound one -- was paying for every commit between the cursor and the head
+			// in order to be told it should not read them. Asked with the bound
+			// (CommitsSinceBounded), git stops one commit past it: a cursor five hundred
+			// commits behind and one fifty thousand commits behind now cost the same 501, and a
+			// cursor inside the bound still gets its exact total for the progress line.
 			limit := o.maxCommits
 			if limit <= 0 {
 				limit = defaultMaxCommits
 			}
-			total, err := bus.CommitsBetween(o.busDir, cursor.Commit, "HEAD")
+			total, over, err := bus.CommitsSinceBounded(o.busDir, cursor.Commit, limit)
 			if err != nil {
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 				return 1, r
 			}
-			if total > limit {
+			if over {
 				fmt.Fprintf(stderr, "INBOX WALK bounded commits=%d %s\n", limit, boundedWalkRemedy)
 				return 0, r
 			}
@@ -2514,6 +2550,8 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	as := f.fs.String("as", "", "which participant you are (required)")
 	maxWords := f.fs.Int("receipt-max-words", 0, "a body under this many words may be a receipt (required, at least 1)")
 	timeout := f.fs.Duration("timeout", 0, "how long to wait before returning WAIT TIMEOUT (required; a duration like 25m, at most "+maxWaitTimeout.String()+")")
+	until := f.fs.String("until", "", "an absolute deadline as an RFC 3339 UTC instant (e.g. 2026-09-18T18:00:00Z); the wait ends at that moment or at --timeout, whichever comes first")
+	idleExit := f.fs.Int("idle-exit", 0, "exit with this code instead of 0 when the wait times out, so a harness that cannot loop can branch on the code without parsing anything; 1 and 2 are refused, they are this tool's own")
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
 	beat := f.fs.Duration("beat", defaultBeatInterval, "how often to push your BEAT liveness file as its own commit")
 	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "how far into the future each BEAT's until= promises the line is alive, so a manager cycle between waits still reads awake")
@@ -2592,6 +2630,46 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(timeout.String()), oneline.Field(maxWaitTimeout.String()))
 		return 2
 	}
+	// --until IS THE DEADLINE A HARNESS ALREADY HAS. A duration is the wrong shape for a
+	// caller whose own limit is a MOMENT -- the end of a session, the hour a shift hands over
+	// -- because turning one into the other means knowing how long the call took to start,
+	// and a caller that guesses that is a caller whose last wait runs past the thing it was
+	// waiting for. So the two live side by side and the EARLIER ONE WINS: --timeout is how
+	// long this call may block, --until is the moment past which blocking is pointless, and a
+	// wait ends at whichever comes first. The ceiling needs no second check: --timeout is
+	// required, it is capped at maxWaitTimeout, and the effective window is never longer.
+	waitFor := *timeout
+	if *until != "" {
+		when, err := time.Parse(time.RFC3339, *until)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-bus wait: --until %s is not an RFC 3339 instant like 2026-09-18T18:00:00Z; %s\n", oneline.Field(*until), oneline.Err(err))
+			return 2
+		}
+		left := when.Sub(now)
+		if left <= 0 {
+			fmt.Fprintf(stderr, "nova-bus wait: --until %s is now or in the past (it is %s), so this wait would end before it began; give an instant in the future, or leave --until off and let --timeout bound the call\n",
+				oneline.Field(*until), oneline.Field(now.UTC().Format(time.RFC3339)))
+			return 2
+		}
+		if left < waitFor {
+			waitFor = left
+		}
+	}
+	// --idle-exit IS FOR A HARNESS THAT CANNOT LOOP (Freddy's, and every harness like it): it
+	// runs one tool call per turn and branches on the exit code, and it has no way to tell
+	// "nothing arrived" from "a note arrived" when both are exit 0. So a timeout may carry a
+	// code of the caller's choosing. 1 and 2 are refused rather than allowed: they are this
+	// tool's own -- a refusal and an invocation that could not run -- and a harness that saw
+	// either would have to parse the output to know which it was, which is the thing this
+	// flag exists to make unnecessary. 126 and up are the shell's own.
+	if *idleExit < 0 || *idleExit > maxIdleExit {
+		fmt.Fprintf(stderr, "nova-bus wait: --idle-exit %d is not an exit code this verb will use; give one between 0 and %d, and note that %d and above belong to the shell\n", *idleExit, maxIdleExit, maxIdleExit+1)
+		return 2
+	}
+	if *idleExit == 1 || *idleExit == 2 {
+		fmt.Fprintf(stderr, "nova-bus wait: --idle-exit %d is this tool's own code -- 1 is a refusal and 2 is an invocation that could not run -- so a harness that got it back could not tell a quiet bus from a broken one; pick another, 3 is free\n", *idleExit)
+		return 2
+	}
 	if *interval < minWaitInterval {
 		fmt.Fprintf(stderr, "nova-bus wait: --interval %s is shorter than %s, and every poll is a git fetch against somebody's server; refusing to fetch faster than that\n",
 			oneline.Field(interval.String()), oneline.Field(minWaitInterval.String()))
@@ -2643,8 +2721,21 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// call began and what it was told to do. A tool call that prints nothing for twenty
 	// minutes and then prints everything is, while it runs, indistinguishable from one
 	// that has hung.
-	fmt.Fprintf(stdout, "WAIT as=%s timeout=%s interval=%s cursor=%s\n",
-		oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)))
+	//
+	// THE TWO SPELLINGS ARE ONE DECISION AND NOT A DUPLICATE. A caller that passes neither
+	// --until nor --idle-exit sees exactly the line it saw before they existed, byte for byte
+	// (testdata/today/wait.txt holds those bytes and readhalf_test.go compares them): a flag
+	// nobody used must not change what everybody reads. A caller that passes EITHER gets both
+	// fields, filled in, because a deadline and an exit code are what that caller is asking
+	// about and half a pair says less than none.
+	if *until == "" && *idleExit == 0 {
+		fmt.Fprintf(stdout, "WAIT as=%s timeout=%s interval=%s cursor=%s\n",
+			oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)))
+	} else {
+		fmt.Fprintf(stdout, "WAIT as=%s timeout=%s interval=%s cursor=%s until=%s idle-exit=%d\n",
+			oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)),
+			oneline.Field(dash(*until)), *idleExit)
+	}
 	// THE ENTRY BEAT, written before the first poll, so a line that is about to wait
 	// already reads awake the moment its call begins, lease and all.
 	if err := bus.WriteBeat(*busDir, me.Lane, held.Commit, now, now.Add(*beatLease)); err != nil {
@@ -2656,8 +2747,13 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// is shell-quoted, not joined raw: a --bus path carrying a space must come back as the
 	// same one argument after a paste, not split in two.
 	next := rearmCommand(args)
-	return waitLoop(o, *timeout, *interval, next, stdout, stderr, now)
+	return waitLoop(o, waitFor, *interval, *idleExit, next, stdout, stderr, now)
 }
+
+// maxIdleExit is the highest code --idle-exit will take. 126 and 127 are the shell's own --
+// "found and not executable", "not found" -- and 128 up is a signal, so a wait that returned
+// one of those would be read as something the shell did to it rather than something it said.
+const maxIdleExit = 125
 
 // defaultWaitInterval is how long a wait leaves between polls when the caller names no
 // interval. It is a default, unlike --timeout, on the same test the tool's other two
@@ -2717,7 +2813,7 @@ func writeBeatLease(o inboxOpts, cursor string) error {
 // note that is already there -- the caller answered the last one and came straight back --
 // and making them wait an interval for news the bus already had would be a tool inventing
 // latency.
-func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout, stderr io.Writer, now time.Time) int {
+func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next string, stdout, stderr io.Writer, now time.Time) int {
 	start := time.Now()
 	deadline := start.Add(timeout)
 	// The moment this call cannot see past: a switch-day line drawn after it hides
@@ -2882,10 +2978,19 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 	// would be one more commit for a stamp a fraction of a second newer, and the push is
 	// bounded by --beat.
 	landBeat()
-	fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s\n",
-		oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
+	// ONE LINE A HARNESS CAN GREP, and -- with --idle-exit -- one code it does not have to
+	// grep for at all. The code is named ON the line as well, because an exit code that
+	// appears nowhere in the transcript is a number somebody reads a bug into: a harness
+	// branching on 3 and a person reading the log see the same fact.
+	if idleExit == 0 {
+		fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s\n",
+			oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
+	} else {
+		fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s idle-exit=%d\n",
+			oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)), idleExit)
+	}
 	fmt.Fprintf(stdout, "WAIT DONE reason=timeout rearm=required next=%s\n", next)
-	return 0
+	return idleExit
 }
 
 // waitPoll is ONE poll, under the checkout lock: the fetch, the listing, and -- only on the

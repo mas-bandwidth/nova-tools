@@ -876,3 +876,99 @@ func splitShellWords(line string) []string {
 	}
 	return words
 }
+
+// FREDDY'S HARNESS DOES NOT WAKE, and it cannot loop either: it runs one tool call per turn
+// and branches on what came back. The three tests below are that harness's whole contract.
+//
+// --idle-exit is the code a TIMEOUT returns instead of 0, so "nothing arrived" and "a note
+// arrived" are two different numbers rather than two shapes of output to parse. The line
+// still says so, in the one WAIT TIMEOUT line a harness can grep, because an exit code that
+// appears nowhere in the transcript is a number somebody reads a bug into.
+func TestWaitIdleExitGivesATimeoutItsOwnCode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	r := invoke(t, "", waitFlags(checkout, "Ada", "300ms", "--idle-exit", "3")...).mustCode(t, 3)
+	r.mustContain(t, "stdout", "WAIT as=Ada timeout=300ms interval=100ms cursor=").
+		mustContain(t, "stdout", "idle-exit=3").
+		mustContain(t, "stdout", "WAIT TIMEOUT after=").
+		mustContain(t, "stdout", "WAIT DONE reason=timeout")
+	// ONE line to grep, and the code is on it.
+	line := r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):]
+	if got := field(t, line, "idle-exit="); got != "3" {
+		t.Fatalf("WAIT TIMEOUT says idle-exit=%q, want 3:\n%s", got, r.stdout)
+	}
+}
+
+// A NOTE IS STILL EXIT 0 with --idle-exit set: the flag names what a TIMEOUT returns and
+// nothing else. A harness that got 3 for a note would answer nothing and re-arm for ever.
+func TestWaitIdleExitDoesNotTouchAReturnOnANote(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	// No cursor, so the fixture's two notes are news and the first poll returns at once.
+	invoke(t, "", waitFlags(checkout, "Ada", "30s", "--idle-exit", "3")...).
+		mustCode(t, 0).
+		mustContain(t, "stdout", "WAIT OK new=2").
+		mustContain(t, "stdout", "INBOX NOTE id=bo-abcdef012345")
+}
+
+// --until IS THE DEADLINE THE HARNESS ALREADY HAS: a MOMENT, not a duration. It stands
+// beside --timeout and the earlier of the two ends the wait, so a caller whose session ends
+// at a known instant does not have to work out how long is left and does not overshoot it.
+func TestWaitUntilIsAnAbsoluteDeadlineAndTheEarlierOneWins(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	// One second past the fixed clock these tests run on, against a --timeout of thirty:
+	// the instant is the earlier of the two and is therefore the one that ends the call.
+	until := now().Add(time.Second).Format(time.RFC3339)
+	r := invoke(t, "", waitFlags(checkout, "Ada", "30s", "--until", until)...).mustCode(t, 0)
+	r.mustContain(t, "stdout", "until="+until).
+		mustContain(t, "stdout", "WAIT TIMEOUT after=")
+	after := afterOf(t, r.stdout)
+	if after < time.Second {
+		t.Fatalf("the wait returned after %s, before the --until it was given:\n%s", after, r.stdout)
+	}
+	// Well under the --timeout it was also given: the two are not added and the longer one
+	// does not win.
+	if after > 15*time.Second {
+		t.Fatalf("the wait ran %s against --until %s and --timeout 30s; the instant did not bound it:\n%s", after, until, r.stdout)
+	}
+}
+
+// The invocations this verb refuses rather than guesses at. Every one of them is a harness
+// that would otherwise be told something untrue about its own deadline or its own exit code.
+func TestWaitRefusesAnUnusableUntilOrIdleExit(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	cases := []struct {
+		name  string
+		extra []string
+		want  string
+	}{
+		{"an --until that is not an instant", []string{"--until", "tomorrow"}, "is not an RFC 3339 instant"},
+		{"an --until already past", []string{"--until", "2026-09-09T12:00:00Z"}, "is now or in the past"},
+		{"--idle-exit 1, a refusal's code", []string{"--idle-exit", "1"}, "is this tool's own code"},
+		{"--idle-exit 2, an invocation's code", []string{"--idle-exit", "2"}, "is this tool's own code"},
+		{"--idle-exit above the shell's floor", []string{"--idle-exit", "126"}, "belong to the shell"},
+		{"a negative --idle-exit", []string{"--idle-exit", "-1"}, "is not an exit code this verb will use"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			invoke(t, "", waitFlags(checkout, "Ada", "300ms", c.extra...)...).
+				mustCode(t, 2).mustContain(t, "stderr", c.want)
+		})
+	}
+}

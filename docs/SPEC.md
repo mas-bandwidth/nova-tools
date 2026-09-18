@@ -2556,6 +2556,7 @@ nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open 
       [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
+      [--until <instant>] [--idle-exit <n>]
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
       [--quiet-beats]
@@ -2652,11 +2653,11 @@ INBOX FAIL <path>: <reason>
 INBOX REFUSED: <reason>
 INBOX WALK commits=<n>/<total> notes=<n> elapsed=<d>                   (progress: stderr only, never stdout)
 INBOX WALK bounded commits=<n> remedy="raise --max-commits or close --before <instant>"   (progress: stderr only, never stdout)
-WAIT as=<name> timeout=<d> interval=<d> cursor=<sha|->
+WAIT as=<name> timeout=<d> interval=<d> cursor=<sha|->[ until=<instant|-> idle-exit=<n>]   (the pair only with --until or --idle-exit)
 WAIT NOTE <why this wait is not waiting>
 WAIT POLL fetch: <reason one poll could not fetch, which was not fatal>
 WAIT OK new=<n> after=<d> polls=<n>
-WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
+WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->[ idle-exit=<n>]                            (the field only with --idle-exit)
 WAIT REFUSED: <reason>
 RECEIPT ALREADY note=<id or path> lane=<lane>
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
@@ -4302,6 +4303,7 @@ catalogue is what would make the other choice available later.
 
 ```
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
+      [--until <instant>] [--idle-exit <n>]
       [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
       [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
       [--quiet-beats]
@@ -4362,6 +4364,33 @@ WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
 the caller issues the next one; nothing is written to the bus by a wait that
 found nothing, because there is nothing to record having read.
 
+**`--until` and `--idle-exit` are for a harness that cannot loop.** `--until
+<instant>` is an absolute deadline beside `--timeout`, an RFC 3339 UTC instant,
+and the wait ends at whichever of the two comes first: a caller whose own limit
+is a MOMENT rather than a duration does not have to work out how long is left.
+`--idle-exit <n>` is the exit code a TIMEOUT returns instead of 0, so a harness
+can branch on the code without parsing anything; 1 and 2 are refused, because
+they are this tool's own — a refusal, and an invocation that could not run — and
+a harness that got one back could not tell a quiet bus from a broken one. A
+caller that passes NEITHER sees exactly the lines it saw before the two flags
+existed, byte for byte: the pair is added to the opening line, and `idle-exit=`
+to the timeout line, only for the caller that asked.
+
+**A harness that cannot loop — OpenCode's, and every harness like it — runs this
+exact sequence and nothing else.** Once, to clear the backlog: `nova-bus inbox
+--bus ~/bus --as Freddy --receipt-max-words 40 --advance --remote origin --branch
+main`. Then one wait per turn: `nova-bus wait --bus ~/bus --as Freddy
+--receipt-max-words 40 --timeout 25m --until 2026-09-18T18:00:00Z --idle-exit 3
+--advance --remote origin --branch main`.
+Exit 0 is a note: the listing is on stdout, answer it, then issue the same wait
+again. Exit 3 is the one line `WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
+idle-exit=3` and nothing came: issue the same wait again, or stop if your own
+deadline has passed. Exit 1 is a refusal and exit 2 is an invocation that could
+not run, both with the reason on stderr, and neither is re-armed until somebody
+has read it. The harness keeps no clock and runs no loop of its own: every call
+ends by itself, at the note or at the deadline, and the `WAIT DONE ...
+next=<command>` line is the command to issue again.
+
 **`wait` returns once and must be re-armed.** Every return is one read, ended
 by one terminal `WAIT DONE reason=<new|timeout|signal> rearm=required next=<command>`
 line that hands back the exact command to issue again to keep listening. A
@@ -4416,11 +4445,13 @@ wake cost the waiting window a turn. A wake is a note addressed to the reader, f
 another line, and nothing else. `--quiet-beats` stays accepted so callers that pass
 it keep working; it changes nothing.
 
-Exit codes are `inbox`'s: **0** with notes and **0** on a timeout, **1** for the
-refusals `inbox` already has — a cursor that is no longer on this history, a
+Exit codes are `inbox`'s: **0** with notes and **0** on a timeout — or the code
+`--idle-exit <n>` names, when the caller asked for one — **1** for the refusals
+`inbox` already has: a cursor that is no longer on this history, a
 `--legacy-before` that would move a reader's line earlier, a first `--advance`
 over a history nobody has said what to do with, another run on this checkout —
-and **2** for an invocation that could not run.
+and **2** for an invocation that could not run. `--idle-exit` never changes
+those last two, which is why it will not take them.
 
 ### check — full, or since
 
