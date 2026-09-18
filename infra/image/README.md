@@ -116,9 +116,48 @@ network namespace, including every service on the host's loopback. Not
 and to call the model API. Verified from inside: GitHub reachable, and the
 host's loopback services are *not* on the container's loopback.
 
-This is the weakest part of the wall today: egress is open, so the boundary is
-"can reach the internet", not "can reach the two endpoints it needs". An egress
-allowlist is a later step and is not in this image.
+Egress itself is walled by **nftables on the bench**, around the `podman run` and
+never inside it — the worker is the adversary, so an allowlist the worker applies
+is not one. The allowlist is `infra/image/egress.txt` in this directory: one
+hostname per line, **default deny**, and a name gets there by a PR reviewed by
+the security lane, never by a flag on one run. A card reaches those names on
+**TCP 443**, the bench resolver on **UDP 53**, and nothing else; the metadata
+address `169.254.169.254`, `127.0.0.0/8` as a destination and the other benches
+are denied outright.
+
+The worker wraps each run in four steps, and the **drop is on every path out**,
+the way `nova-sandbox run` deletes its volume:
+
+    nova-sandbox egress plan  --run <id> --policy infra/image/egress.txt \
+                              --model-host api.deepseek.com --resolver <ip> \
+                              --bench-cidr <other-bench>/24 --uid 10001 \
+                              --out /run/nova/egress-<id>.nft
+    nova-sandbox egress apply --plan /run/nova/egress-<id>.nft --run <id>
+    podman run ... nova-card:<sha> <cmd>
+    nova-sandbox egress drop  --run <id>
+
+`plan` resolves the allowed names once and **pins the addresses for the run**;
+`--model-host` may only name a host `egress.txt` already carries, so one run
+reaches exactly one model vendor. `--uid 10001` is the card user the run contract
+above maps with `--userns=keep-id`, and it is what scopes every rule to the card's
+own traffic; a veth-based run names `--veth` instead. `nova-sandbox egress check
+--plan <file>` reads a ruleset back and asserts its invariants, and `apply` runs
+that same audit before `nft` sees the file.
+
+When a card reaches a destination the wall denies, it gets **one line on its own
+stdout** and the run exits non-zero — fail closed, no retry to another host:
+
+    EGRESS DENIED host=<name>
+
+**This is the linux half.** nftables is the bench's wall and this image is the
+bench's card; on darwin there is no `podman run` and no ruleset — a card there
+runs under `nova-sandbox run`, whose **seatbelt** profile carries the net rules
+already, and `egress apply` and `egress drop` refuse on that platform rather than
+pretend. `egress plan` and `egress check` run on a Mac, so the ruleset a bench
+applies can be built and read there.
+
+See docs/SPEC-SANDBOX.md, "The egress verbs — the card's outbound wall, on
+linux", for the ruleset's shape and the invariants the audit enforces.
 
 ### Credentials
 
