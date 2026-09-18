@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/review"
 )
@@ -30,7 +31,10 @@ func mutate(args []string, out, errOut io.Writer) int {
 	head := fs.String("head", "", "")
 	timeout := fs.Int("timeout", 120, "")
 	maxFlag := fs.Int("max", bounded.Default, "")
-	if fs.Parse(args) != nil || fs.NArg() != 0 {
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		if cliflags.Help(out, err, cliflags.Usage(usage, "mutate")) {
+			return 0
+		}
 		return refuseMutate(errOut, "bad mutate flags")
 	}
 	if *repo == "" || *base == "" || *head == "" {

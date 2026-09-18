@@ -89,6 +89,11 @@ var messageBusAudit = audit.Config{
 		"oneline.Quote", "quoteList", "cappedList",
 	},
 	Imports: []string{
+		// cliflags answers `<tool> <verb> --help`. It hands back lines of THIS
+		// package's own usage constant and never the verb it was asked about,
+		// and it writes only to the stream this package gives it, so nothing
+		// an argument carries can reach a stream through it.
+		`"github.com/mas-bandwidth/nova-tools/internal/cliflags"`,
 		// version.go's resolution order, which now lives once in internal/buildinfo
 		// rather than in a copy per binary: it reads debug.ReadBuildInfo, holds no
 		// writer of its own, and returns a string this package renders through

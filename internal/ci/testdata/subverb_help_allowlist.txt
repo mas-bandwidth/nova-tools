@@ -1,0 +1,10 @@
+# Functions that parse a sub-verb's flags and do not answer a request for help,
+# so `<tool> <verb> --help` prints package flag's own `flag: help requested` at
+# exit 2 instead of that verb's usage at exit 0.
+#
+# The list is EMPTY and stays empty. It exists so that a function which cannot
+# be fixed in the same change can be written down with its reason rather than
+# quietly excused, and TestEverySubVerbFlagSetAnswersHelp checks it in both
+# directions: an unlisted offender is red, and a listed function that no longer
+# offends is red too. One entry per line, "path/to/file.go:FunctionName", with
+# the reason after a " #".

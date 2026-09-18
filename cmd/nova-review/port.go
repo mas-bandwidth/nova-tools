@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -138,7 +139,10 @@ func port(args []string, out, errOut io.Writer) int {
 	dest := fs.String("out", "", "")
 	maxFlag := fs.Int("max", 200, "")
 	timeout := fs.Int("timeout", 300, "")
-	if fs.Parse(args) != nil || fs.NArg() != 0 {
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		if cliflags.Help(out, err, cliflags.Usage(usage, "port")) {
+			return 0
+		}
 		return portRefuse(errOut, *table, *pr, "", "usage", "",
 			"refusing to guess; pass --table <section> --pr <n>")
 	}

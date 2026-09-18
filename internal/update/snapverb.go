@@ -1,6 +1,8 @@
 package update
 
 import (
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
+
 	"context"
 	"flag"
 	"fmt"
@@ -72,6 +74,9 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	fs.StringVar(&bin, "bin", "", "directory holding the binaries")
 	fs.StringVar(&outPath, "out", "", "TSV snapshot to write")
 	if err := fs.Parse(interspersed(fs, args)); err != nil {
+		if cliflags.Help(out, err, cliflags.Usage(versionVerbs, "snapshot")) {
+			return 0
+		}
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("%s (run %s help)", err, name))
 	}
 	var missing []string

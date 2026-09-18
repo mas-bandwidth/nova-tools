@@ -29,6 +29,11 @@ var wakeAudit = audit.Config{
 		`main.go|cmdProbe|wake.HereLine(clock.Now(), wake.ReadBench(), *quietLoad)`: "the line is composed through oneline.Field inside internal/wake and carries only numbers the kernel gave",
 	},
 	Imports: []string{
+		// cliflags answers `<tool> <verb> --help`. It hands back lines of THIS
+		// package's own usage constant and never the verb it was asked about,
+		// and it writes only to the stream this package gives it, so nothing
+		// an argument carries can reach a stream through it.
+		`"github.com/mas-bandwidth/nova-tools/internal/cliflags"`,
 		`"context"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
 		// runtime, for the version verb's os/arch/toolchain, which are
 		// constants of the build and are printed through oneline.Field like

@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -207,6 +208,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, usage) {
+			return 0
+		}
 		return refuse(stderr, "DECIDE", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -290,6 +294,9 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "tune")) {
+			return 0
+		}
 		return refuse(stderr, "TUNE", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {

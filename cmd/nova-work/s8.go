@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -69,6 +70,9 @@ func queryVerb(args []string, stdout, stderr io.Writer) int {
 		strs[s.name] = f.String(s.name, "", "")
 	}
 	if err := f.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "query")) {
+			return 0
+		}
 		return refused(stderr, "query: "+err.Error())
 	}
 	if f.NArg() != 0 {

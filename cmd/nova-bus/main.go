@@ -54,6 +54,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -290,6 +291,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `inbox --as <name>` is the one that only looks")
 	}
+	// `nova-bus <verb> --help` is a question, not a parse failure. These verbs
+	// share one flag-parsing helper that answers over stderr and has no way to
+	// say "answered, exit 0", so the question is answered here, before any flag
+	// set exists; internal/cliflags says why that is the shape.
+	if cliflags.Answer(stdout, usage, args) {
+		return 0
+	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "help", "-h", "--help":
@@ -352,8 +360,10 @@ func newFlags(verb string) *flags {
 // required. It prints its own refusal, escaped; exit 2 belongs to the caller.
 func (f *flags) parse(args []string, stderr io.Writer, required map[string]*string) bool {
 	if err := f.fs.Parse(args); err != nil {
-		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
-		// invocation: exit 2, never 0.
+		// -h and -help no longer reach here: run() answers them with the verb's
+		// usage at exit 0 before this flag set exists (internal/cliflags says
+		// why the answer is there rather than here). What is left is an
+		// unusable invocation, and it is refused: exit 2, never 0.
 		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
 		return false
 	}

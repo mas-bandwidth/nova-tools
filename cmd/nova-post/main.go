@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/post"
 )
@@ -108,6 +109,9 @@ func runDraft(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "draft")) {
+			return 0
+		}
 		return refuseLine(stderr, "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes), 2)
 	}
 	if fs.NArg() > 0 {
@@ -155,6 +159,9 @@ func runShow(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "show")) {
+			return 0
+		}
 		return refuseLine(stderr, "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes), 2)
 	}
 	if fs.NArg() > 0 {
@@ -186,6 +193,9 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "send")) {
+			return 0
+		}
 		return refuseLine(stderr, "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes), 2)
 	}
 	if fs.NArg() > 0 {

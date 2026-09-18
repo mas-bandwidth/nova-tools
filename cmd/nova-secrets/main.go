@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 )
@@ -201,6 +202,9 @@ func runExecCLI(args []string) {
 	fs.Var(&requireFlags, "require", "required key")
 
 	if err := fs.Parse(flagArgs); err != nil {
+		if cliflags.Help(os.Stdout, err, cliflags.Usage(usage, "exec")) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL flags: %s\n", oneline.Err(err))
 		os.Exit(125)
 	}
@@ -226,6 +230,9 @@ func runNamesCLI(args []string) {
 	maxFlag := fs.Int("max", 20, "max items")
 
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(os.Stdout, err, cliflags.Usage(usage, "names")) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -262,6 +269,9 @@ func runCheckCLI(args []string) {
 	maxFlag := fs.Int("max", 20, "max items")
 
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(os.Stdout, err, cliflags.Usage(usage, "check")) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -303,6 +313,9 @@ func runGateCLI(args []string) {
 	machinesFlag := fs.String("machines", "", "fleet machines registry; its seat column vouches for a new recipient")
 
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(os.Stdout, err, cliflags.Usage(usage, "gate")) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -332,6 +345,9 @@ func runKeygenCLI(args []string) {
 	storeFlag := fs.String("store", "", "store dir")
 
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(os.Stdout, err, cliflags.Usage(usage, "keygen")) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -437,6 +453,9 @@ func runPlaceCLI(args []string) {
 	sshFlag := fs.String("ssh", "ssh", "ssh executable")
 
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(os.Stdout, err, cliflags.Usage(usage, "place")) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -473,6 +492,9 @@ func runPlacedCLI(args []string) {
 	receiptsFlag := fs.String("receipts", "", "receipts dir")
 
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(os.Stdout, err, cliflags.Usage(usage, "placed")) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -511,6 +533,9 @@ func runSealCLI(args []string) {
 	noPRFlag := fs.Bool("no-pr", false, "stop after commit")
 
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(os.Stdout, err, cliflags.Usage(usage, "seal")) {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}

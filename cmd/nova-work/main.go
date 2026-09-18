@@ -47,6 +47,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/workclient"
@@ -374,6 +375,9 @@ func cmdDependencies(args []string, stdout, stderr io.Writer) int {
 	node := fs.String("node", "", "the node to write a needs edge to")
 	needs := fs.String("needs", "", "comma-separated needs for --node")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "dependencies")) {
+			return 0
+		}
 		return refuse(stderr, " dependencies", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -450,6 +454,9 @@ func cmdReady(args []string, stdout, stderr io.Writer) int {
 	graph := fs.String("graph", "", "the :deps graph file (required)")
 	node := fs.String("node", "", "one node to evaluate; default all nodes")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "ready")) {
+			return 0
+		}
 		return refuse(stderr, " ready", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -513,6 +520,9 @@ func cmdPlan(args []string, stdout, stderr io.Writer) int {
 	maxDepth := fs.Int("max-depth", def.MaxDepth, "nesting depth ceiling")
 	maxNodes := fs.Int("max-nodes", def.MaxNodes, "atom ceiling")
 	if err := fs.Parse(args[1:]); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "plan check")) {
+			return 0
+		}
 		return refuse(stderr, " plan check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -556,6 +566,9 @@ func cmdPlanExpand(args []string, stdout, stderr io.Writer) int {
 	maxDepth := fs.Int("max-depth", def.MaxDepth, "nesting depth ceiling")
 	maxNodes := fs.Int("max-nodes", def.MaxNodes, "atom ceiling")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "plan expand")) {
+			return 0
+		}
 		return refuse(stderr, " plan expand", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -678,6 +691,9 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if err := f.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, verb)) {
+			return 0
+		}
 		return refused(stderr, verb+": "+err.Error())
 	}
 	if f.NArg() != 0 {
@@ -759,6 +775,9 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 	logPath := fs.String("log", "", "")
 	once := fs.Bool("once", false, "")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "events")) {
+			return 0
+		}
 		fmt.Fprintf(stderr, "nova-work events: %s; run: nova-work help\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}

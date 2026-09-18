@@ -26,6 +26,11 @@ var tokensAudit = audit.Config{
 		"main.go|cmdReport|body": "the report's stdout IS the artifact: every line of it was rendered by tokens.BodyLine, which puts each of its stored fields through oneline.Field, and the lines are joined with \\n by this function. Escaping the join again would escape those newlines and destroy the note body this verb exists to print",
 	},
 	Imports: []string{
+		// cliflags answers `<tool> <verb> --help`. It hands back lines of THIS
+		// package's own usage constant and never the verb it was asked about,
+		// and it writes only to the stream this package gives it, so nothing
+		// an argument carries can reach a stream through it.
+		`"github.com/mas-bandwidth/nova-tools/internal/cliflags"`,
 		// version.go's resolution order, which now lives once in internal/buildinfo
 		// rather than in a copy per binary: it reads debug.ReadBuildInfo, holds no
 		// writer of its own, and returns a string this package renders through

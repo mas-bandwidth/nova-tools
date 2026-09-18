@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -93,6 +94,9 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	fs.Usage = func() {}
 	budget := fs.Int("budget", 60, "whole seconds a package's tests may take before it is over budget")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "slowtests")) {
+			return 0
+		}
 		return refuse(stderr, " slowtests", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {

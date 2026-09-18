@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -134,6 +135,9 @@ func cmdProfiles(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("profiles")
 	swarmRoot := fs.String("swarm-root", "", "")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "profiles")) {
+			return 0
+		}
 		return refuse(stderr, " profiles", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "profiles"); refused {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -20,6 +21,9 @@ func cmdFoldPool(args []string, stdout, stderr io.Writer, now time.Time) int {
 	ledger := fs.String("ledger", "", "")
 	since := fs.String("since", "", "")
 	if err := fs.Parse(args); err != nil {
+		if cliflags.Help(stdout, err, cliflags.Usage(usage, "fold-pool")) {
+			return 0
+		}
 		return refuse(stderr, " fold-pool", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "fold-pool"); refused {

@@ -2,13 +2,13 @@ package release
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cliflags"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -214,22 +214,10 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	}
 	token := strings.ToUpper(verb)
 	if err := f.Parse(args); err != nil {
-		// `--help` on a verb is a REASONABLE QUESTION, not a parse failure.
-		// The flag package answers it with the sentinel flag.ErrHelp, and
-		// printing that gave a person who asked for help the words `flag: help
-		// requested` -- the package's own internals, leaked (darwin dogfood,
-		// 2026-09-18). It is answered here with that verb's usage, and exit 0,
-		// because asking is not an error.
-		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(out, VerbUsage(verb))
-			switch verb {
-			case "cut":
-				fmt.Fprintln(out, CutNote)
-			case "adopt":
-				fmt.Fprintln(out, AdoptNote)
-			case "pull":
-				fmt.Fprintln(out, PullNote)
-			}
+		// `nova-update release <verb> --help` is a question, not a parse
+		// failure. #1336 answered it here verb by verb; internal/cliflags is
+		// the same answer, shared, so the class test can insist on it.
+		if cliflags.Help(out, err, cliflags.Usage(Verbs, "release "+verb)) {
 			return 0
 		}
 		return refusal(errs, token, fmt.Errorf("%s (run %s help)", err, name))
