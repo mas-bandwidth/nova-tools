@@ -819,8 +819,11 @@ read, one `gh api graphql` naming the base branch's merge queue. `--checks` is a
 comma-separated list of commands and defaults to
 `go build ./...,go test ./internal/ci/`, which is the hand loop this verb replaces,
 written out as it was run. `--timeout` is a duration **per check**, default `5m`.
-The scratch worktree is removed on the way out, and a removal that could not happen
-is one `SIMULATE NOTE` rather than a silence.
+The scratch worktree is removed on the way out — **the directory and git's own entry
+for it under `.git/worktrees/`** — and a removal that could not happen is one
+`SIMULATE NOTE` rather than a silence. A pass leaves the repository as it found it:
+`git worktree list` says afterwards exactly what it said before, and there is nothing
+for `git worktree prune` to find.
 
 Four lines, one per entry and one at the end:
 
@@ -836,9 +839,18 @@ entry that will not merge is not the entry that turns the base red.
 
 Exit 0 means no configured check failed; conflicts, reported separately, do not
 change that result. Exit 2 means either a configured check failed or the invocation
-was invalid, including an empty `--checks`. Exit 1 is a preparation or runtime
-refusal. Read the `SIMULATE` output with the exit code to
-distinguish these cases; the code alone is not the whole result.
+was invalid. Exit 1 is a preparation or runtime refusal. Read the `SIMULATE` output
+with the exit code to distinguish these cases; the code alone is not the whole
+result.
+
+**Invalid invocation** is the invocation naming something this verb cannot use: a
+missing or malformed flag, an empty `--checks`, a `--repo` that is not a git
+repository, an `--entries` file that cannot be read or that holds a line which is
+not a pull request number, a `--base` the origin does not have, and an entry whose
+`pull/<n>/head` the origin does not have. **Preparation or runtime refusal** is
+everything after that: a scratch worktree that could not be made, a squash-merge that
+failed for a reason other than a conflict, a commit or a reset the work tree refused,
+a `gh` read of the live queue that did not answer.
 
 ### rebase, react and classify — the lane's three ticks
 
@@ -1645,7 +1657,9 @@ already disposable — it runs inside its image — so name the image root as
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
-The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all seven verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines.
+The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all seven verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
+
+`check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, which is the old reading whole), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines.
 
 ### First run
 

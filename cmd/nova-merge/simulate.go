@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -186,17 +187,11 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if err != nil {
 		return simulateRefused(stderr, err)
 	}
-	defer func() {
-		g := merge.NewGit(repoAbs, timeout, deps.Runner)
-		_, _ = g.Run("worktree", "remove", "--force", scratch)
-		if err := safepath.RemoveUnder(gitDir, scratch); err != nil {
-			fmt.Fprintf(stderr, "SIMULATE NOTE the scratch worktree at %s could not be removed: %s\n",
-				oneline.Field(scratch), oneline.Err(err))
-		}
-	}()
+	defer removeScratchWorktree(stderr, repoAbs, gitDir, scratch, timeout, deps)
 	fetch := merge.NewGit(repoAbs, timeout, deps.Runner)
 	if _, err := fetch.Run("fetch", "--quiet", "origin", *base); err != nil {
-		return simulateRefused(stderr, fmt.Errorf("could not fetch origin/%s: %w", *base, err))
+		// --base named a branch this origin does not have: the caller's to fix, exit 2.
+		return simulateRefused(stderr, invalidInvocation(fmt.Errorf("could not fetch origin/%s: %w", *base, err)))
 	}
 	if _, err := fetch.Run("worktree", "add", "--detach", scratch, "origin/"+*base); err != nil {
 		return simulateRefused(stderr, fmt.Errorf("could not make the scratch worktree: %w", err))
@@ -205,7 +200,10 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	ok, conflicts, poison := 0, 0, 0
 	for _, n := range entries {
 		if _, err := scratchGit.Run("fetch", "--quiet", "origin", "pull/"+strconv.Itoa(n)+"/head"); err != nil {
-			return simulateRefused(stderr, fmt.Errorf("could not fetch pull/%d/head: %w", n, err))
+			// The queue named a pull request origin does not have: exit 2, the same as
+			// an --entries line that is not a number, because it is the same mistake
+			// one step later.
+			return simulateRefused(stderr, invalidInvocation(fmt.Errorf("could not fetch pull/%d/head: %w", n, err)))
 		}
 		// The squash-merge is wrapped in merge.Identity because the command can write a
 		// commit object into the work tree; the tripwire holds every such site to it.
@@ -256,11 +254,80 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	return 0
 }
 
-// simulateRefused is the one shape a tool error takes here: the verb could not run. It
-// is exit 1 on purpose -- exit 2 belongs to a poison the verb found.
+// removeScratchWorktree takes the whole worktree away: the DIRECTORY and the
+// administrative entry git keeps for it under .git/worktrees/<name>.
+//
+// The bug this closes, measured 2026-09-18: four simulate runs left four prunable entries
+// in .git/worktrees and printed no SIMULATE NOTE, although CLI.md promises that "a removal
+// that could not happen is one SIMULATE NOTE rather than a silence". The removal was
+// `git worktree remove --force <scratch>`, and the lane's git seam REFUSES --force in any
+// argument (internal/merge's guard, rule 4: the lane never force-pushes) -- so the command
+// was never run, its GuardError went into a discarded `_`, and safepath then removed the
+// directory out from under an entry nothing was left to clean up.
+//
+// So `git worktree remove` is tried first, with no --force: it is git's own removal, it
+// takes the directory and the entry together, and it touches nothing else in the
+// repository. A worktree the checks left dirty is the case it refuses, and the fallback is
+// the pair that always works and is still safe -- safepath for the directory, which is the
+// one allowed removal of a path this tool computed, and then `git worktree prune`, which
+// needs no --force because by then the directory is gone. Only the fallback failing is a
+// NOTE, because a leftover a person cannot see is a leftover nobody removes.
+func removeScratchWorktree(stderr io.Writer, repo, gitDir, scratch string, timeout time.Duration, deps Deps) {
+	g := merge.NewGit(repo, timeout, deps.Runner)
+	if _, err := g.Run("worktree", "remove", scratch); err == nil {
+		return
+	}
+	if err := safepath.RemoveUnder(gitDir, scratch); err != nil {
+		fmt.Fprintf(stderr, "SIMULATE NOTE the scratch worktree at %s could not be removed: %s\n",
+			oneline.Field(scratch), oneline.Err(err))
+		return
+	}
+	if _, err := g.Run("worktree", "prune"); err != nil {
+		fmt.Fprintf(stderr, "SIMULATE NOTE the scratch worktree at %s was removed and its entry under %s was not: %s\n",
+			oneline.Field(scratch), oneline.Field(filepath.Join(gitDir, "worktrees")), oneline.Err(err))
+	}
+}
+
+// simulateRefused prints the one refusal line and returns THE DOCUMENTED CODE for it.
+//
+// docs/CLI.md has carried this table since the verb landed: "Exit 2 means either a
+// configured check failed or the invocation was invalid, including an empty --checks.
+// Exit 1 is a preparation or runtime refusal." The code did not match it. A `--entries`
+// file that is not there, a line in it that is not a pull request number, a `--base`
+// origin does not have and an entry whose `pull/<n>/head` origin does not have are all
+// the INVOCATION naming something this verb cannot use, and every one of them exited 1.
+//
+// So an invalid invocation is marked at the site that knows -- invalidInvocation -- and
+// everything else keeps exit 1: the run was set up correctly and something underneath it
+// failed. That half is SPEC-MERGE's sentence, "exit 2 when a poison was found, 1 when it
+// could not run at all", and it is why simulate's table is not the family's.
+//
+// The line is the same SIMULATE REFUSED either way: the code says which kind of refusal it
+// was, the line says what to fix, and CLI.md tells a reader to use both.
 func simulateRefused(stderr io.Writer, err error) int {
 	fmt.Fprintf(stderr, "SIMULATE REFUSED: %s\n", oneline.Err(err))
+	var bad *invalidError
+	if errors.As(err, &bad) {
+		return 2
+	}
 	return 1
+}
+
+// invalidError marks an error as a refusal of the invocation. It wraps rather than
+// replaces, so the refusal a person reads is unchanged and only the exit code moves.
+type invalidError struct{ err error }
+
+func (e *invalidError) Error() string { return e.err.Error() }
+func (e *invalidError) Unwrap() error { return e.err }
+
+// invalidInvocation is the mark, applied where the flag is read rather than where the
+// error is printed: the site that knows the value came from a flag is the site that knows
+// it is the caller's to fix.
+func invalidInvocation(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &invalidError{err: err}
 }
 
 // gitDirOf resolves the repository's own .git, which is the root the scratch worktree
@@ -269,7 +336,8 @@ func gitDirOf(repo string, timeout time.Duration, deps Deps) (string, error) {
 	g := merge.NewGit(repo, timeout, deps.Runner)
 	out, err := g.Out("rev-parse", "--absolute-git-dir")
 	if err != nil {
-		return "", fmt.Errorf("%s is not a git repository this tool can read: %w", repo, err)
+		// --repo named it, so it is the caller's to fix: exit 2.
+		return "", invalidInvocation(fmt.Errorf("%s is not a git repository this tool can read: %w", repo, err))
 	}
 	return out, nil
 }
@@ -295,7 +363,7 @@ func simulateEntries(entriesPath, base, repo string, timeout time.Duration, deps
 func readEntryFile(path string) ([]int, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("--entries %s could not be read: %w", path, err)
+		return nil, invalidInvocation(fmt.Errorf("--entries %s could not be read: %w", path, err))
 	}
 	var entries []int
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -305,7 +373,7 @@ func readEntryFile(path string) ([]int, error) {
 		}
 		n, err := strconv.Atoi(s)
 		if err != nil || n < 1 {
-			return nil, fmt.Errorf("--entries %s holds %q, which is not a pull request number", path, s)
+			return nil, invalidInvocation(fmt.Errorf("--entries %s holds %q, which is not a pull request number", path, s))
 		}
 		entries = append(entries, n)
 	}

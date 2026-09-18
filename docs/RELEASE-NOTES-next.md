@@ -56,9 +56,9 @@ New: credentials for seats, pools and services, sealed with age and sops and dec
 ## nova-tokens
 
 - **New verb: `profiles`** — `nova-tokens profiles --swarm-root <dir>` folds, per model, the card count, the median `tokens_out` and the overshoot past each card's own budget line (`PROFILES MODEL` lines, one `PROFILES OK`).
-- **New flags:** `sum` gained the ledger form `sum --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>`; help lists the `--swarm-root/--day/--ledger` form; the `--provider` kind `xai` accepts grok usage JSON.
-- **Changed output lines:** `sum` prints `TOKENS AVG day=… model=… tokens=… usd=… usd_per_mtok=…` — average cost per token per model per day.
-- **Changed behaviour:** `sum` reports missing or malformed cost fields as unknown, never 0; `fold` merges by source and refuses a partial shrink before the write; `report` can report a quiet source on a selected day.
+- **New flags:** `sum` gained the ledger form `sum --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>`; help lists the `--swarm-root/--day/--ledger` form; the `--provider` kind `xai` accepts grok usage JSON; `check --strict` and `check --no-spend <file>`; `sources --unattributed`.
+- **Changed output lines:** `sum` prints `TOKENS AVG day=… model=… tokens=… usd=… usd_per_mtok=…` — average cost per token per model per day. `CHECK OK` and the `CHECK FAIL` count line gain `gap=<n> notes=<n>`; `SOURCES OK` gains `unattributed=<n|->`; `SOURCES UNATTRIBUTED stem=<path> tokens=<n>` is a new listing.
+- **Changed behaviour:** `sum` reports missing or malformed cost fields as unknown, never 0; `fold` merges by source and refuses a partial shrink before the write; `report` can report a quiet source on a selected day. **`check` can go green on a real directory:** a calendar day with no file is counted as `gap=` and named `CHECK MISSING` only under `--strict`, or under a `--no-spend` list that does not account for it; a `*.md`, a `*.log` or a `pre-*` archive beside the day files is counted as `notes=` instead of named as a stray. `--strict` restores the old reading whole. On this repository's own `reports/tokens` that is 40 findings — 36 days nobody worked and 4 files a person put there on purpose — turned into two counts on a green line.
 
 ## nova-version
 
@@ -76,7 +76,7 @@ New: credentials for seats, pools and services, sealed with age and sops and dec
 
 ## nova-merge, nova-update, nova-board
 
-No new verbs or flags. `nova-merge`'s fetched-tip fold is lock-free and retries only the failed records; `nova-update`'s reporter-death cases are staged and tested; the spec-versus-code drift that kept their docs honest was closed.
+No new verbs or flags. **`nova-merge simulate` now leaves no worktree behind and keeps the exit table docs/CLI.md documents:** the scratch worktree's directory *and* git's entry for it under `.git/worktrees/` both go (the old removal used `git worktree remove --force`, which the lane's git seam refuses in any argument, so it never ran and its error was discarded), and an invalid invocation — an unreadable or non-numeric `--entries`, a `--repo` that is not a repository, a `--base` or a `pull/<n>/head` the origin does not have — is exit 2 as the docs say, not 1. `nova-merge`'s fetched-tip fold is lock-free and retries only the failed records; `nova-update`'s reporter-death cases are staged and tested; the spec-versus-code drift that kept their docs honest was closed.
 
 ## Upgrading
 
