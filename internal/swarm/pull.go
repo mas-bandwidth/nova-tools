@@ -21,6 +21,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // queueDirName and takenDirName are the per-bench card directories of section 2:
@@ -126,7 +128,7 @@ func ReapExpiredLeases(store string, now time.Time) ([]string, error) {
 		l, rerr := readSlotLease(store, e.Name())
 		if rerr != nil {
 			// A half-written take: no lease, no owner, no card. Reap it.
-			_ = os.RemoveAll(filepath.Join(slotStoreDir(store), e.Name()))
+			_ = safepath.RemoveUnder(store, filepath.Join(slotStoreDir(store), e.Name()))
 			continue
 		}
 		if l.Until.After(now) || Alive(l.Pid, "") {
@@ -135,7 +137,7 @@ func ReapExpiredLeases(store string, now time.Time) ([]string, error) {
 		if card := returnCardForLease(store, l); card != "" {
 			returned = append(returned, card)
 		}
-		_ = os.RemoveAll(filepath.Join(slotStoreDir(store), e.Name()))
+		_ = safepath.RemoveUnder(store, filepath.Join(slotStoreDir(store), e.Name()))
 	}
 	sort.Strings(returned)
 	return returned, nil

@@ -85,3 +85,39 @@ func TestPullTakesACardUnderALeaseAndHeartbeatRenewsIt(t *testing.T) {
 		t.Fatalf("heartbeat until %s must be after the take's %s", until, res.Until)
 	}
 }
+
+// A slots directory that is a symlink out of the store carries a lease whose computed
+// path escapes the store root. safepath.RemoveUnder refuses it, so the directory the link
+// points at -- and the lease inside it -- survives. A raw os.RemoveAll would follow the
+// link and delete outside the store.
+func TestReapRefusesALeaseThatEscapesTheStoreThroughASymlink(t *testing.T) {
+	const deadPid = 2147483647
+	if Alive(deadPid, "") {
+		t.Skip("dead pid probe is alive here")
+	}
+	store := t.TempDir()
+	outside := t.TempDir()
+	survivor := filepath.Join(outside, "survivor")
+	if err := os.WriteFile(survivor, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The slots directory is a symlink to a directory outside the store: the lease
+	// directory the reaper computes sits under the link, outside the store root.
+	if err := os.Symlink(outside, filepath.Join(store, "slots")); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().UTC().Add(-time.Hour)
+	if err := MakeSlotLease(store, "dead-1", "alice", deadPid, "a.card", past); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ReapExpiredLeases(store, time.Now().UTC()); err != nil {
+		t.Fatalf("ReapExpiredLeases: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "dead-1")); err != nil {
+		t.Fatalf("the reaper followed the slots symlink and removed the lease outside the store: %v", err)
+	}
+	if _, err := os.Stat(survivor); err != nil {
+		t.Fatalf("the directory the slots symlink pointed at was removed: %v", err)
+	}
+}
