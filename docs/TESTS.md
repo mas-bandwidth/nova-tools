@@ -181,6 +181,11 @@ $ nova-check kernel --file ./self/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
 ```
 
+The included `example-self` fixture has `SEED-CORE.md` but no `SEED.md`, so it
+cannot demonstrate `floors` by itself. That check compares a derived core with
+the matching source seed it came from; name a core and source pair you own rather
+than borrowing an unrelated `SEED.md` merely to make the command pass.
+
 ## nova-self-talk
 
 Fixture: `cmd/nova-self-talk/testdata/example-pages`.
@@ -424,6 +429,10 @@ Cut one card of each kind out of the fixture pool, into a fresh `./cards` and
 two-line `pool.tsv` (a read and a fix candidate) and a `templates` directory
 with `benches.tsv`, `read.md` and `fix.md`.
 
+Run the cut/pool examples below from the nova-tools checkout root. Unlike the
+launch fixture above, this setup uses `cmd/nova-pulse/testdata/sources.tsv`,
+whose roadmap path is relative to the checkout root.
+
 `pool` runs against the same directory from the other end: a `sources.tsv`
 declaring one `roadmap` source, and that roadmap — two cells naming a card and
 one naming none. It reads the roadmap, skips the cell without a card, and writes
@@ -524,6 +533,13 @@ STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
 ## nova-tokens
 
 Fixture: `cmd/nova-tokens/testdata/example-bench` (copied into a temp directory first, because a first run WRITES; the bus lane is `example.com`).
+
+Create the output directory before the transcript; `fold` puts its lock inside
+that directory and does not create the directory itself:
+
+```sh
+mkdir -p ./out
+```
 
 ### First run
 
@@ -681,10 +697,16 @@ No fixture: the graph file is created by the run itself under `--graph`, and eve
 line below is local — plain JSON nodes and `:deps` edges, no Redis, no remote, no
 network. A `:deps` cycle is refused at exit 2 before anything is written.
 
-The bounded reader for a `.work` plan. No fixture and no network: the plan is a
-file the run writes, and every line below is read from local bytes alone.
-`cmd/nova-work/firstrun_test.go` writes the plan and runs each `$` line against
-it, so the `./work.work` below is a fresh file per run.
+The bounded reader for a `.work` plan. No fixture and no network: create the
+exact local input before the transcript, then every line below reads local bytes
+alone:
+
+```sh
+printf '%s\n' '(:plan :version 1 (:node :id "n1" :kind docs))' > ./work.work
+```
+
+`cmd/nova-work/firstrun_test.go` performs that setup and runs each `$` line
+against it, so the `./work.work` below is a fresh file per run.
 
 ### First run
 
