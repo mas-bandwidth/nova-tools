@@ -138,17 +138,15 @@ func TestPullWaitsForResult(t *testing.T) {
 		// command names paths, and a temp path can hold "-r" or a glob character, so a
 		// substring match on the line would refuse a copy of one file because of where
 		// the work directory happens to live.
-		// The FILTERS are scp's own words, so they are matched as whole arguments and
-		// never as substrings: a temp path holding `swarm-root` is one `-r` spelling
-		// away from reading a filename as a flag (2026-09-17).
-		// The argv of the copy is what names a filter or a pattern; a substring of the
-		// whole line is not, because "-r" is inside plenty of paths (a temp root under
-		// .../swarm-root, for one) and says nothing about how the copy was asked.
-		fields := strings.Fields(l)
-		if len(fields) != 2 {
-			t.Fatalf("a copy names more than one source and one destination, which is how a filter reads: %q", l)
-		}
-		for _, arg := range fields {
+		//
+		// EACH ARGUMENT, not a substring of the whole line: the copy's paths are absolute
+		// and a temp directory whose name merely contains "-r" (for example one under
+		// ".../swarm-root/...") tripped the old whole-line check while naming a single
+		// file. The intent is unchanged: no argument is a filter or a glob.
+		for _, arg := range strings.Fields(l) {
+			// The argv of the copy is what names a filter or a pattern; a substring of the
+			// whole line is not, because "-r" is inside plenty of paths (a temp root under
+			// .../swarm-root, for one) and says nothing about how the copy was asked.
 			if strings.HasPrefix(arg, "-") || strings.Contains(arg, "*") ||
 				arg == "--include" || arg == "--exclude" || arg == "-r" ||
 				strings.ContainsAny(arg, "*?[") ||

@@ -61,6 +61,7 @@ usage:
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
    nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+   nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
    nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
@@ -189,6 +190,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdNative(rest, stdout, stderr)
 	case "bench":
 		return cmdBench(rest, stdout, stderr)
+	case "reap":
+		return cmdReap(rest, stdout, stderr, now)
 	case "slots":
 		return cmdSlots(rest, stdout, stderr)
 	case "publish":
@@ -1495,6 +1498,42 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 }
 
 // ------------------------------------------------------------------------------- helpers
+
+// cmdReap frees the finished slots under a swarm root (issue #1048): for every slot whose job
+// published a RESULT.md or whose newest harness log is older than --older, the slot's data/,
+// tmp/ and jobs/*/scratch are removed, while RESULT.md, usage.tsv and the logs are kept. It
+// is the verb an operator runs over hulk and vision when the runners have filled a bench.
+func cmdReap(args []string, stdout, stderr io.Writer, now time.Time) int {
+	f := newFlags("reap")
+	root := f.fs.String("root", "", "")
+	olderRaw := f.fs.String("older", swarm.DefaultReapOlder.String(), "")
+	dryRun := f.fs.Bool("dry-run", false, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*root, "root", "the swarm root whose finished slots are reaped; a slot is <root>/<n>")
+	older := swarm.DefaultReapOlder
+	if *olderRaw != "" {
+		d, err := time.ParseDuration(*olderRaw)
+		if err != nil || d < 0 {
+			f.add(fmt.Sprintf("--older wants a duration such as 1h or 30m, got %q", *olderRaw))
+		} else {
+			older = d
+		}
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	slots, freed, err := swarm.ReapSlots(swarm.ReapInput{
+		Root: *root, Older: older, DryRun: *dryRun, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "REAP REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+	fmt.Fprintf(stdout, "REAP OK slots=%d freed=%d\n", slots, freed)
+	return 0
+}
 
 func readTask(path string, useStdin bool, stdin io.Reader) ([]byte, error) {
 	if useStdin {

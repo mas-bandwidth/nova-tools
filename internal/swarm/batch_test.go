@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -992,22 +993,38 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 	// The sleeping card has no such movement, so the same tick sees it idle and kills it.
 	runner := runnerDoing(t, dir, "silent",
 		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "write", Path: "{root}/spin-started", When: "label==spin"},
 		runnerStep{Op: "sleep", Ms: 30000, When: "label==sleeps"},
 		runnerStep{Op: "exit", N: 0, When: "label==sleeps"},
-		runnerStep{Op: "spin", N: 20000, Ms: 5000},
-		runnerStep{Op: "write", Path: "{root}/spin-burned"},
+		runnerStep{Op: "sleep", Ms: 200, When: "label==spin"},
 		publishCard("{job}"),
 	)
+	var round atomic.Int64
+	sampler := &fakeTreeSampler{}
+	sampler.cpuForCard = func(cardIndex, pid int) (uint64, bool) {
+		r := round.Load()
+		if cardIndex == 0 { // spin
+			// Round 0: 100ms. Round 1+: 300ms (grew by 200ms >= 50ms)
+			return uint64(100_000_000 + r*200_000_000), true
+		}
+		if cardIndex == 1 { // sleeps
+			return 50_000_000, true // constant: zero growth
+		}
+		return 0, false
+	}
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
 		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		snapshot: func() activitySnapshot {
+			round.Add(1)
+			return sampler
+		},
 	}, clk, func() {
+		waitForFile(t, filepath.Join(root, "spin-started"))
 		clk.waitTick()
-		waitForTreeCPU(t)
-		clk.tick()
-		waitForFile(t, filepath.Join(root, "spin-burned"))
+		clk.tick() // round 1: initial reading
 		clk.advance(testIdleBudget)
-		clk.tick()
+		clk.tick() // round 2: spin accrued 200ms CPU, sleeps stayed still
 	})
 	if code != 1 {
 		t.Fatalf("a batch holding one idle card exits 1, got %d; stderr: %s", code, errs)
@@ -1020,6 +1037,150 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 	}
 	if !strings.Contains(out, "BATCH B1 n=2 done=1 abstain=1 in=0 out=0 usd=0.0000 idle=1") {
 		t.Fatalf("exactly one of the two silent cards is counted idle:\n%s", out)
+	}
+}
+
+// TestIdleWatchTopologyChangeKeepsCardAlive: a tree whose CPU shrank lost a process (e.g.
+// a compiler or test subprocess finished and was reaped). That process departure is work
+// done, so the idle monitor treats it as activity and keeps the silent card alive.
+func TestIdleWatchTopologyChangeKeepsCardAlive(t *testing.T) {
+	windowsIsNotABench(t)
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"worker", "RESULT: worker\nfinished after subproc"},
+	})
+	runner := runnerDoing(t, dir, "silent-worker",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "write", Path: "{root}/worker-started"},
+		runnerStep{Op: "sleep", Ms: 200},
+		publishCard("{job}"),
+	)
+	var round atomic.Int64
+	sampler := &fakeTreeSampler{}
+	sampler.cpuForCard = func(cardIndex, pid int) (uint64, bool) {
+		r := round.Load()
+		if r <= 1 {
+			return 200_000_000, true // initial reading: tree has child process
+		}
+		// Second reading: child process was reaped, so TreeCPU dropped to 100ms.
+		// A tree whose CPU fell shrank, which resets lastGrow and saves the card.
+		return 100_000_000, true
+	}
+	clk := newManualClock()
+	code, out, errs := runBatchClock(BatchInput{
+		ID: "B-TOPO", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		snapshot: func() activitySnapshot {
+			round.Add(1)
+			return sampler
+		},
+	}, clk, func() {
+		waitForFile(t, filepath.Join(root, "worker-started"))
+		clk.waitTick()
+		clk.tick() // round 1
+		clk.advance(testIdleBudget)
+		clk.tick() // round 2: tree CPU shrank from 200ms to 100ms
+	})
+	if code != 0 {
+		t.Fatalf("batch exit = %d, want 0; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "worker slot=1: finished after subproc") {
+		t.Fatalf("a card whose process tree shrank is kept alive and finishes:\n%s", out)
+	}
+	if strings.Contains(out, "idle=1") {
+		t.Fatalf("a topology-changed card was counted idle:\n%s", out)
+	}
+}
+
+// TestIdleWatchSub1PercentJitterKilled: CPU growth smaller than 1% of the sample interval
+// is Darwin scheduler jitter on sleeping threads (issue #916), not real work. The card
+// must still be idle-killed once the idle window expires.
+func TestIdleWatchSub1PercentJitterKilled(t *testing.T) {
+	windowsIsNotABench(t)
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"jittery", "RESULT: jittery\nMISSING"},
+	})
+	runner := runnerDoing(t, dir, "silent-jitter",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "write", Path: "{root}/jitter-started"},
+		runnerStep{Op: "sleep", Ms: 30000},
+	)
+	var round atomic.Int64
+	sampler := &fakeTreeSampler{}
+	sampler.cpuForCard = func(cardIndex, pid int) (uint64, bool) {
+		r := round.Load()
+		// Over a 5-second interval, 1% is 50ms (50,000,000 ns).
+		// Growth of only 1,000 ns (1 microsecond) is jitter (< 1%).
+		return uint64(100_000_000 + r*1_000), true
+	}
+	clk := newManualClock()
+	code, out, errs := runBatchClock(BatchInput{
+		ID: "B-JITTER", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		snapshot: func() activitySnapshot {
+			round.Add(1)
+			return sampler
+		},
+	}, clk, func() {
+		waitForFile(t, filepath.Join(root, "jitter-started"))
+		clk.waitTick()
+		clk.tick() // round 1
+		clk.advance(testIdleBudget)
+		clk.tick() // round 2: only 1 microsecond growth, card is idle killed
+	})
+	if code != 1 {
+		t.Fatalf("a batch whose only card is idle exits 1, got %d; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "jittery slot=1: "+idleReason) {
+		t.Fatalf("a card with sub-1%% CPU jitter is idle-killed:\n%s", out)
+	}
+}
+
+// TestIdleWatchUnknownSampleReliesOnLog: when TreeCPU returns ok=false (unsupported OS
+// or unreadable process table), the monitor falls back to watching the log alone.
+func TestIdleWatchUnknownSampleReliesOnLog(t *testing.T) {
+	windowsIsNotABench(t)
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := writeCards(t, dir, [][2]string{
+		{"active-log", "RESULT: active-log\nfinished via log"},
+		{"silent", "RESULT: silent\nMISSING"},
+	})
+	runner := runnerDoing(t, dir, "log-watcher",
+		runnerStep{Op: "mkdir", Path: "{job}"},
+		runnerStep{Op: "stdout", Body: "line 1", When: "label==active-log"},
+		runnerStep{Op: "write", Path: "{root}/line1", When: "label==active-log"},
+		runnerStep{Op: "sleep", Ms: 30000, When: "label==silent"},
+		runnerStep{Op: "sleep", Ms: 50, When: "label==active-log"},
+		runnerStep{Op: "stdout", Body: "line 2", When: "label==active-log"},
+		runnerStep{Op: "write", Path: "{root}/line2", When: "label==active-log"},
+		publishCard("{job}"),
+	)
+	sampler := &fakeTreeSampler{}
+	sampler.cpuForCard = func(cardIndex, pid int) (uint64, bool) {
+		return 0, false // TreeCPU returns ok=false (unknown/unsupported)
+	}
+	clk := newManualClock()
+	code, out, errs := runBatchClock(BatchInput{
+		ID: "B-UNK", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		snapshot: func() activitySnapshot { return sampler },
+	}, clk, func() {
+		waitForFile(t, filepath.Join(root, "line1"))
+		clk.waitTick()
+		clk.tick() // round 1: active-log has line 1
+		waitForFile(t, filepath.Join(root, "line2"))
+		clk.advance(testIdleBudget)
+		clk.tick() // round 2: log grew to line 2, active-log is saved while silent is idle-killed
+	})
+	if code != 1 {
+		t.Fatalf("batch exit = %d, want 1; stderr: %s", code, errs)
+	}
+	if !strings.Contains(out, "active-log slot=1: finished via log") {
+		t.Fatalf("card with growing log survives unknown CPU sample:\n%s", out)
+	}
+	if !strings.Contains(out, "silent slot=2: "+idleReason) {
+		t.Fatalf("card with silent log and unknown CPU sample is idle-killed:\n%s", out)
 	}
 }
 

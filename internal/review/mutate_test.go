@@ -83,11 +83,22 @@ func commit(t *testing.T, dir, msg string) string {
 	return strings.TrimSpace(run(t, dir, "git", "rev-parse", "HEAD"))
 }
 
+// mutateFixture runs the verb over a fixture repo with the throwaway worktree under this
+// test's OWN temp directory. Nothing here is asserted about the shared os.TempDir(): it is
+// shared with every other job on the same self-hosted runner, and reading it is the flake
+// the TempRoot option exists to end.
 func mutateFixture(t *testing.T, dir string) (*MutateResult, error) {
+	t.Helper()
+	return mutateFixtureIn(t, dir, t.TempDir())
+}
+
+// mutateFixtureIn is mutateFixture with the temp root named, for the one test that has to
+// look inside it afterwards.
+func mutateFixtureIn(t *testing.T, dir, tempRoot string) (*MutateResult, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	return Mutate(ctx, MutateOptions{Repo: dir, Base: "main", Head: "HEAD"})
+	return Mutate(ctx, MutateOptions{Repo: dir, Base: "main", Head: "HEAD", TempRoot: tempRoot})
 }
 
 // The case the verb exists for: the head fixes Sign at zero and brings a test that is red
@@ -296,17 +307,14 @@ func TestSignBig(t *testing.T) {
 	commit(t, dir, "a change whose test is green without it")
 
 	before := strings.Count(run(t, dir, "git", "worktree", "list"), "\n")
-	// Only the directories THIS run makes are its own: a leftover from some other
-	// process in the same temp directory is not this test's evidence either way.
-	prior := map[string]bool{}
-	was, err := filepath.Glob(filepath.Join(os.TempDir(), "nova-review-mutate-*"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range was {
-		prior[p] = true
-	}
-	res, err := mutateFixture(t, dir)
+	// The temp root is this test's own directory, and nothing else writes into it. The
+	// assertion is therefore the flat one -- NOTHING is left behind -- with no snapshot
+	// to take and no sibling to tell apart. Read against the shared os.TempDir() it was
+	// red whenever another job on the same runner made a `nova-review-mutate-*` between
+	// the snapshot and the check (#1341 twice, #1345, #1360); the class test
+	// TestNoTestGlobsTheSharedTempDir in internal/ci holds the whole tree to this.
+	tempRoot := t.TempDir()
+	res, err := mutateFixtureIn(t, dir, tempRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,14 +325,12 @@ func TestSignBig(t *testing.T) {
 	if strings.Count(after, "\n") != before {
 		t.Fatalf("a worktree outlived the failing run:\n%s", after)
 	}
-	entries, err := filepath.Glob(filepath.Join(os.TempDir(), "nova-review-mutate-*"))
+	entries, err := filepath.Glob(filepath.Join(tempRoot, "nova-review-mutate-*"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range entries {
-		if !prior[p] {
-			t.Fatalf("a temp worktree directory was left behind: %s", p)
-		}
+	if len(entries) != 0 {
+		t.Fatalf("a temp worktree directory was left behind under %s: %v", tempRoot, entries)
 	}
 }
 

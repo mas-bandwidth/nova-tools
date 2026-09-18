@@ -1,0 +1,20 @@
+// The pre-fix shape of cmd/nova-work/firstrun_test.go, kept as a fixture so the
+// scanner is exercised on the text the class rule is about. `dependencies`
+// WRITES the file named by --graph, so a run of this test leaves a deps.json in
+// the package directory -- the class #1311 closed for scratch/, met again.
+package fixture
+
+import "testing"
+
+func TestFirstRunExampleRuns(t *testing.T) {
+	if code, _, stderr := runCLI(t, "dependencies", "--graph", "./deps.json", "--node", "b"); code != 0 {
+		t.Fatalf("the usage example does not run: exit %d, stderr: %s", code, stderr)
+	}
+}
+
+func TestPacketIsWrittenWhereItIsAsked(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--who", "emma", "--out", "packet.md"}, &out, &errb); code != 0 {
+		t.Fatalf("packet exit=%d stderr=%s", code, errb.String())
+	}
+}

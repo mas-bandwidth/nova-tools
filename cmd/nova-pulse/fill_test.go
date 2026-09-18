@@ -30,6 +30,21 @@ func (l *fillLaunchStub) Launch(bench, card string) error {
 	return nil
 }
 
+// fillMachines writes a machines registry naming the test's benches as benches, so the
+// fill's lock guard (runner hosts are CI-only) has something to resolve them through.
+func fillMachines(t *testing.T, dir string, names ...string) string {
+	t.Helper()
+	var b strings.Builder
+	for _, name := range names {
+		b.WriteString(name + "\t" + name + "\tlinux/x64\tbench\tswarm-" + name + "\t64\t-\n")
+	}
+	path := filepath.Join(dir, "machines.tsv")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func fillReady(t *testing.T, dir string, n int) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -60,6 +75,7 @@ func TestFillLaunchesCapacityPerBench(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := pulse.Fill(pulse.FillInput{
 		Ready: ready, Launched: launched,
+		Machines: fillMachines(t, dir, "bench-a", "bench-b"),
 		Benches:  []string{"bench-a", "bench-b"},
 		Once:     true,
 		Stdout:   &out,
@@ -101,6 +117,7 @@ func TestFillCapsAtThirty(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := pulse.Fill(pulse.FillInput{
 		Ready: ready, Launched: launched,
+		Machines: fillMachines(t, dir, "bench-x"),
 		Benches:  []string{"bench-x"},
 		Once:     true,
 		Stdout:   &out,
@@ -130,6 +147,7 @@ func TestFillNeverLaunchesACardTwice(t *testing.T) {
 	l := &fillLaunchStub{}
 	in := pulse.FillInput{
 		Ready: ready, Launched: launched,
+		Machines: fillMachines(t, dir, "bench-a"),
 		Benches:  []string{"bench-a"},
 		Once:     true,
 		Capacity: fillCapStub{"bench-a": 100},

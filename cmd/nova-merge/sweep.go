@@ -65,6 +65,11 @@ func cmdSweep(args []string, stdout, stderr io.Writer, deps Deps) int {
 			oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)), oneline.Field(*repo), oneline.Field(*branch))
 		return 2
 	}
-	fmt.Fprintf(stdout, "SWEEP queued=%d reruns=%d dequeued=%d inqueue=%d\n", res.Queued, res.Reruns, res.Dequeued, res.InQueue)
+	// refused=<n> is the lock, counted: the green pull requests the one door would not
+	// admit because their heads are not a batch's (Glenn, 2026-09-18). A session whose
+	// cards are all green and none batched sweeps to queued=0 refused=<many>, which is the
+	// rule working rather than a sweep that failed.
+	fmt.Fprintf(stdout, "SWEEP queued=%d reruns=%d dequeued=%d inqueue=%d refused=%d\n",
+		res.Queued, res.Reruns, res.Dequeued, res.InQueue, res.Refused)
 	return 0
 }

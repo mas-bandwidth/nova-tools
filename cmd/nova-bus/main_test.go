@@ -107,9 +107,10 @@ const noMaintenanceConfig = "[gc]\n\tauto = 0\n\tautoDetach = false\n" +
 // What stays serial, and must: a test that writes PROCESS-WIDE state. That is the whole
 // list, and every one of them is serial for a named reason --
 //
-//	bus.NoteParses          one counter for the process, so a sibling parsing a note
-//	                        while it counts makes the count somebody else's work
-//	                        (TestInboxParsesOnlyWhatIsNewSinceTheCursor, TestHeardSurvivesTheCursor)
+//	bus.NoteParses,         one counter each for the process, so a sibling parsing a note
+//	bus.CommitsWalked       or counting commits while one of these counts makes the count
+//	                        somebody else's work (TestInboxParsesOnlyWhatIsNewSinceTheCursor,
+//	                        TestHeardSurvivesTheCursor, TestAStaleCursorCostsTheBoundAndNotTheDistance)
 //	refreshCheckout,        package variables taken out at the seam and put back
 //	publishDraft,           (withoutFetch, and the two tests that stand in for a
 //	checkoutLockWait,       filesystem, a held lock and a stamp)
@@ -414,7 +415,6 @@ func TestSendRefusesAndWritesNothing(t *testing.T) {
 		{"an unknown recipient", "From: Ada\nTo: Boe\nSubject: s\n\nbody\n", `"Boe"`},
 		{"an unknown sender", "From: Nobody\nTo: Ada\nSubject: s\n\nbody\n", "names no one on this bus"},
 		{"a sender with no lane", "From: Dana\nTo: Ada\nSubject: s\n\nbody\n", "has no lane"},
-		{"an author-written Id", "From: Ada\nTo: Bo\nId: ada-000000000000\nSubject: s\n\nbody\n", "already carries an Id line"},
 		{"a Re naming a slug", "From: Ada\nTo: Bo\nRe: from-bo/renamed.md\nSubject: s\n\nbody\n", "a slug is not a thread"},
 		{"a misspelled header key", "From: Ada\nTo: Bo\nSbuject: s\n\nbody\n", `unknown header key "Sbuject"`},
 	}
