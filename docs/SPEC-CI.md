@@ -875,6 +875,32 @@ per-binary and live in each command's own `firstrun_test.go`, where the example
 lines are EXECUTED, the refusal sentences asserted and the transcript compared
 against real output.
 
+### `version` — every tool prints the one version line
+
+**The rule.** Every `cmd/nova-*` binary answers `version` with exactly one line
+in the grammar `<tool> <identity> <goos>/<goarch> <go version>` followed by any
+number of `key=value` extras — the grammar `internal/buildinfo` both writes and
+reads, and `docs/SPEC.md` states once.
+**The hurt.** `#1297` and `#1264`: `nova-version snapshot --bin ~/.local/bin`
+refused an entire install, exit 2, because nova-merge printed five tokens where
+the reader wanted four, and nova-sandbox printed a line of a different shape
+(`SANDBOX VERSION tool=... version=...`). Two shapes meant every reader of a
+version line carried its own tolerant parser, and a tool that said one more true
+thing about itself broke them one at a time.
+**The test.** `TestEveryToolPrintsTheOneVersionLine` and
+`TestTheVersionGrammarIsSpelledOutOnceInTheSpec`
+(`internal/ci/version_class_test.go`). The first builds every `cmd/nova-*` in
+one `go build ./cmd/...` and runs the REAL binary through the REAL reader; the
+second holds `docs/SPEC.md` to the same sentence.
+**Its allowlist.** None. The test walks `cmd/` rather than holding a list, so a
+tool added tomorrow is held to the grammar on the day it appears.
+**Its remedy line.** `` `<tool> version` printed a line internal/buildinfo.Parse
+refuses; the grammar is `<tool> <identity> <goos>/<goarch> <go version>` and
+then any number of key=value extras``.
+**Its narrowings.** Only the `version` verb is read; a `--version` flag or a
+version inside a banner is not. Extras are not checked beyond their `key=value`
+shape.
+
 ### `selection` — `internal/ci` is always in the selected packages
 
 **The rule.** `./internal/ci` is added to the package set on every selection —
