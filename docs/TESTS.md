@@ -705,6 +705,9 @@ alone:
 printf '%s\n' '(:plan :version 1 (:node :id "n1" :kind docs))' > ./work.work
 ```
 
+This minimal plan demonstrates `plan check`; `plan expand` also requires each
+node to declare `:output`.
+
 `cmd/nova-work/firstrun_test.go` performs that setup and runs each `$` line
 against it, so the `./work.work` below is a fresh file per run.
 
