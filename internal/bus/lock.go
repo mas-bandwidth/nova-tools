@@ -41,6 +41,80 @@ const LockName = "nova-bus.lock"
 // ErrLockHeld indicates that the requested lock could not be acquired within the wait duration.
 var ErrLockHeld = errors.New("lock held")
 
+// staleLockRemovalWindow bounds how long a sentinel removal is retried when the
+// platform reports a transient collision. On Windows a file that was just
+// closed can sit in a delete-pending or sharing-violating state for a moment,
+// so a single os.Remove is not enough to prove the lock was released.
+const staleLockRemovalWindow = 250 * time.Millisecond
+
+// maxStaleRecoveries bounds how many dead-holder sentinels one acquisition will
+// clear, so a delete-and-recreate cannot turn the wait loop into a spin.
+const maxStaleRecoveries = 3
+
+// sentinelPath is the sibling file whose existence means a sentinel lock is
+// held. It is beside the lock file the caller opened so that the lock stays in
+// the git directory and dies with it.
+func sentinelPath(name string) string {
+	return filepath.Clean(name) + ".held"
+}
+
+// removeLockFile removes a lock artifact, retrying over a short bounded window
+// while the platform calls the failure a transient lock collision. A missing
+// file is success: the lock is already gone.
+func removeLockFile(path string) error {
+	deadline := time.Now().Add(staleLockRemovalWindow)
+	for {
+		err := os.Remove(path)
+		if err == nil || errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if !platformTransientLockCollision(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(lockPoll)
+	}
+}
+
+// clearStaleSentinel reports whether it removed the sentinel beside lockPath
+// because the holder the lock file names is no longer alive.
+//
+// On the sentinel platforms (Windows and the generic exclusive-create build) a
+// killed process cannot have its lock dropped by the kernel, so the sentinel
+// outlives it and the next run would otherwise wait out its whole budget for a
+// process that will never release anything. The pid stamped into the lock file
+// is the only thing that distinguishes a dead holder's lock from a live one, so
+// it is read and checked rather than inferred from the file's existence.
+//
+// On unix the kernel drops an flock when its holder dies, so there is normally
+// no sentinel to clear; if one is left in the repository by a Windows run, this
+// clears it the same way rather than refusing over a file nothing owns.
+func clearStaleSentinel(lockPath string) bool {
+	sentinel := sentinelPath(lockPath)
+	if _, err := os.Stat(sentinel); err != nil {
+		return false
+	}
+	holder := ReadLockHolder(lockPath)
+	pid, err := strconv.Atoi(holder)
+	if err != nil || pid <= 0 {
+		// No pid to judge: an older or unwritten record. Never clear a lock
+		// whose holder cannot be shown to be gone.
+		return false
+	}
+	if processAlive(pid) {
+		return false
+	}
+	// Confirm the holder is still the same dead one before removing, so a live
+	// acquirer that has created the sentinel but not yet stamped its pid cannot
+	// have its lock cleared out from under it.
+	if again := ReadLockHolder(lockPath); again != holder {
+		return false
+	}
+	if err := removeLockFile(sentinel); err != nil {
+		return false
+	}
+	return true
+}
+
 // LockFile takes an exclusive advisory lock on path, waiting up to wait for it, and returns the
 // release function. The release is safe to call more than once.
 //
@@ -63,6 +137,7 @@ func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, re
 	}
 	deadline := time.Now().Add(wait)
 	var lastErr error
+	recoveries := 0
 	for {
 		ok, retryable, lockErr := try(f)
 		if lockErr != nil {
@@ -85,6 +160,14 @@ func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, re
 				unlockFile(f)
 				f.Close()
 			}, nil
+		}
+		if clearStaleSentinel(path) && recoveries < maxStaleRecoveries {
+			// The sentinel is a dead run's lock, not a live one: its holder is
+			// gone, so waiting out the budget would be waiting for a process
+			// that can never release anything. Try again at once. The cap keeps
+			// a pathological delete-and-recreate from spinning this loop.
+			recoveries++
+			continue
 		}
 		if wait == 0 || !time.Now().Before(deadline) {
 			f.Close()
