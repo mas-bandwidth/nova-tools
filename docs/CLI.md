@@ -1216,19 +1216,30 @@ rest of the machine is not the fill's to spend.
 
 ```
 nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
+nova-pulse fleet registry add --machines <file> --name <n> --ssh <user@host> --os <goos/goarch> --roles <a,b> --seat <s|-> --cores <n> --notes <text> [--provider <p>] [--mac <addr@lan-bench>]
+nova-pulse fleet registry set --machines <file> --name <n> [--ssh <t>] [--os <goos/goarch>] [--roles <a,b>] [--seat <s|->] [--cores <n>] [--notes <text>] [--provider <p>] [--mac <addr@lan-bench|->]
 ```
 
 The machines registry says what each machine in the fleet **is**, and therefore what may
 be placed on it. It is one tab-separated file kept in git beside the lanes file:
 
 ```
-name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes
+name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes<TAB>provider<TAB>mac
 ```
 
 `roles` is a **set** from `{bench, runner, coordination, services}`: `bench` means cards,
 probes and load may be placed there; `runner` means the machine serves the merge group's CI
 shards; `coordination` means a friend's own window lives there; `services` means the stack
-does (Loki, Grafana, Redis). `seat` is the machine's nova-secrets seat, or `-`.
+does (Loki, Grafana, Redis). `seat` is the machine's nova-secrets seat, or `-`. `provider`
+is who runs the machine — `self` for our own hardware, which is what a line that does not
+say means, or one of `aws`, `azure`, `digitalocean`, `gcp`, `hetzner`, `oracle`; a spelling
+outside that set is a refusal, because it is a typo far more often than a fleet fact.
+`mac` is the wake address as `<hardware-address>@<lan-bench>`, or `-` when the machine never
+sleeps.
+
+The last two columns arrived after the first seven, so the **reader takes a 7, 8 or 9
+column line** for one release and the **writer always writes nine**: a column nobody filled
+says `-`, so a reader can tell answered from forgotten.
 
 **The lock (Glenn, 2026-09-18): runner hosts are CI-only.** No card, no probe and no load
 goes on a machine that serves the merge group's shards — a card and a shard on one host make
@@ -1252,13 +1263,42 @@ not at all, because the half that reads is the half that lets a card through.
 `fleet registry` prints one line per machine, in file order:
 
 ```
-MACHINE hulk ssh=hulk os=linux/x64 roles=bench,runner seat=swarm-hulk cores=64 notes="allow-shared=2026-09-18 ..."
+MACHINE hulk ssh=hulk os=linux/x64 roles=bench,runner seat=swarm-hulk cores=64 provider=self mac=- notes="allow-shared=2026-09-18 ..."
 ```
 
 `--role <r>` lists only the machines carrying that role; a role no machine carries is a
 refusal, because it is far more likely a typo than a fleet fact. The example registry is
 `internal/fleet/testdata/machines.tsv`, and the fleet's own lives at
 `queue/control/machines.tsv`.
+
+**`add` and `set` are the only two verbs that write it.** On 2026-09-18 this file was
+edited by hand three times — `sed` twice, a python one-liner once — and each of those edits
+was a control file changed by a tool that knows nothing about it: nothing held the new row
+to the roles set, nothing noticed a name written twice, and nothing would have caught a
+`bench,runner` line whose dated exception was missing until a card landed on a CI runner
+host and the merge queue stopped. So a row these verbs write is **rendered, handed back to
+the registry's own reader, and written only if the reader takes the whole file back**. A
+refusal leaves the file on disk byte for byte as it was, and the write itself is a temp
+file in the same directory renamed over the original, so a reader racing it sees the whole
+old file or the whole new one.
+
+`add` takes every column as a flag with no default — a guessed column in a control file is
+how a card reaches a CI runner host — and the columns that may honestly be empty are given
+as `-`. `set` changes only the columns it names: `set --notes` writes a note and not a
+rebuilt row. Both print what they wrote, the event line and then the machine's row:
+
+```
+REGISTRY ADDED name=vision machines=queue/control/machines.tsv
+MACHINE vision ssh=vision os=linux/x64 roles=bench seat=swarm-vision cores=64 provider=self mac=- notes="a card bench"
+
+REGISTRY SET name=batman fields=notes machines=queue/control/machines.tsv
+MACHINE batman ssh=batman os=darwin/amd64 roles=runner seat=- cores=8 provider=self mac=00:00:5e:00:53:01@hulk notes="…"
+```
+
+A duplicate name, an unknown role, a shared row with no `allow-shared=<YYYY-MM-DD>` note, a
+provider outside the set, a wake address that is not six bytes, a lan-bench this file does
+not name, a `set` that names no column and a `set` on a machine that is not there are each
+`REGISTRY REFUSED: …` on stderr and exit 2.
 
 ### fleet add
 

@@ -1,0 +1,11 @@
+# The retired wake registry: `name,mac,lan-bench`, one Mac bench per line.
+#
+# This is queue/control/wake-registry.csv as it stood on 2026-09-18, with the two hardware
+# addresses replaced by documentation addresses -- the same substitution machines.tsv beside
+# it carries, so the two fixtures agree line for line.
+#
+# It is kept as a fixture, not as a file anything reads: the migration test holds it against
+# machines.tsv and proves the fold lost nothing. `nova-pulse wake --registry` reads this
+# shape for one release and prints a NOTE every time; then this file and its reader go.
+batman,00:00:5e:00:53:01,hulk
+superman,00:00:5e:00:53:02,hulk

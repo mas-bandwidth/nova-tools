@@ -15,15 +15,27 @@
 //
 // The file is data, tab separated, kept in git beside the lanes file:
 //
-//	name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes
+//	name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes<TAB>provider<TAB>mac
+//
+// The last two columns arrived after the first seven, so the reader takes a 7, 8 or 9
+// column line: seven is the file as it was written on 2026-09-18, eight adds `provider`
+// (who runs the machine), nine adds `mac` (`<hardware-address>@<lan-bench>`), which folds
+// the old `wake-registry.csv` -- `name,mac,lan-bench` -- into this one file. The WRITER
+// always writes nine: a column nobody filled says `-`, so a reader sees that it was
+// answered and not forgotten.
 //
 // It is read WHOLE and validated whole: a partially-read registry is worse than none,
-// because the half that read is the half that lets a card through.
+// because the half that read is the half that lets a card through. It is WRITTEN whole
+// too, by `nova-pulse fleet registry add` and `set` and by nothing else -- this file was
+// edited by hand with sed and python three times on 2026-09-18, and a control file a hand
+// edits is a control file nothing validates.
 package fleet
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,17 +82,74 @@ const (
 // runner role comes off hulk and vision and the note goes with it.
 const allowSharedPrefix = "allow-shared="
 
+// ProviderSelf is our own hardware on our own bench. Every machine in the fleet today is
+// one, so it is what a line that does not say answers.
+const ProviderSelf = "self"
+
+// knownProviders is who may run a machine. It is deliberately small: a provider outside
+// the set is a typo far more often than a fleet fact, and a new one is a line in this file
+// written the day a machine actually arrives from there -- not a free-text column that
+// quietly grows three spellings of the same company.
+var knownProviders = map[string]bool{
+	ProviderSelf:   true,
+	"aws":          true,
+	"gcp":          true,
+	"azure":        true,
+	"hetzner":      true,
+	"oracle":       true,
+	"digitalocean": true,
+}
+
+// ProviderList is the whole set, sorted, as a refusal prints it.
+func ProviderList() string {
+	out := make([]string, 0, len(knownProviders))
+	for p := range knownProviders {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
+}
+
+// hostAlias is a plain host alias: what ssh and a wake packet's lan-bench may be, and
+// never anything a shell could read as syntax.
+var hostAlias = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 // Machine is one line of the registry.
 type Machine struct {
-	Name  string   // the bench name every verb's --bench takes
-	SSH   string   // the ssh target; an alias in ~/.ssh/config or a host
-	OS    string   // linux, darwin, windows
-	Arch  string   // x64, amd64, arm64
-	Roles []string // sorted, unique, every one from knownRoles
-	Seat  string   // the nova-secrets seat on the machine; "" when it carries none
-	Cores int      // whole cores, as the machine counts them
-	Notes string   // free text; "" when the line said `-`
-	Line  int      // the line of the file this came from, for a refusal that can be found
+	Name     string   // the bench name every verb's --bench takes
+	SSH      string   // the ssh target; an alias in ~/.ssh/config or a host
+	OS       string   // linux, darwin, windows
+	Arch     string   // x64, amd64, arm64
+	Roles    []string // sorted, unique, every one from knownRoles
+	Seat     string   // the nova-secrets seat on the machine; "" when it carries none
+	Cores    int      // whole cores, as the machine counts them
+	Notes    string   // free text; "" when the line said `-`
+	Provider string   // who runs the machine; ProviderSelf when the line does not say
+	MAC      string   // the wake address, as net.ParseMAC read it; "" when it never sleeps
+	LAN      string   // the machine the wake packet is broadcast from; "" with no MAC
+	Line     int      // the line of the file this came from, for a refusal that can be found
+}
+
+// Sleeps says whether the machine carries a wake address, and so may be woken.
+func (m Machine) Sleeps() bool { return m.MAC != "" }
+
+// MACField is the mac column as the file writes it: `<hardware-address>@<lan-bench>`, or
+// `-` when the machine never sleeps.
+func (m Machine) MACField() string {
+	if m.MAC == "" {
+		return "-"
+	}
+	return m.MAC + "@" + m.LAN
+}
+
+// Row is the machine as one tab-separated line of the file. It always writes all nine
+// columns: the reader takes the shorter shapes for one release, the writer never does,
+// because an elided column is a column nobody can tell from a forgotten one.
+func (m Machine) Row() string {
+	return strings.Join([]string{
+		m.Name, m.SSH, m.OS + "/" + m.Arch, m.RoleList(), dash(m.Seat),
+		strconv.Itoa(m.Cores), dash(m.Notes), dash(m.Provider), m.MACField(),
+	}, "\t")
 }
 
 // HasRole says whether the machine carries one role.
@@ -154,9 +223,12 @@ func (e *Refusal) Line(token string) string {
 		token, oneline.Field(e.Name), oneline.Field(e.Reason), oneline.Quote(e.Remedy))
 }
 
-// Registry is the whole machines file, read and validated.
+// Registry is the whole machines file, read and validated. It keeps the file's own lines
+// as well as the machines, so a verb that writes one row leaves the header, the comments
+// and every other row exactly as they were.
 type Registry struct {
 	path     string
+	lines    []string // the file, split on \n, without the trailing empty element
 	machines []Machine
 	byName   map[string]int
 }
@@ -264,8 +336,19 @@ func ReadRegistry(path string) (*Registry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot read the machines registry %s: %w", path, err)
 	}
+	return parseRegistry(path, string(raw))
+}
+
+// parseRegistry is the one reader. Every writer renders the whole file and hands it back
+// here before a byte reaches the disk, so a row a verb wrote is held to exactly the rules
+// a row a person wrote is held to.
+func parseRegistry(path, raw string) (*Registry, error) {
 	reg := &Registry{path: path, byName: map[string]int{}}
-	for i, line := range strings.Split(string(raw), "\n") {
+	reg.lines = strings.Split(strings.TrimSuffix(raw, "\n"), "\n")
+	if len(reg.lines) == 1 && reg.lines[0] == "" {
+		reg.lines = nil
+	}
+	for i, line := range reg.lines {
 		n := i + 1
 		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r"))
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
@@ -276,28 +359,55 @@ func ReadRegistry(path string) (*Registry, error) {
 			return nil, fmt.Errorf("%s line %d: %w", path, n, err)
 		}
 		if _, twice := reg.byName[m.Name]; twice {
-			return nil, fmt.Errorf("%s line %d: %s is named twice; one line per machine",
-				path, n, m.Name)
+			return nil, fmt.Errorf("%s line %d: %s is named twice; one line per machine (give the new machine its own name, or run: nova-pulse fleet registry set --machines %s --name %s …)",
+				path, n, m.Name, path, m.Name)
 		}
 		reg.byName[m.Name] = len(reg.machines)
 		reg.machines = append(reg.machines, m)
 	}
 	if len(reg.machines) == 0 {
-		return nil, fmt.Errorf("%s names no machine; refusing to guess (a machines file is name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes)", path)
+		return nil, fmt.Errorf("%s names no machine; refusing to guess (a machines file is name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes<TAB>provider<TAB>mac; run: nova-pulse fleet registry add --machines %s --name <n> --ssh <user@host> --os <goos/goarch> --roles <a,b> --seat <s|-> --cores <n> --notes <text>)", path, path)
+	}
+	// The lan-bench is a machine of this same fleet, so it is checked once the whole file
+	// has read and the order of the rows cannot matter. This is the check the old
+	// wake-registry.csv could never make: it named `hulk` as a bare string and nothing knew
+	// whether hulk existed.
+	for _, m := range reg.machines {
+		if m.LAN == "" {
+			continue
+		}
+		if _, ok := reg.byName[m.LAN]; !ok {
+			return nil, fmt.Errorf("%s line %d: %s is woken from the lan-bench %s, which %s does not name; give a machine in this file (the machines are %s)",
+				path, m.Line, m.Name, m.LAN, path, strings.Join(reg.names(), ", "))
+		}
 	}
 	return reg, nil
 }
 
-// machineFields is the shape of one line. Seven, always: a column nobody filled says `-`,
-// so a reader can see at a glance that it was answered and not forgotten.
-const machineFields = 7
+// names is every machine name, in file order, as a refusal lists them.
+func (r *Registry) names() []string {
+	out := make([]string, 0, len(r.machines))
+	for _, m := range r.machines {
+		out = append(out, m.Name)
+	}
+	return out
+}
+
+// The shape of one line. Seven columns is the file as it was first written, eight adds
+// `provider` and nine adds `mac`; the reader takes all three for one release and the
+// writer always writes nine. A column nobody filled says `-`, so a reader can see at a
+// glance that it was answered and not forgotten.
+const (
+	machineFieldsMin = 7
+	machineFieldsMax = 9
+)
 
 // readMachine reads and validates one line.
 func readMachine(line string, n int) (Machine, error) {
 	f := strings.Split(line, "\t")
-	if len(f) != machineFields {
-		return Machine{}, fmt.Errorf("wants %d tab-separated fields name, ssh, os/arch, roles, seat, cores, notes; got %d",
-			machineFields, len(f))
+	if len(f) < machineFieldsMin || len(f) > machineFieldsMax {
+		return Machine{}, fmt.Errorf("wants %d to %d tab-separated fields name, ssh, os/arch, roles, seat, cores, notes, provider, mac; got %d (write every column, `-` where there is nothing; run: nova-pulse help)",
+			machineFieldsMin, machineFieldsMax, len(f))
 	}
 	m := Machine{
 		Name: strings.TrimSpace(f[0]),
@@ -307,6 +417,9 @@ func readMachine(line string, n int) (Machine, error) {
 	}
 	if m.Name == "" {
 		return Machine{}, fmt.Errorf("has no machine name")
+	}
+	if !hostAlias.MatchString(m.Name) {
+		return Machine{}, fmt.Errorf("the machine name %q is not a plain host alias; give a name of letters, digits, dot, dash and underscore", m.Name)
 	}
 	if m.SSH == "" {
 		return Machine{}, fmt.Errorf("%s has no ssh target; give the alias ssh would take", m.Name)
@@ -329,6 +442,25 @@ func readMachine(line string, n int) (Machine, error) {
 	}
 	m.Cores = cores
 	m.Notes = undash(f[6])
+
+	m.Provider = ProviderSelf
+	if len(f) > 7 {
+		if p := undash(f[7]); p != "" {
+			if !knownProviders[p] {
+				return Machine{}, fmt.Errorf("%s carries the unknown provider %q; the providers are %s (a machine we own is %s; add a provider to internal/fleet the day a machine arrives from a new one)",
+					m.Name, p, ProviderList(), ProviderSelf)
+			}
+			m.Provider = p
+		}
+	}
+
+	if len(f) > 8 {
+		mac, lan, err := readMAC(undash(f[8]))
+		if err != nil {
+			return Machine{}, fmt.Errorf("%s %w", m.Name, err)
+		}
+		m.MAC, m.LAN = mac, lan
+	}
 
 	// The one rule the file itself enforces: a machine that is both a CI runner host and a
 	// card bench is the exception the lock permits for now, and it must say why and when.
@@ -367,6 +499,33 @@ func readRoles(field string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// readMAC reads the wake column: `<hardware-address>@<lan-bench>`, or nothing at all when
+// the machine never sleeps. Both halves are required together, because a mac with no
+// lan-bench is a machine nothing can wake -- the packet is a LAN broadcast and it has to
+// leave from somewhere. The address is normalised to what net.ParseMAC read, so one file
+// cannot carry two spellings of one machine's hardware.
+func readMAC(field string) (mac, lan string, err error) {
+	if field == "" {
+		return "", "", nil
+	}
+	addr, bench, cut := strings.Cut(field, "@")
+	addr, bench = strings.TrimSpace(addr), strings.TrimSpace(bench)
+	if !cut || addr == "" || bench == "" {
+		return "", "", fmt.Errorf("wants the wake column as <hardware-address>@<lan-bench>, got %q; give the machine the packet is broadcast from, or `-` when it never sleeps", field)
+	}
+	hw, perr := net.ParseMAC(addr)
+	if perr != nil {
+		return "", "", fmt.Errorf("has the wake address %q, which is not a hardware address: %v; give six bytes such as d0:81:7a:d8:3a:ec", addr, perr)
+	}
+	if len(hw) != 6 {
+		return "", "", fmt.Errorf("has the wake address %q, which is %d bytes; give the six-byte address", addr, len(hw))
+	}
+	if !hostAlias.MatchString(bench) {
+		return "", "", fmt.Errorf("is woken from %q, which is not a plain host alias; name the machine the packet is broadcast from", bench)
+	}
+	return hw.String(), bench, nil
 }
 
 // undash reads a column whose `-` means "none".

@@ -1,6 +1,11 @@
 # The fleet's machines: what each one IS, and therefore what may be placed on it.
 #
-# name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes
+# name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes<TAB>provider<TAB>mac
+#
+# This is the fleet's own file as it stood on 2026-09-18, migrated to nine columns. Its two
+# hardware addresses are documentation addresses and its tailnet target is an alias, because
+# a fixture in git carries a SHAPE and never a fleet's private detail; everything else --
+# the names, the roles, the seats, the core counts, the dated exceptions -- is the real file.
 #
 # roles is a SET from {bench, runner, coordination, services}, comma separated:
 #   bench         cards, probes and load may be placed here
@@ -9,6 +14,11 @@
 #   services      Loki, Grafana, Redis and the rest of the stack live here
 # seat is the nova-secrets seat on the machine, or `-` when it carries none.
 # notes is free text, or `-`.
+# provider is who runs the machine: self (our own hardware) or one of the clouds.
+# mac is the wake address as <hardware-address>@<lan-bench>, or `-` when the machine never
+#   sleeps. It is the retired wake-registry.csv folded in: one file, one reader, one truth
+#   about a machine. The lan-bench is the machine the magic packet is broadcast from, and it
+#   must itself be named in this file -- the check two separate files could never make.
 #
 # THE LOCK (Glenn, 2026-09-18): runner hosts are CI-only. No card, no probe and no load may
 # be placed on a machine that serves the merge group's shards -- a card and a shard on one
@@ -19,10 +29,14 @@
 # in its notes: `allow-shared=<YYYY-MM-DD> <why>`. hulk and vision are shared today because
 # the pull worker still runs a card in the bench's own home; when it runs cards in
 # containers the runner role comes off both lines and this exception goes with it.
-studio	studio	darwin/arm64	coordination,runner	studio	32	Glenn's Mac Studio: my window and the lisp CI leg. Never a card bench.
-hulk	hulk	linux/x64	bench,runner	swarm-hulk	64	allow-shared=2026-09-18 eight CI runners beside the cards; drop the runner role when the pull worker runs cards in containers
-vision	vision	linux/x64	bench,runner	swarm-vision	64	allow-shared=2026-09-18 four CI runners beside the cards; drop the runner role when the pull worker runs cards in containers
-space	space	linux/x64	bench,services	swarm-space	32	the stack lives here (Loki, Grafana, Redis) beside the cards; no CI runner
-mini	mini	linux/x64	runner	-	4	one CI runner; 4 cores and 7 GB, too small for a card bench
-batman	batman	darwin/amd64	runner	-	8	2019 iMac Pro, six darwin-x64 runners; CI-only
-superman	superman	darwin/amd64	runner	-	18	2019 iMac Pro, ten darwin-x64 runners; CI-only
+#
+# Nothing edits this file by hand. `nova-pulse fleet registry add` and `set` write it, and
+# they hand every row back to this package's reader before a byte reaches the disk.
+studio	studio	darwin/arm64	coordination,runner	studio	32	Glenn's Mac Studio: my window and the lisp CI leg. Never a card bench.	self	-
+hulk	hulk	linux/x64	bench,runner	swarm-hulk	64	allow-shared=2026-09-18 eight CI runners beside the cards; drop the runner role when the pull worker runs cards in containers	self	-
+vision	vision	linux/x64	bench,runner	swarm-vision	64	allow-shared=2026-09-18 four CI runners beside the cards; drop the runner role when the pull worker runs cards in containers	self	-
+space	space	linux/x64	bench,runner,services	swarm-space	32	allow-shared=2026-09-18 the stack lives here (Loki, Grafana, Redis, Postgres) beside the cards AND sixteen CI runners; drop the runner role when the pull worker runs cards in containers	self	-
+mini	mini	linux/x64	runner	-	4	one CI runner; 4 cores and 7 GB, too small for a card bench	self	-
+batman	batman	darwin/amd64	runner	-	8	2019 iMac Pro, six darwin-x64 runners; CI-only. Draws 100 W and the fleet runs on solar, so it sleeps and is woken on demand.	self	00:00:5e:00:53:01@hulk
+superman	superman	darwin/amd64	runner	-	18	2019 iMac Pro, ten darwin-x64 runners; CI-only. Draws 100 W and the fleet runs on solar, so it sleeps and is woken on demand.	self	00:00:5e:00:53:02@hulk
+air	glenn@air	darwin/arm64	bench,runner	swarm-air	8	allow-shared=2026-09-18 Glenn's M2 MacBook Air: a fleet machine WHILE UP (Glenn 2026-09-18) -- darwin/arm64 cards under nova-sandbox volumes and two studio-labelled runners for the ARM64 shards; also the bud's seat and Glenn's travelling seat; unreachable is not a failure	self	-
