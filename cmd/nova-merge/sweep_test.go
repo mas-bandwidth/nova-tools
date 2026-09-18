@@ -36,11 +36,15 @@ func (f *fakeSweep) HeadRun(branch string) (merge.SweepRun, error) {
 	return f.runs[branch], nil
 }
 
-func (f *fakeSweep) Enqueue(pr int) error {
-	if err := f.enqueueErr[pr]; err != nil {
+// Enqueue takes the WHOLE pull request, because the admission rule is about the head
+// branch. This fake admits whatever the pass offers it: the pass's job is to decide WHAT to
+// offer, and the batch rule itself is the one door's (internal/merge.Enqueuer.Enqueue,
+// which the production sweep host reaches through -- see TestGHSweepEnqueueGoesThroughTheOneDoor).
+func (f *fakeSweep) Enqueue(pr merge.SweepPR) error {
+	if err := f.enqueueErr[pr.Number]; err != nil {
 		return err
 	}
-	f.enqueued = append(f.enqueued, pr)
+	f.enqueued = append(f.enqueued, pr.Number)
 	return nil
 }
 
@@ -98,7 +102,7 @@ func TestSweepEnqueuesGreenUnqueuedRowanPRs(t *testing.T) {
 		t.Fatalf("want exactly [101] enqueued, got %v", f.enqueued)
 	}
 	// One line, and only one, with the counts the card names.
-	contains(t, stdout, "SWEEP queued=1 reruns=0 dequeued=0 inqueue=1\n")
+	contains(t, stdout, "SWEEP queued=1 reruns=0 dequeued=0 inqueue=1 refused=0\n")
 	if lines := strings.Count(stdout, "\n"); lines != 1 {
 		t.Fatalf("sweep prints one line; got %d:\n%s", lines, stdout)
 	}
@@ -122,7 +126,7 @@ func TestSweepRerunsFailedRunsOnlyWhenTheQueueIsShallow(t *testing.T) {
 		if len(f.rerun) != 0 {
 			t.Fatalf("a queue of six holds no rerun, got %v", f.rerun)
 		}
-		contains(t, stdout, "SWEEP queued=0 reruns=0 dequeued=0 inqueue=6\n")
+		contains(t, stdout, "SWEEP queued=0 reruns=0 dequeued=0 inqueue=6 refused=0\n")
 	})
 
 	t.Run("depth five reruns the run once", func(t *testing.T) {
@@ -134,7 +138,7 @@ func TestSweepRerunsFailedRunsOnlyWhenTheQueueIsShallow(t *testing.T) {
 		if len(f.rerun) != 1 || f.rerun[0] != 55 {
 			t.Fatalf("want exactly [55] rerun, got %v", f.rerun)
 		}
-		contains(t, stdout, "SWEEP queued=0 reruns=1 dequeued=0 inqueue=5\n")
+		contains(t, stdout, "SWEEP queued=0 reruns=1 dequeued=0 inqueue=5 refused=0\n")
 	})
 }
 
@@ -171,7 +175,7 @@ func TestSweepDequeuesOnlyUnmergeableEntries(t *testing.T) {
 	if len(f.rerun) != 0 {
 		t.Fatalf("a queued entry is not rerun, got %v", f.rerun)
 	}
-	contains(t, stdout, "SWEEP queued=0 reruns=0 dequeued=1 inqueue=2\n")
+	contains(t, stdout, "SWEEP queued=0 reruns=0 dequeued=1 inqueue=2 refused=0\n")
 }
 
 // DIRTY pull requests and heads that are not rowan/* are not swept at all.
@@ -196,7 +200,7 @@ func TestSweepSkipsDirtyAndNonRowanPRs(t *testing.T) {
 		t.Fatalf("dirty, foreign and unfinished heads are left alone: enqueued=%v reran=%v dequeued=%v",
 			f.enqueued, f.rerun, f.dequeued)
 	}
-	contains(t, stdout, "SWEEP queued=0 reruns=0 dequeued=0 inqueue=0\n")
+	contains(t, stdout, "SWEEP queued=0 reruns=0 dequeued=0 inqueue=0 refused=0\n")
 }
 
 // A sweep with no --once is refused: this is one pass of the old loop, and a loop with no

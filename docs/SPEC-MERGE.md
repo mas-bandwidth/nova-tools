@@ -1527,6 +1527,29 @@ A card writes these first, each seen red before it is trusted; the network, the 
 8. `queue` with no subverb, `hold ""`, `skip` with no `<pr>`, `front` on a missing pull request, `sweep` with no `--window` and `queue classify` with no `--run`: each exit 2 with its one remedy line, and the fake remote sees no push.
 9. Two concurrent `hold`/`skip`/`front`/`sweep` writers: every write lands, `queue.json` parses at every read, a killed writer leaves the old queue whole (rule 1), and the sweep window is measured by a fake clock, never the wall clock.
 
+## One entry to the merge queue (2026-09-18)
+
+**The mistake it removes, in one sentence.** It removes the morning four pull requests landed on `dev` that nobody enqueued: each carried GitHub's auto-merge, switched on hours earlier by a `gh pr merge` call made while the pull request was still red, and the forge queued them itself when their last check went green — twenty-seven more were armed and waiting when the sweep found them.
+
+**The rule (Glenn, 2026-09-18).** *Nothing reaches the dev merge queue but a batch.* The batch verb is the only enqueuer; swarms produce branches, never queue entries.
+
+**One function.** `internal/merge.Enqueuer.Enqueue(ctx, pr, jump)` is the ONE function in the tools that admits anything to a merge queue. It speaks the `enqueuePullRequest` GraphQL mutation — at the front of the queue when `jump` — and it is never `gh pr merge` in any spelling, because `--auto` does not enqueue at all: it leaves a standing instruction the forge executes later, with no caller in the room. It refuses, BEFORE reaching the forge, anything whose head branch is not `rowan/integration-*` unless the caller presents that head's own `BATCH OK` receipt: the line `nova-merge batch` prints after it builds, vets, tests and runs the lisp suite over the merged tree. A receipt naming another sha is refused, and so is one whose `members=none` — that batch dropped everything and lands the base.
+
+**One caller.**
+
+```
+nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
+nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
+```
+
+`land` reads the pull request back from the forge and enqueues it at the front after three refusals: not open, its own checks not green, or a head that is not a batch's. The two green-nesses are different questions and both are asked — the gate's green is a bench's, CI's green is the forge's on the commit the queue will take, and integration-4 went green on hulk and red on three CI legs. `--receipt-file` takes the LAST line of a file, so a caller may hand it the gate's whole output. A refusal is exit 1 (the verb ran and said NO); a read that failed is exit 2.
+
+`queue audit` is the other half: it lists every open pull request carrying an auto-merge and takes it off — the hand sweep that removed 27 that morning, as a verb, with every entry named and one line of counts. `--dry-run` lists and writes nothing. It is not a lane verb and names its repository outright.
+
+**Every other site moved onto it or went.** `nova-merge sweep`'s host now offers a green pull request to the one door instead of enqueueing it, and prints `refused=<n>` for the ones the door would not take; `nova-pulse sweep`'s `GHEnqueuer` — the site that ran `gh pr merge --auto` — is now a thin adapter that reads the head and offers it to the door; `.github/scripts/revert-on-red.sh` opens its revert pull request and LEAVES IT OPEN with a notice, enabling no auto-merge. `internal/ci`'s `merge:queue` set is this session's own green list and reaches no forge.
+
+**The class rule.** `TestNoGhPrMergeSpellingInTheToolsGo` and `TestNoGhPrMergeSpellingUnderDotGithub` (internal/ci) refuse a `pr merge` argument list or an `--auto` flag in every non-test Go file under `cmd/` and `internal/` and in every file under `.github/`. The exceptions are a shrink-only list in `internal/ci/testdata/prmerge_allowlist.txt`, checked in both directions: the guard that names `--auto` in order to refuse it, the audit's `--disable-auto` (the one spelling that unmerges), and the secrets store's own squash merge in a repository that has no merge queue.
+
 ## Tests this spec demands
 
 One line per rule in **the rules, numbered**. Each is a test the work list
