@@ -20,6 +20,7 @@ package pulse
 // hour") and the next case of the same kind is decided by the rule and never by a model.
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -316,6 +318,14 @@ type TriageInput struct {
 	Evidence string // a file of the RESULT lines and the refusal line; default <queue>/UNDECIDED/<case>.txt
 	Stdout   io.Writer
 	Stderr   io.Writer
+
+	// Decide turns on the verb's typed decision: the bounded packet is put to the provider
+	// as one verdict question behind Floor, and the answer is printed as one advisory line
+	// beside the verb's own. A decision below the floor is a suggestion, never an
+	// authorization: the packet is cut and written exactly as it was before the flag.
+	Decide  bool
+	Floor   float64
+	Decider Decider
 }
 
 // Triage cuts one packet to a card file and prints one line.
@@ -341,7 +351,53 @@ func Triage(in TriageInput) int {
 	}
 	fmt.Fprintf(stdout, "TRIAGE OK case=%s ref=%s route=%s rules=%d result=%d bytes=%d out=%s\n",
 		oneline.Field(in.Case), field(in.Ref), TriageRoute, len(p.Rules), len(result), len(card), field(in.Out))
+	// The typed decision, when asked for, is one more advisory line: the answer at or above
+	// the floor, `?` below it, and always the evidence pointer the state came from. It
+	// changes no verdict and writes nothing (SPEC-DECIDE rules 5, 7 and 10).
+	if in.Decide {
+		fmt.Fprintln(stdout, in.decideLine(card, path))
+	}
 	return 0
+}
+
+// triageDecideQuestions is the one typed question the triage verb asks: which of the five
+// dispositions the bounded packet names. It advises; the rule table and a person still
+// decide.
+func triageDecideQuestions() map[string]decide.Question {
+	return map[string]decide.Question{
+		"verdict": {
+			Instructions: "Read the bounded triage packet and choose the one disposition: " +
+				strings.Join(TriageVerdicts, ", ") +
+				". ADMIT admits the card, REFUSE rejects it, HOLD asks a person, RETRY tries the same card once more, ESCALATE hands it to a person.",
+			Choice: map[string]string{
+				"ADMIT":    "the card is sound and may be admitted",
+				"REFUSE":   "the card is unsound and must not be admitted",
+				"HOLD":     "hold the card for a person",
+				"RETRY":    "retry the same card once more",
+				"ESCALATE": "escalate the case to a person",
+			},
+		},
+	}
+}
+
+// decideLine renders the one advisory line the triage verb appends when --decide is set.
+// The typed verdict is shown only at or above the floor; below it the answer is `?` with
+// its confidence (rule 11). The evidence pointer is always present (rule 10), and the line
+// is a suggestion that never changes what the verb does.
+func (in TriageInput) decideLine(state, evidence string) string {
+	value, conf := "?", 0.0
+	if in.Decider != nil {
+		if answers, _, err := in.Decider.Decide(context.Background(), state, triageDecideQuestions()); err == nil {
+			if a, ok := answers["verdict"]; ok {
+				conf = a.Confidence
+				if a.Confidence >= in.Floor && a.Choice != "" {
+					value = a.Choice
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("TRIAGE DECIDE verdict=%s conf=%.2f floor=%.2f evidence=%s",
+		oneline.Field(value), conf, in.Floor, oneline.Field(evidence))
 }
 
 // splitEvidence divides an evidence file into the RESULT lines and the one refusal line:
