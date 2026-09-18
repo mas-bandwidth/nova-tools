@@ -168,7 +168,11 @@ SECRETS EXEC OK as=other keys=1 only=1 required=1 file=/Users/me/secrets/other.y
 
 ## nova-check
 
-Fixture: `cmd/nova-check/testdata/example-self`.
+Fixtures: `cmd/nova-check/testdata/example-self` for the record-layer checks, and
+`cmd/nova-check/testdata/example-dogfood` for the dogfood ledger — a command
+reference the size of a first run, and the receipts two friends left against it.
+`cmd/nova-check/firstrun_test.go` runs every `$` line below against them, and the
+receipts directory is a COPY in `t.TempDir()`, because `dogfood record` writes one.
 
 ### First run
 
@@ -181,7 +185,54 @@ QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
+
+$ nova-check links --dir ./self
+LINKS OK files=4 links=3 excluded=0
+
+$ nova-check nocode --dir ./self
+NOCODE OK files=5 clean deny-list=floor\x20list
+
+$ nova-check attest --home ./self --manifest ./self/MANIFEST
+ATTEST OK files=3 bytes=1889 sha256=0ae484ca6b81e5115318d46ca464e2abcc72a19fc2e724c1a313b32d9a78e8cb
+
+$ nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 2
+CORPUS OK anchors=2 floor=2 ledger=./self/corpus/anchors.md
 ```
+
+`quickstart` runs `links` and `nocode` for you; asked for one at a time they are
+the same two checks with one exit code each, which is what a caller wiring a gate
+types. `attest` and `corpus` are the two that need something of yours — a
+manifest and a ledger — and the fixture ships both, so those are whole runs
+rather than refusals.
+
+`floors` has no transcript here on purpose: it wants a `SEED.md` beside the
+door's `SEED-CORE.md`, and `example-self` ships the core alone, so every run of it
+against this fixture is `FLOORS FAIL ...: does not exist` at exit 1. A transcript
+of a check failing for want of a fixture file teaches nothing about the verb.
+
+Then the dogfood ledger, which is a sitting rather than a verb: record what you
+ran, read the ledger, and let the gate say whether an edge is still open. `record`
+WRITES a receipt, so the transcript below runs against a copy.
+
+```
+$ nova-check dogfood record --cli ./docs/CLI.md --receipts ./dogfood-receipts --tool nova-example --verb quickstart --by Rowan --ok --notes "ran it on the docs lane and it named the two checks it makes and the four that want a budget of mine"
+DOGFOOD RECORD OK tool=nova-example verb=quickstart by=Rowan at=2026-09-18T19:34:51Z ok=yes issue=- file=./dogfood-receipts/20260918T193451Z-nova-example-quickstart-rowan-e698a5ae.json
+
+$ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts --authors ./docs/authors.txt
+DOGFOOD tool=nova-example verb=quickstart by=Rowan at=2026-09-18T19:34:51Z ok=yes issue=-
+DOGFOOD tool=nova-example verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=-
+DOGFOOD tool=nova-example verb=nocode by=Emma at=2026-09-18T10:15:00Z ok=no issue=1301
+DOGFOOD OK verbs=3 dogfooded=3 by-nonauthor=1 open-edges=1 unfiled=0 unmatched=0
+
+$ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts
+DOGFOOD GATE FAIL tool=nova-example verb=nocode: open edge from Emma at 2026-09-18T10:15:00Z (issue #1301): refused a directory it should have walked; smallest fix in the issue
+DOGFOOD GATE FAIL verbs=3 findings=1 shown=1 unmatched=0
+```
+
+`gate` **exits 1** there, and that is the verb working: Emma's receipt says the
+verb refused a directory it should have walked and names the issue, so the edge is
+open and the gate says so. `ledger` exits 0 over the same receipts, because
+reading the ledger is not a verdict.
 
 ## nova-self-talk
 
@@ -445,9 +496,56 @@ CUT ROUTE route=opencode/deepseek-v4-pro reason=flat
 CUT OK cards=2 skipped=0 zero=0 flat=2 metered=0 out=./cards
 
 $ nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
-POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
+POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 prs=0 work=0 next=0 plan=0 seen=0 took=0s out=./root/pool.tsv
 ```
 
+The rest of the sitting is the bench's own housekeeping, and none of it makes a
+model call, starts an ssh child or reads a clock a test cannot set. `progress`
+and `reap` are shown against an EMPTY queue and an empty root on purpose: zero is
+what a first run sees, and a reader who has never run a pulse should be able to
+tell a tool that found nothing from a tool that did not run.
+
+```text
+$ nova-pulse progress --queue ./queue --roots ./roots
+PROGRESS cards=0 rc0=0 wall_p50_s=0 wall_p90_s=0 usd_per_card=0.0000 span_h=0.0 effective_parallelism=0.0 cards_per_hour=0.0
+ESTIMATE remaining_cards=0 hours=0.0 pending=0 launched=0 prs=0 issues=0 wall_p90_s=0 parallelism=0.0 rate=0.0/h factor=1.5
+
+$ nova-pulse reap --roots ./roots --queue ./queue --deadline 60 --dry-run
+REAP roots=1 killed=0 locks=0 requeued=0 failed=0 temp=0 restarted=0 dry-run=true
+
+$ nova-pulse hygiene run --home /Users/me/bench --dry-run --hostname bench-a
+HYGIENE bench-a slots=0 reaped=0 jobs-deleted=0 slots-deleted=0 cache=kept(0G) free 1.7T -> 1.7T
+
+$ nova-pulse fleet registry --machines ./machines.tsv
+MACHINE hulk ssh=hulk os=linux/x64 roles=bench seat=swarm-hulk cores=64 notes="-"
+MACHINE batman ssh=batman os=darwin/amd64 roles=runner seat=- cores=8 notes="2019 iMac Pro; CI-only"
+
+$ nova-pulse fleet registry --machines ./machines.tsv --role bench
+MACHINE hulk ssh=hulk os=linux/x64 roles=bench seat=swarm-hulk cores=64 notes="-"
+
+$ nova-pulse status --html ./page/index.html --benches ./benches.tsv --queue ./queue
+STATUS HTML wrote=./page/index.html live=4 queue=0 down=0 merged=- published=-
+```
+
+`hygiene run` wants an ABSOLUTE `--home` and refuses a relative one, because
+every root it may delete under hangs off that path and a relative home is a
+deletion root nobody can check; `/Users/me/bench` above is a home of yours, and
+`--dry-run` prints what a run would take and touches nothing. `--hostname` is
+what makes the first token of the line the same twice.
+
+`fleet registry` is the only fleet verb with a transcript here. It reads the
+machines table and nothing else. The rest of `fleet` — `survey`, `standard`,
+`mirror`, `join`, `sleep`, `wake`, `reboot`, `secrets` — reaches a bench, and its
+only seam is the `--ssh` program path, so driving it from a document would mean a
+shell fake per bench. `cmd/nova-pulse/fleet_survey_test.go` says at length why
+that was taken out of this package: on macOS every first exec of a newly written
+file waits on the notarisation scan, and the verdict became a function of how busy
+the host was. Those verbs are pinned by Go fakes in their own tests instead.
+
+`status --html` renders the fleet page. Its bench reader is injected here, so the
+`live=` count is the fixture's and no ssh starts; a real run reads the running card
+processes on each bench. The page and the `metrics.tsv` row beside it carry counts
+only — never a card id, a branch name or a label.
 ## nova-board
 
 Fixture: `cmd/nova-board/testdata/example-board`.
@@ -563,7 +661,30 @@ SUM MODEL model=claude-fable-5-1 input=1338 output=1593 cache_write=1200 cache_r
 SUM MODEL model=gemini-2.5-pro input=123456 output=7890 cache_write=- cache_read=- reasoning=- rough=0 dashes=0,0,1,1,1 nonutc=0 repos=1
 SUM TOTAL input=124794 output=9483 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,2,1,3 nonutc=0 turns=3 pairs=3 models=2
 SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
+
+$ nova-tokens sources --repos ./repos.tsv --day 2026-09-11 --claude bench=./transcripts --bus ./bus
+SOURCES SOURCE label=claude:bench kind=claude path=./transcripts reports=input,output,cache_write,cache_read day_basis=utc files=1 unreadable=0 messages=3 dup=1 noid=0 nousage=- unparsed=- comments=- redated=- superseded=- rows=2
+SOURCES SOURCE label=bus:emma kind=bus path=bus/from-emma reports=input,output day_basis=utc files=1 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=1 redated=0 superseded=0 rows=1
+SOURCES SOURCE label=bus:rowan kind=bus path=bus/from-rowan reports=- day_basis=utc files=0 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=0 redated=0 superseded=0 rows=0
+SOURCES OK sources=3 files=2 messages=3 unreadable=0 unparsed=0 rows=3 unattributed=-
+
+$ nova-tokens sources --repos ./repos.tsv --day 2026-09-11 --claude bench=./transcripts --bus ./bus --unattributed --max 20
+SOURCES SOURCE label=claude:bench kind=claude path=./transcripts reports=input,output,cache_write,cache_read day_basis=utc files=1 unreadable=0 messages=3 dup=1 noid=0 nousage=- unparsed=- comments=- redated=- superseded=- rows=2
+SOURCES SOURCE label=bus:emma kind=bus path=bus/from-emma reports=input,output day_basis=utc files=1 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=1 redated=0 superseded=0 rows=1
+SOURCES SOURCE label=bus:rowan kind=bus path=bus/from-rowan reports=- day_basis=utc files=0 unreadable=0 messages=- dup=- noid=- nousage=- unparsed=0 comments=0 redated=0 superseded=0 rows=0
+SOURCES OK sources=3 files=2 messages=3 unreadable=0 unparsed=0 rows=3 unattributed=0
 ```
+
+`sources` is `fold`'s reading half with the writing taken out: the same declared
+sources, the same per-source line, and nothing written to `--out` — which is why
+it needs no `--out` at all. It is what a caller runs before a fold to see whether
+a source is being read the way they think it is.
+
+`unattributed=` is the difference between the two runs. Without the flag it is a
+dash, because nothing was counted; with it the verb also tallies the path stems it
+SAW and matched to no rule in `--repos`, heaviest first, and `unattributed=0` on
+this fixture says every stem it saw was claimed. A dash is never a zero here, the
+same way it is never a zero in a day file.
 
 
 ## nova-play
@@ -720,14 +841,14 @@ POST OK channel=fake id=- url=- hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f
 
 ## nova-work
 
-No fixture: the graph file is created by the run itself under `--graph`, and every
-line below is local — plain JSON nodes and `:deps` edges, no Redis, no remote, no
-network. A `:deps` cycle is refused at exit 2 before anything is written.
-
-The bounded reader for a `.work` plan. No fixture and no network: the plan is a
-file the run writes, and every line below is read from local bytes alone.
-`cmd/nova-work/firstrun_test.go` writes the plan and runs each `$` line against
-it, so the `./work.work` below is a fresh file per run.
+No fixture: every file below is created by the run itself — plain JSON nodes and
+`:deps` edges for the graph verbs, one `.work` plan and one work set for the
+language verbs, one units file for `asks`. All of it is local: no remote, no
+network, and the one verb that needs Redis is pointed at a miniredis.
+`cmd/nova-work/firstrun_test.go` writes those files into one `t.TempDir()` and
+rewrites every `./x` in the lines below to point at it, so the graph the first
+two lines build is still there for the two `ready` lines that read it, and no run
+of this package leaves a file in the tree.
 
 ### First run
 
@@ -746,10 +867,48 @@ READY node=b ready=true
 
 $ nova-work plan check --file ./work.work
 PLAN OK file=./work.work bytes=47 version=1 nodes=1 edges=0
+
+$ nova-work plan expand --file ./expand.work --out ./cards
+PLAN EXPANDED file=./expand.work out=./cards nodes=1 cards=1
+
+$ nova-work set check --file ./work-set.lisp
+SET OK units=2 ready=1 blocked=0 owned=1
+
+$ nova-work set check --file ./work-set.lisp --ready
+SET READY unit=u1 owner=Rowan lane=- deadline=- admit=go on=- by=-
+SET OK units=2 ready=1 blocked=0 owned=1
+
+$ nova-work asks --units ./units.json --now 2026-09-18T12:00:00Z
+ASK id=a2 owner=Stella unit=u1 kind=read lane=- age=3h deadline=2026-09-18T11:00:00Z state=overdue src=units
+ASK id=a1 owner=Emma unit=u1 kind=work lane=- age=30m deadline=2026-09-18T13:00:00Z state=open src=units
+ASKS n=2 open=1 overdue=1
+
+$ nova-work events --redis 127.0.0.1:6379 --repo mas-bandwidth/nova-tools --once
+EVENTS OK once=true card-done=0 published=1
 ```
 
-The two verbs read one plan and one graph as data; a `:deps` cycle is refused at
-exit 2 before anything is written.
+`plan check` and `plan expand` are the two ends of the same reading: `check`
+closes the needs/blocks graph and writes nothing, `expand` writes one card
+directory per hand-written `:node` and mints no id. The plan `expand` reads is the
+larger of the two here, because a node with no `:output` is a refusal rather than
+a card — a card with no branch to land on is a guess, and this tool does not guess.
+
+`set check` reads the OTHER top form of the same language. Without `--ready` it is
+the summary line alone; with it, every ready unit gets its own row first, and the
+summary is unchanged — the flag adds rows, it never changes the arithmetic. This
+set is clean, so it exits 0; a set naming a need no unit carries prints one
+`SET NEEDS` row per finding and exits 1, with the summary still printed.
+
+`asks` is the open asks, oldest first, so the overdue one leads. `--now` is what
+makes the ages in a transcript read the same twice; a real run omits it and the
+wall clock answers.
+
+`events` is the work layer's bridge to `nova-merge react`: it publishes the
+pub/sub messages that tool subscribes to (docs/SPEC-JOBS.md, "Events, not ticks"),
+makes no model call and writes no record, because the bus is a signal and git is
+the record. `--redis 127.0.0.1:6379` is the address a reader would type; the test
+points it at a miniredis and gives the gh fallback a fake forge, so the line runs
+as written and reaches nothing.
 
 ### Refusals
 

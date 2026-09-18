@@ -39,6 +39,28 @@ const firstRunSet = `(work-set "first-run"
           (unit "u1" :needs ("u0") :owner "Rowan" :title "the unit that is ready")))
 `
 
+// firstRunExpand is the plan `plan expand` reads: the same language as
+// firstRunPlan, grown by the one thing expand refuses to guess — a node with no
+// `:output` has no branch to land on, so it is a refusal rather than a card.
+const firstRunExpand = `(:plan :version 1
+ (:node :id "n1" :kind docs :repo "mas-bandwidth/nova-tools" :base "dev"
+  :inputs ((:spec "docs/TESTS.md:1-3"))
+  :output (:branch "rowan/tests-md-n1" :green ("test:docs"))
+  :budget (:minutes 30 :tokens 120000 :model-floor sonnet)
+  :affinity (:bench verify :route "deepseek-flash"))
+ (:clip :per-node))
+`
+
+// firstRunUnits is the units file `asks` reads: two open asks on one unit, one of
+// them past its deadline at the transcript's `--now`, so the transcript shows both
+// states and the count line's arithmetic.
+const firstRunUnits = `{"units":[
+  {"id":"u1","title":"the docs lane","asks":[
+    {"id":"a1","owner":"Emma","kind":"work","unit":"u1","sent":"2026-09-18T11:30:00Z","deadline":"2026-09-18T13:00:00Z","by":"Rowan"},
+    {"id":"a2","owner":"Stella","kind":"read","unit":"u1","sent":"2026-09-18T09:00:00Z","deadline":"2026-09-18T11:00:00Z","by":"Rowan"}
+  ]}]}
+`
+
 func runCLI(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -54,11 +76,15 @@ func runCLI(t *testing.T, args ...string) (int, string, string) {
 func firstRunDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "work.work"), []byte(firstRunPlan), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "work-set.lisp"), []byte(firstRunSet), 0o644); err != nil {
-		t.Fatal(err)
+	for name, body := range map[string]string{
+		"work.work":     firstRunPlan,
+		"work-set.lisp": firstRunSet,
+		"expand.work":   firstRunExpand,
+		"units.json":    firstRunUnits,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return dir
 }
@@ -152,13 +178,32 @@ func TestTESTSFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := firstRunDir(t)
+	// The transcript's `events` line names the default redis address. This run
+	// points it at the test's miniredis and gives the gh fallback a fake forge,
+	// so the line runs exactly as a reader would type it and reaches no network.
+	mr := miniredis.RunT(t)
+	deps := Deps{
+		Now:   func() time.Time { return time.Now().UTC() },
+		Dial:  func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Forge: func(_, _ string, _ time.Duration) ci.Forge { return &fakeForge{} },
+	}
 	var printed map[string]bool
 	for _, line := range lines {
 		if cmd, ok := strings.CutPrefix(line, "$ nova-work "); ok {
 			fields := localize(t, dir, cmd)
-			code, stdout, stderr := runCLI(t, fields...)
-			if code != 0 {
-				t.Fatalf("the TESTS.md command %q does not run: exit %d, stderr: %s", line, code, stderr)
+			for i, a := range fields {
+				if a == "127.0.0.1:6379" {
+					fields[i] = mr.Addr()
+				}
+			}
+			var out, errs bytes.Buffer
+			code := run(fields, &out, &errs, deps)
+			stdout, stderr := out.String(), errs.String()
+			// Exit 1 is a verb that RAN and said NO -- a set with a finding, a
+			// gate that refuses -- and its lines belong in the transcript. Only
+			// exit 2, could not run, is a broken line.
+			if code == 2 {
+				t.Fatalf("the TESTS.md command %q does not run: exit 2, stderr: %s", line, stderr)
 			}
 			printed = map[string]bool{}
 			for _, out := range strings.Split(stdout, "\n") {
