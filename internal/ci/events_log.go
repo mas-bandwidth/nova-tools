@@ -34,10 +34,12 @@ const (
 
 // The verb-level kinds, the SPEC-LOGS spine. A bridge that started and never finished is a
 // start with no done, which is the whole hang test.
+// They are internal/log's own constants, so the bridge, the merge lane and the pulse spell
+// the spine with the one vocabulary.
 const (
-	EventStart  = "start"
-	EventDone   = "done"
-	EventRefuse = "refuse"
+	EventStart  = novalog.EventStart
+	EventDone   = novalog.EventDone
+	EventRefuse = novalog.EventRefuse
 )
 
 // emit writes one structured line for one published event. A nil Events writer writes
@@ -63,24 +65,26 @@ func (p *Producer) Announce(event, msg string, dur time.Duration, err error) {
 }
 
 // write is the one place a Line is built, so every line the bridge emits carries the same
-// five labels and the same fixed fields whatever wrote it.
+// five labels and the same fixed fields whatever wrote it. It builds that line through
+// internal/log's Emitter, which is the SAME emitter nova-merge batch, nova-merge queue,
+// nova-merge react and nova-pulse fill write through: one field list and one redaction for
+// every part of the loop, so a query that answers "what did the bridge do" answers "what
+// did the lane do" with the labels changed and nothing else.
+//
+// A log that cannot be written is not a reason to fail the publish: the bus event already
+// happened, and the record of it is the bus, not this line. The Emitter swallows that
+// error for exactly that reason.
 func (p *Producer) write(event, msg, card string, pr int, level string, dur time.Duration, err error) {
-	if p.Events == nil {
-		return
+	e := &novalog.Emitter{
+		W:      p.Events,
+		Clock:  p.Clock,
+		GUID:   p.GUID,
+		Source: SourceEvents,
+		Verb:   VerbEvents,
+		Bench:  p.Bench,
 	}
-	clock := p.Clock
-	if clock == nil {
-		clock = time.Now
-	}
-	guid := p.GUID
-	if guid == nil {
-		guid = novalog.ProcessGUID
-	}
-	l := novalog.New(clock, guid, SourceEvents)
+	l := e.Line(event)
 	l.Level = level
-	l.Verb = VerbEvents
-	l.Bench = p.Bench
-	l.Event = event
 	l.Card = card
 	l.PR = pr
 	l.Msg = msg
@@ -88,9 +92,7 @@ func (p *Producer) write(event, msg, card string, pr int, level string, dur time
 	if err != nil {
 		l.Err = err.Error()
 	}
-	// A log that cannot be written is not a reason to fail the publish: the bus event
-	// already happened, and the record of it is the bus, not this line.
-	_ = l.Write(p.Events)
+	e.Send(l)
 }
 
 // EventSink is the writer a caller hands the producer. It exists as a name so the verb's

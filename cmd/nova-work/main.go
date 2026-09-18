@@ -48,6 +48,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
+	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/workclient"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
@@ -861,22 +862,6 @@ func cmdEvents(args []string, stdout, stderr io.Writer, deps Deps) int {
 }
 
 // benchName is the bench label on every structured line: the flag when given, else
-// $NOVA_BENCH, else the short hostname. It is the fleet's name for this machine, which is
-// what a LogQL query selects on, and it is read here rather than in internal/ci so a test
-// of the producer injects it and never reads the environment.
-func benchName(flagValue string) string {
-	if s := strings.TrimSpace(flagValue); s != "" {
-		return s
-	}
-	if s := strings.TrimSpace(os.Getenv("NOVA_BENCH")); s != "" {
-		return s
-	}
-	h, err := os.Hostname()
-	if err != nil {
-		return ""
-	}
-	if i := strings.Index(h, "."); i > 0 {
-		h = h[:i]
-	}
-	return strings.TrimSpace(h)
-}
+// $NOVA_BENCH, else the short hostname. It is internal/log's, so the bridge, the merge lane
+// and the pulse all name this machine the same way and one `bench` variable lists them all.
+func benchName(flagValue string) string { return log.BenchName(flagValue) }

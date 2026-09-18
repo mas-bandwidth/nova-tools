@@ -13,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -219,6 +220,10 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	// bench with no sbcl is a bench that cannot judge this batch, and the gate says FAIL
 	// rather than a green nobody may trust.
 	requireLisp := f.fs.Bool("require-lisp", false, "")
+	// The structured sink of SPEC-LOGS.md Part 2 (cmd/nova-merge/events.go): stderr by
+	// default, the file --log names otherwise, and --bench the label a query selects on.
+	logPath := f.fs.String("log", "", "")
+	bench := f.fs.String("bench", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -258,6 +263,11 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if !f.done(stderr) {
 		return 2
 	}
+	em, closeEvents, code := openEmitter("batch", *bench, *logPath, stderr, deps)
+	if code != 0 {
+		return code
+	}
+	defer closeEvents()
 	return runBatch(batchRun{
 		steps:        deps.BatchGate,
 		name:         *name,
@@ -271,7 +281,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		requireLisp:  *requireLisp,
 		requireCheck: !*noRequireChecks,
 		receiptFile:  strings.TrimSpace(*receiptFile),
-	}, stdout, stderr, deps)
+	}, stdout, stderr, deps, em)
 }
 
 // batchRun is one batch's whole invocation, checked, so the run below reads as the steps
@@ -294,14 +304,14 @@ type batchRun struct {
 	receiptFile  string
 }
 
-func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
+func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps, em *log.Emitter) int {
 	start := time.Now()
 	rootAbs, err := filepath.Abs(in.root)
 	if err != nil {
-		return batchRefused(stderr, err)
+		return batchRefused(stderr, em, start, err)
 	}
 	if err := os.MkdirAll(rootAbs, 0o755); err != nil {
-		return batchRefused(stderr, err)
+		return batchRefused(stderr, em, start, err)
 	}
 	// THE WORKING DIRECTORY IS REBUILT EVERY RUN, so a batch never merges on top of a
 	// tree an earlier one left half-merged. It is a path this tool COMPUTED, so its
@@ -309,11 +319,11 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	// away from deleting the whole disk".
 	work := filepath.Join(rootAbs, in.name)
 	if err := safepath.RemoveUnder(rootAbs, work); err != nil {
-		return batchRefused(stderr, err)
+		return batchRefused(stderr, em, start, err)
 	}
 	tmp := filepath.Join(work, "tmp")
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
-		return batchRefused(stderr, err)
+		return batchRefused(stderr, em, start, err)
 	}
 	clone := filepath.Join(work, "repo")
 	cloneArgs := []string{"clone", "--quiet"}
@@ -325,22 +335,24 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	// `--` before the URL, so a URL beginning with a dash is a URL and not an option.
 	cloneArgs = append(cloneArgs, "--", deps.RepoURL(in.repo), clone)
 	if _, err := merge.NewGit(work, in.timeout, deps.Runner).Run(cloneArgs...); err != nil {
-		return batchRefused(stderr, err)
+		return batchRefused(stderr, em, start, err)
 	}
 	g := merge.NewGit(clone, in.timeout, deps.Runner)
 	if _, err := g.Run("fetch", "--quiet", "origin", in.base); err != nil {
-		return batchRefused(stderr, fmt.Errorf("could not fetch origin/%s: %w", in.base, err))
+		return batchRefused(stderr, em, start, fmt.Errorf("could not fetch origin/%s: %w", in.base, err))
 	}
 	branch := "rowan/" + in.name
 	if _, err := g.Run("checkout", "--quiet", "-B", branch, "FETCH_HEAD"); err != nil {
-		return batchRefused(stderr, fmt.Errorf("could not start %s at origin/%s: %w", branch, in.base, err))
+		return batchRefused(stderr, em, start, fmt.Errorf("could not start %s at origin/%s: %w", branch, in.base, err))
 	}
 	baseSHA, err := g.Out("rev-parse", "HEAD")
 	if err != nil {
-		return batchRefused(stderr, err)
+		return batchRefused(stderr, em, start, err)
 	}
 	fmt.Fprintf(stderr, "BATCH START name=%s base=%s prs=%d t=%.1fs\n",
 		oneline.Field(in.name), oneline.Field(baseSHA), len(in.prs), since(start))
+	em.Emit(eventBatchStart, fmt.Sprintf("name=%s base=%s head=%s prs=%d",
+		oneline.Field(in.name), oneline.Field(in.base), oneline.Field(baseSHA), len(in.prs)))
 
 	// EDGE 1: THE TOOLCHAIN IS CHECKED BEFORE THE FIRST MERGE, NOT DISCOVERED IN A STEP.
 	// With go1.22 on PATH and a go.mod asking for 1.26 the whole gate ran, the build step
@@ -348,22 +360,22 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	// go1.26 (linux/amd64)"` -- a NOTICE, not an error, naming no remedy, after minutes
 	// of merging. The requirement is a fact of the tree, so this is the earliest point it
 	// can be known at all: the base is checked out and nothing has been merged yet.
-	if code := checkToolchain(clone, stderr); code != 0 {
+	if code := checkToolchain(clone, stderr, em, start); code != 0 {
 		return code
 	}
 
-	prs, prechecked, code := admissible(in, stdout, stderr, deps, start)
+	prs, prechecked, code := admissible(in, stdout, stderr, deps, start, em)
 	if code != 0 {
 		return code
 	}
-	members, dropped, code := mergeMembers(g, in, prs, stderr, start)
+	members, dropped, code := mergeMembers(g, in, prs, stderr, start, em)
 	if code != 0 {
 		return code
 	}
 	dropped = append(prechecked, dropped...)
 	headSHA, err := g.Out("rev-parse", "HEAD")
 	if err != nil {
-		return batchRefused(stderr, err)
+		return batchRefused(stderr, em, start, err)
 	}
 
 	env := ciTestEnv(tmp, in.gomaxprocs)
@@ -409,9 +421,26 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		fmt.Fprintf(stdout, "BATCH FAIL %s step=%s packages=%s tests=%s reason=%q\n",
 			line, oneline.Field(step.name), oneline.Field(numberOrNone(pkgs)), oneline.Field(numberOrNone(tests)),
 			oneline.Cap(reason, oneline.TailBytes))
+		// The verdict is an ERROR line so a red batch is a label selector on the
+		// dashboard, and it names the step, the packages and the tests: the three
+		// things a reader wants before opening the log.
+		em.Announce(eventBatchVerdict, fmt.Sprintf("verdict=FAIL name=%s head=%s members=%s dropped=%s step=%s packages=%s tests=%s",
+			oneline.Field(in.name), oneline.Field(headSHA), oneline.Field(numberList(members)),
+			oneline.Field(numberList(dropped)), oneline.Field(step.name),
+			oneline.Field(numberOrNone(pkgs)), oneline.Field(numberOrNone(tests))),
+			time.Since(start), fmt.Errorf("%s", oneline.Cap(reason, oneline.TailBytes)))
 		return 1
 	}
 	fmt.Fprintf(stdout, "BATCH OK %s\n", line)
+	em.Emit(eventBatchVerdict, fmt.Sprintf("verdict=OK name=%s head=%s members=%s dropped=%s",
+		oneline.Field(in.name), oneline.Field(headSHA), oneline.Field(numberList(members)),
+		oneline.Field(numberList(dropped))))
+	// THE BATCH IS ENQUEUED AND NOT PUSHED. This verb pushes nothing and opens nothing
+	// (see the header); the event says the branch exists and is green, which is the
+	// moment a caller -- or a panel counting batches waiting to land -- cares about.
+	em.Emit(eventBatchEnqueued, fmt.Sprintf("name=%s branch=%s head=%s members=%s dropped=%s",
+		oneline.Field(in.name), oneline.Field(branch), oneline.Field(headSHA),
+		oneline.Field(numberList(members)), oneline.Field(numberList(dropped))))
 	return 0
 }
 
@@ -448,7 +477,7 @@ const batchRequiredCheck = "ci-ok"
 //
 // The forge is reached through the one host seam the rest of this binary uses, so the
 // tests drive merge.FakeHost and no test here opens a socket.
-func admissible(in batchRun, stdout, stderr io.Writer, deps Deps, start time.Time) (keep, dropped []int, code int) {
+func admissible(in batchRun, stdout, stderr io.Writer, deps Deps, start time.Time, em *log.Emitter) (keep, dropped []int, code int) {
 	if !in.requireCheck {
 		fmt.Fprintf(stderr, "BATCH NOTE checks=waived reason=%q t=%.1fs\n",
 			"--no-require-checks was given: a member is merged whatever its own head last did, and a red batch may be one member's own fault",
@@ -457,13 +486,13 @@ func admissible(in batchRun, stdout, stderr io.Writer, deps Deps, start time.Tim
 	}
 	receipts, err := batchReceipts(in.receiptFile)
 	if err != nil {
-		return nil, nil, batchRefused(stderr, err)
+		return nil, nil, batchRefused(stderr, em, start, err)
 	}
 	host := deps.NewHost(in.repo, in.timeout)
 	for _, n := range in.prs {
 		pr, err := host.PR(n)
 		if err != nil {
-			return nil, nil, batchRefused(stderr, fmt.Errorf(
+			return nil, nil, batchRefused(stderr, em, start, fmt.Errorf(
 				"pull request %d could not be read, and --require-checks is on, so this gate cannot tell whether its head has been green on its own: %w; pass --no-require-checks to merge it anyway and own that", n, err))
 		}
 		// A MEMBER THAT IS ITSELF A GATED TREE NEEDS NO ci-ok. A batch's own branch --
@@ -487,7 +516,7 @@ func admissible(in batchRun, stdout, stderr io.Writer, deps Deps, start time.Tim
 		}
 		checks, err := host.Checks(pr.HeadOID)
 		if err != nil {
-			return nil, nil, batchRefused(stderr, fmt.Errorf(
+			return nil, nil, batchRefused(stderr, em, start, fmt.Errorf(
 				"pull request %d's checks could not be read, and --require-checks is on: %w; pass --no-require-checks to merge it anyway and own that", n, err))
 		}
 		state := checkState(checks.ForSHA(pr.HeadOID), batchRequiredCheck)
@@ -576,14 +605,18 @@ func withBin(env []string, bin string) []string {
 	return append(out, "PATH="+path)
 }
 
+// batchDropReason is why a member is dropped, in one sentence, written once so the human
+// line and the event cannot drift apart.
+const batchDropReason = "the merge conflicts with the members ahead"
+
 // mergeMembers merges every pull request head onto the branch IN THE ORDER GIVEN, which
 // is the order they will land. A head that will not merge is dropped and said out loud,
 // and the members after it are still judged -- on the tree without it, which is the tree
 // that would land.
-func mergeMembers(g *merge.Git, in batchRun, prs []int, stderr io.Writer, start time.Time) (members, dropped []int, code int) {
+func mergeMembers(g *merge.Git, in batchRun, prs []int, stderr io.Writer, start time.Time, em *log.Emitter) (members, dropped []int, code int) {
 	for _, n := range prs {
 		if _, err := g.Run("fetch", "--quiet", "origin", "pull/"+strconv.Itoa(n)+"/head"); err != nil {
-			return nil, nil, batchRefused(stderr, fmt.Errorf("could not fetch pull/%d/head: %w", n, err))
+			return nil, nil, batchRefused(stderr, em, start, fmt.Errorf("could not fetch pull/%d/head: %w", n, err))
 		}
 		// The merge writes a commit object, so it carries nova-merge's own identity: a CI
 		// runner has no git identity anywhere and `git merge --no-ff` there dies with
@@ -593,20 +626,23 @@ func mergeMembers(g *merge.Git, in batchRun, prs []int, stderr io.Writer, start 
 		if err == nil {
 			members = append(members, n)
 			fmt.Fprintf(stderr, "BATCH MERGED #%d t=%.1fs\n", n, since(start))
+			emitPR(em, eventBatchMember, n, fmt.Sprintf("name=%s pr=%d state=merged", oneline.Field(in.name), n))
 			continue
 		}
 		unmerged, cerr := hasConflicts(g)
 		if cerr != nil {
-			return nil, nil, batchRefused(stderr, cerr)
+			return nil, nil, batchRefused(stderr, em, start, cerr)
 		}
 		if !unmerged {
-			return nil, nil, batchRefused(stderr, fmt.Errorf("the merge of pull/%d failed and left no conflicting file: %w", n, err))
+			return nil, nil, batchRefused(stderr, em, start, fmt.Errorf("the merge of pull/%d failed and left no conflicting file: %w", n, err))
 		}
 		if _, aerr := g.Run("merge", "--abort"); aerr != nil {
-			return nil, nil, batchRefused(stderr, aerr)
+			return nil, nil, batchRefused(stderr, em, start, aerr)
 		}
 		dropped = append(dropped, n)
-		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", n, "the merge conflicts with the members ahead", since(start))
+		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", n, batchDropReason, since(start))
+		emitPR(em, eventBatchMember, n, fmt.Sprintf("name=%s pr=%d state=dropped reason=%s",
+			oneline.Field(in.name), n, oneline.Escape(batchDropReason)))
 	}
 	return members, dropped, 0
 }
@@ -625,7 +661,7 @@ var goVersionLine = regexp.MustCompile(`go([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
 // fetched another one is a gate whose answer nobody can reproduce. A tree with no go.mod,
 // no `go` directive, or a `go` this tool could not run at all is left alone: this check
 // refuses what it KNOWS is wrong and never guesses.
-func checkToolchain(clone string, stderr io.Writer) int {
+func checkToolchain(clone string, stderr io.Writer, em *log.Emitter, start time.Time) int {
 	raw, err := os.ReadFile(filepath.Join(clone, "go.mod"))
 	if err != nil {
 		return 0
@@ -651,7 +687,7 @@ func checkToolchain(clone string, stderr io.Writer) int {
 	if !olderThan(have, want) {
 		return 0
 	}
-	return batchRefused(stderr, fmt.Errorf(
+	return batchRefused(stderr, em, start, fmt.Errorf(
 		"this machine's go is go%s and %s asks for go%s; put a go%s or newer on PATH -- on this fleet that is ~/sdk/go%s*/bin -- and run this again. The gate does not download a toolchain: a verdict a bench reached with a compiler it fetched mid-run is a verdict nobody can reproduce",
 		have, filepath.Join(clone, "go.mod"), want, want, want))
 }
@@ -678,8 +714,12 @@ func olderThan(have, want string) bool {
 // batchRefused is what a tool error costs: ONE line on stderr and exit 2, which is this
 // tool's "could not run". A red batch is exit 1 and a green one is 0, and a clone that
 // could not be made is neither -- it is nothing anybody may read as a verdict.
-func batchRefused(stderr io.Writer, err error) int {
+//
+// It is also one refuse event, so a batch that could not run is a start with a refusal on
+// the stream rather than a start with no end at all.
+func batchRefused(stderr io.Writer, em *log.Emitter, start time.Time, err error) int {
 	fmt.Fprintf(stderr, "BATCH REFUSED: %s\n", oneline.Err(err))
+	refuseEvent(em, "batch: the gate could not run", start, err)
 	return 2
 }
 
