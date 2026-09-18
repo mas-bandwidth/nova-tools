@@ -24,7 +24,7 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse fill    --ready <dir> --launched <dir> [--lanes <file>] [--bench <name>]... [--once]
+nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--bench <name>]... [--once]
 nova-pulse harvest --id <pulse id> --root <dir> --sources <file> --templates <dir> [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
@@ -37,6 +37,7 @@ nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hour
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
+nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
 nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>]
 nova-pulse hygiene reap <slot> --home <dir>
@@ -44,11 +45,15 @@ nova-pulse hygiene delete-job <slot> <job> --home <dir>
 nova-pulse hygiene delete-slot <slot> --home <dir>
 nova-pulse hygiene drop-cache --home <dir>
 nova-pulse hygiene log [n] --home <dir>
-nova-pulse fleet survey --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
-nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
-nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
-nova-pulse fleet   reboot --benches <file> --bench <name>[,<name>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
+nova-pulse fleet survey --benches <file> [--machines <file>] [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   suspend --benches <file> --bench <name>[,<name>] [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
+nova-pulse fleet   wake --benches <file> --bench <name>[,<name>] [--machines <file>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   reboot --benches <file> --bench <name>[,<name>] [--machines <file>] [--ssh <path>] [--wait <duration>] [--timeout <s>] [--max <n>]
 nova-pulse fleet   secrets --benches <file> [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   standard --benches <file> --bench <name> [--machines <file>] [--want <stamp>] [--go <ver>] [--os linux|darwin] [--min-free <gb>] [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse fleet   mirror --benches <file> --bench <name> [--machines <file>] --repo <url> --path <remote path> [--ssh <path>] [--timeout <s>]
+nova-pulse fleet   join --benches <file> --bench <name> [--machines <file>] --tailscale <path> --authkey-env <NAME> [--ssh <path>] [--timeout <s>]
+nova-pulse fleet   sleep --benches <file> --bench <name> [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
