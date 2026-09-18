@@ -44,7 +44,21 @@ const MaxRegularRecord = 16 * 1024 * 1024
 var errRecordTooLarge = fs.ErrInvalid
 
 func notRegular(path string, mode os.FileMode) error {
-	return &fs.PathError{Op: "read", Path: path, Err: fmt.Errorf("not a regular file (%s); a job's records are regular files and this tool follows no link and opens no pipe: %w", mode.Type(), errNotRegular)}
+	return &fs.PathError{Op: "read", Path: path, Err: fmt.Errorf("not a regular file (%s); a job's records are regular files and this tool follows no link and opens no pipe: %w", kindOf(mode), errNotRegular)}
+}
+
+// kindOf names the kind a non-regular path is, in the one word the refusal line carries.
+func kindOf(mode os.FileMode) string {
+	switch {
+	case mode&os.ModeSymlink != 0:
+		return "symlink"
+	case mode&os.ModeNamedPipe != 0:
+		return "fifo"
+	case mode&os.ModeDir != 0:
+		return "directory"
+	default:
+		return mode.Type().String()
+	}
 }
 
 func recordTooLarge(path string, size, limit int64) error {

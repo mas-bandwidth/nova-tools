@@ -741,8 +741,14 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	// A remote card's job came back under <root>/<bench>-<n>/jobs/<label>; a local card's
 	// sits under <root>/<n>/jobs/<label>.
 	job := filepath.Join(root, scratchName(c), "jobs", c.label)
-	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	raw, err := readFileSteady(filepath.Join(job, "RESULT.md"))
 	if err != nil {
+		// A RESULT.md that is a symlink or a FIFO is refused by name, in the one line the
+		// probe asserts (issue #233): it is not a result at all, and the refusal names the
+		// path and the kind rather than being folded into the missing-result class.
+		if errors.Is(err, errNotRegular) {
+			return "abstain", "refused", err.Error(), ""
+		}
 		if idleKilled {
 			watched := idleLog
 			if watched == "" {
