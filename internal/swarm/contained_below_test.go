@@ -52,7 +52,7 @@ func TestWorkersAreContainedBelowTheModel(t *testing.T) {
 	}
 
 	w := Worker{EnvVar: "DEEPSEEK_API_KEY"}
-	env := strings.Join(childEnv(w, 1, "abc", "sk-test"), "\n")
+	env := strings.Join(childEnv(w, 1, "abc", "sk-test", absFixture("pool", "worker-home-1")), "\n")
 	if !strings.Contains(env, "DEEPSEEK_API_KEY=sk-test") {
 		t.Errorf("the inference key did not reach the child: %s", env)
 	}
