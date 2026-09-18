@@ -704,3 +704,26 @@ is whole seconds and defaults to 60. The common mistake is forgetting the
 redirect: with an empty stdin the verb reads zero packages and prints
 `CI-SLOW OK packages=0 slowest=none`, which is why the test step always tees
 the stream first (`.github/workflows/ci.yml`).
+
+## nova-work
+
+`nova-work record` consumes the `cards:done` Redis stream and writes one row per result
+into the `card_results` table, idempotent on the stream id, acking only after the commit;
+`nova-work results` lists and filters those rows. The transcript below runs against a fake
+store and a one-message consumer, so it touches no Postgres and no Redis: `cmd/nova-work/
+firstrun_test.go` runs each `$` line through `run` with those seams replaced, and the same
+store answers every line so the second command lists the row the first one wrote.
+
+### First run
+
+```text
+$ nova-work record --migrate --postgres postgres://space/nova
+MIGRATE OK schema=1
+
+$ nova-work record --once --redis 127.0.0.1:6379 --postgres postgres://space/nova
+RECORD id=1-0 card=9347 bench=space exit=1 commit=abc1234 branch=rowan/postgres-card-results inserted=true result=RESULT: CARD-9347 card results in Postgres
+RECORD OK seen=1 inserted=1 duplicate=0 malformed=0
+
+$ nova-work results --postgres postgres://space/nova --bench space --failed
+RESULT id=1-0 card=9347 bench=space exit=1 commit=abc1234 branch=rowan/postgres-card-results pr=- done=2026-09-18T12:00:00Z result=RESULT: CARD-9347 card results in Postgres
+```

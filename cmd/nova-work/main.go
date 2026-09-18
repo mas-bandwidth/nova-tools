@@ -19,22 +19,30 @@
 // flag is a refusal, never a guess. Output is one line per verb. Exit 0 ran and passed;
 // exit 2 could not run -- a missing flag, an unreadable graph or plan, a :deps cycle, an
 // unknown node, a refusal.
+//
+// Command nova-work is also the durable card-result record of docs/SPEC-STATE.md. `record`
+// consumes the `cards:done` Redis stream and writes one row per result into Postgres,
+// idempotent on the stream id; `results` lists and filters those rows. The two record verbs
+// are thin over internal/record so the tests can put a fake store and miniredis behind them.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
 
-var version string
+var version = "dev"
 
 const usage = `nova-work: the job graph and the bounded .work reader (see docs/SPEC-JOBS.md, docs/SPEC-WORKLANG.md)
 
@@ -84,18 +92,52 @@ example:
   nova-work dependencies --graph ./deps.json --node a --needs b
   nova-work ready --node a --graph ./deps.json
   nova-work plan check --file ./work.work --max-bytes 65536
+
+nova-work is also the durable card-result record: Redis carries the result, Postgres keeps it.
+
+usage:
+  nova-work record  --postgres <dsn> --redis <addr> [--once] [--deadline 1h] [--migrate]
+  nova-work results --postgres <dsn> [--since 1h] [--bench b] [--failed] [--max 20]
+
+verbs:
+  record  consume cards:done and write one row per result into card_results, idempotent on
+          the stream id; --migrate applies the schema and exits; --once reads one pass
+  results one line per recorded result, newest first
+  help
+  version
+
+example:
+  nova-work record --migrate --postgres postgres://space/nova
+  nova-work record --once --redis 127.0.0.1:6379 --postgres postgres://space/nova
+  nova-work results --postgres postgres://space/nova --bench space --failed --max 5
 `
 
-// refuse is what an unusable invocation or an unreadable plan costs: one line naming
-// what was wrong and the door to the usage, never the banner itself.
-func refuse(stderr io.Writer, where, what string) int {
-	fmt.Fprintf(stderr, "nova-work%s: %s; run: nova-work help\n", oneline.Escape(where), oneline.Escape(what))
-	return 2
+// deps is the seam the tests replace: the store and consumer factories and the clock.
+type deps struct {
+	openStore    func(dsn string) (record.Store, error)
+	openConsumer func(ctx context.Context, addr, stream, group, name string) (record.Consumer, error)
+	now          func() time.Time
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
+func defaultDeps() deps {
+	return deps{
+		openStore: func(dsn string) (record.Store, error) { return record.OpenPostgres(dsn) },
+		openConsumer: func(ctx context.Context, addr, stream, group, name string) (record.Consumer, error) {
+			return record.NewRedisConsumer(ctx, addr, stream, group, name)
+		},
+		now: time.Now,
+	}
+}
 
-func run(args []string, stdout, stderr io.Writer) int {
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, defaultDeps())) }
+
+// run dispatches every verb. The record verbs read the deps seam; the job-graph verbs do
+// not. The seam is variadic so a test may leave it out when it only exercises the graph.
+func run(args []string, stdout, stderr io.Writer, dList ...deps) int {
+	d := defaultDeps()
+	if len(dList) > 0 {
+		d = dList[0]
+	}
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `plan check` reads a plan and `ready --node X` only looks")
 	}
@@ -113,8 +155,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdClip(args[1:], stdout, stderr)
 	case "plan":
 		return cmdPlan(args[1:], stdout, stderr)
+	case "record":
+		return cmdRecord(args[1:], stdout, stderr, d)
+	case "results":
+		return cmdResults(args[1:], stdout, stderr, d)
 	}
-	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
+	return refuse(stderr, "", fmt.Sprintf("unknown verb %q; run: nova-work help", args[0]))
+}
+
+// refuse is what an unusable invocation costs: one line naming what was wrong and the door
+// to the usage, never the banner.
+func refuse(stderr io.Writer, where, what string) int {
+	fmt.Fprintf(stderr, "nova-work%s: %s; run: nova-work help\n", oneline.Escape(where), oneline.Escape(what))
+	return 2
 }
 
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
@@ -292,4 +345,52 @@ func cmdPlan(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "PLAN OK file=%s bytes=%d version=%d nodes=%d\n",
 		oneline.Field(*file), len(data), plan.Version, len(plan.Nodes))
 	return 0
+}
+
+// ------------------------------------------------------------------------------- flags
+
+// flags is one verb's flag set with package flag's two mouths closed: its error text quotes
+// the argument it could not parse and its usage dump is discarded, so an argument beginning
+// with a dash cannot author a line of stderr before any code here runs.
+type flags struct {
+	verb     string
+	fs       *flag.FlagSet
+	problems []string
+}
+
+func newFlags(verb string) *flags {
+	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	return &flags{verb: verb, fs: fs}
+}
+
+func (f *flags) parse(args []string, stderr io.Writer) bool {
+	if err := f.fs.Parse(args); err != nil {
+		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
+		return false
+	}
+	if n := f.fs.NArg(); n > 0 {
+		fmt.Fprintf(stderr, "nova-work %s: takes no positional arguments, got %d (flags come before arguments)\n", oneline.Escape(f.verb), n)
+		return false
+	}
+	return true
+}
+
+// want records a missing required flag with what it WANTS, never only what was wrong.
+func (f *flags) want(value, name, wants string) {
+	if value == "" {
+		f.problems = append(f.problems, fmt.Sprintf("--%s is required; it wants %s; refusing to guess", oneline.Escape(name), oneline.Escape(wants)))
+	}
+}
+
+func (f *flags) add(problem string) { f.problems = append(f.problems, problem) }
+
+// refused prints every problem this run found, one line each, and reports whether there
+// were any.
+func (f *flags) refused(stderr io.Writer) bool {
+	for _, p := range f.problems {
+		fmt.Fprintf(stderr, "nova-work %s: %s\n", oneline.Escape(f.verb), oneline.Escape(p))
+	}
+	return len(f.problems) > 0
 }
