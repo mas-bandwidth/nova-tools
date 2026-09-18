@@ -63,7 +63,9 @@ usage:
   nova-bus draft --bus <dir> --as <name> --reply-to <id-or-path-or-subject> --body-file <path> --draft-dir <dir> --remote <name> --branch <name>
         [--to <names>] [--cc <names>] [--subject <text>] [--max-body-bytes <n>]
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
-  nova-bus send --bus <dir> (--file <path>|--stdin | --prepared <path>|--prepared-stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
+  nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push] [--dry-run] [--git-timeout <seconds>]
+  nova-bus send --bus <dir> (--prepared <path>|--prepared-stdin) --as <name> --remote <name> --branch <name> [--attempts <n>] [--git-timeout <seconds>]
+  nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run] [--attempts <n>] [--git-timeout <seconds>]
   nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]] [--full] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
@@ -270,6 +272,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdPrepare(rest, stdin, stdout, stderr, now)
 	case "send":
 		return cmdSend(rest, stdin, stdout, stderr, now)
+	case "reply":
+		return cmdReply(rest, stdout, stderr, now)
 	case "inbox":
 		return cmdInbox(rest, stdout, stderr, now)
 	case "receipt":
@@ -825,6 +829,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "commit but do not push; the note is NOT on the bus until it is pushed")
+	dryRun := f.fs.Bool("dry-run", false, "stop after the preflight and the shaping: commit nothing, push nothing, print the note that would be sent")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "remote": remote, "branch": branch}) {
 		return 2
 	}
@@ -841,6 +846,10 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	hasPrepared := *preparedFile != "" || *usePreparedStdin
 	if hasDraft && hasPrepared {
 		fmt.Fprint(stderr, "nova-bus send: --prepared is mutually exclusive with --file and --stdin\n")
+		return 2
+	}
+	if hasPrepared && *dryRun {
+		fmt.Fprint(stderr, "nova-bus send: --dry-run shapes an ordinary draft; drop --prepared or drop --dry-run\n")
 		return 2
 	}
 	if hasPrepared {
@@ -932,6 +941,38 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 			return 2
 		}
 		text = string(raw)
+	}
+	// THE PREFLIGHT, before any commit: two shapes a hand-written draft arrives in that
+	// this tool mints rather than reads. A hand-written Id is the tool's to assign, and a
+	// Re line names one thread. Both are exit 2 with one remedy line, and both leave the
+	// bus, the index and the working tree exactly as they were.
+	if kind, ok := preflightDraft(text); !ok {
+		switch kind {
+		case "id":
+			fmt.Fprintf(stderr, "nova-bus send: the tool mints the Id; delete the Id: header from %s\n", oneline.Field(source))
+		case "re":
+			fmt.Fprintf(stderr, "nova-bus send: Re: names one thread; name one id in %s\n", oneline.Field(source))
+		}
+		return 2
+	}
+	if *dryRun {
+		if err := bus.IsRepoRoot(*busDir); err != nil {
+			fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.Err(err))
+			return 2
+		}
+		t, ok := openBus("send", *busDir, stderr)
+		if !ok {
+			return 2
+		}
+		prepared, err := bus.PrepareDraft(t, text, now, *slug, *as)
+		if err != nil {
+			for _, reason := range bus.Reasons(err) {
+				fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
+			}
+			return 1
+		}
+		printSendDraft(stdout, prepared, t.Config, now)
+		return 0
 	}
 	if err := bus.IsRepoRoot(*busDir); err != nil {
 		fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.Err(err))
@@ -1026,6 +1067,72 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d wakes=%d\n",
 		oneline.Field(prepared.Note.Header.ID), oneline.Field(prepared.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, len(to))
 	return 0
+}
+
+// preflightDraft is the send --file preflight: the two mistakes a shaped note refuses
+// before any commit. It returns which one it found and false, or "" and true.
+//
+// A hand-written Id is refused because the tool mints it, and a Re line naming more than
+// one id is refused because a Re line names one thread. The Re check counts tokens that
+// have the shape of a bus id, so a subject holding a comma is still the subject it is.
+func preflightDraft(text string) (string, bool) {
+	n, _ := bus.ParseNoteAll("", text)
+	if strings.TrimSpace(n.Header.ID) != "" {
+		return "id", false
+	}
+	if countBusIDs(n.Header.Re) > 1 {
+		return "re", false
+	}
+	return "", true
+}
+
+// countBusIDs counts the id-shaped tokens across a note's Re lines: a Re line may separate
+// ids with a comma, a semicolon or a space, and only a token that is a bus id at all is
+// counted.
+func countBusIDs(res []string) int {
+	count := 0
+	for _, r := range res {
+		spaced := strings.ReplaceAll(strings.ReplaceAll(r, ",", " "), ";", " ")
+		for _, tok := range strings.Fields(spaced) {
+			if isBusID(tok) {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// isBusID reports the shape the tool mints: a sender slug, a hyphen, and twelve lower-case
+// hex digits.
+func isBusID(tok string) bool {
+	i := strings.LastIndexByte(tok, '-')
+	if i <= 0 || len(tok)-i-1 != 12 {
+		return false
+	}
+	for _, r := range tok[i+1:] {
+		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// printSendDraft is `send --dry-run`: the shaped note as one line naming every field, then
+// the note verbatim framed by an id, so a caller can pipe it to a file.
+func printSendDraft(stdout io.Writer, p bus.Prepared, c *bus.Config, now time.Time) {
+	id := p.Note.Header.ID
+	to, cc := p.Note.Header.Recipients(c)
+	re := "none"
+	if len(p.Note.Header.Re) > 0 {
+		re = p.Note.Header.Re[0]
+	}
+	note := p.Note.Render()
+	fmt.Fprintf(stdout, "SEND DRAFT id=%s path=%s to=%d cc=%d re=%s subject=%s date=%s bytes=%d\n",
+		oneline.Field(id), oneline.Field(p.Path), len(to), len(cc), oneline.Field(re),
+		oneline.Field(p.Note.Header.Subject), oneline.Field(now.UTC().Format(time.RFC3339)), len(note))
+	fmt.Fprintf(stdout, "SEND DRAFT id=%s\n", oneline.Field(id))
+	fmt.Fprint(stdout, note)
+	fmt.Fprintf(stdout, "SEND DRAFT END id=%s\n", oneline.Field(id))
 }
 
 func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {

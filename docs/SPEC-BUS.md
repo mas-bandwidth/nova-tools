@@ -15,12 +15,13 @@ nova-bus receipt --bus <dir> --as <name> --verdict APPROVE|HOLD|ADOPTED --re <id
 
 **What each reads and writes.** `wait --on-note` reads the bus from `--bus`, fetches
 `--remote`/`--branch` on `--interval`, and reads the notes addressed to the caller
-by To: or Cc:, the wake being To: only (addr=to is the default; --cc opts in to Cc: notes, which are data, not a wake); it writes nothing unless `--advance` is given, when it moves and
-pushes the caller's cursor as `inbox --advance` does. `receipt --verdict` reads the
-bus and roster, resolves `--re` against the open list, and writes one receipt note
-into the caller's lane — `Verdict: <APPROVE|HOLD|ADOPTED>`, `Re: <id>`, the `--text`
-body — plus the lane's `RECEIPTS` record, in one commit it pushes to `--remote` on
-`--branch`.
+by To: only, by To: or Cc: once `--cc` opts in, the wake being To: only (addr=to is
+the default; --cc opts in to Cc: notes, which are data, not a wake); it writes nothing
+unless `--advance` is given, when it moves and pushes the caller's cursor as `inbox
+--advance` does. `receipt --verdict` reads the bus and roster, resolves `--re` against
+the open list, and writes one receipt note into the caller's lane — `Verdict:
+<APPROVE|HOLD|ADOPTED>`, `Re: <id>`, the `--text` body — plus the lane's `RECEIPTS`
+record, in one commit it pushes to `--remote` on `--branch`.
 
 **What `wait --on-note` prints.** The moment a To: note for the caller arrives it
 exits 0 with exactly one status line and the notes, and nothing else: no `INBOX
@@ -35,14 +36,15 @@ INBOX BODY END id=<id>
 ```
 
 Every field is named: the id, the sender, the repository-relative path, the body's
-byte count, and the existing frame fields. A service restart alone does not wake a
-harness parent — nothing in the unit's lifetime reaches the parent — so this slice
-waits in the foreground only: a FIFO is not durable, a file can overwrite pending
-notes, and `--advance` does not itself name the batch it acknowledges. `wait
---on-note` wakes a parent that is waiting inside its own turn, and the exit is the
-wake: a parent wakes on a note without ingesting the open list. Background delivery
-is deferred to a later section, which must pin a real notification adapter and an
-acknowledgement-token protocol before it makes any claim.
+byte count, and the existing frame fields. The verb runs as a systemd or launchd
+unit outside a TUI, so the unit restarts it after a harness cap; the exit is the
+wake, and a parent wakes on a note without ingesting the open list. A service restart
+alone does not wake a harness parent — nothing in the unit's lifetime reaches the
+parent — so this slice waits in the foreground only: a FIFO is not durable, a file
+can overwrite pending notes, and `--advance` does not itself name the batch it
+acknowledges. `wait --on-note` wakes a parent that is waiting inside its own turn.
+Background delivery is deferred to a later section, which must pin a real
+notification adapter and an acknowledgement-token protocol before it makes any claim.
 
 The verb also runs as a systemd or launchd unit outside a TUI, so the unit restarts
 it after a harness cap; the exit is the wake, and a parent wakes on a note without
