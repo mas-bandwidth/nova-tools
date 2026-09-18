@@ -50,8 +50,13 @@ if [ "$OS" = "Linux" ] && [ "${#RUNNERS[@]}" -gt 0 ]; then
     # (1) exactly one listener process mentioning the runner dir.
     pids=""
     if command -v ps >/dev/null 2>&1; then
-      # ps -eo pid=,args= lists "pid cmd..."; match the literal dir.
-      pids="$(ps -eo pid=,args= 2>/dev/null | awk -v dir="$d" 'index($0, dir) {print $1}')"
+      # ps -eo pid=,args= lists "pid cmd...". Match the LISTENER binary under the
+      # runner dir, not the dir string: run.sh and run-helper.sh also carry the dir,
+      # and the awk of this very pipeline carries it in its own argv, so a bare dir
+      # match counted 4 where the answer is 1 on every bench (antman, 2026-09-18).
+      # ps is snapshotted before awk exists for the same reason.
+      pstable="$(ps -eo pid=,args= 2>/dev/null)"
+      pids="$(printf '%s\n' "$pstable" | awk -v bin="${d}bin/Runner.Listener" 'index($0, bin) {print $1}')"
     else
       drift "$unit ps not available to count listeners in $d"
       continue
