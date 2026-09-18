@@ -304,6 +304,64 @@ against `internal/release.Verbs` so a sixth release verb fails on the day it is 
 *Tests: `TestTheCommandReferenceDeclaresEveryReleaseVerb`,
 `TestTheFourthDogfoodsLessonsAreInTheReleaseSpec`.*
 
+## 11. The windows bench is a target like any other
+
+The Ryzen Threadripper is the fleet's first Windows bench (Emma's standard,
+[BENCH-WINDOWS.md](BENCH-WINDOWS.md)), and everything about releasing to it is a **decision** rather
+than a default. Five of them, all made before the machine arrived so that `nova-update release build
+--platform windows-amd64` and the fan-out behind it work on the day it is plugged in.
+
+**The shell on the far side is POSIX, and that is Emma's decision, not a new one.** BENCH-WINDOWS.md
+names the bench's ssh shell as Git Bash (`C:\Program Files\Git\bin\bash.exe`), or native OpenSSH with
+Bash in `sshd_config`, and `internal/pulse/fleetstandard.go`'s windows checks are POSIX shell that
+reach for `powershell.exe -NoProfile -Command '...'` only for the questions only PowerShell can
+answer. `adopt` and `pull` match it: they compose `mkdir -p`, `tar -C`, `cat`, `test -d` and `rm -f`
+there exactly as on a Linux bench, and reach for no PowerShell at all.
+
+**A path may be written the Windows way and is never sent that way.** `--bin`, `--dest`, `--retire`
+and the `--machines` columns take the drive-absolute form — `C:\Users\nova\.local\bin`, which is what
+BENCH-WINDOWS.md puts in that bench's runner `.path` and therefore what a person will type — and every
+backslash is folded to a forward slash by `release.RemotePath` before any command is composed, giving
+`C:/Users/nova/.local/bin`. In Git Bash a backslash is an **escape**: `C:\Users\nova` arrives as
+`C:Usersnova`, silently, and the machine then refuses about a path nobody typed. Windows accepts a
+forward slash in every API and in every one of its own shells, so the fold costs nothing and removes
+the class. The drive form is allowed for the **windows target only** and refused by name for every
+other: `C:\...` on a Linux bench is a first token that cannot exist. Drive-*relative* (`C:Users\nova`)
+and UNC (`\\server\share`) are refused everywhere, for the same reason a bare name is — they resolve
+against something nobody here chose. `--from host:dir` is the one exception to the target rule: that
+directory belongs to the **build host**, whose operating system is its own business, so the drive form
+is allowed there whatever the target is.
+
+**Every artifact is named for the target, and so is every name derived from one.** `release.ToolFile`
+is the only place a tool name becomes a file name: a windows release is a directory of `.exe` files
+whoever built it, `SHA256SUMS` lists those names and nothing else, `install` reads the names out of
+that file rather than rebuilding them, `adopt` sends and runs `nova-update.exe`, `pull` removes
+`.exe` files, and `nova-version snapshot` records the name the file actually has, suffix and all.
+
+**There is no self-verify of a cross-built artifact, and the build says so rather than faking one.** A
+`release build --platform windows-amd64` on the Studio or on hulk produces a `nova-update.exe` this
+host cannot execute, so the build cannot ask it whether it answers `version`. What the build promises
+is the checksum round trip — written, read back, verified, `verified=<n>` on the receipt — and nothing
+more; the receipt carries no claim about anything having been run. The version stamp is asserted where
+the binary can actually run: by `install` on the bench, which probes every file it is about to replace
+through its own `version` verb, and by CI's windows leg. `GOOS=windows go vet ./...` is clean, which
+is the whole of what a non-windows host can say about windows code before the machine exists.
+
+**And one thing the bench's own filesystem decides.** Windows will not replace a file that is open for
+execution, and the file being replaced is frequently `nova-update.exe` replacing itself — `adopt` runs
+the release's own `nova-update.exe` there and that process holds its own image open. It *will* let a
+running file be renamed aside, so `install` falls back to moving the old one out of the way and
+renaming the new one into place. The name it moves aside to is dot-prefixed, which keeps it out of
+`nova-version snapshot` and out of `--retire`, both of which take `nova-*` only; the old image may
+survive until the process ends, and has to be inert while it does. A rename that fails for a real
+reason still fails, with the old binary put back under its own name.
+
+*Tests: `TestAdoptTakesWindowsDrivePathsForBinAndDest`, `TestAdoptComposesSlashPathsForAWindowsBench`,
+`TestAdoptRefusesAWindowsPathForALinuxTarget`, `TestAWindowsPathMayStillCarryNoShellSyntax`,
+`TestTheWindowsSumsFileNamesOnlyExeFiles`, `TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts`,
+`TestInstallMovesARunningFileAsideWhenTheRenameIsRefused`,
+`TestSnapshotReadsExeNamesAndKeepsTheSuffix`, `TestTheWindowsBenchIsInTheReleaseSpec`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and Johnny's read of
