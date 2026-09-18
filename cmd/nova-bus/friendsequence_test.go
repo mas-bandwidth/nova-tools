@@ -3,7 +3,6 @@ package main
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 // THE SEQUENCE A FRIEND ACTUALLY RUNS, end to end, in the order they run it: wait for
@@ -23,7 +22,8 @@ import (
 // empty. A verb that leaves the checkout dirty has broken the next verb, whatever its own
 // output said.
 func TestFriendSequenceWaitSendReceiptInbox(t *testing.T) {
-	t.Parallel()
+	// NOT parallel: it installs the package-wide testWaitBlockedHook sync point, which a
+	// sibling's wait would read in its place.
 	hermetic(t)
 	checkout, bare := busDir(t)
 	settled(t, checkout)
@@ -39,18 +39,24 @@ func TestFriendSequenceWaitSendReceiptInbox(t *testing.T) {
 	// A note from another line, pushed while the wait is running: the event a wait is for.
 	other := bench(t, bare)
 	note(t, other, "bo-444444444444", "the pit stop")
-	pushed := make(chan error, 1)
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		pushed <- push(other)
-	}()
+	// The note is pushed at the wait's own blocked boundary, not after a fixed sleep: the
+	// hook fires once the wait has polled, found nothing, and is about to wait, so the
+	// sequence's first verb sees the note without a wall clock racing its poll.
+	var pushErr error
+	hook := waitBlockedHook(func(dir string) {
+		if dir == checkout {
+			pushErr = push(other)
+		}
+	})
+	prev := testWaitBlockedHook.Swap(&hook)
+	defer testWaitBlockedHook.Store(prev)
 
 	invoke(t, "", waitFlags(checkout, "Ada", "10s")...).
 		mustCode(t, 0).
 		mustContain(t, "stdout", "WAIT OK new=1").
 		mustContain(t, "stdout", "WAIT DONE reason=new")
-	if err := <-pushed; err != nil {
-		t.Fatal(err)
+	if pushErr != nil {
+		t.Fatal(pushErr)
 	}
 	clean("wait")
 

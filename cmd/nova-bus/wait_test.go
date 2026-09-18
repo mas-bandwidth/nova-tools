@@ -116,7 +116,8 @@ func TestWaitEndsWithRearmLine(t *testing.T) {
 // THE POINT OF THE VERB: a note pushed by somebody else, mid-call, ends the wait. The
 // caller is inside a tool call the whole time and gets the listing the moment it is true.
 func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
-	t.Parallel()
+	// NOT parallel: it installs the package-wide testWaitBlockedHook sync point, which a
+	// sibling's wait would read in its place.
 	hermetic(t)
 	checkout, bare := busDir(t)
 	settled(t, checkout)
@@ -124,17 +125,22 @@ func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
 	other := bench(t, bare)
 	note(t, other, "bo-333333333333", "mid wait")
 
-	pushed := make(chan error, 1)
-	go func() {
-		time.Sleep(250 * time.Millisecond)
-		pushed <- push(other)
-	}()
+	// The note is pushed at the wait's own blocked boundary, not after a fixed sleep: the
+	// hook fires the moment the wait has polled, found nothing, and is about to wait, so
+	// the note cannot arrive before the wait is waiting and the wait cannot return before
+	// it arrives. That order is the assertion, made by the hook and not by a wall clock.
+	var pushErr error
+	hook := waitBlockedHook(func(dir string) {
+		if dir == checkout {
+			pushErr = push(other)
+		}
+	})
+	prev := testWaitBlockedHook.Swap(&hook)
+	defer testWaitBlockedHook.Store(prev)
 
-	start := time.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", "30s")...).mustCode(t, 0)
-	took := time.Since(start)
-	if err := <-pushed; err != nil {
-		t.Fatal(err)
+	if pushErr != nil {
+		t.Fatal(pushErr)
 	}
 
 	r.mustContain(t, "stdout", "WAIT as=Ada timeout=30s interval=100ms cursor=").
@@ -144,9 +150,6 @@ func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
 		mustContain(t, "stdout", "INBOX OK as=Ada")
 	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
 		t.Fatalf("the wait timed out over a note that arrived:\n%s", r.stdout)
-	}
-	if took >= 30*time.Second {
-		t.Fatalf("the wait took %s, which is its whole timeout; it did not return on the note", took)
 	}
 	// The polls before the note are silent: a wait that printed a listing per poll would
 	// be a poller with extra steps, and the caller's transcript is what this verb is for.
@@ -185,7 +188,8 @@ func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
 	if testing.Short() {
 		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+	// NOT parallel: this test asserts how far the injected wait clock advanced, and a
+	// sibling's wait would advance the one package-wide clock under it.
 	hermetic(t)
 	checkout, _ := busDir(t)
 	settled(t, checkout)
@@ -197,17 +201,17 @@ func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
 	// that the run polled more than once; that claim is a wall clock and now lives behind
 	// the perf tag, which is what the note further down is about.
 	const timeout = 2 * time.Second
-	start := time.Now()
+	before := waitClk.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)
-	took := time.Since(start)
+	waited := waitClk.Now().Sub(before)
 
 	r.mustContain(t, "stdout", "WAIT as=Ada timeout=2s interval=100ms cursor=").
 		mustContain(t, "stdout", "WAIT TIMEOUT after=")
 	if strings.Contains(r.stdout, "INBOX ") {
 		t.Fatalf("a wait that found nothing printed a listing:\n%s", r.stdout)
 	}
-	if took < timeout {
-		t.Fatalf("the wait returned after %s, before its %s deadline", took, timeout)
+	if waited < timeout {
+		t.Fatalf("the wait returned after %s of injected time, before its %s deadline", waited, timeout)
 	}
 	// It polled and said how many times: a tool that returns "nothing" without saying it
 	// looked is indistinguishable from one that did not look.
@@ -231,6 +235,28 @@ func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
 	onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR"))
 	if at := field(t, line, "cursor="); len(onLane) == 0 || at != onLane[0] {
 		t.Fatalf("WAIT TIMEOUT cursor=%s is not the cursor on the lane:\n%s", at, read(t, checkout, "from-ada/CURSOR"))
+	}
+}
+
+// THE DEADLINE IS READ FROM THE INJECTED CLOCK, which is the whole reason a wait
+// test costs no wall time: waitLoop measures its elapsed through waitNow and
+// waits through waitSleep, and TestMain points both at this package's step clock.
+// Without that seam -- a waitLoop that read time.Now/time.Sleep directly -- the
+// injected clock would never move and this assertion fails: the timeout would be
+// the machine's, which is the fixed wall-clock wait the waits class test refuses
+// and the merge gate's 100 s package budget cannot pay for on the hosted runners.
+func TestAWaitsTimeoutIsMeasuredOnTheInjectedClock(t *testing.T) {
+	// NOT parallel: it asserts how far the one package-wide clock advanced.
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	const timeout = 500 * time.Millisecond
+	from := waitClk.Now()
+	invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0).
+		mustContain(t, "stdout", "WAIT TIMEOUT after=500ms")
+	if got := waitClk.Now().Sub(from); got < timeout {
+		t.Fatalf("the wait advanced the injected clock by %s over a %s --timeout; the deadline is not read from the injected clock", got, timeout)
 	}
 }
 
@@ -349,9 +375,7 @@ func TestWaitReturnsAtOnceWhenTheCursorsLineHidesTheWholeWait(t *testing.T) {
 	// Tomorrow, on the fixed clock: the line a reader draws when they mean "from today".
 	invoke(t, "", advance(checkout, "Ada", "--legacy-before", "2026-09-10")...).mustCode(t, 0)
 
-	start := time.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", "30s")...).mustCode(t, 0)
-	took := time.Since(start)
 
 	r.mustContain(t, "stdout", "INBOX SWITCH your switch-day line is the date 2026-09-10, which hides every note dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus ").
 		mustContain(t, "stdout", "--legacy-now --advance --remote \"origin\" --branch \"main\"").
@@ -363,11 +387,9 @@ func TestWaitReturnsAtOnceWhenTheCursorsLineHidesTheWholeWait(t *testing.T) {
 	if n := strings.Count(r.stdout, "your switch-day line"); n != 1 {
 		t.Fatalf("the line drawn forward was mentioned %d times, want 1:\n%s", n, r.stdout)
 	}
+	// The event is the assertion: a wait that sat out its timeout prints WAIT TIMEOUT.
 	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
 		t.Fatalf("the wait sat out its timeout behind a line that hides everything:\n%s", r.stdout)
-	}
-	if took > 10*time.Second {
-		t.Fatalf("the wait took %s to say the line hides everything; it is meant to say so at once", took)
 	}
 }
 
@@ -402,7 +424,8 @@ func TestWaitSaysWhyAnInstantDrawnForwardHidesTheWholeWait(t *testing.T) {
 // line for the backlog it did not print. With --open in that loop, a line carrying
 // seventy-four re-read all seventy-four on every poll.
 func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
-	t.Parallel()
+	// NOT parallel: it installs the package-wide testWaitBlockedHook sync point, which a
+	// sibling's wait would read in its place.
 	hermetic(t)
 	checkout, bare := busDir(t)
 	// No switch-day line: Ada is carrying the fixture's two, which is the backlog.
@@ -411,11 +434,17 @@ func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
 
 	other := bench(t, bare)
 	note(t, other, "bo-333333333333", "mid wait")
-	pushed := make(chan error, 1)
-	go func() {
-		time.Sleep(250 * time.Millisecond)
-		pushed <- push(other)
-	}()
+	// The push lands at the wait's blocked boundary, not after a fixed sleep: the hook
+	// fires once the wait has polled, found nothing, and is about to wait, so the note is
+	// news on the very next poll and no wall clock decides the order.
+	var pushErr error
+	hook := waitBlockedHook(func(dir string) {
+		if dir == checkout {
+			pushErr = push(other)
+		}
+	})
+	prev := testWaitBlockedHook.Swap(&hook)
+	defer testWaitBlockedHook.Store(prev)
 
 	args := []string{
 		"wait", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
@@ -423,8 +452,8 @@ func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3",
 	}
 	r := invoke(t, "", args...).mustCode(t, 0)
-	if err := <-pushed; err != nil {
-		t.Fatal(err)
+	if pushErr != nil {
+		t.Fatal(pushErr)
 	}
 	r.mustContain(t, "stdout", "WAIT OK new=1").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-333333333333").
@@ -445,18 +474,19 @@ func TestWaitWithoutAdvanceBlocksWhenCursorIsUnadvanced(t *testing.T) {
 	if testing.Short() {
 		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+	// NOT parallel: this test asserts how far the injected wait clock advanced, and a
+	// sibling's wait would advance the one package-wide clock under it.
 	hermetic(t)
 	checkout, _ := busDir(t)
 	settled(t, checkout) // Ada is up to date: nothing new to wake on.
 
 	const timeout = 1 * time.Second
-	start := time.Now()
+	before := waitClk.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)
-	took := time.Since(start)
+	waited := waitClk.Now().Sub(before)
 
-	if took < timeout {
-		t.Fatalf("wait returned after %s, before its %s deadline, with nothing new:\n%s", took, timeout, r.stdout)
+	if waited < timeout {
+		t.Fatalf("wait returned after %s of injected time, before its %s deadline, with nothing new:\n%s", waited, timeout, r.stdout)
 	}
 	r.mustContain(t, "stdout", "WAIT TIMEOUT after=")
 	if strings.Contains(r.stdout, "WAIT OK") {
@@ -516,7 +546,8 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	if testing.Short() {
 		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+	// NOT parallel: this test asserts how far the injected wait clock advanced, and a
+	// sibling's wait would advance the one package-wide clock under it.
 	hermetic(t)
 	checkout, bare := busDir(t)
 	settled(t, checkout)
@@ -531,9 +562,9 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 
 	const timeout = 1 * time.Second
-	start := time.Now()
+	before := waitClk.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String(), "--advance")...).mustCode(t, 0)
-	took := time.Since(start)
+	waited := waitClk.Now().Sub(before)
 
 	r.mustContain(t, "stdout", "WAIT ADVANCED from=").
 		mustContain(t, "stdout", " to=").
@@ -542,8 +573,8 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	if strings.Contains(r.stdout, "WAIT OK new=1") {
 		t.Fatalf("wait --advance returned WAIT OK on a note it had already receipted:\n%s", r.stdout)
 	}
-	if took < timeout {
-		t.Fatalf("wait --advance returned after %s, before its %s deadline, over only a heard note:\n%s", took, timeout, r.stdout)
+	if waited < timeout {
+		t.Fatalf("wait --advance returned after %s of injected time, before its %s deadline, over only a heard note:\n%s", waited, timeout, r.stdout)
 	}
 	// The cursor moved over the heard note: its commit is the one this run read to, which
 	// is the parent of the cursor commit the advance itself made.

@@ -74,9 +74,51 @@ func TestMain(m *testing.M) {
 		// The bus fixture busDir copies is built under this directory too, so it is
 		// removed with it on every path out of this function.
 		busFixtureRoot = dir
+		// THE WAIT CLOCK IS INJECTED. waitLoop is this package's one wall clock used
+		// as control flow: every wait test that exercises a --timeout would otherwise
+		// hold the machine's clock for those seconds, which is the wall time the
+		// merge gate's 100 s package budget cannot spare on the hosted runners and
+		// which the waits class test refuses outright. The fake's Sleep advances Now,
+		// so a wait of seconds reaches its deadline in as many polls as it would in
+		// real time and not one wall-clock millisecond. Every test in this package
+		// drives one process, so one mutex-guarded clock stands in for the real one.
+		injectWaitClock()
 		return m.Run()
 	}())
 }
+
+// stepClock is the injected wait clock: Now stands still until Sleep moves it. It
+// is mutex-guarded because the package's parallel tests share it, and every advance
+// and read is serialised here.
+type stepClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *stepClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *stepClock) Sleep(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+// injectWaitClock points waitLoop's two clock seams at one fake clock for the whole
+// package run. The instant is the tests' own fixed instant, so no wait's elapsed
+// time depends on the machine either.
+func injectWaitClock() {
+	waitClk = &stepClock{now: time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC)}
+	waitNow = waitClk.Now
+	waitSleep = waitClk.Sleep
+}
+
+// waitClk is the fake clock waitLoop reads. A test that asserts on how far a wait
+// advanced reads it here; the wait is measured in injected time, never wall time.
+var waitClk *stepClock
 
 // noMaintenanceConfig is the whole of that global config: no auto-gc anywhere, and if some
 // git runs one anyway it runs in the foreground, where the call that started it waits for

@@ -2498,6 +2498,19 @@ type waitBlockedHook func(busDir string)
 
 var testWaitBlockedHook atomic.Pointer[waitBlockedHook]
 
+// waitNow and waitSleep are the wait loop's clock, named so a test can hold it
+// still. waitLoop is the one place in this package that measures the wall clock
+// as control flow -- its deadline, its elapsed poll stamp, and the sleep between
+// polls -- and a test that must exercise a timeout would otherwise hold real
+// time on the runner. A fake whose Sleep advances Now runs the same loop to its
+// deadline in a few instant polls, which is the shape the waits class test names
+// (a poll on a fake clock, not a fixed wall-clock wait). Production keeps the
+// real clock; the tests install one clock for the whole package in TestMain.
+var (
+	waitNow   = time.Now
+	waitSleep = time.Sleep
+)
+
 // writeBeatLease writes the lane's BEAT carrying until=now+lease, so a line whose manager
 // process is alive but between waits still reads awake to `nova-wake awake`. It is called
 // on entry, every tick and on exit; the stamp and until come from the same Now so the
@@ -2516,7 +2529,7 @@ func writeBeatLease(o inboxOpts, cursor string) error {
 // and making them wait an interval for news the bus already had would be a tool inventing
 // latency.
 func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout, stderr io.Writer, now time.Time) int {
-	start := time.Now()
+	start := waitNow()
 	deadline := start.Add(timeout)
 	// The moment this call cannot see past: a switch-day line drawn after it hides
 	// everything that could possibly arrive during this wait.
@@ -2581,7 +2594,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 	}
 	for {
 		polls++
-		elapsed := time.Since(start).Round(time.Millisecond)
+		elapsed := waitNow().Sub(start).Round(time.Millisecond)
 		pollNow := now.Add(elapsed)
 		// Issue #328, re-landed: a wait returns the moment it sees news, an unadvanced
 		// cursor's backlog included, printing exactly what inbox prints for that state;
@@ -2617,8 +2630,8 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		// <name>", so the line's liveness lands on the bus even while it is simply waiting.
 		// The write is to the working tree on every tick; the push is the only part
 		// bounded, because it is the only part that costs somebody's server.
-		if time.Since(lastBeat) >= o.beat {
-			lastBeat = time.Now()
+		if waitNow().Sub(lastBeat) >= o.beat {
+			lastBeat = waitNow()
 			landBeat()
 		}
 		if skipped {
@@ -2656,7 +2669,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 				(*h)(o.busDir)
 			}
 		}
-		left := time.Until(deadline)
+		left := deadline.Sub(waitNow())
 		if left <= 0 {
 			break
 		}
@@ -2664,10 +2677,10 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 		// than before it: a note that arrives in the final interval is a note this call
 		// saw, and stopping early would hand it to the next call for no reason.
 		if left < interval {
-			time.Sleep(left)
+			waitSleep(left)
 			continue
 		}
-		time.Sleep(interval)
+		waitSleep(interval)
 	}
 	// A TIMEOUT IS NOT AN ERROR. Nothing arrived, and nothing was written -- no cursor
 	// moves on a wait that found nothing, because there is nothing to record having read --
@@ -2681,7 +2694,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, next string, stdout,
 	// bounded by --beat.
 	landBeat()
 	fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s\n",
-		oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
+		oneline.Field(waitNow().Sub(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
 	fmt.Fprintf(stdout, "WAIT DONE reason=timeout rearm=required next=%s\n", next)
 	return 0
 }
