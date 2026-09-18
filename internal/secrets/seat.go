@@ -136,19 +136,24 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 	if err := atomicWriteFile(configPath, updated, 0644); err != nil {
 		return nil, err
 	}
-	restore := func() {
-		_ = atomicWriteFile(configPath, original, 0644)
+	// A restore that fails silently would leave a grant in the store with no file under
+	// it and nothing said about it, which is the one outcome worse than the failure that
+	// caused it. It is named in the error the caller sees.
+	restore := func(cause error) error {
+		if err := atomicWriteFile(configPath, original, 0644); err != nil {
+			return fmt.Errorf("%s, AND .sops.yaml could not be put back: %s -- the rule for %s is still in the working copy with no file under it; remove it by hand (git checkout -- .sops.yaml)",
+				oneline.Err(cause), oneline.Err(err), seatFile)
+		}
+		return cause
 	}
 
 	opts.say("encrypting %d value(s) to the new seat's recipients", len(names))
 	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, carried)
 	if err != nil {
-		restore()
-		return nil, err
+		return nil, restore(err)
 	}
 	if err := atomicWriteFile(targetFile, ciphertext, 0600); err != nil {
-		restore()
-		return nil, err
+		return nil, restore(err)
 	}
 
 	ruleNum := seatAddRuleNumber(updated, seatFile)
