@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // SlotLease is one bench slot lease: the directory name is the id.
@@ -203,7 +204,7 @@ func MakeSlotLease(store, id, owner string, pid int, label string, until time.Ti
 	body := fmt.Sprintf("owner=%s\npid=%d\nlabel=%s\nuntil=%s\n",
 		owner, pid, label, until.UTC().Format(time.RFC3339))
 	if err := os.WriteFile(slotLeaseFile(store, id), []byte(body), 0o644); err != nil {
-		_ = os.RemoveAll(dir)
+		_ = safepath.RemoveUnder(slotStoreDir(store), dir)
 		return err
 	}
 	return nil
@@ -311,11 +312,11 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 		if rerr != nil {
 			// A half-written take: no lease file, no owner, no hold.
 			// Reap it so garbage never accumulates.
-			_ = os.RemoveAll(filepath.Join(slotStoreDir(store), e.Name()))
+			_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), e.Name()))
 			continue
 		}
 		if !l.Until.After(now) && !Alive(l.Pid, "") {
-			_ = os.RemoveAll(filepath.Join(slotStoreDir(store), e.Name()))
+			_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), e.Name()))
 			continue
 		}
 		counts[l.Owner]++
@@ -342,7 +343,7 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 			}
 			body := fmt.Sprintf("owner=%s\npid=%d\nlabel=%s\nuntil=%s\n", owner, pid, label, until)
 			if err := os.WriteFile(slotLeaseFile(store, id), []byte(body), 0o644); err != nil {
-				_ = os.RemoveAll(filepath.Join(slotStoreDir(store), id))
+				_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), id))
 				return 0, 0, 0, 0, "", false, err
 			}
 			break
@@ -385,7 +386,7 @@ func ReleaseSlotLeases(store, owner, label string, all bool) (released, held int
 			held++
 			continue
 		}
-		if rerr := os.RemoveAll(filepath.Join(slotStoreDir(store), e.Name())); rerr != nil {
+		if rerr := safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), e.Name())); rerr != nil {
 			return released, held, rerr
 		}
 		released++

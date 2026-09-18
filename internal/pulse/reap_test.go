@@ -191,6 +191,39 @@ func TestReapRemovesOldSwarmtestTempDirs(t *testing.T) {
 	}
 }
 
+// a temp glob whose literal prefix escapes the root it was given is refused whole: the
+// glob is a flag, and a flag must not be able to aim the reaper at a tree outside it.
+func TestReapRefusesATempGlobOutsideItsRoot(t *testing.T) {
+	now := time.Date(2026, 9, 16, 18, 0, 0, 0, time.UTC)
+	root, queue, procs := reapFixture(t, now)
+	outside := t.TempDir()
+	old := filepath.Join(outside, "swarmtest-old")
+	if err := os.MkdirAll(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	age(t, old, 2*time.Hour, now)
+
+	var out, errs bytes.Buffer
+	code := Reap(ReapInput{
+		Roots: root, Queue: queue, Deadline: 30 * time.Minute,
+		Procs: procs, TempGlob: filepath.Join(outside, "*swarmtest*"), TempRoot: t.TempDir(),
+		TempAge: 30 * time.Minute, Now: func() time.Time { return now },
+		Stdout: &out, Stderr: &errs,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs.String())
+	}
+	if !strings.Contains(errs.String(), "REAP REFUSED") {
+		t.Errorf("the escaping glob was not refused: stdout=%q stderr=%q", out.String(), errs.String())
+	}
+	if !strings.Contains(out.String(), "temp=0") {
+		t.Errorf("REAP line = %q, want temp=0", out.String())
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Errorf("the escaping glob removed a directory outside its root: %v", err)
+	}
+}
+
 // --dry-run changes nothing and prints the same counts: the reaper is read first, act second.
 func TestReapDryRunChangesNothingAndCountsTheSame(t *testing.T) {
 	now := time.Date(2026, 9, 16, 18, 0, 0, 0, time.UTC)

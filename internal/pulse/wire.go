@@ -76,6 +76,7 @@ type WiringInput struct {
 	Timeout  time.Duration // the bound on every child; 0 is childTimeout
 	Max      int
 	TempGlob string // the swarm test leftovers reap collects; empty is reap's own default
+	TempRoot string // the directory the temp glob must sit under; empty derives it from the glob's prefix
 	Now      func() time.Time
 	Config   func() Config // the tick's configuration, re-read by run.go each tick
 	Log      io.Writer     // where each verb's one line goes; nil is <queue>/pulse.log
@@ -272,8 +273,8 @@ func (w *Wiring) Reap(tick int) (int, int, []Undecided, error) {
 	code := Reap(ReapInput{
 		Roots: w.in.Roots, Queue: w.in.Queue, Deadline: w.in.Deadline,
 		Procs: w.in.Procs, Repo: w.in.Repo, Runners: w.in.Runners, Restarter: w.in.Restarter,
-		TempGlob: w.in.TempGlob,
-		Now:      w.in.Now, Stdout: &out, Stderr: &errs,
+		TempGlob: w.in.TempGlob, TempRoot: w.in.TempRoot,
+		Now: w.in.Now, Stdout: &out, Stderr: &errs,
 	})
 	w.log(out.String())
 	w.log(errs.String())

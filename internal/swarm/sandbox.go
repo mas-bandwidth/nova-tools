@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // THE LAUNCH SEAM: every job runs inside nova-sandbox.
@@ -179,7 +180,7 @@ func SandboxGate(sandboxPath, poolDir, secret string, notes io.Writer) (reason, 
 	// it did not, and a directory that will not go away is not a reason to start no worker
 	// -- so it is said on stderr and the gate's answer is unchanged.
 	defer func() {
-		if err := os.RemoveAll(probeDir); err != nil && notes != nil {
+		if err := safepath.RemoveUnder(absPath(poolDir), probeDir); err != nil && notes != nil {
 			fmt.Fprintf(notes, "nova-swarm run: the probe directory %s could not be removed: %s\n",
 				oneline.Field(probeDir), oneline.Escape(redactedReason(err)))
 		}

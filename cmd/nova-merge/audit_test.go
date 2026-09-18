@@ -64,6 +64,11 @@ var mergeAudit = audit.Config{
 		`"net/url"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/merge"`,
+		// safepath holds no writer of its own: RemoveUnder only decides whether a path
+		// may be removed and returns an os error, which every caller renders through
+		// oneline.Escape or oneline.Err before printing. It cannot write past the
+		// escape.
+		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
 	},
 	MinClassified: 60,
 }
