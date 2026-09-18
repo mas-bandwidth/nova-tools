@@ -316,6 +316,9 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 			continue
 		}
 		if !l.Until.After(now) && !Alive(l.Pid, "") {
+			// SPEC-JOBS section 3: the next take reaps the dead worker's lease
+			// and its card returns to queue/ before the slot is granted.
+			_ = returnCardForLease(store, l)
 			_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), e.Name()))
 			continue
 		}
