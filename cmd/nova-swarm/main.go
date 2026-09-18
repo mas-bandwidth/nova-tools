@@ -60,15 +60,26 @@ usage:
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
-   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
-   nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
-   nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
-   nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
-   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
-   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
-   nova-swarm slots list --store <dir>
-   nova-swarm worker    check <description.json> [--env] [--max <n>]
+  nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+  nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+  nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
+  nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
+  nova-swarm pull      --bench <name> --slots <n> --seat <seat> [--store <dir>] [--image <image>] [--once]
+  nova-swarm pull      --batch <n> --clone <dir> --harvest <dir> --queue <dir> --runner <cmd>
+  nova-swarm pull      --bench <dir> --worker <name> [--steal <dir>[,<dir>...] --capacity <n>] [--last-steal <stamp>]
+  nova-swarm pull      --store <dir> --owner <o> --for <duration>
+  nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
+  nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
+  nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
+  nova-swarm slots list --store <dir>
+  nova-swarm worker    check <description.json> [--env] [--max <n>]
+
+PULL TAKES ONE CARD BY RENAME. nova-swarm pull lists a bench's queue/ directory
+and takes one card by rename(<name>.card, taken/<worker>-<name>.card), atomic within
+the directory, so two workers cannot take one card; it drains its own taken/ before
+it reaches for another bench, and an idle worker steals from the fullest bench on the
+mirror's five-minute timer, never emptying the victim below its own capacity line.
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher
 that exited with tasks pending and nothing running, a reclaim with no usage file
@@ -156,7 +167,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "batch":
 		return cmdBatch(rest, stdout, stderr, now)
 	case "pull":
-		return cmdPull(rest, stdout, stderr)
+		return cmdPull(rest, stdout, stderr, now)
 	case "run":
 		return cmdRun(rest, stdout, stderr, now)
 	case "supervise":

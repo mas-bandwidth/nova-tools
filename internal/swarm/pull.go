@@ -55,6 +55,21 @@ func (e *LeaseRefusal) Error() string {
 	return fmt.Sprintf("no lease held=%d share=%d free=%d holders=%s", e.Held, e.Share, e.Free, holders)
 }
 
+// IsNoCard reports whether err is ErrNoCard.
+func IsNoCard(err error) bool {
+	return errors.Is(err, ErrNoCard)
+}
+
+// AsLeaseRefusal unwraps err into *LeaseRefusal if it is one.
+func AsLeaseRefusal(err error) (*LeaseRefusal, bool) {
+	var ref *LeaseRefusal
+	if errors.As(err, &ref) {
+		return ref, true
+	}
+	return nil, false
+}
+
+
 // PullResult names the card a pull owns and the lease it holds it under.
 type PullResult struct {
 	Owner string
