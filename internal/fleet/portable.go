@@ -76,10 +76,11 @@ type spellingRule struct {
 // toolRule is a program that exists on one OS only. The guard is `command -v <tool>`
 // ANYWHERE in the body: a body that branches on the tool's presence has not assumed it.
 type toolRule struct {
-	name   string
-	tool   *regexp.Regexp
-	remedy string
-	guard  string
+	name     string
+	tool     *regexp.Regexp
+	remedy   string
+	guard    string
+	portable []string // the other halves, as for a spelling: a line naming one has chosen
 }
 
 // The spellings. Each one is a fault somebody has actually had: the first three were found
@@ -218,28 +219,32 @@ var portabilitySpellings = []spellingRule{
 // body that reads it unguarded has assumed which one it got.
 var portabilityTools = []toolRule{
 	{
-		name:   "systemctl",
-		tool:   regexp.MustCompile(`\bsystemctl\b`),
-		guard:  "command -v systemctl",
-		remedy: "guard it with `command -v systemctl` and give darwin its launchd half",
+		name:     "systemctl",
+		tool:     regexp.MustCompile(`\bsystemctl\b`),
+		guard:    "command -v systemctl",
+		remedy:   "guard it with `command -v systemctl` and give darwin its launchd half",
+		portable: []string{"uname"},
 	},
 	{
-		name:   "launchctl",
-		tool:   regexp.MustCompile(`\blaunchctl\b`),
-		guard:  "command -v launchctl",
-		remedy: "guard it with `command -v launchctl` and give linux its systemd half",
+		name:     "launchctl",
+		tool:     regexp.MustCompile(`\blaunchctl\b`),
+		guard:    "command -v launchctl",
+		remedy:   "guard it with `command -v launchctl` and give linux its systemd half",
+		portable: []string{"uname"},
 	},
 	{
-		name:   "dscacheutil",
-		tool:   regexp.MustCompile(`\bdscacheutil\b`),
-		guard:  "command -v dscacheutil",
-		remedy: "guard it with `command -v dscacheutil`; it is darwin's only",
+		name:     "dscacheutil",
+		tool:     regexp.MustCompile(`\bdscacheutil\b`),
+		guard:    "command -v dscacheutil",
+		remedy:   "guard it with `command -v dscacheutil`; it is darwin's only",
+		portable: []string{"uname"},
 	},
 	{
-		name:   "sysctl",
-		tool:   regexp.MustCompile(`\bsysctl\b`),
-		guard:  "command -v sysctl",
-		remedy: "guard it with `command -v sysctl`; linux's sysctl is a different program with different keys",
+		name:     "sysctl",
+		tool:     regexp.MustCompile(`\bsysctl\b`),
+		guard:    "command -v sysctl",
+		remedy:   "guard it with `command -v sysctl`; linux's sysctl is a different program with different keys",
+		portable: []string{"uname"},
 	},
 	{
 		name:   "apt-get",
@@ -248,10 +253,11 @@ var portabilityTools = []toolRule{
 		remedy: "a workload never installs; if it must ask, guard it with `command -v apt`",
 	},
 	{
-		name:   "brew",
-		tool:   regexp.MustCompile(`\bbrew\b`),
-		guard:  "command -v brew",
-		remedy: "guard it with `command -v brew`; it is darwin's only and not on every darwin",
+		name:     "brew",
+		tool:     regexp.MustCompile(`\bbrew\b`),
+		guard:    "command -v brew",
+		remedy:   "guard it with `command -v brew`; it is darwin's only and not on every darwin",
+		portable: []string{"uname"},
 	},
 }
 
@@ -312,7 +318,7 @@ func CheckPortability(w Workload) []PortabilityFinding {
 		}
 		for n, raw := range lines {
 			line := stripComment(raw)
-			if !r.tool.MatchString(line) {
+			if !r.tool.MatchString(line) || namesPortableHalf(line, r.portable) {
 				continue
 			}
 			out = append(out, PortabilityFinding{

@@ -17,14 +17,26 @@ expect: ^SERVICES OK
 # The name must RESOLVE, by whatever the machine has: /etc/hosts carries the tailnet
 # addresses on the Linux benches, and a LAN address is as good an answer. No tailnet address
 # is required -- the Studio has none (tailscaled is not running there) and is not a bench.
+#
+# AND RESOLUTION HAS TWO SPELLINGS. There is no getent on darwin, so the M2 Air read the
+# empty output of a program it does not have as "the name does not resolve" and sent a person
+# to look at /etc/hosts -- where `space` was, with its address. Each resolver is named
+# together with its own guard, and a bench with NEITHER says that instead of blaming the name.
 set -eu
 HOST="${NOVA_SERVICES_HOST:-space}"
-ADDR=$(getent hosts "$HOST" 2>/dev/null | awk 'NR==1{print $1}' || true)
-if [ -z "$ADDR" ]; then
-  echo "SERVICES FAIL the name '$HOST' does not resolve on this bench (getent hosts '$HOST' is empty; ~/.ssh/config is not name resolution)"
+RESOLVER=""
+ADDR=""
+if command -v getent >/dev/null 2>&1; then RESOLVER=getent; ADDR=$(getent hosts "$HOST" 2>/dev/null | awk 'NR==1{print $1}' || true); fi
+if [ -z "$RESOLVER" ] && command -v dscacheutil >/dev/null 2>&1; then RESOLVER=dscacheutil; ADDR=$(dscacheutil -q host -a name "$HOST" 2>/dev/null | awk '/^ip_address:/{print $2; exit}' || true); fi
+if [ -z "$RESOLVER" ]; then
+  echo "SERVICES FAIL this bench has no name resolver at all (neither of the two spellings is installed); that is a fault of the bench, and says nothing about '$HOST'"
   exit 1
 fi
-TRIED="name=$HOST addr=$ADDR"
+if [ -z "$ADDR" ]; then
+  echo "SERVICES FAIL the name '$HOST' does not resolve on this bench ($RESOLVER answered nothing; ~/.ssh/config is not name resolution)"
+  exit 1
+fi
+TRIED="name=$HOST addr=$ADDR by=$RESOLVER"
 CLI=$(command -v redis-cli 2>/dev/null || true)
 if [ -z "$CLI" ]; then
   echo "SERVICES FAIL no redis-cli on this bench ($TRIED)"

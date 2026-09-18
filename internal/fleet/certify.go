@@ -507,9 +507,9 @@ type CertifyInput struct {
 	// own tailnet address and reported twelve of its fourteen classes UNREACHABLE.
 	LocalAddrs []string
 	Forge      Forge
-	Now       func() time.Time
-	Stdout    io.Writer
-	Stderr    io.Writer
+	Now        func() time.Time
+	Stdout     io.Writer
+	Stderr     io.Writer
 }
 
 // Certify runs every workload of every named machine's roles, writes one certificate row
@@ -1333,12 +1333,43 @@ func (in CertifyInput) remoteFor(m Machine) (Remote, bool) {
 	return in.Remote, false
 }
 
-// IsLocalMachineAt is IsLocalMachine plus the addresses this machine answers on.
+// IsLocalMachineAt is IsLocalMachine plus the ADDRESSES this machine answers on.
 //
-// TODO(rowan/certify-darwin): this is the pass-through it replaced, so the Air's own test
-// is RED before the fix. The next commit compares the row's ssh host against localAddrs.
+// A registry row may name a machine by address rather than by name, and one does: the M2 Air
+// is `air<TAB>glenn@100.117.59.68`, and the machine calls itself `macbook`. Neither the row's
+// name nor its ssh target is any spelling of the host name, so on 2026-09-18 the Air
+// certifying the Air opened an ssh to its own tailnet address and reported twelve of its
+// fourteen classes UNREACHABLE -- a fleet machine that could never certify itself.
+//
+// The addresses are passed IN rather than read here, because reading this machine's
+// interfaces is the coordinator's business and a test must be able to say what they are.
 func IsLocalMachineAt(m Machine, localHost string, localAddrs []string) bool {
-	return IsLocalMachine(m, localHost)
+	if IsLocalMachine(m, localHost) {
+		return true
+	}
+	host := hostOf(m.SSH)
+	if host == "" || len(localAddrs) == 0 {
+		return false
+	}
+	for _, a := range localAddrs {
+		if a = strings.TrimSpace(a); a != "" && strings.EqualFold(a, host) {
+			return true
+		}
+	}
+	return false
+}
+
+// hostOf is an ssh target with any user and port taken off and the domain LEFT ON: the
+// address half of `glenn@100.117.59.68` is the whole address, not `100`.
+func hostOf(v string) string {
+	v = strings.TrimSpace(v)
+	if i := strings.LastIndex(v, "@"); i >= 0 {
+		v = v[i+1:]
+	}
+	if i := strings.Index(v, ":"); i >= 0 {
+		v = v[:i]
+	}
+	return v
 }
 
 // IsLocalMachine says whether a registry machine is the machine this process runs on. The
@@ -1358,14 +1389,13 @@ func IsLocalMachine(m Machine, localHost string) bool {
 	return false
 }
 
-// shortHost is a host name with any user, port and domain taken off.
+// shortHost is a host name with any user, port and domain taken off. An IPv4 LITERAL is left
+// whole: `100.117.59.68` cut at the first dot is `100`, which would make the Air's row match
+// a machine somebody called `100` -- an address is not a dotted host name.
 func shortHost(v string) string {
-	v = strings.TrimSpace(v)
-	if i := strings.LastIndex(v, "@"); i >= 0 {
-		v = v[i+1:]
-	}
-	if i := strings.Index(v, ":"); i >= 0 {
-		v = v[:i]
+	v = hostOf(v)
+	if isIPv4Literal(v) {
+		return v
 	}
 	if i := strings.Index(v, "."); i >= 0 {
 		v = v[:i]
@@ -1506,4 +1536,25 @@ func firstAnswerLine(out string) string {
 		}
 	}
 	return ""
+}
+
+// isIPv4Literal says whether a target is four dotted decimal octets. It is deliberately not
+// net.ParseIP: a registry target is text a person typed, and `100.117.59.68` is the only
+// shape that ever collides with the short-host cut.
+func isIPv4Literal(v string) bool {
+	parts := strings.Split(v, ".")
+	if len(parts) != 4 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" || len(p) > 3 {
+			return false
+		}
+		for _, r := range p {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }

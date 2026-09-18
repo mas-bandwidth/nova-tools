@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,26 @@ var (
 			return ""
 		}
 		return name
+	}
+	// The addresses this machine answers on, for a registry row that names a machine by
+	// ADDRESS: the M2 Air is `air<TAB>glenn@100.117.59.68` and calls itself `macbook`, so
+	// without this the Air certifying the Air opened an ssh to its own tailnet address and
+	// reported twelve of its fourteen classes UNREACHABLE. It is a hook for the same reason
+	// the hostname is: a test says what this machine's addresses are and reads no interface.
+	fleetLocalAddrs = func() []string {
+		addrs, err := net.InterfaceAddrs()
+		if err != nil {
+			return nil
+		}
+		out := make([]string, 0, len(addrs))
+		for _, a := range addrs {
+			ip, _, err := net.ParseCIDR(a.String())
+			if err != nil {
+				continue
+			}
+			out = append(out, ip.String())
+		}
+		return out
 	}
 )
 
@@ -226,7 +247,7 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 		Timeout: bound, DryRun: *dryRun, IfStale: *ifStale, MaxAge: age, Log: events,
 		Fix: wantFix, MaxFixRounds: *maxFixRounds, Fixer: fixer, Bus: poster, Lane: *lane,
 		Remote: fleetNewCertifyRemote(*ssh), Forge: fleetNewCertifyForge(bound),
-		Local: fleetNewCertifyLocal(), LocalHost: fleetLocalHost(),
+		Local: fleetNewCertifyLocal(), LocalHost: fleetLocalHost(), LocalAddrs: fleetLocalAddrs(),
 		Now:    func() time.Time { return fleetNow().UTC() },
 		Stdout: stdout, Stderr: stderr,
 	})
