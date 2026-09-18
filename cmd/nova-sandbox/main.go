@@ -608,8 +608,10 @@ func probeNonce() ([probeNonceLen]byte, error) {
 //     <file>` truncated the file, exit 0).
 //  2. The bytes on the pipe, hex-encoded, equal the argv copy — compared in constant
 //     time. The argv copy is kept so that a mismatched pair still refuses.
-//  3. The parent process is THIS binary. sandbox-exec execs in place, so the probe's
-//     child has the tool for a parent; a child started by anything else does not.
+//  3. The parent process is running THIS FILE — the same device and inode, not the same
+//     name. sandbox-exec execs in place, so the probe's child has the tool for a parent; a
+//     child started by anything else does not, and a COPY of the tool is a different file
+//     however it is named or wherever it is resolved from (sameImage).
 //
 // The honest bound on all three is in docs/SPEC-SANDBOX.md's probe section: the verb
 // grants NO CAPABILITY THE CALLER LACKS, because everything it does is bounded by the wall
@@ -646,24 +648,58 @@ func notTheProbesChild(nonce string, env []string) string {
 	if err != nil {
 		return "this process cannot name its own path"
 	}
-	parent, err := parentExecutable(os.Getppid())
+	// The pid is read BEFORE the parent's executable and read again AFTER it, and the guard
+	// refuses if it moved. os.Getppid() and the per-pid path read are two syscalls, and
+	// between them the parent can exit: this process is then reparented, the old number is
+	// free, and on a busy machine it is handed out again within the same second. Asking a
+	// STALE number is asking about whatever process now wears it.
+	ppid := os.Getppid()
+	parent, err := parentExecutable(ppid)
 	if err != nil {
 		return "the parent process cannot be named"
 	}
-	if resolve(self) != resolve(parent) {
+	// An absolute path is what both of these syscalls promise; anything else is an answer
+	// this guard has no way to check, and an unchecked answer is a pass.
+	if !filepath.IsAbs(self) || !filepath.IsAbs(parent) {
+		return "the parent process is not named by an absolute path"
+	}
+	if !sameImage(self, parent) {
 		return "the parent process is not this binary"
+	}
+	if os.Getppid() != ppid {
+		return "the parent process changed while the guard was reading it"
 	}
 	return ""
 }
 
-// resolve is EvalSymlinks with the unresolved path as its own answer: the two paths
-// compared above come from different syscalls (os.Executable and the OS's per-pid path),
-// and one of them may still be a symlink while the other is not.
-func resolve(path string) string {
-	if got, err := filepath.EvalSymlinks(path); err == nil {
-		return got
+// sameImage answers the question the guard actually has — "is the parent running THIS
+// FILE?" — and it answers it with the file's IDENTITY, device and inode, rather than with
+// its NAME.
+//
+// A name was the hole. The two paths compared here come from different syscalls that do
+// not even agree on the spelling of the same file: measured on darwin, os.Executable()
+// hands back the path as it was passed to exec (/tmp/x) while the kernel's per-pid path is
+// the resolved one (/private/tmp/x). The old form papered over that with EvalSymlinks and
+// a fallback — `if got, err := filepath.EvalSymlinks(p); err == nil { return got }; return p`
+// — which SWALLOWED its error: EvalSymlinks walks and Lstats every component, so a single
+// component it cannot read (a directory another test is removing, a step denied inside the
+// wall, an interrupted call on a loaded machine) silently turned the comparison back into
+// one between two spellings. Two spellings are not an identity either way round: a COPY of
+// the tool at a name that resolves the same way passes a name test and fails this one,
+// which is the defect this function closes.
+//
+// A stat that fails is a refusal, not a fallback: this is the half of the guard a caller
+// cannot supply, and a half that answers "I could not tell" must answer no.
+func sameImage(self, parent string) bool {
+	selfInfo, err := os.Stat(self)
+	if err != nil {
+		return false
 	}
-	return path
+	parentInfo, err := os.Stat(parent)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(selfInfo, parentInfo)
 }
 
 // probeStepVerb is that child: one step, done in Go, exit 0 for allow and 1 for deny. Each

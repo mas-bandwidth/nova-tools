@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -863,6 +864,140 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	// It stays out of the banner: a verb a caller must not run is not offered to one.
 	if strings.Contains(usage, probeStepVerbName) {
 		t.Fatal("probe-step is in the usage banner")
+	}
+}
+
+// The parent half of the guard is an IDENTITY test, and this is that half on its own, with
+// no process in it: every case below is a file on disk and an answer that cannot move.
+//
+// It exists because the half used to be a comparison between two path STRINGS, and a string
+// is the wrong question twice over. It is too weak — a name says nothing about which FILE
+// wears it — and it is too brittle: the two paths reach the guard from different syscalls
+// that spell the same file differently (os.Executable() hands back the path as it was
+// passed to exec, the kernel's per-pid path is the resolved one; measured on darwin,
+// /tmp/x against /private/tmp/x), so the old form leaned on filepath.EvalSymlinks and
+// SWALLOWED its error. EvalSymlinks Lstats every component of the path; one component it
+// cannot read — a directory being removed, a call interrupted on a loaded machine, a step
+// the wall denies — and the comparison silently fell back to comparing spellings. A guard
+// whose answer depends on whether a directory walk finished is a guard that answers
+// differently under load, which is the shape of the defect this replaces. device+inode is
+// one stat each, it is what "the same binary" means, and it does not move.
+func TestTheParentGuardComparesFilesAndNotNames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipped on windows: the probe's parent guard is not built there, and os.SameFile there is a different identity")
+	}
+	dir := t.TempDir()
+	elsewhere := t.TempDir()
+	tool := filepath.Join(dir, "tool")
+	if err := os.WriteFile(tool, []byte("not really a tool\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(tool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A COPY: the same bytes, a different file. This is the foreign parent, and it is the
+	// case that must be false under every load and from every direction.
+	copied := filepath.Join(dir, "tool-copy")
+	if err := os.WriteFile(copied, body, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A SYMLINK and a HARD LINK are the same file under another name, and a hard link is the
+	// honest answer: there is no sense in which it is a different image.
+	symlinked := filepath.Join(dir, "tool-symlink")
+	if err := os.Symlink(tool, symlinked); err != nil {
+		t.Fatal(err)
+	}
+	hardLinked := filepath.Join(dir, "tool-hardlink")
+	if err := os.Link(tool, hardLinked); err != nil {
+		t.Fatal(err)
+	}
+	// The same file reached through a DIFFERENT SPELLING of its directory: this is the case
+	// the string comparison got wrong whenever the symlink walk could not finish, and the
+	// one that made the legitimate probe's own child refusable.
+	alias := filepath.Join(elsewhere, "alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "no-such-tool")
+
+	for _, c := range []struct {
+		name, self, parent string
+		want               bool
+	}{
+		{"the same path", tool, tool, true},
+		{"a symlink to it", tool, symlinked, true},
+		{"a hard link to it", tool, hardLinked, true},
+		{"the same file spelled through another directory name", tool, filepath.Join(alias, "tool"), true},
+		{"a byte-for-byte copy", tool, copied, false},
+		{"a copy in the other direction", copied, tool, false},
+		{"a parent that is not there", tool, missing, false},
+		{"a self that is not there", missing, tool, false},
+		{"neither is there", missing, missing, false},
+	} {
+		if got := sameImage(c.self, c.parent); got != c.want {
+			t.Errorf("%s: sameImage(%q, %q) = %v, want %v", c.name, c.self, c.parent, got, c.want)
+		}
+	}
+}
+
+// The same refusal as TestProbeStepIsTheInternalVerb's last case, made many times at once
+// while every core is busy: a guard that fails OPEN under load is a security defect and not
+// a flake, so the load belongs in the suite rather than in a note about how to reproduce it.
+//
+// There is no sleep, no deadline and no clock anywhere in it. The pool burns for exactly as
+// long as the children take — it is stopped by this test's cleanup, which testing runs after
+// the parallel subtests below have all finished — so the test costs a fraction of a second
+// on a fast machine and the same work on a slow one, and it asserts the same thing on both.
+func TestParentGuardRefusesACopiedParentUnderLoad(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipped on windows: exec.Cmd.ExtraFiles is unsupported there, so no probe child can be given fd 3 at all")
+	}
+	j := newJob(t)
+	// ONE copy, exec'd many times: a fresh copy per child would race its own write against
+	// its own exec, and this test is about the guard rather than about ETXTBSY.
+	copied := copyOfThisBinary(t)
+	raw := []byte("0123456789abcdef")
+	nonce := hex.EncodeToString(raw)
+	env := probeNonceVar + "=" + nonce
+
+	stop := make(chan struct{})
+	var burning sync.WaitGroup
+	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
+		burning.Add(1)
+		go func() {
+			defer burning.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+			}
+		}()
+	}
+	t.Cleanup(func() {
+		close(stop)
+		burning.Wait()
+	})
+
+	for i := 0; i < 8; i++ {
+		t.Run("child-"+strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
+			// Each child gets its own file OUTSIDE any wall, so an acceptance is not just a
+			// wrong exit code: it is a truncated file, and the file says so.
+			target := filepath.Join(j.write, "under-load-"+strconv.Itoa(i))
+			if err := os.WriteFile(target, []byte("MUST-SURVIVE\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			code, errOut := probeChild(t, copied, raw, env, nonce, "write_outside", target)
+			if code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+				t.Fatalf("a copied parent was accepted under load: exit %d, stderr %q", code, errOut)
+			}
+			if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
+				t.Fatalf("a step refused under load still touched the file: %q, %v", string(got), err)
+			}
+		})
 	}
 }
 
