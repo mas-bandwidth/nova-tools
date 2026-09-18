@@ -53,6 +53,14 @@ const pullLogTail = 64 * 1024
 // no-result abstain and not this.
 var errBenchUnreachable = errors.New("bench unreachable")
 
+// pullClock is the pull's view of time: the deadline it reads and the poll it waits
+// between asks. It is a seam so a test runs the bounded wait to its end with no wall
+// time; realClock is the production one and nil takes it.
+type pullClock interface {
+	Now() time.Time
+	Sleep(time.Duration)
+}
+
 // benchPull is one card's pull: the bench it ran on, the job directory there, and the job
 // directory here.
 type benchPull struct {
@@ -63,6 +71,7 @@ type benchPull struct {
 	wait      time.Duration // how long to wait for RESULT.md to exist remotely
 	poll      time.Duration // how often to ask
 	notes     io.Writer     // where BATCH NOTE lines go
+	clock     pullClock     // nil means the real clock
 }
 
 // pullFromBench waits for the card's RESULT.md, copies the three files back by one explicit
@@ -76,11 +85,15 @@ func pullFromBench(p benchPull) error {
 	if p.poll == 0 {
 		p.poll = pullPollInterval
 	}
+	clk := p.clock
+	if clk == nil {
+		clk = realClock{}
+	}
 	if err := os.MkdirAll(p.localJob, 0o755); err != nil {
 		return err
 	}
 	result := p.remoteJob + "/RESULT.md"
-	found, err := waitForRemoteFile(p.host, result, p.wait, p.poll)
+	found, err := waitForRemoteFile(p.host, result, p.wait, p.poll, clk)
 	if err != nil {
 		return err
 	}
@@ -119,28 +132,31 @@ func pullFromBench(p benchPull) error {
 }
 
 // waitForRemoteFile asks the bench whether a file is there, once per poll, until it is or
-// the wait runs out. A bench that cannot be reached for the whole wait is
-// errBenchUnreachable; one that answers "no file" for the whole wait is (false, nil),
-// which is a card with no result and not a broken bench.
-func waitForRemoteFile(host, path string, wait, poll time.Duration) (bool, error) {
-	deadline := time.Now().Add(wait)
-	answered := false
+// the wait runs out. A bench that cannot be reached is errBenchUnreachable; one that answers
+// "no file" for the whole wait is (false, nil), which is a card with no result and not a
+// broken bench.
+//
+// ssh's own exit 255 is the first ask's answer and the last: a host that could not be
+// reached -- a name that does not resolve, a refused connection, a rejected key -- will not
+// come up in the next second, so the wait answers immediately rather than spending the whole
+// window on a poll that cannot change. That is also what keeps the test that drives it off
+// the machine's clock: the one place a real wait is the answered-but-not-yet-written file,
+// and there the clock is injected.
+func waitForRemoteFile(host, path string, wait, poll time.Duration, clk pullClock) (bool, error) {
+	deadline := clk.Now().Add(wait)
 	for {
 		err := sshRun(host, "test", "-f", path)
 		if err == nil {
 			return true, nil
 		}
-		if !isUnreachable(err) {
-			// The bench answered: the file is not there yet.
-			answered = true
-		}
-		if !time.Now().Before(deadline) {
-			if answered {
-				return false, nil
-			}
+		if isUnreachable(err) {
 			return false, errBenchUnreachable
 		}
-		time.Sleep(poll)
+		// The bench answered: the file is not there yet.
+		if !clk.Now().Before(deadline) {
+			return false, nil
+		}
+		clk.Sleep(poll)
 	}
 }
 

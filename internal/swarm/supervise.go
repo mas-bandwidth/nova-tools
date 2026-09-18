@@ -42,6 +42,26 @@ type SuperviseInput struct {
 	UsageInterval  time.Duration
 	Stdout, Stderr io.Writer
 	Now            func() time.Time
+	// Sleep is the wait between two polls of the group the supervisor confirms dead. It
+	// is a seam beside Now so a test can run the bounded drain and grace waits to their
+	// ends without holding the machine's clock; nil is time.Sleep.
+	Sleep func(time.Duration)
+}
+
+// now is the input's clock, defaulting to the real one.
+func (in SuperviseInput) now() func() time.Time {
+	if in.Now != nil {
+		return in.Now
+	}
+	return time.Now
+}
+
+// sleep is the input's wait between group polls, defaulting to the real one.
+func (in SuperviseInput) sleep() func(time.Duration) {
+	if in.Sleep != nil {
+		return in.Sleep
+	}
+	return time.Sleep
 }
 
 // Supervise is the whole of the supervisor's life. It returns the exit code.
@@ -311,7 +331,7 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 		// Rule 11's group check, made by the process that owns the group and using the
 		// identity it retained at launch: anything still in the job's own group after its
 		// leader has gone is a background subtask the prompt forbids.
-		if groupStillAlive(jobPgid, jobStarted) {
+		if groupStillAlive(jobPgid, jobStarted, in.sleep()) {
 			if n, ok := GroupMembers(jobPgid, os.Getpid()); ok {
 				rec.Survivors = n
 			} else if rec.Survivors == 0 {
@@ -323,7 +343,7 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 		// kernel to agree nothing of it remains. A group that cannot be confirmed dead by
 		// that deadline is recorded WITHOUT the attestation and with `end=unknown` -- the
 		// attestation would otherwise be reusable while a survivor of the group still ran.
-		if groupConfirmedDead(jobPgid, jobStarted) {
+		if groupConfirmedDead(in, jobPgid, jobStarted) {
 			rec.Attest = attest
 		} else {
 			rec.Attest = ""
@@ -342,15 +362,17 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 
 // groupConfirmedDead kills the job's group from the retained identity and waits, bounded by
 // the reap's grace, for the kernel to agree nothing of it remains. It answers whether the
-// group was CONFIRMED dead: the per-launch attestation is published only on true.
-func groupConfirmedDead(jobPgid int, jobStarted string) bool {
+// group was CONFIRMED dead: the per-launch attestation is published only on true. The clock
+// and the wait come from the input's seams, so a test drives the bound without wall time.
+func groupConfirmedDead(in SuperviseInput, jobPgid int, jobStarted string) bool {
 	KillGroup(jobPgid, jobStarted)
-	deadline := time.Now().Add(TerminateGrace)
-	for time.Now().Before(deadline) {
+	now, sleep := in.now(), in.sleep()
+	deadline := now().Add(TerminateGrace)
+	for now().Before(deadline) {
 		if !GroupAlive(jobPgid, jobStarted) {
 			return true
 		}
-		time.Sleep(20 * time.Millisecond)
+		sleep(20 * time.Millisecond)
 	}
 	return !GroupAlive(jobPgid, jobStarted)
 }
@@ -371,12 +393,12 @@ func groupConfirmedDead(jobPgid int, jobStarted string) bool {
 // It was called `groupDrained` and answered the opposite of its own name, so the next
 // reader to invert a caller would have re-broken rule 11's survivor check with a change
 // that read correctly (DeepSeek's read of #88 at d0c1841, LOW 4).
-func groupStillAlive(jobPgid int, jobStarted string) bool {
+func groupStillAlive(jobPgid int, jobStarted string, sleep func(time.Duration)) bool {
 	for waited := time.Duration(0); waited < GroupDrainWait; waited += 20 * time.Millisecond {
 		if !GroupAlive(jobPgid, jobStarted) {
 			return false
 		}
-		time.Sleep(20 * time.Millisecond)
+		sleep(20 * time.Millisecond)
 	}
 	return GroupAlive(jobPgid, jobStarted)
 }
