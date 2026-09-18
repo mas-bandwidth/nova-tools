@@ -75,7 +75,7 @@ func TestLockRecoversWhenTheSentinelHolderDied(t *testing.T) {
 	writeHolder(t, lockPath, fmt.Sprintf("pid=%d at=2000-01-01T00:00:00Z", deadPID(t)))
 	writeSentinel(t, lockPath)
 
-	release, err := lockFile(lockPath, 500*time.Millisecond, sentinelTry)
+	release, err := lockFile(lockPath, 500*time.Millisecond, sentinelTry, newLockStepClock())
 	if err != nil {
 		t.Fatalf("a lock whose holder is dead was not recovered: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestLockLeavesALiveHoldersSentinelAlone(t *testing.T) {
 	writeHolder(t, lockPath, fmt.Sprintf("pid=%d", os.Getpid()))
 	writeSentinel(t, lockPath)
 
-	if _, err := lockFile(lockPath, 100*time.Millisecond, sentinelTry); err == nil {
+	if _, err := lockFile(lockPath, 100*time.Millisecond, sentinelTry, newLockStepClock()); err == nil {
 		t.Fatal("a lock held by a live process was taken")
 	} else if !errors.Is(err, ErrLockHeld) {
 		t.Fatalf("err = %v, want ErrLockHeld", err)
@@ -131,7 +131,7 @@ func TestLockLeavesAnUnknownHolderAlone(t *testing.T) {
 	writeHolder(t, lockPath, "")
 	writeSentinel(t, lockPath)
 
-	if _, err := lockFile(lockPath, 100*time.Millisecond, sentinelTry); err == nil {
+	if _, err := lockFile(lockPath, 100*time.Millisecond, sentinelTry, newLockStepClock()); err == nil {
 		t.Fatal("a lock with no recorded holder was taken")
 	} else if !errors.Is(err, ErrLockHeld) {
 		t.Fatalf("err = %v, want ErrLockHeld", err)

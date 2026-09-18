@@ -37,6 +37,13 @@ const LockWait = 10 * time.Second
 // wait is BOUNDED and the refusal is the point.
 const lockPoll = 25 * time.Millisecond
 
+// Now is the lock wait's clock, named here so a test can hold the clock still: a verb
+// that must exercise its own --timeout then advances this clock instead of holding wall
+// time, which is what keeps a lock refusal test fast under load (a fixed wall-clock wait
+// asserts the machine, not the code). The default is the real clock; production never
+// changes it. The wait between polls is the package's Sleep seam in records.go.
+var Now = time.Now
+
 // Lock takes the kernel lock on path, waiting up to wait, and returns the release. The
 // release is safe to call more than once.
 //
@@ -49,7 +56,7 @@ func Lock(path string, wait time.Duration) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("the lock at %s could not be opened: %w", path, err)
 	}
-	deadline := time.Now().Add(wait)
+	deadline := Now().Add(wait)
 	for {
 		ok, lockErr := tryLockFile(f)
 		if lockErr != nil {
@@ -68,12 +75,12 @@ func Lock(path string, wait time.Duration) (func(), error) {
 				f.Close()
 			}, nil
 		}
-		if !time.Now().Before(deadline) {
+		if !Now().Before(deadline) {
 			held := holder(path)
 			f.Close()
 			return nil, &HeldError{Path: path, Holder: held, Wait: wait}
 		}
-		time.Sleep(jitter(lockPoll))
+		Sleep(jitter(lockPoll))
 	}
 }
 
