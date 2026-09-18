@@ -27,6 +27,16 @@ import (
 // kind, small enough to read in one line.
 const firstRunPlan = "(:plan :version 1 (:node :id \"n1\" :kind docs))\n"
 
+// firstRunSet is the work set the first run reads: the OTHER top form of the same
+// language, small enough to read in one line and clean enough that the example
+// exits 0 -- one closed unit and one that needs it, so --ready has a row to print
+// and the SET OK line's arithmetic is visible in the transcript.
+const firstRunSet = `(work-set "first-run"
+  :title "the smallest work set"
+  :units ((unit "u0" :status "closed" :title "the need that has landed")
+          (unit "u1" :needs ("u0") :owner "Rowan" :title "the unit that is ready")))
+`
+
 func runCLI(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -43,6 +53,9 @@ func firstRunDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "work.work"), []byte(firstRunPlan), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "work-set.lisp"), []byte(firstRunSet), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return dir

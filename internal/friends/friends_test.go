@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
 
 const oneUnit = `{"units":[
@@ -335,7 +337,7 @@ func TestRenderCcsTheSenderSoABroadcastIncludesSelf(t *testing.T) {
 
 func TestOnBusListsTheAsksTheBusItselfRecords(t *testing.T) {
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
-	rows, err := OnBus("testdata/bus", "Ada", "Bo", now, 0)
+	rows, _, err := OnBus("testdata/bus", "Ada", "Bo", now, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,21 +363,233 @@ func TestOnBusListsTheAsksTheBusItselfRecords(t *testing.T) {
 
 func TestOnBusRefusesANameTheRosterDoesNotKnow(t *testing.T) {
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
-	if _, err := OnBus("testdata/bus", "Nobody", "Bo", now, 0); err == nil {
+	if _, _, err := OnBus("testdata/bus", "Nobody", "Bo", now, 0); err == nil {
 		t.Fatal("a sender the roster does not know must be refused by name")
 	}
-	if _, err := OnBus("testdata/bus", "Ada", "Nobody", now, 0); err == nil {
+	if _, _, err := OnBus("testdata/bus", "Ada", "Nobody", now, 0); err == nil {
 		t.Fatal("an owner the roster does not know must be refused by name")
 	}
 }
 
 func TestOnBusWithNoOwnerListsEveryAskTheSenderHasOut(t *testing.T) {
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
-	rows, err := OnBus("testdata/bus", "Ada", "", now, 0)
+	rows, _, err := OnBus("testdata/bus", "Ada", "", now, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+}
+
+// ---- the sentence that says why the ask is yours ----
+
+func TestRenderSaysTheUnitNamesYouOnlyWhenItDoes(t *testing.T) {
+	owned := Unit{ID: "u1", Title: "the ready set", Owner: "Emma"}
+	note, notices, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: owned,
+		Deadline: time.Date(2026, 9, 18, 20, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(note, "the unit names you as its owner") {
+		t.Errorf("a unit that names its owner says so:\n%s", note)
+	}
+	if strings.Contains(note, "assigned by") {
+		t.Errorf("a unit that names its owner is not also assigned:\n%s", note)
+	}
+	for _, n := range notices {
+		if strings.Contains(n, "owner") {
+			t.Errorf("nothing to notice about an owner the unit names: %q", n)
+		}
+	}
+}
+
+func TestRenderSaysAssignedWhenTheUnitNamesNoOwner(t *testing.T) {
+	// The unit carries no :owner -- which is every unit of the real work set -- and the
+	// owner came from --owner. Saying "the unit names you as its owner" was a claim the
+	// file did not make, to the person least able to check it.
+	bare := Unit{ID: "u1", Title: "the ready set"}
+	note, notices, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: bare,
+		Deadline: time.Date(2026, 9, 18, 20, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(note, "the unit names you as its owner") {
+		t.Errorf("the unit names no owner; the note must not say it does:\n%s", note)
+	}
+	if !strings.Contains(note, "assigned by Rowan") {
+		t.Errorf("a unit with no owner is assigned by its sender:\n%s", note)
+	}
+	if !hasNotice(notices, "owner") {
+		t.Errorf("a unit with no owner is worth one notice: %v", notices)
+	}
+}
+
+func TestRenderSaysAssignedWhenTheUnitNamesSomebodyElse(t *testing.T) {
+	theirs := Unit{ID: "u1", Title: "the ready set", Owner: "Stella"}
+	note, notices, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: theirs,
+		Deadline: time.Date(2026, 9, 18, 20, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(note, "the unit names you as its owner") {
+		t.Errorf("the unit names Stella, not Emma:\n%s", note)
+	}
+	if !strings.Contains(note, "assigned by Rowan") {
+		t.Errorf("an owner the unit does not name is assigned:\n%s", note)
+	}
+	if !hasNotice(notices, "Stella") {
+		t.Errorf("the notice must name the owner the unit does carry: %v", notices)
+	}
+}
+
+func hasNotice(notices []string, want string) bool {
+	for _, n := range notices {
+		if strings.Contains(n, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// ---- the bus read is bounded by files, newest first, and says when it was ----
+
+func TestOnBusReadsEveryNoteWhenItIsNotBounded(t *testing.T) {
+	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	rows, bounded, err := OnBus("testdata/bus", "Ada", "Bo", now, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d open asks, want 2:\n%+v", len(rows), rows)
+	}
+	if len(bounded) != 0 {
+		t.Fatalf("an unbounded read reports no bound: %+v", bounded)
+	}
+}
+
+func TestOnBusBoundsTheNewestNotesAndNamesTheBound(t *testing.T) {
+	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	// The sender's lane holds four notes; read one and it is the NEWEST, which is the ask
+	// at 11:30. Oldest-first was the bug: it read the note nobody is waiting on.
+	rows, bounded, err := OnBus("testdata/bus", "Ada", "Bo", now, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != "ada-aaaaaaaaaaaa" {
+		t.Fatalf("a bounded read takes the NEWEST notes: %+v", rows)
+	}
+	var mine *Bounded
+	for i := range bounded {
+		if bounded[i].Lane == "from-ada" {
+			mine = &bounded[i]
+		}
+	}
+	if mine == nil || mine.Notes != 4 || mine.Read != 1 {
+		t.Fatalf("the bound must name the lane, what it holds and what was read: %+v", bounded)
+	}
+}
+
+// ---- one reader for the work set ----
+
+// TestLoadReadsTheLispFormThroughWorklang holds the rule that there is ONE reader of
+// the (work-set ...) form. `nova-work set check` and `nova-work ask` had a reader
+// each, with their own key lists, their own idea of what a unit is and their own
+// stamp parser; a unit either of them read and the other did not was a unit one verb
+// could check and the other could not ask about. The fold is checked HERE, against
+// worklang's own reader, on the file a coordinator actually writes.
+func TestLoadReadsTheLispFormThroughWorklang(t *testing.T) {
+	const path = "testdata/work-set.lisp"
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := worklang.DefaultLimits()
+	limits.MaxBytes = int(DefaultMaxBytes)
+	want, err := worklang.ParseWorkSet(path, raw, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path, DefaultMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Units) != len(want.Units) {
+		t.Fatalf("the two readers disagree on how many units there are: %d vs %d", len(got.Units), len(want.Units))
+	}
+	for i := range want.Units {
+		w, g := want.Units[i], got.Units[i]
+		if g.ID != w.ID || g.Title != w.Title || g.Owner != w.Owner || g.Lane != w.Lane {
+			t.Errorf("unit %d differs: %+v vs %+v", i, g, w)
+		}
+		if w.Deadline == "" {
+			if !g.Deadline.IsZero() {
+				t.Errorf("unit %q has no deadline in the file but one after the read", w.ID)
+			}
+			continue
+		}
+		at, err := worklang.ParseStamp(w.Deadline)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !g.Deadline.Equal(at) {
+			t.Errorf("unit %q deadline = %s, want %s", w.ID, g.Deadline, at)
+		}
+	}
+}
+
+func TestLoadCarriesTheBranchAndAcceptanceTheGrammarWrites(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "set.lisp")
+	if err := os.WriteFile(p, []byte(`(work-set "s"
+  :units ((unit "u1" :owner "Emma" :lane "work" :branch "rowan/lane-friends"
+                :acceptance ("one line per script") :title "retire the child shell")))`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := Load(p, DefaultMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws.Units) != 1 {
+		t.Fatalf("got %d units", len(ws.Units))
+	}
+	u := ws.Units[0]
+	if u.Branch != "rowan/lane-friends" {
+		t.Errorf("the :branch the grammar writes must survive the one reader: %+v", u)
+	}
+	if len(u.Acceptance) != 1 || u.Acceptance[0] != "one line per script" {
+		t.Errorf("the :acceptance the grammar writes must survive the one reader: %+v", u)
+	}
+}
+
+func TestOnBusDoesNotCallAnUnreadableNoteABound(t *testing.T) {
+	// Found by running this verb against the real bus: three lanes reported themselves
+	// bounded with no bound asked for, because a note that would not parse was counted
+	// as one the bound had cut off.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "participants.json"), []byte(
+		`{"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lane := filepath.Join(dir, "from-ada")
+	if err := os.MkdirAll(lane, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lane, "2026-09-18T1000Z-junk-ada0001.md"), []byte("this is not a note"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lane, "2026-09-18T1100Z-ask-work-ada0002.md"), []byte(
+		"From: Ada\nTo: Bo\nDate: Fri Sep 18 11:00:00 UTC 2026\nId: ada-0002\nSubject: ask work: a unit\n\nUnit: u1\nKind: work\nDeadline: 2026-12-01T00:00:00Z\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows, bounded, err := OnBus(dir, "Ada", "", time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the note that parses is still an ask: %+v", rows)
+	}
+	if len(bounded) != 0 {
+		t.Fatalf("no bound was asked for, so none is reported: %+v", bounded)
 	}
 }
