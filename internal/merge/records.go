@@ -48,6 +48,11 @@ type Records struct {
 	Remote string
 	Git    *Git
 	Wait   time.Duration
+	// Now and Sleep are the checkout lock's clock seam: Now says when the bounded wait has
+	// run out and Sleep is the poll between takes. Both default to the real clock, so a
+	// test that must run a contended lock to its end advances them with no wall time.
+	Now   func() time.Time
+	Sleep func(time.Duration)
 }
 
 // NewRecords returns the record layer for a lane.
@@ -59,7 +64,14 @@ func NewRecords(lane, branch, remote string, g *Git, wait time.Duration) *Record
 // held for the whole of a loop, a pull or a fetch. It is a different lock from the state
 // lock of rule 1, which protects state.json and nothing else.
 func (r *Records) LockCheckout() (func(), error) {
-	return Lock(filepath.Join(r.Lane, CheckoutLock), r.Wait)
+	now, sleep := r.Now, r.Sleep
+	if now == nil {
+		now = time.Now
+	}
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	return lockWait(filepath.Join(r.Lane, CheckoutLock), r.Wait, now, sleep)
 }
 
 // Submission is the id drawn once per verb and never reused: the instant, and six random
