@@ -102,13 +102,10 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 
 	// The structured sink is opened before the provider is called: a decision that cost a
 	// call must not be the thing that discovers the event path was wrong.
-	// THE SINK IS THE FILE OR NOTHING. Round 1 let a verb with no --log write its JSON to
-	// stderr, on the grounds that a unit's stderr is the journal. That is right for a loop
-	// that runs as a unit and wrong for a verb like this one, whose stderr IS a contract:
-	// other programs and this tree's own tests read its refusal lines, and a second line of
-	// JSON beside a one-line refusal breaks them (found by dogfooding, 2026-09-18). The file
-	// Alloy tails is the path (SPEC-LOGS.md Part 6), so a run that names no file writes no
-	// structured line and every existing stdout and stderr contract is untouched.
+	// THE SINK IS THE FILE OR NOTHING: a run that names no file writes no structured line,
+	// so this verb's stdout and stderr stay exactly the contract they were. The reason the
+	// round-1 stderr fallback is not taken here is in SPEC-LOGS.md Part 6, and the one long
+	// telling of it is in cmd/nova-bus/events.go.
 	eventsW, eventsCloser, err := novalog.Sink(*eventLog, nil)
 	if err != nil {
 		return refuse(stderr, "ROUTE", "bad-event-log",

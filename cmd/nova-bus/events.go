@@ -44,14 +44,18 @@ const busRecipientCap = 8
 // opened is a refusal here, before the checkout is touched, and never a silent send: a note
 // that went out with no record of it having gone out is exactly the thing the stream exists
 // to prevent.
+//
+// THE SINK IS THE FILE OR NOTHING -- the round-2 rule, and the one long telling of it, which
+// the other four emitting verbs point at. Round 1 let a verb with no --log write its JSON to
+// stderr, on the grounds that a unit's stderr is the journal. That is right for a loop that
+// runs as a systemd unit and wrong for a verb whose stderr IS a contract: other programs and
+// this tree's own tests read these refusal lines, and a second line of JSON beside a
+// one-line refusal breaks them -- which is how it was found, by wiring the fallback and
+// watching nova-pulse hygiene's own tests go red (2026-09-18). The file Alloy tails is the
+// path (SPEC-LOGS.md Part 6), so a run that names no file writes no structured line at all
+// and every existing stdout and stderr contract is untouched.
 func busEmitter(verb, token, logPath, bench string, stderr io.Writer) (*log.Emitter, io.Closer, bool) {
-	// THE SINK IS THE FILE OR NOTHING. Round 1 let a verb with no --log write its JSON to
-	// stderr, on the grounds that a unit's stderr is the journal. That is right for a loop
-	// that runs as a unit and wrong for a verb like this one, whose stderr IS a contract:
-	// other programs and this tree's own tests read its refusal lines, and a second line of
-	// JSON beside a one-line refusal breaks them (found by dogfooding, 2026-09-18). The file
-	// Alloy tails is the path (SPEC-LOGS.md Part 6), so a run that names no file writes no
-	// structured line and every existing stdout and stderr contract is untouched.
+	// The nil fallback is the rule above: no file, no line.
 	w, closer, err := log.Sink(logPath, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s REFUSED: --log %s cannot be opened for append: %s\n",
