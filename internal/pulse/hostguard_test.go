@@ -49,6 +49,28 @@ func TestTheRealSSHRunnerPanicsUnderTheGuard(t *testing.T) {
 	_, _ = SSHRunner{}.Run(context.Background(), "bench.invalid", "uptime")
 }
 
+// TestTheRealBenchShellPanicsUnderTheGuard is the same hurt one verb along.
+// `nova-pulse harvest --bench` (#1367) landed on dev after this rule was
+// written and brought its own shipped BenchShell: sshShell.Run defaults to a
+// child `ssh` exactly the way SSHRunner does, so a harvest test that injects no
+// shell reaches the bench the same way. The guard stands before that child.
+func TestTheRealBenchShellPanicsUnderTheGuard(t *testing.T) {
+	arm(t)
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("the shipped sshShell ran a child under the guard; an unfaked seam must refuse before it reaches a host")
+		}
+		msg, _ := r.(string)
+		for _, want := range []string{testguard.EnvNoHost, "ssh", "bench.invalid", "testguard.AllowHosts"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("the panic must name %q so the reader sees the command and the remedy; got %q", want, msg)
+			}
+		}
+	}()
+	_, _ = sshShell{}.Run("bench.invalid", "uptime")
+}
+
 // TestAFakedRunnerIsUntouchedByTheGuard is the other half: the guard costs a
 // test that injects the seam nothing at all. A rule that made the honest test
 // harder would be edited around within a week.
