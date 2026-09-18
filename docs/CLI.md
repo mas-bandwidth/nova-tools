@@ -2217,13 +2217,15 @@ retiring an individual slot; they are separate from its job evidence.
 
 Because `GOTOOLCHAIN=local` is pinned, the bench's own Go must be reachable
 inside the wall. `nova-swarm native` therefore adds the provisioning standard's
-toolchain directories to the wall's read set, one `--read` each — `~/sdk` (Go
-and sbcl), `~/go/bin` (the standard's `PATH` entry), and `~/go/pkg/mod` (the
-bench's module cache) — read-only, and skipped when a directory is not there.
-A `--read` root carries execute, so `~/sdk/go1.26.5/bin/go` runs; without these
-roots a card was denied the bench's `go` and fell back to `/usr/bin/go`, which
-`go.mod` refuses. No other path under your home is granted: not
-`~/.config/nova-secrets`, not `~/.ssh`. The list lives in
+toolchain directory `~/sdk` (Go and sbcl) to the wall's read set as a single
+`--read`, read-only, and skipped when it is not there. A `--read` root carries
+execute, so `~/sdk/go1.26.5/bin/go` runs; without it a card was denied the
+bench's `go` and fell back to `/usr/bin/go`, which `go.mod` refuses.
+`~/go/bin` is deliberately NOT granted — it is GOPATH/bin and a card that could
+exec it could run bench-user tools — and `~/go/bin/go` still works because it
+is a symlink into `~/sdk`. `~/go/pkg/mod` is not granted either: it wants read
+without execute, which has no argv form yet. No other path under your home is
+granted: not `~/.config/nova-secrets`, not `~/.ssh`. The list lives in
 `internal/swarm/toolchain.go` and is checked against `tools/bench-standard.sh`
 by a test, so provisioning and the wall cannot drift apart.
 

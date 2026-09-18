@@ -50,6 +50,19 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 		t.Errorf("the provisioning standard and the wall name different toolchain roots:\n  %s: %v\n  internal/swarm/toolchain.go: %v\nThey are ONE list. Edit internal/swarm/toolchain.go and the marked block in the script together.",
 			benchStandardScript, fromScript, fromWall)
 	}
+	// THE ROOTS THAT MUST STAY OUT, named here so a later widening is a red run and not a
+	// judgement call. A `--read` root carries EXECUTE on both bodies, so:
+	//   go/bin      is GOPATH/bin -- every `go install` lands there and the bench user can
+	//               write to it, so granting it would let a card exec bench-user tools.
+	//   go/pkg/mod  wants read WITHOUT exec, and nova-sandbox has no --read-noexec flag
+	//               yet. Until it does, the cache is not granted at all.
+	for _, forbidden := range []string{"go/bin", "go/pkg/mod"} {
+		for _, got := range fromWall {
+			if got == forbidden {
+				t.Errorf("the wall grants the toolchain root ~/%s: a --read root carries EXECUTE, and this one must not be granted that way (Johnny's security read of #1364)", forbidden)
+			}
+		}
+	}
 	// The standard must also CHECK them, not merely declare them: a bench missing a root
 	// has to drift before a card discovers it.
 	if !strings.Contains(string(raw), "drift \"toolchain root ") {

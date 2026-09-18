@@ -36,16 +36,29 @@ import (
 // toolchainRootNames is the standard's toolchain directories, relative to a bench HOME and
 // written in slash form so the one list reads the same on every platform.
 //
-//	sdk         the toolchain tree the standard installs into: go<ver>/ and sbcl-<ver>/.
-//	            Read AND execute -- this is the Go the card must run.
-//	go/bin      the standard's own PATH entry (the unit files carry `go/bin`), which on a
-//	            provisioned bench is where `go` and `gofmt` are found first.
-//	go/pkg/mod  the bench's module cache, READ. A card's WRITABLE caches are the per-bench
-//	            pair under `<root>/cache` (GOMODCACHE and GOCACHE, card 8963), which the
-//	            wall already grants as a `--write`; this root is the bench's own copy, so a
-//	            card that is pointed at it by an inherited GOPATH/GOMODCACHE reads the
-//	            downloads the bench already made instead of dying on a denial.
-var toolchainRootNames = []string{"sdk", "go/bin", "go/pkg/mod"}
+//	sdk   the toolchain tree the standard installs into: go<ver>/ and sbcl-<ver>/. Read
+//	      AND execute -- this is the Go the card must run. It is the ONLY home directory
+//	      the wall grants execute on, and the card's `go` and `gofmt` come from it.
+//
+// TWO ROOTS ARE DELIBERATELY NOT HERE (Johnny's security read of #1364), because a
+// `--read` root CARRIES EXECUTE on both bodies -- landlock's read subset is
+// EXECUTE|READ_FILE|READ_DIR, and the darwin profile grants process-exec* globally:
+//
+//	go/bin      GOPATH/bin. Every `go install` on the bench lands there, including the
+//	            stale nova-* binaries being retired, and the bench user can write to it.
+//	            Granting it would let a card EXECUTE bench-user tools inside the wall.
+//	            Nothing is lost: on a provisioned bench ~/go/bin/go is a SYMLINK into the
+//	            sdk tree, and the kernel checks the resolved target, so a card whose PATH
+//	            finds ~/go/bin/go first still runs the granted toolchain -- while a real
+//	            binary sitting in that directory is Permission denied. Measured on hulk.
+//	go/pkg/mod  the bench's module cache. It wants READ WITHOUT EXECUTE, and the wall has
+//	            no argv form for that yet: Policy.ReadsNoExec and both bodies carry the
+//	            grant (internal/sandbox), but `nova-sandbox` has no `--read-noexec` flag
+//	            to reach it. Until that flag lands the cache is NOT granted at all, which
+//	            costs a card nothing -- its GOMODCACHE is the per-bench writable cache
+//	            under <root>/cache (card 8963), never this path. Granting it read+exec to
+//	            save a download is not a trade this wall makes.
+var toolchainRootNames = []string{"sdk"}
 
 // ToolchainRootNames is the list itself, HOME-relative and in slash form: the provisioning
 // standard's side of the agreement, and what the class test compares against. A copy, so no

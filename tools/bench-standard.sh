@@ -124,7 +124,7 @@ fi
 # contradict each other -- the standard put Go under ~/sdk, the wall named no toolchain root,
 # and every Go card on hulk died on `go.mod requires go >= 1.26 (running go 1.22.2)`.
 # NOVA_TOOLCHAIN_ROOTS BEGIN
-NOVA_TOOLCHAIN_ROOTS="sdk go/bin go/pkg/mod"
+NOVA_TOOLCHAIN_ROOTS="sdk"
 # NOVA_TOOLCHAIN_ROOTS END
 for tcroot in $NOVA_TOOLCHAIN_ROOTS; do
   if [ ! -d "$HOME_DIR/$tcroot" ]; then
