@@ -675,8 +675,23 @@ nova-swarm lint      --card <file> [--max <n>]
 nova-swarm quickstart --pool <dir>
 nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
 nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
+nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
 nova-swarm help
 ```
+
+`route` picks the worker by a typed decision behind a floor. It sends the
+card's first 1500 characters as the state with four questions — `kind` a
+choice among probe, read, spec, fix, feat and port; `complexity` a score over
+four levels from one file mechanical to cross-cutting or under-specified;
+`needs_strong` and `touches_private` noul — and reads a routes table of
+`kind<TAB>complexity<TAB>worker json path<TAB>class` rows where class is
+public (a free/contributor route) or paid. When `touches_private` is at or
+above 0.5 the public-class rows are skipped; the row for (`kind`, rounded
+complexity) wins, else the nearest lower complexity for that kind, else
+`--default`. It prints one `ROUTE` line and exits 0, or 3 with
+`worker=<default>` when the kind confidence is below `--floor` (a suggestion,
+never an authorization: the caller keeps today's behaviour as the fallback),
+or 2 on refusal.
 
 `batch --root` and `native --slot`/`--root` are made **absolute and
 symlink-resolved** at admission, and that one spelling is what reaches the
