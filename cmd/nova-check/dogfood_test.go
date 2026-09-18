@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -79,7 +80,7 @@ func TestDogfoodLedgerPrintsOneRowPerVerbAndOneSummary(t *testing.T) {
 		"DOGFOOD tool=nova-example verb=quickstart by=nobody at=- ok=- issue=-",
 		"DOGFOOD tool=nova-example verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=1301",
 		"DOGFOOD tool=nova-example verb=nocode by=nobody at=- ok=- issue=-",
-		"DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=1 open-edges=0",
+		"DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0",
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("ledger:\n got:\n%s\nwant:\n%s", stdout, strings.Join(want, "\n"))
@@ -100,7 +101,7 @@ func TestDogfoodLedgerDoesNotCountAnAuthorRunningTheirOwnVerb(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, want 0\n%s", code, stderr)
 	}
-	if !strings.Contains(stdout, "DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=0 open-edges=0") {
+	if !strings.Contains(stdout, "DOGFOOD OK verbs=3 dogfooded=1 by-nonauthor=0 open-edges=0 unfiled=0") {
 		t.Fatalf("the author's own run counted as a dogfood:\n%s", stdout)
 	}
 }
@@ -169,7 +170,7 @@ func TestDogfoodRecordWritesAReceiptTheLedgerReadsBack(t *testing.T) {
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
 
-	code, stdout, stderr := dogfoodRun(t, "dogfood", "record",
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
 		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
 		"--notes", "ran it over the lane's own docs before the merge", "--issue", "1301",
 		"--receipts", receipts)
@@ -215,7 +216,7 @@ func TestDogfoodRecordRefusesEveryMissingFieldWithOneRemedyEach(t *testing.T) {
 
 func TestDogfoodRecordRefusesAVerdictItWasNotGiven(t *testing.T) {
 	receipts := filepath.Join(t.TempDir(), "receipts")
-	args := []string{"dogfood", "record", "--tool", "nova-example", "--verb", "links",
+	args := []string{"dogfood", "record", "--cli", writeCLI(t, t.TempDir()), "--tool", "nova-example", "--verb", "links",
 		"--by", "Stella", "--notes", "real work", "--receipts", receipts}
 	code, _, stderr := dogfoodRun(t, args...)
 	if code != 2 {
@@ -234,8 +235,10 @@ func TestDogfoodRecordRefusesAVerdictItWasNotGiven(t *testing.T) {
 }
 
 func TestDogfoodRecordKeepsTheReceiptOnOneLine(t *testing.T) {
-	receipts := filepath.Join(t.TempDir(), "receipts")
-	code, _, stderr := dogfoodRun(t, "dogfood", "record",
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	code, _, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
 		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--not-ok",
 		"--notes", "first line\nDOGFOOD OK verbs=99 dogfooded=99 by-nonauthor=99 open-edges=0",
 		"--receipts", receipts)
@@ -286,7 +289,7 @@ func TestDogfoodGateIsGreenWhenEveryVerbHasANonAuthorsPass(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, want 0\n%s", code, stderr)
 	}
-	if !strings.Contains(stdout, "DOGFOOD GATE OK verbs=3 by-nonauthor=3 open-edges=0 require-all=yes") {
+	if !strings.Contains(stdout, "DOGFOOD GATE OK verbs=3 by-nonauthor=3 open-edges=0 unfiled=0 require-all=yes") {
 		t.Fatalf("gate line:\n%s", stdout)
 	}
 }
@@ -440,5 +443,175 @@ func TestDogfoodLedgerReadsAuthorshipFromGit(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "dogfooded=1 by-nonauthor=0") {
 		t.Fatalf("git said Rowan Claude wrote the verb and the ledger counted his own run:\n%s", stdout)
+	}
+}
+
+// The 2026-09-18 dogfood pass, edge 3: the ledger said nine receipts named a
+// verb the reference does not declare and named none of them, so nine real
+// runs were invisible and nobody could tell how the verb should have been
+// spelled.
+func TestDogfoodLedgerNamesEveryStrandedReceiptAndTheNearestVerb(t *testing.T) {
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "stranded.json", map[string]any{
+		"tool": "nova-example", "verb": "lnks", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
+	})
+	code, _, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "stranded") || !strings.Contains(stderr, "stranded.json") {
+		t.Fatalf("the stranded receipt is not named:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "verb=lnks") {
+		t.Fatalf("the note does not say what the receipt claimed:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "nova-example links") {
+		t.Fatalf("the note does not say what it was probably meant to be:\n%s", stderr)
+	}
+}
+
+// Edge 4: the gate — the line the release lane actually calls — dropped the
+// note entirely, so a lane could pass or fail without ever learning that every
+// receipt it read had been discarded.
+func TestDogfoodGateAlsoNamesTheStrandedReceipts(t *testing.T) {
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "stranded.json", map[string]any{
+		"tool": "nova-example", "verb": "lnks", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "real work",
+	})
+	code, _, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--require-all")
+	if code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "stranded.json") || !strings.Contains(stderr, "nova-example links") {
+		t.Fatalf("the gate discarded a receipt and did not say so:\n%s", stderr)
+	}
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	if code != 0 {
+		t.Fatalf("exit %d, want 0 without --require-all\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "stranded.json") {
+		t.Fatalf("a green gate said nothing about the receipt it discarded:\n%s\n%s", stdout, stderr)
+	}
+}
+
+// Edge 5: every receipt of the pass was written with --ok, because the verbs
+// worked, and the edges were in the notes where the family writes them.
+func TestDogfoodLedgerCountsAnEdgeNamedInTheNotes(t *testing.T) {
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "links", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true,
+		"notes": "Did the job. Edges: (1) the refusal names no remedy; (2) it reads only --dir.",
+	})
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--receipts", receipts)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "open-edges=1 unfiled=1") {
+		t.Fatalf("the notes name an edge and the summary says none:\n%s", stdout)
+	}
+	code, _, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	if code != 1 {
+		t.Fatalf("gate exit %d, want 1: an edge nobody filed is open\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "no issue filed") {
+		t.Fatalf("the gate does not say the edge was never filed:\n%s", stderr)
+	}
+}
+
+// Edge 2 at the CLI: `record` had --cli available and checked nothing, so a
+// receipt for a verb spelled differently was accepted silently and discovered
+// later as a NOTE that named nothing. Nine receipts were lost that way.
+func TestDogfoodRecordRefusesAVerbTheReferenceDoesNotDeclare(t *testing.T) {
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "lnks", "--by", "Stella", "--ok",
+		"--notes", "real work", "--receipts", receipts)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if stdout != "" {
+		t.Fatalf("a refusal wrote to stdout:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "nova-example links") {
+		t.Fatalf("the refusal does not name the nearest declared verb:\n%s", stderr)
+	}
+	if entries, err := os.ReadDir(receipts); err == nil && len(entries) > 0 {
+		t.Fatal("a refused record still wrote a receipt")
+	}
+}
+
+func TestDogfoodRecordAcceptsADeclaredVerb(t *testing.T) {
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
+		"--notes", "real work", "--receipts", receipts)
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", code, stderr)
+	}
+	if !strings.HasPrefix(stdout, "DOGFOOD RECORD OK ") {
+		t.Fatalf("record said:\n%s", stdout)
+	}
+}
+
+func TestDogfoodRecordRefusesWithNothingToCheckAgainst(t *testing.T) {
+	receipts := filepath.Join(t.TempDir(), "receipts")
+	code, _, stderr := dogfoodRun(t, "dogfood", "record",
+		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--ok",
+		"--notes", "real work", "--receipts", receipts)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2: a receipt checked against nothing is how nine of them were stranded", code)
+	}
+	if !strings.Contains(stderr, "--cli") || !strings.Contains(stderr, "--tools") {
+		t.Fatalf("the refusal does not name either source:\n%s", stderr)
+	}
+}
+
+// The binaries are the authoritative list when they are to hand: a reference
+// that has gone stale strands receipts for verbs that really exist.
+func TestDogfoodReadsTheVerbsFromTheBinariesWhenToldTo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fixture is a shell script")
+	}
+	tools := t.TempDir()
+	script := "#!/bin/sh\ncat <<'EOF'\nnova-example: a fixture\n\nusage:\n  nova-example links --dir <dir>\n  nova-example ask   delivers ONE unit to the FRIEND who owns it\nEOF\n"
+	if err := os.WriteFile(filepath.Join(tools, "nova-example"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	cli := writeCLI(t, dir) // declares quickstart, links, nocode — and no `ask`
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "ask", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "one real ask sent",
+	})
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "ledger", "--cli", cli, "--tools", tools, "--receipts", receipts)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "verb=ask by=Stella") {
+		t.Fatalf("the binary declares `ask` and the ledger stranded the receipt:\n%s\n%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "verbs=2") {
+		t.Fatalf("the binary answered for itself and the stale reference still filled in:\n%s", stdout)
+	}
+	// And `record` checks against the same list.
+	code, _, stderr = dogfoodRun(t, "dogfood", "record", "--tools", tools,
+		"--tool", "nova-example", "--verb", "ask", "--by", "Emma", "--ok",
+		"--notes", "another real ask", "--receipts", receipts)
+	if code != 0 {
+		t.Fatalf("record exit %d against the binaries' own list\n%s", code, stderr)
 	}
 }

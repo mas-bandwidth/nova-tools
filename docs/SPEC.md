@@ -1378,9 +1378,9 @@ four-column table indented after a blank line is not checked. Indented rows
 ### dogfood — has anybody but the author run it
 
 ```
-nova-check dogfood ledger --cli <docs/CLI.md> --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--fail-max <n>]
-nova-check dogfood record --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>
-nova-check dogfood gate   --cli <docs/CLI.md> --receipts <dir> [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
+nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>
+nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
 ```
 
 **Why it exists.** Glenn, 2026-09-18: *a tool is not finished until it is
@@ -1393,16 +1393,47 @@ and the evidence about the record were the same sentence. So the claim becomes
 a file. The verbs come from the command reference, the runs come from
 receipts, and `gate` is the exit code a release lane calls.
 
-**The verbs are read from the reference, mechanically**, because a list
-maintained beside the document it describes is a second copy that drifts. A
-declaration is a line inside a fenced block that *starts* with a tool name and
-whose leading lowercase bare words are the verb, at most two — so
-`nova-fuse lift quarantine` and `nova-fuse lift lockdown` are the two verbs
-they are, `nova-check links --dir <dir>` stops at the first flag, and a `$`
-transcript line, a prose mention and a flagless synopsis's trailing
-description declare nothing. The tool comes from the line and not from the
-section heading: a reference shows one tool's verb inside another's section,
-and a verb belongs to the tool that runs it.
+**The verbs come from the binaries first and the reference second.** `--tools
+<dir>` asks each built `nova-*` binary for its own `help` and reads the verb
+list out of it; that is authoritative for that tool, and `--cli` fills in the
+tools the directory does not hold. At least one source is required. This is the
+first lesson of this verb's own dogfood pass (2026-09-18, by a non-author): the
+reference had gone stale against two verbs that exist — `nova-work ask` and
+`asks` — and both receipts for them were stranded against a document rather than
+against the tool.
+
+**The reference is read in every shape it uses**, which is the second lesson and
+the larger one: `nova-sandbox` and `nova-work` contributed **zero** of the 77
+rows, not because nobody had run them but because one is documented as prose
+with a worked transcript and the other by pasting its own indented help block.
+*A tool can go un-dogfooded forever by being documented in a shape the
+extractor does not read, and nothing says so.* So a declaration is any of:
+
+- a command line inside a fenced block, at any indentation, with or without a
+  `$` prompt and `VAR=value` prefixes. The verb is the leading lowercase bare
+  words, at most two — `nova-fuse lift quarantine` and `nova-fuse lift lockdown`
+  are the two verbs they are, `nova-check links --dir <dir>` stops at the first
+  flag. A pasted help block puts its description in a second column, so two or
+  more spaces end the command: `nova-work ask            delivers ONE unit` is
+  the verb `ask`, `nova-work plan check --file <p>` is the verb `plan check`.
+- a `### <verb>` heading under a `## nova-<tool>` section — one word, and the
+  heading must be that word alone or that word before a separator, so `### cut`
+  and `### serve: the process outside a session` are verbs while `### native and
+  batch` and `### The seven verbs` are prose.
+- a synopsis line with no verb at all — `nova-decide --questions <file>` —
+  which declares that tool's **bare invocation**. It is a unit like any other,
+  prints as `verb=-`, and `--verb -` names it: a tool that takes no verb is
+  still a tool somebody has to have run.
+
+A `## nova-*` section that yields no unit at all is a red test in this package
+(`TestEveryToolSectionOfTheRealReferenceYieldsAVerb`), because that silence is
+exactly what hid two tools from the gate.
+
+The tool comes from the line and not from the section heading: a reference shows
+one tool's verb inside another's section, and a verb belongs to the tool that
+runs it. Headings are the exception — a heading has no tool in it, so it takes
+its section's. A binary's help speaks for that binary only, so another tool's
+line in its `example:` block declares nothing.
 
 **A receipt is one JSON line** — `tool`, `verb`, `by`, `at` (RFC3339, UTC),
 `ok`, `notes`, `issue` — in its own file under `--receipts`, written to a
@@ -1413,10 +1444,18 @@ refuses a blank one with the line that says what the flag wants, and the
 verdict is `--ok` or `--not-ok` and never a default, because an `ok=` that came
 from the absence of a flag is a record of what somebody forgot to type.
 
+**`record` checks the spelling against the same list the ledger will read it
+against**, and refuses a `--tool`/`--verb` pair nothing declares, naming the
+nearest verb that is declared — a verb written INSIDE a declared one wins
+(`--verb ledger` for `dogfood ledger`), then the nearest by edit distance within
+half the spelling, and nothing at all rather than a guess. It had the flag and
+used it for nothing on 2026-09-18, and every one of that bench's nine receipts
+was accepted in silence and discovered later as a count.
+
 **Asserts** (`ledger`, exit 0 — it reports rather than gates): one
 `DOGFOOD tool=… verb=… by=<who|nobody> at=… ok=<yes|no|-> issue=<n|->` row per
 verb the reference declares, in the reference's order, then
-`DOGFOOD OK verbs=<n> dogfooded=<n> by-nonauthor=<n> open-edges=<n>`. The row
+`DOGFOOD OK verbs=<n> dogfooded=<n> by-nonauthor=<n> open-edges=<n> unfiled=<n>`. The row
 shows the receipt that speaks best for the verb — a non-author's pass first,
 then a non-author's run, then the author's own, latest first inside each rank —
 and the counts come from all of them, not from the row. **Every row prints**:
@@ -1434,10 +1473,20 @@ the ledger says who it has rather than guessing who it meant. A verb neither
 source places has **no** author, so every receipt for it counts: the gate can
 be wrong by asking for one more pass, never by passing a verb nobody ran.
 
-**An edge stays open until somebody runs the verb again and it works.** An
-`ok=false` receipt is an open edge unless a later receipt for the same verb
-says yes. Feedback filed is not feedback applied, and the ledger is the half
-that can see the difference.
+**An edge is what the run found, not only what it failed at.** A receipt
+records an edge when the verb did not do what the run needed (`--not-ok`) **or**
+when its notes name one in the shape the family writes them — `Edge:` or
+`Edges:` before the finding. It stays open until somebody runs the verb again,
+later, and records neither; `unfiled=` counts the open edges carrying no issue
+number, because an edge nobody has filed is one nobody else can act on.
+Feedback filed is not feedback applied, and the ledger is the half that can see
+the difference.
+
+This is the dogfood pass's fifth edge and the sharpest: every receipt of that
+pass was written `--ok`, because the verbs *did* work, and six of them carried
+"Edges: (1) … (2) …" in the notes. The ledger read `open-edges=0` over a bench
+that had just found a dozen things. Counting only the verdict was counting the
+half a dogfooder is least likely to use.
 
 **Says NO (exit 1) when:**
 
@@ -1451,18 +1500,28 @@ that can see the difference.
   finding is one `DOGFOOD GATE FAIL tool=… verb=…: <why>` line, capped the same
   way, then `DOGFOOD GATE FAIL verbs=<n> findings=<n> shown=<n>`. A green gate
   is one line: `DOGFOOD GATE OK verbs=<n> by-nonauthor=<n> open-edges=<n>
-  require-all=<yes|no>`.
+  unfiled=<n> require-all=<yes|no>`.
 
-**Refuses (exit 2) when** `--cli` or `--receipts` is missing (`ledger`,
-`gate`); `--tool`, `--verb`, `--by`, `--notes` or `--receipts` is missing, or
-the verdict is neither or both (`record`); `--receipts` is not a directory; the
-reference declares no verbs at all; an `--authors` line has no `=`, an empty
-side, or maps one verb twice; or the `--repo` read runs past `--git-timeout`.
+**Refuses (exit 2) when** neither `--cli` nor `--tools` is given, on any of the
+three; `--receipts` is missing or is not a directory; `--tool`, `--verb`,
+`--by` or `--notes` is missing, the verdict is neither or both, or the verb is
+one the list does not declare (`record`); the sources named declare no verbs at
+all; an `--authors` line has no `=`, an empty side, or maps one verb twice; or a
+subprocess read runs past `--git-timeout` or `--tools-timeout`. A binary that
+cannot answer `help` is one `DOGFOOD NOTE` and a fallback to the reference for
+that tool, never a dead run: a half-built directory costs that tool's rows, not
+the ledger.
 
-**A receipt naming a verb the reference does not declare is a `DOGFOOD NOTE`
-on stderr, not a row and not a count.** The reference and the receipts
-disagree, and one of them is wrong — which is a finding about the documentation
-rather than about the tool, so it is said and not gated on.
+**A receipt naming a verb the list does not declare is named, one line each, by
+`ledger` AND by `gate`:** the file it lives in, the tool and verb it claimed,
+who wrote it, and the nearest declared verb. The count line follows, capped like
+every other listing here. It stays a `DOGFOOD NOTE` rather than a failure —
+the disagreement is about the documentation, not about the tool — but it is
+never again a bare number: the pass of 2026-09-18 was told `receipts=9 name a
+verb docs/CLI.md does not declare` and nothing else, so nine real runs were
+invisible and unspellable. And `gate`, the line a release lane actually calls,
+printed none of it at all: a lane could pass or fail without ever learning that
+every receipt it read had been discarded.
 
 **Deliberately does not check:** *whether the run was any good.* `notes` is
 prose and nobody grades it; a receipt says somebody ran the verb on real work
@@ -4814,9 +4873,10 @@ two-minute rule by two orders of magnitude, so this is the tool that can be run
 between edits.
 
 `dogfood` (2026-09-18) is the exception, and it is stated rather than papered
-over: `record` reads the clock, because a receipt is a dated record, and
-`ledger`/`gate` run one `git log` per verb **only when `--repo` is given**,
-under `--git-timeout` (60 s). With `--authors`, or with neither, the verb waits
+over: `record` reads the clock, because a receipt is a dated record; `ledger`
+and `gate` run one `git log` per verb **only when `--repo` is given**, under
+`--git-timeout` (60 s); and all three run one `help` per binary **only when
+`--tools` is given**, under `--tools-timeout` (60 s). With `--authors`, or with neither, the verb waits
 only on the filesystem like the six. The card's measurement stands for the six;
 `dogfood --repo` over a 71-verb reference is the one invocation of this binary
 that can take seconds, and it says so on stderr while it does.

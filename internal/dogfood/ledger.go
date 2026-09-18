@@ -46,7 +46,9 @@ type Row struct {
 	NonAuthor bool   // the receipt shown is somebody other than the author's
 }
 
-// Line is the row as the ledger prints it.
+// Line is the row as the ledger prints it. A tool with no verbs prints
+// `verb=-`: its bare invocation is a unit like any other, and a unit with no
+// row can never be dogfooded.
 func (r Row) Line() string {
 	return fmt.Sprintf("DOGFOOD tool=%s verb=%s by=%s at=%s ok=%s issue=%s",
 		r.Tool, r.Verb, r.By, r.At, r.OK, r.Issue)
@@ -57,14 +59,15 @@ type Summary struct {
 	Verbs       int // verbs docs/CLI.md declares
 	Dogfooded   int // verbs with at least one receipt
 	ByNonAuthor int // verbs a non-author has run and said ok
-	OpenEdges   int // ok=false receipts nobody has since cleared
+	OpenEdges   int // edges nobody has since cleared
+	Unfiled     int // of those, the ones with no issue anybody can act on
 	Unknown     int // receipts naming a verb the reference does not declare
 }
 
 // Line is the summary as the ledger prints it.
 func (s Summary) Line() string {
-	return fmt.Sprintf("DOGFOOD OK verbs=%d dogfooded=%d by-nonauthor=%d open-edges=%d",
-		s.Verbs, s.Dogfooded, s.ByNonAuthor, s.OpenEdges)
+	return fmt.Sprintf("DOGFOOD OK verbs=%d dogfooded=%d by-nonauthor=%d open-edges=%d unfiled=%d",
+		s.Verbs, s.Dogfooded, s.ByNonAuthor, s.OpenEdges, s.Unfiled)
 }
 
 // Ledger reads the receipts against the verbs and returns one row per verb, in
@@ -100,7 +103,7 @@ func Ledger(verbs []Verb, receipts []Receipt, authors Authors) ([]Row, Summary) 
 	for _, v := range verbs {
 		key := normalizeKey(v.Key())
 		got := byVerb[key]
-		row := Row{Tool: v.Tool, Verb: v.Verb, By: "nobody", At: "-", OK: "-", Issue: "-"}
+		row := Row{Tool: v.Tool, Verb: v.Spelling(), By: "nobody", At: "-", OK: "-", Issue: "-"}
 		if len(got) > 0 {
 			summary.Dogfooded++
 			best := got[0]
@@ -125,7 +128,12 @@ func Ledger(verbs []Verb, receipts []Receipt, authors Authors) ([]Row, Summary) 
 			}
 		}
 		rows = append(rows, row)
-		summary.OpenEdges += len(openEdges(got))
+		for _, edge := range openEdges(got) {
+			summary.OpenEdges++
+			if !edge.Filed() {
+				summary.Unfiled++
+			}
+		}
 	}
 	return rows, summary
 }
@@ -154,30 +162,158 @@ func yesNo(ok bool) string {
 	return "no"
 }
 
-// openEdges returns the receipts for one verb that said NO and that no later
-// receipt for the same verb has cleared with a yes. An edge is open until
-// somebody runs the verb again and it does what they needed: that is what
-// "feedback applied" means from outside the fix.
+// openEdges returns the receipts for one verb that found something and that no
+// later receipt has cleared. A receipt finds something when the verb did not do
+// what the run needed, or when its notes name an edge; it is cleared when
+// somebody runs the verb again, later, and records neither. That is what
+// "feedback applied" means from outside the fix — and an edge with no issue
+// number is one nobody else can act on at all, which the summary counts
+// separately.
 func openEdges(got []Receipt) []Receipt {
-	var latestOK time.Time
+	var latestClean time.Time
 	for _, r := range got {
-		if r.OK && r.Time().After(latestOK) {
-			latestOK = r.Time()
+		if !r.RecordsAnEdge() && r.Time().After(latestClean) {
+			latestClean = r.Time()
 		}
 	}
 	var open []Receipt
 	for _, r := range got {
-		if r.OK {
+		if !r.RecordsAnEdge() {
 			continue
 		}
-		// An edge recorded after the last pass is still open; one recorded
-		// before it has been answered by a later run that worked.
-		if !latestOK.IsZero() && !r.Time().After(latestOK) {
+		if !latestClean.IsZero() && !r.Time().After(latestClean) {
 			continue
 		}
 		open = append(open, r)
 	}
 	return open
+}
+
+// Strand is one receipt that named a verb the reference does not declare: the
+// file it is in, what it said, and the declared verb it was probably meant to
+// be. The 2026-09-18 dogfood pass was told "receipts=9 name a verb docs/CLI.md
+// does not declare" and nothing else, so nine real runs were invisible and
+// nobody could tell which nine or how to spell them.
+type Strand struct {
+	Receipt Receipt
+	File    string // where the stranded receipt lives
+	Nearest string // the closest declared verb, or "" when nothing is close
+}
+
+// Line is the strand as the ledger and the gate print it.
+func (s Strand) Line() string {
+	where := s.File
+	if where == "" {
+		where = "(receipt)"
+	}
+	nearest := "nothing close enough to suggest"
+	if s.Nearest != "" {
+		nearest = "nearest declared: " + s.Nearest
+	}
+	return fmt.Sprintf("DOGFOOD NOTE stranded %s: tool=%s verb=%s by=%s (%s)",
+		where, s.Receipt.Tool, s.Receipt.Spelling(), s.Receipt.By, nearest)
+}
+
+// Stranded returns every receipt naming a verb the reference does not declare,
+// in the order they were read, each with the nearest declared verb.
+func Stranded(verbs []Verb, receipts []Receipt) []Strand {
+	declared := map[string]bool{}
+	for _, v := range verbs {
+		declared[v.Key()] = true
+	}
+	var strands []Strand
+	for _, r := range receipts {
+		if declared[r.Key()] {
+			continue
+		}
+		strands = append(strands, Strand{Receipt: r, File: r.File, Nearest: Nearest(verbs, r.Tool, r.Verb)})
+	}
+	return strands
+}
+
+// Nearest returns the declared verb closest to what a receipt wrote, or "" when
+// nothing is close enough to be worth suggesting. A verb of the same tool wins
+// over a nearer one of another tool: a remedy that sent a reader to a different
+// binary would be further from the truth than saying nothing.
+func Nearest(verbs []Verb, tool, verb string) string {
+	want := NormalizeKey(tool, verb)
+	// A verb that is written down INSIDE a declared one is not a near miss, it
+	// is the sub-verb somebody dropped a word from: `--verb ledger` for
+	// `dogfood ledger`, which is exactly what stranded the receipts on
+	// 2026-09-18. The shortest declared verb of the same tool that carries
+	// these words wins, ahead of any edit distance.
+	if words := strings.Fields(verb); len(words) > 0 {
+		best := ""
+		for _, v := range verbs {
+			if v.Tool != tool || !containsWords(strings.Fields(v.Verb), words) {
+				continue
+			}
+			if best == "" || len(v.Key()) < len(best) {
+				best = v.Key()
+			}
+		}
+		if best != "" {
+			return best
+		}
+	}
+	best, bestDist := "", -1
+	for _, v := range verbs {
+		d := editDistance(want, v.Key())
+		if v.Tool != tool {
+			// Another tool's verb has to be much closer to be worth naming.
+			d += 4
+		}
+		if bestDist < 0 || d < bestDist {
+			best, bestDist = v.Key(), d
+		}
+	}
+	// A suggestion further away than half the spelling is a guess, and a guess
+	// in a remedy line is worse than an honest silence.
+	if bestDist < 0 || bestDist > len(want)/2 {
+		return ""
+	}
+	return best
+}
+
+// containsWords reports whether want appears in have as a run of whole words.
+func containsWords(have, want []string) bool {
+	if len(want) == 0 || len(want) > len(have) {
+		return false
+	}
+	for i := 0; i+len(want) <= len(have); i++ {
+		match := true
+		for j := range want {
+			if have[i+j] != want[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// editDistance is Levenshtein, over the short strings a verb key is.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, min(cur[j-1]+1, prev[j-1]+cost))
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
 }
 
 // GateFinding is one reason the gate says no.
@@ -227,8 +363,10 @@ func Gate(verbs []Verb, receipts []Receipt, authors Authors, requireAll bool) ([
 		got := byVerb[key]
 		for _, edge := range openEdges(got) {
 			reason := fmt.Sprintf("open edge from %s at %s", edge.By, edge.At)
-			if edge.Issue > 0 {
+			if edge.Filed() {
 				reason += fmt.Sprintf(" (issue #%d)", edge.Issue)
+			} else {
+				reason += " (no issue filed)"
 			}
 			reason += ": " + edge.Notes
 			findings = append(findings, GateFinding{Kind: "open-edge", Tool: v.Tool, Verb: v.Verb, Reason: reason})
@@ -260,8 +398,8 @@ func (s Summary) GateLine(requireAll bool) string {
 	if requireAll {
 		require = "yes"
 	}
-	return fmt.Sprintf("DOGFOOD GATE OK verbs=%d by-nonauthor=%d open-edges=%d require-all=%s",
-		s.Verbs, s.ByNonAuthor, s.OpenEdges, require)
+	return fmt.Sprintf("DOGFOOD GATE OK verbs=%d by-nonauthor=%d open-edges=%d unfiled=%d require-all=%s",
+		s.Verbs, s.ByNonAuthor, s.OpenEdges, s.Unfiled, require)
 }
 
 // GateCountLine is the gate's red count line: the total, and how much of it was
