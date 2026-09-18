@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -21,20 +22,25 @@ import (
 //	per-job data home as the WHOLE write set, the worker home as a read, the job directory as
 //	the cwd, and never --net-deny -- the provider's API is the work.
 func TestWorkersAreContainedBelowTheModel(t *testing.T) {
+	slotDir := absFixture("pool", "worker-home-1")
+	jobDir := filepath.Join(slotDir, "jobs", "abc")
+	dataHome := filepath.Join(jobDir, "data")
+	promptFile := filepath.Join(jobDir, "PROMPT.md")
+
 	job := SandboxJob{
 		Sandbox:  "/usr/local/bin/nova-sandbox",
-		SlotDir:  "/pool/worker-home-1",
-		JobDir:   "/pool/worker-home-1/jobs/abc",
-		DataHome: "/pool/worker-home-1/jobs/abc/data",
+		SlotDir:  slotDir,
+		JobDir:   jobDir,
+		DataHome: dataHome,
 		Command:  "/usr/local/bin/opencode",
-		Args:     []string{"run", "--model", "deepseek/deepseek-flash", "--", "/pool/worker-home-1/jobs/abc/PROMPT.md"},
+		Args:     []string{"run", "--model", "deepseek/deepseek-flash", "--", promptFile},
 	}
 	argv := strings.Join(job.SandboxArgv(), " ")
 	for _, want := range []string{
-		"--read /pool/worker-home-1",
-		"--write /pool/worker-home-1/jobs/abc",
-		"--write /pool/worker-home-1/jobs/abc/data",
-		"--cwd /pool/worker-home-1/jobs/abc",
+		"--read " + slotDir,
+		"--write " + jobDir,
+		"--write " + dataHome,
+		"--cwd " + jobDir,
 		"-- /usr/local/bin/opencode",
 	} {
 		if !strings.Contains(argv, want) {
