@@ -80,6 +80,41 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
 jobs:
+  plan:
+    # A PLAN JOB AT THE HEAD (Glenn, 2026-09-17: "If you don't have enough room
+    # in the fleet to run CI, it is OK to have GitHub run the CI as overflow.
+    # Configure this so it's automatic. We need the spill over."). GitHub cannot
+    # route a job to a different runner once it is queued -- a job's runs-on is
+    # fixed when the job is created -- so the routing happens HERE, before the
+    # test jobs exist. The job lists the repository's runners through the
+    # Actions API (actions: read), counts online-and-idle runners per pool
+    # (studio, space, hulk, vision), holds back a reserve of two per pool so a
+    # card on the same bench can still find a runner, and writes one runs_on
+    # value per shard: the self-hosted pool's label array while idle capacity
+    # covers the shard, the hosted image for that OS once it does not. A push to
+    # dev or main and the nightly schedule keep the whole fleet unconditionally.
+    # ubuntu-latest because this job has to run even when every self-hosted
+    # runner is busy; at well under fifteen seconds it is the one hosted job on
+    # the pull-request path, and a spill is one line in the run summary.
+    name: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    timeout-minutes: 1
+    outputs:
+      runs_on: ${{ steps.plan.outputs.runs_on }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # The plan is a one-file command; a restored cache buys it nothing.
+          cache: false
+      - name: route each shard
+        id: plan
+        run: go run ./internal/ci/cmd/ciplan
+
   lint:
     # gofmt, `go build ./...`, `go vet ./...` on one runner. Formatting is a
     # property of the source, not of the platform, so gofmt is checked once;
@@ -91,6 +126,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
+        if: runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
         shell: bash
@@ -171,6 +207,7 @@ jobs:
       packages: ${{ steps.list.outputs.packages }}
     steps:
       - name: remove stale build dirs from the shared runner
+        if: runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
         shell: bash
@@ -301,13 +338,13 @@ jobs:
             [ -n "${space_grp[$g]:-}" ] || continue
             packages="${space_grp[$g]# }"
             n=$((g + 1))
-            entries+=("{\"name\":\"$n/$SPACE_SHARDS space\",\"packages\":\"$packages\",\"os\":\"linux\",\"arch\":\"x64\",\"group\":\"space\"}")
+            entries+=("{\"name\":\"$n/$SPACE_SHARDS space\",\"key\":\"space-$n\",\"packages\":\"$packages\",\"os\":\"linux\",\"arch\":\"x64\",\"group\":\"space\"}")
           done
           for ((g=0; g<STUDIO_SHARDS; g++)); do
             [ -n "${studio_grp[$g]:-}" ] || continue
             packages="${studio_grp[$g]# }"
             n=$((g + 1))
-            entries+=("{\"name\":\"$n/$STUDIO_SHARDS studio\",\"packages\":\"$packages\",\"os\":\"macOS\",\"arch\":\"macOS\",\"group\":\"macOS\"}")
+            entries+=("{\"name\":\"$n/$STUDIO_SHARDS studio\",\"key\":\"studio-$n\",\"packages\":\"$packages\",\"os\":\"macOS\",\"arch\":\"macOS\",\"group\":\"macOS\"}")
           done
 
           [ "${#entries[@]}" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
@@ -327,16 +364,17 @@ jobs:
     # touched no Go package gets one leg with an empty package list that prints
     # and exits 0.
     name: test (${{ matrix.entry.name }})
-    needs: test-packages
+    needs: [plan, test-packages]
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
       fail-fast: false
       matrix:
         entry: ${{ fromJSON(needs.test-packages.outputs.packages) }}
-    # Labels are carried per entry as single-string variables: runs-on expressions
-    # must resolve to a string, not to an array, so the matrix cannot hand over a
-    # label list as one value.
-    runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
+    # The plan job routes this shard before it is created: runs_on is a map keyed
+    # by the entry's key, and the value is either the pool's label ARRAY (idle
+    # capacity remains) or the hosted image as a string (the pool is short).
+    # fromJSON returns both shapes; runs-on accepts both.
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on)[matrix.entry.key] }}
     # SIX, and the two minutes did not move — what a ceiling MEANS moved. The
     # two-minute law is about the CL feedback path: how long a change waits.
     # Until now that path ran on GitHub-hosted runners, where 48 legs start at
@@ -368,9 +406,14 @@ jobs:
         run: echo "nothing to test for this change"
 
       - name: remove stale build dirs from the shared runner
-        if: matrix.entry.packages != ''
+        if: matrix.entry.packages != '' && runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # A GitHub-hosted runner is fresh: before checkout it has no workspace and
+        # no .git, so the sanity check below cannot hold. The step is guarded to
+        # the self-hosted runners, because the plan spillover can route this shard
+        # to a hosted runner (2026-09-18, run 35304449254: every spilled shard died
+        # here with exit 1 before a single test ran).
         shell: bash
         run: |
           [ -n "${GITHUB_WORKSPACE}" ] && [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 1
@@ -575,15 +618,21 @@ jobs:
     # 51 s idle and over three times that on a loaded Studio, where three
     # shards each crossed the two-minute cap.
     name: test-hosted-merge (${{ matrix.leg.name }}, ${{ matrix.shard }})
+    needs: [plan, plan-merge]
     if: github.event_name == 'merge_group'
-    needs: plan-merge
     strategy:
       fail-fast: false
       matrix:
         leg:
+          # The plan routes each leg by its key: the darwin leg takes the studio
+          # while the pool has idle capacity and macos-latest once it cannot, and
+          # the linux and windows legs are always GitHub-hosted. The runner field
+          # stays as the leg's own image, the fallback if the plan has no entry.
           - name: linux
+            key: merge-linux
             runner: ubuntu-latest
           - name: darwin
+            key: merge-darwin
             # A label array, carried as a JSON string: a runs-on expression must
             # resolve to a single string, so the job parses this one with fromJSON.
             # Any of our Macs, either architecture: the Studio (arm64) and batman (x64,
@@ -591,15 +640,19 @@ jobs:
             # which, and one machine as the only darwin runner made it the clock of the
             # whole merge queue.
             labels: '["self-hosted","macOS"]'
+            runner: macos-latest
           - name: windows
+            key: merge-windows
             runner: windows-latest
         # Only the slots plan-merge says this group needs (1, 3 or 6).
         shard: ${{ fromJSON(needs.plan-merge.outputs.shards) }}
-    # A runs-on expression must resolve to one value, so the darwin leg's label
-    # array is carried as a JSON string and parsed with fromJSON; the hosted legs
-    # carry their runner image as a plain string and are quoted as a JSON string
-    # in the same expression. Same steps, timeout and package selection below.
-    runs-on: ${{ fromJSON(matrix.leg.labels || format('"{0}"', matrix.leg.runner)) }}
+    # runs_on is either the pool's label array (idle) or the hosted image as a
+    # string (short); fromJSON returns both and runs-on accepts both. When the
+    # plan has no entry for the leg, fall back to its own image: the darwin
+    # leg's label array, carried as a JSON string and parsed with fromJSON, or
+    # the hosted legs' runner image quoted as a JSON string. Same steps, timeout
+    # and package selection below.
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on)[matrix.leg.key] || fromJSON(matrix.leg.labels || format('"{0}"', matrix.leg.runner)) }}
     # FIVE: the one allowed exception to the two-minute law. Every other job on
     # the CL path stays at TWO, but this gate is not a small check — it runs the
     # FULL hosted suite (no -short) of the packages a group changes, on three
@@ -814,6 +867,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
+        if: runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
         shell: bash
@@ -858,6 +912,7 @@ jobs:
       changed: ${{ steps.filter.outputs.changed }}
     steps:
       - name: remove stale build dirs from the shared runner
+        if: runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
         shell: bash
@@ -903,6 +958,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
+        if: runner.environment == 'self-hosted'
         # The self-hosted runners reuse the _work directory across jobs; a tree left
         # by an aborted or overlapping run makes checkout fail. Start from clean.
         shell: bash
