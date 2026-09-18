@@ -35,6 +35,19 @@ usage:
   nova-decide tune --kind <k> [--dsn <dsn>] [--decisions <tsv path>]
                    (the decisions table: refuse a floor with no rows behind it)
 
+  nova-decide route --unit <json file|inline json> [--registry <path>] [--log <path>]
+                    [--floor 0.9] [--jev|--no-jev] [--base-url <url>] [--key-env JEV_API_KEY]
+  nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lanes n]
+                    [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
+                    [--guard] [--secrets] [--fresh-take] [--deadline 45m] [--no-jev]
+
+  nova-decide help --state <json file|inline json>
+  nova-decide help [--hours 2] [--retries-on-rung n] [--failures-last-hour n]
+                   [--self-inflicted n] [--class-recurring] [--landing-moved]
+                   [--uncertainty 0..1] [--asked-all-friends]
+
+  nova-decide log --log <path> --summary [--registry <path>]
+
   --questions <file>  JSON object of name to question: {"type": "choice"|"score"|"noul",
                       "instructions": <text>, "criteria": {<option>: <description>} for
                       choice, [<level texts>] for score, absent for noul} (required;
@@ -59,13 +72,42 @@ usage:
   --conf <field>      field holding the confidence (default confidence)
   --max-escalation <f>  escalation-rate cap for the best floor (default 0.7)
 
+route: which mind does this unit of work, over the ladder of minds a registry
+holds. The answer is the LOWEST rung the evidence supports with confidence that
+the first attempt is right; below the floor it steps UP a rung, never down. A
+failed attempt re-enters the decision carrying its evidence and the answer is
+the next rung, sideways first (same height, another lineage) then up. Two rungs
+are chosen by KIND, not height, and by machinery rather than the provider:
+security -- a guard, secrets, the sandbox, sudo, deploy keys, the network -- and
+a fresh take. Friends first: the DeepSeek rungs take mechanical kinds only.
+
+  --unit <file>       the unit's evidence as JSON (inline JSON also accepted):
+                      id, kind, files, packages, lanes, lane_owner, attempts
+                      (rung, outcome, reason), platform, guard, secrets,
+                      fresh_take, deadline
+  --registry <path>   the registry of minds (name, lineage, height, kinds it is
+                      designated for, owned lanes, availability, ask); the
+                      embedded ladder when absent
+  --log <path>        append this decision to the escalation log (JSON lines)
+  --floor <f>         confidence floor; below it the answer steps UP (default 0.9)
+  --no-jev            answer by the rules alone: no key, no network, deterministic
+  --kind <kind>       rebase | stack | fixture-retarget | fleet-chore |
+                      fix-with-red-test | new-verb | spec | design | guard |
+                      cause-to-find
+  --summary           (log) escalations per kind and the regenerated start rung
+
 exit codes: 0 every answer at or above the floor, 3 any answer below it (a
-suggestion), 2 refusal: no key, bad questions, provider error. tune exits 2
-when fewer than 10 labeled rows (a floor with no rows behind it is untuned).
+suggestion), 2 refusal: no key, bad questions, bad evidence, provider error.
+tune exits 2 when fewer than 10 labeled rows (a floor with no rows behind it is
+untuned).
 
 example:
   nova-decide --questions ./questions.json --state ./state.md --floor 0.9
   nova-decide tune --decisions ./decisions.jsonl
+  nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
+  nova-decide route --unit ./unit.json --log ./decide.jsonl --no-jev
+  nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
+  nova-decide log --log ./decide.jsonl --summary
 `
 
 // version is empty in every ordinary build and is the one override: a release
@@ -98,11 +140,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 			fmt.Fprintln(stdout, buildinfo.Line("nova-decide", version))
 			return 0
-		case "help", "-h", "--help":
+		case "-h", "--help":
 			fmt.Fprint(stdout, usage)
 			return 0
+		case "help":
+			// `nova-decide help` is the door the onboarding standard names, and
+			// `nova-decide help --state ...` is the second decision: continue,
+			// ask all friends, or ask Glenn.
+			if len(args) == 1 {
+				fmt.Fprint(stdout, usage)
+				return 0
+			}
+			return runHelp(args[1:], stdout, stderr)
 		case "tune":
 			return runTune(args[1:], stdout, stderr)
+		case "route":
+			return runRoute(args[1:], stdout, stderr)
+		case "log":
+			return runLog(args[1:], stdout, stderr)
 		}
 	}
 	fs := flag.NewFlagSet("nova-decide", flag.ContinueOnError)

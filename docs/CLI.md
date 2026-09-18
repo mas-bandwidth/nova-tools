@@ -386,6 +386,64 @@ DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
 
 **Reading it.** Exactly one line, on stdout for a decision and on stderr for a refusal. Exit 0 when every answer is at or above the floor, 3 when any answer is below it — a suggestion, never an authorization: the caller keeps today's behaviour as the fallback. Exit 2 on refusal (no key, bad questions, provider error): `DECIDE REFUSED reason=<one word> <detail>`.
 
+### route — the ladder of minds
+
+```
+nova-decide route --unit <json file|inline json> [--registry <path>] [--log <path>]
+                  [--floor 0.9] [--jev|--no-jev] [--base-url <url>] [--key-env JEV_API_KEY]
+nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lanes n]
+                  [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
+                  [--guard] [--secrets] [--fresh-take] [--deadline 45m] [--no-jev]
+```
+
+Who does this unit of work. The rungs come from a registry — a data file of minds (`name`, `lineage`, `height`, the `kinds` it is designated for, the `lanes` it owns, `availability`, and how it is `ask`ed) — and the embedded default is the ladder Glenn named: Flash and Pro on the DeepSeek lineage at the bottom, the child rungs Opus (Rowan's) and Sol (Stella's) at **one** height in two lineages, the friends above them each owning a lane, Astra and Fable as the top pair, then all friends at once, then Glenn.
+
+The answer is the **lowest rung the evidence supports** with confidence that the first attempt is right. Below the floor it steps **up** a rung, never down. A failed attempt re-enters the decision carrying its evidence — `--attempt opus:failed:missed the cause` — and the answer is the next rung automatically: **sideways first**, where the same height holds another lineage, then up. The ladder is the retry policy.
+
+Two rungs are chosen by **kind** and not by height, and by machinery rather than by the provider, so no provider call is made for either: security — a guard, secrets, the sandbox, sudo, deploy keys, the network — is Johnny's always, and so is a fresh take (the rungs below failed in two lineages, or a design with one author). Friends first: the DeepSeek rungs take mechanical kinds only (`rebase`, `stack`, `fixture-retarget`, `fleet-chore`).
+
+`--no-jev` answers by the rules alone — no key, no network, the same answer every time — so the loop runs on a bench with no API. With Jev, the provider is offered only the eligible rungs at the supported height and the one above it, so it can advise sideways or up but never down; an answer below the floor steps up, and a provider error, or a rung nobody offered, leaves the rules' answer standing.
+
+```
+$ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 reason="kind rebase starts at rung flash" ask=card
+
+$ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:failed:missed the cause --no-jev
+ROUTE unit=card-41 rung=sol confidence=0.95 floor=0.90 reason="kind fix-with-red-test starts at rung opus/sol; 1 prior attempt(s) burned rung opus/sol: sideways before up" ask=child
+```
+
+**Reading it.** One line: the unit (the evidence pointer rule 10 owes), the rung, the confidence the floor was applied to, the floor, the reason, and how that rung is asked — `bus`, `card` or `child`. Exit 0 at or above the floor, 3 below it (the line already carries the rung it stepped up to), 2 on refusal.
+
+### help — continue, ask all friends, ask Glenn
+
+```
+nova-decide help --state <json file|inline json>
+nova-decide help [--hours 2] [--retries-on-rung n] [--failures-last-hour n]
+                 [--self-inflicted n] [--class-recurring] [--landing-moved]
+                 [--uncertainty 0..1] [--asked-all-friends]
+```
+
+The second decision, over what a line can count about itself: hours on the same problem, retries on one rung, failures in the last hour and how many were self-inflicted, whether a class is recurring, whether landing moved, and the uncertainty it states out loud. `ask-glenn` only ever comes after `ask-all-friends`.
+
+```
+$ nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
+HELP answer=ask-all-friends reason="3.0 h on the same problem; the friends have not been asked, and Glenn is only asked after they are"
+```
+
+### log — the escalation log
+
+```
+nova-decide log --log <path> --summary [--registry <path>]
+```
+
+`route --log <path>` appends one JSON object per decision: the evidence, the rung tried, its confidence and floor, whether it stepped up, the source, the outcome and the rung that succeeded when they are known — and, beside all of it, `rowan_pick`, what the rules alone would have chosen. `log --summary` reads the rows back: the escalations per kind, and the starting rung **regenerated** from the rows — the lowest rung carrying its own weight, with at least as many successes as failures. A kind with no success keeps the rung the table started from.
+
+```
+$ nova-decide log --log ./decide.jsonl --summary
+LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false
+LOG OK rows=1 kinds=1 escalations=0
+```
+
 ## Build
 
 Go 1.26 or newer, standard library only.

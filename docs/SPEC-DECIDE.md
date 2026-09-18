@@ -123,6 +123,46 @@ reports/jev/2026-09-17-card-route.tsv@21d27719 (model jev-latest, 22 rows)`;
 latency about 400 ms in a 20-call trial on 2026-09-17, no retained file. The
 floor is per lane; below it the card keeps today's routing.
 
+### nova-decide route — the ladder of minds
+
+Route one unit of work to one MIND, over a registry of rungs (Glenn 2026-09-18). The rungs are
+Flash and Pro on the DeepSeek lineage, the child rungs Opus (Rowan's) and Sol (Stella's) at one
+height in two lineages, each friend as a mind with an owned lane, Astra and Fable as the top pair,
+then all friends at once, then Glenn. The answer is the lowest rung the evidence supports with
+confidence that the FIRST attempt is right; below the floor it steps UP a rung, never down. A
+failed attempt re-enters the decision with its evidence — the rung, the outcome, the reason — and
+the answer is the next rung automatically, sideways before up: the ladder is the retry policy.
+
+Two rungs are chosen by KIND and not by height, and by the machinery rather than the provider
+(rule 6), so no provider call is made for either: security — a guard, secrets, the sandbox, sudo,
+deploy keys, the network — is Johnny's always, and so is a fresh take, where the rungs below failed
+in two lineages or a design has one author. Friends first: the DeepSeek rungs are eligible for
+mechanical kinds only.
+
+The evidence is bounded and public (rules 1 and 4): kind — one of `rebase`, `stack`,
+`fixture-retarget`, `fleet-chore`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
+`cause-to-find` — size (files, packages, lanes), lane
+owner, prior attempts, platform need, whether a guard or secrets are touched, and the deadline —
+metadata, never a body, never a secret. The provider is offered only the eligible rungs at the
+supported height and the one above it, so a typed answer can advise sideways or up but never down;
+an answer below the floor steps up, and a provider error or a rung nobody offered leaves the rules'
+answer standing (rule 5). `--no-jev` answers by the rules alone, with no key and no network, so the
+loop runs where the API does not.
+
+Every decision is logged (rule 8): the evidence, the rung tried, the confidence and floor, the
+outcome and the rung that succeeded — and beside it `rowan_pick`, what the rules alone would have
+chosen, which is how the route is measured against the coordinator's own hand. `nova-decide log
+--summary` regenerates the starting rung per kind from those rows, and a kind with no success keeps
+the rung it started from.
+
+The second decision, `help`, answers continue | ask-all-friends | ask-glenn over hours on the same
+problem, retries on one rung, failures in the last hour and how many were self-inflicted, a class
+recurring, whether landing moved, and stated uncertainty. Ask-glenn only ever follows
+ask-all-friends. Red tests: `a-failed-attempt-steps-sideways-before-up`,
+`below-the-floor-steps-up-never-down`, `security-is-johnnys-by-kind-not-by-height`,
+`a-designation-makes-no-provider-call` and `ask-glenn-only-after-ask-all-friends`, all against a
+fake decider, with no network and no key on disk.
+
 ### manager abstain / needs_human
 
 A manager judgment that abstains below its floor instead of guessing.
