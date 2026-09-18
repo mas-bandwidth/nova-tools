@@ -26,8 +26,8 @@ import (
 //	(a) it exists, and it names every class rule docs/SPEC-CI.md indexes, by
 //	    rule name — a friend meeting a red reads the name off the refusal, and a
 //	    rule the front page does not list is a rule nobody was told about;
-//	(b) it stays under the line cap — the page is read at the start of every
-//	    session by every harness, so its cost is paid on every turn, and a page
+//	(b) it stays under the line cap — a harness that reads it reads it at the
+//	    start of every session, so its cost is paid on every turn, and a page
 //	    that grows without a ceiling stops being read;
 //	(c) no per-harness file stands anywhere in the tree.
 //
@@ -54,7 +54,7 @@ func TestAgentsPageNamesEveryClassRule(t *testing.T) {
 
 	page, err := os.ReadFile(agentsPath)
 	if err != nil {
-		t.Fatalf("%s: %v; AGENTS.md is the one page every friend's harness loads before touching this repo — it is not optional", agentsPath, err)
+		t.Fatalf("%s: %v; AGENTS.md is the one page a friend's harness reads before touching this repo — it is not optional", agentsPath, err)
 	}
 	body := string(page)
 
@@ -86,7 +86,7 @@ func TestAgentsPageStaysUnderTheLineCap(t *testing.T) {
 	}
 	lines := strings.Count(strings.TrimRight(string(page), "\n"), "\n") + 1
 	if lines > agentsLineCap {
-		t.Errorf("%s is %d lines, over the cap of %d; every harness loads this page at the start of every session, so the cost is paid on every turn — move the detail into docs/ and leave the rule and the link here",
+		t.Errorf("%s is %d lines, over the cap of %d; a harness that reads this page reads it at the start of every session, so the cost is paid on every turn — move the detail into docs/ and leave the rule and the link here",
 			agentsPath, lines, agentsLineCap)
 	}
 }
