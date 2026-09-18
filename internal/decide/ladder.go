@@ -323,20 +323,31 @@ const (
 )
 
 // RouteUsage is what one routing decision spent with the provider: how many
-// calls, the tokens it reported, and whether those numbers are known at all. A
-// call that failed spent something we cannot measure, and UNKNOWN is not zero
-// (SPEC-TOKENS rule 14).
+// calls it made, the counters the provider reported, and -- PER COUNTER --
+// whether it reported them at all. A call that failed, and a call that answered
+// without saying what it cost, both spent something we cannot measure, and
+// UNKNOWN is not zero (SPEC-TOKENS rule 14).
 type RouteUsage struct {
 	Calls        int
 	InputTokens  int
 	OutputTokens int
-	Known        bool
+	HasInput     bool
+	HasOutput    bool
 	Failed       bool
 }
+
+// Known reports whether any counter was measured.
+func (u RouteUsage) Known() bool { return u.HasInput || u.HasOutput }
 
 // RouteResult is one routing decision: the rung, the number the floor was
 // applied to, the floor, why, the typed wait, what it spent, and -- for the
 // log -- what the rules alone would have picked.
+//
+// A REFUSED decision is still a RouteResult. Where the route ends in an error,
+// the result comes back populated with everything that was already true --
+// above all what a completed provider call spent -- and Refusal says why it
+// ended. A refusal cannot unspend tokens, so the caller persists the row and
+// then exits on the refusal (Stella, #1327).
 type RouteResult struct {
 	Unit       string
 	Kind       string
@@ -345,6 +356,7 @@ type RouteResult struct {
 	Floor      float64
 	Reason     string
 	Wait       string
+	Refusal    string
 	SteppedUp  bool
 	Escalated  bool
 	Designated bool
@@ -352,6 +364,17 @@ type RouteResult struct {
 	RulesRung  string
 	Offered    []string
 	Usage      RouteUsage
+}
+
+// refuse populates the result with the refusal that ended it and returns both.
+// Every early return in a route goes through here, so a refused decision is
+// never an empty one.
+func (r RouteResult) refuse(err error) (RouteResult, error) {
+	r.Refusal = err.Error()
+	if r.Wait == "" {
+		r.Wait = WaitNone
+	}
+	return r, err
 }
 
 // AwaitingTermination reports whether this decision is a wait on an attempt
@@ -390,21 +413,21 @@ const (
 // same answer every time. It is what --no-jev runs, and it is the answer the
 // provider's is measured against in the log.
 func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
+	res := RouteResult{Unit: u.ID, Kind: u.Kind, Floor: floor, Source: SourceRules, Wait: WaitNone}
 	if reg == nil || len(reg.Minds) == 0 {
-		return RouteResult{}, fmt.Errorf("decide: no registry; a ladder with no rungs is not a ladder")
+		return res.refuse(fmt.Errorf("decide: no registry; a ladder with no rungs is not a ladder"))
 	}
 	if err := ValidFloor(floor); err != nil {
-		return RouteResult{}, err
+		return res.refuse(err)
 	}
 	if err := u.Validate(); err != nil {
-		return RouteResult{}, err
+		return res.refuse(err)
 	}
 	for _, a := range u.Attempts {
 		if _, ok := reg.ByName(a.Rung); !ok {
-			return RouteResult{}, fmt.Errorf("decide: unit %s attempted rung %q, which the registry does not hold", u.ID, a.Rung)
+			return res.refuse(fmt.Errorf("decide: unit %s attempted rung %q, which the registry does not hold", u.ID, a.Rung))
 		}
 	}
-	res := RouteResult{Unit: u.ID, Kind: u.Kind, Floor: floor, Source: SourceRules, Wait: WaitNone}
 
 	burned, tried, failedAt := burnedHeight(reg, u)
 	res.Escalated = len(u.Attempts) > 0
@@ -421,7 +444,7 @@ func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
 	if u.Security() {
 		m, err := securityRung(reg, u)
 		if err != nil {
-			return RouteResult{}, err
+			return res.refuse(err)
 		}
 		res.Rung = m
 		res.Confidence = confDesignated
@@ -460,7 +483,8 @@ func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
 	height, reasons := supportedHeight(reg, u, burned)
 	m, err := pick(reg, u, height, tried, failedAt)
 	if err != nil {
-		return RouteResult{}, err
+		res.Reason = strings.Join(reasons, "; ")
+		return res.refuse(err)
 	}
 	conf := confSized
 	switch {
@@ -473,7 +497,8 @@ func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
 	if conf < floor {
 		up, why, err := stepUp(reg, u, m, tried, failedAt)
 		if err != nil {
-			return RouteResult{}, err
+			res.Reason = strings.Join(reasons, "; ")
+			return res.refuse(err)
 		}
 		res.Rung = up
 		res.SteppedUp = true
@@ -715,7 +740,9 @@ type Decider interface {
 func RouteJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float64) (RouteResult, error) {
 	rules, err := RouteRules(reg, u, floor)
 	if err != nil {
-		return RouteResult{}, err
+		// The rules refused before any call could be made: that result is
+		// already populated, and it carries the refusal.
+		return rules, err
 	}
 	if d == nil || rules.Designated || rules.AwaitingTermination() || u.Security() {
 		return rules, nil
@@ -737,9 +764,14 @@ func RouteJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 	answers, usage, err := d.Decide(ctx, state, map[string]Question{RungQuestion: rungQuestion(offered, u)})
 	// A call was made, and what it spent is part of the record whether it
 	// answered or not: a failed call's cost is UNKNOWN, never zero.
-	rules.Usage = RouteUsage{Calls: 1, InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, Known: err == nil, Failed: err != nil}
+	rules.Usage = RouteUsage{Calls: 1, Failed: err != nil}
+	if err == nil {
+		// Presence travels per counter: a 200 that named no usage has told us
+		// nothing about what it cost, and nothing is not zero.
+		rules.Usage.InputTokens, rules.Usage.HasInput = usage.InputTokens, usage.HasInput
+		rules.Usage.OutputTokens, rules.Usage.HasOutput = usage.OutputTokens, usage.HasOutput
+	}
 	if err != nil {
-		rules.Usage.InputTokens, rules.Usage.OutputTokens = 0, 0
 		rules.Reason += fmt.Sprintf("; the provider refused (%s), so the rules answer stands", oneline.Err(err))
 		return rules, nil
 	}
@@ -762,7 +794,9 @@ func RouteJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 	if a.Confidence < floor {
 		up, why, err := stepUp(reg, u, chosen, tried, failedAt)
 		if err != nil {
-			return RouteResult{}, err
+			// The call is already made and already paid for: the refusal comes
+			// back carrying it, so the caller writes the row before it exits.
+			return res.refuse(err)
 		}
 		res.Rung = up
 		res.SteppedUp = true

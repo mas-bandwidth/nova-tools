@@ -113,35 +113,32 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	}
 	ask := *useJev && !*noJev
 	var res decide.RouteResult
+	var routeErr error
 	if ask {
 		client, err := deciderOpener(*baseURL, *keyEnv)
 		if err != nil {
 			return refuse(stderr, "ROUTE", "no-key", oneline.Cap(err.Error(), oneline.TailBytes))
 		}
 		fmt.Fprintf(stderr, "nova-decide route: asking jev about unit %s (kind %s, floor %.2f)\n", oneline.Field(unit.ID), oneline.Field(unit.Kind), *floor)
-		res, err = decide.RouteJev(context.Background(), client, reg, unit, *floor)
-		if err != nil {
-			return refuse(stderr, "ROUTE", "no-rung", oneline.Cap(err.Error(), oneline.TailBytes))
-		}
+		res, routeErr = decide.RouteJev(context.Background(), client, reg, unit, *floor)
 		fmt.Fprintf(stderr, "nova-decide route: jev answered for unit %s\n", oneline.Field(unit.ID))
 	} else {
-		res, err = decide.RouteRules(reg, unit, *floor)
-		if err != nil {
-			return refuse(stderr, "ROUTE", "no-rung", oneline.Cap(err.Error(), oneline.TailBytes))
-		}
+		res, routeErr = decide.RouteRules(reg, unit, *floor)
 	}
-	if strings.TrimSpace(*logPath) != "" {
-		if err := decide.AppendEntry(*logPath, decide.EntryFor(res, unit, now())); err != nil {
-			return refuse(stderr, "ROUTE", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
+	// The record is written BEFORE the refusal is returned. A call that has
+	// already been made has already been paid for, and a decision that could
+	// not be made is still evidence: neither is unspent or unmade by an error
+	// on the way out (Stella, #1327). The exit code stays the refusal's own.
+	persisted := persist(res, unit, *logPath, *usagePath)
+	if routeErr != nil {
+		detail := oneline.Cap(routeErr.Error(), oneline.TailBytes)
+		if persisted != nil {
+			detail += "; and the record could not be written: " + oneline.Err(persisted)
 		}
+		return refuse(stderr, "ROUTE", "no-rung", detail)
 	}
-	// What a provider call spent goes to the shared accounting, in the columns
-	// the rest of the fleet writes and nova-tokens reads. A call that failed is
-	// a row too: its cost is unknown, and an unknown is not a zero.
-	if strings.TrimSpace(*usagePath) != "" && res.Usage.Calls > 0 {
-		if err := appendUsage(*usagePath, res, unit); err != nil {
-			return refuse(stderr, "ROUTE", "bad-usage", oneline.Cap(err.Error(), oneline.TailBytes))
-		}
+	if persisted != nil {
+		return refuse(stderr, "ROUTE", "bad-record", oneline.Cap(persisted.Error(), oneline.TailBytes))
 	}
 	fmt.Fprintln(stdout, res.Line())
 	switch {
@@ -154,6 +151,33 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		return 3
 	}
 	return 0
+}
+
+// persist writes the decision's record: the log row for any decision that got
+// far enough to be one, and the usage row for any provider call that was
+// actually made. It runs on the way out of BOTH paths -- the answer and the
+// refusal -- so no row is lost to an error that came after the spend.
+func persist(res decide.RouteResult, u decide.Unit, logPath, usagePath string) error {
+	if res.Unit == "" {
+		return nil // nothing got as far as being a decision
+	}
+	var failures []string
+	if strings.TrimSpace(logPath) != "" {
+		if err := decide.AppendEntry(logPath, decide.EntryFor(res, u, now())); err != nil {
+			failures = append(failures, "log: "+err.Error())
+		}
+	}
+	// A decision that made no call writes no usage row: an empty row would be a
+	// claim that a call was made.
+	if strings.TrimSpace(usagePath) != "" && res.Usage.Calls > 0 {
+		if err := appendUsage(usagePath, res, u); err != nil {
+			failures = append(failures, "usage: "+err.Error())
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s", strings.Join(failures, "; "))
 }
 
 // appendUsage writes one row of the fleet's usage TSV for the provider call
@@ -172,8 +196,13 @@ func appendUsage(path string, res decide.RouteResult, u decide.Unit) error {
 		"provider": usageProvider,
 		"model":    decide.DefaultModel,
 	}
-	if res.Usage.Known {
+	// Per counter, because the provider reports them per counter: an unreported
+	// one is left empty and AppendCardUsage writes it as "-", while a reported
+	// zero is written as the measurement it is.
+	if res.Usage.HasInput {
 		row["tokens_in"] = strconv.Itoa(res.Usage.InputTokens)
+	}
+	if res.Usage.HasOutput {
 		row["tokens_out"] = strconv.Itoa(res.Usage.OutputTokens)
 	}
 	if res.Usage.Failed {

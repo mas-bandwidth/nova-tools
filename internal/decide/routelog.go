@@ -50,6 +50,10 @@ type Entry struct {
 	// Wait is the typed action beside the rung: "-" for a decision the caller
 	// may act on, awaiting_termination for one it may not.
 	Wait string `json:"wait,omitempty"`
+	// Refusal is why the route ended in a refusal, where it did. The row is
+	// still written: a call that was already made is still a cost, and a
+	// decision that could not be made is still evidence.
+	Refusal string `json:"refusal,omitempty"`
 	// AwaitingTermination is the same fact as a boolean, for a reader that
 	// gates on it: the rung named is the one an attempt may still be running
 	// on, and the lease rule keeps its expiry UNKNOWN until termination.
@@ -87,9 +91,10 @@ func EntryFor(res RouteResult, u Unit, now time.Time) Entry {
 
 		Wait:                waitOrDash(res.Wait),
 		AwaitingTermination: res.AwaitingTermination(),
+		Refusal:             res.Refusal,
 		Calls:               res.Usage.Calls,
-		TokensIn:            tokens(res.Usage, res.Usage.InputTokens),
-		TokensOut:           tokens(res.Usage, res.Usage.OutputTokens),
+		TokensIn:            tokens(res.Usage.HasInput, res.Usage.InputTokens),
+		TokensOut:           tokens(res.Usage.HasOutput, res.Usage.OutputTokens),
 		UsageFailed:         res.Usage.Failed,
 	}
 }
@@ -103,10 +108,11 @@ func waitOrDash(wait string) string {
 	return wait
 }
 
-// tokens reports a token count only where the provider reported one. An
-// unmeasured cost is an absence in the row, never a zero.
-func tokens(u RouteUsage, n int) *int {
-	if !u.Known {
+// tokens reports a counter only where the provider reported THAT counter. An
+// unmeasured cost is an absence in the row, never a zero; a reported zero is a
+// measurement and is written as one.
+func tokens(has bool, n int) *int {
+	if !has {
 		return nil
 	}
 	v := n

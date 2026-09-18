@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -23,6 +24,7 @@ type fake struct {
 	usage decide.Usage
 	err   error
 	calls int
+	pick  int // which offered option to choose, by position
 }
 
 func (f *fake) Decide(_ context.Context, _ string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
@@ -30,11 +32,14 @@ func (f *fake) Decide(_ context.Context, _ string, qs map[string]decide.Question
 	if f.err != nil {
 		return nil, decide.Usage{}, f.err
 	}
-	choice := ""
+	var names []string
 	for name := range qs[decide.RungQuestion].Choice {
-		if choice == "" || name < choice {
-			choice = name
-		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	choice := ""
+	if f.pick < len(names) {
+		choice = names[f.pick]
 	}
 	return map[string]decide.Answer{decide.RungQuestion: {Type: "choice", Choice: choice, Confidence: f.conf}}, f.usage, nil
 }
@@ -101,7 +106,7 @@ func TestRouteWithoutAWaitExitsZero(t *testing.T) {
 // (R5) The provider's usage is written to the shared accounting: one TSV row in
 // the fleet's usage columns, with the tokens it reported.
 func TestRouteWritesTheUsageRecord(t *testing.T) {
-	useFake(t, &fake{conf: 0.97, usage: decide.Usage{InputTokens: 937, OutputTokens: 12}})
+	useFake(t, &fake{conf: 0.97, usage: decide.Usage{InputTokens: 937, HasInput: true, OutputTokens: 12, HasOutput: true}})
 	dir := t.TempDir()
 	usage := filepath.Join(dir, "usage.tsv")
 	log := filepath.Join(dir, "decide.jsonl")

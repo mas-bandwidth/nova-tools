@@ -73,6 +73,10 @@ func TestSpecDecideNamesTheLadder(t *testing.T) {
 		"a wait is not permission",
 		"What a call spent is kept",
 		"SPEC-TOKENS rule 14",
+		// Stella's two accounting witnesses at df8cedaf.
+		"not evidence of reported usage",
+		"PER COUNTER",
+		"cannot unspend a call",
 	} {
 		if !strings.Contains(doc, phrase) {
 			t.Errorf("SPEC-DECIDE.md does not name the ladder rule keyed by %q", phrase)

@@ -250,12 +250,12 @@ func TestProviderUsageIsKept(t *testing.T) {
 	reg := testRegistry(t)
 	u := Unit{ID: "u", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1}
 
-	rec := &recorder{conf: 0.95, usage: Usage{InputTokens: 937, OutputTokens: 12}}
+	rec := &recorder{conf: 0.95, usage: Usage{InputTokens: 937, HasInput: true, OutputTokens: 12, HasOutput: true}}
 	res, err := RouteJev(context.Background(), rec, reg, u, DefaultFloor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Usage.Calls != 1 || res.Usage.InputTokens != 937 || res.Usage.OutputTokens != 12 || !res.Usage.Known {
+	if res.Usage.Calls != 1 || res.Usage.InputTokens != 937 || res.Usage.OutputTokens != 12 || !res.Usage.Known() {
 		t.Errorf("usage = %+v, want 1 call of 937/12 known", res.Usage)
 	}
 
@@ -264,7 +264,7 @@ func TestProviderUsageIsKept(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Usage.Calls != 1 || res.Usage.Known || !res.Usage.Failed {
+	if res.Usage.Calls != 1 || res.Usage.Known() || !res.Usage.Failed {
 		t.Errorf("a failed call is evidence too: %+v", res.Usage)
 	}
 	if res.Usage.InputTokens != 0 || res.Usage.OutputTokens != 0 {
@@ -272,7 +272,7 @@ func TestProviderUsageIsKept(t *testing.T) {
 	}
 
 	rules := mustRoute(t, reg, u, DefaultFloor)
-	if rules.Usage.Calls != 0 || rules.Usage.Known {
+	if rules.Usage.Calls != 0 || rules.Usage.Known() {
 		t.Errorf("the rules alone spend nothing: %+v", rules.Usage)
 	}
 	guard := mustRoute(t, reg, Unit{ID: "g", Kind: KindGuard, Files: 1}, DefaultFloor)
@@ -285,7 +285,7 @@ func TestProviderUsageIsKept(t *testing.T) {
 // was spent as well as what was decided.
 func TestTheLogRowCarriesUsageAndWait(t *testing.T) {
 	reg := testRegistry(t)
-	rec := &recorder{conf: 0.95, usage: Usage{InputTokens: 100, OutputTokens: 5}}
+	rec := &recorder{conf: 0.95, usage: Usage{InputTokens: 100, HasInput: true, OutputTokens: 5, HasOutput: true}}
 	res, err := RouteJev(context.Background(), rec, reg, Unit{ID: "u", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1}, DefaultFloor)
 	if err != nil {
 		t.Fatal(err)

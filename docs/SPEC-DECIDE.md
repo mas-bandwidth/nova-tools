@@ -207,9 +207,22 @@ no success keeps the rung it started from.
 usage: the call count and the tokens in the log row, and one row of the fleet's own usage TSV at
 `--usage` — the same columns, written through the same appender, that a swarm card's usage is
 written with, so `nova-tokens` reads a decision's spend the way it reads everything else. A call
-that FAILED is a row too, with a non-zero `rc`: its cost is real and unmeasured, and a field the
-provider did not report is the literal `-` and never a `0` (SPEC-TOKENS rule 14). A decision that
+that FAILED is a row too, with a non-zero `rc`: its cost is real and unmeasured. A decision that
 made no call writes no row, because an empty row would be a claim that a call was made.
+
+**A successful answer is not evidence of reported usage.** Presence is tracked PER COUNTER, from
+the decoder outward: a 200 that carries a valid answer and no `usage` object, or one naming only
+some of the counters, has said nothing about the rest — and nothing is not zero. An unreported
+counter is written as the literal `-` in the TSV and is ABSENT from the log row; an explicitly
+reported `0` is a measurement and is written as `0` (SPEC-TOKENS rule 14). Decoding the counters as
+plain integers is what made every silent response look like a free one.
+
+**A refusal cannot unspend a call.** Where a route ends in a refusal, the result comes back
+POPULATED — the unit, the reason, and above all what a completed provider call spent — and carries
+the refusal in `Refusal`. The caller persists the usage row and the log row, with that reason,
+BEFORE it exits, and the exit code stays the refusal's own. The hurt: a provider answered, the
+tokens were spent, the rung it picked had nothing above it to step up to, and the verb exited 2
+before either file was written, so the call left no trace anywhere.
 
 The second decision, `help`, answers continue | ask-all-friends | ask-glenn over hours on the same
 problem, retries on one rung, failures in the last hour and how many were self-inflicted, a class
@@ -223,8 +236,10 @@ the provider on and off, every floor and every prior attempt), `a-timeout-does-n
 synthetic private markers, checked over the state AND the questions),
 `an-opaque-choice-maps-back-to-its-mind`, `public-is-an-allowlist`,
 `the-wait-is-typed-on-the-line`, `security-and-wait-together` and
-`the-provider-usage-is-kept-including-a-failed-call`, all against a fake decider, with no network
-and no key on disk.
+`the-provider-usage-is-kept-including-a-failed-call`, `usage-presence-is-per-counter`,
+`an-unreported-counter-is-a-dash-and-a-reported-zero-is-a-zero` and
+`a-routing-refusal-still-persists-the-call`, all against a fake decider, with no network and no key
+on disk.
 
 ### manager abstain / needs_human
 
