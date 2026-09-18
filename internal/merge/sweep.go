@@ -17,7 +17,9 @@ import "strings"
 //   - a DIRTY pull request is skipped, because the loop skipped it;
 //   - a pull request already in the merge queue is skipped entirely: it is neither
 //     enqueued again nor rerun;
-//   - a completed success off the queue is enqueued;
+//   - a completed success off the queue is OFFERED to the one door, which admits it only
+//     if its head is a batch's (Glenn, 2026-09-18: nothing reaches the dev merge queue but
+//     a batch); a refusal is counted as refused and the pass carries on;
 //   - a completed failure or cancellation is rerun only while the queue is at most
 //     RerunQueueDepth deep (the loop held `[ "$qn" -le 5 ]`);
 //   - an UNMERGEABLE queue entry is dequeued, and is otherwise untouched.
@@ -58,9 +60,16 @@ func Sweep(host SweepHost, branch, prefix string) (SweepResult, error) {
 		}
 		switch strings.ToLower(strings.TrimSpace(run.Conclusion)) {
 		case RunSuccess:
-			if err := host.Enqueue(pr.Number); err == nil {
+			// THE WHOLE PULL REQUEST, not its number: the admission rule is about the
+			// HEAD BRANCH -- a batch's own, or nothing -- and a pass that handed the host
+			// a bare number would be a pass whose host had to go and read back the one
+			// fact the decision turns on. Every refusal is counted and none stops the
+			// pass, exactly as the shell loop's `&&` did.
+			if err := host.Enqueue(pr); err == nil {
 				res.Queued++
 				queued[pr.Number] = true
+			} else {
+				res.Refused++
 			}
 		case RunFailure, RunCancelled:
 			// THE THRESHOLD IS THE DEPTH READ AT THE TOP OF THE PASS, exactly as the
@@ -140,8 +149,11 @@ type SweepHost interface {
 	OpenPRs() ([]SweepPR, error)
 	// HeadRun reads the newest run of the branch's CI workflow.
 	HeadRun(branch string) (SweepRun, error)
-	// Enqueue adds a pull request to the merge queue.
-	Enqueue(pr int) error
+	// Enqueue admits a pull request to the merge queue, through the ONE DOOR
+	// (Enqueuer.Enqueue): a batch's own head, or a head with that head's BATCH OK
+	// receipt, and nothing else. It takes the whole pull request because the rule is
+	// about the head branch.
+	Enqueue(pr SweepPR) error
 	// Rerun reruns one completed run.
 	Rerun(run int64) error
 	// Dequeue removes a pull request from the merge queue.
@@ -154,4 +166,9 @@ type SweepResult struct {
 	Reruns   int
 	Dequeued int
 	InQueue  int
+	// Refused is the green pull requests the one door would not admit -- an ordinary
+	// card's branch with no batch behind it. It is a COUNT AND NOT A FAILURE: a session
+	// whose cards are all green and none batched refuses every one of them, which is the
+	// lock working.
+	Refused int
 }

@@ -1994,7 +1994,29 @@
     #:state-export-wait
     #:snapshot-state-export
     #:export-wire-op
-    #:state-export-cancel-ack))
+    #:state-export-cancel-ack
+    ;; notes (the coordinator's notes replays)
+    #:note-scope
+    #:note-author
+    #:note-date
+    #:note-source
+    #:note-kind
+    #:note-text
+    #:note-constraint
+    #:note-uncertain
+    #:note-superseded
+    #:note-did-for
+    #:make-notes-config
+    #:make-notes-store
+    #:notes-notes
+    #:note-by-id
+    #:active-note-p
+    #:notes-active
+    #:notes-active-count
+    #:notes-write
+    #:notes-supersede
+    #:check-not-weaker-kind
+    #:make-replacement-note))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

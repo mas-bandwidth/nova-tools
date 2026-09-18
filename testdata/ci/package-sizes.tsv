@@ -1,7 +1,22 @@
+# package-sizes.tsv: measured seconds for a full `go test` on a LINUX bench. It
+# is what plan-merge-slots.sh and test-hosted-merge's linux and darwin legs deal
+# their shards from. The windows leg deals from package-sizes-windows.tsv
+# instead: this table cannot predict that one, and integration-4's merge group is
+# the receipt — cmd/nova-bus at 6.4 s here bought three shards, and one of those
+# three was killed at 100 s on windows-latest.
+#
+# The first rows were measured on an idle bench. The four git-fixture packages
+# were re-measured on hulk on 2026-09-18 WHILE IT CARRIED ITS EIGHT RUNNERS, so
+# those are loaded-bench numbers and sit above an idle one — which is the
+# condition CI actually runs in.
+#
+# import path	seconds
 github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	51.0
 github.com/mas-bandwidth/nova-tools/internal/swarm	17.4
-github.com/mas-bandwidth/nova-tools/cmd/nova-bus	6.4
+github.com/mas-bandwidth/nova-tools/cmd/nova-bus	10.0
 github.com/mas-bandwidth/nova-tools/internal/pulse	4.5
 github.com/mas-bandwidth/nova-tools/cmd/nova-pulse	0.6
-github.com/mas-bandwidth/nova-tools/cmd/nova-merge	6.2
+github.com/mas-bandwidth/nova-tools/cmd/nova-merge	7.7
+github.com/mas-bandwidth/nova-tools/cmd/nova-review	6.8
+github.com/mas-bandwidth/nova-tools/cmd/nova-wake	24.6
 github.com/mas-bandwidth/nova-tools/internal/ci	1.5

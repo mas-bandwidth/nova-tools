@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
@@ -69,6 +70,7 @@ func buildFakes(t *testing.T) {
 		dir := t.TempDir()
 		cmd := exec.Command("go", "build", "-o", dir,
 			"./testdata/fakebus", "./testdata/fakegh", "./testdata/fakenote", "./testdata/fakegit")
+		cmd.Env = goenv.Clean(os.Environ())
 		if raw, err := cmd.CombinedOutput(); err != nil {
 			fakeBuilt = fmt.Errorf("building the fakes: %v\n%s", err, raw)
 			return

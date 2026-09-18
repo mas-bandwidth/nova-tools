@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -79,21 +80,7 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	// them either.
 	const history = 10000
 	const carried = 500
-	var index strings.Builder
-	for i := range history {
-		id := fmt.Sprintf("bo-%012x", i+0x100000)
-		path := fmt.Sprintf("from-bo/2026-08-%02dT%02d%02dZ-bulk-%s.md", i%28+1, i/60%24, i%60, id[len(id)-12:])
-		to := "Bo"
-		if i < carried {
-			to = "Ada"
-		}
-		writeFile(t, checkout, path, fmt.Sprintf(
-			"From: Bo\nTo: %s\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: bulk %d\n\nA note in the history.\n",
-			to, i%28+1, id, i))
-		fmt.Fprintf(&index, "%s\t%s\t2026-08-%02dT00:00:00Z\t%s\t-\n", id, path, i%28+1, to)
-	}
-	appendFile(t, checkout, "from-bo/INDEX", index.String())
-	commitAs(t, checkout, "Bo", "ten thousand notes")
+	bulkHistory(t, checkout, history, carried)
 
 	// The first run has no cursor, so it is a full one and it says so. This is the only
 	// full read a reader ever pays for, and it is what writes the open list every later run
@@ -191,6 +178,65 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	if n := openEntries(t, checkout, "from-ada"); n != carried {
 		t.Fatalf("the open list holds %d entries after one closed, want %d", n, carried)
 	}
+}
+
+// bulkHistory puts `history` notes on the bus in ONE git process, of which the first
+// `carried` are addressed to Ada and the rest are Bo's own business.
+//
+// It used to be a loop of `history` os.WriteFile calls followed by commitAs, which is
+// `git add -A` over ten thousand new paths, a commit over them and a push. Measured on an
+// idle Studio 2026-09-18: 0.9 s of file writes and 5.7 s of git, which is most of this
+// test -- and windows-latest, where a file operation is expensive and the merge group's
+// hosted leg runs, timed the shard out at 100 s with this test still running, twice.
+//
+// fast-import builds the same commit from a stream: one process, no working-tree scan, no
+// index full of ten thousand untracked paths to hash, and the tree written once. The
+// working tree is then materialized by a single `git reset --hard`, which is git writing
+// the files instead of Go writing them one at a time. The BUS IS THE SAME: the same ten
+// thousand notes, the same INDEX lines, the same one commit on main, pushed the same way.
+// Nothing this test asserts is a fact about how the fixture was built.
+func bulkHistory(t *testing.T, checkout string, history, carried int) {
+	t.Helper()
+	head := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
+
+	// The INDEX is REPLACED rather than appended to, because fast-import writes a whole
+	// blob: the fixture's own two lines have to be carried into it or the notes they name
+	// leave the index and the bus stops agreeing with itself.
+	index := read(t, checkout, "from-bo/INDEX")
+
+	var b strings.Builder
+	const msg = "ten thousand notes"
+	fmt.Fprintf(&b, "commit refs/heads/main\n")
+	fmt.Fprintf(&b, "author Bo <bo@example.com> 1757376000 +0000\n")
+	fmt.Fprintf(&b, "committer Bo <bo@example.com> 1757376000 +0000\n")
+	fmt.Fprintf(&b, "data %d\n%s\n", len(msg), msg)
+	fmt.Fprintf(&b, "from %s\n", head)
+	for i := range history {
+		id := fmt.Sprintf("bo-%012x", i+0x100000)
+		path := fmt.Sprintf("from-bo/2026-08-%02dT%02d%02dZ-bulk-%s.md", i%28+1, i/60%24, i%60, id[len(id)-12:])
+		to := "Bo"
+		if i < carried {
+			to = "Ada"
+		}
+		note := fmt.Sprintf(
+			"From: Bo\nTo: %s\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: bulk %d\n\nA note in the history.\n",
+			to, i%28+1, id, i)
+		fmt.Fprintf(&b, "M 100644 inline %s\ndata %d\n%s", path, len(note), note)
+		index += fmt.Sprintf("%s\t%s\t2026-08-%02dT00:00:00Z\t%s\t-\n", id, path, i%28+1, to)
+	}
+	fmt.Fprintf(&b, "M 100644 inline from-bo/INDEX\ndata %d\n%s", len(index), index)
+	b.WriteString("\ndone\n")
+
+	cmd := exec.Command("git", "-C", checkout, "fast-import", "--quiet")
+	cmd.Stdin = strings.NewReader(b.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git fast-import %d notes: %v\n%s", history, err, out)
+	}
+	// fast-import moved the branch under the working tree; this is what puts the notes in
+	// it. --hard against the branch it just wrote, so the tree, the index and HEAD agree
+	// and the checkout is clean -- inbox --advance refuses a dirty one.
+	gitIn(t, checkout, "reset", "--hard", "-q", "refs/heads/main")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 }
 
 // commitAs commits everything in the checkout under a roster name's identity and pushes it,

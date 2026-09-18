@@ -41,6 +41,9 @@ const (
 	// grace with a provider server error in its tail. It is retried with backoff and,
 	// after the third fast failure, is filed with the provider's own ref (issue #900).
 	EndProvider = "provider"
+	// EndWall is a job the harness's own fence stopped at a path outside it, with no
+	// RESULT.md: the death names the path and the commits ./repo kept (issue #918).
+	EndWall = "wall"
 )
 
 // Dash is the absence this file writes, and never a zero.

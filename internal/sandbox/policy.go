@@ -117,15 +117,34 @@ func (p *Policy) Net() string {
 func (p *Policy) CmdName() string { return filepath.Base(p.Command) }
 
 // ancestorPaths is the set of paths whose proper ancestors the darwin profile grants
-// file-read-metadata on: every --read and --write, plus the --cwd and the temp directory.
+// file-read-metadata on: every --read and --write, the --cwd, the temp directory — and
+// every OPTIONAL ROOT.
+//
+// The optional roots were missing, and the cost was measured on 2026-09-18 dogfooding
+// `nova-sandbox run` on a real card step: a `go build` inside the wall died with Go's own
+// message and nothing else — `go: cannot find GOROOT directory: 'go' binary is trimmed and
+// GOROOT is not set`. The profile granted `(allow file-read* (subpath "/opt/homebrew"))`,
+// so every FILE of the toolchain was readable; what was not readable was `/opt`. Homebrew
+// builds `go` with -trimpath, so it finds GOROOT by resolving its own executable, and
+// `/opt/homebrew/bin/go` is a symlink into `../Cellar/...`: resolving it lstats every
+// leading component and the lstat of `/opt` was denied. A wall that grants a directory and
+// denies the path TO it has granted nothing that a symlink must be followed to reach.
+//
+// The card worked around it with `--read /opt/homebrew/Cellar/go/1.27.1`, which looks like
+// a read grant and is really an ancestor grant — naming ANY path under /opt is what put
+// /opt in the literals. That is a workaround every caller would have to carry, for a root
+// the TOOL added and the caller never named, so it belongs here. The grant stays
+// file-read-metadata, which is stat and not a listing: /opt does not become readable, only
+// traversable, which is exactly what resolving a path through it needs.
 func (p *Policy) ancestorPaths() []string {
 	paths := append(append([]string{}, p.Reads...), p.Writes...)
+	paths = append(paths, p.OptRoots...)
 	return append(paths, p.Cwd, p.Tmp)
 }
 
 // AncestorCount is how many file-read-metadata ancestor literals the darwin profile emits
-// for this policy: one per proper ancestor of every --read, --write, --cwd and --tmp path,
-// "/" excluded. It is the ancestors=<n> number on the SANDBOX OK line.
+// for this policy: one per proper ancestor of every --read, --write, --cwd, --tmp path and
+// optional root, "/" excluded. It is the ancestors=<n> number on the SANDBOX OK line.
 func (p *Policy) AncestorCount() int {
 	return len(Ancestors(p.ancestorPaths()...))
 }

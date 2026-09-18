@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // fakeSwarm puts a fake nova-swarm on PATH that records each invocation's argv, one line
@@ -344,6 +346,7 @@ func realSwarm(t *testing.T) (binDir, argvLog string) {
 	dir := t.TempDir()
 	real := filepath.Join(dir, "nova-swarm.real")
 	build := exec.Command("go", "build", "-o", real, "../../cmd/nova-swarm")
+	build.Env = goenv.Clean(os.Environ())
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the real nova-swarm: %v\n%s", err, out)
 	}

@@ -36,7 +36,11 @@ const leakRemedy = "make the version command wait for its own children, or send 
 var dotted = regexp.MustCompile(`[0-9]\.[0-9]`)
 var digit = regexp.MustCompile(`[0-9]`)
 var bareCommit = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
-var release = regexp.MustCompile(`^[0-9]+(\.[0-9]+)+$`)
+
+// dottedRelease is a plain numeric release tag, `1.2` or `1.2.3`. It is named for
+// what it matches rather than for the concept, because the package now also
+// carries the `release` VERB and one name for two things is one too few.
+var dottedRelease = regexp.MustCompile(`^[0-9]+(\.[0-9]+)+$`)
 var digest = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 var pseudo = regexp.MustCompile(`^([0-9]+\.[0-9]+\.[0-9]+)-0\.[0-9]+-([0-9a-f]{7,40})(\+.*)?$`)
 
@@ -260,6 +264,27 @@ func recordedVersion(installed []string) (string, bool) {
 	return tok, true
 }
 
+// ladder is the invocations one entry is asked for its version, in order. A manifest row
+// whose installed column is a WHOLE argv -- `go version`, `sops --version` -- is the
+// caller's sentence and is run exactly as written, once: appending to it would run a verb
+// the caller did not ask for.
+//
+// A `tool` row that names nothing but the executable is the other case, and it is the one
+// that cost us #1264. `nova-version snapshot` writes such rows, and so does every friend's
+// hand-written manifest: `nova-swarm  tool  ~/.local/bin/nova-swarm  ...`. Run bare, EVERY
+// nova tool answers a usage refusal -- the banner is behind `help`, not in front of every
+// mistake -- so the adoption pass read UNKNOWN for every one of our own tools while each
+// of them was perfectly able to say which build it was. They are asked the verb they
+// answer: `version`, then `--version`, then bare for a foreign tool that prints its
+// version with no argument at all.
+func ladder(e Entry) [][]string {
+	if len(e.Installed) != 1 || e.Kind != "tool" {
+		return [][]string{e.Installed}
+	}
+	exe := e.Installed[0]
+	return [][]string{{exe, "version"}, {exe, "--version"}, {exe}}
+}
+
 func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool) Read {
 	if ctx.Err() != nil {
 		return Read{Reason: "budget", Remedy: "increase --budget"}
@@ -269,9 +294,31 @@ func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool)
 	if v, ok := recordedVersion(e.Installed); ok {
 		return Read{Raw: v, Version: v, Source: "manifest"}
 	}
+	// ONE deadline covers the whole ladder, not one deadline per rung: --timeout is what
+	// a friend budgeted for reading this tool, and three invocations of a hung binary
+	// must not cost three times what one costs.
 	child, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	p := process(child, e.Installed, nil, ChildCap)
+	var last Read
+	for _, argv := range ladder(e) {
+		p := process(child, argv, nil, ChildCap)
+		last = reading(e, p, report)
+		if last.Known() {
+			break
+		}
+		// A binary that is not there, a deadline spent or a held pipe is the same
+		// answer at every rung; only a refusal is worth asking again.
+		switch p.Reason {
+		case "not_found", "timeout", "budget", "output_not_closed":
+			return budgetCheck(ctx, last)
+		}
+	}
+	return budgetCheck(ctx, last)
+}
+
+// reading turns one invocation's result into the Read a report prints, with the remedy
+// that names what the person can do about this particular failure.
+func reading(e Entry, p ProcessResult, report bool) Read {
 	raw := p.Stdout
 	if raw == "" {
 		raw = p.Stderr
@@ -291,6 +338,12 @@ func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool)
 			r.Remedy = leakRemedy
 		}
 	}
+	return r
+}
+
+// budgetCheck: a reading taken after the run's whole budget is gone is not a reading of
+// the tool, whatever the child managed to print.
+func budgetCheck(ctx context.Context, r Read) Read {
 	if ctx.Err() != nil {
 		r.Reason = "budget"
 		r.Remedy = "increase --budget"
@@ -304,7 +357,7 @@ func Compare(a, b string) string {
 	if a == b {
 		return "EQUAL"
 	}
-	if !release.MatchString(a) || !release.MatchString(b) {
+	if !dottedRelease.MatchString(a) || !dottedRelease.MatchString(b) {
 		return "DIFFERENT"
 	}
 	aa, bb := strings.Split(a, "."), strings.Split(b, ".")

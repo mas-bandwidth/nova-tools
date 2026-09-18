@@ -73,6 +73,7 @@ type nativeRunResult struct {
 	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
 	harness      string  // ok | silent: silent when the capture holds no words of the child's and no result was found
 	fence        string  // the first path the harness's own fence auto-rejected, "" when it rejected nothing
+	wallReport   string  // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 	reason       string  // harness-silent when the child exited 0 but wrote no report, "" otherwise
 }
 
@@ -194,6 +195,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		refuseNative(errOut, fmt.Sprintf("the temp directory %s could not be made: %s", oneline.Field(tmpDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
+	}
+	// THE SHARED PER-BENCH CACHE (issue #1048). The Go toolchain and every module are the
+	// same for every card under one root, but each card downloaded them into its own data
+	// home -- up to 5 GB per slot, and 120 cards filled hulk and vision to 100%. The cache
+	// lives once under <root>/cache (a permitted write root beside the job directory) and
+	// the child is pointed at it by GOMODCACHE, GOCACHE and NPM_CONFIG_CACHE.
+	if !cfg.noSharedCaches && cfg.root != "" {
+		if err := swarm.EnsureCacheDirs(cfg.root); err != nil {
+			refuseNative(errOut, fmt.Sprintf("the shared cache directories under %s could not be made: %s", oneline.Field(swarm.CacheRoot(cfg.root)), oneline.Escape(err.Error())))
+			return nativeRunResult{}, 2
+		}
 	}
 
 	// (3b) THE BENCH-SHARED GO CACHES (card 8963). Go derives GOMODCACHE and GOCACHE from
@@ -435,6 +447,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the timeline.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 		}
 	}
+	// A WALL DEATH (issue #918). When the fence stopped the card AND no result was
+	// published, the death is `end=wall` and its report names the rejected path and the
+	// commits ./repo kept, so the harvester can push the work rather than leave it
+	// stranded with the card. A rejection beside a published result is not a death:
+	// WallDeath asks the result first.
+	if report, ok := swarm.WallDeath(jobDir, cfg.label); ok {
+		res.wallReport = report
+	}
 
 	if wall != "" {
 		backend, cwd, reason := wallNamed(wallOut.String())
@@ -618,6 +638,11 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 	// 8963). It is one directory for the whole bench, so the write is shared, not per-card.
 	if cacheDir := nativeCacheDir(cfg); cacheDir != "" {
 		argv = append(argv, "--write", cacheDir)
+	}
+	if !cfg.noSharedCaches && cfg.root != "" {
+		// The shared per-bench cache root is a permitted write root beside the job directory
+		// and the data home (issue #1048, docs/SPEC-SANDBOX.md).
+		argv = append(argv, "--write", swarm.CacheRoot(cfg.root))
 	}
 	argv = append(argv, "--cwd", jobDir)
 	// The keyless provider's loopback address is opened back up by name, never by widening

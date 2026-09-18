@@ -256,10 +256,25 @@ is the day it was learned.
     a non-negative integer or exactly `-`, never empty, `day_basis` either
     `utc` or a zone name with no whitespace, the version line carries
     `turns=` as an integer or `-`, the `date` column equals the
-    file name, rows are sorted and unique by `(model, repo)`, and no day is
-    missing between the first and last day present. A missing day is `CHECK MISSING date=<d>`, named, never
-    filled. `check` exits 1 on any finding and prints the count line either
-    way. Never gate on `sum` or `sources`; `check` is the gate.
+    file name, and rows are sorted and unique by `(model, repo)`. A missing day
+    is `CHECK MISSING date=<d>`, named, never filled. `check` exits 1 on any
+    finding and prints the count line either way. Never gate on `sum` or
+    `sources`; `check` is the gate.
+
+    **A GATE THAT CANNOT GO GREEN IS NOT A GATE.** Measured on this repository's
+    own `reports/tokens`, 2026-09-18: 36 `missing` findings for the 36 calendar
+    days nobody worked, and 4 `stray` findings for a README, a collator's log, a
+    `pre-nova-tokens/` archive and a session note. All 40 were correct, none was
+    work anybody would do, and the gate had become a line people skipped. So a
+    calendar day between the first and the last with no file is `gap=<n>` on the
+    `CHECK` line, and it is `missing` only when something this run can read says
+    there was spend on it: `--strict` names every gap, and `--no-spend <file>`
+    (one `YYYY-MM-DD` per line, the days that had none) names the gaps the list
+    does not account for. A `*.md`, a `*.log` or a `pre-*` archive directory
+    beside the day files is `notes=<n>` rather than a stray, and `--strict`
+    names those too. **Both counts print on the OK line**, so nothing was hidden
+    to make it green, and the two flags are one question with two answers —
+    giving both is a refusal. `check` still removes nothing.
 14. **The swarm's usage files are a source.** SPEC-SWARM rule 12 writes one
     usage file per job, `<pool>/usage/<job>.tsv`, outside the directory
     `reclaim` removes, before the job's files move. `--swarm <label>=<pool>`
@@ -447,11 +462,10 @@ is the day it was learned.
 
 ```
 nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
-                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
-                    [--provider <label>=<file>]...
-                    [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
+                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
+                    [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
 nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
-                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <label>=<file>]...
+                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                     [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
 nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
                     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
@@ -687,14 +701,15 @@ CHECK FAIL <path>:<line>: <reason>
 CHECK MISSING date=<d>
 CHECK STRAY <path>
 CHECK MORE kind=<file|row|missing|stray> shown=<n> total=<t> nova-tokens check --out <dir> --max 0
-CHECK OK at=<stamp> build=<id> files=<n> rows=<n> first=<d> last=<d> missing=0 stray=0
-CHECK FAIL files=<n> rows=<n> first=<d> last=<d> bad=<n> missing=<n> stray=<n>
+CHECK OK at=<stamp> build=<id> files=<n> rows=<n> first=<d> last=<d> missing=0 stray=0 gap=<n> notes=<n>
+CHECK FAIL files=<n> rows=<n> first=<d> last=<d> bad=<n> missing=<n> stray=<n> gap=<n> notes=<n>
 CHECK REFUSED: <reason>
 SOURCES SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|mixed|<zone>> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
 SOURCES UNREADABLE label=<label> path=<path>: <why>
 SOURCES UNPARSED label=<kind>:<name> note=<id> line=<n>: <text>
-SOURCES MORE kind=<source|unreadable|unparsed> shown=<n> total=<t> nova-tokens sources … --max 0
-SOURCES OK sources=<n> files=<n> messages=<n> unreadable=<n> unparsed=<n> rows=<n>
+SOURCES UNATTRIBUTED stem=<path> tokens=<n>
+SOURCES MORE kind=<source|unreadable|unparsed|unattributed> shown=<n> total=<t> nova-tokens sources … --max 0
+SOURCES OK sources=<n> files=<n> messages=<n> unreadable=<n> unparsed=<n> rows=<n> unattributed=<n|->
 SOURCES REFUSED: <reason>
 SESSION turns=<n> input=<n> cache_write=<n> cache_read=<n> output=<n> weighted=<n> avg_context=<n>
 PROFILES MODEL model=<model> cards=<n> median_out=<n|-> overshoot=<n>
@@ -882,7 +897,7 @@ order is `TOKENS UNPARSED` naming the file and the first wrong column.
 
 For a harness that records nothing (rule 21). The file is the provider's own
 export, unmodified; the label names the provider and the parser (`google`,
-`xai`); an export whose shape the parser does not know is `TOKENS UNREADABLE`
+`openai`, `xai`); an export whose shape the parser does not know is `TOKENS UNREADABLE`
 with the first unparsed line quoted, never a guess. Rows land with repo
 `unattributed` and the model as the export names it; a type the export has
 no column for is `-`, and `reports=` on the source line names the columns it
@@ -899,7 +914,12 @@ array, chosen by the file's leading `{` or `[`), folding each turn into the
 same rows: `endedAt` is the day, `primaryModelId` the model, and
 `inputTokens`/`outputTokens`/`cacheCreationTokens`/`cachedReadTokens`/
 `reasoningTokens` the five counts, with a field the turn did not carry left
-a `-`, never a zero.
+a `-`, never a zero. `costUsdTicks` is the turn's cost, an integer count of
+micro-dollar ticks — the unit `usd=` holds — folded into the model's `usd=`
+on the day's `TOKENS AVG` lines (rule 20's amendment: the cost is "from the
+usage `usd` column or a cost tick the source reported"); a lexeme that is
+not a non-negative integer is an absence, and `usd=` is `0` where no source
+reported one.
 
 ### `--bus <dir>`: friends' self-reports
 
@@ -1038,6 +1058,30 @@ one per script, and they disagreed on `serialize`, `rowan` and `freddy`. Here
 the table is the caller's file, the rule is one function, and the two shares
 on the day line are how a person sees whether the file is good enough.
 
+**`sources --unattributed` says what `other` is made of.** The share on the day
+line is the diagnosis and never the remedy: measured 2026-09-18, this bench's
+rules file put 81% of turns in `other`, and the only way to learn which paths
+those were was to grep the transcripts by hand. With the flag, `sources` tallies
+every path token that reached the `other` arm, keyed by the token's leading
+directory to four elements — which is where a repo is named, and which is the
+shape a rule matches — and prints them heaviest first, capped by `--max`:
+
+```
+SOURCES UNATTRIBUTED stem=<path> tokens=<n>
+```
+
+`SOURCES OK` then carries `unattributed=<n>`, the total tokens that fell to
+`other`; without the flag nothing is tallied and the field is `-`, because a
+dash is an absence where a zero is a measurement. The tally is taken inside the
+attribution ladder as the paths go past, so there is no second read of anything,
+and `fold` never takes it: `sources` is the verb that only looks.
+
+The tally holds at most 50,000 distinct stems — past that the stems already held
+keep counting and no new one is admitted, so the top of the list is unaffected
+and `unattributed=<n>` is still every token. The `SOURCES MORE` line's `total=`
+is the stems the tally holds, and `unattributed=` on the `OK` line is the number
+that is never capped.
+
 ## The month sum
 
 ```
@@ -1069,7 +1113,7 @@ sources. Ninety days under `--all`.
 | `report` | up to 200 pairs x 5 types = 1,000 lines on stdout, uncapped, because the body is the artifact and a capped report would be a count sent as a total; 1 REPORT OK on stderr | under 64 KB |
 | `sum --month` | 1 MONTH + 20 PAIR + 1 MORE + 20 MODEL + 1 MORE + 1 TOTAL + 1 OK = 45 | under 10 KB |
 | `check` | 20 FAIL + 1 MORE + 20 MISSING + 1 MORE + 20 STRAY + 1 MORE + 1 count line = 64 | under 8 KB |
-| `sources --all` | 10 SOURCE + 20 UNREADABLE + 1 MORE + 20 UNPARSED + 1 MORE + 1 OK = 53 | under 8 KB |
+| `sources --all` | 10 SOURCE + 20 UNREADABLE + 1 MORE + 20 UNPARSED + 1 MORE + 1 OK = 53 (+ 20 UNATTRIBUTED + 1 MORE with `--unattributed`) | under 8 KB |
 
 These are ceilings that do not grow with the state. A test builds that state
 in `t.TempDir()`, runs every verb, and asserts the line and byte counts
@@ -2120,12 +2164,19 @@ seen red before it is trusted.
     a file with rows out of order, a file with no version line, a file with
     an empty type cell, a file with `day_basis` empty, a file whose version
     line lacks `turns=`, and a run of days
-    `09-07, 09-08, 09-10`: every finding prints one line,
-    `CHECK MISSING date=2026-09-09` prints, the count line prints
-    `bad=8 missing=1`, exit 1; a file whose type cells are `-` and whose
-    `day_basis` is `America/Los_Angeles` is clean; a clean set is
-    `CHECK OK … missing=0`, exit 0; `sum` over the same gapped month exits
-    0 with `missing=1`.
+    `09-07, 09-08, 09-10`: every finding prints one line, the count line
+    prints `bad=8 gap=1 missing=0`, exit 1; the same run with `--strict`
+    prints `CHECK MISSING date=2026-09-09` and `missing=1`, and so does a
+    `--no-spend` list that does not name that day; a `--no-spend` list that
+    names it is `missing=0`; `--strict` and `--no-spend` together is exit 2;
+    a file whose type cells are `-` and whose `day_basis` is
+    `America/Los_Angeles` is clean; a clean set is `CHECK OK … missing=0`,
+    exit 0; `sum` over the same gapped month exits 0 with `missing=1`.
+    The directory listing of this repository's own `reports/tokens` — sixteen
+    day files with two long gaps, `README.md`, `collate.log`,
+    `pre-nova-tokens/` and a session note — is `CHECK OK`, exit 0, with the
+    gaps and the notes counted on the line; under `--strict` it is the 40
+    findings that made the gate unusable.
 14. A pool with two usage files and a third job directory with none, after
     the two job directories are reclaimed: two rows fold with
     `sources=swarm:<label>` and all five types from the row, a file whose
@@ -2220,8 +2271,10 @@ seen red before it is trusted.
     `TOKENS MIXED` for that row.
 21. A fixture Google export and a fixture xAI export fold to rows with repo
     `unattributed`, the parser name in `sources`, `-` in every type the
-    export has no column for, and `day_basis` per demanded test 17; an
-    export with one unknown column is `TOKENS UNREADABLE` quoting that line;
+    export has no column for, and `day_basis` per demanded test 17; a
+    `grok usage` JSON turn carrying `costUsdTicks` folds its cost into the
+    model's `usd=` on the day's `TOKENS AVG` line, never `usd=0` where the
+    source reported a tick; an export with one unknown column is `TOKENS UNREADABLE` quoting that line;
     a friend's tokens note whose body is one `# repos: schema, serialize`
     line and nothing else is a valid note with zero rows, yields
     `TOKENS TOUCHED … repos=schema,serialize`, and changes no count.
@@ -2315,7 +2368,10 @@ paragraphs are the normative text and these ten lines are the index.
     rewrites the day file between the lock and the push is exit 1
     `reason=changed`.
 32. A fixture ledger and a fixture swarm root of cards whose receipts carry
-    `repo` and `rc`: `sum --swarm-root` writes one ledger row per `(model,
+    `repo` and `rc`, and a usage receipt is named from SPEC-WORK's `:attempt`
+    `:usage` pointer by its **`usage:<receipt-id>`** form, `receipt-id` a
+    32-character hexadecimal string and the shape the two specs join on:
+    `sum --swarm-root` writes one ledger row per `(model,
     repo)` pair with `repo` from the receipt, `completed` counting only the
     `rc=0` cards, and `usd_per_task` equal to `usd / completed` to six
     decimals; a pair with `completed=0` writes `usd_per_task=-`, never a

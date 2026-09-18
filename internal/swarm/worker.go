@@ -89,6 +89,12 @@ type Worker struct {
 	// DefaultLaunchGrace (15s). A slow failure -- one that takes longer than this -- is
 	// a real run that failed and is never retried.
 	LaunchGrace string `json:"launch_grace,omitempty"`
+
+	// KEEP DATA (issue #1048): a worker description that sets keep_data=true asks `run` not
+	// to reap the finished slots' data/ and tmp/ at task end. It is a person's debugging
+	// switch: the default is false, and the shared per-bench caches under <root>/cache are
+	// never touched either way.
+	KeepData bool `json:"keep_data,omitempty"`
 }
 
 // The usage sources a description may declare (rule 13). There are two.
