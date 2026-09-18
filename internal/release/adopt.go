@@ -80,15 +80,21 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// install is the one this verb just copied there, so a machine with no
 	// nova-tools at all -- a bench provisioned this morning -- adopts with the
 	// same command as one that is a version behind.
+	// The file is named for the TARGET platform, never this host: adopting a
+	// windows bench from the Studio must look for, send and run
+	// `nova-update.exe`. A bare `nova-update` there is a path that exists
+	// nowhere in the release, and the machine would refuse with `command not
+	// found` for a mistake made on this side.
+	updateFile := ToolFile("nova-update", goos)
 	var carriesUpdate bool
 	for _, a := range arts {
-		if a.Name == "nova-update" || a.Name == "nova-update.exe" {
+		if a.Name == updateFile {
 			carriesUpdate = true
 		}
 	}
 	if !carriesUpdate {
 		return refusal(errs, "ADOPT", refuse("build from a checkout that has cmd/nova-update",
-			"this release carries no nova-update, so no machine could run the install"))
+			"this release carries no %s, so no machine could run the install", updateFile))
 	}
 	ssh := deps.SSH
 	if ssh == nil {
@@ -108,7 +114,7 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			continue
 		}
 		argv := []string{
-			path.Join(remoteDir, "nova-update"), "release", "install",
+			path.Join(remoteDir, updateFile), "release", "install",
 			"--from", o.dest, "--version", o.version, "--bin", o.bin,
 			"--platform", goos + "-" + goarch,
 		}

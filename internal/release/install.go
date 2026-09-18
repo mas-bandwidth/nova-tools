@@ -92,11 +92,18 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	}
 	installed, skipped := 0, 0
 	for _, a := range arts {
+		// a.Name is the file name the BUILD chose for the target platform --
+		// ToolFile, so `nova-bus.exe` in a windows release -- read back out of
+		// that release's own SHA256SUMS. Every name here therefore already
+		// carries the right suffix, and nothing below rebuilds one from
+		// runtime.GOOS: the file that is verified, the path the probe runs and
+		// the rename target are all this one string.
 		target := filepath.Join(o.bin, a.Name)
 		// SKIP WHEN THE BOX ALREADY ANSWERS. The question is asked of the
-		// BINARY, not of a marker file: a marker says what somebody meant to
-		// install, and the whole point of the version verbs is to say what is
-		// actually there.
+		// BINARY -- by its real name, the one it was installed under -- and
+		// not of a marker file: a marker says what somebody meant to install,
+		// and the whole point of the version verbs is to say what is actually
+		// there.
 		if line, err := versionOf(ctx, target); err == nil && hasToken(line, o.version) {
 			skipped++
 			continue

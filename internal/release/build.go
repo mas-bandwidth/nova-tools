@@ -34,6 +34,31 @@ func Platform(flagValue string) (string, string, error) {
 	return goos, goarch, nil
 }
 
+// ExeSuffix is what a tool's FILE is called on one platform: `nova-bus` on unix,
+// `nova-bus.exe` on windows. It takes the TARGET's goos, never the host's,
+// because every one of these names is decided for the machine the binary will
+// run on rather than for the machine deciding it -- a release cut on the Studio
+// for a windows bench names windows files, and a release built ON windows names
+// them the same way.
+//
+// Reading runtime.GOOS at each of these sites instead is the defect this exists
+// to make impossible, and it is a defect that hides: it is right on the host
+// that happens to match and silently wrong on every other, so the artifacts end
+// up called one thing while everything looking for them asks for another. The
+// Windows PR leg found the test half of it (integration-4, 2026-09-18); the
+// product half was `adopt` composing the remote command as a bare `nova-update`,
+// which named a path that does not exist on a windows bench.
+func ExeSuffix(goos string) string {
+	if goos == "windows" {
+		return ".exe"
+	}
+	return ""
+}
+
+// ToolFile is the file one tool installs under on the target platform. Every
+// place in this package that turns a tool NAME into a FILE goes through it.
+func ToolFile(tool, goos string) string { return tool + ExeSuffix(goos) }
+
 // ArtifactDir is where one platform's binaries for one version live, under the
 // root --out or --from names. The version and the platform are both in the path
 // so that one root can hold several releases and several platforms at once,
@@ -93,11 +118,7 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	args := []string{"-trimpath", "-ldflags", Ldflags(o.version)}
 	for i, tool := range tools {
 		progress(errs, "building %s for %s/%s (%d/%d)", tool, goos, goarch, i+1, len(tools))
-		name := tool
-		if goos == "windows" {
-			name += ".exe"
-		}
-		output, err := tc.Build(ctx, o.source, "./cmd/"+tool, filepath.Join(dir, name), goos, goarch, args)
+		output, err := tc.Build(ctx, o.source, "./cmd/"+tool, filepath.Join(dir, ToolFile(tool, goos)), goos, goarch, args)
 		if err != nil {
 			fmt.Fprintf(errs, "BUILD FAIL tool=%s platform=%s version=%s: %s (fix the compile error and build again; no %s was written)\n",
 				field(tool), field(goos+"-"+goarch), field(o.version), oneLine(output, err), SumsFile)

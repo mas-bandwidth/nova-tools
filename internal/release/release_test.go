@@ -406,9 +406,27 @@ func TestBuildRefusesASourceTreeWithNoNovaTools(t *testing.T) {
 // install
 // ---------------------------------------------------------------------------
 
-// built lays down what `build` writes, so the install tests start from the
-// artifact rather than from a hand-made directory that might not match it.
-func built(t *testing.T, version string, tools ...string) string {
+// hostPlatform is what an empty --platform resolves to. A test that wants a
+// SPECIFIC platform passes one; a test that does not care passes "" and gets
+// this. No test here assembles a tool's FILE NAME out of runtime.GOOS itself:
+// doing that is how the Windows leg failed, with the artifacts written as
+// nova-wake.exe and every assertion asking after nova-wake.
+var hostPlatform = runtime.GOOS + "-" + runtime.GOARCH
+
+func platformOf(t *testing.T, flagValue string) (string, string) {
+	t.Helper()
+	goos, goarch, err := Platform(flagValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return goos, goarch
+}
+
+// built lays down what `build` writes for one platform, so the install and
+// adopt tests start from the artifact rather than from a hand-made directory
+// that might not match it -- including its file NAMES, which is the whole of
+// what went wrong. platform "" means this host.
+func built(t *testing.T, version, platform string, tools ...string) string {
 	t.Helper()
 	out := t.TempDir()
 	source := t.TempDir()
@@ -420,65 +438,128 @@ func built(t *testing.T, version string, tools ...string) string {
 			t.Fatal(err)
 		}
 	}
+	args := []string{"build", "--version", version, "--out", out, "--source", source}
+	if platform != "" {
+		args = append(args, "--platform", platform)
+	}
 	var o, e bytes.Buffer
-	if code := Run("nova-update", []string{"build", "--version", version, "--out", out, "--source", source},
-		&o, &e, Deps{Toolchain: &fakeToolchain{}}); code != 0 {
+	if code := Run("nova-update", args, &o, &e, Deps{Toolchain: &fakeToolchain{}}); code != 0 {
 		t.Fatalf("fixture build: %d %s", code, e.String())
 	}
 	return out
 }
 
-func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
-	from := built(t, "v0.16.0", "nova-bus", "nova-swarm", "nova-wake")
-	bin := t.TempDir()
-	// nova-wake is already at the release; the other two are not.
-	if err := os.WriteFile(filepath.Join(bin, "nova-wake"), []byte("old"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin},
-		&o, &e, Deps{VersionOf: func(_ context.Context, path string) (string, error) {
-			if filepath.Base(path) == "nova-wake" {
-				return "nova-wake v0.16.0 " + runtime.GOOS + "/" + runtime.GOARCH, nil
+// The build names every artifact for the TARGET, so a windows release is a
+// directory of .exe files whatever host built it -- which is what lets the
+// install below find them and the adopt below run one of them.
+func TestBuildNamesArtifactsForTheTargetNotTheHost(t *testing.T) {
+	for _, tc := range []struct{ platform, want string }{
+		{"windows-amd64", "nova-bus.exe"},
+		{"linux-amd64", "nova-bus"},
+		{"darwin-arm64", "nova-bus"},
+	} {
+		t.Run(tc.platform, func(t *testing.T) {
+			goos, goarch := platformOf(t, tc.platform)
+			dir := ArtifactDir(built(t, "v0.16.0", tc.platform, "nova-bus"), "v0.16.0", goos, goarch)
+			arts, err := ReadSums(dir)
+			if err != nil {
+				t.Fatal(err)
 			}
-			return "", fmt.Errorf("no such file")
-		}})
-	if code != 0 {
-		t.Fatalf("code=%d errs=%s", code, e.String())
+			if len(arts) != 1 || arts[0].Name != tc.want {
+				t.Fatalf("%s built %v, want %s", tc.platform, arts, tc.want)
+			}
+			if _, err := os.Stat(filepath.Join(dir, tc.want)); err != nil {
+				t.Fatalf("%s is not on disk: %v", tc.want, err)
+			}
+		})
 	}
-	if want := "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=1"; !strings.Contains(o.String(), want) {
-		t.Fatalf("no install line %q in:\n%s", want, o.String())
-	}
-	for _, tool := range []string{"nova-bus", "nova-swarm"} {
-		info, err := os.Stat(filepath.Join(bin, tool))
-		if err != nil {
-			t.Fatal(err)
+}
+
+// The Windows PR leg of integration-4 failed here: on a windows host the build
+// writes nova-wake.exe, this test pre-installed a bare nova-wake, and its probe
+// matched a bare base name -- so nothing skipped and the count was wrong. The
+// platform is now NAMED rather than inherited from whichever host runs the
+// suite, and windows is one of the names, so this holds on every runner and
+// also says what a windows release is supposed to look like.
+func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
+	for _, platform := range []string{"", "linux-amd64", "windows-amd64"} {
+		name := platform
+		if name == "" {
+			name = "this host " + hostPlatform
 		}
-		if info.Mode().Perm()&0o111 == 0 {
-			t.Fatalf("%s is not executable: %v", tool, info.Mode())
-		}
-	}
-	// Skipped means untouched, not overwritten with the same bytes.
-	body, err := os.ReadFile(filepath.Join(bin, "nova-wake"))
-	if err != nil || string(body) != "old" {
-		t.Fatalf("a skipped tool was rewritten: %q %v", body, err)
-	}
-	// The temporary name never survives the verb.
-	entries, err := os.ReadDir(bin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
-			t.Fatalf("a temporary file was left behind: %s", entry.Name())
-		}
+		t.Run(name, func(t *testing.T) {
+			goos, _ := platformOf(t, platform)
+			from := built(t, "v0.16.0", platform, "nova-bus", "nova-swarm", "nova-wake")
+			bin := t.TempDir()
+			// nova-wake is already at the release; the other two are not. It
+			// is written under the name the TARGET installs it as.
+			current := ToolFile("nova-wake", goos)
+			if err := os.WriteFile(filepath.Join(bin, current), []byte("old"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin}
+			if platform != "" {
+				args = append(args, "--platform", platform)
+			}
+			var o, e bytes.Buffer
+			var probed []string
+			code := Run("nova-update", args, &o, &e, Deps{VersionOf: func(_ context.Context, p string) (string, error) {
+				probed = append(probed, filepath.Base(p))
+				if filepath.Base(p) == current {
+					return "nova-wake v0.16.0 " + goos + "/amd64", nil
+				}
+				return "", fmt.Errorf("no such file")
+			}})
+			if code != 0 {
+				t.Fatalf("code=%d errs=%s", code, e.String())
+			}
+			if want := "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=1"; !strings.Contains(o.String(), want) {
+				t.Fatalf("no install line %q in:\n%s", want, o.String())
+			}
+			// THE PROBE ASKS THE REAL FILE. On windows that is nova-bus.exe,
+			// and a probe that ran `nova-bus` would be asking after a path
+			// that does not exist -- an error, which reads as "not current",
+			// which reinstalls every tool on every pass forever.
+			wantProbed := []string{ToolFile("nova-bus", goos), ToolFile("nova-swarm", goos), current}
+			sort.Strings(probed)
+			sort.Strings(wantProbed)
+			if strings.Join(probed, ",") != strings.Join(wantProbed, ",") {
+				t.Fatalf("probed %v, want %v", probed, wantProbed)
+			}
+			for _, tool := range []string{"nova-bus", "nova-swarm"} {
+				file := ToolFile(tool, goos)
+				info, err := os.Stat(filepath.Join(bin, file))
+				if err != nil {
+					t.Fatalf("%s was not installed: %v", file, err)
+				}
+				if info.Mode().Perm()&0o111 == 0 {
+					t.Fatalf("%s is not executable: %v", file, info.Mode())
+				}
+			}
+			// Skipped means untouched, not overwritten with the same bytes.
+			body, err := os.ReadFile(filepath.Join(bin, current))
+			if err != nil || string(body) != "old" {
+				t.Fatalf("a skipped tool was rewritten: %q %v", body, err)
+			}
+			// The temporary name never survives the verb.
+			entries, err := os.ReadDir(bin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Name(), ".") {
+					t.Fatalf("a temporary file was left behind: %s", entry.Name())
+				}
+			}
+		})
 	}
 }
 
 func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
-	from := built(t, "v0.16.0", "nova-bus", "nova-swarm")
-	dir := filepath.Join(from, "v0.16.0", runtime.GOOS+"-"+runtime.GOARCH)
-	if err := os.WriteFile(filepath.Join(dir, "nova-bus"), []byte("tampered"), 0o755); err != nil {
+	goos, goarch := platformOf(t, "")
+	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm")
+	dir := ArtifactDir(from, "v0.16.0", goos, goarch)
+	if err := os.WriteFile(filepath.Join(dir, ToolFile("nova-bus", goos)), []byte("tampered"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
@@ -500,7 +581,7 @@ func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
 
 func TestInstallRefusesAVersionThatWasNeverBuilt(t *testing.T) {
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"install", "--from", built(t, "v0.16.0", "nova-bus"),
+	code := Run("nova-update", []string{"install", "--from", built(t, "v0.16.0", "", "nova-bus"),
 		"--version", "v0.17.0", "--bin", t.TempDir()}, &o, &e, Deps{})
 	if code != 2 || !strings.Contains(e.String(), "v0.17.0") {
 		t.Fatalf("code=%d errs=%s", code, e.String())
@@ -520,52 +601,88 @@ func machinesFile(t *testing.T, lines string) string {
 	return path
 }
 
+// The remote command names the tool file of the TARGET, so adopting a windows
+// bench runs nova-update.exe there. Composing a bare `nova-update` was the
+// product half of the same defect the Windows PR leg found in the test half:
+// the path would exist nowhere in the release, and the bench would answer
+// `command not found` for a mistake made on this side.
 func TestAdoptSendsInstallsAndWritesOneReceiptPerMachine(t *testing.T) {
-	from := built(t, "v0.16.0", "nova-bus", "nova-update")
-	list := machinesFile(t, "# the Linux benches\nhulk\nvision\n\nmini\n")
-	s := &fakeSSH{answer: map[string]string{
-		"hulk":   "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n",
-		"vision": "RELEASE INSTALLED version=v0.16.0 tools=0 skipped=2\n",
-		"mini":   "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n",
-	}}
+	for _, platform := range []string{"", "linux-amd64", "windows-amd64"} {
+		name := platform
+		if name == "" {
+			name = "this host " + hostPlatform
+		}
+		t.Run(name, func(t *testing.T) {
+			goos, goarch := platformOf(t, platform)
+			from := built(t, "v0.16.0", platform, "nova-bus", "nova-update")
+			list := machinesFile(t, "# the Linux benches\nhulk\nvision\n\nmini\n")
+			s := &fakeSSH{answer: map[string]string{
+				"hulk":   "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n",
+				"vision": "RELEASE INSTALLED version=v0.16.0 tools=0 skipped=2\n",
+				"mini":   "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n",
+			}}
+			args := []string{"adopt", "--version", "v0.16.0", "--machines", list,
+				"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/home/nova/.local/bin",
+				"--dest", "/home/nova/nova-bench/build"}
+			if platform != "" {
+				args = append(args, "--platform", platform)
+			}
+			var o, e bytes.Buffer
+			if code := Run("nova-update", args, &o, &e, Deps{SSH: s}); code != 0 {
+				t.Fatalf("code=%d errs=%s", code, e.String())
+			}
+			for _, machine := range []string{"hulk", "vision", "mini"} {
+				want := "RELEASE ADOPTED machine=" + machine + " version=v0.16.0 tools="
+				if !strings.Contains(o.String(), want) {
+					t.Fatalf("no receipt for %s:\n%s", machine, o.String())
+				}
+			}
+			if !strings.Contains(o.String(), "RELEASE ADOPT OK machines=3 adopted=3 refused=0") {
+				t.Fatalf("no verdict line:\n%s", o.String())
+			}
+			if len(s.sends) != 3 || len(s.runs) != 3 {
+				t.Fatalf("sends=%v runs=%v", s.sends, s.runs)
+			}
+			// The release installs ITSELF: the nova-update that runs the
+			// remote install is the one just sent, so a bench with no
+			// nova-tools at all can still adopt. That is the whole of what
+			// fleet-install-tools.sh's nested ssh quoting was doing.
+			run := s.runs[0]
+			for _, part := range []string{
+				"/home/nova/nova-bench/build/v0.16.0/" + goos + "-" + goarch + "/" + ToolFile("nova-update", goos),
+				"release install",
+				"--version v0.16.0",
+				"--bin /home/nova/.local/bin",
+				"--platform " + goos + "-" + goarch,
+			} {
+				if !strings.Contains(run, part) {
+					t.Fatalf("the remote command does not carry %q: %s", part, run)
+				}
+			}
+			// Remote paths are slash paths whatever this host is, so a
+			// darwin or windows coordinator adopts a Linux bench correctly.
+			if strings.Contains(run, `\`) {
+				t.Fatalf("the remote command carries a backslash path: %s", run)
+			}
+		})
+	}
+}
+
+// A windows release that somehow carries no nova-update.exe is refused by name,
+// rather than sent and then found missing on the far side.
+func TestAdoptRefusesAReleaseWithNoUpdateForTheTarget(t *testing.T) {
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0", "--machines", list,
-		"--ssh", "/usr/bin/ssh", "--from", from, "--bin", "/home/nova/.local/bin",
-		"--dest", "/home/nova/nova-bench/build"}, &o, &e, Deps{SSH: s})
-	if code != 0 {
+	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh",
+		"--from", built(t, "v0.16.0", "windows-amd64", "nova-bus"), "--bin", "/b", "--dest", "/d",
+		"--platform", "windows-amd64"}, &o, &e, Deps{SSH: &fakeSSH{}})
+	if code != 2 || !strings.Contains(e.String(), "nova-update.exe") {
 		t.Fatalf("code=%d errs=%s", code, e.String())
-	}
-	for _, machine := range []string{"hulk", "vision", "mini"} {
-		want := "RELEASE ADOPTED machine=" + machine + " version=v0.16.0 tools="
-		if !strings.Contains(o.String(), want) {
-			t.Fatalf("no receipt for %s:\n%s", machine, o.String())
-		}
-	}
-	if !strings.Contains(o.String(), "RELEASE ADOPT OK machines=3 adopted=3 refused=0") {
-		t.Fatalf("no verdict line:\n%s", o.String())
-	}
-	if len(s.sends) != 3 || len(s.runs) != 3 {
-		t.Fatalf("sends=%v runs=%v", s.sends, s.runs)
-	}
-	// The release installs ITSELF: the nova-update that runs the remote
-	// install is the one just sent, so a bench with no nova-tools at all can
-	// still adopt. That is the whole of what fleet-install-tools.sh's nested
-	// ssh quoting was doing.
-	run := s.runs[0]
-	for _, part := range []string{
-		"/home/nova/nova-bench/build/v0.16.0/" + runtime.GOOS + "-" + runtime.GOARCH + "/nova-update",
-		"release install",
-		"--version v0.16.0",
-		"--bin /home/nova/.local/bin",
-	} {
-		if !strings.Contains(run, part) {
-			t.Fatalf("the remote command does not carry %q: %s", part, run)
-		}
 	}
 }
 
 func TestAdoptRefusesOneMachineAndStillReportsTheRest(t *testing.T) {
-	from := built(t, "v0.16.0", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "", "nova-bus", "nova-update")
 	list := machinesFile(t, "hulk\nvision\n")
 	s := &fakeSSH{
 		answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n"},
@@ -603,7 +720,7 @@ func TestAdoptRefusesOneMachineAndStillReportsTheRest(t *testing.T) {
 // adoption, however cheerfully it exited: the receipt is read from the output,
 // never from the exit code.
 func TestAdoptRefusesAMachineWhoseInstallSaidNothing(t *testing.T) {
-	from := built(t, "v0.16.0", "nova-update")
+	from := built(t, "v0.16.0", "", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"hulk": "bash: nova-update: command not found\n"}}
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0", "--machines", machinesFile(t, "hulk\n"),
@@ -614,7 +731,7 @@ func TestAdoptRefusesAMachineWhoseInstallSaidNothing(t *testing.T) {
 }
 
 func TestAdoptRefusesAMachineNameThatIsNotOne(t *testing.T) {
-	from := built(t, "v0.16.0", "nova-update")
+	from := built(t, "v0.16.0", "", "nova-update")
 	s := &fakeSSH{}
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
@@ -632,7 +749,7 @@ func TestAdoptRefusesAnEmptyMachineList(t *testing.T) {
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "# nobody\n\n"), "--ssh", "/usr/bin/ssh",
-		"--from", built(t, "v0.16.0", "nova-update"), "--bin", "/b", "--dest", "/d"}, &o, &e, Deps{SSH: &fakeSSH{}})
+		"--from", built(t, "v0.16.0", "", "nova-update"), "--bin", "/b", "--dest", "/d"}, &o, &e, Deps{SSH: &fakeSSH{}})
 	if code != 2 || !strings.Contains(e.String(), "no machine") {
 		t.Fatalf("code=%d errs=%s", code, e.String())
 	}
@@ -698,7 +815,7 @@ func TestReleaseRefusesAnUnknownSubverbAndNamesTheFour(t *testing.T) {
 // the receipt off stdout reads receipts and nothing else (Glenn 2026-09-17:
 // programs say what they are doing).
 func TestProgressGoesToStderrAndReceiptsToStdout(t *testing.T) {
-	from := built(t, "v0.16.0", "nova-bus", "nova-update")
+	from := built(t, "v0.16.0", "", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n"}}
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"adopt", "--version", "v0.16.0", "--machines", machinesFile(t, "hulk\n"),
