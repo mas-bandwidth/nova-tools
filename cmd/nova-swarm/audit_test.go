@@ -51,6 +51,11 @@ var swarmAudit = audit.Config{
 		// the harness's own capture -- a file a card can write -- so nothing but the empty
 		// string and an oneline.Field-escaped path can come back.
 		"fenceSuffix",
+		// swarm.WallLine (issue #644's follow-up) builds the `WALL task=<id> path=<p>
+		// step=<n> [commits=<n> branch=<name>]` report line and puts every field through
+		// oneline.Field inside itself. The path and step come from the card's own log and
+		// the branch from the clone, so nothing but escaped fields can come back.
+		"swarm.WallLine",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
