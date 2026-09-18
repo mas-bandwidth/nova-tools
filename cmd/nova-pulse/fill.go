@@ -1,6 +1,8 @@
 package main
 
-// The fill verb: fill-loop.sh's tick body, once per tick, for every bench. It reads the
+// The fill verb: fill-loop.sh's tick body, once per tick, for every bench. --machines names
+// the machines registry, and a --bench whose roles lack `bench` is refused before any ssh:
+// runner hosts are CI-only (Glenn 2026-09-18), and the fill is the path a CARD takes. It reads the
 // bench's capacity over ssh, pops that many ready cards, moves them to launched and hands
 // each to flash-native-bench.sh. A card's `LANE: <name>` line serializes its area: at most
 // one live card per lane, the rest held in order, named by --lanes (default
@@ -41,6 +43,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	ready := f.fs.String("ready", "", "")
 	launched := f.fs.String("launched", "", "")
 	lanes := f.fs.String("lanes", "queue/control/lanes.tsv", "")
+	machines := f.fs.String("machines", "queue/control/machines.tsv", "")
 	once := f.fs.Bool("once", false, "")
 	var benches benchFlag
 	f.fs.Var(&benches, "bench", "")
@@ -50,6 +53,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	f.want(*ready, "ready", "the directory holding the card-*.md ready to launch")
 	f.want(*launched, "launched", "the directory the launched cards are moved into")
+	f.want(*machines, "machines", "the machines registry: which hosts are benches and which serve the merge group's shards")
 	if f.refused(stderr) {
 		return 2
 	}
@@ -60,6 +64,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Ready:    *ready,
 		Launched: *launched,
 		Lanes:    *lanes,
+		Machines: *machines,
 		Benches:  []string(benches),
 		Once:     *once,
 		Stdout:   stdout,

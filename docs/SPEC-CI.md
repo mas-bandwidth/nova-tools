@@ -900,6 +900,63 @@ then any number of key=value extras``.
 **Its narrowings.** Only the `version` verb is read; a `--version` flag or a
 version inside a banner is not. Extras are not checked beyond their `key=value`
 shape.
+### `benchname` — a bench name is resolved through the machines registry
+
+**The rule.** Glenn's lock of 2026-09-18: runner hosts are CI-only — no card,
+probe or load on a machine that serves the merge group's shards. A function in
+`internal/pulse` or `cmd/nova-pulse` that takes a `bench string` must resolve it
+through `internal/fleet`'s registry (`RequireBench`, `Lookup`, or the two pulse
+wrappers `fleetOneBench` and `refuseNonBenches`) before the name reaches a
+machine, or be named in the allowlist with its reason.
+**The hurt.** The lock was broken by a SHAPE, not a mistake: a bench name was a
+bare string, so `--bench batman` was a hostname to ssh to and nothing in the
+tools knew batman is six CI runners and not a card bench (2026-09-18: a
+reproduction loaded onto batman put the darwin shards under, ledger item 13).
+**The test.** `TestEveryBenchNameIsResolvedThroughTheRegistry` and
+`TestTheBenchNameHeuristicReadsWhatItClaims`
+(`internal/ci/benchname_class_test.go`); the second holds the heuristic itself
+to hand-written sources so the first cannot pass by reading nothing.
+**Its allowlist.** `internal/ci/testdata/benchname_allowlist.txt`, one
+`<path>:<func>` per line with its reason, checked in BOTH directions — a listed
+function that has left or now resolves its name is a red run — so the list only
+shrinks. Today: `reissue` (formats card text, touches no machine), the two raw
+seams `sshCapacity.Capacity` and `flashLauncher.Launch` (wrapped by
+`pulse.Fill`), and the Mac power verbs, which exist FOR the runner hosts.
+**Its remedy line.** `<path>:<func> takes a bench name and does not resolve it
+through the machines registry; call fleet.RequireBench (or fleetOneBench /
+refuseNonBenches) first, or add it to internal/ci/testdata/benchname_allowlist.txt
+with the reason`.
+**Its narrowings.** Only the two packages where a bench name reaches a machine
+are read; a bench name that arrives as a different type, or through a package
+outside them, is the compiler's rule, not this one.
+
+### `prmerge` — nothing reaches the dev merge queue but a batch
+
+**The rule.** Glenn, 2026-09-18: "Nothing reaches the dev merge queue but a
+batch." `gh pr merge` in any spelling, and any `--auto` flag to it, is refused in
+every non-test Go file under `cmd/` and `internal/` and in every file under
+`.github/`. Admission to a merge queue is `internal/merge.Enqueuer.Enqueue`, the
+`enqueuePullRequest` mutation, and nothing else.
+**The hurt.** Four pull requests landed on dev that morning that nobody
+enqueued: each carried GitHub's auto-merge, switched on hours earlier by a
+`gh pr merge` call made while the pull request was red, and the forge enqueued
+them itself as their checks went green. Twenty-seven open pull requests were
+carrying the same instruction when the sweep found them; the enqueuer in
+`internal/pulse/ledger.go` was doing it in code.
+**The test.** `TestNoGhPrMergeSpellingInTheToolsGo` and
+`TestNoGhPrMergeSpellingUnderDotGithub` (`internal/ci/prmerge_class_test.go`).
+The Go walk reads string literals in source order per function, so a command
+built in a slice is seen as well as one passed inline, and a refusal message
+that mentions the spelling is one literal, not an argument list.
+**Its allowlist.** `internal/ci/testdata/prmerge_allowlist.txt`, `<path>:<func>`
+per line, checked in both directions so it only shrinks. Today: the audit's
+`--disable-auto`, which takes an auto-merge OFF.
+**Its remedy line.** `<path>:<line>: gh pr merge (or --auto) is refused; enqueue
+through internal/merge.Enqueuer.Enqueue, or take the auto-merge off with the
+audit's --disable-auto`.
+**Its narrowings.** Test files are not read; a comment may still say auto-merge
+— the rule is about what runs. A spelling assembled at run time from separate
+words is not seen.
 
 ### `selection` — `internal/ci` is always in the selected packages
 

@@ -50,6 +50,7 @@ func TestFillHoldsAllButOneCardPerLane(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched, Lanes: lanes,
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Benches:  []string{"bench-a"},
 		Once:     true,
 		Stdout:   &out,
@@ -89,6 +90,7 @@ func TestFillLaunchesOneCardInEachLane(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched, Lanes: lanes,
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Benches:  []string{"bench-a"},
 		Once:     true,
 		Stdout:   &out,
@@ -117,6 +119,7 @@ func TestFillLaunchesCardWithoutLane(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched, Lanes: lanes,
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Benches:  []string{"bench-a"},
 		Once:     true,
 		Stdout:   &out,
@@ -146,6 +149,7 @@ func TestFillRefusesUnknownLane(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched, Lanes: lanes,
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Benches:  []string{"bench-a"},
 		Once:     true,
 		Stdout:   &out,
@@ -181,6 +185,7 @@ func TestFillReadsLiveLaneFromLaunchedCard(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched, Lanes: lanes,
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Benches:  []string{"bench-a"},
 		Once:     true,
 		Stdout:   &out,
