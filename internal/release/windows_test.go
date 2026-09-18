@@ -256,8 +256,14 @@ func TestAdoptFetchesFromAWindowsBuildHost(t *testing.T) {
 	if !strings.HasPrefix(s.fetches[0], "threadripper: C:/Users/nova/nova-release/v0.16.0/windows-amd64 -> ") {
 		t.Fatalf("the fetch did not name the windows build host's own path: %v", s.fetches)
 	}
-	if strings.Contains(s.fetches[0], `\`) {
-		t.Fatalf("a backslash reached the fetch: %v", s.fetches)
+	// Only the REMOTE half is checked for a backslash. The local half is the staging
+	// directory this test was handed, and on a windows runner that is a native path
+	// with backslashes in it -- `C:\Users\RUNNER~1\AppData\Local\Temp\...` is
+	// correct there and asserting against it made this test fail on the one platform
+	// it is about. What must carry no backslash is the path that goes over ssh.
+	remote, _, _ := strings.Cut(s.fetches[0], " -> ")
+	if strings.Contains(remote, `\`) {
+		t.Fatalf("a backslash reached the remote half of the fetch: %v", s.fetches)
 	}
 }
 
