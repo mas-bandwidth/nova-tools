@@ -27,15 +27,30 @@ func runCheck(t *testing.T, args ...string) (exit int, stdout, stderr string) {
 	return exit, out.String(), errb.String()
 }
 
+// exampleDogfood is the fixture the dogfood verb's banner example runs
+// against: a command reference the size of a first run, and the receipts two
+// friends left against it.
+const exampleDogfood = "testdata/example-dogfood"
+
 // localize points an example or transcript command at the fixture, so what is
-// under test is the command's SHAPE and not the reader's directory layout.
+// under test is the command's SHAPE and not the reader's directory layout. The
+// banner shows a reader the paths they would type from the repository root
+// (./self, ./docs/CLI.md); here those become the fixtures that ship with the
+// tool, so the example is run rather than read.
 func localize(args []string) []string {
 	out := append([]string(nil), args...)
 	for i, a := range out {
-		if a == "./self" {
+		switch {
+		case a == "./self":
 			out[i] = exampleSelf
-		} else if rest, ok := strings.CutPrefix(a, "./self/"); ok {
-			out[i] = filepath.Join(exampleSelf, rest)
+		case a == "./docs/CLI.md":
+			out[i] = filepath.Join(exampleDogfood, "CLI.md")
+		case a == "./dogfood-receipts":
+			out[i] = filepath.Join(exampleDogfood, "receipts")
+		default:
+			if rest, ok := strings.CutPrefix(a, "./self/"); ok {
+				out[i] = filepath.Join(exampleSelf, rest)
+			}
 		}
 	}
 	return out

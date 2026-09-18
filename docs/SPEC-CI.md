@@ -259,3 +259,67 @@ secret leak look the same in the log.
    is allowed.
 7. A row allows one offender of its kind in its file wherever the offender now
    stands; a second offender of the same kind in the file is refused.
+
+## The CI class test against a child `go` that inherits the environment
+
+**The help line.** The class test is entered in the CI check roster and in help
+as the verb `goenv`:
+
+```
+goenv   read every .go under cmd/ and internal/; refuse a child `go` that inherits the caller's environment
+```
+
+It runs as `go test ./internal/ci -run TestGoEnvClassRuleHoldsOverTheRepository`.
+
+**What it reads and what it writes.** It reads, as text, every `.go` file under
+`internal/` and `cmd/` — tests included, because a test helper that builds a
+binary is a tool spawning `go` exactly like a verb is — parses each as Go, and
+refuses an `exec.Command` or `exec.CommandContext` whose `argv[0]` is the
+literal `"go"` unless the function around it assigns that command's `Env` from
+`goenv.Clean(...)`, directly or through an `append` onto it. The heuristic is
+conservative on purpose: it asks to SEE the sanitized environment beside the
+call, so a helper that hides it one frame away is refused rather than trusted.
+`internal/goenv` itself and every `testdata/` directory are skipped. It writes
+nothing. Its only input besides the tree is `testdata/goenv-allowlist.txt`: the
+existing offenders, each with a reason and the date it was written, and that
+file may only shrink — it is empty, because every site was fixed when the rule
+landed. Like the fixed-waits and net lists it is matched by **file and kind,
+never by line**.
+
+**What `goenv.Clean` drops.** `GOFLAGS`, every `GOTEST*` variable, and any other
+`GO`-prefixed variable whose value carries a `-json` or `--json` flag.
+`GOTMPDIR` is deliberately kept: it names a location, not an output shape, and a
+tool that wants its own scratch appends `GOTMPDIR=` after `Clean`, where the
+last value wins.
+
+**Its one-line output.** On a clean tree it prints one line,
+`CI-GOENV OK files=<n> allowlisted=<n> refused=0`. On a refusal it prints one
+line per offender, `CI-GOENV file=<path> line=<n> func=<name>
+remedy="<the one thing to do>"`, then closes with `CI-GOENV FAIL files=<n>
+allowlisted=<n> refused=<k>`.
+
+**Its refusals (exit 2, one remedy line each).** A child `go` command with no
+sanitized environment — `remedy="set cmd.Env = goenv.Clean(os.Environ())"`. A
+row in the allowlist that names no offender —
+`remedy="delete the stale row; the allowlist only shrinks"`.
+
+**The mistake it removes.** A tool that reads the output of a `go` command it
+started is reading a shape the caller can change. CI's `make test` exports
+`GOFLAGS=-json`; on 2026-09-18 the inner `go test` of `nova-review mutate`
+inherited it, answered in JSON with no `--- PASS:` line in it, and the parser
+counted the unit that stayed green as red: `MUTATE <sha> red=1 green=1 PASS`
+was reported as `red=2 green=0`, and three legs of integration-4 (#1332) failed
+on a tool that was working.
+
+**Red tests.**
+
+1. The pre-fix `runUnits` of `nova-review mutate` is refused with its file, its
+   line, its function and the remedy.
+2. The fixed shape is allowed, both spellings: `goenv.Clean(os.Environ())` and
+   an `append` onto it for the tool's own variables.
+3. `cmd.Env = append(os.Environ(), ...)` is still refused — the environment is
+   set, but it is the caller's, so `GOFLAGS` travels — and a non-`go` command in
+   the same file is not this rule's business.
+4. A row that names no offender is refused, so the list only shrinks.
+5. A row holds one offender of its kind in its file wherever it now stands.
+6. The rule holds over this repository with an empty allowlist.
