@@ -455,6 +455,93 @@ DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
 
 **Reading it.** Exactly one line, on stdout for a decision and on stderr for a refusal. Exit 0 when every answer is at or above the floor, 3 when any answer is below it — a suggestion, never an authorization: the caller keeps today's behaviour as the fallback. Exit 2 on refusal (no key, bad questions, provider error): `DECIDE REFUSED reason=<one word> <detail>`.
 
+### route — the ladder of minds
+
+```
+nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+                  [--registry <path>] [--floor 0.9] [--base-url <url>] [--key-env JEV_API_KEY]
+                  (--usage and --log are REQUIRED whenever jev is asked)
+nova-decide route --unit <json file|inline json> --no-jev [--registry <path>]
+                  [--usage <path>] [--log <path>] [--floor 0.9]
+nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lanes n]
+                  [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
+                  [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
+                  [--fresh-take] [--deadline 45m] [--no-jev]
+```
+
+Who does this unit of work. The rungs come from a registry — a data file of minds (`name`, `lineage`, `height`, the `kinds` it is designated for, the `lanes` it owns, `availability`, and how it is `ask`ed) — and the embedded default is the ladder Glenn named: Flash and Pro on the DeepSeek lineage at the bottom, the child rungs Opus (Rowan's) and Sol (Stella's) at **one** height in two lineages, the friends above them each owning a lane, Astra and Fable as the top pair, then all friends at once, then Glenn.
+
+The answer is the **lowest rung the evidence supports** with confidence that the first attempt is right. Below the floor it steps **up** a rung, never down. A failed attempt re-enters the decision carrying its evidence — `--attempt opus:failed:missed the cause` — and the answer is the next rung automatically: **sideways first**, where the same height holds another lineage, then up. The ladder is the retry policy.
+
+Two rungs are chosen by **kind** and not by height, and by machinery rather than by the provider, so no provider call is made for either: security — a guard, secrets, the sandbox, sudo, deploy keys, the network — is Johnny's always, and so is a fresh take (the rungs below failed in two lineages, or a design with one author). Friends first: the DeepSeek rungs take mechanical kinds only (`rebase`, `stack`, `fixture-retarget`, `fleet-chore`).
+
+**Security never falls through.** `--guard`, `--secrets`, `--kind guard` and each `--touches` value resolve to the designated rung on every path — Jev on or off, at any floor, after any attempt, including an attempt by that rung itself. It is a kind and not a height, so sideways, up, the floor and never-down do not apply to it. If no mind is designated, or every designated one is asleep, the work **waits**: that is a refusal, not a route to somebody else.
+
+**A timeout is not a death, and a wait is not permission.** `--attempt opus:timeout` says the attempt fell silent; its expiry is UNKNOWN until something proves it dead, so the answer is the **same** rung with `wait=awaiting_termination` on the line, the floor does not move it and the provider is not asked. The same rung is an answer about who owns the work, **not permission to retry**: establish what happened to the attempt first. The exit code says it too — **1 is the verb saying NOT YET**, and only exit 0 is permission to dispatch. A security unit whose designated rung timed out carries both facts: `rung=johnny` *and* the wait. `--attempt opus:timeout-terminated:killed at 10m` is the proof of death, and only then does the ladder move on; `failed` and `abandoned` are confirmed failures and move it as before.
+
+`--no-jev` answers by the rules alone — no key, no network, the same answer every time — so the loop runs on a bench with no API. With Jev, the provider is offered only the eligible rungs at the supported height and the one above it, so it can advise sideways or up but never down; an answer below the floor steps up, and a provider error, or a rung nobody offered, leaves the rules' answer standing.
+
+**What Jev is told is typed and enumerated**, and it is less than the evidence: one `field: value` line each for the kind, size buckets, whether the lane is one a mind on the ladder **owns** (`none`, `owned`, `other` — never which lane), an attempt-count bucket, a platform flag (`ordinary` or `named`), a security flag and a deadline bucket — every value checked against the closed set its field allows before anything is sent, so the boundary fails closed. **No registry string crosses it either**: a mind's name, its lineage and its lanes are local configuration, not public data, so the rungs Jev chooses between are **opaque ids** (`rung-1`, `rung-2`) described only by the step above the lowest rung offered, a per-call lineage label, whether that mind owns the lane, and how it is asked. The answer is mapped back to a mind here. The unit's id, its lane's spelling, its platform's name, its deadline and every attempt reason stay in the process. `--floor` refuses NaN, an infinity, a negative and anything above one, with one remedy line.
+
+**Accounting is not optional.** Token spend reporting is an obligation and every decision is logged, so **`--usage` and `--log` are required whenever jev is asked**. A route that would call the provider without them is refused *before* the call, in one line naming the missing flag and the line to paste — a call nobody can account for is refused rather than made and then forgotten. `--no-jev` makes no call, so there is nothing to account for and both stay optional there.
+
+```
+$ nova-decide route --unit-id u --kind rebase --files 2 --packages 1
+ROUTE REFUSED reason=no-accounting a jev call must be accounted for: --usage and --log missing; pass --usage ./usage.tsv --log ./decide.jsonl, or --no-jev to answer by the rules alone with no call to account for
+```
+
+**What a call spent is kept.** `--usage <path>` appends one row of the fleet's usage TSV — the same columns, through the same appender, that a swarm card's usage is written with, so `nova-tokens` reads a decision's spend the way it reads everything else. A call that **failed** is a row too, with a non-zero `rc`: its cost is real and unmeasured. A decision that made no call writes no row. The `--log` row carries the same numbers as `calls`, `tokens_in` and `tokens_out`.
+
+Presence is tracked **per counter**: a 200 with a valid answer and no `usage` object has said nothing about what it cost, so `tokens_in` and `tokens_out` are written as `-` and are absent from the log row — a successful answer is not evidence of reported usage. An explicitly reported `0` is a measurement and is written as `0`.
+
+**A refusal cannot unspend a call.** Where the route refuses *after* a call — the provider picks the top rung below the floor and there is nothing above it to step up to — the usage row and the log row (carrying `refusal`) are written **before** the verb exits, and the exit code stays the refusal's own (2). A refusal with no call behind it writes the log row and no usage row.
+
+```
+$ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.90 wait=- reason="kind rebase starts at rung flash" ask=card
+
+$ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:failed:missed the cause --no-jev
+ROUTE unit=card-41 rung=sol confidence=0.95 floor=0.90 wait=- reason="kind fix-with-red-test starts at rung opus/sol; 1 prior attempt(s) burned rung opus/sol: sideways before up" ask=child
+```
+
+```
+$ nova-decide route --unit-id t-1 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:timeout --no-jev ; echo "exit=$?"
+ROUTE unit=t-1 rung=opus confidence=1.00 floor=0.90 wait=awaiting_termination reason="the attempt on opus timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=child
+exit=1
+```
+
+**Reading it.** One line: the unit (the evidence pointer rule 10 owes), the rung, the confidence the floor was applied to, the floor, the typed `wait` (`-` or `awaiting_termination`), the reason, and how that rung is asked — `bus`, `card` or `child`. Exit 0 the answer may be acted on, **1 the verb ran and said NOT YET** (a wait: the rung named owns the work and an attempt on it is not known dead), 3 below the floor (the line already carries the rung it stepped up to), 2 on refusal. Only exit 0 is permission to dispatch.
+
+### help — continue, ask all friends, ask Glenn
+
+```
+nova-decide help --state <json file|inline json>
+nova-decide help [--hours 2] [--retries-on-rung n] [--failures-last-hour n]
+                 [--self-inflicted n] [--class-recurring] [--landing-moved]
+                 [--uncertainty 0..1] [--asked-all-friends]
+```
+
+The second decision, over what a line can count about itself: hours on the same problem, retries on one rung, failures in the last hour and how many were self-inflicted, whether a class is recurring, whether landing moved, and the uncertainty it states out loud. `ask-glenn` only ever comes after `ask-all-friends`.
+
+```
+$ nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
+HELP answer=ask-all-friends reason="3.0 h on the same problem; the friends have not been asked, and Glenn is only asked after they are"
+```
+
+### log — the escalation log
+
+```
+nova-decide log --log <path> --summary [--registry <path>]
+```
+
+`route --log <path>` appends one JSON object per decision: the evidence, the rung tried, its confidence and floor, whether it stepped up, the source, the outcome and the rung that succeeded when they are known — and, beside all of it, `rowan_pick`, what the rules alone would have chosen. `log --summary` reads the rows back: the escalations per kind, and the starting rung **regenerated** from the rows — the lowest rung carrying its own weight, with at least as many successes as failures. A kind with no success keeps the rung the table started from.
+
+```
+$ nova-decide log --log ./decide.jsonl --summary
+LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false
+LOG OK rows=1 kinds=1 escalations=0
+```
+
 ## Build
 
 Go 1.26 or newer, standard library only.
