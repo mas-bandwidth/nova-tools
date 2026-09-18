@@ -303,7 +303,7 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 				refuseLane(in, card, v.Lane)
 				continue
 			case "lane-held":
-				held = append(held, heldLine(card, v))
+				held = append(held, heldLine("FILL", card, v))
 				continue
 			case "gated":
 				gated++

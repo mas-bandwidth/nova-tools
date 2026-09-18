@@ -133,10 +133,11 @@ func (p *placement) release(lane, base string) {
 	}
 }
 
-// heldLine is the one line a card the lane rule holds is owed.
-func heldLine(card string, v placeVerdict) string {
-	return fmt.Sprintf("FILL HELD card=%s lane=%s live=%s",
-		field(filepath.Base(card)), field(v.Lane), field(v.Holder))
+// heldLine is the one line a card the lane rule holds is owed. The prefix is the ROAD's, so
+// a person reading pulse.log knows which of the two held the card.
+func heldLine(prefix, card string, v placeVerdict) string {
+	return fmt.Sprintf("%s HELD card=%s lane=%s live=%s",
+		prefix, field(filepath.Base(card)), field(v.Lane), field(v.Holder))
 }
 
 // gatedLine is the one line a card the gate holds is owed, and it names the PR and what the

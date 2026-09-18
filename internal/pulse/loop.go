@@ -185,7 +185,7 @@ func (l *looper) tick(n int) string {
 	}
 	// A refusal on either road into a bench is a refusal, and the loop counts both.
 	c.refused += countPrefix(runOut, "LAUNCH REFUSED") + countPrefix(mgrOut, "MANAGER REFUSED")
-	c.held += countPrefix(runOut, "FILL HELD") + countPrefix(runOut, "LAUNCH GATED")
+	c.held += countPrefix(runOut, "LAUNCH HELD") + countPrefix(runOut, "LAUNCH GATED")
 
 	// 5. THE PROBE.
 	c.dead = l.launchDead()
@@ -198,14 +198,45 @@ func (l *looper) tick(n int) string {
 func (l *looper) step(run func(io.Writer) int) string {
 	var buf bytes.Buffer
 	run(&buf)
-	out := buf.String()
-	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(line) != "" {
-			appendLine(filepath.Join(l.in.Queue, "pulse.log"),
-				l.in.Now().UTC().Format("15:04:05Z")+" "+line)
+	// A verb that stamps its own lines is stamped ONCE. The wired verbs write through
+	// Wiring.log, which puts the time in front; the loop puts the time in front of every
+	// line it files. Both ran, and the log read `19:51:51Z 19:51:51Z LAUNCH REFUSED ...`
+	// with the marker no longer at the start of the line, so the LOOP TICK line above it
+	// read refused=0 while the refusal sat two lines below (found dogfooding this verb,
+	// 2026-09-18).
+	var kept []string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		line = unstamp(line)
+		if line == "" {
+			continue
+		}
+		kept = append(kept, line)
+		appendLine(filepath.Join(l.in.Queue, "pulse.log"),
+			l.in.Now().UTC().Format("15:04:05Z")+" "+line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// unstamp takes one leading `HH:MM:SSZ ` off a line, so a marker is at the start of the line
+// whichever verb wrote it.
+func unstamp(line string) string {
+	line = strings.TrimSpace(line)
+	stamp, rest, ok := strings.Cut(line, " ")
+	if !ok || len(stamp) != 9 || !strings.HasSuffix(stamp, "Z") {
+		return line
+	}
+	for i, r := range stamp[:8] {
+		if i == 2 || i == 5 {
+			if r != ':' {
+				return line
+			}
+			continue
+		}
+		if r < '0' || r > '9' {
+			return line
 		}
 	}
-	return out
+	return strings.TrimSpace(rest)
 }
 
 func (l *looper) runStep(w io.Writer) int {
@@ -221,10 +252,14 @@ func (l *looper) runStep(w io.Writer) int {
 	}
 	cfg := DefaultConfig()
 	in.Configured = func(c Config) { cfg = c }
+	// The wired verbs' own lines come HERE rather than straight to <queue>/pulse.log: the
+	// loop writes them to the same file a breath later, and on the way it can COUNT them.
+	// Without this a `LAUNCH REFUSED bench=studio reason=runner-host` was in the log and the
+	// LOOP TICK line above it read refused=0 (found dogfooding this verb, 2026-09-18).
 	Wire(&in, NewWiring(WiringInput{
 		Queue: l.in.Queue, Roots: l.in.Roots, Repo: l.in.Repo, Branch: l.in.Branch,
 		Machines: l.in.Machines, Lanes: l.in.Lanes,
-		Max: l.in.Max, Now: l.in.Now,
+		Max: l.in.Max, Now: l.in.Now, Log: w,
 		Config: func() Config { return cfg },
 		PRs:    l.in.Forge,
 	}))

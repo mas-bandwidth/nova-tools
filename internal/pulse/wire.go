@@ -558,7 +558,7 @@ func (w *Wiring) Launch(tick int) (int, int, error) {
 					field(filepath.Base(card)), field(v.Lane), field(w.in.Lanes)))
 				continue
 			case "lane-held":
-				w.log(heldLine(card, v))
+				w.log(heldLine("LAUNCH", card, v))
 				continue
 			case "gated":
 				w.log(gatedLine("LAUNCH", card, v))

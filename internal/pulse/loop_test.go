@@ -232,3 +232,40 @@ func writeMarker(t *testing.T, dir, base, lane, bench string, at time.Time) {
 		t.Fatal(err)
 	}
 }
+
+// TestLoopStampsEachLineOnceAndCountsTheRunRoad: the wired verbs stamp their own lines and
+// the loop stamps every line it files, so the log read `19:51:51Z 19:51:51Z LAUNCH REFUSED`
+// with the marker no longer at the start -- and the LOOP TICK line above it read refused=0
+// while the refusal sat two lines below it. Found dogfooding this verb against a private copy
+// of the queue, 2026-09-18.
+func TestLoopStampsEachLineOnceAndCountsTheRunRoad(t *testing.T) {
+	b := newLoopBench(t)
+	var out bytes.Buffer
+	Loop(LoopInput{
+		Queue: b.queue, Machines: b.machines, Lanes: b.lanes, Roots: b.root,
+		Once: true, Stdout: &out, Stderr: io.Discard,
+		Now:   func() time.Time { return time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC) },
+		Sleep: func(time.Duration) {},
+		RunStep: func(in RunInput) int {
+			// Exactly what Wiring.log writes: the verb's line behind its own stamp.
+			fmt.Fprintln(in.Stdout, "12:00:00Z LAUNCH REFUSED bench=studio reason=runner-host")
+			fmt.Fprintln(in.Stdout, "12:00:00Z LAUNCH HELD card=card-002.md lane=pulse live=card-001.md")
+			fmt.Fprintln(in.Stdout, "PULSE WIDTH tick=1 benches=1 stop=no harvested=0 launched=0 free=0")
+			return 0
+		},
+		FillStep: func(FillInput) int { return 0 },
+	})
+	if !strings.Contains(out.String(), "held=1 refused=1") {
+		t.Fatalf("the run road's refusal and hold reached the LOOP TICK line as %q", strings.TrimSpace(out.String()))
+	}
+	log, err := os.ReadFile(filepath.Join(b.queue, "pulse.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(log), "12:00:00Z 12:00:00Z") {
+		t.Fatalf("a line was stamped twice: %q", log)
+	}
+	if !strings.Contains(string(log), "12:00:00Z LAUNCH REFUSED bench=studio") {
+		t.Fatalf("the refusal is not in the log under one stamp: %q", log)
+	}
+}
