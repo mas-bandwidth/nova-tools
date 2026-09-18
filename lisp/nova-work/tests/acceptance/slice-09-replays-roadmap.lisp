@@ -628,6 +628,7 @@
       (check-equal 2 code "non-matrix axis exit")
       (ok (search "--axis" line) "the non-matrix refusal did not name the flag: ~A" line))))
 
+
 ;;; ------------------------------------------------------------------
 ;;; cell                                     docs/SPEC-WORK.md:2329
 ;;; ------------------------------------------------------------------
@@ -718,3 +719,96 @@
       (ok (null okp) "a duplicate coordinate was accepted")
       (check-equal 2 code "duplicate-coordinate exit")
       (ok (search "duplicate coordinate" line) "the duplicate refusal: ~A" line))))
+
+;;; ------------------------------------------------------------------
+;;; render --view over a stored selection    docs/SPEC-WORK.md:3131-3136
+;;; ------------------------------------------------------------------
+
+(deftest "render-view-over-a-stored-selection" "docs/SPEC-WORK.md:3131"
+    "expected=projection-reads-its-stored-display-selection-not-its-file;matrix-names-its-selection;zero-or-one-axis-needs-none;the-two-forms-exclusive;unknown-missing-or-duplicate-axis-or-member-refused-bad-selection"
+  ;; SPEC-WORK.md:3133-3136 -- `render --view <id> --chat [--projection <id> |
+  ;; --row-axis <id> --column-axis <id> --fixed <axis-id>=<member-id> ...]`:
+  ;; with a projection it reads that projection's display selection and not its
+  ;; file, without one a matrix names its selection and a zero- or one-axis
+  ;; view needs none, the two forms are exclusive, and a matrix selection
+  ;; naming an unknown, missing or duplicate axis or member refuses
+  ;; `bad selection`.
+  (let* ((view (list :axes '("col" "row" "x")
+                     :members '()
+                     :axis-members '(("col" . ("c1" "c2"))
+                                     ("row" . ("r1" "r2"))
+                                     ("x" . ("x1" "x2")))
+                     :private '()
+                     :revision 3
+                     :projections
+                     (list (list :id "p1" :root "root" :repo "acme/work"
+                                 :path "ROADMAP.md"
+                                 :start "<!-- ROADMAP:START -->"
+                                 :end "<!-- ROADMAP:END -->"
+                                 :policy :markdown-table
+                                 :row-axis "row" :column-axis "col"
+                                 :fixed '(("x" "x1")))
+                           (list :id "p2" :root "root" :repo "acme/work"
+                                 :path "ROADMAP.md"
+                                 :start "<!-- ROADMAP:START -->"
+                                 :end "<!-- ROADMAP:END -->"
+                                 :policy :markdown-table
+                                 :row-axis "row" :column-axis "col"
+                                 :fixed '(("x" "zz")))))))
+    ;; With a projection it reads that projection's stored display selection
+    ;; and not its file.
+    (multiple-value-bind (body line code) (render-view view :projection "p1")
+      (ok (eql 0 code) "the stored projection was refused: ~A" line)
+      (ok (search "row=r1 col=c1 x=x1" body)
+          "the stored display selection was not rendered: ~A" body)
+      (ok (not (search "x=x2" body))
+          "the projection's fixed member did not select a single coordinate")
+      (ok (not (search "ROADMAP.md" body)) "render read the projection's file")
+      (ok (not (search "<!-- ROADMAP" body)) "render read the projection's file"))
+    ;; The two forms are exclusive.
+    (multiple-value-bind (body line code)
+        (render-view view :projection "p1" :row-axis "row" :column-axis "col")
+      (check-equal 2 code "a projection plus an explicit selection was accepted")
+      (ok (search "exclusive" line) "the exclusivity refusal: ~A" line))
+    ;; A projection the view has not got refuses.
+    (multiple-value-bind (body line code) (render-view view :projection "nope")
+      (check-equal 2 code "an unknown projection was accepted")
+      (ok (search "no such projection" line) "the unknown-projection refusal: ~A" line))
+    ;; Without a projection a matrix names its selection.
+    (multiple-value-bind (body line code)
+        (render-view view :row-axis "row" :column-axis "col" :fixed '(("x" "x1")))
+      (ok (eql 0 code) "a matrix selection was refused: ~A" line)
+      (ok (search "row=r2 col=c2 x=x1" body) "the matrix selection was not rendered"))
+    ;; ...and a matrix with no selection refuses.
+    (multiple-value-bind (body line code) (render-view view)
+      (check-equal 2 code "a matrix with no selection was accepted")
+      (ok (search "bad selection" line) "the missing-selection refusal: ~A" line))
+    ;; A missing fixed axis, a duplicate or unknown axis and an unknown member
+    ;; all refuse `bad selection`.
+    (multiple-value-bind (body line code)
+        (render-view view :row-axis "row" :column-axis "col")
+      (check-equal 2 code "a matrix missing its fixed axis was accepted")
+      (ok (search "bad selection" line) "the missing-fixed refusal: ~A" line))
+    (multiple-value-bind (body line code)
+        (render-view view :row-axis "row" :column-axis "row" :fixed '(("x" "x1")))
+      (check-equal 2 code "a duplicate row/column axis was accepted")
+      (ok (search "bad selection" line) "the duplicate-axis refusal: ~A" line))
+    (multiple-value-bind (body line code)
+        (render-view view :row-axis "nope" :column-axis "col" :fixed '(("x" "x1")))
+      (check-equal 2 code "an unknown row axis was accepted")
+      (ok (search "bad selection" line) "the unknown-axis refusal: ~A" line))
+    (multiple-value-bind (body line code) (render-view view :projection "p2")
+      (check-equal 2 code "a selection with an unknown member was accepted")
+      (ok (search "bad selection" line) "the unknown-member refusal: ~A" line))
+    ;; A zero- or one-axis view needs no selection.
+    (let ((flat (list :axes '() :members '("t1" "t2") :private '() :projections '()))
+          (one (list :axes '("only") :members '("t1") :private '() :projections '())))
+      (multiple-value-bind (body line code) (render-view flat)
+        (ok (eql 0 code) "an axisless view needs no selection: ~A" line)
+        (ok (search "row=t2" body) "an axisless view dropped a row"))
+      (multiple-value-bind (body line code) (render-view one)
+        (ok (eql 0 code) "a one-axis view needs no selection: ~A" line))
+      (multiple-value-bind (body line code) (render-view flat :row-axis "row")
+        (check-equal 2 code "a zero-axis view accepted a selection")
+        (ok (search "bad selection" line) "the zero-axis refusal: ~A" line)))))
+
