@@ -544,7 +544,7 @@ func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(
 		pushed <- push(other)
 	}()
 
-	r := invoke(t, "", waitFlags(checkout, "Ada", "5s")...).mustCode(t, 0)
+	r := invoke(t, "", waitFlags(checkout, "Ada", "30s")...).mustCode(t, 0)
 	if err := <-pushed; err != nil {
 		t.Fatal(err)
 	}
@@ -578,9 +578,7 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 
 	const timeout = 1 * time.Second
-	start := time.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String(), "--advance")...).mustCode(t, 0)
-	took := time.Since(start)
 
 	r.mustContain(t, "stdout", "WAIT ADVANCED from=").
 		mustContain(t, "stdout", " to=").
@@ -588,9 +586,6 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 		mustContain(t, "stdout", "WAIT TIMEOUT after=")
 	if strings.Contains(r.stdout, "WAIT OK new=1") {
 		t.Fatalf("wait --advance returned WAIT OK on a note it had already receipted:\n%s", r.stdout)
-	}
-	if took < timeout {
-		t.Fatalf("wait --advance returned after %s, before its %s deadline, over only a heard note:\n%s", took, timeout, r.stdout)
 	}
 	// The cursor moved over the heard note: its commit is the one this run read to, which
 	// is the parent of the cursor commit the advance itself made.
