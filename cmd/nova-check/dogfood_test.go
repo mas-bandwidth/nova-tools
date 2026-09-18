@@ -615,3 +615,90 @@ func TestDogfoodReadsTheVerbsFromTheBinariesWhenToldTo(t *testing.T) {
 		t.Fatalf("record exit %d against the binaries' own list\n%s", code, stderr)
 	}
 }
+
+// DOGFOOD ROUND 5, EDGE 2, THROUGH THE VERB A PERSON ACTUALLY RUNS. Stella finds
+// something; somebody else's later pass does not close it; the fixer records a receipt
+// that NAMES it, and the gate goes green.
+func TestDogfoodRecordClosesTheFindingItNames(t *testing.T) {
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	receipts := filepath.Join(dir, "receipts")
+
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "links", "--by", "Stella", "--not-ok",
+		"--notes", "ran it over the lane's own docs; it refused a relative path",
+		"--receipts", receipts)
+	if code != 0 {
+		t.Fatalf("record exit %d\n%s", code, stderr)
+	}
+	// The id is the eight characters ending the file the record line names, which is
+	// how a reader gets one to type into --closes.
+	file := fieldOf(t, stdout, "file=")
+	id := strings.TrimSuffix(filepath.Base(file), ".json")
+	id = id[len(id)-8:]
+
+	// Somebody else runs it later and it works for them. That is not an answer.
+	if code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "links", "--by", "Johnny", "--ok",
+		"--notes", "ran it over my own tree; nothing to report",
+		"--receipts", receipts); code != 0 {
+		t.Fatalf("record exit %d\n%s", code, stderr)
+	}
+	code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts)
+	if code != 1 {
+		t.Fatalf("the gate passed over Stella's open finding: exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "receipt="+id) {
+		t.Fatalf("the gate never named the id a closer must use (%s):\n%s", id, stderr)
+	}
+
+	// An id that names nothing closes nothing.
+	if code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "links", "--by", "Rowan", "--ok",
+		"--closes", "deadbeef", "--notes", "fixed it, or so I thought",
+		"--receipts", receipts); code != 0 {
+		t.Fatalf("record exit %d\n%s", code, stderr)
+	}
+	if code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts); code != 1 {
+		t.Fatalf("a --closes naming nothing closed a real finding: exit %d\n%s\n%s", code, stdout, stderr)
+	}
+
+	// Naming it closes it.
+	if code, _, stderr = dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "links", "--by", "Rowan", "--ok",
+		"--closes", id, "--notes", "relative paths now taken; ran it on the same tree",
+		"--receipts", receipts); code != 0 {
+		t.Fatalf("record exit %d\n%s", code, stderr)
+	}
+	if code, stdout, stderr = dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts); code != 0 {
+		t.Fatalf("the gate still says no over an answered finding: exit %d\n%s\n%s", code, stdout, stderr)
+	}
+}
+
+// A --closes that is not an id is refused where it is written, not stored and puzzled
+// over later.
+func TestDogfoodRecordRefusesAClosesThatIsNotAnID(t *testing.T) {
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "record", "--cli", cli,
+		"--tool", "nova-example", "--verb", "links", "--by", "Rowan", "--ok",
+		"--closes", "stella's one", "--notes", "fixed it",
+		"--receipts", filepath.Join(dir, "receipts"))
+	if code != 2 {
+		t.Fatalf("exit %d, want 2\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "--closes") {
+		t.Fatalf("the refusal never names the flag:\n%s", stderr)
+	}
+}
+
+// fieldOf pulls one `name=value` off a one-line record, to the end of the line.
+func fieldOf(t *testing.T, line, name string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(line, name)
+	if !ok {
+		t.Fatalf("no %s in:\n%s", name, line)
+	}
+	value, _, _ := strings.Cut(strings.TrimSpace(rest), "\n")
+	return strings.TrimSpace(value)
+}
