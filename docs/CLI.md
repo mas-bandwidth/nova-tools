@@ -2407,3 +2407,26 @@ duplicate; different bytes under an existing ID refuse. Each write requires an
 explicit publication policy. These examples choose local-only `never`. The current
 slice implements no transport: successful writes report `persisted=true` and
 `published=false`, even when another publication policy is recorded.
+
+Two store shapes are read. The tool's own is `sessions/<id>.md` with `entries/`
+and `log.jsonl` beside it. A **bench store** keeps one markdown file per session
+directly under the store — `cairns/<session>.md`, the shape a friend appending
+by hand already has — and is read as it stands:
+
+```sh
+# cairns/b9395d11.md exists, written by hand
+nova-cairn append --store ./cairns --session b9395d11 --entry beat-1405 \
+  --publish manual --file -
+```
+
+`open` on such a record is a no-op (it never writes a second record under
+`sessions/`, which would split one session in two), and `append` lands a dated
+`## <stamp> — <entry>` section at the end of the file, one blank line between
+sections, the words byte-for-byte under the heading. Nothing appears beside the
+file: no `entries/`, no `log.jsonl`, no index. Retries and conflicts read that
+section, so the same ID with the same words adds nothing and the same ID with
+different words still refuses. `index` and `receipt` read stored entries and so
+cover the tool's own shape only; a bench record's entries are its sections, and
+the coverage ledger counts the file. An append addressing a session neither
+shape holds refuses with the whole remedy verb: `open first: nova-cairn open
+--store <dir> --session <id> --publish <policy>`.
