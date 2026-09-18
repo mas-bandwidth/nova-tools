@@ -561,3 +561,35 @@ func TestLoadCarriesTheBranchAndAcceptanceTheGrammarWrites(t *testing.T) {
 		t.Errorf("the :acceptance the grammar writes must survive the one reader: %+v", u)
 	}
 }
+
+func TestOnBusDoesNotCallAnUnreadableNoteABound(t *testing.T) {
+	// Found by running this verb against the real bus: three lanes reported themselves
+	// bounded with no bound asked for, because a note that would not parse was counted
+	// as one the bound had cut off.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "participants.json"), []byte(
+		`{"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lane := filepath.Join(dir, "from-ada")
+	if err := os.MkdirAll(lane, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lane, "2026-09-18T1000Z-junk-ada0001.md"), []byte("this is not a note"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lane, "2026-09-18T1100Z-ask-work-ada0002.md"), []byte(
+		"From: Ada\nTo: Bo\nDate: Fri Sep 18 11:00:00 UTC 2026\nId: ada-0002\nSubject: ask work: a unit\n\nUnit: u1\nKind: work\nDeadline: 2026-12-01T00:00:00Z\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows, bounded, err := OnBus(dir, "Ada", "", time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the note that parses is still an ask: %+v", rows)
+	}
+	if len(bounded) != 0 {
+		t.Fatalf("no bound was asked for, so none is reported: %+v", bounded)
+	}
+}

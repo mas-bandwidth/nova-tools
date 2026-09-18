@@ -581,12 +581,12 @@ func OnBus(busDir, as, owner string, now time.Time, maxNotes int) ([]Row, []Boun
 	}
 	var bounds []Bounded
 	read := func(lane string) ([]bus.Note, error) {
-		notes, held, err := laneNotes(busDir, lane, maxNotes)
+		notes, bound, err := laneNotes(busDir, lane, maxNotes)
 		if err != nil {
 			return nil, err
 		}
-		if held > len(notes) {
-			bounds = append(bounds, Bounded{Lane: lane, Notes: held, Read: len(notes)})
+		if bound != nil {
+			bounds = append(bounds, *bound)
 		}
 		return notes, nil
 	}
@@ -656,6 +656,10 @@ func OnBus(busDir, as, owner string, now time.Time, maxNotes int) ([]Row, []Boun
 // many note files it holds and how many of them this run read. A caller prints one
 // line per bound, the way nova-bus's own since-walk names --max-commits, so a short
 // count is never mistaken for a quiet bus.
+//
+// It says the bound BIT, and nothing else. A note that would not parse is skipped by
+// every reader of this bus and is not a bound: reporting one made three lanes of the
+// real bus claim they had been cut short when nobody had asked for a bound at all.
 type Bounded struct {
 	Lane  string
 	Notes int
@@ -670,17 +674,17 @@ type Bounded struct {
 // max is the NEWEST max files, not the first max: a lane's names carry their stamp, so
 // the directory's own order is oldest first and taking the head of it is taking the
 // notes that have already been answered. 0 is every file.
-func laneNotes(busDir, lane string, max int) ([]bus.Note, int, error) {
+func laneNotes(busDir, lane string, max int) ([]bus.Note, *Bounded, error) {
 	if lane == "" {
-		return nil, 0, nil
+		return nil, nil, nil
 	}
 	dir := filepath.Join(busDir, lane)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, 0, nil
+			return nil, nil, nil
 		}
-		return nil, 0, err
+		return nil, nil, err
 	}
 	var names []string
 	for _, e := range entries {
@@ -689,25 +693,28 @@ func laneNotes(busDir, lane string, max int) ([]bus.Note, int, error) {
 		}
 		names = append(names, e.Name())
 	}
-	held := len(names)
 	// ReadDir sorts by name and a note's name opens with its stamp, so the tail is the
 	// newest. A bounded read takes that tail, in the same order the whole lane is read in.
+	var bound *Bounded
 	if max > 0 && len(names) > max {
+		bound = &Bounded{Lane: lane, Notes: len(names), Read: max}
 		names = names[len(names)-max:]
 	}
 	var out []bus.Note
 	for _, name := range names {
 		raw, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
-			return nil, held, err
+			return nil, bound, err
 		}
 		n, err := bus.ParseNote(lane+"/"+name, string(raw))
 		if err != nil {
+			// A note this reader cannot parse is skipped, as every other reader of this bus
+			// skips it. It is NOT a bound: the run read the whole lane.
 			continue
 		}
 		out = append(out, n)
 	}
-	return out, held, nil
+	return out, bound, nil
 }
 
 // askKind reads the kind out of an ask's subject, and says no to anything that is not
