@@ -33,7 +33,6 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -80,23 +79,12 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
 
+	// The same fixture the parse-count test builds, from the same helper: what is timed
+	// below is this tool over ten thousand notes, and the bus it reads must be the bus
+	// those counts are taken over or the two nets guard different things.
 	const history = 10000
 	const carried = 500
-	var index strings.Builder
-	for i := range history {
-		id := fmt.Sprintf("bo-%012x", i+0x100000)
-		path := fmt.Sprintf("from-bo/2026-08-%02dT%02d%02dZ-bulk-%s.md", i%28+1, i/60%24, i%60, id[len(id)-12:])
-		to := "Bo"
-		if i < carried {
-			to = "Ada"
-		}
-		writeFile(t, checkout, path, fmt.Sprintf(
-			"From: Bo\nTo: %s\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: bulk %d\n\nA note in the history.\n",
-			to, i%28+1, id, i))
-		fmt.Fprintf(&index, "%s\t%s\t2026-08-%02dT00:00:00Z\t%s\t-\n", id, path, i%28+1, to)
-	}
-	appendFile(t, checkout, "from-bo/INDEX", index.String())
-	commitAs(t, checkout, "Bo", "ten thousand notes")
+	bulkHistory(t, checkout, history, carried)
 
 	// The one full read a reader ever pays for, which gives Ada a cursor and an open list
 	// of five hundred. It is NOT timed: a full walk is the size of the bus by definition
