@@ -74,7 +74,7 @@ func TestCardTemplateRefusesTheFourSpellingsTheDogfoodMeasured(t *testing.T) {
 	root := cardTree(t, "templates", "measure.md", body)
 	res := checkTree(t, root, "templates")
 
-	want := []string{"go_version", "gnu_time", "java_version", "nproc"}
+	want := []string{"gnu_time", "go_version", "java_version", "nproc"}
 	got := spells(res)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("spells = %v, want %v", got, want)
