@@ -479,7 +479,8 @@ nova-sandbox").
 ## The run verb — a disposable place, on darwin
 
 ```
-nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] -- <command> <args...>
+nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>]
+                 [--out <dir> [--artifact <relpath>]... [--out-max-bytes <64m>]] -- <command> <args...>
 nova-sandbox run --help
 ```
 
@@ -743,6 +744,69 @@ not need a number.
    SANDBOX TIMEOUT after=<d> name=<n>
    ```
 
+### The handoff — what leaves the disposable place
+
+**The hurt.** 2026-09-18, dogfooding `run` on a real card: the card cloned the
+repo, made the fix, committed it, and the commit died with the volume. The verb
+had no writable path out. "Nothing survives" is exactly right for scratch and
+exactly wrong for the one thing the card was for, and a card that cannot hand
+back its commit has to be re-done outside the sandbox — which is the same as not
+having one.
+
+**`--out <dir>`** is the door. After the command exits and **before** the volume
+is deleted — there is exactly one place in the verb where both are true — the
+named artifacts are copied to `<out>/<name>/`, and one line says what left:
+
+```
+SANDBOX OUT name=<n> files=<k> bytes=<b>
+```
+
+It is printed before `SANDBOX DONE`, because it happens before the delete.
+
+**What leaves.** `RESULT.md`, `usage.tsv` and `repo.bundle`, each taken **if
+present** — a read card writes no bundle and that is not a failure.
+`--artifact <relpath>` replaces that set, repeatable, each path relative to the
+card's working directory. An artifact the **caller named** and did not write is
+a refusal, the same way rule 5 refuses a `--read` the caller named that is not
+there; a default that is absent is skipped. A directory is taken whole, one row
+per regular file, with its shape kept.
+
+**Nothing escapes the volume.** Every source resolves through
+`safepath.ResolvedUnder` against the card's working directory: an absolute path,
+a `..` element, a symlink and anything that is not a file or a directory are all
+refused, and the shape checks run as text before any filesystem call so the
+refusal names the flag rather than an errno.
+
+**`--out-max-bytes`**, default `64m`. The whole set is **measured before a byte
+is written** and refused over the cap. A handoff is a door, not a backup: a
+truncated artifact is worse than none, and a card that wants to move gigabytes
+wants a bundle or a different tool.
+
+**A commit leaves as a bundle.** The documented way, and the card's own last
+step:
+
+```
+git bundle create repo.bundle <branch>
+```
+
+One file, the complete history of that branch, and `git fetch ./repo.bundle
+<branch>` on the other side. `cmd/nova-pulse/testdata/templates/fix.md` ends
+with it.
+
+**The status.** A handoff that fails after a command that **succeeded** turns the
+run into `SANDBOX REFUSED reason=out_failed`, exit 125: a zero exit would tell
+the caller the artifacts are in `--out` when they are not. A handoff that fails
+after a command that already failed leaves that status alone — the command's own
+failure is the more important truth, and it is almost always why there was
+nothing to hand back. The volume is deleted either way.
+
+**Checked before anything is made.** `--artifact` or `--out-max-bytes` without
+`--out` is `reason=no_out`; a `--artifact` that is absolute, empty, `.` or
+carries `..` is `reason=bad_artifact`; a `--out-max-bytes` that is not a positive
+quantity is `reason=bad_out_max`. `--out` on **windows** is `reason=no_out`: the
+windows half keeps its per-run scratch under `--scratch` and there is nothing to
+copy off. A typo found after the card has run is worth nothing.
+
 ### `run --help`
 
 `nova-sandbox run --help`, `-h` or `help` prints the verb's own usage on stdout
@@ -843,7 +907,7 @@ range, and this is a deliberate, recorded departure from the conventions
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
 | 3 | `run` only: the disposable volume could not be deleted — `SANDBOX LEAK`, naming the disk and the one command that removes it. It overrides the command's own status, because "nothing survives" is the whole contract and a caller that read `0` would believe the machine was clean |
 | 124 | `run` only: `--timeout` passed, the whole process group was killed and the volume was deleted anyway — `timeout(1)`'s status |
-| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`) and a volume that could not be made (`reason=volume_failed`) |
+| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`), a volume that could not be made (`reason=volume_failed`), and the handoff's own — `--artifact` or `--out-max-bytes` with no `--out`, or `--out` on windows (`reason=no_out`), an artifact path that is absolute, empty, `.` or carries `..` (`reason=bad_artifact`), a `--out-max-bytes` that is not a positive quantity (`reason=bad_out_max`), and a handoff that could not be completed after a command that exited 0 (`reason=out_failed`) |
 | 126 | the command could not be executed **and the tool was still there to say so**: on `linux` the child could not be started inside the wall, on `windows` `CreateProcessW` failed. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
 | 127 | the command could not be resolved on the caller's `PATH`: `SANDBOX REFUSED reason=not_found`, printed like every other refusal of the tool's own |
 | 128+N | the wrapped command was killed by signal `N` |
