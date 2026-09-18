@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -18,13 +19,70 @@ import (
 	"time"
 )
 
-// requireSqlite skips the calling test BY NAME when the sqlite3 CLI is not on PATH, so a
-// host without the store reader never runs a fixture that needs it; the msg is one bounded
-// line and the remedy names the binary, as SPEC-SWARM's readers already do.
+// sqliteRuns reports whether the sqlite3 PATH resolves to actually executes. LookPath
+// alone is not enough: a stale or non-executable sqlite3 ahead of the real one resolves
+// but fails to exec, which must read as "no store reader" and never as a fixture fatal.
+func sqliteRuns() bool {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		return false
+	}
+	return exec.Command("sqlite3", "-version").Run() == nil
+}
+
+// runnableSqliteDir is the first PATH directory whose sqlite3 actually runs, or "" when
+// none does. It is how a host whose PATH carries a bad sqlite3 ahead of the good one keeps
+// running the fixture instead of skipping it.
+func runnableSqliteDir() string {
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			continue
+		}
+		for _, name := range []string{"sqlite3", "sqlite3.exe"} {
+			if exec.Command(filepath.Join(dir, name), "-version").Run() == nil {
+				return dir
+			}
+		}
+	}
+	return ""
+}
+
+// ensureSqlite puts a runnable sqlite3 first on PATH when this host has one anywhere on
+// PATH, so the test runs; it reports whether a runnable sqlite3 is now on PATH.
+func ensureSqlite(t *testing.T) bool {
+	t.Helper()
+	if sqliteRuns() {
+		return true
+	}
+	if dir := runnableSqliteDir(); dir != "" {
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		return true
+	}
+	return false
+}
+
+// requireSqlite skips the calling test BY NAME when no sqlite3 that actually runs is on
+// PATH, so a host without the store reader never runs a fixture that needs it; the msg is
+// one bounded line and the remedy names the binary, as SPEC-SWARM's readers already do.
 func requireSqlite(t *testing.T) {
 	t.Helper()
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		t.Skipf("sqlite3 is not on PATH: the fixture needs the harness store data/opencode/opencode.db; install sqlite3 to run this test here")
+	if !ensureSqlite(t) {
+		t.Skipf("sqlite3 is not on PATH or does not run: the fixture needs the harness store data/opencode/opencode.db; install sqlite3 to run this test here")
+	}
+}
+
+// a sqlite3 whose interpreter does not exist resolves on PATH but cannot run; that is the
+// stale-shim shape the old LookPath-only check mistook for a usable store reader.
+func TestEnsureSqliteRejectsANonRunnableSqlite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the bad-interpreter shim is a unix fact")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sqlite3"), []byte("#!/nonexistent/interpreter\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if ensureSqlite(t) {
+		t.Fatal("a sqlite3 that resolves but cannot run must not read as usable")
 	}
 }
 
@@ -36,8 +94,8 @@ func requireSqlite(t *testing.T) {
 // bounded line.
 func fixtureDBSeed(t *testing.T) []byte {
 	t.Helper()
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		t.Logf("sqlite3 is not on PATH: fixture jobs carry no data/opencode/opencode.db")
+	if !ensureSqlite(t) {
+		t.Logf("sqlite3 is not on PATH or does not run: fixture jobs carry no data/opencode/opencode.db")
 		return nil
 	}
 	seed := filepath.Join(t.TempDir(), "seed")
