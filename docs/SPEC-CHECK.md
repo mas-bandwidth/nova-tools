@@ -98,7 +98,13 @@ fake-driven and none of them reaches a network, a clock or a bench.
     is read from and written to `--state <file>`: one JSON object holding, per stream,
     the last value, the tick that wrote it and the consecutive widening count. Without
     `--state` nothing is remembered, no streak can be two, and the verb exits 0 with
-    every widening stream still named on the line.
+    every widening stream still named on the line. **A tick at or before the remembered
+    instant is that tick read again, not a second one**, and never advances the streak:
+    the first real run of this verb found it, and without the rule two invocations of
+    one command over one window would have gone red on a reading nobody took. The
+    streak is therefore about a window that MOVES: a stream whose `before` is anchored
+    to a fixed `--since` reports the same trend on every tick and trips the streak on
+    the second one, which is what the rolling `--since 24h` spelling is for.
 12. **`--json` prints the same reading, once, as one object.** The stream rows, their
     numbers, ratios and trends, the verdict, and the absent streams with the flag each
     one wanted. `--json` replaces the lines; it never adds to them.
@@ -142,4 +148,5 @@ a bench or a clock; nothing below reaches a network.
 19. `TestConvergenceRefusesAVersionsFileItDoesNotKnow`: a `--versions` with an unknown header, and a row of the wrong arity, are each exit 2 naming the file and the two headers it reads.
 20. `TestEveryFieldSurvivesAHostileValue`: a pull request title, a ledger cell, a stamp and a `--by` name each holding a newline, an `=` and a bidi override print as one field on one line.
 21. `TestJSONCarriesTheSameReadingAsTheLines`: `--json` parses to the same per-stream numbers, ratios, trends, verdict and absent list that the lines print, and prints no `CONVERGENCE` line.
-22. `TestEveryChildIsBounded`: a fake forge and a fake git that hang past `--timeout` are each exit 2 naming the child and the deadline, and no stream line is printed.
+22. `TestTheSameTickReadTwiceIsNotTwoTicks`: one widening reading applied three times at one instant leaves the streak at one and exits 0, and the same reading at a later instant is the second tick and the red.
+23. `TestEveryChildIsBounded`: a fake forge and a fake git that hang past `--timeout` are each exit 2 naming the child and the deadline, and no stream line is printed.

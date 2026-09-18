@@ -296,10 +296,10 @@ func TestConvergencePrintsOneLinePerStream(t *testing.T) {
 
 func TestATrendIsTheDirectionTheStreamConverges(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		now, before  float64
-		lower        bool
-		want         Trend
+		name        string
+		now, before float64
+		lower       bool
+		want        Trend
 	}{
 		{"fewer open edges", 3, 5, true, Contracting},
 		{"more open edges", 7, 5, true, Widening},
@@ -647,17 +647,46 @@ func TestExitOneOnlyOnTheSecondConsecutiveWidening(t *testing.T) {
 		t.Fatalf("the first widening was not counted: %+v", st.Streams["EDGES"])
 	}
 
-	_, st, streak = widening(7, 5).Apply(st, tick)
+	_, st, streak = widening(7, 5).Apply(st, tick.Add(time.Hour))
 	if !streak {
 		t.Fatalf("two consecutive widening ticks is the one exit-1 condition")
 	}
 
-	_, st, streak = widening(2, 7).Apply(st, tick)
+	_, st, streak = widening(2, 7).Apply(st, tick.Add(2*time.Hour))
 	if streak || st.Streams["EDGES"].Widening != 0 {
 		t.Fatalf("a contracting tick must reset the streak: %+v", st.Streams["EDGES"])
 	}
-	if _, _, streak = widening(4, 2).Apply(st, tick); streak {
+	if _, _, streak = widening(4, 2).Apply(st, tick.Add(3*time.Hour)); streak {
 		t.Fatalf("after a reset, one widening tick is a WARN again")
+	}
+}
+
+// The edge the first real run of this verb found: two invocations over one
+// window are one tick read twice, and counting the second would have gone red
+// on a reading nobody took.
+func TestTheSameTickReadTwiceIsNotTwoTicks(t *testing.T) {
+	tick := at(t, windowNow)
+	st := State{Streams: map[string]StreamState{}}
+
+	_, st, streak := widening(5, 3).Apply(st, tick)
+	if streak || st.Streams["EDGES"].Widening != 1 {
+		t.Fatalf("the first tick: streak=%v state=%+v", streak, st.Streams["EDGES"])
+	}
+	for i := 0; i < 3; i++ {
+		var again State
+		_, again, streak = widening(5, 3).Apply(st, tick)
+		if streak {
+			t.Fatalf("re-reading the same tick %d times went red", i+1)
+		}
+		if again.Streams["EDGES"].Widening != 1 {
+			t.Fatalf("re-reading the same tick counted it again: %+v", again.Streams["EDGES"])
+		}
+		st = again
+	}
+	// A tick of the clock later, the same widening IS the second one.
+	_, _, streak = widening(6, 3).Apply(st, tick.Add(time.Hour))
+	if !streak {
+		t.Fatalf("a later tick that widens again is the exit-1 condition")
 	}
 }
 

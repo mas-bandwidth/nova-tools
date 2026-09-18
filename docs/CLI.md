@@ -185,7 +185,10 @@ that would have fed it, and is counted in `absent=` rather than as a zero — a
 number nobody measured, printed as a number, is worse than not printing it.
 `WARN` says a stream is widening; the exit code is 1 only when one has widened
 on **two consecutive ticks**, which is a fact about history, so it lives in
-`--state` and nowhere else. `--json` prints the same reading as one object.
+`--state` and nowhere else. A tick at or before the remembered instant is that
+tick read again and never advances the streak; run the loop with the rolling
+`--since 24h` rather than a fixed instant, or every tick re-reads one window and
+the second one goes red. `--json` prints the same reading as one object.
 
 **What the flags want.** `--repo` is a name on a forge, never a directory;
 `--ledger` is the pit-stop ledger whose rows carry PASS, FAIL, PARTIAL or TODO;

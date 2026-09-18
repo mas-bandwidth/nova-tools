@@ -247,8 +247,10 @@ func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Each tick is a tick of the clock: the same instant read twice is one tick,
+	// so the ticks below are an hour apart.
 	owe("| c | three | TODO |\n")
-	exit, stdout, _ := f.run(t, "--state", state)
+	exit, stdout, _ := f.run(t, "--state", state, "--now", "2026-09-18T13:00:00Z")
 	if exit != 0 {
 		t.Fatalf("one widening tick exited %d, want 0 with a WARN:\n%s", exit, stdout)
 	}
@@ -257,7 +259,7 @@ func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
 	}
 	// And another: the same stream widening twice running is the red.
 	owe("| d | four | TODO |\n")
-	exit, stdout, _ = f.run(t, "--state", state)
+	exit, stdout, _ = f.run(t, "--state", state, "--now", "2026-09-18T14:00:00Z")
 	if exit != 1 {
 		t.Fatalf("two consecutive widening ticks exited %d, want 1:\n%s", exit, stdout)
 	}
@@ -266,9 +268,19 @@ func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
 	}
 
 	// With no --state nothing is remembered, so the same two ticks are both 0.
-	for i := 0; i < 2; i++ {
-		if exit, _, _ := f.run(t); exit != 0 {
+	for i, when := range []string{"2026-09-18T15:00:00Z", "2026-09-18T16:00:00Z"} {
+		if exit, _, _ := f.run(t, "--now", when); exit != 0 {
 			t.Errorf("tick %d with no --state exited %d", i, exit)
+		}
+	}
+
+	// And the same tick read twice is one tick: a second invocation over the
+	// same window must not turn a WARN into a red on a reading nobody took.
+	same := filepath.Join(f.dir, "same.json")
+	for i := 0; i < 3; i++ {
+		exit, stdout, _ := f.run(t, "--state", same, "--now", "2026-09-18T17:00:00Z")
+		if exit != 0 {
+			t.Fatalf("reading one tick %d times went red:\n%s", i+1, stdout)
 		}
 	}
 }

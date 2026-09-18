@@ -339,8 +339,24 @@ func (r Report) Apply(st State, now time.Time) (Report, State, bool) {
 			continue
 		}
 		entry := StreamState{Now: s.Now, At: now.UTC().Format(time.RFC3339)}
+		// A tick at or before the remembered instant is the SAME tick read
+		// again, not a second one. The first real run of this verb found it:
+		// two runs of one command over one window would have counted one
+		// widening twice and gone red, so a reading nobody took would have
+		// stopped the lane. The streak counts ticks of the clock, not
+		// invocations.
+		same := had && !now.After(parseState(prev.At))
+		if same {
+			entry.At = prev.At
+		}
 		if s.Trend() == Widening {
 			entry.Widening = prev.Widening + 1
+			if same {
+				entry.Widening = prev.Widening
+				if entry.Widening == 0 {
+					entry.Widening = 1
+				}
+			}
 			if entry.Widening >= 2 {
 				streak = true
 			}
@@ -349,6 +365,19 @@ func (r Report) Apply(st State, now time.Time) (Report, State, bool) {
 		out.Streams = append(out.Streams, s)
 	}
 	return out, next, streak
+}
+
+// parseState reads a remembered instant, answering the zero time for a state
+// file written before this field carried one. A zero time is before every tick,
+// so an unreadable instant makes the next tick a new one -- the safe way round:
+// a streak that is counted is a line a person reads, and one that is silently
+// dropped is a red that never comes.
+func parseState(at string) time.Time {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(at))
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 // JSON is the whole reading as one object: the same numbers the lines print,
@@ -367,14 +396,14 @@ type JSON struct {
 // StreamJSON is one stream in that object. A number the verb does not have is
 // null rather than zero, for the same reason the line prints `-`.
 type StreamJSON struct {
-	Name    string             `json:"stream"`
-	Measure string             `json:"measure"`
-	Now     *float64           `json:"now"`
-	Before  *float64           `json:"before"`
-	Ratio   *float64           `json:"ratio"`
-	Trend   string             `json:"trend"`
-	Want    string             `json:"source,omitempty"`
-	Extra   map[string]string  `json:"extra,omitempty"`
+	Name    string            `json:"stream"`
+	Measure string            `json:"measure"`
+	Now     *float64          `json:"now"`
+	Before  *float64          `json:"before"`
+	Ratio   *float64          `json:"ratio"`
+	Trend   string            `json:"trend"`
+	Want    string            `json:"source,omitempty"`
+	Extra   map[string]string `json:"extra,omitempty"`
 }
 
 // AsJSON renders the report.
