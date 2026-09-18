@@ -55,7 +55,8 @@ func TestSpecReleaseCarriesItsRulesAndRedTests(t *testing.T) {
 		"## Says NO when",
 		"## Refuses when",
 		"## Deliberately does not",
-		"## Open questions for Stella and Johnny",
+		"## Settled since draft 1",
+		"## Still open",
 	} {
 		if !strings.Contains(spec, want) {
 			t.Errorf("docs/SPEC-RELEASE.md is missing the section %q", want)
@@ -97,11 +98,54 @@ func TestSpecReleaseCarriesItsRulesAndRedTests(t *testing.T) {
 		}
 	}
 
-	// The open questions are lettered, because the pull request body refers to
-	// them by letter and a reviewer answering "C" must find a C here.
-	for _, letter := range []string{"A", "B", "C", "D", "E", "F", "G", "H"} {
-		if !strings.Contains(spec, "- **"+letter+".") {
-			t.Errorf("docs/SPEC-RELEASE.md is missing open question %s", letter)
+	// The security lane's answers (johnny-860d359211aa) are what draft 2 exists
+	// for, and each one is a decision a later edit would have to reverse
+	// deliberately rather than drift out of.
+	for _, want := range []string{
+		// A: build from the sha, then an ANNOTATED tag carrying the digest, and
+		// the lightweight ref the code creates today is named as a bug.
+		"The order is: build from the sha, then tag",
+		"The tag must be an ANNOTATED object, and today's is not: that is a bug.",
+		"`git/tags`",
+		// B: the classification is a path list, here, and it is all six prefixes.
+		"internal/secrets/",
+		"cmd/nova-secrets/",
+		"internal/sandbox/",
+		"cmd/nova-sandbox/",
+		"infra/image/",
+		"scripts/coordination/",
+		"changing it is a pull request the\n   security sitting reads",
+		"not a label",
+		// C: the remote source, and no agent forwarding on it.
+		"`--from <host>:<dir>`",
+		"`ForwardAgent` is never set on it",
+		// D: the snapshot is the same transaction as the install.
+		"`adopt` takes the snapshot itself",
+		"snapshot=<path>",
+		// F: retire is a release verb the security lane reads.
+		"It is a `release` verb and the security lane reads it",
+		// G: one changelog file per release, named for the version.
+		"docs/RELEASE-NOTES-<version>.md",
+		// H: a leaked release has its assets pulled; the tag stays as history.
+		"the GitHub release assets are pulled",
+		"annotated superseded",
+		"if a key moved, it is rotated",
+	} {
+		if !strings.Contains(spec, want) {
+			t.Errorf("docs/SPEC-RELEASE.md lost a settled decision: missing %q", want)
+		}
+	}
+
+	// Exactly one question is still open, and it is E. A spec that quietly
+	// reopens a settled one, or that closes E without saying how, is the drift
+	// this assertion catches.
+	stillOpen := spec[strings.Index(spec, "## Still open"):]
+	if !strings.Contains(stillOpen, "- **E.") {
+		t.Error("docs/SPEC-RELEASE.md: E (stamp directory or rename) must still be listed as open")
+	}
+	for _, letter := range []string{"A", "B", "C", "D", "F", "G", "H"} {
+		if strings.Contains(stillOpen, "- **"+letter+".") {
+			t.Errorf("docs/SPEC-RELEASE.md: question %s was settled by johnny-860d359211aa and must not be listed as open", letter)
 		}
 	}
 }
@@ -164,6 +208,14 @@ func TestSpecSandboxCarriesTheWindowsPlace(t *testing.T) {
 		"reason=no_wsb",
 		"reason=wsb_busy",
 		"one instance at a time",
+		// The security lane's three answers (johnny-860d359211aa): job is the
+		// default, the caps are the run verb's, and a wsb that cannot report an
+		// exit status refuses instead of fabricating a clean one.
+		"`--place` therefore defaults to `job` and `wsb` is an explicit opt-in",
+		"Both flags belong to the `run` verb and to nothing else",
+		"reason=wsb_no_status",
+		"A clean close is never reported as 0 on the",
+		"Nothing in this section is open.",
 		// The never.
 		"WSL is never the answer",
 		"`reason=no_sandbox`",

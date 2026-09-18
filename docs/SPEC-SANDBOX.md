@@ -1238,7 +1238,7 @@ Those four are rejected as **the wall** — the thing that scopes what a command
 may read and write. Two of them come back below as **the place**, which is a
 different question, and the section says which is which.
 
-## Windows — the disposable place (draft 1, for Stella's and Johnny's read)
+## Windows — the disposable place (draft 2, Johnny's read folded in)
 
 The section above is the Windows **wall**: AppContainer, one run, filesystem
 scope. This section is the Windows **place** — the `run` verb's *create → run →
@@ -1246,11 +1246,13 @@ always delete* — and it is the Windows half of *"build our own minimal isolati
 and hygiene sandboxes"* (Glenn, 2026-09-18), written before the bench arrives so
 that it is not designed under fire (Johnny, 2026-09-18).
 
-It is a draft. Every rule below says what it is measured on, and **no rule here
-is measured on a Windows bench yet**: the estate has none. Each carries the one
-call or file it stands on and the red test that must be seen red first; the
-numbers are `W1`…`W12` so that a rule of this section is never confused with a
-rule of the platform-independent set.
+It is a draft, read by the security lane (`johnny-860d359211aa`, 2026-09-18) and
+carrying that read: the three questions draft 1 left open are settled in the
+rules that own them and recorded at the end of the section. Every rule below says
+what it is measured on, and **no rule here is measured on a Windows bench yet**:
+the estate has none. Each carries the one call or file it stands on and the red
+test that must be seen red first; the numbers are `W1`…`W12` so that a rule of
+this section is never confused with a rule of the platform-independent set.
 
 **The contract does not change.** `nova-sandbox run --name <n> …` on Windows is
 the same verb with the same five steps, the same receipt, the same leak line and
@@ -1306,8 +1308,13 @@ W4. **The caps are the job's, and they are `--memory` and `--cpu`.**
     `--name` already is, so one caller builds one argv for three platforms.
     A `--memory` or `--cpu` that is not a positive quantity is
     `SANDBOX REFUSED reason=bad_memory` / `reason=bad_cpu` at 125.
+    **Both flags belong to the `run` verb and to nothing else** (Johnny,
+    2026-09-18): the bare exec wrapper does not take them and refuses them as
+    unknown flags, because the wrapper builds a wall and a wall carries no
+    limits, while `run` makes a place and the Job Object is part of the place.
     **Red tests:** `a-child-over-the-memory-cap-is-killed-by-the-job`;
-    `memory-and-cpu-are-accepted-and-ignored-off-windows`.
+    `memory-and-cpu-are-accepted-and-ignored-off-windows`;
+    `the-bare-wrapper-refuses-memory-and-cpu-as-unknown-flags`.
 
 W5. **The scratch is a directory the tool makes under `--scratch`, it is the
     run's only `--write`, and it is deleted on every path out.** `<scratch>/nova-<n>`,
@@ -1369,26 +1376,37 @@ W8. **`--place wsb` is Windows Sandbox, and it is the only full disposability
 
 W9. **`wsb` is one instance at a time, so it is the review place and never the
     swarm's.** Windows Sandbox permits a single running instance per machine; a
-    pool of workers each wanting one is a queue of one, which is not a pool. The
-    default on windows is therefore `--place job` (W1), and `wsb` is for the
-    one-off: a review of an untrusted branch, a first run of a card image, a
-    dependency nobody has read. A second `--place wsb` on a machine already
+    pool of workers each wanting one is a queue of one, which is not a pool.
+    **`--place` therefore defaults to `job` and `wsb` is an explicit opt-in**
+    (Johnny, 2026-09-18): the default is the place every Windows machine can
+    make, and the one-off says so on the command line. `wsb` is for the review of
+    an untrusted branch, the first run of a card image, the dependency nobody has
+    read — never the swarm. A second `--place wsb` on a machine already
     running one is `SANDBOX REFUSED reason=wsb_busy` at 125, naming the running
     instance — never a silent wait.
     **Red test:** `a-second-wsb-run-refuses-rather-than-queues`.
 
-W10. **Under `wsb`, the command's exit status comes back through the scratch or
-    not at all.** `WindowsSandbox.exe` returns as soon as the VM is up and
-    carries no guest status, so the `<LogonCommand>` ends by writing the
-    command's own `%ERRORLEVEL%` to `<scratch>/.nova-sandbox-exit` in the mapped
-    writable folder, and the host waits for that file. **This is the one place
-    the contract bends**: a run whose status file is absent when `--timeout`
-    passes exits **124** with the VM closed, and a run with no `--timeout` under
-    `wsb` is refused (`reason=bad_timeout`) — because without it, a guest that
-    never writes the file is a wait with no end. Under `--place job` the status
-    is `GetExitCodeProcess` and nothing bends.
-    **Red tests:** `a-wsb-run-with-no-status-file-times-out-at-124`;
-    `wsb-refuses-a-run-with-no-timeout`.
+W10. **Under `wsb` the exit status comes back through the scratch, and a `wsb`
+    that cannot report one REFUSES.** `WindowsSandbox.exe` returns as soon as the
+    VM is up and carries no guest status, so the `<LogonCommand>` ends by writing
+    the command's own `%ERRORLEVEL%` to `<scratch>/.nova-sandbox-exit` in the
+    mapped writable folder, and the host waits for that file. Johnny, 2026-09-18:
+    *if `.wsb` cannot write an exit-status file, refuse `--place wsb` — do not
+    fake a card exit as 0 on sandbox close.* So a configuration in which the
+    status file cannot be written — no writable mapped folder, a `<LogonCommand>`
+    the tool could not compose — is `SANDBOX REFUSED reason=wsb_no_status` at
+    **125**, before the VM starts. A run whose file never appears is **124** at
+    `--timeout` with the VM closed, and a `wsb` run with no `--timeout` is
+    refused (`reason=bad_timeout`), because without it a guest that never writes
+    the file is a wait with no end. **A clean close is never reported as 0 on the
+    strength of the close alone**: the exit status of a card is the card's, and a
+    fabricated 0 is the one failure that makes every gate downstream believe a
+    run that did not happen. Under `--place job` the status is
+    `GetExitCodeProcess` and none of this arises.
+    **Red tests:** `wsb-refuses-when-it-cannot-report-an-exit-status`;
+    `a-wsb-run-with-no-status-file-times-out-at-124`;
+    `wsb-refuses-a-run-with-no-timeout`;
+    `a-clean-wsb-close-is-never-reported-as-zero`.
 
 W11. **WSL is never the answer. Not as the wall, not as the place, not as a
     fallback.** WSL2 brings a second operating system, a second filesystem, a
@@ -1455,11 +1473,14 @@ the whole run.
   widened to make a windows test pass, and no windows gap is closed by skipping
   the wall.
 
-**Open on this section:** whether `--place` is a flag at all or whether the tool
-picks `job` and only a `--place wsb` opts in; whether `--memory` and `--cpu`
-belong on `run` or on every verb; and whether the `wsb` status file is worth the
-bent contract of W10 or whether `wsb` should simply refuse to report an exit
-status and always exit 0 on a clean close. Stella and Johnny own those three.
+**Settled by the security lane's read** (`johnny-860d359211aa`, 2026-09-18), each
+folded into the rule above that owns it: **`--place` defaults to `job`** and
+`--place wsb` is the opt-in for the one-off, never the swarm (W8, W9);
+**`--memory` and `--cpu` are flags of the `run` verb only**, not of the bare
+exec wrapper (W4); and **a `.wsb` that cannot report the command's exit status
+refuses**, rather than reporting a clean close as 0 (W10). The parent-guard as
+image path plus `IsProcessInJob`, and WSL as a never, were confirmed rather than
+changed. Nothing in this section is open.
 
 ## The probe
 

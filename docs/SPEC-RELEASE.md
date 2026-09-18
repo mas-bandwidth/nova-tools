@@ -1,4 +1,4 @@
-# The release — specification (draft 1, for Stella's and Johnny's read)
+# The release — specification (draft 2, Johnny's read folded in)
 
 Glenn, 2026-09-18: *"a tool is not finished until it is tested, dogfooded by a
 non-author on real work with the edges filed, the feedback applied, documented
@@ -13,7 +13,10 @@ This spec is normative where it describes the code on `dev` at `220c05d7`, and
 [SPEC.md](SPEC.md)'s **Conventions** govern throughout — exit codes, the
 one-line grammar, the field law, `internal/oneline`, `internal/bounded`, no
 guessed paths — and are not restated. Where this file and the code disagree,
-one of them has a bug and the tests decide which.
+one of them has a bug and the tests decide which. Draft 2 folds in the security
+lane's read (`johnny-860d359211aa`, 2026-09-18) and the coordinator's answers
+(`rowan-a13a1678d61b`): what those two settled is recorded under **Settled since
+draft 1**, and one question is still open under **Still open**.
 
 It exists because of the pit stop of 2026-09-17: four Linux benches ran
 six-hour-old tools while the coordinator believed they were current, and the
@@ -39,11 +42,11 @@ any of it and no step that could SAY what it had done.
 
 1. **A release is a tag on a green commit on `main`, and nothing else is one.**
    Not a build somebody kept, not a `bin/` a friend is happy with, not a branch.
-   The tag is created by `release cut` at the sha `--from` resolved, it is
-   created and never force-moved — `GH.Tag` POSTs `git/refs`, a create — because
-   a tag that can be moved is a tag whose binaries and whose source can
-   disagree. A version that is already a tag in the repository is refused before
-   anything else happens.
+   The tag is created at the sha `--from` resolved, **after** that sha's binaries
+   exist (rule 4), and it is created and never force-moved, because a tag that
+   can be moved is a tag whose binaries and whose source can disagree. A version
+   that is already a tag in the repository is refused before anything else
+   happens.
    **Red test:** `a-tag-is-never-moved-only-created`.
 2. **A release is a set of per-platform binaries, every one of them stamped with
    the version.** `release build` compiles every `cmd/nova-*` found by walking
@@ -67,11 +70,26 @@ any of it and no step that could SAY what it had done.
    adopting host got from the **forge**, not against a file that travelled with
    the bits. A checksum file carried beside the binaries proves only that the
    directory agrees with itself.
-   **NOT BUILT at `220c05d7`.** `GH.Tag` creates a lightweight ref with no
-   message, and `build` writes `SHA256SUMS` after the tag exists. This is the
-   spec's one structural change to the verbs, and open question **A** below is
-   the ordering it needs.
-   **Red test:** `install-refuses-a-SUMS-whose-digest-is-not-the-tags`.
+   **The order is: build from the sha, then tag** (Johnny, 2026-09-18, settling
+   open question A). The digest cannot exist before the binaries, and the
+   binaries are built from the sha, so `build` runs first against the resolved,
+   gated commit and the tag is created **last**, carrying one digest line per
+   platform in its message. A build that fails therefore leaves no tag, which is
+   the property `cut` already has and the reason a tag is the last mutation of a
+   release rather than the first.
+   **The tag must be an ANNOTATED object, and today's is not: that is a bug.**
+   `GH.Tag` POSTs `git/refs`, which creates a **lightweight** ref with no
+   message, while the comment beside it calls it "annotated-by-reference"
+   (Johnny, 2026-09-18: *lightweight `git/refs` is a bug*). A lightweight tag has
+   nowhere to put a digest, so rule 4 cannot stand on one. The fix is a `git/tags`
+   POST creating the tag object with its message, then `git/refs` pointing at
+   that object, and it is filed for the release lane as the first item of this
+   rule's work.
+   **NOT BUILT at `220c05d7`:** the annotated tag, the digest inside it, the
+   build-then-tag order, and `install`'s check against it.
+   **Red tests:** `install-refuses-a-SUMS-whose-digest-is-not-the-tags`;
+   `the-tag-is-an-annotated-object-not-a-bare-ref`;
+   `a-failed-build-leaves-no-tag`.
 
 ## What gates it
 
@@ -103,12 +121,34 @@ somebody makes in prose.
    reviewer's impression.
    **Red test:** `cut-refuses-when-moved-names-a-verb-CLI-md-does-not`.
 8. **Anything touching secrets, the sandbox or the card image is read by the
-   security lane before the cut.** Johnny, 2026-09-18: that sitting reads those
-   three surfaces, and it does not merge. The evidence is his read on the bus,
-   named by note id in the release's changelog section.
-   **Red test:** `cut-refuses-a-range-touching-internal-secrets-with-no-read-recorded`.
+   security lane before the cut, and what "touching" means is this path list.**
+   Johnny, 2026-09-18: that sitting reads those three surfaces, and it does not
+   merge. A range touches them when any file it changes is under one of these
+   prefixes:
+
+   ```
+   internal/secrets/
+   cmd/nova-secrets/
+   internal/sandbox/
+   cmd/nova-sandbox/
+   infra/image/
+   scripts/coordination/
+   ```
+
+   **The list lives here, in the spec, and changing it is a pull request the
+   security sitting reads** (Johnny, settling open question B). It is not a label
+   on a pull request — labels drift, and the thing that must not drift is what
+   counts as security-relevant — and it is not a note id in the changelog, which
+   is after the fact: a note id records that a read happened, and the gate has to
+   be able to say a read is *required* before anybody has done one. `cut` reads
+   the compare range it already computes for the changelog, classifies each
+   changed path against the list, and refuses a cut whose range touches the list
+   with no recorded read for that sha.
+   **Red tests:** `cut-refuses-a-range-touching-internal-secrets-with-no-read-recorded`;
+   `the-classification-list-is-read-from-the-spec-not-from-a-label`;
+   `a-range-touching-nothing-on-the-list-needs-no-security-read`.
    **NOT BUILT at `220c05d7`:** `cut` reads the compare range but does not
-   classify it. Open question **B**.
+   classify it.
 9. **The gates are ANDed and each one names itself when it says no.** A cut
    blocked by three gates prints three lines, not the first one: a refusal that
    names one of several sends somebody round the loop once per gate. This is the
@@ -134,8 +174,20 @@ rule 3 governs the child processes: argv, never a shell.
     survive `-X main.version=`, a printf format or the field law — whitespace,
     `%`, `=`, a missing `v`, not three dotted numbers — is refused here, before
     anything is built or tagged.
+    **`--changelog` names `docs/RELEASE-NOTES-<version>.md`**, one file per
+    release, and what `cut` writes into it is the **mechanical** list: the pull
+    request numbers, their titles, the batch members. The prose release notes —
+    the page a friend reads to find the row that is their actual problem today —
+    are Stella's, written beside it under the same version's name. Two documents
+    with one flag was the confusion; one file per release, mechanical list first
+    and prose above it, is the settlement.
+    **Under rule 4's settled order the tag step moves to the end**: `cut` gates,
+    decides the version and writes the changelog section, `build` produces each
+    platform's set, and the annotated tag is created last with the digests in it.
+    At `220c05d7` `cut` still tags before anything is built.
     **Red tests:** `cut-dry-run-writes-nothing-and-tags-nothing`;
-    `previous-tag-is-semantic-not-lexical`.
+    `previous-tag-is-semantic-not-lexical`;
+    `the-changelog-file-is-named-for-the-version`.
 11. **`build` compiles one platform's set from one checkout.** `--source` is a
     nova-tools checkout, `--platform <goos>-<goarch>` cross-compiles (this host
     when it is absent). The file names are decided for the **target**, never for
@@ -169,10 +221,20 @@ rule 3 governs the child processes: argv, never a shell.
     **hulk builds, the Studio adopts.** The Studio pulls the stamp directory from
     the build host, verifies it against the digest it already holds from the tag
     (rule 4), and only then reaches each bench.
-    **Red test:** `adopt-refuses-to-run-on-a-host-that-is-not-the-adopting-host`.
+    **`--from` learns a remote form: `--from <host>:<dir>`** (Johnny,
+    2026-09-18, settling open question C), so the pull is inside the verb and has
+    the verb's refusals rather than being a step somebody remembers. The host
+    half is the same narrow name rule 15 already enforces, the directory half is
+    an absolute path, and the pull is a copy, never a remote command composed by
+    interpolation. **`ForwardAgent` is never set on it**, on this edge or any
+    other: an agent forwarded to a build host is the build host holding the
+    fleet's trust by another route, which is the thing this rule exists to
+    prevent. A local `--from <dir>` keeps working unchanged.
+    **Red tests:** `adopt-refuses-to-run-on-a-host-that-is-not-the-adopting-host`;
+    `from-host-dir-pulls-before-it-verifies-and-verifies-before-it-sends`;
+    `no-ssh-argv-this-package-composes-carries-ForwardAgent`.
     **NOT BUILT at `220c05d7`:** `adopt --from <dir>` reads a **local** artifact
-    root, so the pull from the build host is a step outside the verb today. Open
-    question **C**.
+    root only.
 14. **The release installs itself, by absolute path, on the far side.** The
     `nova-update` that runs the remote install is the one `adopt` just sent — so
     a bench provisioned this morning adopts with the same command as one a
@@ -230,9 +292,18 @@ rule 3 governs the child processes: argv, never a shell.
     <previous>/<machine>.tsv --to <this>/<machine>.tsv` is the answer to *what
     moved on that bench* without asking the bench. The coordinator's belief is
     never the record.
-    **Red test:** `a-release-with-a-machine-missing-its-snapshot-is-not-complete`.
+    **`adopt` takes the snapshot itself**, in the same remote turn as the install
+    (Johnny and Rowan, 2026-09-18, settling open question D): the receipt and the
+    proof are then one transaction, and the path of the snapshot it wrote is a
+    field on the receipt line —
+    `RELEASE ADOPTED machine=… version=… tools=… skipped=… bin=… snapshot=<path>`.
+    A snapshot that refuses — a mixed set on that bench — makes that machine a
+    `RELEASE REFUSED` even though the install itself returned, because a bench
+    that cannot say what it is running has not adopted. One more remote call per
+    machine is the price, and the alternative is a step something has to remember.
+    **Red tests:** `a-release-with-a-machine-missing-its-snapshot-is-not-complete`;
+    `a-mixed-set-after-install-makes-the-machine-refused-not-adopted`.
     **NOT BUILT at `220c05d7`:** the snapshot is a separate verb a person runs.
-    Open question **D**.
 
 ## How a bad release is undone
 
@@ -255,20 +326,38 @@ rule 3 governs the child processes: argv, never a shell.
     line per file and a count, and **refuses outright when `<dir>` is the live
     stamp or the directory `bin/` points at** — never `rm` the last-good stamp.
     Deletion goes through the one guarded helper; CI refuses any other.
+    **It is a `release` verb and the security lane reads it** (Johnny,
+    2026-09-18, settling open question F): the stale copies came from `go
+    install` rather than from a release, but the question *which directory is
+    live* is a release's to answer, and a deletion verb is his read wherever it
+    sits.
     **Red tests:** `retire-refuses-the-live-stamp`;
     `retire-refuses-a-path-that-is-not-below-its-root`.
-    **NOT BUILT at `220c05d7`.** Open question **F**.
-23. **A tag is never deleted to undo a release.** The bad version keeps its tag
-    and its changelog section, the next one supersedes it, and the changelog says
-    what was wrong with it. A tag deleted and recreated is the one state the cut
-    gate spends its whole length refusing.
-    **Red test:** `cut-refuses-a-version-that-is-already-a-tag`.
+    **NOT BUILT at `220c05d7`.**
+23. **A tag is never deleted; a leaked release has its artifacts pulled.** The
+    bad version keeps its tag and its changelog section, the next one supersedes
+    it, and the changelog says what was wrong with it — a tag deleted and
+    recreated is the one state the cut gate spends its whole length refusing.
+    **But a release that leaked a secret is not undone by superseding it**
+    (Johnny, 2026-09-18, settling open question H): *leaving the bits
+    downloadable is the leak continuing.* So the remedy has three parts and all
+    three happen — **the GitHub release assets are pulled**, binaries and
+    `SHA256SUMS` both, so the artifacts are no longer downloadable; **the tag
+    stays, as history, annotated superseded**, naming the version that replaces
+    it and why; and **if a key moved, it is rotated**, which is the security
+    lane's step and not this tool's. An `install` against a pulled release finds
+    nothing and refuses; it never falls back to a cached copy.
+    **Red tests:** `cut-refuses-a-version-that-is-already-a-tag`;
+    `a-pulled-release-cannot-be-installed-from-a-cache`.
 
 ## What a version number means for us
 
 24. **`v0.MINOR.PATCH`, and the `0` is honest.** No tool here has promised a
     stable interface across a sprint; the major stays `0` until one does, and the
-    day one does is a decision on the bus, not a cutter's.
+    day one does is a decision on the bus, not a cutter's. The scheme in rules
+    24–26 was proposed in draft 1 and carried on the bus without objection
+    (Johnny, 2026-09-18); it is the estate's numbering until somebody proposes
+    another.
     **Red test:** `cut-refuses-a-major-above-zero`. **NOT BUILT at `220c05d7`:**
     `ValidVersion` accepts any three numbers after the `v`.
 25. **MINOR is the sprint; PATCH is the batch.** A sprint has a fixed scope and a
@@ -343,7 +432,10 @@ Each a `RELEASE REFUSED: <reason> (<remedy>)`, exit 2 — the tool could not run
   file's digest does not match the tag's;
 - the release carries no `nova-update` for the target platform;
 - `--machines` names no machine, or a line is not a machine name;
-- **proposed:** `--retire` names the live stamp, or a path not below its root.
+- `--from <host>:<dir>` carries a host that is not a machine name, or a
+  directory that is not absolute;
+- `--retire` names the live stamp, or the directory `bin/` points at, or a path
+  not below its root.
 
 ## Deliberately does not
 
@@ -364,39 +456,46 @@ Each a `RELEASE REFUSED: <reason> (<remedy>)`, exit 2 — the tool could not run
 - **It does not delete a tag, a changelog section or the last-good stamp.**
 - **It does not have a config file.** There is no file any path can arrive from.
 
-## Open questions for Stella and Johnny
+## Settled since draft 1
 
-These are the ones this draft could not settle; they are repeated in the pull
-request body.
+Johnny's read of #1337 (`johnny-860d359211aa`, 2026-09-18) and Rowan's answers
+(`rowan-a13a1678d61b`) settled eight of the nine. Each is folded into the rule
+it belongs to and recorded here so a reader knows the decision was made rather
+than assumed:
 
-- **A. The ordering of tag and digest (rule 4).** The digest can only be written
-  into the annotation after the binaries exist, and the binaries are built from
-  the tagged sha. Either `cut` tags and a fifth step annotates after `build`, or
-  `build` runs first from a sha and `cut` tags with the digest in hand. The
-  second is one fewer mutation; the first keeps `cut` as the single writer.
-- **B. How `cut` classifies a range as touching secrets, the sandbox or the
-  image (rule 8).** A path prefix list (`internal/secrets/`, `internal/sandbox/`,
-  `infra/image/`) is mechanical and cheap; it is also a list that drifts. Johnny
-  owns whether the gate is a path list, a label on the pull request, or his note
-  id in the changelog section and nothing more.
-- **C. Whether `adopt` learns `--from host:dir` (rule 13).** Johnny's shape has
-  the Studio pulling the stamp directory from hulk. Today `--from` is a local
-  root, so the pull is a step outside the verb. Adding a remote source puts a
-  second `ssh` edge in the verb; leaving it out leaves one step unspecified.
-- **D. Whether `adopt` takes the snapshot itself (rule 20).** One more remote
-  call per machine, and the receipt becomes part of the same transaction — or the
-  snapshot stays a separate verb and something else has to remember to run it.
+- **A** — build from the sha, then an **annotated** tag carrying the digest; the
+  lightweight `git/refs` tag `GH.Tag` creates today is a bug, filed for the
+  release lane (rule 4).
+- **B** — the security classification is a **path list in this spec**, six
+  prefixes, and changing it is a pull request the security sitting reads; not a
+  label, not a note id (rule 8).
+- **C** — `adopt --from <host>:<dir>`, and `ForwardAgent` never (rule 13).
+- **D** — `adopt` takes the `nova-version snapshot` itself, in the same remote
+  turn, and the receipt carries its path (rule 20).
+- **F** — `--retire` is a `release` verb and the security lane reads it (rule 22).
+- **G** — `--changelog` names `docs/RELEASE-NOTES-<version>.md`, one file per
+  release: the mechanical list is `cut`'s, the prose above it is Stella's
+  (rule 10).
+- **H** — a leaked release has its **GitHub assets pulled**, its tag kept as
+  history and annotated superseded, and any key that moved rotated (rule 23).
+- **The version mapping** — `v0.MINOR.PATCH`, MINOR per sprint, PATCH per batch,
+  dev builds `v0.16.0-dev.<sha>`, carried without objection (rules 24–26).
+
+The Windows section's three are settled in its own text: `--place` defaults to
+`job` and `wsb` opts in; `--memory` and `--cpu` live on `run` only; and a `.wsb`
+that cannot report an exit status **refuses** rather than reporting a clean
+close as 0.
+
+## Still open
+
+One, and it is Stella's:
+
 - **E. Stamp directory or rename (rule 21).** `release install` renames into
-  `--bin`; `apply --sha` stages a set and swaps a link. The rollback story wants
-  the link; the rename is what makes an install safe while work is in flight.
-  Both may be right on different machines, which would be a flag, which is worse.
-- **F. Who owns `--retire` (rule 22).** It is a deletion verb, so it is Johnny's
-  read. Whether it belongs on `release` or on `nova-version` is open: the stale
-  copies it removes were put there by `go install`, not by a release.
-- **G. Which file `--changelog` names.** `docs/RELEASE-NOTES-next.md` is prose a
-  person writes; `cut` writes a mechanical list of merged pull requests. They are
-  two documents with one name. Stella owns which is which.
-- **H. Whether a failed release is retired or superseded (rule 23).** This draft
-  says superseded. If a release is found to leak a secret, superseding it leaves
-  the bad artifacts reachable by tag, and Johnny may want the artifacts pulled
-  even though the tag stays.
+  `--bin`; `nova-update apply --sha` stages a set and swaps a link
+  ([SPEC-VERSION.md](SPEC-VERSION.md) rule 5). The rollback story wants the link,
+  because a version that is still on the disk is a version `install --version
+  <previous>` can reach. The rename is what makes an install safe while work is
+  in flight, because a running process keeps its own inode. Two shapes do one
+  job today, and a flag that picked between them per machine would be worse than
+  either. Until it is settled, rule 21 describes the stamp directory and marks
+  itself NOT BUILT.
