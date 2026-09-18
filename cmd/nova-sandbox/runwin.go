@@ -389,8 +389,15 @@ func finishWindows(stderr io.Writer, name, root, dir string, code int, started t
 	wall := runNow().Sub(started).Seconds()
 	if rmErr != nil {
 		fmt.Fprintf(stderr, "SANDBOX DONE name=%s exit=%d wall=%.3f freed=%d\n", oneline.Field(name), code, wall, 0)
-		fmt.Fprintf(stderr, "SANDBOX LEAK name=%s volume=%s remedy=%q\n",
-			oneline.Field(name), oneline.Field(dir), "rmdir /s /q "+dir)
+		// The remedy is a line to RUN, in the grammar's own shape: literal quotes around a
+		// value rendered through oneline.Field, exactly as the darwin leak line spells
+		// `diskutil apfs deleteVolume`. It was `%q`, which is GO quoting, and on a real
+		// windows path that doubled every separator:
+		// remedy="rmdir /s /q C:\\Users\\...\\nova-j1" is not a command anyone can paste
+		// (measured on the windows leg, run 35367602664). oneline.Field leaves a backslash
+		// alone, which is why the volume= slot beside it was already right.
+		fmt.Fprintf(stderr, "SANDBOX LEAK name=%s volume=%s remedy=\"rmdir /s /q %s\"\n",
+			oneline.Field(name), oneline.Field(dir), oneline.Field(dir))
 		fmt.Fprintf(stderr, "SANDBOX NOTE the scratch could not be removed after %s of retries: %s. A running .exe inside it cannot be removed and cannot be replaced in place -- NTFS raises a sharing violation and there is no replace-the-inode trick -- so something in the job outlived the close, or Defender still holds a handle\n",
 			winRemoveWindow, oneline.Err(rmErr))
 		return exitLeak

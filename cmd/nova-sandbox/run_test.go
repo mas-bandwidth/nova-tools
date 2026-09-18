@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -210,20 +211,52 @@ func TestRunRefusesWhenTheContainerCannotBeRead(t *testing.T) {
 }
 
 // Every independent problem in ONE run, and each one naming the form its flag wants.
+//
+// The CONTRACT is the count of runs, not the vocabulary: a first run is never sequenced
+// into as many runs as it has mistakes. The vocabulary is the PLATFORM's — `--size lots`
+// is `bad_size` on darwin and `size_unenforceable` on windows (W6), where no `--size` can
+// be enforced at all, and windows adds the `bad_scratch` of W5 because the place there has
+// no default. So the reason set is asked of `validateRun` with the platform NAMED, which
+// is what that parameter is for, and both platforms are checked from either machine.
+//
+// Measured red on the windows CI leg (run 35367602664, job test-windows-pr): this test
+// asserted darwin's set and darwin's remedy whatever platform it ran on, and the windows
+// verb — which named every one of its own six problems in one refusal, correctly — failed
+// it.
 func TestRunNamesEveryBadFlagAtOnce(t *testing.T) {
+	badArgv := []string{"--name", "a b", "--size", "lots", "--timeout", "soon", "--container", "sda1"}
+	for _, tc := range []struct {
+		goos string
+		want []string
+	}{
+		{"darwin", []string{"no_name", "bad_size", "bad_timeout", "no_container", "no_command"}},
+		{"windows", []string{"no_name", "size_unenforceable", "bad_scratch", "bad_timeout", "no_container", "no_command"}},
+	} {
+		f := parseRun(badArgv)
+		_, bad := validateRun(&f, tc.goos)
+		for _, want := range tc.want {
+			if !hasReason(bad, want) {
+				t.Errorf("on %s, an argv with a problem per flag does not report reason=%s; every independent problem is named in ONE refusal (all: %v)",
+					tc.goos, want, reasonsOf(bad))
+			}
+		}
+	}
+
+	// And end to end, on the platform this test is actually running on: one refusal, exit
+	// 125, and the remedy line is that platform's own — a windows reader handed the darwin
+	// argv would type the very flag the next line refuses.
 	var out, errb bytes.Buffer
-	code := runVerb([]string{"--name", "a b", "--size", "lots", "--timeout", "soon", "--container", "sda1"},
-		nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
+	code := runVerb(badArgv, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})
 	if code != 125 {
 		t.Fatalf("bad flags are the tool's own refusal, 125, and got %d\n%s", code, errb.String())
 	}
-	for _, want := range []string{"reason=no_name", "reason=bad_size", "reason=bad_timeout", "reason=no_container", "reason=no_command"} {
+	for _, want := range []string{"reason=no_name", "reason=bad_timeout", "reason=no_container", "reason=no_command"} {
 		if !strings.Contains(errb.String(), want) {
-			t.Errorf("a run with five problems does not report %s; a first run must not be sequenced into as many runs as it has mistakes:\n%s", want, errb.String())
+			t.Errorf("the refusal does not carry %s, which every platform shares:\n%s", want, errb.String())
 		}
 	}
-	if !strings.Contains(errb.String(), runRemedy) {
-		t.Errorf("the refusal carries no remedy line:\n%s", errb.String())
+	if !strings.Contains(errb.String(), remedyFor(runtime.GOOS)) {
+		t.Errorf("the refusal carries no remedy line for %s:\n%s", runtime.GOOS, errb.String())
 	}
 }
 
