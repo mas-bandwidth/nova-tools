@@ -67,7 +67,7 @@ When `nova-pulse fleet standard --bench <name> --platform windows` probes the be
 | `git` | `contains:windows` | Native Git for Windows (`git version ...windows...`), not WSL. |
 | `no-wsl` | `equals:ok` | Session is not inside WSL (`WSL_DISTRO_NAME` and `WSL_INTEROP` unset). |
 | `features` | `contains:Containers` | Hyper-V and Containers virtualization features enabled for sandboxing. |
-| `runner-service`| `contains:Running` | GitHub Actions runner Windows Service is active and running under `nova`. |
+| `runner-service`| `contains:Running (nova)` | GitHub Actions runner Windows Service is active and running under `nova`. |
 | `wol` | `equals:enabled` | Network adapter has Wake-on-Magic-Packet enabled in driver properties. |
 | `nova-stamp` | `nonempty` | `nova-swarm version` answers cleanly. |
 | `seat` | `equals:1` | Exactly one `*.key` present in `.config/nova-secrets/`. |

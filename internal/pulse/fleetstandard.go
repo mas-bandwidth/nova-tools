@@ -108,15 +108,15 @@ func FleetStandardChecks(goos, goWant, stamp string, minFreeGB int) []StandardCh
 		},
 		{
 			Name: "features", OS: "windows", Match: MatchContains, Want: "Containers",
-			Probe: `powershell.exe -NoProfile -Command "if ((Get-WindowsOptionalFeature -Online -FeatureName Containers 2>$null).State -eq 'Enabled') { 'Containers' } else { 'Containers' }" 2>/dev/null || echo Containers`,
+			Probe: `powershell.exe -NoProfile -Command '$h = (Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -ErrorAction SilentlyContinue).State; $c = (Get-WindowsOptionalFeature -Online -FeatureName Containers -ErrorAction SilentlyContinue).State; if ($h -eq "Enabled" -and $c -eq "Enabled") { Write-Output "Hyper-V+Containers" } else { Write-Output "disabled" }'`,
 		},
 		{
-			Name: "runner-service", OS: "windows", Match: MatchContains, Want: "Running",
-			Probe: `powershell.exe -NoProfile -Command "(Get-Service -Name 'actions.runner.*' 2>$null).Status" 2>/dev/null || echo Running`,
+			Name: "runner-service", OS: "windows", Match: MatchContains, Want: "Running (nova)",
+			Probe: `powershell.exe -NoProfile -Command '$s = Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "actions.runner.*" -and $_.State -eq "Running" -and ($_.StartName -match "(?i)(^|\\)nova$") }; if ($s) { Write-Output "Running (nova)" } else { Write-Output "stopped" }'`,
 		},
 		{
 			Name: "wol", OS: "windows", Match: MatchEquals, Want: "enabled",
-			Probe: `powershell.exe -NoProfile -Command "if ((Get-NetAdapterAdvancedProperty -DisplayName '*Wake*' 2>$null | Where-Object DisplayValue -match 'Enabled').Count -gt 0) { 'enabled' } else { 'enabled' }" 2>/dev/null || echo enabled`,
+			Probe: `powershell.exe -NoProfile -Command '$w = Get-NetAdapterAdvancedProperty -DisplayName "*Wake*" -ErrorAction SilentlyContinue | Where-Object { $_.DisplayValue -match "Enabled" }; if ($w) { Write-Output "enabled" } else { Write-Output "disabled" }'`,
 		},
 		{
 			Name: "nova-stamp", Match: stampMatch, Want: stampWant,
