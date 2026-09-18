@@ -1445,6 +1445,12 @@ func TestTheRefusalSentencesAreWhatTheyWere(t *testing.T) {
 // [175] ONE RUN REPORTS EVERY PROBLEM, IN A DETERMINISTIC ORDER. The every-problem half is
 // pinned elsewhere; the order is a fact a reader builds a habit on, and a map iteration in
 // the wrong place would make it a coin toss per run.
+//
+// Add's backend hint is LAST, not first, since issue 625: add now makes its own --dir
+// (TestAddCreatesTheBoardDirectoryOnFirstUse), and the makeDir rule is that the caller
+// judges every flag BEFORE it asks for the backend, so a refused line makes no directory
+// (dir.go, flags.backend's second lock). The backend's own problems therefore join the
+// list after the flags', and the order a reader sees is the order the run discovers them.
 func TestTheRefusalLinesComeInOneOrder(t *testing.T) {
 	t.Parallel()
 	b := newBench(t)
@@ -1458,7 +1464,7 @@ func TestTheRefusalLinesComeInOneOrder(t *testing.T) {
 			t.Fatalf("two runs of one bad invocation printed different orders:\n%s\n%s", first, stderr)
 		}
 	}
-	want := []string{backendHint, asHint, textHint, byHint, defHint}
+	want := []string{asHint, textHint, byHint, defHint, backendHint}
 	at := -1
 	for _, hint := range want {
 		next := strings.Index(first, hint)

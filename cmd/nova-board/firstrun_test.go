@@ -302,9 +302,11 @@ func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 // Glenn ruled on nova-tools #109: "It is best to do the right thing if a friend
 // uses it a certain way, or to correct docs to show only right way. Pick one."
 // The right thing: `quickstart` MAKES the directory (TestQuickstartMakesTheDirectory
-// below), as `nova-swarm quickstart --pool` makes its pool. Every other verb still
-// refuses a directory that is not there -- quickstart is the one verb whose whole
-// job is a first run, and a first run has nowhere to write yet, while a `list` or a
+// below), as `nova-swarm quickstart --pool` makes its pool. Issue 625 extends the
+// ruling to the FIRST add (TestAddCreatesTheBoardDirectoryOnFirstUse): a board's
+// first card has nowhere to write yet, and an empty directory is a valid empty
+// ledger. Every OTHER verb still refuses a directory that is not there --
+// quickstart and add are the verbs that write a first run, while a `list` or a
 // `take` against a directory that does not exist is a caller who named the wrong
 // path, and making it for them would hide the typo behind an empty board.
 //
@@ -313,14 +315,13 @@ func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 // not a numbered rule), and here what it wants is a directory that exists.
 func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "board")
-	for _, verb := range []string{"list", "check", "add"} {
+	for _, verb := range []string{"list", "check", "take"} {
 		args := []string{verb, "--dir", missing, "--stale", "10m"}
 		switch verb {
 		case "check":
 			args = []string{verb, "--dir", missing, "--words", "anything"}
-		case "add":
-			args = []string{verb, "--dir", missing, "--as", "rowan", "--text", "a card",
-				"--by", "4h", "--default", "the filer files it as a known gap"}
+		case "take":
+			args = []string{verb, "--dir", missing, "--as", "rowan", "--card", "0000000000000000000000000000000f", "--stale", "10m"}
 		}
 		var out, errb bytes.Buffer
 		exit := run(args, &out, &errb, time.Now().UTC(), &seq{})
@@ -343,7 +344,8 @@ func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 	}
 
 	// A path that exists and is a FILE is a different mistake and keeps its own
-	// message: mkdir -p would not fix it.
+	// message: mkdir -p would not fix it. ADD still refuses it too -- a board is not
+	// a file this tool replaces, and the error is the same one quickstart names.
 	file := filepath.Join(t.TempDir(), "board")
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -354,6 +356,15 @@ func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "is a file") || strings.Contains(errb.String(), "mkdir -p") {
 		t.Errorf("a --dir that is a file is not a missing directory:\n%s", errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if exit := run([]string{"add", "--dir", file, "--as", "rowan", "--text", "a card",
+		"--by", "4h", "--default", "d"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 2 {
+		t.Errorf("add against a --dir that is a file exits %d, want 2", exit)
+	}
+	if !strings.Contains(errb.String(), "is a file") || strings.Contains(errb.String(), "mkdir -p") {
+		t.Errorf("add against a file is not a missing directory and not something it may make:\n%s", errb.String())
 	}
 }
 
@@ -497,5 +508,67 @@ func TestQuickstartRefusedMakesNothing(t *testing.T) {
 				t.Errorf("%v was refused and still made %s (%v); a refused run makes no board", args, missing, err)
 			}
 		})
+	}
+}
+
+// Issue 625 (dogfood, Stella): the FIRST add into a board directory that is not
+// there yet. `nova-board add --dir --what "..."` refused -- the `--what` spelling
+// is not evidence, the flag is `--text` (the usage banner) -- and the expectation
+// is that the add CREATES the board directory on first use: an empty directory is
+// a valid empty ledger, and the ledger is append-only, so the first event is the
+// directory's first card. quickstart makes its directory
+// (TestQuickstartMakesTheDirectory) and the first add makes its own, with MkdirAll
+// and 0755 exactly as `nova-swarm quickstart --pool` makes its pool;
+// created=true|false on the ADD OK line says which run made it, so a reader can
+// tell a new board from a wrong path -- the same "and it says so" rule quickstart's
+// created= serves. A path that is a FILE or cannot be made still refuses: MkdirAll
+// would not fix a file, and a board is not a file this tool replaces
+// (TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt pins the refusals that
+// REMAIN: list, check and take).
+func TestAddCreatesTheBoardDirectoryOnFirstUse(t *testing.T) {
+	b := newBench(t)
+	missing := filepath.Join(b.dir, "board")
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("the board directory exists before the first add (%v); the fixture is supposed to be new", err)
+	}
+	exit, stdout, stderr := b.run("add", "--dir", missing, "--as", "rowan",
+		"--text", "the one card a first add files", "--by", "4h", "--default", "the filer files it as a known gap")
+	if exit != 0 {
+		t.Fatalf("add into a nonexistent --dir exits %d, want 0: the first add makes the board; stderr: %s", exit, stderr)
+	}
+	if !strings.Contains(stdout, "created=true") {
+		t.Errorf("the run that made the directory does not say so; want created=true on the ADD OK line:\n%s", stdout)
+	}
+	id := field(stdout, "id=")
+	if id == "" {
+		t.Fatalf("add printed no id:\n%s", stdout)
+	}
+	// The listing returns exactly that obligation: one card, the one just filed.
+	exit, stdout, stderr = b.run("list", "--dir", missing, "--stale", "10m", "--list")
+	if exit != 0 {
+		t.Fatalf("list against the board add just made exits %d, want 0; stderr: %s", exit, stderr)
+	}
+	if n := count(stdout, "BOARD CARD"); n != 1 {
+		t.Errorf("the listing shows %d cards, want exactly the one the add filed:\n%s", n, stdout)
+	}
+	if !strings.Contains(stdout, "BOARD OK cards=1") {
+		t.Errorf("the count is not the one card:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "the one card a first add files") {
+		t.Errorf("the listing lost the obligation that was filed:\n%s", stdout)
+	}
+	// The directory is a real directory on disk, made the way quickstart makes its
+	// board -- and a SECOND add finds it there and says so.
+	info, err := os.Stat(missing)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("add returned 0 and %s is not a directory (%v)", missing, err)
+	}
+	exit, stdout, stderr = b.run("add", "--dir", missing, "--as", "rowan",
+		"--text", "a second card on the same board", "--by", "4h", "--default", "d")
+	if exit != 0 {
+		t.Fatalf("a second add exits %d, want 0; stderr: %s", exit, stderr)
+	}
+	if !strings.Contains(stdout, "created=false") {
+		t.Errorf("a second add re-made the directory it found; want created=false:\n%s", stdout)
 	}
 }

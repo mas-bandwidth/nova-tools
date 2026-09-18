@@ -316,14 +316,16 @@ write access to a repo's branches.
 
 **`--dir <path>` — a directory of card files in a repository, tomorrow.** One
 file per card, `<dir>/<id>.board`, created by `add`. **The directory itself is made
-by `quickstart` and by no other verb** (`created=` on its `QUICKSTART OK` line says
-whether that run made it): a first run has nowhere to write yet, while every other
-verb refuses a directory that is not there and names the `mkdir -p` that fixes it,
-because a `list` or a `take` against a missing directory is a path typed wrong and
-making it would answer the typo with an empty board. One event per line, appended,
-read whole; the board is a fold over every file in the directory (rule 3). The
-first line of every card file is exactly `BOARD v1` and nothing else, for the
-reason `OPEN v2` has a version line: a later format read as this one would be
+by `quickstart` and by the first `add`** (`created=` on its `QUICKSTART OK` and
+`ADD OK` lines says whether that run made it): a first run and a first card have
+nowhere to write yet, while every other verb refuses a directory that is not there
+and names the `mkdir -p` that fixes it, because a `list` or a `take` against a
+missing directory is a path typed wrong and making it would answer the typo with an
+empty board. An empty directory is a valid empty ledger, so the first `add` making
+its own directory changes nothing about what a card is: one event per line,
+appended, read whole; the board is a fold over every file in the directory (rule
+3). The first line of every card file is exactly `BOARD v1` and nothing else, for
+the reason `OPEN v2` has a version line: a later format read as this one would be
 entries nobody wrote. Blank lines and `#` comments are ignored, as everywhere else
 in this family's files. A file in the directory that is not `<thirty-two hex>.board`
 is counted under `BOARD NOTE unparsed files=<n>` and never read as a card. **The
@@ -407,7 +409,7 @@ BOARD MORE kind=<card|line|leg> shown=<n> total=<t> and <t-n> more; <remedy>
 BOARD NOTE <something true about this board that is not a card>
 BOARD FAIL <id or source>: <reason>
 BOARD REFUSED: <reason>
-ADD OK id=<id> owner=<name> at=<stamp> by=<stamp> backend=<issue|dir> durable=<true|false> existed=<true|false>
+ADD OK id=<id> owner=<name> at=<stamp> by=<stamp> backend=<issue|dir> durable=<true|false> created=<true|false> existed=<true|false>
 ADD NOTE <something true about this filing that is not a refusal>
 ADD REFUSED: <reason>
 TAKE OK id=<id> owner=<name> at=<stamp> previous=<name|-> override=<true|false>
@@ -916,16 +918,18 @@ shared packages used rather than re-spelled.
 7. **`cmd/nova-board/check.go`** — the dumb matcher, `--all`, `CHECK HIT` capped,
    `matched=` never capped, and **exit 1 on a match**. The test is named for the
    mnemonic: `TestCheckExitsOneOnMatchSoTheShellGuardReads`.
-8. **`quickstart`** — the natural first run: judge **every** flag first, then, only on
-   a line that is accepted whole, make the `--dir` directory when it is missing
-   (`MkdirAll`, `0755`, as `nova-swarm quickstart --pool` makes its pool) and report it
-   as `created=true|false`. **A refused run makes nothing**: a first run that
-   fat-fingers `--stale` is exactly the run with no board yet, and making it would
-   answer the typo with an empty board. Then read the board, print the counts, print
-   the `check … || { [ $? -eq 1 ] && exit 0; exit 2; }; add … --by … --default …`
-   pair with this board's own values in it, quoted
-   the way `nova-bus names` quotes — a value meant to be pasted rather than
-   scanned.
+8. **`quickstart` and the first `add`** — the two verbs that make the `--dir`
+    directory: judge **every** flag first, then, only on
+    a line that is accepted whole, make the directory when it is missing
+    (`MkdirAll`, `0755`, as `nova-swarm quickstart --pool` makes its pool) and report it
+    as `created=true|false` on the `QUICKSTART OK` line and the `ADD OK` line. **A
+    refused run makes nothing**: a first run that fat-fingers `--stale` is exactly the
+    run with no board yet, and making it would answer the typo with an empty board.
+    Then read the board, print the counts, print
+    the `check … || { [ $? -eq 1 ] && exit 0; exit 2; }; add … --by … --default …`
+    pair with this board's own values in it, quoted
+    the way `nova-bus names` quotes — a value meant to be pasted rather than
+    scanned.
 9. **Onboarding, which `internal/ci/onboarding_test.go` will require the moment the
    directory exists** — a usage banner ending in an `example:` block whose lines
    run, a `### First run` in `docs/CLI.md`, `nova-board help` on stdout at exit 0, a

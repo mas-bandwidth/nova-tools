@@ -196,8 +196,10 @@ type flags struct {
 	ghTimeout  int
 	problems   []string
 
-	// makeDir is quickstart's alone: the first run makes the board directory it is
-	// pointed at, and created says whether this run is the one that made it.
+	// makeDir belongs to the two verbs that make the board directory they are
+	// pointed at -- quickstart, whose whole job is a first run, and add, whose
+	// first use has nowhere to write yet (issue 625) -- and created says whether
+	// this run is the one that made it.
 	makeDir, created bool
 }
 
@@ -259,8 +261,9 @@ func (f *flags) backend() (board.Backend, string, string) {
 	case f.issue != "" && f.dir != "":
 		f.want(twoBackends)
 	case f.dir != "":
-		// QUICKSTART MAKES THE DIRECTORY; every other verb refuses one that is not
-		// there and names the mkdir -p that fixes it (internal/board/dir.go).
+		// QUICKSTART AND THE FIRST ADD MAKE THE DIRECTORY; every other verb refuses
+		// one that is not there and names the mkdir -p that fixes it
+		// (internal/board/dir.go).
 		if f.makeDir {
 			// A REFUSED RUN MAKES NOTHING. The caller judges every other flag
 			// BEFORE it asks for the backend, and this is the second lock on the
@@ -405,6 +408,13 @@ func cmdList(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reader) int {
 	f := newFlags("add")
+	// THE FIRST ADD MAKES ITS OWN DIRECTORY (issue 625): a --dir that is not there
+	// yet is where a first card is going to live, an empty directory is a valid
+	// empty ledger, and refusing it would send a filer to `quickstart` before their
+	// first card. The directory is made only when the whole line is accepted, by the
+	// same gate quickstart uses -- every flag is judged BEFORE the backend is asked
+	// for (see backend, makeDir) -- so a refused add makes nothing.
+	f.makeDir = true
 	var as, text, by, deflt, owner, thing, leg, evidence, id string
 	f.fs.StringVar(&as, "as", "", "")
 	f.fs.StringVar(&text, "text", "", "")
@@ -418,7 +428,6 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	backend, kind, source := f.backend()
 	f.need(as, asHint)
 	f.need(text, textHint)
 	f.need(by, byHint)
@@ -438,6 +447,14 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 	if strings.TrimSpace(text) != "" && strings.TrimSpace(tail) == "" {
 		f.want("--text is empty once its control characters are escaped; a card a person cannot read is not a card")
 	}
+	// EVERY FLAG IS JUDGED BEFORE THE BACKEND IS ASKED FOR, because this verb's
+	// backend MAKES the directory (flags.backend, makeDir) and that is a side effect
+	// on the filesystem. A refused line answers nothing with an empty board, exactly
+	// as quickstart's first run does; backend's makeDir arm holds the same gate
+	// (it makes nothing when a problem was already found), and the problems it finds
+	// itself -- a --dir that is a FILE, or one it cannot make -- are refused here
+	// before anything is read.
+	backend, kind, source := f.backend()
 	if len(f.problems) > 0 {
 		return f.refused(stderr)
 	}
@@ -462,9 +479,9 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 		if existing := b.Card(id); existing != nil {
 			event.ID = id
 			if sameCreation(existing, event) {
-				fmt.Fprintf(stdout, "ADD OK id=%s owner=%s at=%s by=%s backend=%s durable=%s existed=true\n",
+				fmt.Fprintf(stdout, "ADD OK id=%s owner=%s at=%s by=%s backend=%s durable=%s created=%s existed=true\n",
 					oneline.Field(id), oneline.Field(existing.Owner), oneline.Field(existing.SinceRaw),
-					oneline.Field(existing.By), oneline.Field(kind), oneline.Field(durable(kind)))
+					oneline.Field(existing.By), oneline.Field(kind), oneline.Field(durable(kind)), oneline.Field(yesNo(f.created)))
 				return 0
 			}
 			fmt.Fprintf(stderr, "ADD REFUSED: id %s exists with different fields; nothing written\n", oneline.Field(id))
@@ -516,9 +533,9 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 		counts(stdout, b, kind, source)
 		return 1
 	}
-	fmt.Fprintf(stdout, "ADD OK id=%s owner=%s at=%s by=%s backend=%s durable=%s existed=false\n",
+	fmt.Fprintf(stdout, "ADD OK id=%s owner=%s at=%s by=%s backend=%s durable=%s created=%s existed=false\n",
 		oneline.Field(event.ID), oneline.Field(owner), oneline.Field(board.Stamp(now)),
-		oneline.Field(deadline), oneline.Field(kind), oneline.Field(durable(kind)))
+		oneline.Field(deadline), oneline.Field(kind), oneline.Field(durable(kind)), oneline.Field(yesNo(f.created)))
 	// durable=false IS THE ONE FIELD THAT OWES A REMEDY. The directory backend appends and
 	// never runs git, which is the honest asymmetry between the backends — and a line that
 	// read durable=false and was told nothing about it has a card no other clone can see.
