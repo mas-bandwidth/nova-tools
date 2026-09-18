@@ -387,6 +387,61 @@ func TestBatchNoRequireChecksIsSaidOutLoud(t *testing.T) {
 	contains(t, stdout, "members=1")
 }
 
+// EDGE 25, the exemption a batch's own pull request needs (#1347's receipt, read here).
+// The gate must not refuse a member that IS a gated tree: a batch branch is the gate's own
+// evidence, and so is a BATCH OK line naming that member's head. Without this, a batch
+// pull request whose CI is still running -- which is every batch pull request in the
+// minutes after it is opened -- could never be a member of the next batch.
+func TestBatchAdmitsAMemberTheGateItselfVouchedFor(t *testing.T) {
+	l := batchRepo(t)
+	// #1's own head is red on ci-ok, and it arrives on a batch's own branch.
+	l.host.SetCheckRuns(l.heads[1], merge.CheckDetail{Name: "ci-ok", Conclusion: "failure", SHA: l.heads[1]})
+	pr := l.host.PRs[1]
+	pr.HeadRef = merge.BatchBranchPrefix + "6"
+	l.host.PRs[1] = pr
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-branch", "--pr", "1",
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m")
+	if exit != 0 {
+		t.Fatalf("a member on a batch branch is admitted: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "BATCH NOTE #1 checks=batch-branch")
+	contains(t, stdout, "members=1")
+	contains(t, stdout, "checks=required")
+
+	// And the receipt, for a member that is not on a batch branch: the same BATCH OK line
+	// `nova-merge land` takes, read by the same parser.
+	l2 := batchRepo(t)
+	l2.host.SetCheckRuns(l2.heads[1], merge.CheckDetail{Name: "ci-ok", Conclusion: "failure", SHA: l2.heads[1]})
+	receipt := filepath.Join(l2.dir, "receipt.txt")
+	body := "BATCH STEP build command=\"go build ./...\"\n" +
+		"BATCH OK name=integration-6 base=" + strings.Repeat("b", 40) + " head=" + l2.heads[1] + " members=7 dropped=none\n"
+	if err := os.WriteFile(receipt, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr = l2.run("batch", "--name", "integration-receipt", "--pr", "1",
+		"--repo", "o/n", "--root", filepath.Join(l2.dir, "batch"), "--base", "dev",
+		"--timeout", "5m", "--receipt-file", receipt)
+	if exit != 0 {
+		t.Fatalf("a member a receipt vouches for is admitted: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "BATCH NOTE #1 checks=receipt")
+	contains(t, stdout, "members=1")
+
+	// A --receipt-file that holds no receipt at all is a refusal, not a silent empty set:
+	// a caller who presented evidence and had it ignored would read a ci-ok refusal and
+	// have no idea why.
+	empty := filepath.Join(l2.dir, "not-a-receipt.txt")
+	if err := os.WriteFile(empty, []byte("BATCH FAIL name=x step=test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if exit, _, errb := l2.run("batch", "--name", "integration-empty", "--pr", "1",
+		"--repo", "o/n", "--root", filepath.Join(l2.dir, "batch"), "--base", "dev",
+		"--timeout", "5m", "--receipt-file", empty); exit != 2 {
+		t.Errorf("a --receipt-file with no BATCH OK line is exit 2, got %d: %s", exit, errb)
+	}
+}
+
 // EDGE 3. The help said the test step runs `go test -json -count=1 -timeout 5m` and the
 // step has carried no -timeout since integration-4: the Makefile's target does not set
 // one, so neither does the gate. A help that describes a command the tool does not run is

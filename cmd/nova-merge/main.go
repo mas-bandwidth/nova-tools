@@ -85,7 +85,14 @@ never claims a suite it only ran part of; --require-lisp turns a skipped lisp st
 FAIL for a caller who needs it run, and a program that is not on PATH is also looked for
 under ~/sdk/<toolchain>/bin before the step is skipped. The toolchain is checked against
 the tree's go.mod BEFORE the first merge, so an old go on PATH is one refusal with the
-remedy rather than a red build step quoting a download notice. Pushing that branch and opening the pull request is the caller's, who is
+remedy rather than a red build step quoting a download notice. checks=required is the
+default: a member whose own head has no green ci-ok is DROPPED BEFORE THE MERGE, because
+the gate runs on one operating system and CI runs on three and a member nobody has judged
+on its own would turn the whole batch red for its own fault. A member whose head is a
+batch's own branch (rowan/integration-*) or is named by a BATCH OK line in --receipt-file
+is admitted on the gate's own evidence instead -- the same receipt nova-merge land takes.
+--no-require-checks waives the whole check and says so on the verdict line. Pushing that
+branch and opening the pull request is the caller's, who is
 the one who knows whether this is the batch they wanted. --base defaults to dev, which is
 where this repository's integration batches land; --root is rebuilt on every run, so give
 it a directory of the batch's own.

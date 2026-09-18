@@ -189,6 +189,12 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	// to judge for the first time IN COMBINATION, which is the one thing a batch cannot
 	// do: it would report the batch red for a fault that is one member's alone.
 	noRequireChecks := f.fs.Bool("no-require-checks", false, "")
+	// --receipt-file carries the BATCH OK lines of batches ALREADY BUILT, so a member that
+	// is itself a gated tree is admitted on the gate's own evidence rather than on a
+	// `ci-ok` the forge has not finished running. It is the same receipt `nova-merge land`
+	// reads and the same parser (internal/merge.ParseBatchReceipt): one receipt, one
+	// meaning, wherever it is presented.
+	receiptFile := f.fs.String("receipt-file", "", "")
 	// --require-lisp is for the caller who needs the lisp suite RUN. Without it a bench
 	// with no sbcl skips that step and says so on the verdict line (edge 2); with it, a
 	// bench with no sbcl is a bench that cannot judge this batch, and the gate says FAIL
@@ -244,6 +250,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		gomaxprocs:   *gomaxprocs,
 		requireLisp:  *requireLisp,
 		requireCheck: !*noRequireChecks,
+		receiptFile:  strings.TrimSpace(*receiptFile),
 	}, stdout, stderr, deps)
 }
 
@@ -260,6 +267,7 @@ type batchRun struct {
 	gomaxprocs   int
 	requireLisp  bool
 	requireCheck bool
+	receiptFile  string
 }
 
 func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
@@ -419,12 +427,35 @@ func admissible(in batchRun, stdout, stderr io.Writer, deps Deps, start time.Tim
 			since(start))
 		return in.prs, nil, 0
 	}
+	receipts, err := batchReceipts(in.receiptFile)
+	if err != nil {
+		return nil, nil, batchRefused(stderr, err)
+	}
 	host := deps.NewHost(in.repo, in.timeout)
 	for _, n := range in.prs {
 		pr, err := host.PR(n)
 		if err != nil {
 			return nil, nil, batchRefused(stderr, fmt.Errorf(
 				"pull request %d could not be read, and --require-checks is on, so this gate cannot tell whether its head has been green on its own: %w; pass --no-require-checks to merge it anyway and own that", n, err))
+		}
+		// A MEMBER THAT IS ITSELF A GATED TREE NEEDS NO ci-ok. A batch's own branch --
+		// rowan/integration-*, the shape this verb builds and nothing else does -- and a
+		// head named by a BATCH OK receipt the caller presented are both evidence the
+		// gate produced; requiring the forge's rollup on top of them would refuse a batch
+		// pull request whose CI is still running, which is every batch pull request in
+		// the minutes after it is opened. It is the same receipt `nova-merge land` takes
+		// and the same parser reads it (#1347).
+		if merge.IsBatchBranch(pr.HeadRef) {
+			keep = append(keep, n)
+			fmt.Fprintf(stderr, "BATCH NOTE #%d checks=batch-branch reason=%q t=%.1fs\n", n,
+				"its head branch is a batch's own, which is the gate's own evidence", since(start))
+			continue
+		}
+		if receipts[strings.ToLower(strings.TrimSpace(pr.HeadOID))] {
+			keep = append(keep, n)
+			fmt.Fprintf(stderr, "BATCH NOTE #%d checks=receipt reason=%q t=%.1fs\n", n,
+				"a BATCH OK receipt names this very head", since(start))
+			continue
 		}
 		checks, err := host.Checks(pr.HeadOID)
 		if err != nil {
@@ -441,6 +472,32 @@ func admissible(in batchRun, stdout, stderr io.Writer, deps Deps, start time.Tim
 			fmt.Sprintf("head %s has no green %s (state=%s)", oneline.Field(pr.HeadOID), batchRequiredCheck, oneline.Field(state)), since(start))
 	}
 	return keep, dropped, 0
+}
+
+// batchReceipts reads --receipt-file: every BATCH OK line in it, keyed by the head it
+// names. A file with no readable receipt at all is a refusal rather than an empty set --
+// a caller who presented evidence and had it silently ignored would read a `ci-ok`
+// refusal and have no idea why.
+func batchReceipts(path string) (map[string]bool, error) {
+	if path == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("--receipt-file could not be read: %w", err)
+	}
+	heads := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		rec, err := merge.ParseBatchReceipt(strings.TrimSpace(line))
+		if err != nil {
+			continue
+		}
+		heads[strings.ToLower(rec.Head)] = true
+	}
+	if len(heads) == 0 {
+		return nil, fmt.Errorf("--receipt-file %s holds no BATCH OK line naming a head; a receipt is the landing gate's own green line", path)
+	}
+	return heads, nil
 }
 
 // checkState is what the named check last did on this commit: green, failure, pending,

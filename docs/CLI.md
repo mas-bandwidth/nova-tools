@@ -1070,7 +1070,7 @@ skip and every parked poison**.
 ### batch
 
 ```
-nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks]
+nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
 ```
 
 `batch` is the landing gate and **it pushes nothing**. It clones `--repo` under
@@ -1086,6 +1086,7 @@ BATCH DROP #<n> reason="head <sha> has no green ci-ok (state=<pending|failure|no
 BATCH SKIP <step> reason="<why it could not run>"
 BATCH STEP <step> command="<what it runs>"
 BATCH NOTE checks=waived reason="<what the caller took on>"
+BATCH NOTE #<n> checks=<batch-branch|receipt> reason="<the gate's own evidence for this member>"
 BATCH REFUSED: <reason>
 ```
 
@@ -1108,8 +1109,12 @@ runs on one operating system and CI runs on three: three members went green unde
 gate on linux and red on CI's windows legs, and the batch pull request went red after
 the gate had said OK. A member that has not been green on its own is a member nobody
 has judged on every platform, and putting it in a batch asks this gate a question it
-cannot answer. `--no-require-checks` waives that and says so on `BATCH NOTE` and on the
-verdict line. The `vet-windows` step (`GOOS=windows go vet ./...`) catches the
+cannot answer. A member whose head is **a batch's own branch** (`rowan/integration-*`) or is named by a
+`BATCH OK` line in **`--receipt-file`** is admitted on the gate's own evidence instead of
+the forge's rollup — that is the same receipt `nova-merge land` takes, read by the same
+parser — so a batch pull request whose own CI is still running is never refused as a
+member of the next one. `--no-require-checks` waives the whole check and says so on
+`BATCH NOTE` and on the verdict line. The `vet-windows` step (`GOOS=windows go vet ./...`) catches the
 build-level half of the same class on the bench, in seconds, with no second machine; it
 does not catch a windows-only **test** failure, which is what the forge's own windows
 leg is for.
