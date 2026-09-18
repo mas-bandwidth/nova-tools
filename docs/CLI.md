@@ -2518,6 +2518,19 @@ past it: classify from a complete local list instead, with `--local-diff <checko
 (`git diff --name-only <previous>...<head>`) and `--paths-from <file>` to write it or read it back.
 `--dry-run` decides and prints and writes nothing.
 
+**Before any of that, `cut` and `build` run the dogfood gate.** It is `nova-check dogfood gate --cli
+<reference> --receipts <dir>` in process: a verb somebody ran that did not do what they needed, and
+that nobody has run since and said it did, is an **open edge**, and an open edge refuses —
+`RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate
+--reason <why>"`. `--cli` defaults to `docs/CLI.md` beside the checkout the verb was already given
+(`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/rowan-working/dogfood`
+when that directory exists, and a run with neither says `dogfood-gate=skipped` rather than passing
+quietly. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
+line as `dogfood=waived`, and written into the CHANGELOG section as `Dogfood gate waived: <why>`.
+Every release line carries `dogfood=ok|waived|skipped`. Glenn, 2026-09-18: a tool is done when it is
+tested, dogfooded by a non-author on real work, and the feedback is applied — see
+[SPEC-RELEASE.md](SPEC-RELEASE.md) lesson 12.
+
 ```sh
 nova-update release build --version v0.17.0 --out ./release --source . --platform linux-amd64 --platform darwin-arm64,darwin-amd64
 ```
