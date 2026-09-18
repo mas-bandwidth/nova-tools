@@ -12,7 +12,19 @@ import (
 // step that makes a reply impossible to hand-shape: a caller supplies the body and nothing
 // else, so there is no header line to get wrong.
 func PrepareReply(t *Bus, me Participant, original *Note, body string, now time.Time) (Prepared, error) {
+	return PrepareReplyFrom(t, me, original, body, now, "")
+}
+
+// PrepareReplyFrom is PrepareReply with the machine the reply is posted from. An empty
+// host writes no Host line at all, which is the reply this tool has always written, byte
+// for byte; PrepareReply is that call and is kept so a caller with no host reads as one.
+func PrepareReplyFrom(t *Bus, me Participant, original *Note, body string, now time.Time, host string) (Prepared, error) {
 	var p Prepared
+	if host != "" {
+		if err := ValidHost(host); err != nil {
+			return p, err
+		}
+	}
 	if me.Lane == "" {
 		return p, fmt.Errorf("%q has no lane on this bus, so has nowhere to send from", me.Name)
 	}
@@ -26,6 +38,7 @@ func PrepareReply(t *Bus, me Participant, original *Note, body string, now time.
 	}
 	h := Header{
 		From:    me.Name,
+		Host:    host,
 		To:      original.Header.From,
 		Re:      []string{target},
 		Subject: subject,

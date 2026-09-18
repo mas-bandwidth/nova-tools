@@ -467,6 +467,52 @@ func receiptMaxWordsFromDefaults(busDir string) (int, bool) {
 	return 0, false
 }
 
+// host resolves the machine a note is posted from. The flag wins; when it is absent, a
+// `host=<name>` line in <bus>/.nova-bus/defaults is read. There is NO default beyond that
+// and no refusal when none is found: a bus whose lines each post from one machine has
+// nothing to disambiguate, and a note with no Host line is the note this tool has always
+// written. A value that is given and unusable IS a refusal, because a host silently
+// dropped is the `[bud air]` subject convention all over again.
+func (f *flags) host(flagValue string, flagWasSet bool, busDir string, stderr io.Writer) (string, bool) {
+	if !flagWasSet {
+		flagValue = hostFromDefaults(busDir)
+		if flagValue == "" {
+			return "", true
+		}
+	}
+	if err := bus.ValidHost(flagValue); err != nil {
+		fmt.Fprintf(stderr, "nova-bus %s: %s\n", f.verb, oneline.Err(err))
+		return "", false
+	}
+	return flagValue, true
+}
+
+// hostFromDefaults reads the `host=<name>` line out of <bus>/.nova-bus/defaults, the same
+// key=value file receipt-max-words is read from. A missing file or a missing key is "no
+// host"; a key whose value is unusable is returned as it stands, so the caller refuses it
+// by name rather than posting as nobody.
+func hostFromDefaults(busDir string) string {
+	if busDir == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(busDir, ".nova-bus", "defaults"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != "host" {
+			continue
+		}
+		return strings.TrimSpace(val)
+	}
+	return ""
+}
+
 // receiptMaxWordsFromEnv reads NOVA_BUS_RECEIPT_MAX_WORDS, the environment default source.
 // An empty or unusable value is "absent".
 func receiptMaxWordsFromEnv() (int, bool) {
@@ -854,6 +900,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	remote := f.fs.String("remote", "", "the git remote to push to (required)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required)")
 	as := f.fs.String("as", "", "which participant you are; supplies the From line when the draft has none, and is refused if the draft's From line names anybody else")
+	host := f.fs.String("host", "", "the machine you are posting from; written as the Host line, shown as host= on an inbox line, and read from a `host=` line in <bus>/.nova-bus/defaults when the flag is absent")
 	slug := f.fs.String("slug", "", "the human half of the filename (default: from the subject)")
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
@@ -869,6 +916,10 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		return 2
 	}
 	if !f.gitArgs(*remote, *branch, stderr) {
+		return 2
+	}
+	hostName, ok := f.host(*host, f.set("host"), *busDir, stderr)
+	if !ok {
 		return 2
 	}
 	hasDraft := *file != "" || *useStdin
@@ -993,7 +1044,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		if !ok {
 			return 2
 		}
-		prepared, err := bus.PrepareDraft(t, text, now, *slug, *as)
+		prepared, err := bus.PrepareWith(t, text, now, bus.SendOptions{Slug: *slug, As: *as, Host: hostName})
 		if err != nil {
 			for _, reason := range bus.Reasons(err) {
 				fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
@@ -1017,7 +1068,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	if !ok {
 		return 2
 	}
-	prepared, err := bus.PrepareDraft(t, text, now, *slug, *as)
+	prepared, err := bus.PrepareWith(t, text, now, bus.SendOptions{Slug: *slug, As: *as, Host: hostName})
 	if err != nil {
 		// EVERY reason, one line each. A refusal that named the first of three mistakes in
 		// a draft cost the writer three runs to find the other two, and the tool had read
@@ -2339,8 +2390,8 @@ func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) int {
 			if shown >= max {
 				return shown
 			}
-			fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n",
-				token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)),
+			fmt.Fprintf(stdout, "INBOX %s id=%s from=%s %saddr=%s at=%s path=%s: %s\n",
+				token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), hostField(e.Host), oneline.Field(dash(e.Addr)),
 				oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject))
 			shown++
 		}
@@ -2436,17 +2487,29 @@ func bodyDisplayGroup(item bus.BodyItem) string {
 	return "NOTE"
 }
 
+// hostField is the `host=<name> ` token an inbox line carries when the note named the
+// machine it was posted from, and the empty string when it did not. It is written this way
+// -- the whole token, space and all, or nothing -- so a note with no Host line prints the
+// line it has always printed, byte for byte, and every parser that reads field 4 of an
+// `INBOX NOTE` as `from=` keeps reading it there.
+func hostField(host string) string {
+	if host == "" {
+		return ""
+	}
+	return "host=" + oneline.Field(host) + " "
+}
+
 func printBodyItem(stdout io.Writer, item bus.BodyItem) error {
 	e := item.Entry
 	kind := bodyDisplayGroup(item)
 	if kind != "NOTE" {
-		if _, err := fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n", kind, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+		if _, err := fmt.Fprintf(stdout, "INBOX %s id=%s from=%s %saddr=%s at=%s path=%s: %s\n", kind, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), hostField(e.Host), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
 			return err
 		}
 		return nil
 	}
 	bodyBytes := item.Body
-	if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+	if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s %saddr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), hostField(e.Host), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "INBOX BODY id=%s bytes=%d\n", oneline.Field(dash(e.ID)), len(item.Body)); err != nil {

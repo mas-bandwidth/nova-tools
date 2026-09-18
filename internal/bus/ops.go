@@ -36,7 +36,22 @@ type Prepared struct {
 // It is PrepareDraft with nobody named by --as, which is what a caller with a draft that
 // already carries its own From line has.
 func Prepare(t *Bus, text string, now time.Time, slugOverride string) (Prepared, error) {
-	return PrepareDraft(t, text, now, slugOverride, "")
+	return PrepareWith(t, text, now, SendOptions{Slug: slugOverride})
+}
+
+// SendOptions is what the command line adds to a draft. It is a struct rather than more
+// positional strings because the next one would be the sixth, and a call reading
+// `("", "", "air")` says nothing about which is which.
+type SendOptions struct {
+	// Slug overrides the filename's human half.
+	Slug string
+	// As is --as: the caller's own name, which send writes as the From line when the draft
+	// has none.
+	As string
+	// Host is --host: the machine posting, which send writes as the Host line when the
+	// draft has none. Empty means no Host line at all, which is what every note before
+	// this option had and what this tool still writes by default.
+	Host string
 }
 
 // PrepareDraft is Prepare with the send-side tolerances and the caller's own name.
@@ -53,8 +68,16 @@ func Prepare(t *Bus, text string, now time.Time, slugOverride string) (Prepared,
 // Those are the same refusals they always were, with the rest of the run's findings beside
 // them.
 func PrepareDraft(t *Bus, text string, now time.Time, slugOverride, as string) (Prepared, error) {
+	return PrepareWith(t, text, now, SendOptions{Slug: slugOverride, As: as})
+}
+
+// PrepareWith is PrepareDraft with everything the command line can add to a draft in one
+// place. PrepareDraft and Prepare are the two shapes that were here before it and call
+// straight through, so a caller with no --host writes and reads exactly what it did.
+func PrepareWith(t *Bus, text string, now time.Time, opts SendOptions) (Prepared, error) {
 	var p Prepared
 	c := t.Config
+	slugOverride, as := opts.Slug, opts.As
 	tol := tolerate(c, text, as)
 	n, parseProblems := parseLines("", tol.lines, tol.at, 0)
 	problems := append(tol.problems, parseProblems...)
@@ -67,6 +90,19 @@ func PrepareDraft(t *Bus, text string, now time.Time, slugOverride, as string) (
 	}
 	if n.Header.ID != "" {
 		problems = append(problems, fmt.Errorf("this draft already carries an %s line (%q); send assigns the id, and a note is sent once", KeyID, n.Header.ID))
+	}
+	// THE HOST LINE. --host names the machine, the way --as names the line: a draft that
+	// carries no Host line gets the one the flag names, and a draft that carries a
+	// DIFFERENT one is a refusal rather than a guess at which of the two the writer meant.
+	// A draft whose Host line already says what the flag says is neither, and says nothing.
+	if opts.Host != "" {
+		switch {
+		case n.Header.Host == "":
+			n.Header.Host = opts.Host
+			tol.notices = append(tol.notices, fmt.Sprintf("this draft had no %s line; --host says you are posting from %q, so send wrote %q", KeyHost, opts.Host, KeyHost+": "+opts.Host))
+		case n.Header.Host != opts.Host:
+			problems = append(problems, fmt.Errorf("--host %q, but this draft's %s line says %q; send does not post one machine's note as another", opts.Host, KeyHost, truncate(n.Header.Host, HostMax)))
+		}
 	}
 	sender, senderKnown := c.ResolveOne(n.Header.From)
 	// Broadcast aliases resolve against the roster at send time. Expand them to the
@@ -169,6 +205,34 @@ func ValidSlug(slug string) error {
 	}
 	if clean := Slugify(slug, 0); clean != slug {
 		return fmt.Errorf("--slug %q is not a slug: a slug is lower-case letters, digits and hyphens, and this one would have to be rewritten as %q", truncate(slug, SlugMax), truncate(clean, SlugMax))
+	}
+	return nil
+}
+
+// HostMax is how long a Host value may be. A host is a machine's short name -- `air`,
+// `studio`, `hulk` -- and it is printed on an inbox line beside the sender, so it is
+// bounded rather than left to whatever a defaults file holds.
+const HostMax = 40
+
+// ValidHost checks a Host value. A host is ONE WORD: it is printed as `host=<name>` on a
+// line whose fields are separated by spaces, so a host with a space in it would read as
+// two fields to every line parser on this bus. The alphabet is the slug's -- lower-case
+// letters, digits, `-`, `.` and `_` -- because a machine name is written by a person in a
+// defaults file and read back by a program.
+func ValidHost(host string) error {
+	if host == "" {
+		return errors.New("--host: empty; a host is the machine's short name, such as `air` or `studio`")
+	}
+	if len(host) > HostMax {
+		return fmt.Errorf("--host %q: longer than %d characters", truncate(host, HostMax), HostMax)
+	}
+	for _, r := range host {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r == '-' || r == '.' || r == '_':
+		default:
+			return fmt.Errorf("--host %q: a host is lower-case letters, digits, `-`, `.` and `_`, and is printed as one space-separated `host=` field, so %q is refused", truncate(host, HostMax), string(r))
+		}
 	}
 	return nil
 }

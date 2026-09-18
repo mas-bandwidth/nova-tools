@@ -2715,9 +2715,9 @@ INBOX UNREADABLE path=<path>: <reason>
 INBOX UNREADABLE count=<n> unchanged=<true|false> first=<path>
 INBOX UNADDRESSED path=<path>: <reason>
 INBOX SWITCH your switch-day line is the date <date>, which hides every note dated <date-1> or earlier; draw it at an instant, once: <command>
-INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
-INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
-INBOX RECEIPT id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
+INBOX NOTE id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<path>: <subject>
+INBOX HEARD id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<path>: <subject>
+INBOX RECEIPT id=<id|-> from=<name> [host=<host> ]addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> heard=<n> unaddressed=<n> unreadable=<n>
 INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
 INBOX FAIL <path>: <reason>
@@ -3017,6 +3017,7 @@ line but `Date` and `Id`.
 
 ```
 From: Ada (day shift, the west host, the shared account)
+Host: west
 To: Bo
 Cc: Dana
 Date: Wed Sep  9 12:34:56 UTC 2026
@@ -3026,16 +3027,36 @@ Kind: note
 Subject: Yes, on the merge queue too
 ```
 
-That is the order `send` writes, `Kind` included: `From`, `To`, `Cc`, `Date`,
-`Id`, `Re`…, `Kind`, `Subject`. `Cc`, `Re` and `Kind` are written only when the
-note has them.
+That is the order `send` writes, `Kind` included: `From`, `Host`, `To`, `Cc`,
+`Date`, `Id`, `Re`…, `Kind`, `Subject`. `Host`, `Cc`, `Re` and `Kind` are
+written only when the note has them.
 
 The header is every line before the first blank line, and each line is
-`Key: value`. The keys are exactly `From`, `To`, `Cc`, `Date`, `Id`, `Re`,
-`Subject`, `Kind`; **an unknown key is a refusal**, because a note whose
+`Key: value`. The keys are exactly `From`, `Host`, `To`, `Cc`, `Date`, `Id`,
+`Re`, `Subject`, `Kind`; **an unknown key is a refusal**, because a note whose
 `Sbuject:` line was accepted as prose has no subject and a note whose `Rf:` line
 was accepted has no thread. `Re` may repeat; nothing else may. `Kind` is
 `receipt` or `note` and is the only override of the receipt heuristic.
+
+**`Host` is which MACHINE posted, and it is optional.** One name can post from
+two places — the keeper on the Studio and the bud on the Air both post as
+`Rowan` — and until this line existed they were told apart by a `[bud air]` in
+the subject, which spent the subject on routing. `send --host <name>` and
+`reply --host <name>` write it; `<bus>/.nova-bus/defaults` may carry a
+`host=<name>` line, read when the flag is absent, so a bench sets it once. A
+host is one word of lower-case letters, digits, `-`, `.` and `_`, at most 40
+characters, because it is printed as one space-separated `host=` field on an
+inbox line. A draft that carries its own `Host:` line keeps it; a `--host` that
+names a DIFFERENT machine is a refusal, the same shape as `--as` against a
+`From` line that names somebody else.
+
+**A note with no `Host` line is unchanged, byte for byte.** Nothing writes the
+line unless it is asked for, `inbox` prints no `host=` field where there is none,
+and the OPEN cache keeps the eight fields it has always had on a bus whose notes
+carry no host. The host is **not** in the id's preimage (`nova-bus id v1` is
+unchanged): the id says a note is the same note — same sender, same second, same
+recipients, same subject, same body — and which machine typed it is a fact about
+the posting, so every id already on every bus is still the id it was.
 
 **Two parse tolerances**, for the two shapes a bus people also read in a
 browser actually writes, both enumerated here and pinned by tests:
@@ -3061,7 +3082,7 @@ names its own repair:
 | what is on the line | what the refusal says |
 |---|---|
 | a key in markdown bold — `**To**: Ada` | headers are plain `Key: value`, not markdown bold; and it writes out `To:` |
-| a key nobody knows — `Branch: main` | unknown header key, **and the eight keys there are** |
+| a key nobody knows — `Branch: main` | unknown header key, **and the nine keys there are** |
 | a body sentence where the header goes, with a colon somewhere in it or none at all | the header ends at the first blank line; put a blank line after the last header |
 
 A key is taken for a sentence when it holds a space or runs past twenty
