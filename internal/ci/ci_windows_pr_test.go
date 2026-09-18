@@ -274,3 +274,76 @@ var windowsForcingPackages = []string{"cmd/nova-bus", "cmd/nova-merge", "cmd/nov
 
 // modulePath is this module, the prefix both size tables are keyed by.
 const modulePath = "github.com/mas-bandwidth/nova-tools/"
+
+// TestOnlyOneWindowsLegRunsOnAPullRequest is the consolidation, held shut.
+//
+// For one day a pull request ran TWO Windows legs: this file's sharded
+// test-windows-pr, and test-hosted-pr's older windows entry, which ran a fixed
+// package list unsharded behind a path filter. integration-4 ran both on the
+// same commit: the three sharded shards passed at 13:37-13:43Z, and the
+// unsharded leg was cancelled by its own six-minute timeout at 13:43:39 and
+// failed the run. A second leg that can only fail is not redundancy, it is a
+// second thing to fix.
+//
+// So the windows entry was retired and its rule folded in here. The retirement
+// is only correct if NOTHING it covered was lost, and that is what this test
+// checks: the two packages it ran and the three paths it watched are both
+// present in test-windows-pr, and no other pull_request job reaches Windows.
+// The paths matter on their own — a change to a fixture under cmd/nova-bus
+// moves no .go file, so select-packages.sh cannot see it, and without the
+// `platform` filter that change would take the Windows runner away from exactly
+// the package that needs it.
+func TestOnlyOneWindowsLegRunsOnAPullRequest(t *testing.T) {
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+
+	// Exactly one job runs on a pull request and reaches windows-latest.
+	var onWindows []string
+	for _, name := range jobNames(src) {
+		job := jobBody(src, name)
+		if strings.Contains(job, "windows-latest") && strings.Contains(job, "github.event_name == 'pull_request'") {
+			onWindows = append(onWindows, name)
+		}
+	}
+	if len(onWindows) != 1 || onWindows[0] != "test-windows-pr" {
+		t.Errorf("the pull_request jobs that reach windows-latest are %v, want exactly [test-windows-pr]; two Windows legs on one PR is a second thing to fix and integration-4 is what it costs", onWindows)
+	}
+
+	hosted := jobBody(src, "test-hosted-pr")
+	if hosted == "" {
+		t.Fatal("no test-hosted-pr job in ci.yml; the Linux sandbox leg is not part of this consolidation and must stay")
+	}
+	if strings.Contains(hosted, "windows-latest") {
+		t.Error("test-hosted-pr still has a windows leg; it was retired into test-windows-pr on 2026-09-18 after being cancelled by its own timeout on a commit the sharded leg passed")
+	}
+	if !strings.Contains(hosted, "./internal/sandbox") {
+		t.Error("test-hosted-pr no longer runs ./internal/sandbox; the consolidation retires the WINDOWS entry only — the sandbox is darwin-only in the self-hosted matrix, so its Linux leg has to stay")
+	}
+
+	// Nothing the retired leg covered may be lost: its trigger and its packages
+	// both live in test-windows-pr now.
+	windows := jobBody(src, "test-windows-pr")
+	for _, path := range retiredWindowsLegPaths {
+		if !strings.Contains(windows, path) {
+			t.Errorf("test-windows-pr's filters do not carry %s, which the retired windows leg watched; a change under it that moves no .go file would now get no Windows runner at all", path)
+		}
+	}
+	for _, pkg := range retiredWindowsLegPackages {
+		if !strings.Contains(windows, pkg) {
+			t.Errorf("test-windows-pr never adds %s, which the retired windows leg ran; select-packages.sh cannot select it from a change that moves no .go file", pkg)
+		}
+	}
+	if !strings.Contains(windows, "steps.filter.outputs.platform") {
+		t.Error("test-windows-pr does not read the `platform` filter output; the retired leg's trigger would be declared and never used")
+	}
+}
+
+// retiredWindowsLegPaths and retiredWindowsLegPackages are what test-hosted-pr's
+// windows entry watched and ran before it was retired on 2026-09-18. They are
+// written down here so the retirement can be checked for loss rather than
+// trusted: every one of them must still reach a Windows runner through
+// test-windows-pr.
+var (
+	retiredWindowsLegPaths    = []string{"'cmd/nova-bus/**'", "'internal/bus/**'", "'**/*_windows.go'"}
+	retiredWindowsLegPackages = []string{"./cmd/nova-bus", "./internal/bus"}
+)

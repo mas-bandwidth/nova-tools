@@ -22,10 +22,16 @@
 # fan-out over the 4+4 machines and never a serial queue, and never
 # GitHub-hosted compute. The GitHub-hosted runners (ubuntu-latest, macos-latest,
 # windows-latest) run only on push to main and on the nightly schedule, with the
-# full suite. The ONE exception is test-hosted-pr: a PR that touches a
-# platform-specific path — internal/sandbox or *_linux.go, cmd/nova-bus or
-# internal/bus or *_windows.go — runs that one hosted leg on the PR, so a
-# platform the self-hosted runners cannot see gets its feedback before main.
+# full suite. There are TWO exceptions, one per platform the self-hosted runners
+# cannot see. test-hosted-pr runs internal/sandbox on ubuntu-latest when the
+# sandbox or a *_linux.go moves, because the sandbox is darwin-only in the
+# self-hosted matrix. test-windows-pr runs the packages a change touches on
+# windows-latest, dealt across three shards from measured Windows sizes, because
+# there is no self-hosted Windows runner at all. test-hosted-pr had a windows
+# entry of its own until 2026-09-18; it was retired into test-windows-pr after
+# integration-4, where the sharded leg passed and the unsharded one was
+# cancelled by its own timeout on the same commit. Its trigger and its two
+# packages live on inside test-windows-pr, so nothing it covered was lost.
 # Every self-hosted job is guarded by the head-repo check, so a
 # pull_request from a fork skips CI rather than running untrusted code on our
 # machines.
@@ -806,20 +812,35 @@ jobs:
           done
 
   test-hosted-pr:
-    # THE ONE EXCEPTION to "a pull request never touches GitHub-hosted
-    # compute": a PR that touches a platform-specific path runs THAT leg here,
-    # on the hosted runner that platform belongs to, so the platform's feedback
-    # comes back on the PR and not on main. Two legs, each gated by a path
-    # filter over the PR diff: ubuntu-latest when the sandbox changed
-    # (internal/sandbox/**, any *_linux.go or *_linux_test.go), windows-latest
-    # when the bus changed (cmd/nova-bus/**, internal/bus/**, any *_windows.go).
-    # There is no Windows self-hosted runner, and the sandbox is darwin-only in
-    # the self-hosted matrix, so without this a platform break the self-hosted
-    # runners cannot see would only surface on main. A leg runs ONLY the packages
-    # its filter names, under the two-minute rule; when the diff matches nothing
-    # the test step is skipped, and ci-ok counts a skip as ok. Same head-repo
-    # guard as every other PR job: a fork PR skips the leg rather than running
-    # untrusted code on hosted compute. The concurrency group is the workflow's.
+    # THE SANDBOX LEG, and since 2026-09-18 that is all it is. A PR that touches
+    # a platform-specific path the self-hosted matrix cannot see runs THAT
+    # platform here, on the hosted runner it belongs to, so the feedback comes
+    # back on the PR and not on main. The sandbox is darwin-only in the
+    # self-hosted matrix, so a Linux sandbox break would otherwise only surface
+    # on main: that is this job's remaining reason to exist, gated by a path
+    # filter over the PR diff (internal/sandbox/**, any *_linux.go or
+    # *_linux_test.go).
+    #
+    # THE WINDOWS ENTRY IS GONE, retired into test-windows-pr below, and
+    # integration-4 is why. Two Windows PR legs existed for a day. The sharded
+    # one passed all three shards at 13:37-13:43Z; this one was CANCELLED by its
+    # own six-minute timeout at 13:43:39, running the same heavy packages
+    # unsharded and failing the whole run. One leg, sharded from measured sizes,
+    # is strictly better than that leg plus an unsharded copy of part of it.
+    # Nothing it covered was dropped: its trigger (cmd/nova-bus/**,
+    # internal/bus/**, **/*_windows.go) and its package list
+    # (./cmd/nova-bus ./internal/bus) are folded into test-windows-pr's filter
+    # and selection, so a change to a fixture under cmd/nova-bus that moves no
+    # .go file still puts those two packages on a Windows runner.
+    #
+    # A leg runs ONLY the packages its filter names, under the two-minute rule;
+    # when the diff matches nothing the test step is skipped, and ci-ok counts a
+    # skip as ok. Same head-repo guard as every other PR job: a fork PR skips
+    # the leg rather than running untrusted code on hosted compute. The
+    # concurrency group is the workflow's. The matrix keeps one entry rather
+    # than being flattened away: the shape is "a hosted leg per platform the
+    # self-hosted runners cannot see", and the next such platform is an entry
+    # rather than a rewrite.
     name: test-hosted-pr (${{ matrix.leg.name }})
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     strategy:
@@ -834,14 +855,6 @@ jobs:
                 - 'internal/sandbox/**'
                 - '**/*_linux.go'
                 - '**/*_linux_test.go'
-          - name: windows
-            os: windows-latest
-            packages: ./cmd/nova-bus ./internal/bus
-            filters: |
-              changed:
-                - 'cmd/nova-bus/**'
-                - 'internal/bus/**'
-                - '**/*_windows.go'
     runs-on: ${{ matrix.leg.os }}
     # 6 is the CL cap the two-minute law allows; 2 killed the windows leg by the clock
     # (cmd/nova-bus measured 439 s there). The legs run -short (#682).
@@ -888,18 +901,29 @@ jobs:
         run: make test-short PKGS="${{ matrix.leg.packages }}"
 
   test-windows-pr:
-    # WINDOWS, ON THE PULL REQUEST, for the packages the change touches — the
-    # second and last exception to "a pull request never touches GitHub-hosted
+    # WINDOWS, ON THE PULL REQUEST, for the packages the change touches — one of
+    # the two exceptions to "a pull request never touches GitHub-hosted
     # compute", and it is here for a class of bug the rest of this file cannot
-    # see. There is no Windows self-hosted runner, so until now the only Windows
-    # a PR could get was test-hosted-pr's bus leg, which runs a FIXED package
-    # list behind a path filter. Everything else met Windows for the first time
-    # in the merge group (test-hosted-merge), where a Windows-only failure is
-    # not one PR's problem: a red shard drops the whole group and restarts every
-    # PR behind it. The failures are always small and always the same three
-    # shapes — an assertion on the execute bit, a backslash where a test
-    # expected "a/b", a fake binary written without the .exe suffix — and every
-    # one of them is found by running the changed packages once on Windows.
+    # see. There is no Windows self-hosted runner, so before this job the only
+    # Windows a PR could get was test-hosted-pr's bus leg, which ran a FIXED
+    # package list behind a path filter. Everything else met Windows for the
+    # first time in the merge group (test-hosted-merge), where a Windows-only
+    # failure is not one PR's problem: a red shard drops the whole group and
+    # restarts every PR behind it. The failures are always small and always the
+    # same three shapes — an assertion on the execute bit, a backslash where a
+    # test expected "a/b", a fake binary written without the .exe suffix — and
+    # every one of them is found by running the changed packages once on
+    # Windows.
+    #
+    # THE ONLY WINDOWS LEG A PR RUNS, since 2026-09-18. test-hosted-pr's windows
+    # entry was retired into this job after integration-4 ran both on one
+    # commit: these three shards passed at 13:37-13:43Z while that leg was
+    # cancelled by its own six-minute timeout at 13:43:39, running the same
+    # heavy packages unsharded, and failed the run. Its rule was not dropped —
+    # its trigger is the `platform` filter below and its two packages are folded
+    # into the selection — so a change to a fixture under cmd/nova-bus, which
+    # moves no .go file and which select-packages.sh therefore cannot see, still
+    # puts cmd/nova-bus and internal/bus on a Windows runner.
     #
     # CHEAP IS THE WHOLE DESIGN, because these are billed hosted minutes at 2x
     # the Linux rate. Only the packages the change touches and their in-repo
@@ -963,11 +987,18 @@ jobs:
           # cheaper certainty on a repository this size.
           fetch-depth: 0
 
-      - name: did any Go package change at all
+      - name: did anything that can break windows change
         # The same dorny/paths-filter test-hosted-pr uses, pinned by the same
-        # sha. A PR that moves no .go file and no module file cannot break
-        # Windows, so everything below is skipped and the job costs one
-        # checkout. ci-ok counts the skipped steps as ok.
+        # sha, with TWO outputs. `changed` is the Go question: a PR that moves
+        # no .go file and no module file cannot break a Go test on Windows, so
+        # everything below is skipped and the job costs one checkout. `platform`
+        # is the rule inherited from the windows leg of test-hosted-pr, retired
+        # into this job on 2026-09-18 — the bus paths and any *_windows.go — and
+        # it exists because a change to a FIXTURE under cmd/nova-bus moves no
+        # .go file and would otherwise take the Windows runner away from exactly
+        # the package that needs it. When it fires, the two packages that leg
+        # ran are added to the selection below. ci-ok counts the skipped steps
+        # as ok.
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
         with:
@@ -976,16 +1007,34 @@ jobs:
               - '**/*.go'
               - 'go.mod'
               - 'go.sum'
+            platform:
+              - 'cmd/nova-bus/**'
+              - 'internal/bus/**'
+              - '**/*_windows.go'
+
+      - name: this shard has work
+        # One place decides whether the leg runs, so the steps below carry one
+        # condition instead of an `||` each. Either question answering yes is
+        # enough: a Go change anywhere, or a change under the paths the retired
+        # windows leg watched.
+        id: want
+        shell: bash
+        run: |
+          if [ "${{ steps.filter.outputs.changed }}" = "true" ] || [ "${{ steps.filter.outputs.platform }}" = "true" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=no" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        if: steps.filter.outputs.changed == 'true'
+        if: steps.want.outputs.run == 'yes'
         with:
           go-version-file: go.mod
           # This workflow manages caching explicitly; do not probe for a missing go.sum.
           cache: false
 
       - name: cache go build and module cache
-        if: runner.environment == 'github-hosted' && (steps.filter.outputs.changed == 'true')
+        if: runner.environment == 'github-hosted' && (steps.want.outputs.run == 'yes')
         # Only on GitHub-hosted runners, the rule internal/ci holds as a class
         # test. This leg is always hosted — there is no self-hosted Windows —
         # and a hosted runner is a fresh machine, so the cache pays for itself
@@ -1000,7 +1049,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: make on PATH
-        if: steps.filter.outputs.changed == 'true'
+        if: steps.want.outputs.run == 'yes'
         # The Makefile is the one entry for build, test and lint (internal/ci
         # holds that class test), so this leg runs its tests through make — and
         # `shell: bash` on windows-latest is Git Bash, which ships no make of
@@ -1027,25 +1076,40 @@ jobs:
 
       - name: select the packages this pull request changes
         id: pkgs
-        if: steps.filter.outputs.changed == 'true'
+        if: steps.want.outputs.run == 'yes'
         shell: bash
         # THE SAME SCRIPT the self-hosted shards call, with the same argument:
         # the PR's own base sha. It prints the ./cmd and ./internal packages the
         # diff touches plus every in-repo package that imports one of them, and
         # always ./internal/ci (which scans the tree rather than importing what
-        # it guards). A go.mod or go.sum change selects the whole tree. ONE
-        # shard: the whole list goes to one `go test` invocation, so the leg is
-        # one set of billed minutes and not twelve.
+        # it guards). A go.mod or go.sum change selects the whole tree. The list
+        # is then dealt across the three shards by the step below.
         run: |
           set -euo pipefail
           base="${{ github.event.pull_request.base.sha }}"
           pkgs=$(bash .github/scripts/select-packages.sh "$base" | tr '\n' ' ')
           pkgs=$(echo $pkgs)
+          # THE RETIRED LEG'S PACKAGE LIST, folded in. test-hosted-pr's windows
+          # entry ran exactly these two whenever its paths moved, and the script
+          # above cannot select them from a change that moves no .go file — a
+          # fixture under cmd/nova-bus, say. They are added only when that
+          # filter fired, and only when the selection does not already carry
+          # them, so nothing is tested twice.
+          if [ "${{ steps.filter.outputs.platform }}" = "true" ]; then
+            for p in ./cmd/nova-bus ./internal/bus; do
+              case " $pkgs " in
+                *" $p "*) ;;
+                *) pkgs="$pkgs $p" ;;
+              esac
+            done
+            pkgs=$(echo $pkgs)
+            echo "the retired windows leg's paths moved: ./cmd/nova-bus and ./internal/bus are in scope"
+          fi
           echo "windows leg: ${pkgs:-nothing to test for this change}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
 
       - name: test this shard of the changed packages on windows
-        if: steps.filter.outputs.changed == 'true' && steps.pkgs.outputs.pkgs != ''
+        if: steps.want.outputs.run == 'yes' && steps.pkgs.outputs.pkgs != ''
         shell: bash
         # THE SHARD PLAN, derived from the measurements and not from a guess.
         # For each selected package: its measured windows-latest size comes out

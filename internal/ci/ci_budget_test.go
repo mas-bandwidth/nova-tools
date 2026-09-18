@@ -338,21 +338,27 @@ var clTierCeilings = map[string]int{
 	// group. mergeGateReason carries the record the budget test asserts.
 	"test-hosted-merge": mergeGateCeiling,
 
-	// The platform legs a PR runs only when it touches platform-specific paths
-	// (internal/sandbox on ubuntu-latest, the bus on windows-latest). A hosted
-	// runner starts cold (checkout, setup-go, cache restore) and cmd/nova-bus
-	// measured 439 s on windows-latest before its -short gate (#682); the leg
-	// runs -short, and 6 is the same cap the sharded matrix carries. A PR that
-	// does not touch those paths pays a checkout and skips. (2026-09-16)
+	// The sandbox leg a PR runs only when it touches internal/sandbox or a
+	// *_linux.go. A hosted runner starts cold (checkout, setup-go, cache
+	// restore) before it compiles anything, and 6 is the same cap the sharded
+	// matrix carries. A PR that does not touch those paths pays a checkout and
+	// skips. This job carried a windows entry too until 2026-09-18, when that
+	// entry was retired into test-windows-pr: on integration-4 it was CANCELLED
+	// by this very cap at 6 min 20 s, running unsharded the same packages the
+	// sharded leg had just passed. The number was never the problem; running
+	// them unsharded was. (2026-09-16, amended 2026-09-18)
 	"test-hosted-pr": 6,
 
-	// The Windows leg a pull request gets for the packages it changes. Same
-	// number as test-hosted-pr and the same reason: a hosted runner starts cold
-	// — checkout, setup-go, cache restore — before it compiles anything, and a
-	// two-minute cap killed the windows leg by the clock rather than by any
-	// finding. It runs -short with a 100 s per-package ceiling, so Go names a
-	// slow package inside the cap instead of the runner killing the job.
-	// (2026-09-18)
+	// The Windows leg a pull request gets for the packages it changes, and since
+	// 2026-09-18 the ONLY Windows leg a PR runs. Same number as test-hosted-pr
+	// and the same reason: a hosted runner starts cold before it compiles
+	// anything, and a two-minute cap killed a windows leg by the clock rather
+	// than by any finding. Six minutes is a hang detector here because the work
+	// inside it is bounded by the shard plan — three shards dealt from the
+	// measured sizes in testdata/ci/package-sizes-windows.tsv, with the
+	// Makefile's WINDOWS_TIMEOUT (180 s) as the per-package ceiling — and not by
+	// hope. The leg that was retired had the same six minutes and no shard plan,
+	// which is exactly the difference. (2026-09-18)
 	"test-windows-pr": 6,
 
 	// The sharded test matrix, and the one number the move to self-hosted
