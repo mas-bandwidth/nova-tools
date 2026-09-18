@@ -192,6 +192,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		refuseNative(errOut, fmt.Sprintf("the temp directory %s could not be made: %s", oneline.Field(tmpDir), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
+	// THE SHARED PER-BENCH CACHE (issue #1048). The Go toolchain and every module are the
+	// same for every card under one root, but each card downloaded them into its own data
+	// home -- up to 5 GB per slot, and 120 cards filled hulk and vision to 100%. The cache
+	// lives once under <root>/cache (a permitted write root beside the job directory) and
+	// the child is pointed at it by GOMODCACHE, GOCACHE and NPM_CONFIG_CACHE.
+	if !cfg.noSharedCaches && cfg.root != "" {
+		if err := swarm.EnsureCacheDirs(cfg.root); err != nil {
+			refuseNative(errOut, fmt.Sprintf("the shared cache directories under %s could not be made: %s", oneline.Field(swarm.CacheRoot(cfg.root)), oneline.Escape(err.Error())))
+			return nativeRunResult{}, 2
+		}
+	}
 
 	// (3b) THE BENCH-SHARED GO CACHES (card 8963). Go derives GOMODCACHE and GOCACHE from
 	// HOME, and a native run makes HOME the slot's data home, so every card used to download
@@ -606,6 +617,11 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 	// 8963). It is one directory for the whole bench, so the write is shared, not per-card.
 	if cacheDir := nativeCacheDir(cfg); cacheDir != "" {
 		argv = append(argv, "--write", cacheDir)
+	}
+	if !cfg.noSharedCaches && cfg.root != "" {
+		// The shared per-bench cache root is a permitted write root beside the job directory
+		// and the data home (issue #1048, docs/SPEC-SANDBOX.md).
+		argv = append(argv, "--write", swarm.CacheRoot(cfg.root))
 	}
 	argv = append(argv, "--cwd", jobDir)
 	// The shell launcher read the harness's own directory and /opt/homebrew so git and the

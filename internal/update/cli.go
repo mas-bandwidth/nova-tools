@@ -3,6 +3,7 @@ package update
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -221,6 +222,15 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		}
 	}
 	if err := f.Parse(interspersed(f, args)); err != nil {
+		// `<tool> <verb> --help` is a reasonable question, and the flag
+		// package answers it with the sentinel flag.ErrHelp. Printing that
+		// gave the person `flag: help requested` -- the package's internals,
+		// leaked to somebody who asked for help (darwin dogfood, 2026-09-18).
+		// They get the usage, and exit 0, because asking is not an error.
+		if errors.Is(err, flag.ErrHelp) {
+			help(name, out)
+			return 0
+		}
 		return refusal(errs, token, fmt.Errorf("%s (run %s help)", err, name))
 	}
 	missing := []string{}

@@ -87,9 +87,22 @@ func Tools(source string) ([]string, error) {
 }
 
 func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
-	goos, goarch, err := Platform(o.platform)
-	if err != nil {
-		return refusal(errs, "BUILD", err)
+	// EVERY PLATFORM IS RESOLVED BEFORE THE FIRST COMPILE. A list whose fourth
+	// entry is a typo must not be found out after three platforms have been
+	// built: that is a half-built release root somebody then has to reason
+	// about.
+	wanted := []string(o.platforms)
+	if len(wanted) == 0 {
+		wanted = []string{""} // this host
+	}
+	type target struct{ goos, goarch string }
+	targets := make([]target, 0, len(wanted))
+	for _, p := range wanted {
+		goos, goarch, err := Platform(p)
+		if err != nil {
+			return refusal(errs, "BUILD", err)
+		}
+		targets = append(targets, target{goos, goarch})
 	}
 	tools, err := Tools(o.source)
 	// A --source with no cmd/ at all is the same mistake as one with no
@@ -107,33 +120,50 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	if tc == nil {
 		tc = GoBuild{}
 	}
-	dir := ArtifactDir(o.out, o.version, goos, goarch)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return refusal(errs, "BUILD", fmt.Errorf("cannot create %s: %w (name a writable --out)", dir, err))
-	}
 	// THE STAMP IS COMPOSED ONCE, before the first target, the way
 	// .github/scripts/release-ldflags.sh composes it once for the release
 	// workflow: `-X main.version=` with an empty value is a legal linker flag
 	// that stamps nothing, and nothing downstream notices (#118).
 	args := []string{"-trimpath", "-ldflags", Ldflags(o.version)}
-	for i, tool := range tools {
-		progress(errs, "building %s for %s/%s (%d/%d)", tool, goos, goarch, i+1, len(tools))
-		output, err := tc.Build(ctx, o.source, "./cmd/"+tool, filepath.Join(dir, ToolFile(tool, goos)), goos, goarch, args)
-		if err != nil {
-			fmt.Fprintf(errs, "BUILD FAIL tool=%s platform=%s version=%s: %s (fix the compile error and build again; no %s was written)\n",
-				field(tool), field(goos+"-"+goarch), field(o.version), oneLine(output, err), SumsFile)
-			return 1
+	for _, tgt := range targets {
+		goos, goarch := tgt.goos, tgt.goarch
+		dir := ArtifactDir(o.out, o.version, goos, goarch)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return refusal(errs, "BUILD", fmt.Errorf("cannot create %s: %w (name a writable --out)", dir, err))
 		}
+		for i, tool := range tools {
+			progress(errs, "building %s for %s/%s (%d/%d)", tool, goos, goarch, i+1, len(tools))
+			output, err := tc.Build(ctx, o.source, "./cmd/"+tool, filepath.Join(dir, ToolFile(tool, goos)), goos, goarch, args)
+			if err != nil {
+				fmt.Fprintf(errs, "BUILD FAIL tool=%s platform=%s version=%s: %s (fix the compile error and build again; no %s was written)\n",
+					field(tool), field(goos+"-"+goarch), field(o.version), oneLine(output, err), SumsFile)
+				return 1
+			}
+		}
+		// SHA256SUMS LAST, over the whole set, in the same step that finished
+		// it. A checksum file written beside a half-built directory is a file
+		// that agrees with itself and with nothing anybody released.
+		sums, err := writeSums(dir)
+		if err != nil {
+			return refusal(errs, "BUILD", fmt.Errorf("cannot write %s: %w (name a writable --out)", filepath.Join(dir, SumsFile), err))
+		}
+		// AND READ BACK IMMEDIATELY. release.yml has verified its own
+		// SHA256SUMS since the beginning, for the reason it gives in place: a
+		// checksum file nobody has ever checked is a file whose first reader
+		// is the person it was supposed to reassure. This is that check, one
+		// step earlier, where the remedy is still `build again`.
+		arts, err := ReadSums(dir)
+		if err != nil {
+			return refusal(errs, "BUILD", fmt.Errorf("the %s just written cannot be read back: %w", SumsFile, err))
+		}
+		progress(errs, "verifying the %d artifacts just written for %s-%s", len(arts), goos, goarch)
+		verified, err := VerifyArtifacts(dir, arts)
+		if err != nil {
+			return refusal(errs, "BUILD", fmt.Errorf("the %s just written does not describe what was built: %w", SumsFile, err))
+		}
+		fmt.Fprintf(out, "RELEASE BUILT version=%s platform=%s tools=%d verified=%d out=%s sums=%s\n",
+			field(o.version), field(goos+"-"+goarch), len(tools), verified, field(dir), field(sums))
 	}
-	// SHA256SUMS LAST, over the whole set, in the same step that finished it.
-	// A checksum file written beside a half-built directory is a file that
-	// agrees with itself and with nothing anybody released.
-	sums, err := writeSums(dir)
-	if err != nil {
-		return refusal(errs, "BUILD", fmt.Errorf("cannot write %s: %w (name a writable --out)", filepath.Join(dir, SumsFile), err))
-	}
-	fmt.Fprintf(out, "RELEASE BUILT version=%s platform=%s tools=%d out=%s sums=%s\n",
-		field(o.version), field(goos+"-"+goarch), len(tools), field(dir), field(sums))
 	return 0
 }
 

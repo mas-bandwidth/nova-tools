@@ -1013,22 +1013,71 @@ const LanePathspec = ":(glob)from-*/**"
 // the bus moved before an id was resolved. A count and never a list: what arrived is the
 // bus's business and the receipt's job is to say that it did.
 func CommitsBetween(dir, from, to string) (int, error) {
+	n, _, err := commitsSince(dir, from, to, 0)
+	return n, err
+}
+
+// CommitsSinceBounded is CommitsBetween with a CEILING, and it is what the since-walk asks.
+//
+// THE COST OF ASKING IS THE WHOLE POINT. `rev-list --count <from>..HEAD` walks every commit
+// between the two ends before it can answer, so a cursor left a long way behind pays for the
+// whole distance just to be TOLD it is a long way behind -- which is the one answer that
+// then reads nothing. That is the question asked backwards: the walk does not need the
+// distance, it needs to know whether the distance is over its bound.
+// `--max-count=<ceiling+1>` is git stopping the moment the answer cannot change, so an
+// over-bound cursor costs ceiling+1 commits instead of however many there are -- five
+// hundred or fifty thousand, the same 501 either way -- and an under-bound one still gets
+// its exact total for the progress line.
+//
+// capped says the count stopped at the ceiling rather than at the cursor: there are MORE
+// commits than the ceiling, and how many more is deliberately not known. A caller that
+// wants the true distance asks CommitsBetween and pays for it.
+func CommitsSinceBounded(dir, from string, ceiling int) (n int, capped bool, err error) {
+	if ceiling <= 0 {
+		return 0, false, fmt.Errorf("a bounded commit count needs a positive ceiling, not %d", ceiling)
+	}
+	return commitsSince(dir, from, "HEAD", ceiling)
+}
+
+// commitsSince is the one rev-list both spellings run; a ceiling of 0 means no ceiling.
+func commitsSince(dir, from, to string, ceiling int) (int, bool, error) {
 	if err := ValidRevision(from); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if err := ValidRevision(to); err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	out, err := git(dir, "rev-list", "--count", from+".."+to)
+	args := []string{"rev-list", "--count"}
+	if ceiling > 0 {
+		args = append(args, "--max-count="+strconv.Itoa(ceiling+1))
+	}
+	args = append(args, from+".."+to)
+	out, err := git(dir, args...)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	n := 0
 	if _, err := fmt.Sscanf(strings.TrimSpace(out), "%d", &n); err != nil {
-		return 0, fmt.Errorf("git rev-list --count did not answer with a number: %w", err)
+		return 0, false, fmt.Errorf("git rev-list --count did not answer with a number: %w", err)
 	}
-	return n, nil
+	commitsWalked.Add(int64(n))
+	return n, ceiling > 0 && n > ceiling, nil
 }
+
+// commitsWalked counts the commits this process's commit counts have enumerated, and
+// CommitsWalked reads it.
+//
+// It is INSTRUMENTATION, of the same kind and for the same reason as NoteParses in note.go:
+// the property it measures -- a stale cursor costs the BOUND and not the distance -- is a
+// claim about work NOT DONE, and work not done leaves no output to assert on. The honest
+// proof is a count taken where the work happens. Timing two runs instead would be a flake on
+// a shared runner and would prove nothing on a fast enough machine.
+var commitsWalked atomic.Int64
+
+// CommitsWalked is how many commits this process's rev-list counts have enumerated. Tests
+// take it before and after a run and assert on the difference; nothing else reads it and
+// nothing branches on it.
+func CommitsWalked() int64 { return commitsWalked.Load() }
 
 func ChangedSince(dir, commit string) ([]string, error) {
 	if err := ValidCommitHex(commit); err != nil {

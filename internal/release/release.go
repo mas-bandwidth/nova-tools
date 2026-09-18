@@ -68,8 +68,9 @@ type PR struct {
 	Members []int
 }
 
-// Forge is the edge between this tool and GitHub. Five questions, one gh
-// invocation each, and every one of them is a read except Tag.
+// Forge is the edge between this tool and GitHub. Seven questions, one gh
+// invocation each -- Tag is two, for the reason it gives -- and every one of
+// them is a read except Tag.
 type Forge interface {
 	// HeadSHA resolves a branch to the commit it points at.
 	HeadSHA(ctx context.Context, repo, branch string) (string, error)
@@ -79,9 +80,22 @@ type Forge interface {
 	Tags(ctx context.Context, repo string) ([]string, error)
 	// Compare lists the commits in base..head, oldest first.
 	Compare(ctx context.Context, repo, base, head string) ([]Commit, error)
-	// Tag creates an annotated-by-reference tag at sha. It is the one
-	// mutation on this interface and the only one `cut` performs.
-	Tag(ctx context.Context, repo, tag, sha string) error
+	// Files lists the paths base..head touched. It is a separate question
+	// from Compare because it is asked for a separate reason -- the
+	// classification `cut` makes against SensitivePaths -- and because its
+	// answer carries a ceiling of its own (CompareFileCap) that the commit
+	// list does not.
+	Files(ctx context.Context, repo, base, head string) ([]string, error)
+	// Tag creates an ANNOTATED tag at sha: a tag OBJECT carrying message,
+	// then the ref pointing at that object. It is the one mutation on this
+	// interface and the only one `cut` performs.
+	Tag(ctx context.Context, repo, tag, sha, message string) error
+	// TagMessage reads an existing annotated tag's message back. It is how
+	// `adopt` learns the digest a release was cut with without anybody
+	// retyping it: a tag object is a git object, so its message reached the
+	// adopting host through the repository rather than through the machine
+	// whose bits are being checked against it.
+	TagMessage(ctx context.Context, repo, tag string) (string, error)
 }
 
 // SSH is the edge to another machine: run a command there, or put a directory
@@ -93,7 +107,37 @@ type SSH interface {
 	Run(ctx context.Context, machine string, argv []string) (string, error)
 	// Send copies the local directory tree at dir to dest on machine.
 	Send(ctx context.Context, machine, dir, dest string) (string, error)
+	// Fetch copies the directory dir ON machine into the local directory
+	// dest. It is how the host that has the trust reads a release built on
+	// the host that has the cores, without anybody copying it by hand.
+	Fetch(ctx context.Context, machine, dir, dest string) (string, error)
 }
+
+// Machine is one line of the --machines file: which machine, and optionally
+// where ITS tools go. The fleet has three different home directories, so a
+// single --bin is right for most machines and wrong for one; the columns are
+// how that one is said in the file rather than by a second run with different
+// flags -- which is a second chance to get the version wrong.
+type Machine struct {
+	Name string
+	// Bin and Dest override --bin and --dest for this machine. Empty means
+	// the flag's value, which is the ordinary case.
+	Bin, Dest string
+}
+
+// MachinesShape is the one sentence that says what the --machines file holds.
+// The help prints it and docs/SPEC-UPDATE.md carries it, because a file format
+// discoverable only from a refusal is a format nobody can write correctly the
+// first time: the dogfood pass of 2026-09-18 had to read the source for it.
+const MachinesShape = "one machine per line: <name>[TAB<bin>[TAB<dest>]]; blank lines and #-comments skipped; user@host allowed; the optional columns override --bin and --dest for that machine"
+
+// RemotePathsNote says the one thing about --bin and --dest that is easy to get
+// wrong and silent when you do. They are paths ON THE MACHINE: the remote shell
+// expands a leading ~, so `--bin '~/.local/bin'` is how three different home
+// directories are named at once -- and the quotes are load-bearing, because an
+// unquoted ~ is expanded by the LOCAL shell into the adopting host's home,
+// which is a path the machine has probably never heard of.
+const RemotePathsNote = "--bin and --dest are paths on each machine; the remote shell expands a leading ~, so quote it ('~/.local/bin') or the local shell expands it here instead"
 
 // Toolchain is the edge to `go build`. The arguments are handed over whole, so
 // that a test asserting -trimpath and the -ldflags stamp is asserting the exact

@@ -57,7 +57,7 @@ func TestRenderCarriesTheHouseShape(t *testing.T) {
 	}
 	u, _ := ws.Unit("u1")
 	deadline := time.Date(2026, 9, 18, 20, 0, 0, 0, time.UTC)
-	note, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: *u, Deadline: deadline, Branch: "rowan/lane-friends"})
+	note, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: *u, Deadline: deadline, Branch: "rowan/lane-friends"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,15 +79,19 @@ func TestRenderCarriesTheHouseShape(t *testing.T) {
 
 func TestRenderRefusesASubjectThatWouldForgeAHeaderLine(t *testing.T) {
 	u := Unit{ID: "u1", Title: "one\nTo: somebody-else"}
-	if _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC(), Branch: "b"}); err == nil {
+	if _, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC(), Branch: "b"}); err == nil {
 		t.Fatal("a title with a newline must be refused, never written onto a header line")
 	}
 }
 
-func TestRenderRefusesAUnitWithNoAcceptance(t *testing.T) {
-	u := Unit{ID: "u1", Title: "a unit", Needs: []string{"n"}}
-	if _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC(), Branch: "b"}); err == nil {
-		t.Fatal("an ask with no acceptance is a unit nobody can finish; it must be refused")
+// Superseded by the dogfood run of 2026-09-18: a unit with no :acceptance is asked,
+// with the title standing as the acceptance and a notice saying so. See
+// TestRenderWithoutAcceptanceTakesTheTitleAndSaysSo. What stays refused is a unit
+// with no TITLE, which would leave both the subject and the acceptance empty.
+func TestRenderRefusesAUnitWithNoTitle(t *testing.T) {
+	u := Unit{ID: "u1", Needs: []string{"n"}}
+	if _, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC(), Branch: "b"}); err == nil {
+		t.Fatal("a unit with no title says nothing in a subject and nothing in an acceptance")
 	}
 }
 
@@ -177,5 +181,201 @@ func TestSendOKLineYieldsTheID(t *testing.T) {
 	}
 	if _, err := parseSendOK("SEND FAIL x: no\n"); err == nil {
 		t.Fatal("a send that did not print SEND OK must be an error, never a silent success")
+	}
+}
+
+// ---------------------------------------------------------------- the dogfood edges
+// A non-author ran ask/asks on a real unit on 2026-09-18. Seven edges came back, and
+// each one is a test here before it is a line of code.
+
+func TestLoadReadsTheLispWorkSetACoordinatorActuallyWrites(t *testing.T) {
+	ws, err := Load("testdata/work-set.lisp", DefaultMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws.Units) != 3 {
+		t.Fatalf("read %d units, want 3", len(ws.Units))
+	}
+	u, err := ws.Unit("pull:queue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// edge 3: :lane, :owner, :needs and :deadline all survive the read
+	if u.Owner != "Stella" {
+		t.Errorf("owner = %q", u.Owner)
+	}
+	if u.Lane != "work" {
+		t.Errorf("lane = %q, and a lane that is lost is a unit nobody can schedule", u.Lane)
+	}
+	if len(u.Needs) != 1 || u.Needs[0] != "promote:main" {
+		t.Errorf("needs = %v", u.Needs)
+	}
+	// the file's stamps are short RFC3339 (no seconds), which is what a person writes
+	want := time.Date(2026, 9, 18, 18, 0, 0, 0, time.UTC)
+	if !u.Deadline.Equal(want) {
+		t.Errorf("deadline = %v, want %v", u.Deadline, want)
+	}
+	if !strings.HasPrefix(u.Title, "the ready set in Redis") {
+		t.Errorf("title = %q", u.Title)
+	}
+	// a unit with no :title is still a unit; it is Render that refuses it
+	if _, err := ws.Unit("verb:hygiene"); err != nil {
+		t.Errorf("a unit with no :title must still be found: %v", err)
+	}
+}
+
+func TestLoadStillReadsTheJSONForm(t *testing.T) {
+	ws, err := Load(write(t, "units.json", oneUnit), DefaultMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws.Units) != 1 {
+		t.Fatalf("read %d units, want 1", len(ws.Units))
+	}
+}
+
+func TestLaneAndDeadlineSurviveTheJSONForm(t *testing.T) {
+	p := write(t, "units.json", `{"units":[{"id":"u1","title":"t","owner":"Emma","lane":"work","deadline":"2026-09-18T18:00Z","acceptance":["a"]}]}`)
+	ws, err := Load(p, DefaultMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := ws.Unit("u1")
+	if u.Lane != "work" || u.Deadline.IsZero() {
+		t.Fatalf("lane and deadline did not survive: %+v", u)
+	}
+	// and back out again, byte for byte enough to read once more
+	if err := Save(p, ws); err != nil {
+		t.Fatal(err)
+	}
+	back, err := Load(p, DefaultMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := back.Unit("u1"); b.Lane != "work" || !b.Deadline.Equal(u.Deadline.Time) {
+		t.Fatalf("lane or deadline lost on the round trip: %+v", b)
+	}
+}
+
+func TestRenderWithoutAcceptanceTakesTheTitleAndSaysSo(t *testing.T) {
+	u := Unit{ID: "pull:queue", Title: "the ready set in Redis", Owner: "Stella", Lane: "work"}
+	note, notices, err := Render(AskSpec{From: "Rowan", Owner: "Stella", Kind: "work", Unit: u, Deadline: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatalf("a unit with no :acceptance must be asked, not refused: %v", err)
+	}
+	if !strings.Contains(note, "Acceptance: as titled\n") {
+		t.Errorf("the note must say the acceptance is the title:\n%s", note)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "acceptance") {
+		t.Errorf("one notice must say the unit carries no acceptance, got %v", notices)
+	}
+	// edge 3: the lane travels with the unit
+	if !strings.Contains(note, "Lane: work\n") {
+		t.Errorf("the note does not carry the lane:\n%s", note)
+	}
+}
+
+func TestRenderOmitsTheBranchClauseWhenThereIsNoBranch(t *testing.T) {
+	u := Unit{ID: "u1", Title: "t", Acceptance: []string{"a"}}
+	note, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(note, "on that branch") || strings.Contains(note, "Reply on branch:") {
+		t.Errorf("with no branch there is no branch clause:\n%s", note)
+	}
+	if !strings.Contains(note, "Reply on the bus") {
+		t.Errorf("the note must still say where to reply:\n%s", note)
+	}
+
+	withBranch, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC().Add(time.Hour), Branch: "rowan/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(withBranch, "Reply on branch: rowan/x\n") || !strings.Contains(withBranch, "on that branch") {
+		t.Errorf("with a branch the clause is there:\n%s", withBranch)
+	}
+}
+
+func TestRenderPrintsTheTitleOnceOnly(t *testing.T) {
+	u := Unit{ID: "u1", Title: "retire the child shell", Acceptance: []string{"a"}}
+	note, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(note, "retire the child shell"); n != 1 {
+		t.Fatalf("the title is printed %d times, want once (the Subject):\n%s", n, note)
+	}
+}
+
+func TestRenderCcsTheSenderSoABroadcastIncludesSelf(t *testing.T) {
+	u := Unit{ID: "u1", Title: "t", Acceptance: []string{"a"}}
+	note, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Kind: "work", Unit: u, Deadline: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(note, "Cc: Rowan\n") {
+		t.Errorf("with no --cc the sender Ccs itself:\n%s", note)
+	}
+	named, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Cc: "Stella", Kind: "work", Unit: u, Deadline: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(named, "Cc: Stella, Rowan\n") {
+		t.Errorf("--cc is kept and the sender is added to it:\n%s", named)
+	}
+	already, _, err := Render(AskSpec{From: "Rowan", Owner: "Emma", Cc: "Rowan, Stella", Kind: "work", Unit: u, Deadline: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(already, "Cc: Rowan, Stella\n") {
+		t.Errorf("a sender already named is not named twice:\n%s", already)
+	}
+}
+
+func TestOnBusListsTheAsksTheBusItselfRecords(t *testing.T) {
+	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	rows, err := OnBus("testdata/bus", "Ada", "Bo", now, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// three ask notes, one of them answered by a Re from the owner's own lane, and one
+	// note that is not an ask at all
+	if len(rows) != 2 {
+		t.Fatalf("got %d open asks, want 2:\n%+v", len(rows), rows)
+	}
+	// oldest first
+	if rows[0].ID != "ada-bbbbbbbbbbbb" || rows[0].Kind != "read" || rows[0].Unit != "read:worklang" {
+		t.Errorf("row 0 = %+v", rows[0])
+	}
+	if !rows[0].Overdue {
+		t.Errorf("an ask past the deadline in its own body is overdue: %+v", rows[0])
+	}
+	if rows[1].ID != "ada-aaaaaaaaaaaa" || rows[1].Age != 30*time.Minute || rows[1].Overdue {
+		t.Errorf("row 1 = %+v", rows[1])
+	}
+	if rows[1].Owner != "Bo" || rows[1].By != "Ada" {
+		t.Errorf("row 1 does not carry who asked whom: %+v", rows[1])
+	}
+}
+
+func TestOnBusRefusesANameTheRosterDoesNotKnow(t *testing.T) {
+	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	if _, err := OnBus("testdata/bus", "Nobody", "Bo", now, 0); err == nil {
+		t.Fatal("a sender the roster does not know must be refused by name")
+	}
+	if _, err := OnBus("testdata/bus", "Ada", "Nobody", now, 0); err == nil {
+		t.Fatal("an owner the roster does not know must be refused by name")
+	}
+}
+
+func TestOnBusWithNoOwnerListsEveryAskTheSenderHasOut(t *testing.T) {
+	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	rows, err := OnBus("testdata/bus", "Ada", "", now, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
 	}
 }

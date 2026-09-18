@@ -138,7 +138,7 @@ func lessVersion(a, b []int) bool {
 // Section renders one changelog section. It is exported and pure so that the
 // shape of what a release says about itself is asserted by a test rather than
 // by reading a file somebody wrote by hand afterwards.
-func Section(version, sha, previous string, when time.Time, prs []PR) string {
+func Section(version, sha, previous, sumsDigest string, when time.Time, prs []PR) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s — %s\n\n", version, when.UTC().Format("2006-01-02"))
 	since := "this repository's first commit"
@@ -146,6 +146,16 @@ func Section(version, sha, previous string, when time.Time, prs []PR) string {
 		since = previous
 	}
 	fmt.Fprintf(&b, "Cut from %s. %s since %s.\n\n", sha, plural(len(prs), "pull request"), since)
+	// THE DIGEST GOES IN THE CHANGELOG, WHICH TRAVELS BY GIT. `adopt` fetching
+	// a release from another machine cannot verify it with the checksum file
+	// that came with it -- anybody who could change one could change the other
+	// -- so it is given this digest instead, which reached the adopting host
+	// through the repository rather than through the machine being read
+	// (Johnny, 2026-09-18). It is written in the form the check wants, so
+	// nobody has to transcribe it.
+	if sumsDigest != "" {
+		fmt.Fprintf(&b, "%s%s\n\nAdopt this release with `--expect-sums %s`.\n\n", SumsDigestPrefix, sumsDigest, sumsDigest)
+	}
 	for _, pr := range prs {
 		fmt.Fprintf(&b, "- #%d %s\n", pr.Number, pr.Title)
 		if len(pr.Members) > 0 {
@@ -168,6 +178,88 @@ func plural(n int, noun string) string {
 		return "1 " + noun
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// SumsDigestPrefix is how the changelog names the digest of a release's
+// SHA256SUMS, in one place so that what `cut` writes and what a person copies
+// into `adopt --expect-sums` are the same string.
+const SumsDigestPrefix = "SHA256SUMS digest: "
+
+// AnnotationSumsPrefix is how the TAG names the same digest, and it is written
+// on a line of its own so that reading it back is an anchored match rather than
+// a search through prose.
+const AnnotationSumsPrefix = "sums="
+
+// annotationSums reads the digest line and only the digest line. A sha
+// mentioned inside a release note is not the digest this release was cut with,
+// and a reader that took the first 64 hex characters it found would sometimes
+// be right, which is the worst way for a check like this to be wrong.
+var annotationSums = regexp.MustCompile(`(?m)^` + AnnotationSumsPrefix + `([0-9a-f]{64})$`)
+
+// Annotation is the message the TAG OBJECT carries, composed in one place
+// because it is written by `cut` and read by `adopt` and the two have to agree
+// about where the digest is (Johnny's decision 2, #1337). A tag is the one
+// thing in this repository that cannot be quietly amended, so what it says
+// about a release is the most durable record the release has.
+func Annotation(version, sha, sumsDigest string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n\nCut from %s.\n", version, sha)
+	if sumsDigest != "" {
+		fmt.Fprintf(&b, "%s%s\n", AnnotationSumsPrefix, sumsDigest)
+	}
+	return b.String()
+}
+
+// SumsInAnnotation reads the digest back out of a tag's message, or "" when
+// the tag carries none -- which is what a release cut before decision 2, or one
+// cut without --sums, looks like from here.
+func SumsInAnnotation(message string) string {
+	m := annotationSums.FindStringSubmatch(message)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// classify is the gate Johnny's decision 1 puts in front of the tag: which of
+// the paths this range touched are on SensitivePaths, and may this cut proceed.
+// It is its own function, and pure apart from the writer, because the decision
+// is the thing worth reading -- the cut around it is bookkeeping.
+//
+// The ORDER matters. A range with hits is named by its hits; a range too big to
+// classify is named by the ceiling. Both are got past the same way, and neither
+// is got past by trying again.
+func classify(files []string, securityRead string, out, errs io.Writer) error {
+	hits := Sensitive(files)
+	atCeiling := len(files) >= CompareFileCap
+	if securityRead != "" {
+		if err := ValidSecurityRead(securityRead); err != nil {
+			return err
+		}
+	}
+	if !atCeiling && len(hits) == 0 {
+		// The line exists to mark the exception. Printed every time, it is a
+		// line nobody reads, and then it is not a mark at all.
+		return nil
+	}
+	if securityRead == "" {
+		if len(hits) > 0 {
+			return refuse("get Johnny's read of these paths and name it: --security-read <note id or the url of his comment>",
+				"this range touches %s on the sensitive list: %s", plural(len(hits), "path"), namedPaths(hits, 10))
+		}
+		return refuse("get Johnny's read and name it with --security-read, or cut from a nearer tag so the list fits",
+			"the forge named %d files for this range, which is its ceiling of %d: a list that may be short cannot be classified against the sensitive paths",
+			len(files), CompareFileCap)
+	}
+	if atCeiling {
+		progress(errs, "the file list is at the forge's ceiling of %d, so the count below is of what could be seen", CompareFileCap)
+	}
+	// ON STDOUT, above the cut line: it is a receipt, not progress. A release
+	// that crossed the sensitive list is a fact somebody reads off the
+	// terminal today and out of a log in six months, and `read=` is how they
+	// find what was actually said.
+	fmt.Fprintf(out, "RELEASE CUT SENSITIVE paths=%d read=%s\n", len(hits), field(securityRead))
+	return nil
 }
 
 // prependSection puts the new section above every other section and below the
@@ -237,25 +329,49 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		}
 	}
 	prs := PullRequests(commits)
-	section := Section(o.version, sha, previous, deps.Now(), prs)
+	// WHICH PATHS THE RANGE TOUCHED, and whether that needs a read before a
+	// tag exists (Johnny's decision 1, #1337). Asked BEFORE --dry-run branches
+	// and before anything is written: a dry run exists to find out what would
+	// happen, and what would happen is this refusal.
+	var files []string
+	if previous != "" {
+		progress(errs, "reading which paths %s..%s touched", previous, sha)
+		files, err = forge.Files(ctx, o.repo, previous, sha)
+		if err != nil {
+			return refusal(errs, "CUT", fmt.Errorf("cannot read the files in %s...%s: %w (ask again when the forge answers)", previous, sha, err))
+		}
+	}
+	if err := classify(files, o.securityRead, out, errs); err != nil {
+		return refusal(errs, "CUT", err)
+	}
+	// --sums names a SHA256SUMS this release's build already wrote; its digest
+	// is recorded in the section so that an adopt on another host can check a
+	// fetched release against something that did not travel with the bits.
+	sumsDigest := ""
+	if o.sums != "" {
+		if sumsDigest, err = fileSum(o.sums); err != nil {
+			return refusal(errs, "CUT", fmt.Errorf("cannot read %s: %w (name the SHA256SUMS that `release build` wrote, or leave --sums out)", o.sums, err))
+		}
+	}
+	section := Section(o.version, sha, previous, sumsDigest, deps.Now(), prs)
 	if o.dryRun {
-		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s dry-run=yes\n",
-			field(o.version), field(sha), len(prs), field(previous), field(o.changelog))
+		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dry-run=yes\n",
+			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest))
 		fmt.Fprint(errs, section)
 		return 0
 	}
 	if err := prependSection(o.changelog, section); err != nil {
 		return refusal(errs, "CUT", fmt.Errorf("cannot write %s: %w (name a writable --changelog)", o.changelog, err))
 	}
-	progress(errs, "tagging %s at %s", o.version, sha)
-	if err := forge.Tag(ctx, o.repo, o.version, sha); err != nil {
+	progress(errs, "tagging %s at %s, annotated with the digest adopt will check", o.version, sha)
+	if err := forge.Tag(ctx, o.repo, o.version, sha, Annotation(o.version, sha, sumsDigest)); err != nil {
 		// The changelog is already written; say so, because the remedy is to
 		// tag by hand or to cut again, not to wonder which half happened.
 		fmt.Fprintf(errs, "CUT FAIL version=%s sha=%s: %s (the changelog section is written at %s; create the tag by hand or delete the section and cut again)\n",
 			field(o.version), field(sha), oneline.Err(err), field(o.changelog))
 		return 1
 	}
-	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s dry-run=no\n",
-		field(o.version), field(sha), len(prs), field(previous), field(o.changelog))
+	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dry-run=no\n",
+		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest))
 	return 0
 }
