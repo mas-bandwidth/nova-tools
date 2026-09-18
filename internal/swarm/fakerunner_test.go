@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,8 +48,18 @@ var (
 )
 
 // builtFakeRunner builds testdata/fakerunner once per package run and returns its path.
+// The build is done in TestMain, before any test, so its compile is never charged to the
+// first test to ask for a runner (the studio bench charged it to TestBatchAllocatesSlots).
 func builtFakeRunner(t *testing.T) string {
 	t.Helper()
+	if err := buildFakeRunner(); err != nil {
+		t.Fatalf("building the fake runner these tests drive: %v", err)
+	}
+	return fakeRunnerBin
+}
+
+// buildFakeRunner compiles the one fixture program the whole package shares, once.
+func buildFakeRunner() error {
 	fakeRunnerOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "nova-swarm-fakerunner")
 		if err != nil {
@@ -74,10 +85,7 @@ func builtFakeRunner(t *testing.T) string {
 		}
 		fakeRunnerBin = bin
 	})
-	if fakeRunnerErr != nil {
-		t.Fatalf("building the fake runner these tests drive: %v", fakeRunnerErr)
-	}
-	return fakeRunnerBin
+	return fakeRunnerErr
 }
 
 type buildError struct {
@@ -89,8 +97,13 @@ func (e *buildError) Error() string { return e.err.Error() + "\n" + e.out }
 
 // TestMain removes the one directory these tests keep outside a t.TempDir(): the fake runner
 // every fixture is copied from, which cannot live in any single test's own directory because
-// every test shares it.
+// every test shares it. It builds that runner first, so the compile lands here and not on
+// whichever test happens to ask first.
 func TestMain(m *testing.M) {
+	if err := buildFakeRunner(); err != nil {
+		fmt.Fprintf(os.Stderr, "building the fake runner these tests drive: %v\n", err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	if fakeRunnerDir != "" {
 		_ = os.RemoveAll(fakeRunnerDir)

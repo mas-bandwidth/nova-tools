@@ -260,7 +260,8 @@ func donePublished(t *testing.T, p *Pool, label string) string {
 	if err := p.writeRev(p.ReportsDir(sc.ID), 1, HashBytes([]byte(body))); err != nil {
 		t.Fatal(err)
 	}
-	// A job id is time-ordered to the second; two made in one second would collide.
-	time.Sleep(1100 * time.Millisecond)
+	// No wait to keep two ids apart: NewID carries a random half as well as its UTC
+	// second, and the two calls here carry different labels, so two in one second cannot
+	// collide and the page holds both whatever order time ties them in.
 	return sc.ID
 }

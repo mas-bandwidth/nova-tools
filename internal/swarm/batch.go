@@ -95,6 +95,7 @@ type realClock struct{}
 
 func (realClock) Now() time.Time                         { return time.Now() }
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+func (realClock) Sleep(d time.Duration)                  { time.Sleep(d) }
 func (realClock) NewTicker(d time.Duration) (<-chan time.Time, func()) {
 	t := time.NewTicker(d)
 	return t.C, t.Stop

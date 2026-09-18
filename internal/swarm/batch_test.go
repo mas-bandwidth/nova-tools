@@ -332,7 +332,7 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 	// four-second clock.
 	runner := runnerDoing(t, dir, "writing",
 		runnerStep{Op: "mkdir", Path: "{job}"},
-		runnerStep{Op: "stdout", Body: "working {i}", N: 6, Ms: 150},
+		runnerStep{Op: "stdout", Body: "working {i}", N: 6, Ms: 10},
 		publishCard("{job}"),
 	)
 	log := filepath.Join(root, "1", "jobs", "a", "harness.log")
@@ -408,7 +408,7 @@ func TestIdleWatchesNativeLog(t *testing.T) {
 	}
 	runner := runnerDoing(t, dir, "native-writes",
 		runnerStep{Op: "mkdir", Path: "{job}"},
-		runnerStep{Op: "appendn", Path: "{root}/{slot}/native.log", Body: "line {i}", N: 12, Ms: 200},
+		runnerStep{Op: "appendn", Path: "{root}/{slot}/native.log", Body: "line {i}", N: 12, Ms: 10},
 		publishCard("{job}"),
 	)
 	// The kill window is injected: a tick after a whole --idle sees the growth since
@@ -449,7 +449,7 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := runnerDoing(t, dir, "native-stops",
-		runnerStep{Op: "appendn", Path: "{root}/{slot}/native.log", Body: "line {i}", N: 3, Ms: 200},
+		runnerStep{Op: "appendn", Path: "{root}/{slot}/native.log", Body: "line {i}", N: 3, Ms: 10},
 		runnerStep{Op: "sleep", Ms: 30000},
 	)
 	// The monitor watches the child's own native.log, and the kill is driven by the
@@ -977,8 +977,8 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 		{"spin", "RESULT: spin\nbusy and silent"},
 		{"sleeps", "RESULT: sleeps\nMISSING"},
 	})
-	// One runner, two cards: `spin` starts a silent grandchild that burns CPU for far longer
-	// than --idle and then publishes its result; `sleeps` sleeps past the idle window. Neither
+	// One runner, two cards: `spin` starts a silent grandchild that burns CPU for a
+	// moment and then publishes its result; `sleeps` sleeps past the idle window. Neither
 	// writes one byte to its log.
 	// The spinner burns CPU and writes nothing, and it carries its own deadline so that a red
 	// run of this test leaves no process behind: it ends on its own at 20 s whatever happens
@@ -991,6 +991,16 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 	// sample taken after the marker then sees the burner gone: the tree's CPU time did
 	// not grow, it fell, and a tree that lost a charged process is working, not still.
 	// The sleeping card has no such movement, so the same tick sees it idle and kills it.
+	// The spinner burns CPU and writes nothing, and it carries its own deadline so that a
+	// red run of this test leaves no process behind.
+	// The marker appears once the spin card's grandchild has burned, so the test waits on
+	// that event rather than on a clock: between the first CPU sample and the sample taken
+	// after the marker, the tree's CPU time has grown, which is the only thing that saves
+	// the silent spinner. The burn only has to exceed a hundredth of the INJECTED sample
+	// interval -- the idle window the test advances is four virtual seconds, so forty
+	// milliseconds of CPU is already activity -- and is a fraction of a second, never the
+	// five real seconds it used to hold a core for. The sleeping card has no such growth,
+	// so the same tick sees it idle and kills it.
 	runner := runnerDoing(t, dir, "silent",
 		runnerStep{Op: "mkdir", Path: "{job}"},
 		runnerStep{Op: "write", Path: "{root}/spin-started", When: "label==spin"},
