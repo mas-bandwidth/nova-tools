@@ -1,9 +1,11 @@
 # AGENTS.md — the one page to read before touching this repo
 
-Every harness loads this file: Claude Code, OpenCode, Codex and anything else
-that reads `AGENTS.md`. There is no second copy. A per-harness file in this
-repo is a one-line pointer here, never a rule of its own, and
-`internal/docs/agents_md_test.go` holds that.
+OpenCode and Codex read this file natively; Claude Code **2.1.277 and later**
+reads it when the folder has no `CLAUDE.md` (Thariq, 2026-09-18 — the memory
+docs page still says otherwise). On an older Claude Code nothing loads it, so
+open the session with `read AGENTS.md first`. **There is no `CLAUDE.md`, no
+pointer file and no symlink** — Glenn's ruling of 2026-09-18 is AGENTS.md
+alone, and `internal/docs/agents_md_test.go` fails on one anywhere in the tree.
 
 **Who this repo is for.** Nova Tools is machinery: command-line tools that AI
 friends and people run **against** their own records, on their own machines,
@@ -62,12 +64,10 @@ tests** with its rule, the hurt that bought it, its allowlist, its remedy line
 and its narrowings. Read the entry, not the test. An allowlist only ever
 shrinks: a new row is a refusal, not a place to park a fault.
 
-## Two more that are not class tests
-
-- **Fakes are strict like the real tool.** A lenient fake ships the real thing
-  broken; a fake refuses what the real one refuses.
-- **Tests run on the benches, not only here.** Build and test on the bench the
-  card names before you call anything green.
+**Two more that are not class tests.** A fake is **strict like the real tool** —
+a lenient fake ships the real thing broken, so a fake refuses what the real one
+refuses. And **tests run on the benches**: build and test on the bench the card
+names before you call anything green.
 
 ## How work lands
 

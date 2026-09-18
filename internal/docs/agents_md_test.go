@@ -9,14 +9,17 @@ import (
 	"testing"
 )
 
-// agents_md_test.go holds AGENTS.md — the ONE page every friend's harness loads
+// agents_md_test.go holds AGENTS.md — the ONE page a friend's harness reads
 // before it touches this repository — against the rules it claims to carry.
 //
-// Claude Code 2.1.277 reads AGENTS.md when a folder has no CLAUDE.md; OpenCode
-// and Codex already do. Glenn, 2026-09-18: "AGENTS.md from now on! We should
-// standardize on it, instead of CLAUDE.md." So there is one page, not one per
-// harness, and a per-harness file in this tree is a pointer to it rather than a
-// second set of rules that drifts from the first within a week.
+// OpenCode and Codex read AGENTS.md natively. Claude Code 2.1.277 and later
+// reads it when the folder has no CLAUDE.md; an older Claude Code loads nothing
+// and has to be told `read AGENTS.md first`. Glenn, 2026-09-18: "AGENTS.md from
+// now on! We should standardize on it, instead of CLAUDE.md." The ruling is
+// AGENTS.md ALONE — no CLAUDE.md, no pointer file, no symlink. A pointer would
+// be worse than nothing here, because Claude Code reads AGENTS.md exactly when
+// no CLAUDE.md stands: a stub would hold every Claude session on a file that
+// says nothing while the other harnesses read the real page.
 //
 // Three things are pinned, each for a way the page rots:
 //
@@ -26,8 +29,7 @@ import (
 //	(b) it stays under the line cap — the page is read at the start of every
 //	    session by every harness, so its cost is paid on every turn, and a page
 //	    that grows without a ceiling stops being read;
-//	(c) every per-harness file carries a one-line pointer here and no rules of
-//	    its own.
+//	(c) no per-harness file stands anywhere in the tree.
 //
 // It reads text and runs nothing.
 
@@ -37,15 +39,10 @@ const agentsPath = "../../AGENTS.md"
 // agentsLineCap is the ceiling. Every harness pays this at session start.
 const agentsLineCap = 120
 
-// harnessFiles are the per-harness files a harness loads INSTEAD of AGENTS.md.
-// Each one present must point here rather than carry rules. CLAUDE.md is the
-// only one today: OpenCode and Codex read AGENTS.md directly.
+// harnessFiles are the per-harness files a harness would load INSTEAD of
+// AGENTS.md. None of them may stand in this tree. CLAUDE.md is the only one
+// today; a symlink counts, because what a harness opens is the contents.
 var harnessFiles = []string{"CLAUDE.md"}
-
-// harnessPointerLines is how short a pointer file may be and still be a
-// pointer. Three non-blank lines is a heading, a sentence and a link; more than
-// that is a file growing its own rules.
-const harnessPointerLines = 3
 
 // classRuleRe reads the rule NAME out of a `### `name` — description` heading
 // in SPEC-CI.md's index.
@@ -94,8 +91,8 @@ func TestAgentsPageStaysUnderTheLineCap(t *testing.T) {
 	}
 }
 
-// TestEveryHarnessFilePointsAtAgents holds the per-harness files to a pointer.
-func TestEveryHarnessFilePointsAtAgents(t *testing.T) {
+// TestNoPerHarnessFileStandsBesideAgents holds the ruling: AGENTS.md alone.
+func TestNoPerHarnessFileStandsBesideAgents(t *testing.T) {
 	t.Parallel()
 
 	root := filepath.Join("..", "..")
@@ -105,20 +102,8 @@ func TestEveryHarnessFilePointsAtAgents(t *testing.T) {
 			t.Fatalf("walking for %s: %v", name, err)
 		}
 		for _, rel := range found {
-			body, err := os.ReadFile(filepath.Join(root, rel))
-			if err != nil {
-				t.Errorf("%s: %v", rel, err)
-				continue
-			}
-			text := string(body)
-			if !strings.Contains(text, "AGENTS.md") {
-				t.Errorf("%s does not point at AGENTS.md; Glenn, 2026-09-18: one page, not one per harness — replace this file's contents with a single line pointing at AGENTS.md, or delete it",
-					rel)
-			}
-			if n := nonBlankLines(text); n > harnessPointerLines {
-				t.Errorf("%s carries %d non-blank lines, more than the %d a pointer needs; a per-harness file that carries rules of its own is a second front page that drifts from the first — leave one line pointing at AGENTS.md and move the rules there",
-					rel, n, harnessPointerLines)
-			}
+			t.Errorf("%s stands beside AGENTS.md; Glenn, 2026-09-18: AGENTS.md alone — no %s, no pointer file, no symlink. Claude Code reads AGENTS.md exactly when no %s stands, so even a one-line pointer holds every Claude session on a file that says nothing while the other harnesses read the real page — delete it, and move anything it carried into AGENTS.md or under docs/",
+				rel, name, name)
 		}
 	}
 }
@@ -161,15 +146,4 @@ func findHarnessFiles(root, name string) ([]string, error) {
 	})
 	sort.Strings(found)
 	return found, err
-}
-
-// nonBlankLines counts the lines that carry something other than whitespace.
-func nonBlankLines(text string) int {
-	n := 0
-	for _, line := range strings.Split(text, "\n") {
-		if strings.TrimSpace(line) != "" {
-			n++
-		}
-	}
-	return n
 }
