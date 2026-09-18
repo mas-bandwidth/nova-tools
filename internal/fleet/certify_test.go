@@ -162,6 +162,12 @@ func TestTheStandardWorkloadsAreTheShippedClasses(t *testing.T) {
 		"services-reach": RoleBench,  // redis on 127.0.0.1, and `space` resolving nowhere
 		"registry-truth": RoleBench,  // 16 online runners on a machine with no runner role
 		"diag-size":      RoleRunner, // 15.7 GB of _diag, and a WARN not a FAIL
+		// The role's own dispatch path, end to end, on the machine that claims the role
+		// (Stella, 2026-09-18): every other class proves a PIECE, and the card that died on
+		// hulk died on the path while every piece passed.
+		"role-dispatch-bench":        RoleBench,
+		"role-dispatch-services":     RoleServices,
+		"role-dispatch-coordination": RoleCoordination,
 	}
 	if len(loads) != len(want) {
 		t.Fatalf("the standard set ships %d workloads, want %d", len(loads), len(want))
@@ -408,7 +414,8 @@ func TestEvidenceIsOneLineOnTheRowAndOnTheLine(t *testing.T) {
 // somebody makes in a test as well as in a directory.
 var spaceBenchClasses = []string{
 	"c-build", "cpp-build", "git-identity", "git-push", "go-on-path", "go-test",
-	"path-resolves", "registry-truth", "sbcl", "services-reach", "wall-toolchain",
+	"path-resolves", "registry-truth", "role-dispatch-bench", "sbcl", "services-reach",
+	"wall-toolchain",
 }
 
 func benchOK() map[string]remoteAnswer {
@@ -423,6 +430,8 @@ func benchOK() map[string]remoteAnswer {
 		"space|go-on-path":     {out: "GO PATH OK /home/u/go/bin/go go version go1.26.5 linux/amd64\n"},
 		"space|git-identity":   {out: "GIT IDENTITY OK Rowan Claude <rowan@mas-bandwidth.com>\n"},
 		"space|wall-toolchain": {out: "WALL TOOLCHAIN OK go version go1.26.5 linux/amd64\n"},
+		"space|role-dispatch-bench": {
+			out: "DISPATCH OK card ran under the wall, seat=rowan key=ANTHROPIC_API_KEY present\n"},
 		"space|services-reach": {out: "SERVICES OK name=space addr=100.115.99.19 redis=PONG loki=ready\n"},
 	}
 }

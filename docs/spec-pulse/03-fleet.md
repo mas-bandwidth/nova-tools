@@ -135,6 +135,10 @@ The class is the FILE'S NAME and never a key, so two cards cannot claim one clas
   `reads:` is a refusal.
 - `reads:` — the wall's readable roots; `$HOME` is the machine's own.
 - `forge: runners|registry` — a question for the forge, not for a machine.
+- `where: machine|coordinator` — where the workload RUNS. The default is `machine`; a forge
+  question is always `coordinator`, and saying otherwise is a refusal. `gh` lives where the
+  coordinator is: the first real run of this verb went looking for it on a bench that has
+  never had it.
 - `report: yes` — a failure is a `WARN`, never a `FAIL`: measured, written, printed, and it
   gates nothing. Only `diag-size` carries it.
 
@@ -163,10 +167,62 @@ bytes, so either half moving expires every certificate written under the old pai
 goes through `internal/oneline`, so a tab or a newline in what a machine said cannot become
 a column or a row.
 
+**Neither a transport failure nor a timeout is a verdict.** `UNREACHABLE` is its own token
+and its own count, and so is `TIMEOUT` -- work the run never let finish (`exec sleep 5` under
+a one-millisecond `--timeout`) is not a judgement on a machine. Both write no row, are never
+repaired, and exit 3:
+`CERTIFY <machine> <class> UNREACHABLE reason="Host key verification failed."`, **no
+certificate row**, no repair, and exit 3 — what every other fleet verb answers for a machine
+it could not reach. The first real run of this verb, by somebody who did not write it, wrote
+`CERTIFY hulk go-test FAIL evidence="Host key verification failed."` and a row whose build
+column held that sentence; a tool that cannot reach a machine knows nothing about it. The
+build column holds a parsed version or `-`, never a line. The first transport failure of a
+machine ends that machine's ssh work: its classes carry that reason, and its `coordinator`
+classes are still answered.
+
+**One row per (machine, class) per run.** The repair round certifies a class a second time,
+and appending both left the record holding two verdicts for one pass -- the first of them a
+failure that was no longer true when the run ended. A machine's rows are held and written
+once its pass is over, carrying the verdict the run ENDED on, and a class that ends
+UNREACHABLE or TIMEOUT writes nothing at all.
+
+**A `where: coordinator` workload never opens an ssh**, whether it asks the forge or runs a
+body: its body runs HERE. The branch is taken before the run, not after it.
+
+**Finishing comes before the matched line.** A workload that printed the line its `expect:`
+wanted and THEN ran out of time is `TIMEOUT`, never OK: the marker says the work started, and
+a certificate claims it finished. `echo PROOF OK` followed by `exec sleep 3` under a 100 ms
+bound was recorded OK with a certificate behind it.
+
+**Every attempt leaves its evidence as it happens.** One line per attempt is appended to
+`--attempts <file>` (by default `attempts.log` beside the certificates file), including the
+attempts that write no certificate at all, so a run killed halfway through a machine still
+says what it had learned: `at<TAB>machine<TAB>class<TAB>verdict<TAB>evidence`. The tool never
+reads it; it is for the person who comes back and asks what happened.
+
+**The provisioning standard has a default.** `--standard` names a file; without one it is the
+clone's `tools/bench-standard.sh`, and outside a clone the copy EMBEDDED in the binary --
+the same bytes, so the hash does not move between them. The first real fleet-wide run refused
+with `tools/bench-standard.sh not found above the working directory`, which is not something
+a six-hourly timer can fix. Each run says which it used: `CERTIFY NOTE standard=<path|embedded> hash=<h>`.
+
+**A forge that cannot be read is UNREACHABLE**, like a machine that cannot be reached: "gh
+could not answer" says nothing about whether a machine's runners are online. The forge read
+is PAGED (`--paginate`, `per_page=100`): it read one page of thirty until 2026-09-18, the
+fleet has ninety-five runners, and five of eight machines were told "the forge names no
+online <machine>-nova-*" while every one of them was serving. That read is the reaper's too.
+
+**A machine certifies ITSELF without ssh.** When the machine named is the machine running the
+verb — by registry name, ssh target or short host name — the workload runs here through
+`bash -s`, and `CERTIFY NOTE machine=<m> transport=local reason=this-is-the-machine` says so
+once. hulk certifying hulk went through `ssh hulk` and died on its own host key.
+
 **The output.** One `CERTIFY <machine> <class> OK|FAIL|WARN evidence="..."` line per
 workload, `CERTIFY <machine> CURRENT classes=<n> build=<v>` for a machine `--if-stale`
-skipped, and `CERTIFY OK|FAIL machines=<n> ok=<n> fail=<n> warn=<n> skipped=<n>` at the end.
-Exit 1 on any FAIL, 2 on a refusal. A forge question with no forge wired is SKIPPED with
+skipped, and `CERTIFY OK|FAIL|UNREACHABLE|TIMEOUT machines=<n> ok=<n> fail=<n> warn=<n> skipped=<n>
+unreachable=<n> timeout=<n> fixed=<n>` at the end. A dry run ends `CERTIFY DRY-RUN machines=<n>
+would=<n>` and **never** says OK: a run that reached nothing has no passes to report.
+Exit 1 on any FAIL, 3 when a machine was only unreachable or out of time, 2 on a refusal. A forge question with no forge wired is SKIPPED with
 `CERTIFY NOTE machine=<m> class=<c> skipped=no-forge` and writes no row — "this tool could
 not ask" is not "this machine is wrong".
 
@@ -200,12 +256,79 @@ mechanized"*). Three triggers:
 3. `fleet/launchd/com.rowan.fleet-certify.plist` runs `--all --if-stale` every six hours. A
    fleet with nothing to do costs one file read and one `nova-merge version` per machine.
 
-`--status` reads the record and reaches no machine: one line per machine and class, and
-exit 1 when any is stale, failed or missing. `--log <file>` writes one structured event per
-certificate through `internal/log` — the same Emitter `nova-pulse launch` uses — with
-`verb=certify`, `event=certify`, `bench=<machine>`, and the verdict in the level.
+`--status` reads the record and reaches no machine, so it needs **only `--certs`**: with a
+registry it reports every machine and class the fleet is meant to hold (a class nobody has
+certified is `NONE`), without one it reports what the record carries. One line per machine
+and class, and exit 1 when any is stale, failed or missing. `--log <file>` writes one structured event per
+certificate AND per escalation through `internal/log` — the same Emitter `nova-pulse launch`
+uses — with `verb=certify`, `event=certify`, `bench=<machine>`, and the verdict in the level;
+an escalation is ERROR and carries the classes and the remedy.
+
+### Fix, then prove, then escalate
+
+A verdict is not the end of the work. On 2026-09-18 the same four faults were found on four
+Linux machines, repaired BY HAND four times, and nothing in the tools remembered how by the
+evening. So the repairs are the provisioning standard itself, as remedies:
+
+```
+nova-pulse fleet standard --apply --machines <file> --machine <name> [--items <a,b>]
+  [--home <dir>] [--git-name <name>] [--git-email <addr>] [--ssh <path>] [--timeout <s>] [--dry-run]
+```
+
+`--apply` is the ONE mutating fleet verb. It names its machine through the machines REGISTRY
+— the file that decides where cards go — never through the benches file, never `--all`, and
+prints one line per item:
+
+```
+STANDARD APPLY <machine> <item> changed|unchanged|would|failed remedy=<-|adopt> detail="..."
+STANDARD APPLY OK machine=<m> items=<n> changed=<n> failed=<n>
+```
+
+The items, each an idempotent remedy for one check of the standard: `path-noninteractive`
+(one marker block at the TOP of `~/.bashrc`, above the interactive guard, because that guard
+is where a non-interactive shell returns), `gobin-shadow` (the `nova-*` binaries in
+`~/go/bin` MOVED to `~/nova-bench/stale-gobin-<date>/` and **never deleted**), `git-identity`
+(set when either half is empty, never overwritten), `runner-path-go` (the wanted Go on the
+first line of each runner's `.path`, both namings — asking for any `go` is how
+`/usr/bin/go` 1.22 passed for a toolchain go.mod refuses by name), and `nova-stamp`, **the
+one apply never runs**: a stale build is `nova-update release adopt`, which stops cards,
+swaps binaries and re-certifies, so apply says `remedy=adopt` and stops.
+
+Certification runs that apply itself. `--fix` is ON by default and `--no-fix` waives it out
+loud:
+
+1. A FAIL whose class maps to a standard item — the mapping is a table in code
+   (`internal/fleet.ItemsForClass`): `path-resolves` → `gobin-shadow`,
+   `path-noninteractive`; `go-on-path` → `path-noninteractive`; `release-path` →
+   `nova-stamp`, `path-noninteractive`; `git-identity` → `git-identity`; `runner-path` →
+   `runner-path-go` — is applied, on one `CERTIFY FIX machine=<m> round=<n> classes=<list>
+   items=<list> by-hand=<list>` line. **Only a class that FAILED with evidence gathered from
+   the machine.** An `UNREACHABLE` class is never repaired: applying a remedy to a machine
+   nobody reached is a second ssh to the same closed door.
+2. The repaired classes are **certified again**, by the same workloads through the same wall
+   (`--max-fix-rounds`, default 1). A repair is never credit: what the class holds after a
+   fix is a real certificate or none.
+3. Whatever still fails is ONE line per machine, never one per class, and one note to the
+   fleet lane through the bus seam (`--bus <clone> --as <name> --to <names>`, `nova-bus
+   send`; without a bus the line and the event still happen and the run says
+   `escalation=unsent reason=no-bus`):
+
+```
+CERTIFY ESCALATE machine=hulk classes=go-test,path-resolves remedy="applied gobin-shadow,path-noninteractive and go-test,path-resolves still fails; go to hulk by hand"
+```
+
+A class no item repairs is never "repaired": `go-test` failing is a broken toolchain inside
+the wall and no line of `~/.bashrc` fixes it, so the escalation says exactly that rather than
+applying something plausible. **The failed classes stay uncertified either way**, so `fill`
+refuses cards for them until a real pass proves them.
 
 Red tests, fake-driven, no network and no wall-clock bound:
+`the-fix-mapping-names-a-standard-item-per-repairable-class`,
+`a-failed-class-is-repaired-and-certified-again`,
+`a-class-that-still-fails-escalates-once-and-stays-uncertified`,
+`a-failure-no-standard-item-repairs-escalates-without-touching-the-machine`,
+`an-escalation-is-an-event-through-the-emitter`,
+`apply-is-idempotent`, `apply-never-runs-the-adopt`, `no-remedy-deletes-anything`,
 `the-standard-workloads-are-the-shipped-classes`,
 `go-test-runs-inside-the-wall-with-the-toolchain-as-a-read-root`,
 `certified-is-true-only-for-the-current-build-and-hash`,

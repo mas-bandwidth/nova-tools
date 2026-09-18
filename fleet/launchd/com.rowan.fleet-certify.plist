@@ -12,13 +12,17 @@
       launchctl unload ~/Library/LaunchAgents/com.rowan.fleet-certify.plist
       launchctl load  ~/Library/LaunchAgents/com.rowan.fleet-certify.plist
 
+  The job names a bus clone: the fix round is ON by default, and an escalation with nowhere
+  to go is a machine nobody is told about. It sends as Rowan to Stella on the fleet lane, and
+  the run says `escalation=sent lane=fleet bus=<path>` or `unsent` with the reason.
+
   RunAtLoad is false on purpose: loading an agent must not start a fleet-wide pass at the
   moment somebody is installing it. The first run is the next six-hour boundary, or
   `launchctl start com.rowan.fleet-certify` when it is wanted now.
 -->
 <plist version="1.0"><dict>
   <key>Label</key><string>com.rowan.fleet-certify</string>
-  <key>ProgramArguments</key><array><string>/bin/zsh</string><string>-lc</string><string>/Users/glenn/.local/bin/nova-pulse fleet certify --all --if-stale --machines /Users/glenn/rowan-working/queue/control/machines.tsv --certs /Users/glenn/rowan-working/queue/control/certs.tsv --standard /Users/glenn/rowan-new/tools/bench-standard.sh --log /Users/glenn/rowan-working/queue/control/certify.log</string></array>
+  <key>ProgramArguments</key><array><string>/bin/zsh</string><string>-lc</string><string>/Users/glenn/.local/bin/nova-pulse fleet certify --all --if-stale --machines /Users/glenn/rowan-working/queue/control/machines.tsv --certs /Users/glenn/rowan-working/queue/control/certs.tsv --standard /Users/glenn/rowan-new/tools/bench-standard.sh --log /Users/glenn/rowan-working/queue/control/certify.log --attempts /Users/glenn/rowan-working/queue/control/certify-attempts.log --bus /Users/glenn/rowan-working/rowan-stella --as Rowan --to Stella</string></array>
   <key>StartCalendarInterval</key><array>
     <dict><key>Hour</key><integer>1</integer><key>Minute</key><integer>15</integer></dict>
     <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>15</integer></dict>

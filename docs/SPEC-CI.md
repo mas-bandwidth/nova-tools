@@ -1295,6 +1295,39 @@ reaches `go test`: whole-line YAML comments are dropped first, so prose ABOUT a
 tag never stands in for a job that runs it. A tag assembled at run time, or
 passed through a variable the step does not expand inline, is not seen.
 
+### `bench-standard-apply` — a check never matches itself, and a remedy never signals a process it did not start
+
+**The rule.** A process check matches the PROGRAM it is looking for, never "any
+line of `ps` mentioning a directory"; and `tools/bench-standard.sh --apply`
+names what a person must do about a stray runner, and sends no signal to
+anything.
+**The hurt.** The listener count was
+`ps -eo pid=,args= | awk -v dir="$d" 'index($0, dir) {print $1}'` — and the
+awk's own command line carries the directory, because it is right there in
+`-v dir=…`. So the checker appeared in its own result, was counted as a second
+listener, was declared STRAY because it descends from no systemd unit, and
+`--apply` then sent it a signal. Two ways that is dangerous, and the fleet ops
+pass of 2026-09-18 found both: a pid that has already exited may have been
+recycled by the kernel and belong to anything by the time the kill lands, and a
+runner that is RUNNING A JOB has a second process — the worker, with somebody's
+CI job in it — that the same rule called stray.
+**The test.** `TestTheListenerCheckDoesNotMatchItself` and
+`TestTheBenchStandardSignalsNothing`
+(`internal/ci/benchstandard_apply_class_test.go`). The first one lifts the
+matcher line out of the script and runs it against a fake `ps` whose ONLY
+mention of the runner directory is the checker's own awk; the second reads every
+non-comment line of the script.
+**Its allowlist.** None. A script that starts a process may stop it; this one
+starts none.
+**Its remedy line.** `the listener check matched <pid> in a table whose only
+mention of the runner directory is the CHECKER ITSELF; --apply then signals that
+pid, which by then may belong to anything`.
+**Its narrowings.** It holds `tools/bench-standard.sh` and no other script: the
+matcher is found by its `ps -eo pid=,args=` … `awk` shape, so a matcher written
+another way moves out of its sight and this entry moves with it. The signal rule
+is textual — `kill`, `pkill`, `killall` — and a signal sent through a variable
+or another program's name is not seen.
+
 ### `selection` — `internal/ci` is always in the selected packages
 
 **The rule.** `./internal/ci` is added to the package set on every selection —

@@ -4,9 +4,19 @@ expect: ^BUS OK
 # A coordination host's one representative piece of work is talking on the bus, and the
 # thing that stops it is a bus repository with a dirty tree or a branch behind its remote.
 set -eu
-BUS="${NOVA_BUS:-$NOVA_HOME/nova-bus}"
-if [ ! -d "$BUS/.git" ]; then
-  echo "BUS FAIL no bus repository at $BUS (set NOVA_BUS)"
+# The bus is where NOVA_BUS says, or one of the conventional places. It looked in exactly
+# ONE place until the first real fleet-wide run, and the Studio -- which talks on the bus all
+# day -- was told it had no bus at all, because its clone is not called ~/nova-bus. A check
+# that names one guess and calls a machine broken is a check that teaches people to ignore it.
+BUS=""
+for candidate in "${NOVA_BUS:-}" "$NOVA_HOME/nova-bus" "$NOVA_HOME/bus"; do
+  if [ -n "$candidate" ] && [ -d "$candidate/.git" ]; then
+    BUS="$candidate"
+    break
+  fi
+done
+if [ -z "$BUS" ]; then
+  echo "BUS FAIL no bus repository in \$NOVA_BUS, $NOVA_HOME/nova-bus or $NOVA_HOME/bus; set NOVA_BUS to the clone this host sends from"
   exit 1
 fi
 GIT=$(command -v git 2>/dev/null || true)

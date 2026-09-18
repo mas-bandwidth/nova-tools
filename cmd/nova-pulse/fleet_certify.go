@@ -18,12 +18,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
+	"github.com/mas-bandwidth/nova-tools/internal/friends"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
+	"github.com/mas-bandwidth/nova-tools/tools"
 )
 
 // The hooks a test replaces, in the shape fleet.go already uses: nothing global, wired in
@@ -31,7 +36,36 @@ import (
 var (
 	fleetNewCertifyRemote = func(program string) fleet.Remote { return fleetSSHRunner{Program: program} }
 	fleetNewCertifyForge  = func(timeout time.Duration) fleet.Forge { return ghRunnerList{Timeout: timeout} }
+	fleetNewCertifyFixer  = func(f certifyFixer) fleet.Fixer { return f }
+	fleetNewCertifyBus    = func(b certifyBusPoster) fleet.BusPoster { return b }
+	// The local transport, behind a hook like every other one. It is a seam FOR SAFETY as
+	// much as for testing: a test that ran the real workloads would run them on whichever CI
+	// machine it landed on, and the machines in this fleet are named in the test registries.
+	fleetNewCertifyLocal = func() fleet.Remote { return localRunner{} }
+	// The machine this process is on. A test replaces it; nothing else reads the hostname,
+	// so "is this me" is decided in one place.
+	fleetLocalHost = func() string {
+		name, err := os.Hostname()
+		if err != nil {
+			return ""
+		}
+		return name
+	}
 )
+
+// localRunner runs a script HERE, with `bash -s` and no ssh, for the machine that is this
+// machine. hulk certifying hulk went through `ssh hulk` on the first real run of this verb
+// and died on its own host key -- a machine has no business proving itself over a transport
+// it does not need, and the host key, the agent and BatchMode are all of them ways for that
+// to fail for reasons that say nothing about the bench.
+type localRunner struct{}
+
+func (localRunner) Run(ctx context.Context, target, script string) (string, error) {
+	cmd := exec.CommandContext(ctx, "bash", "-s")
+	cmd.Stdin = strings.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
 
 // ghRunnerList is the production forge: the reaper's own runner read, narrowed to the one
 // question certification asks.
@@ -56,6 +90,7 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 	all := f.fs.Bool("all", false, "")
 	workloads := f.fs.String("workloads", "", "")
 	certs := f.fs.String("certs", "", "")
+	attempts := f.fs.String("attempts", "", "")
 	standard := f.fs.String("standard", "", "")
 	build := f.fs.String("build", "", "")
 	repo := f.fs.String("repo", "mas-bandwidth/nova-tools", "")
@@ -67,10 +102,35 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 	status := f.fs.Bool("status", false, "")
 	logPath := f.fs.String("log", "", "")
 	dryRun := f.fs.Bool("dry-run", false, "")
+	// The repair round. It is ON by default, because the whole point of mechanizing
+	// certification is that the fleet does not wait for a person to type the same four
+	// repairs on four machines again; `--no-fix` waives it out loud.
+	fix := f.fs.Bool("fix", true, "")
+	noFix := f.fs.Bool("no-fix", false, "")
+	maxFixRounds := f.fs.Int("max-fix-rounds", fleet.DefaultFixRounds, "")
+	gitName := f.fs.String("git-name", "", "")
+	gitEmail := f.fs.String("git-email", "", "")
+	// Where an escalation goes. With no --bus the escalation is still a line and still an
+	// event; the note is what needs a bus, and a run without one says so rather than
+	// dropping it.
+	busDir := f.fs.String("bus", "", "")
+	busAs := f.fs.String("as", "", "")
+	busTo := f.fs.String("to", "", "")
+	busRemote := f.fs.String("bus-remote", "origin", "")
+	busBranch := f.fs.String("bus-branch", "main", "")
+	lane := f.fs.String("lane", fleet.DefaultLane, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	f.want(*machines, "machines", "the machines registry: name, ssh, os/arch, roles, seat, cores, notes, tab separated")
+	// --status touches no machine and reads one file, so it wants one file. It used to want
+	// the registry AND a provisioning standard above the working directory, which is how a
+	// reading verb becomes something nobody can run from anywhere.
+	if !*status {
+		f.want(*machines, "machines", "the machines registry: name, ssh, os/arch, roles, seat, cores, notes, tab separated")
+	}
+	if *status {
+		f.want(*certs, "certs", "the certificates file to read back")
+	}
 	if !*dryRun {
 		f.want(*certs, "certs", "the certificates file appended to: machine, build, standard-hash, class, verdict, evidence, at")
 	}
@@ -91,6 +151,15 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 	if *status && (*machine != "" || *all || *ifStale) {
 		f.add("--status reads the record and reaches no machine; pass it alone")
 	}
+	if *maxFixRounds < 0 {
+		f.add(fmt.Sprintf("--max-fix-rounds is 0 or more, got %d; 0 is the same waiver as --no-fix", *maxFixRounds))
+	}
+	if strings.TrimSpace(*busDir) != "" && strings.TrimSpace(*busAs) == "" {
+		f.add("--bus without --as; a note needs a sender, and the bus refuses one with no lane of its own")
+	}
+	if strings.TrimSpace(*busDir) != "" && strings.TrimSpace(*busTo) == "" {
+		f.add("--bus without --to; an escalation nobody is addressed by is an escalation nobody reads")
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -100,16 +169,24 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "CERTIFY REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	standardPath, err := certifyStandardPath(*standard)
+	// The provisioning standard, and the hash over it. --standard names a file; without one
+	// the clone's own tools/bench-standard.sh is used, and outside a clone the copy embedded
+	// in this binary -- which is the SAME BYTES, so the hash is the same either way.
+	//
+	// The default exists because the first real fleet-wide run refused: the launchd job runs
+	// from wherever launchd starts it, and `tools/bench-standard.sh not found above the
+	// working directory` is not a thing a timer can fix at four in the morning.
+	standardRaw, standardFrom, err := certifyStandard(*standard)
 	if err != nil {
 		fmt.Fprintf(stderr, "CERTIFY REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	hash, err := fleet.StandardHash(standardPath, loads)
+	hash, err := fleet.StandardHashFrom(standardRaw, loads)
 	if err != nil {
 		fmt.Fprintf(stderr, "CERTIFY REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
+	fmt.Fprintf(stderr, "CERTIFY NOTE standard=%s hash=%s\n", oneline.Field(standardFrom), oneline.Field(hash))
 
 	if *status {
 		return fleet.Status(fleet.StatusInput{
@@ -132,14 +209,82 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 		events = f
 	}
 
+	// The repair is on unless it was waived, and it is wired even when it is off: a run that
+	// turns the fix on must never fall back to a guessed path for the apply.
+	wantFix := *fix && !*noFix
+	fixer := fleetNewCertifyFixer(certifyFixer{
+		Machines: *machines, SSH: *ssh, GitName: *gitName, GitEmail: *gitEmail,
+		Timeout: bound, LocalHost: fleetLocalHost(), Stdout: stdout, Stderr: stderr,
+	})
+	var poster fleet.BusPoster
+	if strings.TrimSpace(*busDir) != "" {
+		poster = fleetNewCertifyBus(certifyBusPoster{
+			Bus: *busDir, As: *busAs, To: *busTo, Remote: *busRemote, Branch: *busBranch, Timeout: bound,
+		})
+	}
+
 	return fleet.Certify(fleet.CertifyInput{
 		Machines: *machines, Only: *machine, All: *all, Workloads: loads,
-		Certs: *certs, Hash: hash, Build: *build, Bin: *bin, Repo: *repo,
+		Certs: *certs, Attempts: *attempts, Hash: hash, Build: *build, Bin: *bin, Repo: *repo,
 		Timeout: bound, DryRun: *dryRun, IfStale: *ifStale, MaxAge: age, Log: events,
+		Fix: wantFix, MaxFixRounds: *maxFixRounds, Fixer: fixer, Bus: poster, Lane: *lane,
 		Remote: fleetNewCertifyRemote(*ssh), Forge: fleetNewCertifyForge(bound),
+		Local: fleetNewCertifyLocal(), LocalHost: fleetLocalHost(),
 		Now:    func() time.Time { return fleetNow().UTC() },
 		Stdout: stdout, Stderr: stderr,
 	})
+}
+
+// certifyFixer is the apply seam in production: `fleet standard --apply` for one machine,
+// run in-process rather than as a subprocess, so there is ONE apply and not a second copy of
+// it behind a certify. Its STANDARD APPLY lines go to the same streams as the CERTIFY lines,
+// because what a repair changed on a machine belongs in the same transcript as the failure
+// that asked for it.
+type certifyFixer struct {
+	Machines  string
+	SSH       string
+	GitName   string
+	GitEmail  string
+	Timeout   time.Duration
+	LocalHost string
+	Stdout    io.Writer
+	Stderr    io.Writer
+}
+
+func (f certifyFixer) Apply(machine string, items []string) ([]string, error) {
+	out := pulse.FleetStandardApply(pulse.ApplyInput{
+		Machines: f.Machines, Name: machine, Items: items, SSH: f.SSH,
+		GitName: f.GitName, GitEmail: f.GitEmail, Timeout: f.Timeout,
+		Local: fleetNewCertifyLocal(), LocalHost: f.LocalHost,
+		Stdout: f.Stdout, Stderr: f.Stderr,
+	})
+	if out.Code != 0 {
+		return out.Changed(), fmt.Errorf("the apply on %s exited %d; the STANDARD APPLY lines above name the item", machine, out.Code)
+	}
+	return out.Changed(), nil
+}
+
+// certifyBusPoster is the escalation's note in production: ONE `nova-bus send`, through the
+// bus's own send path -- its locking, its index, its push -- and never a second shape of
+// note on one bus. The lane is the first line of the body, the way a card names its lane.
+type certifyBusPoster struct {
+	Bus     string
+	As      string
+	To      string
+	Remote  string
+	Branch  string
+	Timeout time.Duration
+}
+
+// Where is the clone this poster sends from, so the line that reports the note names it.
+func (b certifyBusPoster) Where() string { return b.Bus }
+
+func (b certifyBusPoster) Post(lane, subject, body string) error {
+	note := bus.Skeleton{From: b.As, To: b.To, Subject: subject}.RenderWith("LANE: " + lane + "\n\n" + body)
+	_, err := friends.BusSender{
+		Bin: "nova-bus", Bus: b.Bus, As: b.As, Remote: b.Remote, Branch: b.Branch, Timeout: b.Timeout,
+	}.Send(note)
+	return err
 }
 
 // certifyWorkloads takes the override directory when one is named and the embedded standard
@@ -152,32 +297,38 @@ func certifyWorkloads(dir string) ([]fleet.Workload, error) {
 	return fleet.ReadWorkloads(dir)
 }
 
-// certifyStandardPath answers the provisioning standard file the hash is taken over.
-// --standard names it; left out, it is tools/bench-standard.sh above the working directory,
-// the same file `fleet survey` runs.
-func certifyStandardPath(named string) (string, error) {
-	if named != "" {
-		if _, err := os.Stat(named); err != nil {
-			return "", fmt.Errorf("cannot read --standard %s: %w", named, err)
+// certifyStandard answers the provisioning standard's BYTES and where they came from.
+//
+// Three roads, in order: --standard names a file (a named file that cannot be read is a
+// refusal -- somebody meant that file); the clone's own tools/bench-standard.sh above the
+// working directory; and, outside a clone, the copy embedded in this binary. The embedded
+// copy is the same file, compiled in, so the hash does not move between them.
+func certifyStandard(named string) ([]byte, string, error) {
+	if strings.TrimSpace(named) != "" {
+		raw, err := os.ReadFile(named)
+		if err != nil {
+			return nil, "", fmt.Errorf("cannot read --standard %s: %w", named, err)
 		}
-		return named, nil
+		return raw, named, nil
 	}
 	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for i := 0; i < 16; i++ {
-		candidate := filepath.Join(dir, "tools", "bench-standard.sh")
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
+	if err == nil {
+		for i := 0; i < 16; i++ {
+			candidate := filepath.Join(dir, "tools", "bench-standard.sh")
+			if raw, err := os.ReadFile(candidate); err == nil {
+				return raw, candidate, nil
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
 	}
-	return "", fmt.Errorf("tools/bench-standard.sh not found above the working directory; name it with --standard")
+	if len(tools.BenchStandard) == 0 {
+		return nil, "", fmt.Errorf("this binary carries no provisioning standard and none is above the working directory; name one with --standard")
+	}
+	return tools.BenchStandard, "embedded", nil
 }
 
 // certifyBuildReader is the fill's build seam in production: one ssh per bench per tick,

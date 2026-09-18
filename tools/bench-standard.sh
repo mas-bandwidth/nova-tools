@@ -5,7 +5,7 @@
 #
 #   tools/bench-standard.sh
 #   NOVA_GO=go1.26.5 NOVA_WANT=v1.2.3 tools/bench-standard.sh
-#   tools/bench-standard.sh --apply   # kills stray runner listeners, nothing else
+#   tools/bench-standard.sh --apply   # names what a person must do; it signals nothing
 #
 # Exit 0 prints "STANDARD OK ..."; exit 1 prints "STANDARD DRIFT (see lines
 # above)" after the DRIFT lines. Runner checks (1)-(2) run only on Linux.
@@ -50,8 +50,13 @@ if [ "$OS" = "Linux" ] && [ "${#RUNNERS[@]}" -gt 0 ]; then
     # (1) exactly one listener process mentioning the runner dir.
     pids=""
     if command -v ps >/dev/null 2>&1; then
-      # ps -eo pid=,args= lists "pid cmd..."; match the literal dir.
-      pids="$(ps -eo pid=,args= 2>/dev/null | awk -v dir="$d" 'index($0, dir) {print $1}')"
+      # ps -eo pid=,args= lists "pid cmd...". Match the LISTENER -- the program -- and not
+      # "any line mentioning the directory": this awk's own argv carries `-v dir=<the
+      # directory>`, so the checker was in its own result, was counted as a second listener,
+      # was called stray because it descends from no unit, and --apply then signalled it. A
+      # pid that has exited may have been recycled and belong to anything by then, and a
+      # runner that is RUNNING A JOB has a worker process the same rule called stray.
+      pids="$(ps -eo pid=,args= 2>/dev/null | awk -v dir="$d" 'index($0, dir) && index($0, "Runner.Listener") {print $1}')"
     else
       drift "$unit ps not available to count listeners in $d"
       continue
@@ -103,19 +108,15 @@ if [ "$OS" = "Linux" ] && [ "${#RUNNERS[@]}" -gt 0 ]; then
   done
 fi
 
-# --apply kills stray runner listeners not under their unit, nothing else.
+# --apply NAMES what a person must do about a stray listener. It signals nothing.
+#
+# It used to kill every pid it had called stray, and the pids it called stray included its
+# own checker (see the matcher above) and, on a busy runner, the worker process running
+# somebody's CI job. A remedy never signals a process it did not start: stopping a runner is
+# the unit's job, and the unit is named here so the person has the command.
 if [ "$APPLY" = "1" ] && [ -n "$STRAY_PIDS" ]; then
-  # shellcheck disable=SC2086
-  for pid in $STRAY_PIDS; do
-    case "$pid" in
-      ''|*[!0-9]*) continue ;;
-    esac
-    if [ "$pid" = "1" ]; then
-      continue
-    fi
-    kill "$pid" 2>/dev/null || true
-  done
-  echo "NOTE stray runner listeners killed:$STRAY_PIDS"
+  echo "NOTE stray runner listeners:$STRAY_PIDS"
+  echo "NOTE stop each through its unit -- systemctl --user stop nova-runner-<n>.service (or systemctl stop) -- and never by pid: this script starts no runner and so signals none"
 fi
 
 # (3) go version, sbcl, harness.

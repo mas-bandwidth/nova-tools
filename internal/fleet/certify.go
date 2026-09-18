@@ -33,6 +33,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"embed"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -75,10 +76,32 @@ const EvidenceCap = 240
 // 15.7 GB across the fleet on 2026-09-18 and nothing was broken by it. A WARN is written,
 // counted and printed, and it neither fails the run nor withholds the certificate, because
 // a check that cries wolf is a check people learn to pass over.
+//
+// UNREACHABLE is NOT a verdict about a machine: it is this tool saying it could not ask.
+// It exists because the first real run of this verb, by somebody who did not write it,
+// printed `CERTIFY hulk go-test FAIL evidence="Host key verification failed."` and wrote a
+// row whose build column held `Host\x20key\x20verification\x20failed.` -- a lie about a
+// bench's toolchain, recorded, and then read by `fill`. A transport failure writes no row,
+// is counted apart, and never reaches the repair round.
 const (
-	VerdictOK   = "OK"
-	VerdictFail = "FAIL"
-	VerdictWarn = "WARN"
+	VerdictOK          = "OK"
+	VerdictFail        = "FAIL"
+	VerdictWarn        = "WARN"
+	VerdictUnreachable = "UNREACHABLE"
+	// TIMEOUT is the second thing that is not a verdict: the work did not FINISH inside the
+	// bound this run gave it. `exec sleep 5` under a one-millisecond --timeout was reported
+	// FAIL, which is a judgement on work nobody let run. Like UNREACHABLE it writes no row,
+	// is never repaired, and is counted apart.
+	VerdictTimeout = "TIMEOUT"
+)
+
+// Where one workload runs. `gh` lives where the coordinator is and not on a bench, so the
+// forge questions -- "are this machine's runners online", "does the registry tell the truth
+// about it" -- are asked HERE about the machine. Asking the machine is how the first real
+// run of this verb went looking for `gh` on a bench that has never had it.
+const (
+	WhereMachine     = "machine"
+	WhereCoordinator = "coordinator"
 )
 
 // The two workloads that are not questions for a machine at all. Whether the forge says a
@@ -127,9 +150,11 @@ type Workload struct {
 	Class  string         // the name on every line and every row; the file's name
 	Roles  []string       // the roles this workload applies to, sorted
 	Expect *regexp.Regexp // a pass is this matching the machine's output
+	Warn   *regexp.Regexp // a WARN: a state that is neither the pass nor a fault of the machine
 	Wall   bool           // true runs the body inside nova-sandbox
 	Reads  []string       // the wall's readable roots; `$HOME` is the machine's own
 	Forge  string         // ForgeRunners or ForgeRegistry, or "" for a workload the machine runs
+	Where  string         // WhereMachine (the default) or WhereCoordinator
 	Report bool           // true makes a failure a WARN: measured and never a refusal
 	Body   string         // the command run ON the machine
 	Source string         // where this workload was read from, for a refusal that can be found
@@ -252,6 +277,16 @@ func ParseWorkload(source string, raw []byte) (Workload, error) {
 				return Workload{}, fmt.Errorf("%s line %d: expect is not a regexp: %w", source, n+1, err)
 			}
 			w.Expect = re
+		case "warn":
+			// A third answer, for a state that is real, known, and not this machine's fault:
+			// redis answering NOAUTH says the address and the port are RIGHT and the seat's
+			// password has not landed yet. It sat in the FAIL branch, so the card could not
+			// pass its own remedy until somebody else finished a different job.
+			re, err := regexp.Compile("(?m)" + value)
+			if err != nil {
+				return Workload{}, fmt.Errorf("%s line %d: warn is not a regexp: %w", source, n+1, err)
+			}
+			w.Warn = re
 		case "wall":
 			switch value {
 			case "yes", "true":
@@ -271,6 +306,11 @@ func ParseWorkload(source string, raw []byte) (Workload, error) {
 				return Workload{}, fmt.Errorf("%s line %d: the forge questions are %s and %s, got %q", source, n+1, ForgeRunners, ForgeRegistry, value)
 			}
 			w.Forge = value
+		case "where":
+			if value != WhereMachine && value != WhereCoordinator {
+				return Workload{}, fmt.Errorf("%s line %d: where is %s or %s, got %q", source, n+1, WhereMachine, WhereCoordinator, value)
+			}
+			w.Where = value
 		case "report":
 			switch value {
 			case "yes", "true":
@@ -280,7 +320,7 @@ func ParseWorkload(source string, raw []byte) (Workload, error) {
 				return Workload{}, fmt.Errorf("%s line %d: report is yes or no, got %q", source, n+1, value)
 			}
 		default:
-			return Workload{}, fmt.Errorf("%s line %d: unknown key %q (the keys are roles, expect, wall, reads, forge, report)", source, n+1, key)
+			return Workload{}, fmt.Errorf("%s line %d: unknown key %q (the keys are roles, expect, warn, wall, reads, forge, where, report)", source, n+1, key)
 		}
 	}
 	if len(w.Roles) == 0 {
@@ -292,6 +332,21 @@ func ParseWorkload(source string, raw []byte) (Workload, error) {
 	if w.Wall && len(w.Reads) == 0 {
 		return Workload{}, fmt.Errorf("%s: runs inside the wall and names no reads; a toolchain outside the wall is the failure this exists to catch", source)
 	}
+	// A forge question is a coordinator question, always: `gh` is where the coordinator is.
+	// Saying otherwise out loud is a refusal rather than a quiet correction, because a card
+	// that names the wrong `where` means somebody believes something false about the fleet.
+	if w.Forge != "" {
+		if w.Where == WhereMachine {
+			return Workload{}, fmt.Errorf("%s: asks the forge and says where: %s; the forge is asked where the coordinator is, and a bench has no gh", source, WhereMachine)
+		}
+		w.Where = WhereCoordinator
+	}
+	if w.Where == "" {
+		w.Where = WhereMachine
+	}
+	if w.Where == WhereCoordinator && w.Wall {
+		return Workload{}, fmt.Errorf("%s: runs on the coordinator and asks for the wall; the wall is the containment a CARD gets on a bench", source)
+	}
 	return w, nil
 }
 
@@ -299,11 +354,19 @@ func ParseWorkload(source string, raw []byte) (Workload, error) {
 // standard file and over every workload's bytes, in class order. Either half moving is a
 // new hash and so a fleet with no current certificates, which is the honest state.
 func StandardHash(standard string, loads []Workload) (string, error) {
-	h := sha256.New()
 	raw, err := os.ReadFile(standard)
 	if err != nil {
 		return "", fmt.Errorf("cannot read the provisioning standard %s: %w", standard, err)
 	}
+	return StandardHashFrom(raw, loads)
+}
+
+// StandardHashFrom is the same hash over the standard's BYTES. The loop's launchd job runs
+// outside any clone, so the standard has to have a default -- the copy embedded in the
+// binary -- and a default that hashed to anything but the file's own hash would expire every
+// certificate in the fleet on every run of the timer.
+func StandardHashFrom(raw []byte, loads []Workload) (string, error) {
+	h := sha256.New()
 	fmt.Fprintf(h, "standard %d\n", len(raw))
 	h.Write(raw)
 	ordered := append([]Workload(nil), loads...)
@@ -432,6 +495,7 @@ type CertifyInput struct {
 	All       bool       // every machine in the registry, under its own roles
 	Workloads []Workload // the set to run; nil takes StandardWorkloads
 	Certs     string     // the certificates file appended to
+	Attempts  string     // the per-attempt trail; "" is attempts.log beside Certs
 	Hash      string     // the standard hash every row carries
 	Build     string     // the build every row carries; empty asks each machine its own
 	Bin       string     // the install directory the release puts the tools in; "" is $HOME/.local/bin
@@ -441,7 +505,22 @@ type CertifyInput struct {
 	Log       io.Writer // the structured event stream; nil writes none
 	Timeout   time.Duration
 	DryRun    bool
-	Remote    Remote
+	// Fix is the repair round: a FAIL whose class maps to an item of the provisioning
+	// standard is applied and certified ONCE more. The CLI has it on by default and
+	// `--no-fix` waives it out loud; the zero value here is off, so a caller that wants a
+	// verb that only reads gets one by saying nothing.
+	Fix          bool
+	MaxFixRounds int       // how many repair-and-recertify rounds; 0 is DefaultFixRounds
+	Fixer        Fixer     // the apply seam; nil with Fix on is an escalation, never a pass
+	Bus          BusPoster // where an escalation's note goes; nil sends none and says so
+	Lane         string    // the lane that note goes to; "" is DefaultLane
+	Remote       Remote
+	// Local runs a workload HERE, with no ssh, when the machine being certified is the
+	// machine running this. hulk certifying hulk went through `ssh hulk` on its first real
+	// run and died on its own host key: a machine cannot be asked to prove itself through a
+	// transport it does not need.
+	Local     Remote
+	LocalHost string // this machine's hostname; "" never matches anything
 	Forge     Forge
 	Now       func() time.Time
 	Stdout    io.Writer
@@ -521,7 +600,7 @@ func Certify(in CertifyInput) int {
 		}
 	}
 
-	ok, fail, warn, skipped := 0, 0, 0, 0
+	ok, fail, warn, skipped, fixed, would, unreachable, timedOut := 0, 0, 0, 0, 0, 0, 0, 0
 	for _, m := range machines {
 		loads := workloadsFor(in.Workloads, m)
 		if len(loads) == 0 {
@@ -529,9 +608,14 @@ func Certify(in CertifyInput) int {
 				oneline.Field(m.Name), oneline.Field(m.RoleList()))
 			continue
 		}
-		build := in.Build
+		if _, local := in.remoteFor(m); local && !in.DryRun {
+			// Said once per machine, because it changes what every line below it means.
+			fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s transport=local reason=this-is-the-machine\n",
+				oneline.Field(m.Name))
+		}
+		build, unreached, firstAnswer := in.Build, "", ""
 		if build == "" && !in.DryRun {
-			build = machineBuild(in, m)
+			build, unreached, firstAnswer = machineBuild(in, m)
 		}
 		if build == "" {
 			build = "-"
@@ -544,6 +628,12 @@ func Certify(in CertifyInput) int {
 				continue
 			}
 		}
+		// The verdict of every class this machine ran, and what it said. They are a map and
+		// not a counter because the repair round runs a class AGAIN: what the run reports is
+		// each class's FINAL verdict, so a class that failed, was repaired and passed is one
+		// pass -- and a certificate -- rather than a failure the summary can never lose.
+		verdicts, evidence := map[string]string{}, map[string]string{}
+		rows := map[string]Certificate{}
 		for _, w := range loads {
 			// A forge question with no forge wired is SKIPPED, not failed: `release adopt`
 			// certifies over ssh and has no runner list to read, and a FAIL there would
@@ -556,46 +646,297 @@ func Certify(in CertifyInput) int {
 				continue
 			}
 			if in.DryRun {
-				fmt.Fprintf(in.Stdout, "CERTIFY %s %s WOULD wall=%t build=%s hash=%s\n",
-					oneline.Field(m.Name), oneline.Field(w.Class), w.Wall,
+				fmt.Fprintf(in.Stdout, "CERTIFY %s %s WOULD wall=%t where=%s build=%s hash=%s\n",
+					oneline.Field(m.Name), oneline.Field(w.Class), w.Wall, w.Where,
 					oneline.Field(build), oneline.Field(in.Hash))
-				ok++
+				would++
 				continue
 			}
-			verdict, evidence := runWorkload(in, reg, m, w)
-			cert := Certificate{
-				Machine: m.Name, Build: build, Hash: in.Hash, Class: w.Class,
-				Verdict: verdict, Evidence: evidence, At: in.Now().UTC(),
+			// The machine did not answer the first question at all. Its own classes carry
+			// that same answer -- UNREACHABLE or TIMEOUT -- with the reason the first
+			// attempt gave, and no second attempt is made; a coordinator class is still
+			// answered, because the forge and this machine know what they know whether or
+			// not anybody can ssh to the bench.
+			if unreached != "" && w.Where != WhereCoordinator {
+				verdicts[w.Class], evidence[w.Class] = firstAnswer, unreached
+				in.appendAttempt(m, w.Class, firstAnswer, unreached)
+				fmt.Fprintf(in.Stderr, "CERTIFY %s %s %s reason=%s\n",
+					oneline.Field(m.Name), oneline.Field(w.Class), firstAnswer,
+					oneline.Quote(oneline.Cap(unreached, EvidenceCap)))
+				in.unansweredEvent(m, w.Class, firstAnswer, unreached)
+				continue
 			}
-			if err := AppendCertificate(in.Certs, cert); err != nil {
-				return certifyRefusal(in.Stderr, err)
-			}
-			in.event(cert)
-			line := fmt.Sprintf("CERTIFY %s %s %s evidence=%s",
-				oneline.Field(m.Name), oneline.Field(w.Class), verdict,
-				oneline.Quote(oneline.Cap(evidence, EvidenceCap)))
-			switch verdict {
+			in.certifyOne(reg, m, w, build, verdicts, evidence, rows)
+		}
+		// Fix, prove, escalate. Nothing here mutates a machine unless Fix is on, and even
+		// then only through the Fixer seam.
+		before := len(failedClasses(verdicts))
+		esc, err := in.repair(reg, m, build, loads, verdicts, evidence, rows)
+		if err != nil {
+			return certifyRefusal(in.Stderr, err)
+		}
+		fixed += before - len(failedClasses(verdicts))
+		if err := in.writeRows(rows); err != nil {
+			return certifyRefusal(in.Stderr, err)
+		}
+		if esc != nil {
+			fmt.Fprintln(in.Stderr, esc.Line())
+			in.escalationEvent(*esc, build)
+			in.postEscalation(*esc, build)
+		}
+		for _, v := range verdicts {
+			switch v {
 			case VerdictOK:
 				ok++
-				fmt.Fprintln(in.Stdout, line)
 			case VerdictWarn:
-				// A WARN goes to stderr, where a person looking for what to do next looks,
-				// and changes neither the count that gates nor the exit.
 				warn++
-				fmt.Fprintln(in.Stderr, line)
+			case VerdictUnreachable:
+				unreachable++
+			case VerdictTimeout:
+				timedOut++
 			default:
 				fail++
-				fmt.Fprintln(in.Stderr, line)
 			}
 		}
 	}
-	w, result, code := in.Stdout, VerdictOK, 0
-	if fail > 0 {
-		w, result, code = in.Stderr, VerdictFail, 1
+	// A dry run has its own closing line. `CERTIFY OK machines=1 ok=14` for a run that
+	// reached nothing was this tool reporting fourteen passes it never made.
+	if in.DryRun {
+		fmt.Fprintf(in.Stdout, "CERTIFY DRY-RUN machines=%d would=%d\n", len(machines), would)
+		return 0
 	}
-	fmt.Fprintf(w, "CERTIFY %s machines=%d ok=%d fail=%d warn=%d skipped=%d\n",
-		result, len(machines), ok, fail, warn, skipped)
+	w, result, code := in.Stdout, VerdictOK, 0
+	switch {
+	case fail > 0:
+		w, result, code = in.Stderr, VerdictFail, 1
+	case unreachable > 0:
+		// Exit 3 is what every other fleet verb answers for a machine it could not reach,
+		// and it is not exit 1: nothing failed, and a caller that treats them alike will act
+		// on a machine it has no evidence about.
+		w, result, code = in.Stderr, VerdictUnreachable, 3
+	case timedOut > 0:
+		w, result, code = in.Stderr, VerdictTimeout, 3
+	}
+	fmt.Fprintf(w, "CERTIFY %s machines=%d ok=%d fail=%d warn=%d skipped=%d unreachable=%d timeout=%d fixed=%d\n",
+		result, len(machines), ok, fail, warn, skipped, unreachable, timedOut, fixed)
 	return code
+}
+
+// certifyOne runs ONE workload against ONE machine: the row, the event, the line, and the
+// verdict recorded under its class. It is one function because the repair round runs it a
+// second time, and two spellings of "certify this class" is two records of what happened.
+func (in CertifyInput) certifyOne(reg *Registry, m Machine, w Workload, build string, verdicts, evidence map[string]string, rows map[string]Certificate) {
+	verdict, said := runWorkload(in, reg, m, w)
+	verdicts[w.Class], evidence[w.Class] = verdict, said
+	// Two things that are not verdicts about the machine, and neither is written down: a
+	// machine nobody reached proved nothing, and work nobody let finish proved nothing. The
+	// row that said `FAIL ... build=Host\x20key\x20verification` was a record of this
+	// tool's own failure filed as the bench's, and a FAIL for `exec sleep` under a
+	// one-millisecond bound is a judgement on work that never ran.
+	if verdict == VerdictUnreachable || verdict == VerdictTimeout {
+		// A row from an earlier attempt in this run would now be a lie by omission: the run
+		// ends knowing less than it did, and the record must say so rather than keep the
+		// older verdict as though it were this run's.
+		delete(rows, w.Class)
+		in.appendAttempt(m, w.Class, verdict, said)
+		fmt.Fprintf(in.Stderr, "CERTIFY %s %s %s reason=%s\n",
+			oneline.Field(m.Name), oneline.Field(w.Class), verdict,
+			oneline.Quote(oneline.Cap(said, EvidenceCap)))
+		in.unansweredEvent(m, w.Class, verdict, said)
+		return
+	}
+	// ONE ROW PER (machine, class) PER RUN. The repair round certifies a class a second
+	// time, and appending both left the record holding two verdicts for one pass -- the
+	// first of them a failure that was no longer true when the run ended. The rows are held
+	// and written once the machine's pass is over, so the record carries the FINAL verdict.
+	rows[w.Class] = Certificate{
+		Machine: m.Name, Build: build, Hash: in.Hash, Class: w.Class,
+		Verdict: verdict, Evidence: said, At: in.Now().UTC(),
+	}
+	in.appendAttempt(m, w.Class, verdict, said)
+	line := fmt.Sprintf("CERTIFY %s %s %s evidence=%s",
+		oneline.Field(m.Name), oneline.Field(w.Class), verdict,
+		oneline.Quote(oneline.Cap(said, EvidenceCap)))
+	if verdict == VerdictOK {
+		fmt.Fprintln(in.Stdout, line)
+		return
+	}
+	// A WARN and a FAIL both go to stderr, where a person looking for what to do next looks.
+	// A WARN changes neither the count that gates nor the exit.
+	fmt.Fprintln(in.Stderr, line)
+}
+
+// appendAttempt writes ONE line per attempt, AS IT HAPPENS, beside the certificates.
+//
+// Holding the rows to one per (machine, class) is right for the record and wrong for the
+// trail: a run killed halfway through a machine would leave nothing of what it had already
+// learned, and the run that matters most is the one somebody interrupts because it is taking
+// too long. The trail is append-only, one line per attempt including the ones that write no
+// certificate at all (UNREACHABLE, TIMEOUT), and it is never read by the tool -- it is for
+// the person who comes back to a machine and asks what happened.
+//
+// A trail that cannot be written is a NOTE and not a refusal: the run has real work to do
+// and the record is the certificates file.
+func (in CertifyInput) appendAttempt(m Machine, class, verdict, evidence string) {
+	path := in.attemptsPath()
+	if path == "" {
+		return
+	}
+	line := strings.Join([]string{
+		in.Now().UTC().Format(time.RFC3339), dash(m.Name), dash(class), dash(verdict),
+		dash(oneline.Escape(oneline.Cap(evidence, EvidenceCap))),
+	}, "\t")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err == nil {
+		_, err = io.WriteString(f, line+"\n")
+		_ = f.Close()
+	}
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "CERTIFY NOTE attempts=unwritten path=%s err=%s\n",
+			oneline.Field(path), oneline.Quote(oneline.Cap(err.Error(), EvidenceCap)))
+	}
+}
+
+// attemptsPath is --attempts, or attempts.log beside the certificates file. A dry run writes
+// no trail, because it made no attempt.
+func (in CertifyInput) attemptsPath() string {
+	if in.DryRun {
+		return ""
+	}
+	if p := strings.TrimSpace(in.Attempts); p != "" {
+		return p
+	}
+	if strings.TrimSpace(in.Certs) == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(in.Certs), "attempts.log")
+}
+
+// writeRows puts one machine's pass on the record: one row per class, in class order, each
+// with the verdict the run ENDED on. It is called once per machine rather than once at the
+// end, so a fleet run interrupted halfway keeps what it proved about the machines it
+// finished.
+func (in CertifyInput) writeRows(rows map[string]Certificate) error {
+	classes := make([]string, 0, len(rows))
+	for class := range rows {
+		classes = append(classes, class)
+	}
+	sort.Strings(classes)
+	for _, class := range classes {
+		cert := rows[class]
+		if err := AppendCertificate(in.Certs, cert); err != nil {
+			return err
+		}
+		in.event(cert)
+	}
+	return nil
+}
+
+// repair is the fix-then-prove round: apply the standard items the failed classes map to,
+// certify those classes once more, and answer the escalation for whatever still fails.
+//
+// It NEVER credits a repair. The classes it re-runs are run by the same workloads through
+// the same wall, and the certificate that comes out is the certificate `fill` reads.
+func (in CertifyInput) repair(reg *Registry, m Machine, build string, loads []Workload, verdicts, evidence map[string]string, rows map[string]Certificate) (*escalation, error) {
+	if in.DryRun || len(failedClasses(verdicts)) == 0 {
+		return nil, nil
+	}
+	if !in.Fix {
+		// --no-fix: the failures are lines and rows, and the waiver is the person saying out
+		// loud that they will look. Nothing is applied and nobody is paged.
+		return nil, nil
+	}
+	e := &escalation{machine: m.Name, evidence: evidence}
+	rounds := in.MaxFixRounds
+	if rounds <= 0 {
+		rounds = DefaultFixRounds
+	}
+	for round := 1; round <= rounds; round++ {
+		failed := failedClasses(verdicts)
+		if len(failed) == 0 {
+			return nil, nil
+		}
+		items, byHand := ItemsForClasses(failed)
+		if len(items) == 0 {
+			// No item of the standard repairs any of these. Going to the machine anyway is a
+			// round of load and a lie in the record.
+			break
+		}
+		run := runnableItems(items)
+		e.applied, e.byHand = run, byHand
+		fmt.Fprintf(in.Stdout, "CERTIFY FIX machine=%s round=%d classes=%s items=%s by-hand=%s\n",
+			oneline.Field(m.Name), round, oneline.Field(strings.Join(failed, ",")),
+			oneline.Field(dash(strings.Join(run, ","))), oneline.Field(dash(strings.Join(byHand, ","))))
+		changed, err := in.apply(m.Name, run)
+		if err != nil {
+			e.failed = oneline.Err(err)
+			fmt.Fprintf(in.Stderr, "CERTIFY FIX machine=%s FAILED err=%s\n",
+				oneline.Field(m.Name), oneline.Quote(oneline.Cap(err.Error(), EvidenceCap)))
+			break
+		}
+		fmt.Fprintf(in.Stdout, "CERTIFY FIX machine=%s changed=%s\n",
+			oneline.Field(m.Name), oneline.Field(dash(strings.Join(changed, ","))))
+		for _, w := range loads {
+			if verdicts[w.Class] != VerdictFail || len(ItemsForClass(w.Class)) == 0 {
+				continue
+			}
+			in.certifyOne(reg, m, w, build, verdicts, evidence, rows)
+		}
+	}
+	failed := failedClasses(verdicts)
+	if len(failed) == 0 {
+		return nil, nil
+	}
+	e.classes = failed
+	return e, nil
+}
+
+// apply is the one call that mutates a machine, and it is behind the seam. A Fix with no
+// Fixer is an error and never a silent pass: "on by default" cannot mean a guessed path.
+func (in CertifyInput) apply(machine string, items []string) ([]string, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	if in.Fixer == nil {
+		return nil, fmt.Errorf("no apply is wired; run: nova-pulse fleet standard --apply --machine %s", machine)
+	}
+	return in.Fixer.Apply(machine, items)
+}
+
+// runnableItems is the items apply actually runs: everything but the ones that are named and
+// left to a person (`nova-update release adopt`).
+func runnableItems(items []string) []string {
+	var out []string
+	for _, item := range items {
+		if _, byHand := ByHandItems[item]; byHand {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+// postEscalation carries the escalation to the lane through the bus seam. A run with no bus
+// wired says so on a line rather than dropping the escalation quietly.
+func (in CertifyInput) postEscalation(e escalation, build string) {
+	if in.Bus == nil {
+		fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=unsent reason=no-bus remedy=%s\n",
+			oneline.Field(e.machine),
+			oneline.Quote("pass --bus <clone> --as <name> --to <names>; the escalation is on the line above and in the event stream either way"))
+		return
+	}
+	lane := strings.TrimSpace(in.Lane)
+	if lane == "" {
+		lane = DefaultLane
+	}
+	if err := in.Bus.Post(lane, e.subject(), e.note(in.Hash, build)); err != nil {
+		fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=unsent bus=%s err=%s\n",
+			oneline.Field(e.machine), oneline.Field(dash(in.Bus.Where())),
+			oneline.Quote(oneline.Cap(err.Error(), EvidenceCap)))
+		return
+	}
+	fmt.Fprintf(in.Stderr, "CERTIFY NOTE machine=%s escalation=sent lane=%s bus=%s\n",
+		oneline.Field(e.machine), oneline.Field(lane), oneline.Field(dash(in.Bus.Where())))
 }
 
 // Stale says whether the newest certificate for one machine and class is missing, failed,
@@ -660,49 +1001,47 @@ func Status(in StatusInput) int {
 	if in.MaxAge <= 0 {
 		in.MaxAge = DefaultMaxAge
 	}
-	reg, err := ReadRegistry(in.Machines)
+	certs, err := ReadCertificates(in.Certs)
 	if err != nil {
 		return certifyRefusal(in.Stderr, err)
 	}
-	if in.Workloads == nil {
-		loads, err := StandardWorkloads()
-		if err != nil {
-			return certifyRefusal(in.Stderr, err)
-		}
-		in.Workloads = loads
-	}
-	certs, err := ReadCertificates(in.Certs)
+	// --status reads ONE FILE. It used to refuse without a registry and without the
+	// provisioning standard above the working directory -- for a verb that touches no
+	// machine and answers from a record. With a registry it reports every machine and class
+	// the fleet is MEANT to hold, including the ones nobody has certified at all; without
+	// one it reports what the record carries, which is what a person asking "what do we
+	// know" wants at the moment they cannot find the registry.
+	pairs, err := statusPairs(in, certs)
 	if err != nil {
 		return certifyRefusal(in.Stderr, err)
 	}
 	now := in.Now().UTC()
 	current, stale := 0, 0
-	for _, m := range reg.Machines() {
-		for _, w := range workloadsFor(in.Workloads, m) {
-			c, found := newestCertificate(certs, m.Name, w.Class)
-			switch {
-			case !found:
-				stale++
-				fmt.Fprintf(in.Stderr, "CERTIFY STATUS %s %s NONE\n", oneline.Field(m.Name), oneline.Field(w.Class))
-			case c.Verdict == VerdictFail:
-				stale++
-				fmt.Fprintf(in.Stderr, "CERTIFY STATUS %s %s FAIL build=%s at=%s evidence=%s\n",
-					oneline.Field(m.Name), oneline.Field(w.Class), oneline.Field(c.Build),
-					c.At.UTC().Format(time.RFC3339), oneline.Quote(c.Evidence))
-			case c.Hash != in.Hash && in.Hash != "":
-				stale++
-				fmt.Fprintf(in.Stderr, "CERTIFY STATUS %s %s STALE reason=standard-hash was=%s now=%s\n",
-					oneline.Field(m.Name), oneline.Field(w.Class), oneline.Field(c.Hash), oneline.Field(in.Hash))
-			case now.Sub(c.At) > in.MaxAge:
-				stale++
-				fmt.Fprintf(in.Stderr, "CERTIFY STATUS %s %s STALE reason=age at=%s max-age=%s\n",
-					oneline.Field(m.Name), oneline.Field(w.Class), c.At.UTC().Format(time.RFC3339), in.MaxAge)
-			default:
-				current++
-				fmt.Fprintf(in.Stdout, "CERTIFY STATUS %s %s %s build=%s at=%s\n",
-					oneline.Field(m.Name), oneline.Field(w.Class), c.Verdict,
-					oneline.Field(c.Build), c.At.UTC().Format(time.RFC3339))
-			}
+	for _, pair := range pairs {
+		machine, class := pair[0], pair[1]
+		c, found := newestCertificate(certs, machine, class)
+		switch {
+		case !found:
+			stale++
+			fmt.Fprintf(in.Stderr, "CERTIFY STATUS %s %s NONE\n", oneline.Field(machine), oneline.Field(class))
+		case c.Verdict == VerdictFail:
+			stale++
+			fmt.Fprintf(in.Stderr, "CERTIFY STATUS %s %s FAIL build=%s at=%s evidence=%s\n",
+				oneline.Field(machine), oneline.Field(class), oneline.Field(c.Build),
+				c.At.UTC().Format(time.RFC3339), oneline.Quote(c.Evidence))
+		case c.Hash != in.Hash && in.Hash != "":
+			stale++
+			fmt.Fprintf(in.Stderr, "CERTIFY STATUS %s %s STALE reason=standard-hash was=%s now=%s\n",
+				oneline.Field(machine), oneline.Field(class), oneline.Field(c.Hash), oneline.Field(in.Hash))
+		case now.Sub(c.At) > in.MaxAge:
+			stale++
+			fmt.Fprintf(in.Stderr, "CERTIFY STATUS %s %s STALE reason=age at=%s max-age=%s\n",
+				oneline.Field(machine), oneline.Field(class), c.At.UTC().Format(time.RFC3339), in.MaxAge)
+		default:
+			current++
+			fmt.Fprintf(in.Stdout, "CERTIFY STATUS %s %s %s build=%s at=%s\n",
+				oneline.Field(machine), oneline.Field(class), c.Verdict,
+				oneline.Field(c.Build), c.At.UTC().Format(time.RFC3339))
 		}
 	}
 	w, result, code := in.Stdout, VerdictOK, 0
@@ -711,6 +1050,49 @@ func Status(in StatusInput) int {
 	}
 	fmt.Fprintf(w, "CERTIFY STATUS %s current=%d stale=%d\n", result, current, stale)
 	return code
+}
+
+// statusPairs is every (machine, class) --status reports on. With a registry it is what the
+// fleet is MEANT to hold -- every machine's roles crossed with the workloads, so a class
+// nobody has ever certified shows as NONE. With no registry it is what the record carries,
+// sorted, so the verb still answers when the registry is not at hand.
+func statusPairs(in StatusInput, certs []Certificate) ([][2]string, error) {
+	var out [][2]string
+	if strings.TrimSpace(in.Machines) == "" {
+		seen := map[[2]string]bool{}
+		for _, c := range certs {
+			key := [2]string{c.Machine, c.Class}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, key)
+		}
+		sort.Slice(out, func(i, j int) bool {
+			if out[i][0] != out[j][0] {
+				return out[i][0] < out[j][0]
+			}
+			return out[i][1] < out[j][1]
+		})
+		return out, nil
+	}
+	reg, err := ReadRegistry(in.Machines)
+	if err != nil {
+		return nil, err
+	}
+	loads := in.Workloads
+	if loads == nil {
+		loads, err = StandardWorkloads()
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, m := range reg.Machines() {
+		for _, w := range workloadsFor(loads, m) {
+			out = append(out, [2]string{m.Name, w.Class})
+		}
+	}
+	return out, nil
 }
 
 // newestCertificate is the latest row for one machine and class, whatever build or hash it
@@ -759,6 +1141,50 @@ func (in CertifyInput) event(c Certificate) {
 	_ = l.Write(in.Log)
 }
 
+// escalationEvent is the same stream, for the event a dashboard must never miss: a machine
+// the loop could not certify and could not repair. It is ERROR, it carries the machine and
+// the classes, and it is one event per machine, like the line.
+func (in CertifyInput) escalationEvent(e escalation, build string) {
+	if in.Log == nil {
+		return
+	}
+	clock := in.Now
+	if clock == nil {
+		clock = func() time.Time { return time.Now().UTC() }
+	}
+	l := log.New(Clock(clock), log.ProcessGUID, "nova-pulse")
+	l.Verb = "certify"
+	l.Event = "certify"
+	l.Level = "ERROR"
+	l.Bench = e.machine
+	l.Msg = fmt.Sprintf("certify escalate: %s classes=%s applied=%s build=%s remedy=%s",
+		e.machine, strings.Join(e.classes, ","), dash(strings.Join(e.applied, ",")), dash(build), e.remedy())
+	l.Err = e.remedy()
+	_ = l.Write(in.Log)
+}
+
+// unansweredEvent is the third thing the stream carries: not a certificate and not an
+// escalation, but this tool saying it could not ask, or could not wait long enough. WARN and not ERROR -- nothing about the
+// machine is known to be wrong -- and it names the transport so a dashboard can tell a fleet
+// with a broken bench from a coordinator with a broken ssh.
+func (in CertifyInput) unansweredEvent(m Machine, class, verdict, reason string) {
+	if in.Log == nil {
+		return
+	}
+	clock := in.Now
+	if clock == nil {
+		clock = func() time.Time { return time.Now().UTC() }
+	}
+	l := log.New(Clock(clock), log.ProcessGUID, "nova-pulse")
+	l.Verb = "certify"
+	l.Event = "certify"
+	l.Level = "WARN"
+	l.Bench = m.Name
+	l.Msg = fmt.Sprintf("certify %s: %s %s transport=%s reason=%s", strings.ToLower(verdict), m.Name, class, m.SSH, reason)
+	l.Err = reason
+	_ = l.Write(in.Log)
+}
+
 // Clock is internal/log's clock, re-exported here only so a caller need not import both.
 type Clock = log.Clock
 
@@ -787,9 +1213,20 @@ func workloadsFor(loads []Workload, m Machine) []Workload {
 // machineBuild asks the machine what nova-merge it is running. The build is half of what
 // makes a certificate current, so it is read FROM the machine and never assumed: `release
 // adopt` changes it, and a certificate written before an adopt must not survive it.
-func machineBuild(in CertifyInput, m Machine) string {
-	out, _ := runScript(in, m, "build", BuildScript)
-	return BuildVersion(out)
+//
+// It is also the run's FIRST contact with the machine, so it is where "unreachable" is
+// found: if this answer is the transport failing, nothing else is asked of that machine, and
+// the reason is carried to every one of its classes. Eleven doomed ssh attempts teach a
+// person nothing the first one did not.
+func machineBuild(in CertifyInput, m Machine) (build, reason, token string) {
+	out, err := runScript(in, m, "build", BuildScript)
+	if errors.Is(err, ErrTimeout) {
+		return "", oneline.Err(err), VerdictTimeout
+	}
+	if said, bad := TransportFailure(out, err); bad {
+		return "", said, VerdictUnreachable
+	}
+	return BuildVersion(out), "", ""
 }
 
 // BuildScript is the one question every certification asks first: what build is installed
@@ -800,6 +1237,11 @@ const BuildScript = "# nova-certify workload build\nnova-merge version 2>&1 || t
 // BuildVersion reads the version token out of a `nova-merge version` line. The token, not
 // the line: `nova-merge v0.17.0` and `v0.17.0` are the same build, and a certificate keyed
 // on the whole line would expire when the banner changed.
+//
+// A line with NO version token is no build at all, and it used to be kept whole: the first
+// real run of this verb wrote `build=Host\x20key\x20verification\x20failed.` into a
+// certificate row, where the build column is half of what makes a certificate current. The
+// column holds a version or it holds `-`.
 func BuildVersion(out string) string {
 	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
@@ -811,7 +1253,6 @@ func BuildVersion(out string) string {
 				return f
 			}
 		}
-		return oneline.Field(line)
 	}
 	return ""
 }
@@ -825,7 +1266,8 @@ func BuildVersion(out string) string {
 // already knows.
 func runWorkload(in CertifyInput, reg *Registry, m Machine, w Workload) (string, string) {
 	verdict, evidence := answer(in, reg, m, w)
-	// `report: yes` is the whole difference between a measurement and a gate.
+	// `report: yes` is the whole difference between a measurement and a gate. It softens a
+	// FAIL and never an UNREACHABLE: "we could not ask" is not a measurement.
 	if verdict == VerdictFail && w.Report {
 		return VerdictWarn, evidence
 	}
@@ -839,12 +1281,41 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 	case ForgeRegistry:
 		return registryTruth(in, reg, m)
 	}
-	out, err := runScript(in, m, w.Class, certifyScript(in, w))
+	script := certifyScript(in, reg, m, w)
+	// The branch comes BEFORE the run, not after it. Written the other way round -- run,
+	// then decide -- the ssh had already happened, which is exactly the fault `where` exists
+	// to prevent, and no test of the embedded set could see it because the only coordinator
+	// workloads there ask the forge and run no script at all.
+	out, err := "", error(nil)
+	if w.Where == WhereCoordinator {
+		out, err = runHere(in, w.Class, script)
+	} else {
+		out, err = runScript(in, m, w.Class, script)
+	}
+	// FINISHING COMES FIRST, before the matched line. `echo PROOF OK` followed by `exec
+	// sleep 3` under a 100ms bound printed the expected line, ran out of time, and was
+	// recorded OK with a certificate behind it: the marker said the work had STARTED, and a
+	// certificate is a claim that it FINISHED. A workload that printed its line and then ran
+	// out of time is TIMEOUT, never OK.
+	if errors.Is(err, ErrTimeout) {
+		return VerdictTimeout, oneline.Err(err)
+	}
 	// The evidence is the WHOLE LINE the expect matched, not the matched text: `^GO OK` is
 	// four characters and `GO OK go version go1.26.5 linux/amd64 ok 0.4s` is the answer a
 	// person reading the certificate in a month actually needs.
 	if line, ok := matchedLine(w.Expect, out); ok {
 		return VerdictOK, line
+	}
+	// A state the card knows and does not blame the machine for.
+	if w.Warn != nil {
+		if line, ok := matchedLine(w.Warn, out); ok {
+			return VerdictWarn, line
+		}
+	}
+	// Reaching the machine comes before judging it: a machine that printed the marker WAS
+	// reached, whatever else came back.
+	if reason, bad := TransportFailure(out, err); bad {
+		return VerdictUnreachable, reason
 	}
 	if reason := firstAnswerLine(out); reason != "" {
 		return VerdictFail, reason
@@ -866,7 +1337,8 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 func registryTruth(in CertifyInput, reg *Registry, m Machine) (string, string) {
 	runners, err := in.Forge.Runners(in.Repo)
 	if err != nil {
-		return VerdictFail, oneline.Err(err)
+		// The same rule as ssh: "gh could not answer" is not a verdict about a machine.
+		return VerdictUnreachable, "the forge could not be read: " + oneline.Err(err)
 	}
 	prefix := m.Name + "-nova-"
 	online, stale := 0, []string{}
@@ -896,10 +1368,118 @@ func registryTruth(in CertifyInput, reg *Registry, m Machine) (string, string) {
 	return VerdictOK, fmt.Sprintf("roles=%s online=%d prefix=%s", m.RoleList(), online, prefix)
 }
 
+// ErrTimeout is the work not finishing inside this run's bound. It is a sentinel because
+// what a Remote returns for a killed child is its own business -- `signal: killed` from
+// exec, a context error from another -- and the DISTINCTION must not depend on the wording.
+var ErrTimeout = errors.New("the work did not finish inside the timeout")
+
 func runScript(in CertifyInput, m Machine, class, script string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), in.Timeout)
 	defer cancel()
-	return in.Remote.Run(ctx, m.SSH, script)
+	remote, _ := in.remoteFor(m)
+	out, err := remote.Run(ctx, m.SSH, script)
+	if err != nil && (errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded) {
+		return out, fmt.Errorf("%w (%s)", ErrTimeout, in.Timeout)
+	}
+	return out, err
+}
+
+// runHere runs a coordinator workload's body ON THE COORDINATOR. `where: coordinator` is not
+// only about the forge: a workload that asks whether `gh` is authenticated, or whether the
+// queue is where it should be, is a question about THIS machine, and the first draft sent
+// its body down the ssh pipe to the bench -- which is the one thing `where` exists to stop.
+func runHere(in CertifyInput, class, script string) (string, error) {
+	if in.Local == nil {
+		return "", fmt.Errorf("no coordinator runner is wired, and a %s workload never opens an ssh; inject a fleet.Remote as Local", WhereCoordinator)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), in.Timeout)
+	defer cancel()
+	out, err := in.Local.Run(ctx, "", script)
+	if err != nil && (errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded) {
+		return out, fmt.Errorf("%w (%s)", ErrTimeout, in.Timeout)
+	}
+	return out, err
+}
+
+// remoteFor is the transport for one machine: the local runner when the machine IS this
+// machine, ssh otherwise. It answers whether it chose the local one, so the run can say so
+// on a line -- "it ran here" is the kind of thing a person needs told once, not guessed.
+func (in CertifyInput) remoteFor(m Machine) (Remote, bool) {
+	if in.Local != nil && IsLocalMachine(m, in.LocalHost) {
+		return in.Local, true
+	}
+	return in.Remote, false
+}
+
+// IsLocalMachine says whether a registry machine is the machine this process runs on. The
+// registry's name, its ssh target and the host's own name are all compared as SHORT host
+// names, because the same machine is `space`, `nova@space` and `space.tail1234.ts.net`
+// depending on who is writing it down.
+func IsLocalMachine(m Machine, localHost string) bool {
+	local := shortHost(localHost)
+	if local == "" {
+		return false
+	}
+	for _, candidate := range []string{m.Name, m.SSH} {
+		if c := shortHost(candidate); c != "" && strings.EqualFold(c, local) {
+			return true
+		}
+	}
+	return false
+}
+
+// shortHost is a host name with any user, port and domain taken off.
+func shortHost(v string) string {
+	v = strings.TrimSpace(v)
+	if i := strings.LastIndex(v, "@"); i >= 0 {
+		v = v[i+1:]
+	}
+	if i := strings.Index(v, ":"); i >= 0 {
+		v = v[:i]
+	}
+	if i := strings.Index(v, "."); i >= 0 {
+		v = v[:i]
+	}
+	return v
+}
+
+// transportMarkers are ssh's OWN words for "I never reached the machine". They are matched
+// against what came back rather than against an exit code, because ssh exits 255 for its own
+// failures and the remote command's status for everything else, and a fake or another
+// transport has neither.
+var transportMarkers = []string{
+	"host key verification failed",
+	"ssh: connect to host",
+	"ssh: could not resolve hostname",
+	"permission denied (publickey",
+	"connection refused",
+	"connection timed out",
+	"connection closed by remote host",
+	"connection reset by peer",
+	"no route to host",
+	"kex_exchange_identification",
+	"operation timed out",
+	"broken pipe",
+	"remote host identification has changed",
+}
+
+// TransportFailure says whether this answer is the transport failing rather than the machine
+// answering, and names the line that said so. THE DISTINCTION IS THE WHOLE POINT: what a
+// machine said about its own work is a verdict, and what ssh said about reaching it is not.
+func TransportFailure(out string, err error) (string, bool) {
+	for _, raw := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		for _, marker := range transportMarkers {
+			if strings.Contains(lower, marker) {
+				return line, true
+			}
+		}
+	}
+	return "", false
 }
 
 // runnersOnline is the runner host's own workload: the forge says every runner named
@@ -908,7 +1488,7 @@ func runScript(in CertifyInput, m Machine, class, script string) (string, error)
 func runnersOnline(in CertifyInput, m Machine) (string, string) {
 	runners, err := in.Forge.Runners(in.Repo)
 	if err != nil {
-		return VerdictFail, oneline.Err(err)
+		return VerdictUnreachable, "the forge could not be read: " + oneline.Err(err)
 	}
 	prefix := m.Name + "-nova-"
 	seen, offline := 0, []string{}
@@ -939,7 +1519,7 @@ func runnersOnline(in CertifyInput, m Machine) (string, string) {
 //
 // The job directory is made for the run and taken away after it, on every exit path: Glenn,
 // 2026-09-17, hygiene -- a job lives in working/tmp, is read, and is deleted.
-func certifyScript(in CertifyInput, w Workload) string {
+func certifyScript(in CertifyInput, reg *Registry, m Machine, w Workload) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# nova-certify workload %s\n", w.Class)
 	b.WriteString("set -eu\n")
@@ -948,6 +1528,18 @@ func certifyScript(in CertifyInput, w Workload) string {
 		bin = "$HOME/.local/bin"
 	}
 	fmt.Fprintf(&b, "NOVA_HOME=\"$HOME\"\nNOVA_GO=%q\nNOVA_BIN=%q\nexport NOVA_GO NOVA_BIN\n", DefaultGo, bin)
+	// THE ADDRESSES COME FROM THE REGISTRY, never from DNS. `services-reach` resolved a name
+	// with `getent`, which does not exist on darwin at all, so the Air was told that `space`
+	// "does not resolve" while it was talking to space over ssh at that moment; and
+	// `loki-ready` probed localhost on a host where Loki binds the tailnet address on
+	// purpose. The registry is the file that already knows where every machine is.
+	fmt.Fprintf(&b, "NOVA_SELF_ADDR=%q\nNOVA_SERVICES_ADDR=%q\nNOVA_SERVICES_HOST=%q\nexport NOVA_SELF_ADDR NOVA_SERVICES_ADDR NOVA_SERVICES_HOST\n",
+		MachineAddress(m), ServicesAddress(reg), ServicesName(reg))
+	// The machine's own name and its SEAT, from the registry row. The seat is a NAME, never
+	// a key: `role-dispatch-bench` opens it through `nova-secrets exec --only <KEY>` and the
+	// value reaches a child process and nothing else -- not this output, not the
+	// certificate, not the log.
+	fmt.Fprintf(&b, "NOVA_MACHINE=%q\nNOVA_SEAT=%q\nexport NOVA_MACHINE NOVA_SEAT\n", m.Name, m.Seat)
 	if !w.Wall {
 		b.WriteString("export NOVA_HOME\n")
 		b.WriteString(w.Body)
@@ -974,6 +1566,43 @@ func certifyScript(in CertifyInput, w Workload) string {
 	b.WriteString("; do\n  if [ -e \"$r\" ]; then NOVA_READS=\"$NOVA_READS --read $r\"; fi\ndone\n")
 	b.WriteString("HOME=\"$JOB/home\" nova-sandbox $NOVA_READS --write \"$JOB\" --cwd \"$JOB\" -- /bin/sh \"$JOB/body.sh\"\n")
 	return b.String()
+}
+
+// MachineAddress is where a machine IS, as the registry writes it: the ssh column with any
+// user taken off. It is what a probe should dial, because it is the address the fleet
+// already uses for that machine and the one a person can check by hand.
+func MachineAddress(m Machine) string {
+	target := strings.TrimSpace(m.SSH)
+	if i := strings.LastIndex(target, "@"); i >= 0 {
+		target = target[i+1:]
+	}
+	if target == "" {
+		return m.Name
+	}
+	return target
+}
+
+// ServicesAddress is the address of the machine carrying the services role, and "" when the
+// registry names none -- which is a fact about the registry and is said as one.
+func ServicesAddress(reg *Registry) string {
+	if reg == nil {
+		return ""
+	}
+	for _, m := range reg.WithRole(RoleServices) {
+		return MachineAddress(m)
+	}
+	return ""
+}
+
+// ServicesName is that machine's registry name, for evidence a person can read.
+func ServicesName(reg *Registry) string {
+	if reg == nil {
+		return ""
+	}
+	for _, m := range reg.WithRole(RoleServices) {
+		return m.Name
+	}
+	return ""
 }
 
 // matchedLine is the first line of the output the expect matches, whole.
