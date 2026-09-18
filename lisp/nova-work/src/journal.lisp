@@ -270,74 +270,102 @@ Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
                                  :fail-creation-sync-on fail-creation-sync-on))
          (full-path (journal-path journal))
          (exists (probe-file full-path)))
-    ;; The OS-held lock is taken before the file is opened or created, so a
-    ;; second holder is refused up front and never reads a journal out from
-    ;; under a live owner (SPEC-WORK.md:162-183). The lock is keyed by the
-    ;; journal's canonical spelling (realpath).
-    (when take-lock
-      (let ((lock (take-journal-lock full-path)))
-        (if lock
-            (setf (journal-lock journal) lock)
-            (error 'journal-held :path full-path))))
-    (setf (journal-bench journal) (or bench (bench-identity :path full-path)))
-    (if exists
-        (let ((seq 0))
-          ;; 1. Read and validate entire file read-only. Failure leaves file untouched.
-          (with-open-file (in full-path :direction :input :element-type 'character :external-format :utf-8)
-            (let* ((header (read-header in full-path initial-state-hash))
-                   (hplist (rest header)))
-              (setf (journal-initial-state-hash journal) (getf hplist :initial-state))
-              (when (getf hplist :capacity)
-                (setf (slot-value journal 'capacity) (getf hplist :capacity)))
-              (when (getf hplist :bench)
-                (setf (journal-bench journal) (getf hplist :bench))))
-            (loop
-              (let ((frame (read-record-frame in full-path (1+ seq))))
-                (unless frame (return))
-                (incf seq)
-                (let* ((record (getf (rest frame) :record))
-                       (req (getf record :request))
-                       (digest (getf record :digest))
-                       (line (getf record :line))
-                       (rev (getf record :rev)))
-                  (when (and (>= (hash-table-count (journal-records journal)) (journal-capacity journal))
-                             (null (gethash req (journal-records journal))))
-                    (error 'journal-corrupt-data :path full-path
-                           :reason (format nil "journal contains ~D records, exceeding capacity ~D"
-                                           (1+ (hash-table-count (journal-records journal)))
-                                           (journal-capacity journal))))
-                  (setf (gethash req (journal-records journal)) (list digest line rev))
-                  (push req (journal-order-slot journal))))))
-          (setf (journal-seq journal) seq)
-          ;; 2. Reopen for append once validated.
-          (let ((out (open full-path :direction :output
-                                     :if-exists :append
-                                     :if-does-not-exist :error
-                                     :element-type 'character
-                                     :external-format :utf-8)))
-            (setf (journal-stream journal) out)))
-        ;; File does not exist: create fresh journal, sync directory, and write header
-        (let ((out (open full-path :direction :output
-                                   :if-exists :error
-                                   :if-does-not-exist :create
-                                   :element-type 'character
-                                   :external-format :utf-8)))
-          (setf (journal-stream journal) out)
-          (handler-case
-              (progn
-                ;; Optional injected creation directory sync failure
-                (when (journal-fail-creation-sync-on journal)
-                  (error 'journal-sync-failed :path full-path :reason "injected creation directory sync failure"))
-                ;; Synchronize parent directory to guarantee the new directory entry is durable
-                (let ((parent-dir (directory-namestring (merge-pathnames full-path))))
-                  (sync-directory parent-dir))
-                (write-header out initial-state-hash capacity stamp full-path (journal-bench journal)))
-            (error (c)
-              ;; CRITICAL: Close the already-open stream so file descriptor is not leaked,
-              ;; while preserving the created file on disk for explicit recovery.
-              (ignore-errors (close out))
-              (setf (journal-stream journal) nil)
-              (error c)))))
+    ;; A failed open -- a held lock, an unreadable or corrupt existing journal,
+    ;; or a creation that could not be made durable -- leaves nothing behind:
+    ;; any append stream is closed and the OS lock is released, so the same path
+    ;; can be opened again and answers the same refusal instead of `journal
+    ;; held`, and the bytes already on disk are never touched
+    ;; (SPEC-WORK.md:307,3348,3357).
+    (flet ((release-on-failure ()
+             (when (journal-stream journal)
+               (ignore-errors (close (journal-stream journal)))
+               (setf (journal-stream journal) nil))
+             (when (journal-lock journal)
+               (release-journal-lock (journal-lock journal))
+               (setf (journal-lock journal) nil))))
+      (handler-case
+          (progn
+            ;; The OS-held lock is taken before the file is opened or created, so a
+            ;; second holder is refused up front and never reads a journal out from
+            ;; under a live owner (SPEC-WORK.md:162-183). The lock is keyed by the
+            ;; journal's canonical spelling (realpath).
+            (when take-lock
+              (let ((lock (take-journal-lock full-path)))
+                (if lock
+                    (setf (journal-lock journal) lock)
+                    (error 'journal-held :path full-path))))
+            (setf (journal-bench journal) (or bench (bench-identity :path full-path)))
+            (if exists
+                (let ((seq 0))
+                  ;; 1. Read and validate the whole file read-only. A torn tail,
+                  ;; a flipped bit or a wrong header refuses HERE, before any
+                  ;; stream for append is opened, so the file is left bit for
+                  ;; bit as it was. A raw reader or stream error that is not
+                  ;; already a named journal condition is still a corrupt
+                  ;; journal and must refuse as one.
+                  (handler-case
+                      (with-open-file (in full-path :direction :input :element-type 'character :external-format :utf-8)
+                        (let* ((header (read-header in full-path initial-state-hash))
+                               (hplist (rest header)))
+                          (setf (journal-initial-state-hash journal) (getf hplist :initial-state))
+                          (when (getf hplist :capacity)
+                            (setf (slot-value journal 'capacity) (getf hplist :capacity)))
+                          (when (getf hplist :bench)
+                            (setf (journal-bench journal) (getf hplist :bench))))
+                        (loop
+                          (let ((frame (read-record-frame in full-path (1+ seq))))
+                            (unless frame (return))
+                            (incf seq)
+                            (let* ((record (getf (rest frame) :record))
+                                   (req (getf record :request))
+                                   (digest (getf record :digest))
+                                   (line (getf record :line))
+                                   (rev (getf record :rev)))
+                              (when (and (>= (hash-table-count (journal-records journal)) (journal-capacity journal))
+                                         (null (gethash req (journal-records journal))))
+                                (error 'journal-corrupt-data :path full-path
+                                       :reason (format nil "journal contains ~D records, exceeding capacity ~D"
+                                                       (1+ (hash-table-count (journal-records journal)))
+                                                       (journal-capacity journal))))
+                              (setf (gethash req (journal-records journal)) (list digest line rev))
+                              (push req (journal-order-slot journal))))))
+                    (journal-error (c) (error c))
+                    (error (c)
+                      (error 'journal-corrupt-data :path full-path
+                             :reason (format nil "journal could not be read: ~A" c))))
+                  (setf (journal-seq journal) seq)
+                  ;; 2. Reopen for append once validated.
+                  (let ((out (open full-path :direction :output
+                                             :if-exists :append
+                                             :if-does-not-exist :error
+                                             :element-type 'character
+                                             :external-format :utf-8)))
+                    (setf (journal-stream journal) out)))
+                ;; File does not exist: create fresh journal, sync directory, and write header
+                (let ((out (open full-path :direction :output
+                                           :if-exists :error
+                                           :if-does-not-exist :create
+                                           :element-type 'character
+                                           :external-format :utf-8)))
+                  (setf (journal-stream journal) out)
+                  (handler-case
+                      (progn
+                        ;; Optional injected creation directory sync failure
+                        (when (journal-fail-creation-sync-on journal)
+                          (error 'journal-sync-failed :path full-path :reason "injected creation directory sync failure"))
+                        ;; Synchronize parent directory to guarantee the new directory entry is durable
+                        (let ((parent-dir (directory-namestring (merge-pathnames full-path))))
+                          (sync-directory parent-dir))
+                        (write-header out initial-state-hash capacity stamp full-path (journal-bench journal)))
+                    (error (c)
+                      ;; CRITICAL: Close the already-open stream so file descriptor is not leaked,
+                      ;; while preserving the created file on disk for explicit recovery.
+                      (ignore-errors (close out))
+                      (setf (journal-stream journal) nil)
+                      (error c))))))
+        (error (c)
+          (release-on-failure)
+          (error c))))
     journal))
 
 (defun close-file-journal (journal)
