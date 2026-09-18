@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -60,7 +61,7 @@ usage:
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>] [--bench <name>] [--log <path>]
    nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
    nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
@@ -1377,6 +1378,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
+	// The structured sink of SPEC-LOGS.md Part 2: --log names the file Alloy tails, and
+	// without it the lines go to stderr, which under systemd is the unit's journal. --bench
+	// is the fleet's name for THIS machine (else $NOVA_BENCH, else the short hostname): a
+	// card that ran on hulk and a card that ran on vision are one query apart.
+	// --label is NOT that name: on this verb it has always been the card's own label.
+	logPath := f.fs.String("log", "", "")
+	bench := f.fs.String("bench", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -1473,10 +1481,31 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if workerGiven {
 		cfg.worker = &w
 	}
+	// The sink is opened BEFORE the child starts: a --log nobody can write is a refusal
+	// that costs nothing, and a card whose run cost real tokens must not be the thing that
+	// discovers the path was wrong.
+	// THE SINK IS THE FILE OR NOTHING: a run that names no file writes no structured line,
+	// so this verb's stdout and stderr stay exactly the contract they were. The reason the
+	// round-1 stderr fallback is not taken here is in SPEC-LOGS.md Part 6, and the one long
+	// telling of it is in cmd/nova-bus/events.go.
+	events, closer, err := log.Sink(*logPath, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "NATIVE REFUSED: --log %s cannot be opened for append: %s\n",
+			oneline.Field(*logPath), oneline.Err(err))
+		return 2
+	}
+	if closer != nil {
+		defer closer.Close()
+	}
+	em := log.NewEmitter(events, "nova-swarm", "native", log.BenchName(*bench))
+	started := time.Now()
+	emitNativeCard(em, log.EventStart, cfg, nativeRunResult{}, 0)
 	res, code := nativeRun(cfg, stderr)
 	if code != 0 {
+		emitNativeCard(em, log.EventRefuse, cfg, res, time.Since(started))
 		return code
 	}
+	emitNativeCard(em, log.EventDone, cfg, res, time.Since(started))
 	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
 	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s\n",
@@ -1583,6 +1612,52 @@ func usageSuffix(reason, path string) string {
 		return ""
 	}
 	return " usage=none reason=" + oneline.Field(reason) + " path=" + oneline.Field(path)
+}
+
+// emitNativeCard writes one card's structured line: start when the child is about to run,
+// done when it has gone, refuse when the configuration was wrong before it ran. The done
+// line carries the usage the run just wrote to usage.tsv -- tokens in and out, the cache
+// columns, the reasoning tokens and the dollars -- so "what did this card cost" is a query
+// and not a walk of the slot directories. A column no provider reported stays a dash and
+// never becomes a zero, which is the same rule usage.tsv itself is written under.
+//
+// NOTHING OF THE CARD'S TEXT IS ON THE LINE. The label, the slot, the model and the
+// numbers are ids and counts; the card's prose is the card file, which the line names by
+// nothing at all (SPEC-LOGS.md Part 2, what must never be logged).
+func emitNativeCard(e *log.Emitter, event string, cfg nativeRunConfig, res nativeRunResult, dur time.Duration) {
+	if e == nil {
+		return
+	}
+	l := e.Line(event)
+	l.Card = oneline.Field(cfg.label)
+	l.Slot = oneline.Field(filepath.Base(cfg.slotDir))
+	l.DurMS = dur.Milliseconds()
+	switch event {
+	case log.EventStart:
+		l.Msg = fmt.Sprintf("native: card %s model=%s deadline=%s",
+			oneline.Field(cfg.label), oneline.Field(dash(cfg.model)), oneline.Field(cfg.deadline.String()))
+	case log.EventRefuse:
+		l.Level = "ERROR"
+		l.Msg = fmt.Sprintf("native: card %s refused before the child ran", oneline.Field(cfg.label))
+	default:
+		l.Msg = fmt.Sprintf("native: card %s model=%s rc=%d wall=%.2fs harness=%s %s",
+			oneline.Field(cfg.label), oneline.Field(dash(cfg.model)), res.rc, res.wallSeconds,
+			oneline.Field(orElse(res.harness, "silent")), nativeUsageFields(res.usage))
+		if res.rc != 0 {
+			l.Level = "ERROR"
+		}
+	}
+	e.Send(l)
+}
+
+// nativeUsageFields renders the usage columns a done line carries, in the order usage.tsv
+// writes them, each a dash when nothing was reported.
+func nativeUsageFields(row swarm.UsageRow) string {
+	parts := make([]string, 0, len(swarm.TokenColumns)+1)
+	for _, c := range swarm.TokenColumns {
+		parts = append(parts, c+"="+oneline.Field(dash(row[c])))
+	}
+	return strings.Join(parts, " ") + " usd=" + oneline.Field(dash(row["usd"]))
 }
 
 func orElse(a, b string) string {

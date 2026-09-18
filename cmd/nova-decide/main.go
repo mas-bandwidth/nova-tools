@@ -37,7 +37,7 @@ usage:
 
   nova-decide route --unit <json file|inline json> --usage <path> --log <path>
                     [--registry <path>] [--floor 0.9] [--base-url <url>]
-                    [--key-env JEV_API_KEY]
+                    [--key-env JEV_API_KEY] [--bench <name>] [--event-log <path>]
                     (--usage and --log are REQUIRED whenever jev is asked)
   nova-decide route --unit-id <id> --kind <kind> --no-jev [--files n] [--packages n] [--lanes n]
                     [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
@@ -100,6 +100,13 @@ opaque ids rather than any mind's name.
                       embedded ladder when absent
   --log <path>        append this decision to the escalation log (JSON lines);
                       REQUIRED when jev is asked
+  --event-log <path>  append one structured JSON event per decision (kind, rung,
+                      confidence, floor) to this file, the one Alloy tails
+                      (SPEC-LOGS.md Part 2). Without it no structured line is
+                      written at all. It is NOT --log: --log is the decision
+                      RECORD, this is the OBSERVATION
+  --bench <name>      this machine's fleet name, the bench label every structured
+                      line carries (else $NOVA_BENCH, else the short hostname)
   --usage <path>      append what a provider call spent to this usage TSV, in
                       the fleet's own columns; a failed call is a row too, with
                       its cost unknown (a dash), never a zero. REQUIRED when jev

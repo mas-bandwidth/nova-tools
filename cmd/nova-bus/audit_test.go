@@ -23,6 +23,7 @@ var messageBusAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
+		"events.go|busEmitter|token":      "the verb's own event token, the literals \"SEND\" and \"REPLY\" at the two call sites (main.go, verb_reply.go)",
 		"main.go|parse|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|parse|name":              "a required flag's name, a literal map key at every call site in this file",
 		"main.go|count|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
@@ -89,6 +90,12 @@ var messageBusAudit = audit.Config{
 		"oneline.Quote", "quoteList", "cappedList",
 	},
 	Imports: []string{
+		// internal/log holds the structured JSON line of SPEC-LOGS.md Part 2. It cannot
+		// write past the escape: its one writer is the sink the verb hands it, every
+		// field whose content comes from outside the program goes through oneline and
+		// then Redact inside Line.Write, and the object is rendered by log/slog's own
+		// JSON handler, which escapes a newline as \n rather than ending the line.
+		`"github.com/mas-bandwidth/nova-tools/internal/log"`,
 		// version.go's resolution order, which now lives once in internal/buildinfo
 		// rather than in a copy per binary: it reads debug.ReadBuildInfo, holds no
 		// writer of its own, and returns a string this package renders through

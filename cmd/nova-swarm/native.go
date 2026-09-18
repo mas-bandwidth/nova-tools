@@ -66,11 +66,16 @@ type nativeRunResult struct {
 	job          string  // the job directory <slot>/jobs/<label> the child ran in
 	usageState   string  // the store path the NATIVE OK line names when no store answered, "" otherwise
 	usageReason  string  // no-rows | no-store | no-sqlite3, "" when the store answered
-	configSHA    string  // sha8 of the carried provider config, "" when --config named none
-	tmp          string  // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
-	harness      string  // ok | silent: silent when the capture holds no words of the child's and no result was found
-	fence        string  // the first path the harness's own fence auto-rejected, "" when it rejected nothing
-	wallReport   string  // the WALL report line when the fence stopped the card and it published nothing (issue #918)
+	// usage is the last launch's own row as the numbers a done event carries: tokens in
+	// and out, the cache columns, the reasoning tokens and the dollars, each a dash when
+	// the provider reported nothing. It is the row that was just written to usage.tsv --
+	// never a second reading of the store -- so the line and the file cannot disagree.
+	usage      swarm.UsageRow
+	configSHA  string // sha8 of the carried provider config, "" when --config named none
+	tmp        string // the TMPDIR the child was handed, <slot>/tmp/<label>, never a repo
+	harness    string // ok | silent: silent when the capture holds no words of the child's and no result was found
+	fence      string // the first path the harness's own fence auto-rejected, "" when it rejected nothing
+	wallReport string // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 }
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -410,7 +415,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
-		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, errOut)
+		res.usageReason, res.usageState, res.usage = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, errOut)
 		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
@@ -874,7 +879,7 @@ func sameDir(a, b string) bool {
 // attempt, so a retried card's usage.tsv carries attempt=1,2,3 for its one job and each
 // attempt is summed once. A fast failure whose provider reported nothing keeps its dashes,
 // and `usd` stays a dash rather than becoming a zero.
-func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc, attempt int, errOut io.Writer) (reason, path string) {
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc, attempt int, errOut io.Writer) (reason, path string, written swarm.UsageRow) {
 	usage, note, storePath, rr := swarm.ReadCardUsage(dataHome, start, end)
 	rcCol := "-"
 	if rc >= 0 {
@@ -899,12 +904,12 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}
 	if rr == "" {
-		return "", ""
+		return "", "", row
 	}
 	if storePath == "" {
 		storePath = filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
 	}
-	return rr, storePath
+	return rr, storePath, row
 }
 
 // providerOf splits a native model id on its single slash and reports whether it

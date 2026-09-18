@@ -84,7 +84,7 @@ func Redact(s string) string {
 	s = reBearer.ReplaceAllString(s, Redacted)
 	s = reKeyedValue.ReplaceAllStringFunc(s, func(m string) string {
 		g := reKeyedValue.FindStringSubmatch(m)
-		if len(g) != 5 || g[4] == Redacted {
+		if len(g) != 5 || g[4] == Redacted || isCount(g[1], g[4]) {
 			return m
 		}
 		return g[1] + g[2] + g[3] + Redacted
@@ -96,6 +96,60 @@ func Redact(s string) string {
 		return m
 	})
 	return s
+}
+
+// countedKeys are the keys whose word looks like a credential to reKeyedValue and is not
+// one: it is a NUMBER OF tokens and never a token. `tokens_in=12345` is a card's spend, and
+// token spend reporting is an obligation here -- a log in which every usage number reads
+// [redacted] is a ledger nobody can keep (found the first time nova-swarm native's done
+// line reached Loki from hulk, 2026-09-18).
+//
+// The distinction is the plural: `token`, `api_token` and `auth_token` are credentials,
+// while `tokens`, `tokens_in` and `max_tokens` are counts of them. The numeric test below
+// is the second half of the rule, so a key on this list still redacts anything that is not
+// a number: a count is digits, and a credential never is.
+var countedKeys = map[string]bool{
+	"tokens": true, "tokens_in": true, "tokens_out": true, "tokens_total": true,
+	"max_tokens": true, "input_tokens": true, "output_tokens": true,
+	"reasoning_tokens": true, "cache_tokens": true, "token_count": true,
+	"token_budget": true,
+}
+
+// isCount reports whether a keyed value is a measurement rather than a credential: an
+// ABSENCE, which is the dash this tree writes wherever a number was not reported and is a
+// secret in no reading at all, or one of the counted keys above carrying a number.
+func isCount(key, value string) bool {
+	if value == "-" {
+		return true
+	}
+	return countedKeys[strings.ToLower(key)] && isNumber(value)
+}
+
+// isNumber is digits, with at most one dot and an optional leading minus -- the shape of
+// every count and every dollar figure the fleet writes. It is deliberately not a parser: a
+// value that is nearly a number is not one, and is redacted.
+func isNumber(s string) bool {
+	if s == "" {
+		return false
+	}
+	s = strings.TrimPrefix(s, "-")
+	if s == "" {
+		return false
+	}
+	dots := 0
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+		case r == '.':
+			dots++
+			if dots > 1 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // mixedClasses is the entropy rule's test: at least entropyPerClass upper-case letters,
