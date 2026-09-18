@@ -1477,7 +1477,13 @@ names the first entry that turns the base red: `SIMULATE OK #<n>` for each that 
 `SIMULATE CONFLICT #<n> with the entries ahead` for one that conflicts (skipped, and the
 entries after it still judged), and `SIMULATE POISON #<n> check="<check>" <first failing
 line>` for the first red one, with `SIMULATE DONE entries=<n> ok=<n> conflicts=<n>
-poison=<#n|none>` and exit 2 when a poison was found, 1 when it could not run at all.
+poison=<#n|none>` and exit 2 when a poison was found **or the invocation named something
+the verb cannot use** — a `--repo` that is not a repository, an `--entries` file that
+cannot be read or holds a line that is not a pull request number, a `--base` or a
+`pull/<n>/head` the origin does not have — 1 when the invocation was good and it could not
+run at all. The scratch worktree is removed whole on the way out, the directory **and**
+git's own entry for it under `.git/worktrees/`, and a removal that could not happen is one
+`SIMULATE NOTE` rather than a silence.
 
 **What it reads and what it writes.** It reads the lane's `state.json` and the lane branch's records through the fold, and the host through `Host.PR` and `Host.Checks` — no new client, and no re-derivation inside one sweep (one snapshot per pass). It writes `<lane>/queue.json` (`queued`, `skipped`, `parked`), `<lane>/hold` (present means held; its first line is the reason), and one immutable `classify` record per decision under `<lane>/classify/<run>-<at>-<rand6>.json`, pushed by the tool exactly as a read is (rule 22). **A record's path is a git path and is built with `path.Join`, never `filepath.Join`**: it is written into the record's own `file` field, it is the pathspec for `git add`, and it is the right-hand side of the confirming `git show <rev>:<path>`, all of which git spells with forward slashes on every platform. Built with the machine's separator it came out `classify\<name>.json` on Windows, the push landed, the confirm asked for a file whose name contains a backslash and `queue classify` exited 1 on windows-latest alone (#1335). `destinationOf` makes the path a git path at the one boundary where a record's `file` reaches git, and `TestRecordPathsAreGitPathsNotMachinePaths` reads this package's source so the class cannot come back on a host where it is invisible. Every queue write is a read-modify-write under rule 1's kernel lock through a fixed temp name; every path comes from `--lane` and nothing goes under `/tmp` (rule 13).
 
