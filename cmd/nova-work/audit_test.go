@@ -37,6 +37,15 @@ var workAudit = audit.Config{
 		// worklang is the bounded plan reader; it parses bytes into values and every
 		// field it yields is printed through oneline.
 		`"github.com/mas-bandwidth/nova-tools/internal/worklang"`,
+		// The events verb's edges. context is CancelFunc plumbing for the deadline and
+		// writes nothing; time is duration parsing and the injected clock, both rendered
+		// through oneline; the redis client and internal/ci are read and published
+		// through their own APIs, and this package prints only the escaped lines below,
+		// so none of them writes past oneline.
+		`"context"`,
+		`"time"`,
+		`"github.com/redis/go-redis/v9"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,

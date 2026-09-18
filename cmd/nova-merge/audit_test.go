@@ -69,6 +69,13 @@ var mergeAudit = audit.Config{
 		// oneline.Escape or oneline.Err before printing. It cannot write past the
 		// escape.
 		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
+		// react.go's two edges. context is CancelFunc plumbing and writes nothing; the
+		// redis client and internal/ci are read and published through their own APIs and
+		// this package prints only the escaped lines below, so neither writes past
+		// oneline.
+		`"context"`,
+		`"github.com/redis/go-redis/v9"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
 	},
 	MinClassified: 60,
 }
