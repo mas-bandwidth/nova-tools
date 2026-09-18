@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -168,30 +169,75 @@ func TestBenchProbeNeverReadsAuth(t *testing.T) {
 }
 
 // probeReaders are the commands that would copy a file's CONTENTS out of the
-// bench. `stat` is not one of them: it answers about the file, which is the
-// whole point of the check above.
-var probeReaders = []string{"cat", "head", "cp"}
+// bench. `stat` is not one of them: it answers ABOUT the file without opening
+// it, which is the whole point of the check above. The list is wider than the
+// three the check started with, because the question it answers is "did
+// anything take the bytes", and `tail` or `base64` takes them just as well as
+// `cat` does.
+var probeReaders = []string{
+	"base64", "cat", "cp", "dd", "head", "less", "more", "od", "scp", "tail", "xxd",
+}
 
-// readsPath reports whether one line of the fake ssh's recording READ the file
-// at p. The fake records `"$*"` -- the words it was handed, space-joined -- so
-// the question is about the recorded ARGV WORDS and never about the letters in
-// the line.
+// words splits one recorded line into the argv WORDS the fake ssh was handed.
+// The fake records `"$*"`, so a word is something the bench would have run or
+// been handed -- and a SUBSTRING of the line is not. Everything below asks
+// about words for the reason benchlog_test.go gives at length: the letters of
+// a command turn up inside paths, and on darwin they turn up inside a $TMPDIR
+// that is random per boot.
+func words(line string) []string { return strings.Fields(line) }
+
+// commandIs reports whether the argv word w invoked the command `name`, by the
+// word itself or by a path ending in it: `cat` and `/bin/cat` are both cat.
+// bench is a remote POSIX shell, so a word that carries a directory carries it
+// with slashes whatever this test is running on.
+func commandIs(w, name string) bool { return w == name || path.Base(w) == name }
+
+// readsPath reports whether one line of the recording READ the file at p: the
+// line handed p as a whole argv word AND ran a reader as some OTHER word. The
+// "other word" is not a nicety -- an auth file named `cp` is an argument, and
+// an argument is not a command.
 func readsPath(line, p string) bool {
-	if !strings.Contains(line, p) {
+	ws := words(line)
+	named := false
+	for _, w := range ws {
+		if w == p {
+			named = true
+			break
+		}
+	}
+	if !named {
 		return false
 	}
-	for _, reader := range probeReaders {
-		if strings.Contains(line, reader) {
-			return true
+	for _, w := range ws {
+		if w == p {
+			continue
+		}
+		for _, reader := range probeReaders {
+			if commandIs(w, reader) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// ranOn reports whether any line of the recording ran `name` on the file at p.
+// ranOn reports whether any ONE line of the recording ran `name` on the file at
+// p. One line, because the recording is one line per ssh invocation: a command
+// on one line and the path on another are two round trips, not one.
 func ranOn(log, name, p string) bool {
 	for _, line := range strings.Split(log, "\n") {
-		if strings.Contains(line, name) && strings.Contains(line, p) {
+		ws := words(line)
+		ran, named := false, false
+		for _, w := range ws {
+			if w == p {
+				named = true
+				continue
+			}
+			if commandIs(w, name) {
+				ran = true
+			}
+		}
+		if ran && named {
 			return true
 		}
 	}
