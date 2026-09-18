@@ -54,13 +54,13 @@ func TestTheCommandReferenceDeclaresEveryReleaseVerb(t *testing.T) {
 	}
 }
 
-// LESSON 12. The definition of done is a gate in front of the tag, and the
+// LESSON 11. The definition of done is a gate in front of the tag, and the
 // gate's whole worth is that somebody meeting its refusal can find out what it
 // is. A refusal a person cannot look up is a refusal they route around.
 func TestTheDogfoodGateIsInTheReleaseSpec(t *testing.T) {
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-RELEASE.md"))
 	for _, want := range []string{
-		"## 12. ",
+		"## 11. ",
 		"RELEASE CUT REFUSED reason=dogfood-gate",
 		"RELEASE BUILD REFUSED",
 		"--no-dogfood-gate",

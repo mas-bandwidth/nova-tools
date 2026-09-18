@@ -304,6 +304,51 @@ against `internal/release.Verbs` so a sixth release verb fails on the day it is 
 *Tests: `TestTheCommandReferenceDeclaresEveryReleaseVerb`,
 `TestTheFourthDogfoodsLessonsAreInTheReleaseSpec`.*
 
+## 11. A release is cut only when a non-author has run it
+
+Glenn, 2026-09-18, the definition of done: a tool is finished when it has been **tested**, **dogfooded
+by somebody who did not write it** on real work, and the **feedback applied**. `nova-check dogfood
+gate` made that mechanical — receipts on disk, read against the command reference, an exit code. What
+it did not have was a caller. The claim that a release had been dogfooded was whatever the last person
+said it was, and a tag cannot be quietly amended and pushed again.
+
+**`cut` and `build` run the gate FIRST.** Before the forge is asked anything, before a single tool is
+compiled. The gate is `internal/dogfood.Gate` in process rather than a shell out to `nova-check` — one
+process, one set of refusals, no shell to get wrong — and it is the same read
+`nova-check dogfood gate --cli <reference> --receipts <dir>` does.
+
+**An OPEN EDGE refuses.** An open edge is a verb somebody ran, that did not do what they needed, and
+that nobody has run since and said it did. Feedback *filed* is not feedback *applied*, and the third
+step of the definition is the one that used to go missing:
+
+```
+RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate --reason <why>"
+```
+
+`build` refuses the same way under `RELEASE BUILD REFUSED`, because a dev build has no tag and no
+changelog and still reaches four benches through `adopt`. The gate asks the question a release turns
+on, not the stronger `--require-all` one: a tag held hostage to the last unrun verb in a long reference
+is a tag nobody ever cuts.
+
+**The two inputs, and the one default in this package.** `--cli` names the command reference and
+defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,
+`--source` for `build`). `--receipts` names the receipts directory and defaults to
+`~/rowan-working/dogfood` **when that directory exists** — the single exception to SPEC-UPDATE rule 1,
+taken because the alternative fails in the direction that lets a tool ship. A run with neither is not a
+run that passed: it prints `RELEASE CUT NOTE dogfood-gate=skipped …` naming what was missing.
+
+**The waiver is work, and it outlives the terminal.** `--no-dogfood-gate` without `--reason <why>`
+refuses. With one, the reason is printed as `RELEASE CUT DOGFOOD WAIVED reason=<why>`, the receipt line
+carries `dogfood=waived`, and the reason is written into the CHANGELOG section as
+`Dogfood gate waived: <why>` — in the file that travels by git, because a waiver nobody can find later
+is a gate nobody has. Every release line now carries `dogfood=ok|waived|skipped`.
+
+*Tests: `TestCutRefusesOnAnOpenEdgeBeforeItAsksTheForgeAnything`,
+`TestBuildRefusesOnAnOpenEdgeBeforeItCompilesAnything`,
+`TestCutWaivesTheGateOnlyWithAReasonAndRecordsItEverywhere`, `TestCutNamesASkippedGate`,
+`TestCutFindsTheReferenceBesideTheChangelog`, `TestTheRefusalIsBounded`, `TestTheGateIsASeam`,
+`TestTheDogfoodGateIsInTheReleaseSpec`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and Johnny's read of
