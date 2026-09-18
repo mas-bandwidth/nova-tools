@@ -109,14 +109,14 @@ func TestCutIssueTitleAndBodyAreVerbatim(t *testing.T) {
 	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "issue", validatedIssueTemplate)
 	out := filepath.Join(dir, "out")
 	code, stdout, stderr := runValidatedCut(t, "--issue", "mas-bandwidth/nova-tools#42",
-		"--templates", tmpl, "--out", out, "--root", filepath.Join(dir, "root"))
+		"--templates", tmpl, "--out", out, "--repo", dir)
 	if code != 0 {
 		t.Fatalf("cut --issue exit = %d, want 0; stderr=%q", code, stderr)
 	}
 	if !strings.Contains(stdout, "CUT OK cards=1 from=issue skipped=0 out="+out) {
 		t.Fatalf("stdout=%q, want the one line of the section", stdout)
 	}
-	card, err := os.ReadFile(filepath.Join(out, "42.md"))
+	card, err := os.ReadFile(filepath.Join(out, "card-42.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestCutRowsOneCardPerGroup(t *testing.T) {
 	}
 	out := filepath.Join(dir, "out")
 	code, stdout, stderr := runValidatedCut(t, "--rows", rows,
-		"--templates", tmpl, "--out", out, "--root", filepath.Join(dir, "root"))
+		"--templates", tmpl, "--out", out, "--repo", dir)
 	if code != 0 {
 		t.Fatalf("cut --rows exit = %d, want 0; stderr=%q", code, stderr)
 	}
@@ -151,8 +151,8 @@ func TestCutRowsOneCardPerGroup(t *testing.T) {
 		t.Fatalf("stdout=%q, want cards=2 from=rows skipped=0", stdout)
 	}
 	names := mdFiles(t, out)
-	if len(names) != 2 || names[0] != "one.md" || names[1] != "two.md" {
-		t.Fatalf("cards = %v, want exactly one.md and two.md", names)
+	if len(names) != 2 || names[0] != "card-one.md" || names[1] != "card-two.md" {
+		t.Fatalf("cards = %v, want exactly card-one.md and card-two.md", names)
 	}
 }
 
@@ -174,11 +174,11 @@ func TestCutBranchDerivedAndAbsent(t *testing.T) {
 	// Absent: the default git answers exit 0 with no ref, so the derived branch is free.
 	gitAnswers(t, specs, "")
 	code, stdout, stderr := runValidatedCut(t, "--issue", "mas-bandwidth/nova-tools#42",
-		"--templates", issueTmpl, "--out", out, "--root", filepath.Join(dir, "root"))
+		"--templates", issueTmpl, "--out", out, "--repo", dir)
 	if code != 0 {
 		t.Fatalf("absent branch: exit = %d, want 0; stderr=%q", code, stderr)
 	}
-	card, err := os.ReadFile(filepath.Join(out, "42.md"))
+	card, err := os.ReadFile(filepath.Join(out, "card-42.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,9 +191,9 @@ func TestCutBranchDerivedAndAbsent(t *testing.T) {
 
 	// Present on origin: CUT REFUSED check=branch, no card written for this run.
 	os.RemoveAll(out)
-	gitAnswers(t, specs, "", fakeRule{Arg: 3, Equals: branch, Stdout: "abc123\trefs/heads/" + branch})
+	gitAnswers(t, specs, "", fakeRule{Arg: 5, Equals: branch, Stdout: "abc123\trefs/heads/" + branch})
 	code, _, stderr = runValidatedCut(t, "--issue", "mas-bandwidth/nova-tools#42",
-		"--templates", issueTmpl, "--out", out, "--root", filepath.Join(dir, "root"))
+		"--templates", issueTmpl, "--out", out, "--repo", dir)
 	if code != 2 {
 		t.Fatalf("present branch: exit = %d, want 2; stderr=%q", code, stderr)
 	}
@@ -212,11 +212,11 @@ func TestCutBranchDerivedAndAbsent(t *testing.T) {
 	})
 	out2 := filepath.Join(dir, "out2")
 	code, _, stderr = runValidatedCut(t, "--branch-from", "mas-bandwidth/nova-tools#42",
-		"--templates", prTmpl, "--out", out2, "--root", filepath.Join(dir, "root"))
+		"--templates", prTmpl, "--out", out2, "--repo", dir)
 	if code != 0 {
 		t.Fatalf("--branch-from: exit = %d, want 0; stderr=%q", code, stderr)
 	}
-	card2, err := os.ReadFile(filepath.Join(out2, "rowan-issue-42-fix-the-widget.md"))
+	card2, err := os.ReadFile(filepath.Join(out2, "card-rowan-issue-42-fix-the-widget.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestCutBranchDerivedAndAbsent(t *testing.T) {
 // refuses the row naming the missing path, exit 2, no card written.
 func TestCutNamesExistAtBase(t *testing.T) {
 	specs := fakePATH(t)
-	gitAnswers(t, specs, "", fakeRule{Arg: 3, Equals: "dev:missing.md", Exit: 1})
+	gitAnswers(t, specs, "", fakeRule{Arg: 5, Equals: "dev:missing.md", Exit: 1})
 	dir := t.TempDir()
 	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "rows", validatedRowsTemplate)
 	rows := filepath.Join(dir, "rows.tsv")
@@ -240,7 +240,7 @@ func TestCutNamesExistAtBase(t *testing.T) {
 	}
 	out := filepath.Join(dir, "out")
 	code, _, stderr := runValidatedCut(t, "--rows", rows,
-		"--templates", tmpl, "--out", out, "--root", filepath.Join(dir, "root"))
+		"--templates", tmpl, "--out", out, "--repo", dir)
 	if code != 2 {
 		t.Fatalf("missing path: exit = %d, want 2; stderr=%q", code, stderr)
 	}
@@ -271,7 +271,7 @@ STEP last. Write RESULT.md.`
 	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "issue", split)
 	out := filepath.Join(dir, "out")
 	code, _, stderr := runValidatedCut(t, "--issue", "mas-bandwidth/nova-tools#42",
-		"--templates", tmpl, "--out", out, "--root", filepath.Join(dir, "root"))
+		"--templates", tmpl, "--out", out, "--repo", dir)
 	if code != 2 {
 		t.Fatalf("split STEP 1: exit = %d, want 2; stderr=%q", code, stderr)
 	}
@@ -284,7 +284,7 @@ STEP last. Write RESULT.md.`
 
 	one := writeValidatedTemplates(t, filepath.Join(dir, "templates2"), "issue", validatedIssueTemplate)
 	code, _, stderr = runValidatedCut(t, "--issue", "mas-bandwidth/nova-tools#42",
-		"--templates", one, "--out", filepath.Join(dir, "out2"), "--root", filepath.Join(dir, "root"))
+		"--templates", one, "--out", filepath.Join(dir, "out2"), "--repo", dir)
 	if code != 0 {
 		t.Fatalf("one-line STEP 1: exit = %d, want 0; stderr=%q", code, stderr)
 	}
@@ -307,7 +307,7 @@ func TestCutSeparatorAndHeaderAreNotCards(t *testing.T) {
 	}
 	out := filepath.Join(dir, "out")
 	code, stdout, stderr := runValidatedCut(t, "--rows", rows,
-		"--templates", tmpl, "--out", out, "--root", filepath.Join(dir, "root"))
+		"--templates", tmpl, "--out", out, "--repo", dir)
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 (two rows cut nothing); stderr=%q", code, stderr)
 	}
@@ -315,8 +315,8 @@ func TestCutSeparatorAndHeaderAreNotCards(t *testing.T) {
 		t.Fatalf("stdout=%q, want cards=2 from=rows skipped=2", stdout)
 	}
 	names := mdFiles(t, out)
-	if len(names) != 2 || names[0] != "one.md" || names[1] != "two.md" {
-		t.Fatalf("cards = %v, want exactly one.md and two.md and no header or separator card", names)
+	if len(names) != 2 || names[0] != "card-one.md" || names[1] != "card-two.md" {
+		t.Fatalf("cards = %v, want exactly card-one.md and card-two.md and no header or separator card", names)
 	}
 }
 
@@ -337,7 +337,7 @@ STEP last. Write RESULT.md.`
 	fakeTool(t, specs, "gh", fakeSpec{Default: fakeRule{Stdout: issueJSON(t, "one\ntwo", "")}})
 	out := filepath.Join(dir, "out")
 	code, _, stderr := runValidatedCut(t, "--issue", "mas-bandwidth/nova-tools#42",
-		"--templates", tmpl, "--out", out, "--root", filepath.Join(dir, "root"))
+		"--templates", tmpl, "--out", out, "--repo", dir)
 	if code != 2 {
 		t.Fatalf("two-line title: exit = %d, want 2; stderr=%q", code, stderr)
 	}
@@ -350,7 +350,7 @@ STEP last. Write RESULT.md.`
 
 	fakeTool(t, specs, "gh", fakeSpec{Default: fakeRule{Stdout: issueJSON(t, "one line", "")}})
 	code, _, stderr = runValidatedCut(t, "--issue", "mas-bandwidth/nova-tools#42",
-		"--templates", tmpl, "--out", filepath.Join(dir, "out2"), "--root", filepath.Join(dir, "root"))
+		"--templates", tmpl, "--out", filepath.Join(dir, "out2"), "--repo", dir)
 	if code != 0 {
 		t.Fatalf("one-line title: exit = %d, want 0; stderr=%q", code, stderr)
 	}
@@ -364,8 +364,8 @@ func TestCutRefusesTheFirstFailingCheck(t *testing.T) {
 	log := filepath.Join(dir, "git.log")
 	branch := "rowan/issue-1-one"
 	gitAnswers(t, specs, log,
-		fakeRule{Arg: 3, Equals: branch, Stdout: "abc123\trefs/heads/" + branch},
-		fakeRule{Arg: 3, Equals: "dev:missing.md", Exit: 1})
+		fakeRule{Arg: 5, Equals: branch, Stdout: "abc123\trefs/heads/" + branch},
+		fakeRule{Arg: 5, Equals: "dev:missing.md", Exit: 1})
 	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "rows", validatedRowsTemplate)
 	rows := filepath.Join(dir, "rows.tsv")
 	if err := os.WriteFile(rows, []byte("one\tdev\tmissing.md\tok.md\t"+branch+"\n"), 0o644); err != nil {
@@ -373,7 +373,7 @@ func TestCutRefusesTheFirstFailingCheck(t *testing.T) {
 	}
 	out := filepath.Join(dir, "out")
 	code, _, stderr := runValidatedCut(t, "--rows", rows,
-		"--templates", tmpl, "--out", out, "--root", filepath.Join(dir, "root"))
+		"--templates", tmpl, "--out", out, "--repo", dir)
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2; stderr=%q", code, stderr)
 	}
@@ -386,5 +386,199 @@ func TestCutRefusesTheFirstFailingCheck(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "cat-file") {
 		t.Fatalf("the path check ran after the branch check failed: %s", raw)
+	}
+}
+
+// The dogfood edges of 2026-09-18, red first: a branch name with a space was CUT OK, every
+// git call read the working directory, the cards were written under a name `fill` steps
+// over, a second cut overwrote the first's cards.tsv, and the three templates the section
+// describes shipped nowhere.
+
+// TestCutRefusesABranchNameGitWouldRefuse: `rowan/has a space` is not a branch. The name is
+// checked in process with git check-ref-format --branch semantics, before any ls-remote, so
+// no child is started and no card is written.
+func TestCutRefusesABranchNameGitWouldRefuse(t *testing.T) {
+	specs := fakePATH(t)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "git.log")
+	gitAnswers(t, specs, log)
+	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "rows", validatedRowsTemplate)
+	rows := filepath.Join(dir, "rows.tsv")
+	if err := os.WriteFile(rows, []byte("one\tdev\ta.go\tb.md\trowan/has a space\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out")
+	code, _, stderr := runValidatedCut(t, "--rows", rows, "--templates", tmpl, "--out", out, "--repo", dir)
+	if code != 2 {
+		t.Fatalf("a branch with a space: exit = %d, want 2; stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stderr, "CUT REFUSED check=branch") || !strings.Contains(stderr, "it holds a space") {
+		t.Fatalf("stderr=%q, want check=branch naming the space", stderr)
+	}
+	if names := mdFiles(t, out); len(names) != 0 {
+		t.Fatalf("cards written despite the refusal: %v", names)
+	}
+	if raw, err := os.ReadFile(log); err == nil && strings.Contains(string(raw), "ls-remote") {
+		t.Fatalf("ls-remote ran for a name git would not accept: %s", raw)
+	}
+}
+
+// TestCutRunsEveryGitCallInTheNamedRepo: the rule is that a command never depends on the
+// working directory, so every git call carries -C <repo>, and --repo is required for the
+// validated forms.
+func TestCutRunsEveryGitCallInTheNamedRepo(t *testing.T) {
+	specs := fakePATH(t)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "git.log")
+	gitAnswers(t, specs, log)
+	clone := filepath.Join(dir, "clone")
+	if err := os.MkdirAll(clone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "rows", validatedRowsTemplate)
+	rows := filepath.Join(dir, "rows.tsv")
+	if err := os.WriteFile(rows, []byte("one\tdev\ta.go\tb.md\trowan/issue-1-one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := runValidatedCut(t, "--rows", rows, "--templates", tmpl,
+		"--out", filepath.Join(dir, "out"), "--repo", clone)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr)
+	}
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("no git was run: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) == 0 {
+		t.Fatal("no git was run")
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "git -C "+clone+" ") {
+			t.Errorf("a git call did not run in --repo: %q", line)
+		}
+	}
+
+	// Without --repo the verb refuses rather than reading the working directory.
+	var out, errb bytes.Buffer
+	code = run([]string{"cut", "--rows", rows, "--templates", tmpl, "--out", filepath.Join(dir, "out2")},
+		&out, &errb, time.Now().UTC())
+	if code != 2 {
+		t.Fatalf("cut without --repo exit = %d, want 2; stderr=%q", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "--repo is required") {
+		t.Fatalf("the refusal does not name --repo: %q", errb.String())
+	}
+
+	// A --repo that is not a directory is a refusal, not a git error three calls later.
+	code, _, stderr = runValidatedCut(t, "--rows", rows, "--templates", tmpl,
+		"--out", filepath.Join(dir, "out3"), "--repo", filepath.Join(dir, "nowhere"))
+	if code != 2 {
+		t.Fatalf("cut with a missing --repo exit = %d, want 2; stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stderr, "--repo") || !strings.Contains(stderr, "not a directory") {
+		t.Fatalf("stderr=%q, want a refusal naming --repo", stderr)
+	}
+}
+
+// TestCutWritesTheQueuesFilenameContract: a cut card is a card-<n>.md, which is what fill
+// globs. `<label>.md` was a directory of cards the tick stepped over in silence.
+func TestCutWritesTheQueuesFilenameContract(t *testing.T) {
+	specs := fakePATH(t)
+	fakeTool(t, specs, "gh", fakeSpec{Default: fakeRule{Stdout: issueJSON(t, "Fix the widget", "the body")}})
+	gitAnswers(t, specs, "")
+	dir := t.TempDir()
+	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "issue", validatedIssueTemplate)
+	out := filepath.Join(dir, "out")
+	code, _, stderr := runValidatedCut(t, "--issue", "mas-bandwidth/nova-tools#42",
+		"--templates", tmpl, "--out", out, "--repo", dir)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr)
+	}
+	names := mdFiles(t, out)
+	if len(names) != 1 || names[0] != "card-42.md" {
+		t.Fatalf("cards = %v, want exactly card-42.md", names)
+	}
+	globbed, err := filepath.Glob(filepath.Join(out, "card-*.md"))
+	if err != nil || len(globbed) != 1 {
+		t.Fatalf("the queue's own glob found %v, want the one card", globbed)
+	}
+}
+
+// TestCutAppendsToCardsTSV: a second cut into the same --out adds its rows; the first cut's
+// cards are still named by the table. A row already there is not written twice.
+func TestCutAppendsToCardsTSV(t *testing.T) {
+	specs := fakePATH(t)
+	gitAnswers(t, specs, "")
+	dir := t.TempDir()
+	tmpl := writeValidatedTemplates(t, filepath.Join(dir, "templates"), "rows", validatedRowsTemplate)
+	out := filepath.Join(dir, "out")
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	first := write("first.tsv", "one\tdev\ta.go\tb.md\trowan/issue-1-one\n")
+	second := write("second.tsv", "two\tdev\tc.go\td.md\trowan/issue-2-two\n")
+	for _, rows := range []string{first, second, second} {
+		if code, _, stderr := runValidatedCut(t, "--rows", rows, "--templates", tmpl,
+			"--out", out, "--repo", dir); code != 0 {
+			t.Fatalf("cut %s exit = %d; stderr=%q", rows, code, stderr)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "cards.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("cards.tsv = %q, want the two cards of the two cuts and no repeat", lines)
+	}
+	if !strings.HasPrefix(lines[0], "one\t") || !strings.HasPrefix(lines[1], "two\t") {
+		t.Fatalf("cards.tsv = %q, want the first cut's row first", lines)
+	}
+}
+
+// TestShippedValidatedTemplatesCut: the three examples the reference names are in the repo
+// and every one of them passes the five checks and cuts a card.
+func TestShippedValidatedTemplatesCut(t *testing.T) {
+	shipped := filepath.Join("testdata", "templates")
+	for _, name := range []string{"issue.md", "rows.md", "branch-from.md"} {
+		if _, err := os.Stat(filepath.Join(shipped, name)); err != nil {
+			t.Fatalf("the reference names %s and the repo does not ship it: %v", name, err)
+		}
+	}
+	specs := fakePATH(t)
+	gitAnswers(t, specs, "")
+	fakeTool(t, specs, "gh", fakeSpec{
+		Rules: []fakeRule{
+			{Arg: 1, Equals: "issue", Stdout: issueJSON(t, "Fix the widget", "the body of the issue")},
+			{Arg: 1, Equals: "pr", Stdout: `{"headRefName":"rowan/a-head","headRefOid":"abc123"}`},
+		},
+		Default: fakeRule{Stdout: issueJSON(t, "Fix the widget", "the body of the issue")},
+	})
+	dir := t.TempDir()
+	rows := filepath.Join(dir, "rows.tsv")
+	if err := os.WriteFile(rows, []byte("one\tdev\ta.go\tb.md\trowan/issue-1-one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ flag, value, card string }{
+		{"--issue", "mas-bandwidth/nova-tools#42", "card-42.md"},
+		{"--rows", rows, "card-one.md"},
+		{"--branch-from", "mas-bandwidth/nova-tools#42", "card-rowan-a-head.md"},
+	} {
+		out := filepath.Join(dir, "out"+strings.TrimPrefix(c.flag, "--"))
+		code, stdout, stderr := runValidatedCut(t, c.flag, c.value, "--templates", shipped, "--out", out, "--repo", dir)
+		if code != 0 {
+			t.Fatalf("cut %s with the shipped template: exit = %d; stderr=%q", c.flag, code, stderr)
+		}
+		if !strings.Contains(stdout, "CUT OK cards=1") {
+			t.Fatalf("cut %s: stdout=%q, want one card", c.flag, stdout)
+		}
+		if _, err := os.Stat(filepath.Join(out, c.card)); err != nil {
+			t.Fatalf("cut %s wrote no %s: %v (%v)", c.flag, c.card, err, mdFiles(t, out))
+		}
 	}
 }

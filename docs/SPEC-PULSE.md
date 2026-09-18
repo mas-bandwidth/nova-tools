@@ -1054,8 +1054,21 @@ an issue (`--issue <repo>#<n>`, title and body verbatim), a table of rows (`--ro
 by hand becomes a flag and the script retires. The verb line, as help will print it:
 
 ```
-nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--max <n>]
 ```
+
+**Amended 2026-09-18, from a non-author's dogfood run.** Four things the section above
+did not say, and the verb now does. `--repo <clone>` is required of the three validated
+forms and every `git` call runs with `-C <repo>`: a command never depends on the working
+directory. `--root` is the pool form's alone — the validated forms wrote nothing under it
+and asked for it anyway. The branch check begins with `git check-ref-format --branch`
+semantics applied in process, because `rowan/has a space` was `CUT OK`. Every card is
+written as `card-<label>.md`, the one filename contract the queue directories keep and the
+one `nova-pulse fill` globs, and a second cut into the same `--out` appends to `cards.tsv`
+rather than overwriting it. One example of each template ships at
+`cmd/nova-pulse/testdata/templates/{issue,rows,branch-from}.md`, and a test cuts a card
+from each.
 
 **It reads one source and one template, and writes only cards.** `--issue` reads title and
 body verbatim through `gh issue view --json title,body`; `--rows` reads a tab-separated file,
