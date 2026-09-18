@@ -2,10 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/redisq"
+	"github.com/redis/go-redis/v9"
 )
 
 func writeSeed(t *testing.T, body string) string {
@@ -32,7 +38,7 @@ const cycleSeed = `{"nodes":[{"id":"a","needs":["b"]},{"id":"b","needs":["a"]}]}
 
 func invoke(args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
-	code := run(args, &stdout, &stderr)
+	code := run(args, strings.NewReader(""), &stdout, &stderr, time.Now().UTC())
 	return code, stdout.String(), stderr.String()
 }
 
@@ -124,7 +130,7 @@ func TestReadyRefusesAnUnknownNode(t *testing.T) {
 func TestPlanCheckReadsAValidPlan(t *testing.T) {
 	path := writePlan(t, "(:plan :version 1 (:node :id \"n1\" :kind docs :bespoke \"kept\"))\n")
 	var out, errb bytes.Buffer
-	code := run([]string{"plan", "check", "--file", path}, &out, &errb)
+	code := run([]string{"plan", "check", "--file", path}, strings.NewReader(""), &out, &errb, time.Now().UTC())
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%s", code, errb.String())
 	}
@@ -184,7 +190,7 @@ func TestPlanCheckRefusals(t *testing.T) {
 			path := writePlan(t, tc.body)
 			args := append([]string{"plan", "check", "--file", path}, tc.args...)
 			var out, errb bytes.Buffer
-			code := run(args, &out, &errb)
+			code := run(args, strings.NewReader(""), &out, &errb, time.Now().UTC())
 			if code != 2 {
 				t.Fatalf("exit = %d, want 2; stderr=%s", code, errb.String())
 			}
@@ -203,7 +209,7 @@ func TestPlanCheckRefusals(t *testing.T) {
 
 func TestPlanCheckRefusesAMissingFile(t *testing.T) {
 	var out, errb bytes.Buffer
-	code := run([]string{"plan", "check"}, &out, &errb)
+	code := run([]string{"plan", "check"}, strings.NewReader(""), &out, &errb, time.Now().UTC())
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2; stderr=%s", code, errb.String())
 	}
@@ -285,4 +291,120 @@ func TestPlanExpandRefusesANeedsCycle(t *testing.T) {
 	if entries, _ := os.ReadDir(out); len(entries) != 0 {
 		t.Fatalf("a refused cycle wrote %d cards", len(entries))
 	}
+}
+
+func writeCard(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func testReadyStream(t *testing.T) (*miniredis.Miniredis, redisq.Client) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	c, err := redisq.Open(mr.Addr())
+	if err != nil {
+		t.Fatalf("open redis: %v", err)
+	}
+	t.Cleanup(func() { c.Close() })
+	if err := c.EnsureGroup(context.Background(), redisq.ReadyStream, redisq.Group, "0"); err != nil {
+		t.Fatalf("ensure group: %v", err)
+	}
+	return mr, c
+}
+
+// TestPushThenPull puts a valid card and reads it back as the bench's group
+// would: the entry carries the id, label, body, priority, needs and pushed-at
+// the spec names.
+func TestPushThenPull(t *testing.T) {
+	mr, c := testReadyStream(t)
+	dir := t.TempDir()
+	path := writeCard(t, dir, "card-one.md", "RESULT: CARD-1 green\n\nrun the thing\n")
+
+	var out, errb bytes.Buffer
+	code := run([]string{"push", "--redis", mr.Addr(), "--card", path, "--priority", "7", "--needs", "a,b"},
+		strings.NewReader(""), &out, &errb, time.Now().UTC())
+	if code != 0 {
+		t.Fatalf("push exit %d: %s", code, errb.String())
+	}
+	line := strings.TrimSpace(out.String())
+	if !strings.HasPrefix(line, "PUSH OK id=") || !strings.Contains(line, "label=card-one") {
+		t.Fatalf("push line = %q, want PUSH OK id=<stream id> label=card-one", line)
+	}
+
+	entry, err := c.ReadGroup(context.Background(), redisq.ReadyStream, redisq.Group, "bench-a", 0)
+	if err != nil || entry == nil {
+		t.Fatalf("read ready: entry=%v err=%v", entry, err)
+	}
+	if got := entry.Field("label"); got != "card-one" {
+		t.Errorf("label = %q, want card-one", got)
+	}
+	if got := entry.Field("body"); !strings.Contains(got, "run the thing") {
+		t.Errorf("body = %q", got)
+	}
+	if got := entry.Field("priority"); got != "7" {
+		t.Errorf("priority = %q, want 7", got)
+	}
+	if got := entry.Field("needs"); got != "a,b" {
+		t.Errorf("needs = %q, want a,b", got)
+	}
+	if entry.Field("id") == "" || entry.Field("pushed-at") == "" {
+		t.Errorf("id and pushed-at must be set: %+v", entry.Fields)
+	}
+}
+
+// TestPushRefusesACardWhoseFirstLineIsNotResult is the card-content refusal:
+// a body whose first line is not a RESULT line never reaches the ready set.
+func TestPushRefusesACardWhoseFirstLineIsNotResult(t *testing.T) {
+	mr, _ := testReadyStream(t)
+	dir := t.TempDir()
+	path := writeCard(t, dir, "not-a-card.md", "just some prose\n")
+
+	var out, errb bytes.Buffer
+	code := run([]string{"push", "--redis", mr.Addr(), "--card", path},
+		strings.NewReader(""), &out, &errb, time.Now().UTC())
+	if code == 0 {
+		t.Fatalf("push accepted a card without a RESULT first line: %s", out.String())
+	}
+	if !strings.Contains(errb.String(), "RESULT:") {
+		t.Errorf("refusal does not name the RESULT line: %s", errb.String())
+	}
+	if n := streamLen(t, mr.Addr(), redisq.ReadyStream); n != 0 {
+		t.Errorf("a refused card reached cards:ready: len=%d", n)
+	}
+}
+
+// TestPushRefusesABadLabel refuses a card whose label carries a character the
+// label grammar does not allow.
+func TestPushRefusesABadLabel(t *testing.T) {
+	mr, _ := testReadyStream(t)
+	dir := t.TempDir()
+	path := writeCard(t, dir, "bad label.md", "RESULT: CARD-2 green\n")
+
+	var errb bytes.Buffer
+	code := run([]string{"push", "--redis", mr.Addr(), "--card", path},
+		strings.NewReader(""), &bytes.Buffer{}, &errb, time.Now().UTC())
+	if code == 0 {
+		t.Fatalf("push accepted a label outside [A-Za-z0-9._-]+")
+	}
+	if !strings.Contains(errb.String(), "label") {
+		t.Errorf("refusal does not name the label: %s", errb.String())
+	}
+	if n := streamLen(t, mr.Addr(), redisq.ReadyStream); n != 0 {
+		t.Errorf("a refused card reached cards:ready: len=%d", n)
+	}
+}
+
+func streamLen(t *testing.T, addr, stream string) int64 {
+	t.Helper()
+	rdb := redis.NewClient(&redis.Options{Addr: addr})
+	defer rdb.Close()
+	n, err := rdb.XLen(context.Background(), stream).Result()
+	if err != nil {
+		t.Fatalf("xlen %s: %v", stream, err)
+	}
+	return n
 }
