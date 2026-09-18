@@ -499,6 +499,12 @@ func TestWorktreeParseOwnerRepo(t *testing.T) {
 		{"host with no path", "https://example.com/", ""},
 		{"one path word", "https://example.com/n.git", ""},
 		{"nothing", "", ""},
+		{"file url", "file:///tmp/x/o/n.git", ""},
+		{"relative path up", "../o/n.git", ""},
+		{"relative path here", "./o/n", ""},
+		{"absolute path", "/abs/path/o/n.git", ""},
+		{"drive letter", "C:/repos/o/n", ""},
+		{"drive letter backslashes", `C:\repos\o\n`, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

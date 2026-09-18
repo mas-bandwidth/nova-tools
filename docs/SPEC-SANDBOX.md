@@ -922,7 +922,10 @@ names <owner>/<name>`, and the line names the origin it read; each of the four
 carries the remedy `run: nova-sandbox worktree --repo <dir> --scratch <dir> --pr
 <id>`. The owner and name are read out of the remote's PATH and the host is read
 by nobody, so an ssh `Host` alias standing where the forge's own name would is
-one of the shapes that works; `gh` is what resolves the forge. A pull request the
+one of the shapes that works; `gh` is what resolves the forge. A remote naming a
+place on this machine — a `file://` URL, an absolute path, one beginning with `.`
+or `..`, a windows drive letter — names no owner and name and is `bad_origin`,
+because a bare push target's directories are not an owner and a repository. A pull request the
 forge does not know is `reason=no_pr` and an unreachable forge is
 `reason=no_forge`, each with the one remedy naming the flag and saying to retry
 once the forge answers — `no_forge` is the forge's own silence and never an input
@@ -957,7 +960,9 @@ of every network, bench and clock, and no real forge or network is touched.
 9. Owner and name are read out of `https://<host>/o/n.git`, the same without
    `.git`, the scp-like `git@<host>:o/n.git`, `ssh://git@<host>/o/n.git`, the same
    with a port, an ssh `Host` alias in place of the host, and `o/n` alone; a
-   remote whose path names no owner and name yields nothing.
+   remote whose path names no owner and name yields nothing, and so does every
+   local-path shape — `file:///tmp/x/o/n.git`, `../o/n.git`, `./o/n`,
+   `/abs/path/o/n.git`, `C:/repos/o/n` and `C:\repos\o\n`.
 10. A pathless `origin`, and a repository with no `origin` at all, are the bad
     origin failure and not the unreachable one, and the error names the origin
     read.

@@ -516,10 +516,16 @@ func (g ghForge) PR(id int) (worktreePR, error) {
 // remote in: a scheme's URL, the scp-like git@host:owner/name, and owner/name
 // alone. The host is read by nobody here, because an ssh Host alias from
 // ~/.ssh/config stands where the forge's own name would and `gh` is the one that
-// resolves the forge. Empty is the answer for a remote whose path names no owner
-// and name, which the caller reports as bad input.
+// resolves the forge. A remote naming a place on this machine rather than a forge
+// names no owner and name at all, so a bare push target or a test fixture is
+// never read as two path words that look like one. Empty is the answer for a
+// remote whose path names no owner and name, which the caller reports as bad
+// input.
 func parseOwnerRepo(url string) string {
 	path := strings.TrimSuffix(strings.TrimSpace(url), ".git")
+	if localRemote(path) {
+		return ""
+	}
 	if scheme, rest, ok := strings.Cut(path, "://"); ok && scheme != "" {
 		// Everything to the first slash is [user@]host[:port].
 		_, path, _ = strings.Cut(rest, "/")
@@ -531,4 +537,22 @@ func parseOwnerRepo(url string) string {
 		return parts[0] + "/" + parts[1]
 	}
 	return ""
+}
+
+// localRemote is true for a remote naming a place on this machine: a file URL, a
+// path that is absolute or begins with . or .., and a windows drive letter, which
+// is also why the drive is decided here rather than by the scp-like host:path
+// split, where C:/repos would read as a host.
+func localRemote(path string) bool {
+	if scheme, _, ok := strings.Cut(path, "://"); ok {
+		return strings.EqualFold(scheme, "file")
+	}
+	if strings.HasPrefix(path, "/") || strings.HasPrefix(path, ".") {
+		return true
+	}
+	if len(path) >= 3 && path[1] == ':' && (path[2] == '/' || path[2] == '\\') {
+		r := path[0] | 0x20
+		return r >= 'a' && r <= 'z'
+	}
+	return false
 }
