@@ -346,6 +346,15 @@ var clTierCeilings = map[string]int{
 	// does not touch those paths pays a checkout and skips. (2026-09-16)
 	"test-hosted-pr": 6,
 
+	// The Windows leg a pull request gets for the packages it changes. Same
+	// number as test-hosted-pr and the same reason: a hosted runner starts cold
+	// — checkout, setup-go, cache restore — before it compiles anything, and a
+	// two-minute cap killed the windows leg by the clock rather than by any
+	// finding. It runs -short with a 100 s per-package ceiling, so Go names a
+	// slow package inside the cap instead of the runner killing the job.
+	// (2026-09-18)
+	"test-windows-pr": 6,
+
 	// The sharded test matrix, and the one number the move to self-hosted
 	// runners actually changed. The two minutes are the CL FEEDBACK PATH: how
 	// long a change waits. On GitHub-hosted runners every leg starts at once,

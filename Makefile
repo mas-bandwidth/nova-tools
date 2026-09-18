@@ -12,7 +12,7 @@ GO ?= go
 PKGS ?= ./...
 CL_PKGS := ./cmd/... ./internal/...
 
-.PHONY: help build fmt vet lint test test-full test-short test-merge test-race test-e2e test-lisp check clean
+.PHONY: help build fmt vet lint test test-full test-short test-pr test-merge test-race test-e2e test-lisp check clean
 
 help:
 	@echo "make help        this list"
@@ -23,6 +23,7 @@ help:
 	@echo "make test        go test -count=1 PKGS plus the 60s slowtests budget (the fast tier)"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
 	@echo "make test-short  go test -short -count=1 -timeout 12m PKGS"
+	@echo "make test-pr     go test -short -count=1 -timeout 100s PKGS (the hosted PR legs)"
 	@echo "make test-merge  go test -count=1 -timeout 100s -run RUN PKGS"
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
@@ -72,6 +73,19 @@ test-full:
 
 test-short:
 	$(GO) test -short -count=1 -timeout 12m $(PKGS)
+
+# The hosted legs a PULL REQUEST gets, and the two flags are both deliberate.
+# -short keeps the multi-process and thousand-note fixtures (cmd/nova-bus
+# measured 439 s on windows-latest before its -short gate, #682) out of a leg
+# whose budget is two minutes; the Windows-only breakages this leg is here for —
+# an execute-bit assertion, a backslash in an expected path, an unsuffixed fake
+# .exe — are ordinary unit tests and are not gated behind testing.Short(). The
+# 100 s ceiling is the hosted convention: Go names the slow package instead of
+# the runner killing the job at its own timeout. The merge group still runs the
+# same packages FULL (test-merge), so nothing is traded away, only moved
+# earlier.
+test-pr:
+	$(GO) test -short -count=1 -timeout 100s $(PKGS)
 
 # The merge-group hosted leg: full tests (no -short) for the packages the group
 # changes, one shard at a time. RUN is the shard's test-name regex; empty means

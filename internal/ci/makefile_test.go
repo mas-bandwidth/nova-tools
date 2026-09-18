@@ -1,7 +1,7 @@
 package ci
 
 import (
-	"os/exec"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -17,9 +17,12 @@ import (
 // below.
 //
 // Both files are read as text on purpose: the repository has no YAML library in
-// go.mod (standard library only), and this test must run on every platform the
-// matrix covers, including Windows, where `make` is not installed. It is the
-// same approach ci_budget_test.go takes for the job names and timeouts.
+// go.mod (standard library only), and these tests must run on every platform the
+// matrix covers and give the same answer on each — including Windows, where
+// `make` is not installed, and including three GNU make versions (3.81 on the
+// Studio, 4.3 on hulk, 4.4.1 on the space runner) whose output differs. Nothing
+// here runs make; see TestMakefileIsTheOneEntry for why. It is the same approach
+// ci_budget_test.go takes for the job names and timeouts.
 
 // buildTestLintRe matches a build, test or lint COMMAND at the start of a shell
 // statement: `go build`, `go vet`, `go test`, `gofmt`, or the nova-work
@@ -87,121 +90,304 @@ func TestCIBuildTestLintCommandsGoThroughMake(t *testing.T) {
 
 // TestMakefileIsTheOneEntry pins the Makefile's own shape: the required targets
 // are declared and phony, `check` is the union of the gates CI runs, and `clean`
-// removes only the two explicit directories. It reads the Makefile as text so it
-// runs on the Windows legs too, where make is not installed.
+// removes only the two explicit directories.
+//
+// IT PARSES THE MAKEFILE'S OWN RULES, and never runs make. The first revision of
+// this test shelled out to `make -n check` and compared the dry-run text; it
+// passed on hulk (GNU make 4.3) and failed on the space runner (4.4.1) and on
+// the Studio (3.81), because the dry-run output is not a contract: 4.4 prints
+// recipes it used to suppress, 3.81 lays out a `bash -c` line differently, and
+// what $(GO) and $(PKGS) expand to depends on the environment make inherits — a
+// GO or PKGS exported by a shell profile silently rewrites the very strings the
+// assertion reads. A test whose verdict depends on the host's make version and
+// environment says nothing about the repository.
+//
+// So the parser below reads the rules the way a reader does: targets, their
+// prerequisites, their recipe lines, the variables, and any included file. It
+// expands the Makefile's OWN variable values, not the environment's, so the
+// answer is the same byte for byte on 3.81, on 4.4.1, on a runner with GO set to
+// something else, and on the Windows legs where there is no make at all. The
+// contract being pinned is the Makefile's text, which is what a friend reads and
+// what CI runs; that is exactly what the parser sees.
 func TestMakefileIsTheOneEntry(t *testing.T) {
 	root := repoRoot(t)
-	mk := readFile(t, filepath.Join(root, "Makefile"))
+	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
 
-	targets := makeTargets(mk)
 	for _, want := range requiredTargets {
-		if !targets[want] {
-			t.Errorf("Makefile declares no %q target", want)
+		if _, ok := mk.recipes[want]; !ok {
+			if _, dep := mk.deps[want]; !dep {
+				t.Errorf("Makefile declares no %q target", want)
+			}
 		}
-	}
-
-	phony := makePhony(mk)
-	for _, want := range requiredTargets {
-		if !phony[want] {
+		if !mk.phony[want] {
 			t.Errorf("Makefile .PHONY does not name %q", want)
 		}
 	}
 
-	if !strings.Contains(mk, "rm -rf ./bin ./scratch") {
-		t.Error("Makefile clean does not remove exactly ./bin and ./scratch through an explicit list")
+	// clean removes exactly two named directories: one recipe line, an explicit
+	// list, no computed path (the removal rule internal/ci holds elsewhere).
+	clean := mk.recipeFor("clean")
+	if len(clean) != 1 || strings.TrimSpace(clean[0]) != "rm -rf ./bin ./scratch" {
+		t.Errorf("Makefile clean is not the explicit two-directory removal `rm -rf ./bin ./scratch`, it is %q", clean)
 	}
 
-	checkDeps := makeDeps(mk, "check")
-	for _, want := range []string{"build", "lint", "test"} {
+	// check is the union of the gates CI runs, named as prerequisites.
+	checkDeps := map[string]bool{}
+	for _, d := range mk.deps["check"] {
+		checkDeps[d] = true
+	}
+	for _, want := range []string{"build", "lint", "test", "test-e2e", "test-lisp"} {
 		if !checkDeps[want] {
-			t.Errorf("Makefile check does not run %q", want)
+			t.Errorf("Makefile check does not run %q; the contract is build, lint, test, test-e2e and test-lisp", want)
 		}
 	}
 
-	// And, where make exists, drive it over the fixture: `make help` must answer
-	// and a dry-run of `check` must expand to the gates. The dry-run is the
-	// closest a unit test can come to "a CI job runs make check" without
-	// recursively building the tree inside the test the tree is running. make is
-	// not guaranteed on the Windows legs, so a missing make is a skip, not a red.
-	if _, err := exec.LookPath("make"); err != nil {
-		t.Log("make is not on PATH; the text checks above still ran")
-		return
-	}
-	help := runMake(t, root, "help")
-	for _, target := range requiredTargets {
-		if !strings.Contains(help, "make "+target) {
-			t.Errorf("`make help` does not list target %q:\n%s", target, help)
-		}
-	}
-	dry := runMake(t, root, "-n", "check")
+	// And the gates themselves: every command `make check` would run, gathered
+	// from check and the transitive closure of its prerequisites, with the
+	// Makefile's own variables expanded. This is what the dry-run comparison was
+	// reaching for, minus the host.
+	recipes := strings.Join(mk.recipesUnder("check"), "\n")
 	for _, gate := range []string{
 		"go build ./...",
+		"gofmt -l .",
 		"go vet ./...",
 		"go test -count=1 ./cmd/... ./internal/...",
 		"go test -count=1 -run TestFriendSequence ./cmd/...",
 		"./lisp/nova-work/run-tests.sh",
 	} {
-		if !strings.Contains(dry, gate) {
-			t.Errorf("`make -n check` does not run %q:\n%s", gate, dry)
+		if !strings.Contains(recipes, gate) {
+			t.Errorf("`make check` does not reach %q; the recipes it runs are:\n%s", gate, recipes)
 		}
 	}
-	clean := runMake(t, root, "-n", "clean")
-	if !strings.Contains(clean, "rm -rf ./bin ./scratch") {
-		t.Errorf("`make -n clean` is not the explicit two-directory removal:\n%s", clean)
+
+	help := strings.Join(mk.recipeFor("help"), "\n")
+	for _, target := range requiredTargets {
+		if !strings.Contains(help, "make "+target) {
+			t.Errorf("the help target does not list %q:\n%s", target, help)
+		}
 	}
 }
 
-// runMake runs make with the repository root as its working directory and
-// returns stdout and stderr combined, failing the test if make cannot start.
-func runMake(t *testing.T, root string, args ...string) string {
+// parsedMakefile is what the parser below reads out of a Makefile: its
+// variables, each target's prerequisites and recipe lines, and the .PHONY set.
+// It is a SMALL parser on purpose — enough of GNU make's syntax to read this
+// repository's Makefile exactly, and no more: simple and recursive variable
+// assignment, target-specific variables, `include`, line continuations, and the
+// recipe prefixes @ - and +. Anything it does not understand it leaves alone,
+// which shows up as an assertion that cannot find its gate rather than as a
+// quietly wrong answer.
+type parsedMakefile struct {
+	vars       map[string]string
+	targetVars map[string]map[string]string
+	deps       map[string][]string
+	recipes    map[string][]string
+	phony      map[string]bool
+}
+
+var (
+	makeVarRe       = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*(\?=|:=|::=|\+=|=)\s*(.*)$`)
+	makeRuleRe      = regexp.MustCompile(`^([^\t#=][^:=]*):(?:\s+(.*))?$`)
+	makeIncludeRe   = regexp.MustCompile(`^-?include\s+(.*)$`)
+	makeExpandRe    = regexp.MustCompile(`\$[({]([A-Za-z_][A-Za-z0-9_]*)[)}]`)
+	makeRecipePfxRe = regexp.MustCompile(`^[@+-]+`)
+)
+
+// dollarDollar stands in for `$$` (an escaped dollar, which make hands to the
+// shell as one `$`) while variables are expanded, so a shell expression like
+// `$${TMPDIR:-/tmp}` is never mistaken for a make variable reference.
+const dollarDollar = "\x00"
+
+func parseMakefile(t *testing.T, path string) *parsedMakefile {
 	t.Helper()
-	cmd := exec.Command("make", args...)
-	cmd.Dir = root
-	out, err := cmd.CombinedOutput()
+	mk := &parsedMakefile{
+		vars:       map[string]string{},
+		targetVars: map[string]map[string]string{},
+		deps:       map[string][]string{},
+		recipes:    map[string][]string{},
+		phony:      map[string]bool{},
+	}
+	mk.read(t, path, 0)
+	return mk
+}
+
+// read parses one file into mk, following `include` lines relative to the
+// including file's directory. depth bounds the recursion so a Makefile that
+// includes itself is a failed test and not a hung one.
+func (mk *parsedMakefile) read(t *testing.T, path string, depth int) {
+	t.Helper()
+	if depth > 8 {
+		t.Fatalf("include depth over 8 at %s; a Makefile includes itself", path)
+	}
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("make %s: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("cannot read %s: %v", path, err)
 	}
-	return string(out)
-}
-
-// makeTargets returns every target name declared in the Makefile, keyed by name.
-func makeTargets(mk string) map[string]bool {
-	out := make(map[string]bool)
-	for _, line := range strings.Split(mk, "\n") {
-		if m := regexp.MustCompile(`^([a-zA-Z0-9_-]+):`).FindStringSubmatch(line); m != nil {
-			out[m[1]] = true
-		}
-	}
-	return out
-}
-
-// makePhony returns the target names on the .PHONY line.
-func makePhony(mk string) map[string]bool {
-	out := make(map[string]bool)
-	for _, line := range strings.Split(mk, "\n") {
-		if !strings.HasPrefix(line, ".PHONY:") {
+	lines := joinContinuations(strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n"))
+	current := ""
+	for _, line := range lines {
+		if strings.HasPrefix(line, "\t") {
+			// A recipe line belongs to the rule above it. A shell comment in a
+			// recipe runs nothing, so it is not part of the contract.
+			body := strings.TrimSpace(line)
+			if current == "" || body == "" || strings.HasPrefix(body, "#") {
+				continue
+			}
+			body = makeRecipePfxRe.ReplaceAllString(body, "")
+			mk.recipes[current] = append(mk.recipes[current], body)
 			continue
 		}
-		for _, name := range strings.Fields(strings.TrimPrefix(line, ".PHONY:")) {
-			out[name] = true
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
 		}
-	}
-	return out
-}
-
-// makeDeps returns the prerequisite targets named on a target's `name: deps`
-// line.
-func makeDeps(mk, target string) map[string]bool {
-	out := make(map[string]bool)
-	re := regexp.MustCompile(`^` + regexp.QuoteMeta(target) + `:\s*(.*)$`)
-	for _, line := range strings.Split(mk, "\n") {
-		m := re.FindStringSubmatch(line)
+		if m := makeIncludeRe.FindStringSubmatch(trimmed); m != nil {
+			for _, inc := range strings.Fields(mk.expand(mk.vars, m[1])) {
+				mk.read(t, filepath.Join(filepath.Dir(path), inc), depth+1)
+			}
+			continue
+		}
+		if m := makeVarRe.FindStringSubmatch(trimmed); m != nil {
+			mk.assign(mk.vars, m[1], m[2], m[3])
+			current = ""
+			continue
+		}
+		m := makeRuleRe.FindStringSubmatch(trimmed)
 		if m == nil {
+			// Anything else — a conditional, a directive — is left alone; the
+			// assertions above fail on a missing gate rather than on a guess.
 			continue
 		}
-		for _, dep := range strings.Fields(m[1]) {
-			out[dep] = true
+		targets := strings.Fields(strings.TrimSpace(m[1]))
+		rest := strings.TrimSpace(m[2])
+		// `target: VAR := value` is a target-specific variable, not a rule with
+		// prerequisites, and it carries no recipe.
+		if v := makeVarRe.FindStringSubmatch(rest); v != nil {
+			for _, target := range targets {
+				if mk.targetVars[target] == nil {
+					mk.targetVars[target] = map[string]string{}
+				}
+				mk.assign(mk.targetVars[target], v[1], v[2], v[3])
+			}
+			continue
 		}
+		if len(targets) == 1 && targets[0] == ".PHONY" {
+			for _, name := range strings.Fields(rest) {
+				mk.phony[name] = true
+			}
+			current = ""
+			continue
+		}
+		for _, target := range targets {
+			mk.deps[target] = append(mk.deps[target], strings.Fields(rest)...)
+		}
+		current = targets[len(targets)-1]
+	}
+}
+
+// assign records one variable assignment. `?=` keeps the first value, which is
+// the Makefile's own default: the point of this test is that the FILE decides,
+// so an environment variable of the same name is deliberately not consulted.
+func (mk *parsedMakefile) assign(into map[string]string, name, op, value string) {
+	switch op {
+	case "?=":
+		if _, ok := into[name]; !ok {
+			into[name] = value
+		}
+	case "+=":
+		if old, ok := into[name]; ok && old != "" {
+			into[name] = old + " " + value
+			return
+		}
+		into[name] = value
+	default:
+		into[name] = value
+	}
+}
+
+// expand replaces $(NAME) and ${NAME} with NAME's value, repeatedly, so a
+// variable whose value names another is resolved. An unknown name expands to
+// nothing, exactly as make does.
+func (mk *parsedMakefile) expand(vars map[string]string, s string) string {
+	s = strings.ReplaceAll(s, "$$", dollarDollar)
+	for i := 0; i < 10; i++ {
+		next := makeExpandRe.ReplaceAllStringFunc(s, func(ref string) string {
+			name := makeExpandRe.FindStringSubmatch(ref)[1]
+			return vars[name]
+		})
+		if next == s {
+			break
+		}
+		s = next
+	}
+	return strings.ReplaceAll(s, dollarDollar, "$")
+}
+
+// recipeFor returns one target's recipe lines with the variables expanded,
+// target-specific values winning over the file's. (Real make also passes a
+// target-specific value down to that target's prerequisites; no target in this
+// Makefile both sets one and has prerequisites, so the distinction does not
+// arise here — and a new one that did would show up as a gate the assertions
+// cannot find.)
+func (mk *parsedMakefile) recipeFor(target string) []string {
+	vars := map[string]string{}
+	for k, v := range mk.vars {
+		vars[k] = v
+	}
+	for k, v := range mk.targetVars[target] {
+		vars[k] = v
+	}
+	var out []string
+	for _, line := range mk.recipes[target] {
+		out = append(out, mk.expand(vars, line))
+	}
+	return out
+}
+
+// recipesUnder returns every recipe line `make <target>` would run: the target's
+// own, plus those of its prerequisites, depth first, each target once.
+func (mk *parsedMakefile) recipesUnder(target string) []string {
+	seen := map[string]bool{}
+	var walk func(string) []string
+	walk = func(name string) []string {
+		if seen[name] {
+			return nil
+		}
+		seen[name] = true
+		var out []string
+		for _, dep := range mk.deps[name] {
+			out = append(out, walk(dep)...)
+		}
+		return append(out, mk.recipeFor(name)...)
+	}
+	return walk(target)
+}
+
+// joinContinuations folds a backslash-continued line into one logical line, the
+// way make reads it before handing a recipe to the shell.
+func joinContinuations(lines []string) []string {
+	var out []string
+	var buf string
+	joining := false
+	for _, line := range lines {
+		part := line
+		if joining {
+			part = strings.TrimLeft(line, " \t")
+		}
+		if strings.HasSuffix(part, "\\") {
+			buf += strings.TrimSuffix(part, "\\") + " "
+			joining = true
+			continue
+		}
+		if joining {
+			out = append(out, buf+part)
+			buf = ""
+			joining = false
+			continue
+		}
+		out = append(out, part)
+	}
+	if joining {
+		out = append(out, buf)
 	}
 	return out
 }

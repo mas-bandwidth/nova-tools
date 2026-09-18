@@ -830,6 +830,143 @@ jobs:
         if: steps.filter.outputs.changed == 'true'
         run: make test-short PKGS="${{ matrix.leg.packages }}"
 
+  test-windows-pr:
+    # WINDOWS, ON THE PULL REQUEST, for the packages the change touches — the
+    # second and last exception to "a pull request never touches GitHub-hosted
+    # compute", and it is here for a class of bug the rest of this file cannot
+    # see. There is no Windows self-hosted runner, so until now the only Windows
+    # a PR could get was test-hosted-pr's bus leg, which runs a FIXED package
+    # list behind a path filter. Everything else met Windows for the first time
+    # in the merge group (test-hosted-merge), where a Windows-only failure is
+    # not one PR's problem: a red shard drops the whole group and restarts every
+    # PR behind it. The failures are always small and always the same three
+    # shapes — an assertion on the execute bit, a backslash where a test
+    # expected "a/b", a fake binary written without the .exe suffix — and every
+    # one of them is found by running the changed packages once on Windows.
+    #
+    # CHEAP IS THE WHOLE DESIGN, because these are billed hosted minutes at 2x
+    # the Linux rate. ONE job, not a matrix. Only the packages the change
+    # touches and their in-repo importers, selected by
+    # .github/scripts/select-packages.sh — the same script, called the same way,
+    # as the self-hosted shards in test-packages, so there is one answer to
+    # "what does this change test" and not two. A change that touches no Go
+    # package at all pays one checkout and a path filter and skips the rest, so
+    # a docs or lisp PR costs nothing here. The tests run -short (the Makefile's
+    # test-pr target) with the 100 s per-package ceiling the other hosted legs
+    # use; the merge group still runs the same packages FULL, so this leg moves
+    # the feedback earlier and takes nothing away.
+    #
+    # Same head-repo guard as every other PR job: a fork PR skips rather than
+    # running untrusted code on hosted compute. The concurrency group is the
+    # workflow's, so a new push supersedes this leg with the rest of the run.
+    name: test-windows-pr
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    # 6, the same cap test-hosted-pr carries and for the same reason: a hosted
+    # runner starts cold (checkout, setup-go, cache restore) before it compiles
+    # anything, and 2 killed the windows leg by the clock. The budget test in
+    # internal/ci records the number and the reason together.
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # select-packages.sh diffs against the PR's base sha, and a depth-1
+          # checkout has no commit to diff against. The script fetches the base
+          # itself, which needs the history to attach to; fetch-depth 0 is the
+          # cheaper certainty on a repository this size.
+          fetch-depth: 0
+
+      - name: did any Go package change at all
+        # The same dorny/paths-filter test-hosted-pr uses, pinned by the same
+        # sha. A PR that moves no .go file and no module file cannot break
+        # Windows, so everything below is skipped and the job costs one
+        # checkout. ci-ok counts the skipped steps as ok.
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            changed:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        if: steps.filter.outputs.changed == 'true'
+        with:
+          go-version-file: go.mod
+          # This workflow manages caching explicitly; do not probe for a missing go.sum.
+          cache: false
+
+      - name: cache go build and module cache
+        if: runner.environment == 'github-hosted' && (steps.filter.outputs.changed == 'true')
+        # Only on GitHub-hosted runners, the rule internal/ci holds as a class
+        # test. This leg is always hosted — there is no self-hosted Windows —
+        # and a hosted runner is a fresh machine, so the cache pays for itself
+        # exactly as it does in test-hosted and test-hosted-pr.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: make on PATH
+        if: steps.filter.outputs.changed == 'true'
+        # The Makefile is the one entry for build, test and lint (internal/ci
+        # holds that class test), so this leg runs its tests through make — and
+        # `shell: bash` on windows-latest is Git Bash, which ships no make of
+        # its own. The image carries MSYS2 at C:\msys64 but keeps its usr\bin
+        # off PATH. Find one rather than assume: the step is a no-op printing a
+        # version when make is already there, and it names the failure plainly
+        # when no make exists at all, instead of the test step dying with
+        # "make: command not found". If a hosted Windows leg ever reports that,
+        # this step is the one to copy into it.
+        shell: bash
+        run: |
+          set -uo pipefail
+          if ! command -v make >/dev/null 2>&1; then
+            for d in /c/msys64/usr/bin "/c/Program Files/Git/usr/bin" /c/ProgramData/chocolatey/bin /c/msys64/mingw64/bin; do
+              if [ -x "$d/make" ] || [ -x "$d/make.exe" ]; then
+                echo "$d" >> "$GITHUB_PATH"
+                export PATH="$d:$PATH"
+                break
+              fi
+            done
+          fi
+          command -v make >/dev/null 2>&1 || { echo "no make on this runner: the Makefile is the one entry and this leg cannot run without it"; exit 1; }
+          make --version
+
+      - name: select the packages this pull request changes
+        id: pkgs
+        if: steps.filter.outputs.changed == 'true'
+        shell: bash
+        # THE SAME SCRIPT the self-hosted shards call, with the same argument:
+        # the PR's own base sha. It prints the ./cmd and ./internal packages the
+        # diff touches plus every in-repo package that imports one of them, and
+        # always ./internal/ci (which scans the tree rather than importing what
+        # it guards). A go.mod or go.sum change selects the whole tree. ONE
+        # shard: the whole list goes to one `go test` invocation, so the leg is
+        # one set of billed minutes and not twelve.
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          pkgs=$(bash .github/scripts/select-packages.sh "$base" | tr '\n' ' ')
+          pkgs=$(echo $pkgs)
+          echo "windows leg: ${pkgs:-nothing to test for this change}"
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+
+      - name: test the changed packages on windows
+        if: steps.filter.outputs.changed == 'true' && steps.pkgs.outputs.pkgs != ''
+        # -short with the 100 s per-package ceiling, both carried by the
+        # Makefile's test-pr target, so this leg and a friend's own `make
+        # test-pr` are the same command. The target's comment carries why
+        # -short is not a gap here: the Windows-only failures this leg exists
+        # for are ordinary unit tests, and the merge group runs these same
+        # packages full.
+        run: make test-pr PKGS="${{ steps.pkgs.outputs.pkgs }}"
+
   e2e:
     # THE SEQUENCES A FRIEND RUNS, end to end, one job. The sharded `test` job above runs
     # these too -- they are ordinary Go tests in ordinary packages -- and this job exists
@@ -1053,7 +1190,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, e2e, lisp, test-hosted, test-hosted-pr, test-hosted-merge]
+    needs: [lint, test, e2e, lisp, test-hosted, test-hosted-pr, test-windows-pr, test-hosted-merge]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -1074,6 +1211,7 @@ jobs:
             "lisp:${{ needs.lisp.result }}" \
             "e2e:${{ needs.e2e.result }}" \
             "test-hosted-pr:${{ needs.test-hosted-pr.result }}" \
+            "test-windows-pr:${{ needs.test-windows-pr.result }}" \
             "test-hosted-merge:${{ needs.test-hosted-merge.result }}"
           do
             job="${pair%:*}"; result="${pair##*:}"
@@ -1091,6 +1229,12 @@ jobs:
             [ "$result" = "success" ] && continue
             [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
+            # test-windows-pr runs only on a pull_request from this repository:
+            # it is skipped on a merge group, on a manual run and on a fork PR,
+            # and its own steps are skipped when the PR moved no Go file. A skip
+            # is ok; a red Windows leg blocks the PR, which is the whole point
+            # of running it before the merge group sees the change.
+            [ "$job" = "test-windows-pr" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-merge" ] && [ "$result" = "skipped" ] && [ "${{ github.event_name }}" != "merge_group" ] && continue
             bad=$((bad + 1))
           done
