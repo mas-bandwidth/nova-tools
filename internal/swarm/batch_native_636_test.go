@@ -27,20 +27,18 @@ func card636(t *testing.T, dir, label string) string {
 	return tsv
 }
 
-// self636 writes a stand-in for this same binary: it records the argv it was handed and
-// prints the NATIVE OK line a real `nova-swarm native` prints, so the test can prove the
-// batch reached its own native verb with no runner script at all.
+// self636 places the package's fake runner as the stand-in for this same binary, invoked as
+// `nova-swarm native` by a runnerless batch. It records the argv it was handed (the `record`
+// step) and prints the NATIVE OK line a real `nova-swarm native` prints (the `stdout` step),
+// so the test can prove the batch reached its own native verb with no runner script at all.
+// It is a copy of the package's ONE fake executable (fakerunner_test.go), not a `#!/bin/sh`
+// script, so it is a real command on linux, darwin and windows alike.
 func self636(t *testing.T, dir string) string {
 	t.Helper()
-	argvFile := filepath.Join(dir, "self-argv")
-	self := filepath.Join(dir, "nova-swarm")
-	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"$@\" > " + argvFile + "\n" +
-		"echo NATIVE OK label=card-f\n"
-	if err := os.WriteFile(self, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return self
+	return runnerDoing(t, dir, "nova-swarm",
+		runnerStep{Op: "record", Path: filepath.Join(dir, "self-argv")},
+		runnerStep{Op: "stdout", Body: "NATIVE OK label=card-f"},
+	)
 }
 
 // TestCard8909BatchRunsNativeWithNoRunner is issue #636's red test: with no --runner the

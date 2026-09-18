@@ -15,15 +15,19 @@
 // a different name per fixture. Its behaviour is a list of STEPS read from a JSON file
 // beside its own executable (`<exe>.json`), so one build serves every fixture and no test
 // pays for a compile of its own. The steps are the things the shell scripts did: make a
-// directory, write or append a file, copy one, say a line on stdout, sleep, burn CPU in a
-// grandchild, publish a RESULT.md, exit with a code -- each optionally guarded by the card's
-// label or the second line of its text, which is how the scripts branched.
+// directory, write or append a file, copy one, record its own argv, say a line on stdout,
+// sleep, burn CPU in a grandchild, publish a RESULT.md, exit with a code -- each optionally
+// guarded by the card's label or the second line of its text, which is how the scripts
+// branched.
 //
-// Argv is the runner contract: label, slot, model, card path, root.
+// Argv is the contract. A `--runner` fixture is handed label, slot, model, card path, root;
+// the same binary stands in for nova-swarm itself, so it is also run as `nova-swarm native`
+// with the native flags (issue #636), parsed the way native.go parses them.
 package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -59,14 +63,56 @@ func main() {
 		burn(time.Duration(ms) * time.Millisecond)
 		return
 	}
-	if len(os.Args) != 6 {
-		fmt.Fprintf(os.Stderr, "fakerunner: want 5 arguments (label slot model card root), got %d\n", len(os.Args)-1)
-		os.Exit(2)
+	var r *runner
+	// A runnerless batch (issue #636) runs the card through `nova-swarm native`, so a fixture
+	// standing in for the nova-swarm binary itself is handed the native flags, not the five
+	// runner arguments. The steps are the same; parsing the flags keeps the self's `{label}`,
+	// `{root}` and guards as exact as a `--runner` fixture's. A native invocation is never
+	// exactly five positional arguments, which is what separates it from the runner contract.
+	if len(os.Args) > 1 && os.Args[1] == "native" && len(os.Args) != 6 {
+		n, err := nativeRunner(os.Args[2:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "fakerunner: %v\n", err)
+			os.Exit(2)
+		}
+		r = n
+	} else {
+		if len(os.Args) != 6 {
+			fmt.Fprintf(os.Stderr, "fakerunner: want 5 arguments (label slot model card root), got %d\n", len(os.Args)-1)
+			os.Exit(2)
+		}
+		r = &runner{label: os.Args[1], slot: os.Args[2], model: os.Args[3], card: os.Args[4], root: os.Args[5]}
+		r.job = filepath.Join(r.root, r.slot, "jobs", r.label)
 	}
-	r := &runner{label: os.Args[1], slot: os.Args[2], model: os.Args[3], card: os.Args[4], root: os.Args[5]}
-	r.job = filepath.Join(r.root, r.slot, "jobs", r.label)
 	r.line1, r.line2 = cardLines(r.card)
 	os.Exit(r.run(load()))
+}
+
+// nativeRunner reads the arguments a runnerless batch hands the self when it runs the card
+// through its own native verb (issue #636):
+//
+//	native --harness <h> --model <m> --label <l> --card <c> --slot <slotdir> --root <r> --deadline <d> [--auth <a>]
+//
+// `--slot` is the SLOT DIRECTORY, unlike a `--runner` invocation's slot number, so the job
+// sits directly under it. Parsing the flags, rather than running with empty fields, keeps a
+// native fixture's expansion and guards the same as a runner fixture's.
+func nativeRunner(args []string) (*runner, error) {
+	fs := flag.NewFlagSet("native", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	_ = fs.String("harness", "", "the harness binary")
+	model := fs.String("model", "", "the card's model")
+	label := fs.String("label", "", "the card's label")
+	card := fs.String("card", "", "the card file")
+	slotDir := fs.String("slot", "", "the slot directory")
+	root := fs.String("root", "", "the batch root")
+	_ = fs.String("deadline", "", "the card's deadline")
+	_ = fs.String("auth", "", "the auth profile")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	r := &runner{label: *label, slot: filepath.Base(*slotDir), model: *model, card: *card, root: *root}
+	r.job = filepath.Join(*slotDir, "jobs", *label)
+	return r, nil
 }
 
 type runner struct {
@@ -147,6 +193,14 @@ func (r *runner) run(s spec) int {
 			p := r.expand(st.Path)
 			must(os.MkdirAll(filepath.Dir(p), 0o755))
 			must(os.WriteFile(p, raw, 0o644))
+		case "record":
+			// The runner's WHOLE argv, one element per line, is what a fixture checks when the
+			// question is which command the batch ran and with what flags -- the self's `native`
+			// verb, say, or a runner's five arguments. Path is where it lands, expanded like any
+			// other step's; the argv itself is written verbatim.
+			p := r.expand(st.Path)
+			must(os.MkdirAll(filepath.Dir(p), 0o755))
+			must(os.WriteFile(p, []byte(strings.Join(os.Args, "\n")+"\n"), 0o644))
 		case "stdout":
 			// The batch pins the runner's stdout to the job's harness.log. N defaults to one.
 			n := st.N
