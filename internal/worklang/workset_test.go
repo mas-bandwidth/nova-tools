@@ -293,3 +293,29 @@ func TestFindCyclesNamesEachLoopOnce(t *testing.T) {
 		t.Errorf("an acyclic graph reported %v", got)
 	}
 }
+
+// TestReadUnitCarriesBranchAndAcceptance holds the two keys the ask side needs. They
+// are read HERE because this is the one reader of the work-set form: a key only one
+// caller reads is the second reader growing back.
+func TestReadUnitCarriesBranchAndAcceptance(t *testing.T) {
+	src := []byte(`(work-set "s" :units ((unit "u1" :branch "rowan/lane-friends"
+	                                            :acceptance ("a line in notes.md" "a test")
+	                                            :title "retire the child shell")))`)
+	ws, err := ParseWorkSet("set.lisp", src, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws.Units) != 1 {
+		t.Fatalf("got %d units", len(ws.Units))
+	}
+	u := ws.Units[0]
+	if u.Branch != "rowan/lane-friends" {
+		t.Errorf("Branch = %q", u.Branch)
+	}
+	if len(u.Acceptance) != 2 || u.Acceptance[0] != "a line in notes.md" || u.Acceptance[1] != "a test" {
+		t.Errorf("Acceptance = %#v", u.Acceptance)
+	}
+	if u.Keys[0] != "branch" || u.Keys[1] != "acceptance" {
+		t.Errorf("every key is still recorded in written order: %#v", u.Keys)
+	}
+}
