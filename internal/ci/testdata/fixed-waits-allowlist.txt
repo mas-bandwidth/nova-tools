@@ -30,7 +30,6 @@ internal/swarm/launch_bound_test.go:61 elapsed 2026-09-17 a wall-clock measureme
 internal/swarm/launch_bound_test.go:66 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/swarm/regular_size_test.go:116 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/swarm/result_collision_test.go:236 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-internal/swarm/revision_test.go:257 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 internal/update/delivery_test.go:70 sleep 2026-09-17 a fixed sleep in a helper or child process, not a pass/fail poll; predates the checker
 internal/update/rules_test.go:208 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/update/slow_test.go:135 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker

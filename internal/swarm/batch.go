@@ -95,6 +95,7 @@ type realClock struct{}
 
 func (realClock) Now() time.Time                         { return time.Now() }
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+func (realClock) Sleep(d time.Duration)                  { time.Sleep(d) }
 func (realClock) NewTicker(d time.Duration) (<-chan time.Time, func()) {
 	t := time.NewTicker(d)
 	return t.C, t.Stop
@@ -502,6 +503,18 @@ func Batch(in BatchInput) int {
 		liftResult(filepath.Join(in.Root, scratchName(c), "jobs", c.label), c.label, in.Stderr)
 		state, reason, tail, line2 := scoreCard(in.Root, c, procs[i].idleKilled, procs[i].deadKilled, procs[i].rc, idleSeconds, logPath, procs[i].idleLog)
 		rows[i].state, rows[i].reason, rows[i].tail, rows[i].line2 = state, reason, tail, line2
+		// THE REPORT LINE. A wall death is named once, with the path the wall refused, the
+		// step the card reached and -- when its clone holds commits past its base -- the
+		// branch and count a harvester can still push. It goes to the notes, never the
+		// packet, which stays bounded by n.
+		if reason == "wall" {
+			if raw, err := readRegular(logPath); err == nil {
+				if wr, ok := WallRefused(raw); ok {
+					branch, commits, _ := WallCommits(filepath.Join(in.Root, scratchName(c), "jobs", c.label, "repo"))
+					fmt.Fprintln(in.Stderr, WallLine(c.label, wr, branch, commits))
+				}
+			}
+		}
 		if state == "done" {
 			done++
 			if strings.Contains(rows[i].line2, "HOLD") {
@@ -761,6 +774,17 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		// runner that reported the rejection without the raw line the wall death reads.
 		if p, ok := cardFenceRejected(job); ok {
 			return "abstain", "fence", "path=" + p, ""
+		}
+		// AND THE WALL ITSELF (issue #644's follow-up): the harness's permission auto-reject
+		// line, or the sandbox's own refusal, read straight out of the card's log. `native`
+		// carries the fence on its NATIVE OK line, but the legacy supervisor does not, and a
+		// wall death there was scored `no-result` -- the model blamed for machinery. The
+		// result was already read above: a matching RESULT.md is done, and only the absence
+		// of one reaches this line.
+		if raw, err := readRegular(logPath); err == nil {
+			if wr, ok := WallRefused(raw); ok {
+				return "abstain", "wall", wallTail(wr), ""
+			}
 		}
 		if deadKilled {
 			return "abstain", "deadline", "", ""

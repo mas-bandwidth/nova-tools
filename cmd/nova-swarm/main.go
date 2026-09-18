@@ -40,6 +40,7 @@ const usage = `nova-swarm: a pool of one-task workers, with the ways a swarm fai
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
+  nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
@@ -54,13 +55,14 @@ usage:
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--max <n>]
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity
-  nova-swarm cost      --pool <dir> [--since <stamp>] [--max <n>]
+  nova-swarm cost      --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
    nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
    nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
    nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
@@ -68,6 +70,7 @@ usage:
    nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
    nova-swarm slots list --store <dir>
    nova-swarm worker    check <description.json> [--env] [--max <n>]
+   nova-swarm pull     --stream <kind> --bench <name> (--redis <addr> | --dir <dir>) [--lane <lane>] [--wait <duration>]
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher
 that exited with tasks pending and nothing running, a reclaim with no usage file
@@ -136,7 +139,14 @@ func refuse(stderr io.Writer, where, what string) int {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
+	args := os.Args[1:]
+	// Before a launch verb starts a card, refuse a nova-swarm whose PATH copy is not the
+	// built one (doctor.go). The check is at the process boundary because it reads the real
+	// PATH and the real home; the dispatcher below is what the tests drive with fakes.
+	if code, stop := preflightDoctor(args, os.Stderr); stop {
+		os.Exit(code)
+	}
+	os.Exit(run(args, os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
@@ -150,6 +160,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return 0
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
+	case "doctor":
+		return cmdDoctor(rest, stdout, stderr)
 	case "add":
 		return cmdAdd(rest, stdin, stdout, stderr, now)
 	case "batch":
@@ -188,6 +200,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdQuickstart(rest, stdout, stderr)
 	case "native":
 		return cmdNative(rest, stdout, stderr)
+	case "route":
+		return cmdRoute(rest, stdout, stderr)
 	case "bench":
 		return cmdBench(rest, stdout, stderr)
 	case "reap":
@@ -1175,6 +1189,8 @@ func cmdCost(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("cost")
 	pool := f.fs.String("pool", "", "")
 	since := f.fs.String("since", "", "")
+	by := f.fs.String("by", "", "")
+	summaryOnly := f.fs.Bool("summary-only", false, "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -1188,7 +1204,7 @@ func cmdCost(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	return swarm.Cost(p, *since, *max, stdout, stderr)
+	return swarm.Cost(p, *since, *max, *by, *summaryOnly, stdout, stderr)
 }
 
 // cmdProfile folds the per-turn timelines a glob names into a card's minutes per phase. It
@@ -1487,6 +1503,14 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// and the line names the path and the commits so the harvester pushes the work.
 	if res.wallReport != "" {
 		fmt.Fprintln(stdout, oneline.Escape(res.wallReport))
+	}
+	// THE REPORT LINE A WALL DEATH OWES (issue #644's follow-up): the path the wall refused,
+	// the step the card reached, and the commits it left on its branch so a harvester can
+	// still push the work. Printed only when the wall stopped a card with no result, which is
+	// the one shape nativeRun sets res.wall for.
+	if (res.wallRefusal != swarm.WallRefusal{}) {
+		branch, commits, _ := swarm.WallCommits(filepath.Join(res.job, "repo"))
+		fmt.Fprintln(stdout, swarm.WallLine(cfg.label, res.wallRefusal, branch, commits))
 	}
 	if res.rc != 0 {
 		if res.rc > 0 {

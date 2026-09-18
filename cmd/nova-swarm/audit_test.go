@@ -21,16 +21,17 @@ var swarmAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|parse|f.verb":     "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
-		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
-		"main.go|wantCount|name":   "a required count flag's name, a literal at every call site in this file",
-		"main.go|wantCount|wants":  "the guidance that count flag wants, a literal at every call site in this file",
-		"main.go|refused|f.verb":   "the verb's own name, the value newFlags stored from that literal",
-		"main.go|openPool|verb":    "the verb's own name, a literal at every call site in this file",
-		"main.go|slotWord|sc.Slot": "an int from the sidecar; fmt.Sprint of an int cannot hold a control character",
-		"main.go|cmdTemplate|body": "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
-		"main.go|cmdFinalize|line": "the other verbatim site, `finalize`'s line: swarm.FinalizeByHand BUILDS the whole sentence and passes every caller-supplied value through oneline.Field or oneline.Err, so the one-line guarantee is already made over the finished line. Escaping it a second time here would fold that line into one unreadable \\x0a form. Both print sites in this function share this entry; TestADispatcherRunsAJobEndToEnd exercises the path.",
+		"main.go|parse|f.verb":        "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|want|name":           "a required flag's name, a literal at every call site in this file",
+		"main.go|want|wants":          "the guidance that flag wants, a literal at every call site in this file",
+		"main.go|wantCount|name":      "a required count flag's name, a literal at every call site in this file",
+		"main.go|wantCount|wants":     "the guidance that count flag wants, a literal at every call site in this file",
+		"main.go|refused|f.verb":      "the verb's own name, the value newFlags stored from that literal",
+		"main.go|openPool|verb":       "the verb's own name, a literal at every call site in this file",
+		"main.go|slotWord|sc.Slot":    "an int from the sidecar; fmt.Sprint of an int cannot hold a control character",
+		"main.go|cmdTemplate|body":    "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
+		"main.go|cmdFinalize|line":    "the other verbatim site, `finalize`'s line: swarm.FinalizeByHand BUILDS the whole sentence and passes every caller-supplied value through oneline.Field or oneline.Err, so the one-line guarantee is already made over the finished line. Escaping it a second time here would fold that line into one unreadable \\x0a form. Both print sites in this function share this entry; TestADispatcherRunsAJobEndToEnd exercises the path.",
+		"route.go|cmdRoute|belowWord": "built in this function from oneline.Field-escaped answer names joined with a literal comma, so it is already one safe token; the ROUTE print site's other caller-supplied values go through oneline.Field or a numeric verb on the same line. TestRouteBelowFloorExits3 is the behavioural test for this site.",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -50,6 +51,11 @@ var swarmAudit = audit.Config{
 		// the harness's own capture -- a file a card can write -- so nothing but the empty
 		// string and an oneline.Field-escaped path can come back.
 		"fenceSuffix",
+		// swarm.WallLine (issue #644's follow-up) builds the `WALL task=<id> path=<p>
+		// step=<n> [commits=<n> branch=<name>]` report line and puts every field through
+		// oneline.Field inside itself. The path and step come from the card's own log and
+		// the branch from the clone, so nothing but escaped fields can come back.
+		"swarm.WallLine",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
@@ -75,6 +81,12 @@ var swarmAudit = audit.Config{
 		// and the two lines this binary prints whole are the two exempted verbatim sites
 		// above.
 		`"github.com/mas-bandwidth/nova-tools/internal/swarm"`,
+		// redisq (slice 1 of SPEC-STATE) reads the Redis Streams pull queue, the fenced
+		// slot lease and the in-flight cap. It holds no writer of its own: every call
+		// either returns a value this package prints through oneline.Field or an error
+		// this package renders through oneline.Err, and the Lua scripts run inside Redis
+		// and write only that instance's own keys.
+		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
 		// native.go (issue #296) needs these five and none of them writes a stream, so
 		// none can write past the escape. context only gives CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the
@@ -106,6 +118,14 @@ var swarmAudit = audit.Config{
 		// LINT DRIFT line, so a card cannot write past the escape. It only reads the one
 		// file the caller named and writes nothing at all.
 		`"regexp"`,
+		// route.go needs math, sort and decide and none of them writes a stream, so
+		// none can write past the escape. math only rounds the complexity score
+		// into the integer the routes table names; sort only orders the answer
+		// names so the ROUTE line and its below list are deterministic; decide
+		// POSTs the state and the four questions and returns typed answers, with
+		// the key travelling only on the Authorization header and never printed.
+		`"math"`, `"sort"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 	},
 	MinClassified: 40,
 }

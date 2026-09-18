@@ -42,6 +42,26 @@ type SuperviseInput struct {
 	UsageInterval  time.Duration
 	Stdout, Stderr io.Writer
 	Now            func() time.Time
+	// Sleep is the wait between two polls of the group the supervisor confirms dead. It
+	// is a seam beside Now so a test can run the bounded drain and grace waits to their
+	// ends without holding the machine's clock; nil is time.Sleep.
+	Sleep func(time.Duration)
+}
+
+// now is the input's clock, defaulting to the real one.
+func (in SuperviseInput) now() func() time.Time {
+	if in.Now != nil {
+		return in.Now
+	}
+	return time.Now
+}
+
+// sleep is the input's wait between group polls, defaulting to the real one.
+func (in SuperviseInput) sleep() func(time.Duration) {
+	if in.Sleep != nil {
+		return in.Sleep
+	}
+	return time.Sleep
 }
 
 // Supervise is the whole of the supervisor's life. It returns the exit code.
@@ -191,6 +211,21 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			if rc != 0 {
 				end = EndFailed
 			}
+			// A WALL DEATH IS NAMED HERE (issue #644's follow-up). The harness's own fence,
+			// or the OS wall, can stop the card at a path and the harness then exits with no
+			// RESULT.md; the pool read that absence as `no-result` -- the model's own doing --
+			// when the truth is the machinery shut a path. The supervisor owns `<job>/harness.log`,
+			// so it reads its own capture, and only when no result exists: a card that
+			// published despite the line is done, never an abstain. The report line names the
+			// path, the last STEP the card reached and the commits it left behind.
+			if wr, ok := wallRefusedInLog(filepath.Join(jobDir, "harness.log")); ok {
+				if _, published := FindCardResult(jobDir); !published {
+					branch, commits, _ := WallCommits(filepath.Join(jobDir, "repo"))
+					line := WallLine(in.Task, wr, branch, commits)
+					fmt.Fprintln(in.Stderr, line)
+					return ExitRecord{RC: rc, Signal: signal, End: EndWall, Spent: spent, Observed: observed, Partial: partial, Reason: line}
+				}
+			}
 			// ISSUE #163: A STRUCTURED SIGNAL BEFORE THE HEURISTIC. A harness adapter records
 			// the provider's refusal as a field -- class, value, limit -- and this
 			// supervisor reads that field and re-emits it as one line the next reader
@@ -318,7 +353,7 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 		// Rule 11's group check, made by the process that owns the group and using the
 		// identity it retained at launch: anything still in the job's own group after its
 		// leader has gone is a background subtask the prompt forbids.
-		if groupStillAlive(jobPgid, jobStarted) {
+		if groupStillAlive(jobPgid, jobStarted, in.sleep()) {
 			if n, ok := GroupMembers(jobPgid, os.Getpid()); ok {
 				rec.Survivors = n
 			} else if rec.Survivors == 0 {
@@ -330,7 +365,7 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 		// kernel to agree nothing of it remains. A group that cannot be confirmed dead by
 		// that deadline is recorded WITHOUT the attestation and with `end=unknown` -- the
 		// attestation would otherwise be reusable while a survivor of the group still ran.
-		if groupConfirmedDead(jobPgid, jobStarted) {
+		if groupConfirmedDead(in, jobPgid, jobStarted) {
 			rec.Attest = attest
 		} else {
 			rec.Attest = ""
@@ -349,15 +384,17 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 
 // groupConfirmedDead kills the job's group from the retained identity and waits, bounded by
 // the reap's grace, for the kernel to agree nothing of it remains. It answers whether the
-// group was CONFIRMED dead: the per-launch attestation is published only on true.
-func groupConfirmedDead(jobPgid int, jobStarted string) bool {
+// group was CONFIRMED dead: the per-launch attestation is published only on true. The clock
+// and the wait come from the input's seams, so a test drives the bound without wall time.
+func groupConfirmedDead(in SuperviseInput, jobPgid int, jobStarted string) bool {
 	KillGroup(jobPgid, jobStarted)
-	deadline := time.Now().Add(TerminateGrace)
-	for time.Now().Before(deadline) {
+	now, sleep := in.now(), in.sleep()
+	deadline := now().Add(TerminateGrace)
+	for now().Before(deadline) {
 		if !GroupAlive(jobPgid, jobStarted) {
 			return true
 		}
-		time.Sleep(20 * time.Millisecond)
+		sleep(20 * time.Millisecond)
 	}
 	return !GroupAlive(jobPgid, jobStarted)
 }
@@ -378,12 +415,12 @@ func groupConfirmedDead(jobPgid int, jobStarted string) bool {
 // It was called `groupDrained` and answered the opposite of its own name, so the next
 // reader to invert a caller would have re-broken rule 11's survivor check with a change
 // that read correctly (DeepSeek's read of #88 at d0c1841, LOW 4).
-func groupStillAlive(jobPgid int, jobStarted string) bool {
+func groupStillAlive(jobPgid int, jobStarted string, sleep func(time.Duration)) bool {
 	for waited := time.Duration(0); waited < GroupDrainWait; waited += 20 * time.Millisecond {
 		if !GroupAlive(jobPgid, jobStarted) {
 			return false
 		}
-		time.Sleep(20 * time.Millisecond)
+		sleep(20 * time.Millisecond)
 	}
 	return GroupAlive(jobPgid, jobStarted)
 }
