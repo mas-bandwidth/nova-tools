@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,16 @@ import (
 	"testing"
 )
 
+// canRun reports whether the program at path actually starts. LookPath/Stat alone is not
+// enough: a stale or non-executable sops or age-keygen earlier on PATH resolves and then
+// fails to exec (a *exec.Error), which must read as absent and skip rather than fatal every
+// test that needs it. A program that starts and exits non-zero is still runnable.
+func canRun(path string) bool {
+	err := exec.Command(path, "--version").Run()
+	var exitErr *exec.ExitError
+	return err == nil || errors.As(err, &exitErr)
+}
+
 type keyPair struct {
 	privPath string
 	pubKey   string
@@ -18,25 +29,25 @@ type keyPair struct {
 
 func findSops(t *testing.T) string {
 	t.Helper()
-	if p, err := exec.LookPath("sops"); err == nil {
+	if p, err := exec.LookPath("sops"); err == nil && canRun(p) {
 		return p
 	}
-	if _, err := os.Stat("/opt/homebrew/bin/sops"); err == nil {
+	if canRun("/opt/homebrew/bin/sops") {
 		return "/opt/homebrew/bin/sops"
 	}
-	t.Skip("sops binary not found")
+	t.Skip("sops binary not found or not runnable")
 	return ""
 }
 
 func findAgeKeygen(t *testing.T) string {
 	t.Helper()
-	if p, err := exec.LookPath("age-keygen"); err == nil {
+	if p, err := exec.LookPath("age-keygen"); err == nil && canRun(p) {
 		return p
 	}
-	if _, err := os.Stat("/opt/homebrew/bin/age-keygen"); err == nil {
+	if canRun("/opt/homebrew/bin/age-keygen") {
 		return "/opt/homebrew/bin/age-keygen"
 	}
-	t.Skip("age-keygen binary not found")
+	t.Skip("age-keygen binary not found or not runnable")
 	return ""
 }
 
