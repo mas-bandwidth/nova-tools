@@ -19,6 +19,17 @@
   RunAtLoad is false on purpose: loading an agent must not start a fleet-wide pass at the
   moment somebody is installing it. The first run is the next six-hour boundary, or
   `launchctl start com.rowan.fleet-certify` when it is wanted now.
+
+  The three bus flags are what makes this a LOOP and not a log. certify repairs what it
+  can and escalates what it cannot; the escalation is a line AND a note, and with no bus
+  named the note is never sent (`escalation=unsent reason=no-bus`). A timer that finds a
+  bad bench, tries the repairs, fails and tells nobody is the half of mechanization that
+  does not pay. They travel together: a bus with no sender or no recipient is exit 2 at
+  the flag check, which for a timer is a refusal every six hours and no certification at
+  all.
+
+  The log flag is the structured event stream the dashboard reads, appended to, beside
+  the StandardOutPath transcript: one is events, the other is everything the run said.
 -->
 <plist version="1.0"><dict>
   <key>Label</key><string>com.rowan.fleet-certify</string>

@@ -1681,7 +1681,9 @@ changes the build and so invalidates every certificate — with `--certify <regi
 <file> --standard <file>`, or `--no-certify` to waive it out loud (`certified=waived` on the
 verdict). `--if-stale` skips a machine whose every class is current, where stale means the
 build or hash moved, the verdict was FAIL, or the row is older than `--max-age` (default
-24h). `fleet/launchd/com.rowan.fleet-certify.plist` runs `--all --if-stale` every six hours.
+24h). `fleet/launchd/com.rowan.fleet-certify.plist` runs `--all --if-stale` every six hours,
+with `--log` for the event stream and `--bus --as --to` so an escalation it cannot repair
+reaches the fleet lane instead of stopping at a line in a log file nobody opens.
 
 **Neither a transport failure nor a timeout is a verdict.** `UNREACHABLE` is its own token,
 its own count and its own exit (3), and so is `TIMEOUT` -- work the run never let finish is
