@@ -25,6 +25,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
 
@@ -47,7 +48,9 @@ func walledTool(t *testing.T) string {
 			return
 		}
 		builtTool = filepath.Join(dir, "nova-sandbox")
-		out, err := exec.Command("go", "build", "-o", builtTool, ".").CombinedOutput()
+		build := exec.Command("go", "build", "-o", builtTool, ".")
+		build.Env = goenv.Clean(os.Environ())
+		out, err := build.CombinedOutput()
 		if err != nil {
 			buildErr = fmt.Errorf("go build: %v: %s", err, out)
 		}

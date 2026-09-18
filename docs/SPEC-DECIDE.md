@@ -123,6 +123,131 @@ reports/jev/2026-09-17-card-route.tsv@21d27719 (model jev-latest, 22 rows)`;
 latency about 400 ms in a 20-call trial on 2026-09-17, no retained file. The
 floor is per lane; below it the card keeps today's routing.
 
+### nova-decide route — the ladder of minds
+
+Route one unit of work to one MIND, over a registry of rungs (Glenn 2026-09-18). The rungs are
+Flash and Pro on the DeepSeek lineage, the child rungs Opus (Rowan's) and Sol (Stella's) at one
+height in two lineages, each friend as a mind with an owned lane, Astra and Fable as the top pair,
+then all friends at once, then Glenn. The answer is the lowest rung the evidence supports with
+confidence that the FIRST attempt is right; below the floor it steps UP a rung, never down. A
+failed attempt re-enters the decision with its evidence — the rung, the outcome, the reason — and
+the answer is the next rung automatically, sideways before up: the ladder is the retry policy.
+
+Two rungs are chosen by KIND and not by height, and by the machinery rather than the provider
+(rule 6), so no provider call is made for either: security — a guard, secrets, the sandbox, sudo,
+deploy keys, the network — is Johnny's always, and so is a fresh take, where the rungs below failed
+in two lineages or a design has one author. Friends first: the DeepSeek rungs are eligible for
+mechanical kinds only.
+
+**Security never falls through.** A unit that touches a guard, secrets, the sandbox, sudo, deploy
+keys or the network resolves to the designated rung on EVERY path: with the provider on or off, at
+any floor, and after any prior attempt, including an attempt by the designated rung itself. It is a
+kind and not a height, so the height rules — sideways, up, the floor, never down — do not apply to
+it at all. Where no mind is designated, or every designated mind is asleep, the work WAITS for one
+of them, and that is a refusal: handing a guard, a secret or a deploy key to another mind because
+the right one is busy is the failure this rule exists to prevent.
+
+**A timeout is not a death.** An attempt that timed out with no proof it terminated leaves its
+expiry UNKNOWN (Stella's lease rule), and a rung whose attempt may still be running is not a rung
+to step off: the answer is the SAME rung until there is termination proof, the floor does not move
+it, and the provider is not asked — there is no choice to make while an attempt may be alive. Only
+a CONFIRMED failure — `failed`, `abandoned`, or a `timeout` marked terminated — moves the ladder
+on, and only confirmed failures are counted when the starting rung is regenerated.
+
+**A wait is typed, and a wait is not permission.** The waiting is carried in a field of its own —
+`wait=awaiting_termination` on the line, `wait` and `awaiting_termination` in the log row — never
+as prose a reader has to parse; a decision that is not a wait carries `wait=-`, so the field is
+always there to gate on. The same rung is an answer about WHO owns the work, not permission to
+start it again: the caller's next move is to establish what happened to the attempt. The CLI says
+so in its exit code, where only 0 is permission (SPEC.md): **1 is the verb running and saying NOT
+YET**. The owner and the wait are two facts and neither hides the other — a security unit whose
+designated rung timed out answers with that rung AND the wait.
+
+The evidence is bounded and public (rules 1 and 4): kind — one of `rebase`, `stack`,
+`fixture-retarget`, `fleet-chore`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
+`cause-to-find` — size (files, packages, lanes), lane
+owner, prior attempts, platform need, what security it touches (`guard`, `secrets`, `sandbox`,
+`sudo`, `deploy-keys`, `network`), and the deadline — metadata, never a body, never a secret.
+
+**The public-data boundary is explicit, and it is an allowlist.** What the provider sees is
+typed and enumerated: a `Public()` projection of the unit and nothing else — a kind, size
+buckets, whether the lane is one a
+mind on the ladder OWNS (`none`, `owned`, `other` — never which lane), an attempt-count bucket, a
+platform flag (`ordinary` or `named`, never which platform), a security flag and a deadline bucket
+— one `field: value` line each, every value checked against the closed set its field allows before
+anything is sent. A value that is not on the allowlist is a refusal, not a payload, so the boundary
+fails closed.
+
+**No registry string crosses that boundary either.** A registry is local configuration, and being
+configured locally does not make a value public: a mind's name, its lineage and the lanes it owns
+are as private as the project they came from. The rungs the provider chooses between are therefore
+**opaque ids** — `rung-1`, `rung-2`, by position in the offered set — described only by our own
+enumerations: the step above the lowest rung offered, a per-call lineage LABEL (so "the same
+lineage" and "another lineage" survive without the lineage's name), whether that mind owns the
+unit's lane, and how it is asked. The answer is mapped back to a mind here; an answer naming a mind
+outright is an answer to a question this process never asked. The unit's id, its lane's spelling,
+its platform's name, its deadline and every attempt reason stay in this process, so no title, path,
+branch name or error text can ride out on a payload.
+
+The provider is offered only the eligible rungs at the
+supported height and the one above it, so a typed answer can advise sideways or up but never down;
+an answer below the floor steps up, and a provider error or a rung nobody offered leaves the rules'
+answer standing (rule 5). A floor that is not a number between 0 and 1 — NaN, an infinity, a
+negative, anything above one — is refused with one remedy line, because NaN compares false against
+every bound and would otherwise gate a decision on a number that is not one. `--no-jev` answers by
+the rules alone, with no key and no network, so the loop runs where the API does not.
+
+Every decision is logged (rule 8): the evidence, the rung tried, the confidence and floor, the
+wait, the outcome and the rung that succeeded — and beside it `rowan_pick`, what the rules alone
+would have chosen, which is how the route is measured against the coordinator's own hand.
+`nova-decide log --summary` regenerates the starting rung per kind from those rows, and a kind with
+no success keeps the rung it started from.
+
+**What a call spent is kept, not dropped.** A routing decision that called the provider records its
+usage: the call count and the tokens in the log row, and one row of the fleet's own usage TSV at
+`--usage` — the same columns, written through the same appender, that a swarm card's usage is
+written with, so `nova-tokens` reads a decision's spend the way it reads everything else. A call
+that FAILED is a row too, with a non-zero `rc`: its cost is real and unmeasured. A decision that
+made no call writes no row, because an empty row would be a claim that a call was made.
+
+**Accounting is not optional.** Token spend reporting is an obligation and every decision is
+logged (Glenn), so the route verb REFUSES to ask the provider at all unless it has been told where
+both records go: `--usage` and `--log` are required whenever jev is asked, and the refusal comes
+before the call, in one line naming the missing flag. A call nobody can account for is refused
+rather than made and then forgotten. `--no-jev` makes no call and has nothing to account for, so
+both stay optional there.
+
+**A successful answer is not evidence of reported usage.** Presence is tracked PER COUNTER, from
+the decoder outward: a 200 that carries a valid answer and no `usage` object, or one naming only
+some of the counters, has said nothing about the rest — and nothing is not zero. An unreported
+counter is written as the literal `-` in the TSV and is ABSENT from the log row; an explicitly
+reported `0` is a measurement and is written as `0` (SPEC-TOKENS rule 14). Decoding the counters as
+plain integers is what made every silent response look like a free one.
+
+**A refusal cannot unspend a call.** Where a route ends in a refusal, the result comes back
+POPULATED — the unit, the reason, and above all what a completed provider call spent — and carries
+the refusal in `Refusal`. The caller persists the usage row and the log row, with that reason,
+BEFORE it exits, and the exit code stays the refusal's own. The hurt: a provider answered, the
+tokens were spent, the rung it picked had nothing above it to step up to, and the verb exited 2
+before either file was written, so the call left no trace anywhere.
+
+The second decision, `help`, answers continue | ask-all-friends | ask-glenn over hours on the same
+problem, retries on one rung, failures in the last hour and how many were self-inflicted, a class
+recurring, whether landing moved, and stated uncertainty. Ask-glenn only ever follows
+ask-all-friends. Red tests: `a-failed-attempt-steps-sideways-before-up`,
+`below-the-floor-steps-up-never-down`, `security-is-johnnys-by-kind-not-by-height`,
+`a-designation-makes-no-provider-call`, `ask-glenn-only-after-ask-all-friends`,
+`the-provider-sees-only-typed-enumerated-evidence`, `security-never-falls-through` (a table over
+the provider on and off, every floor and every prior attempt), `a-timeout-does-not-advance-the-rung`,
+`a-floor-that-is-not-a-number-is-refused`, `no-registry-string-reaches-the-provider` (a registry of
+synthetic private markers, checked over the state AND the questions),
+`an-opaque-choice-maps-back-to-its-mind`, `public-is-an-allowlist`,
+`the-wait-is-typed-on-the-line`, `security-and-wait-together` and
+`the-provider-usage-is-kept-including-a-failed-call`, `usage-presence-is-per-counter`,
+`an-unreported-counter-is-a-dash-and-a-reported-zero-is-a-zero` and
+`a-routing-refusal-still-persists-the-call` and `a-jev-call-with-no-accounting-is-refused-before-it-is-made`,
+all against a fake decider, with no network and no key on disk.
+
 ### manager abstain / needs_human
 
 A manager judgment that abstains below its floor instead of guessing.
@@ -165,6 +290,16 @@ and mark the job harvested, the `already-fixed` line naming the test the
 `RESULT.md` `red:` line carries for the closer; `off-branch` pushes nothing and
 prints the remedy. Below the floor the class is `unknown` (the line reads
 `below=class`) and harvest runs the path that ran before the call.
+
+### nova-merge classify merge-group failure
+
+Classify one failed merge-group run by kind — flaky-under-load, own-change or
+environment — from the `--- FAIL` test names of its failed jobs, the package each
+test lives in, whether the pull request changed that package, and the runner name.
+The floor is 0.9. Above it `flaky-under-load` and `environment` print `rerun=yes`
+and `own-change` prints `park=yes`; below it the kind is `unknown`, `rerun=no`,
+`park=no`, and the line names the raw answer as `below=<name>`, so the pass keeps
+today's skip-and-rerun-versus-park behaviour.
 
 ### the space game intent layer
 

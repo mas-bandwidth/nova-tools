@@ -25,7 +25,7 @@ const profileBase = `{
         "harness_args": ["run", "--", "{prompt}"],
         "worker_dir": "/opt/example/worker",
         %s
-        "execution": {"adapter": "opencode-native/1"}
+        "execution": {"adapter": "opencode-native/1", "adapter_revision": "1"}
         %s
       },
       "route": {
@@ -92,7 +92,6 @@ func TestProfileRefusesUnknownField(t *testing.T) {
 // TestProfileRefusesMissingLimit: a worker with no `deadline` is the missing-limits refusal,
 // and it names the exact field a person must go and fill in.
 func TestProfileRefusesMissingLimit(t *testing.T) {
-	windowsIsNotABench(t)
 	mustRefuse(t, profileJSON("", ""), "worker.deadline")
 }
 
@@ -100,7 +99,6 @@ func TestProfileRefusesMissingLimit(t *testing.T) {
 // profile record in canonical field order, so the same record (even reordered and
 // re-spaced) hashes the same, and changing one field changes the hash.
 func TestProfilePreimageIsStable(t *testing.T) {
-	windowsIsNotABench(t)
 	valid := profileJSON("5m", "")
 
 	first, err := LoadProfile(writeProfile(t, valid))
@@ -137,7 +135,7 @@ func TestProfilePreimageIsStable(t *testing.T) {
       "model": "example-go-model",
       "env_var": "OPENCODE_GO_KEY",
       "route": {"credentials": {"launcher": "/opt/example/bin/isolated-worker-launcher", "gate": "/opt/example/bin/nova-secrets", "sops": "/opt/example/bin/sops", "age_key": "/secure/example/worker.agekey", "seat": "worker", "store": "/secure/example/store", "kind": "nova-secrets"}, "endpoint": "https://go.invalid", "provider": "opencode-go"},
-      "worker": {"execution": {"adapter": "opencode-native/1"}, "deadline": "5m", "worker_dir": "/opt/example/worker", "harness_args": ["run", "--", "{prompt}"], "harness": "/opt/example/bin/harness", "usage": "opencode", "name": "hosted-small"}
+      "worker": {"execution": {"adapter": "opencode-native/1", "adapter_revision": "1"}, "deadline": "5m", "worker_dir": "/opt/example/worker", "harness_args": ["run", "--", "{prompt}"], "harness": "/opt/example/bin/harness", "usage": "opencode", "name": "hosted-small"}
     }
   },
   "version": 1
@@ -181,7 +179,7 @@ func TestProfileRefusesEmptyID(t *testing.T) {
         "harness": "/opt/example/bin/harness",
         "harness_args": ["run", "--", "{prompt}"],
         "worker_dir": "/opt/example/worker", "deadline": "5m",
-        "execution": {"adapter": "opencode-native/1"}
+        "execution": {"adapter": "opencode-native/1", "adapter_revision": "1"}
       },
       "route": {"provider": "opencode-go", "credentials": {
         "kind": "nova-secrets", "store": "/s", "seat": "worker", "age_key": "/s/a",
@@ -207,4 +205,23 @@ func TestProfileRefusesDuplicateID(t *testing.T) {
   }
 }`
 	mustRefuse(t, body, "go-small")
+}
+
+// TestProfileRefusesUnknownAdapter: the worker's execution object names a native adapter
+// this build does not support, and the profile refuses on that field before any provider
+// or gate use. `adapter` is a closed implementation identifier, not a provider/model name.
+func TestProfileRefusesUnknownAdapter(t *testing.T) {
+	body := strings.Replace(profileJSON("5m", ""),
+		`"execution": {"adapter": "opencode-native/1", "adapter_revision": "1"}`,
+		`"execution": {"adapter": "opencode-native/2", "adapter_revision": "1"}`, 1)
+	mustRefuse(t, body, "worker.execution.adapter")
+}
+
+// TestProfileRefusesUnknownAdapterRevision: a compatibility revision this build does not
+// support is refused too, on its own field.
+func TestProfileRefusesUnknownAdapterRevision(t *testing.T) {
+	body := strings.Replace(profileJSON("5m", ""),
+		`"execution": {"adapter": "opencode-native/1", "adapter_revision": "1"}`,
+		`"execution": {"adapter": "opencode-native/1", "adapter_revision": "9"}`, 1)
+	mustRefuse(t, body, "worker.execution.adapter_revision")
 }

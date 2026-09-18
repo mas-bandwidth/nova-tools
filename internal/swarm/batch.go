@@ -74,6 +74,11 @@ type BatchInput struct {
 	// manual one so the idle kill and the deadline are events it chooses, never the
 	// machine's load (#916).
 	clock batchClock
+	// snapshot is the batch's process table reader. nil means the real kernel
+	// table (newProcSnapshot); a test injects a fake reader so process CPU
+	// activity and process tree lifecycle are deterministic events rather than
+	// scheduler races.
+	snapshot func() activitySnapshot
 }
 
 // batchClock is the batch's view of time: the idle window (Now), the whole-batch
@@ -310,10 +315,14 @@ func Batch(in BatchInput) int {
 				case now := <-tickC:
 					// The process table is read once per activity poll, outside the lock, and
 					// every card is asked of that one snapshot (issue #593).
-					var snap *procSnapshot
+					var snap activitySnapshot
 					var sampleSpan time.Duration
 					if now.Sub(lastSample) >= activityInterval(in.Idle) {
-						snap = newProcSnapshot()
+						if in.snapshot != nil {
+							snap = in.snapshot()
+						} else {
+							snap = newProcSnapshot()
+						}
 						sampleSpan = now.Sub(lastSample)
 						lastSample = now
 					}
@@ -555,7 +564,11 @@ func Batch(in BatchInput) int {
 	fmt.Fprintln(in.Stdout)
 	for _, r := range rows {
 		if r.state == "done" {
-			fmt.Fprintf(in.Stdout, "%s slot=%d: %s log=%d\n", oneline.Field(r.label), r.slot, r.line2, r.logLines)
+			line := fmt.Sprintf("%s slot=%d: %s log=%d", oneline.Field(r.label), r.slot, r.line2, r.logLines)
+			if r.tail != "" {
+				line += " " + r.tail
+			}
+			fmt.Fprintln(in.Stdout, line)
 			continue
 		}
 		line := fmt.Sprintf("%s slot=%d: ABSTAIN reason=%s log=%d", oneline.Field(r.label), r.slot, r.reason, r.logLines)
@@ -733,12 +746,19 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 		// model's own doing; `rc=<n>` is a harness that ran and ended badly; a silent harness
 		// is neither, and its exit code -- 0 in the fault that wrote this rule -- says nothing
 		// worth going to read. The exit code is still on the card's own NATIVE OK line.
+		// A WALL DEATH BEFORE THE PLAIN FENCE (issue #918). When the run's own capture
+		// holds the harness's raw `auto-rejecting` line, the death is `wall`: it names
+		// the rejected path AND the commits ./repo kept, so the harvester can push them.
+		if report, ok := WallDeath(job, c.label); ok {
+			return "abstain", "wall", report, ""
+		}
 		// THE FENCE BEFORE EVERYTHING ELSE THE HARNESS DID (issue #644). When the harness's
 		// own permission fence auto-rejected a path -- the card's `../scratch`, a read-only
 		// /sys path on a bench with no wall -- the model was stopped by the MACHINERY, not
 		// by its own judgement, and neither `no-result` (the model published nothing) nor
 		// `harness-silent` (the harness never ran) is true of it. The token is read off the
-		// card's own NATIVE OK line, never recomputed here.
+		// card's own NATIVE OK line, never recomputed here, and stays its own token for a
+		// runner that reported the rejection without the raw line the wall death reads.
 		if p, ok := cardFenceRejected(job); ok {
 			return "abstain", "fence", "path=" + p, ""
 		}
@@ -775,7 +795,14 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	if strings.HasPrefix(one, "ABSTAIN") {
 		return "abstain", "card-abstain", "", ""
 	}
-	if !strings.EqualFold(one, strings.TrimSpace(c.contract)) {
+	// A card whose line 1 is a prefix of the RESULT line 1 is still this card: the card
+	// generator truncates the issue title, so the worker's fuller first line begins with the
+	// card's own contract line. That is done, with the extra chars named as tail=<n> on the
+	// card line so a coordinator reads how much longer the worker's line ran. A first line
+	// that differs before the end of the contract line is a different card and stays
+	// line1-mismatch.
+	cardLine := strings.TrimSpace(c.contract)
+	if len(one) < len(cardLine) || !strings.EqualFold(one[:len(cardLine)], cardLine) {
 		return "abstain", "line1-mismatch", "", ""
 	}
 	if strings.HasPrefix(strings.TrimSpace(two), "ABSTAIN") {
@@ -787,6 +814,9 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled bool, rc, idleSe
 	// the coordinator reads the token rather than opening the RESULT to learn it was late.
 	if deadKilled {
 		return "abstain", "result-after-deadline", "", ""
+	}
+	if extra := len(one) - len(cardLine); extra > 0 {
+		return "done", "", "tail=" + strconv.Itoa(extra), two
 	}
 	return "done", "", "", two
 }
