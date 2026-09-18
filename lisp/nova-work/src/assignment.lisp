@@ -360,7 +360,7 @@ consumes no capacity twice; conflicting bytes for one receipt id are refused."
   "An absent note field is the restricted-data spelling (:absent)."
   (if (null v) +absent+ v))
 
-(defun note-id (scope author date source kind text constraint uncertain)
+(defun note-id-fields (scope author date source kind text constraint uncertain)
   "Identity is the content: `note:` and the lowercase SHA-256 of the canonical
 serialization of the eight fields, absent ones (:absent), in field order
 (SPEC-WORK.md:4212)."
@@ -375,7 +375,7 @@ serialization of the eight fields, absent ones (:absent), in field order
   "One note record: every field written, an absent one (:absent)."
   (let ((constraint (note-field constraint))
         (uncertain (note-field uncertain)))
-    (list :id (note-id scope author date source kind text constraint uncertain)
+    (list :id (note-id-fields scope author date source kind text constraint uncertain)
           :scope scope :author author :date date :source source :kind kind
           :text text :constraint constraint :uncertain uncertain)))
 
