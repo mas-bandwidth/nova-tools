@@ -51,6 +51,12 @@ usage:
   nova-sandbox reap [--dry-run]                                   (darwin)
   nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
   nova-sandbox worktree --repo <dir> --scratch <dir> --prune
+  nova-sandbox egress plan  --run <id> --policy <file> --model-host <host>
+               --resolver <ip> [--bench-cidr <cidr>]... [--uid <n>] [--veth <if>]
+               --out <file>
+  nova-sandbox egress apply --plan <file> --run <id>                    (linux)
+  nova-sandbox egress check --plan <file>
+  nova-sandbox egress drop  --run <id>                                  (linux)
   nova-sandbox version
   nova-sandbox help
 
@@ -113,6 +119,27 @@ what holds each one (SIGTERM, then SIGKILL) and deletes it -- except a volume a
 LIVE run owns, which it reports and leaves alone. Exit 0 clean, 3 when anything
 remained, so nova-sandbox reap --dry-run is a gate a card can end on.
 
+egress is the card's OUTBOUND wall, and it lives on the BENCH rather than in the
+card, because the worker is the adversary: plan resolves the names in the reviewed
+allowlist (infra/image/egress.txt) ONCE, pins the addresses and writes an nftables
+ruleset that denies everything the card did not name — TCP 443 to the pinned
+addresses, UDP 53 to the resolver, and the metadata address, loopback and the other
+benches denied outright. apply hands that ruleset to nft, check reads one back and
+asserts its invariants, and drop takes the run's table away.
+
+  --run <id>      egress: the run this wall belongs to; the table is nova_egress_<id>
+  --policy <f>    egress plan: the allowlist in git. A name reaches a card only by a
+                  PR to that file, never by a flag on one run.
+  --model-host <h> egress plan: the ONE model host of this run, and it must already
+                  be a line in the policy file.
+  --resolver <ip> egress plan: the only destination UDP 53 is allowed to.
+  --bench-cidr <c> egress plan: another bench, denied. Repeatable.
+  --uid <n>       egress plan: the container's uid on the host (meta skuid).
+  --veth <if>     egress plan: the container's interface (iifname). A plan needs
+                  --uid or --veth: every rule is scoped to the card's own traffic.
+  --out <file>    egress plan: where the ruleset is written.
+  --plan <file>   egress apply and check: the ruleset to apply or to read back.
+
 Every path is yours and none is guessed: a --read, a --write, a --cwd or a --tmp
 that does not exist is a refusal and is NOT created. HOME must resolve inside a
 --write (the caller sets it), because almost every tool derives a path from it
@@ -164,6 +191,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return reapVerb(args[1:], stdout, stderr)
 	case "worktree":
 		return worktreeVerb(args[1:], stdout, stderr, env)
+	case "egress":
+		return egressVerb(args[1:], stderr)
 	case "policy":
 		return policyVerb(args[1:], stdout, stderr, env)
 	case "probe":

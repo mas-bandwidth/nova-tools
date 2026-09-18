@@ -1,0 +1,27 @@
+# nova-card: the egress allowlist. One hostname per line; `#` starts a comment.
+#
+# DEFAULT DENY. A card reaches the names below on TCP 443 and nothing else: no
+# other host, no other port, and no UDP except DNS to the bench resolver for
+# these names. The metadata address (169.254.169.254), the bench's own loopback
+# and the other benches are denied outright.
+#
+# This file is the CONTRACT, not a default. Adding a name is a PR to this file
+# reviewed by the security lane (Johnny, 2026-09-18: "Update: a PR to
+# egress.txt, reviewed by this sitting. Not a runtime flag."), and
+# `nova-sandbox egress plan --model-host` may only name a host that is already
+# here.
+#
+# The wall is nftables on the bench, applied to the card's own traffic — never
+# an environment variable the worker is trusted to respect, because the worker
+# is the adversary. See docs/SPEC-SANDBOX.md, "The egress verbs".
+
+# GitHub: the clone, the API and the object store releases come from. Every
+# card gets these three, whatever it is working on.
+github.com
+api.github.com
+objects.githubusercontent.com
+
+# Model hosts. A run gets exactly ONE of these — the host named in the worker
+# description and passed as `--model-host` — so a card cannot reach a second
+# vendor, and a new one is reviewed here before any run can name it.
+api.deepseek.com
