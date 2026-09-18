@@ -4,6 +4,22 @@
 
 Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
 
+## The scripts these verbs retire
+
+A verb earns its place by taking a hand-written script out of `~/rowan-working/bin` (Glenn, 2026-09-17: everything sketched becomes a tool, and a step done by hand twice becomes a verb). The reports family is done — run the verb, delete the script.
+
+| script | the verb that replaces it |
+| --- | --- |
+| `status-page.sh` | `nova-pulse status --html <out> --benches <file> --queue <dir>` |
+| `status.sh` | `nova-pulse status --queue <dir> --roots <dirs> --batches <dir>` |
+| `progress.sh` | `nova-pulse progress --queue <dir> --roots <dirs>` |
+| `board.sh` | `nova-board list`, `add`, `take`, `close`, `check` |
+| `token-fold.sh` | `nova-tokens fold --claude <label>=<dir>` |
+| `token-fold-opencode.sh` | `nova-tokens fold --opencode <label>=<file> --scratch <dir>` |
+| `token-collate.sh` | `nova-tokens fold --out <dir> --repos <file> --bus <dir>`, then `sum` and `check` |
+
+The fold scripts wrote two intermediate tables and a collator merged them. `nova-tokens fold` declares every source as a flag and writes the day files directly, so there is no intermediate table to go stale; the five token types stay apart, and a type the source did not report is a dash where the scripts wrote `0`.
+
 ## nova-check
 
 ```
