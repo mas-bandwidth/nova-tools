@@ -50,8 +50,14 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	launched := f.fs.String("launched", "", "")
 	lanes := f.fs.String("lanes", "queue/control/lanes.tsv", "")
 	machines := f.fs.String("machines", "queue/control/machines.tsv", "")
+	queue := f.fs.String("queue", "", "")
+	repo := f.fs.String("repo", "", "")
+	ghConfig := f.fs.String("gh-config", "", "")
+	ssh := f.fs.String("ssh", "", "")
+	timeout := f.fs.Int("timeout", 120, "")
 	session := f.fs.String("session", "", "")
 	once := f.fs.Bool("once", false, "")
+	dryRun := f.fs.Bool("dry-run", false, "")
 	capacity := f.fs.Int("capacity", -1, "")
 	launcher := f.fs.String("launcher", "", "")
 	deadline := f.fs.Int("deadline", defaultCardDeadline, "")
@@ -80,10 +86,16 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if f.refused(stderr) {
 		return 2
 	}
+	if err := applyGhConfig(*ghConfig); err != nil {
+		fmt.Fprintf(stderr, "nova-pulse fill: --gh-config %s: %s\n", *ghConfig, err)
+		return 2
+	}
 	if len(benches) == 0 {
 		benches = fillBenches
 	}
-	var reader pulse.Capacity = sshCapacity{}
+	// --ssh is the door every fleet verb already takes, and fill's was a bare PATH lookup:
+	// a dogfooder had to shadow PATH to try the verb at all (the manager dogfood, edge 4).
+	var reader pulse.Capacity = sshCapacity{ssh: *ssh}
 	if *capacity >= 0 {
 		reader = fixedCapacity(*capacity)
 	}
@@ -92,15 +104,19 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Launched: *launched,
 		Lanes:    *lanes,
 		Machines: *machines,
+		Queue:    *queue,
+		Repo:     *repo,
 		Session:  *session,
 		Benches:  []string(benches),
 		Only:     []string(only),
 		Once:     *once,
+		DryRun:   *dryRun,
 		Stdout:   stdout,
 		Stderr:   stderr,
 		Now:      func() time.Time { return now },
 		Capacity: reader,
 		Launcher: flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
+		Forge:    pulse.GHSource{Timeout: time.Duration(*timeout) * time.Second},
 	})
 }
 

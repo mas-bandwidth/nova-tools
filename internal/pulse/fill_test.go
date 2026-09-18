@@ -268,7 +268,7 @@ func TestFillReturnsAFailedLaunchToReady(t *testing.T) {
 		t.Fatalf("marker = %q, want card-001.md.failed-1", filepath.Base(got[0]))
 	}
 	line := strings.SplitN(strings.TrimSpace(out.String()), "\n", 2)[0]
-	if want := "FILL tick=1 bench-a:launched=0,failed=1 ready=1"; line != want {
+	if want := "FILL tick=1 bench-a:launched=0,failed=1 ready=1 gated=0"; line != want {
 		t.Fatalf("FILL line = %q, want %q", line, want)
 	}
 	if !strings.Contains(errb.String(), "FILL NOTE tick=1") || !strings.Contains(errb.String(), "exit status 7") {
@@ -307,7 +307,7 @@ func TestFillReleasesTheLaneOfAFailedLaunch(t *testing.T) {
 		t.Fatalf("the second card was held behind a card that never ran: %q", out.String())
 	}
 	line := strings.SplitN(strings.TrimSpace(out.String()), "\n", 2)[0]
-	if want := "FILL tick=1 bench-a:launched=1,failed=1 ready=1"; line != want {
+	if want := "FILL tick=1 bench-a:launched=1,failed=1 ready=1 gated=0"; line != want {
 		t.Fatalf("FILL line = %q, want %q", line, want)
 	}
 }

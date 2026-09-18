@@ -147,7 +147,10 @@ handoff (rule **The manager tier**).
     exactly three rows in one cycle, deduplicated on PR number, issue number and contract line.
 43. `gated-card-launches-on-merge`: a card carrying `AFTER: PR7 merged` is `gated=1` while the
     fixture `gh` reports PR 7 open and is in the batch argv of the first cycle after the
-    fixture reports it merged, with no other input.
+    fixture reports it merged, with no other input. Both halves:
+    `TestGatedCardLaunchesOnMerge` (the placement road, `internal/pulse/cardgate_spec_test.go`)
+    and `TestManagerReleasesTheGateWhenItSeesTheMerge` (the release,
+    `internal/pulse/manager_gate_test.go`).
 44. `contraction-phase-cards-bugs-only`: with `verdict=EXPANDING`, a candidate whose issue
     carries the label `next-push` is `skipped` on the `CUT` line and never cut; a fix candidate
     with a `red:` line is cut.
@@ -173,3 +176,19 @@ handoff (rule **The manager tier**).
     draft yields `prs=2` on the `POOL` line and two `pool.tsv` rows of kind `read`, template
     `read`, one candidate per PR — the draft is nowhere, and the read candidate is the same
     shape harvest's own read card has (rule 13).
+51. `second-writer-refuses-naming-the-holder`: with one writer holding `<queue>/.lock`, a
+    second `fill`, `run`, `manager` or `loop` on that queue exits 2 and its line carries the
+    holder's `pid=`, `verb=` and `since=`; a lock whose holder is not running is taken over
+    once, with no wait. `TestSecondWriterRefusesNamingTheHolder`,
+    `TestSecondFillOnALockedQueueExitsTwo` and `TestStaleLockIsTakenOver`
+    (`internal/pulse/queuelock_test.go`).
+52. `loop-tick-is-run-fill-manager-in-order`: one `nova-pulse loop --once` calls `run`, `fill`
+    and `manager` once each in that order, under one lock, and answers exactly one
+    `LOOP TICK n=<i> ran=… filled=… harvested=… held=… refused=… dead=…` line on the console
+    with each verb's own line in `<queue>/pulse.log`. `TestLoopTickIsRunFillManagerInOrder`
+    (`internal/pulse/loop_test.go`).
+53. `launch-dead-releases-the-lane`: a card under `launched` whose marker is older than the
+    launch grace and whose job directory never appeared is moved back to `pending` with its
+    marker removed, so its lane is free; a card whose job directory is there, and one still
+    inside its grace, are untouched. `TestLoopLaunchDeadRequeuesAndReleasesTheLane`
+    (`internal/pulse/loop_test.go`).

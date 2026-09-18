@@ -24,19 +24,21 @@ nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> 
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--max <n>]
-nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--queue <dir>] [--repo <o/n>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--ssh <path>] [--deadline <s>] [--launch-grace <d>] [--once] [--dry-run] [--gh-config <dir>]
+nova-pulse loop    --queue <dir> --machines <file> --lanes <file> --roots <dirs> [--repo <o/n>] [--branch <b>] [--policy <file>] [--bus <clone>] [--as <name>]
+        [--once | --deadline <d>] [--interval <d>] [--launch-grace <d>] [--bench <name>]... [--capacity <n>] [--launcher <path>] [--ssh <path>] [--gh-config <dir>] [--dry-run]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
-nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
+nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> (--hours <n> | --once) [--dry-run] [--gh-config <dir>] [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 nova-pulse status  --html <out> --benches <file> [--queue <dir>] [--ssh <path>] [--timeout <s|duration>]
         [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]... [--branch <name>]
         [--day-start <HH:MMZ>] [--gh-config <dir>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
-nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--max <n>]
+nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--machines <file>] [--lanes <file>] [--gh-config <dir>] [--max <n>]
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
@@ -223,6 +225,19 @@ UNREACHABLE <error>). --max caps the lines; 0 means all.
 example:
   nova-pulse fleet survey --benches ./fleet.tsv
 
+loop is bin/pulse-loop.sh as one verb: one tick is run, fill and manager in the
+script's order under ONE queue lock, then the launch-dead probe, then one LOOP
+TICK line. Every placement -- the fill road and the run road -- is held against
+the same --machines registry and --lanes table, so a card refused on one road is
+refused on the other; a card carrying an AFTER: PR<n> merged line is held until the
+forge says that PR merged (SPEC-PULSE rule 4). --once is one tick, --deadline is
+how long the loop runs, --dry-run reads everything and changes nothing, and
+--gh-config is the identity every gh, git and nova-merge child answers as. A
+second loop on the same queue refuses at exit 2 naming the one that holds it.
+
+example:
+  nova-pulse loop --queue ./queue --machines ./queue/control/machines.tsv --lanes ./queue/control/lanes.tsv --roots ./swarm-root,./swarm-root-space --repo mas-bandwidth/nova-tools --branch dev --once --dry-run
+
 wake and sleep are the Mac benches' power verbs (Glenn 2026-09-17: each iMac Pro
 draws 100 W and the fleet runs on solar). --registry is one name,mac,lan-bench
 per line, validated whole before any ssh. To wake a bench the magic packet is
@@ -263,6 +278,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdLaunch(rest, stdout, stderr, now)
 	case "fill":
 		return cmdFill(rest, stdout, stderr, now)
+	case "loop":
+		return cmdLoop(rest, stdout, stderr)
 	case "cut":
 		if hasKindFlag(rest) {
 			return cmdCutKind(rest, stdout, stderr)
@@ -572,6 +589,9 @@ func cmdManager(args []string, stdout, stderr io.Writer) int {
 	bus := f.fs.String("bus", "", "")
 	as := f.fs.String("as", "", "")
 	hours := f.fs.Float64("hours", -1, "")
+	once := f.fs.Bool("once", false, "")
+	dryRun := f.fs.Bool("dry-run", false, "")
+	ghConfig := f.fs.String("gh-config", "", "")
 	max := f.fs.Int("max", bounded.Default, "")
 
 	if !f.parse(args, stderr) {
@@ -582,8 +602,11 @@ func cmdManager(args []string, stdout, stderr io.Writer) int {
 	f.want(*roots, "roots", "the benches this shift harvests, comma separated")
 	f.want(*bus, "bus", "the nova-bus clone this shift is the single waiter on")
 	f.want(*as, "as", "the name this shift waits and receipts as")
-	if *hours < 0 {
-		f.add(fmt.Sprintf("--hours is required and is 0 or more, got %v; 0 runs exactly one cycle", *hours))
+	// --once is the one-cycle door spelled as what it is. --hours 0 did the same thing and
+	// a reader had to know that a DURATION of zero means one cycle rather than none (the
+	// manager dogfood, edge 6).
+	if *hours < 0 && !*once {
+		f.add(fmt.Sprintf("--hours is required and is 0 or more, got %v; --once runs exactly one cycle and needs no hours", *hours))
 	}
 	if *max < 0 {
 		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all", *max))
@@ -591,9 +614,17 @@ func cmdManager(args []string, stdout, stderr io.Writer) int {
 	if f.refused(stderr) {
 		return 2
 	}
+	if err := applyGhConfig(*ghConfig); err != nil {
+		fmt.Fprintf(stderr, "nova-pulse manager: --gh-config %s: %s\n", *ghConfig, err)
+		return 2
+	}
+	h := *hours
+	if h < 0 {
+		h = 0
+	}
 	return pulse.Manager(pulse.ManagerInput{
 		Policy: *policy, Queue: *queue, Roots: *roots, Bus: *bus, As: *as,
-		Hours: *hours, Max: *max, Stdout: stdout, Stderr: stderr,
+		Hours: h, Once: *once, DryRun: *dryRun, Max: *max, Stdout: stdout, Stderr: stderr,
 	})
 }
 

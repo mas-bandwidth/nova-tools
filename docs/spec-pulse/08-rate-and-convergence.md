@@ -21,7 +21,14 @@ depth and headroom, never from slot count alone.
    half a card is not a card (issue #869).
 4. **A gated card launches itself.** A card carrying `AFTER: PR<n> merged` stays `gated` on
    the `QUEUE` line and is launched by the first cycle in which `gh` reports that PR merged —
-   never by a person noticing. Replay: `gated-card-launches-on-merge`.
+   never by a person noticing. **The gate is read at the moment of PLACEMENT, on every road
+   into a bench** (`internal/pulse/placement.go`): `fill` and `run`'s launcher both hold a
+   card against it, the forge is asked once per distinct pull request per tick, and a gate
+   whose answer cannot be had stays shut. `manager` takes the `AFTER:` line off the card the
+   cycle it sees the merge, before its refill, so a card whose dependency landed is ready in
+   that same cycle. Until 2026-09-18 the line was written and counted and nothing read it, and
+   a card gated on a pull request that did not exist went out on a bench.
+   Replay: `gated-card-launches-on-merge`.
 5. **No card pays a clone.** Where the policy names `mirror`, `launch` pre-clones the job's
    `repo/` from that bench-local mirror, refreshed by the upgrade loop, and the card's `STEP 1`
    tolerates an existing checkout (`git fetch` and `checkout <head>` when `.git` exists,
@@ -35,6 +42,20 @@ depth and headroom, never from slot count alone.
 8. **The coordinator is a friend.** Every broadcast includes it; adoption is a mechanical step
    with a receipt; `status` names it on its own `ADOPTION` line (replay 34).
 9. **Parallelism and time remaining are printed, never guessed** — `progress`, above.
+10. **One writer per queue.** `<queue>/.lock` is taken with `O_EXCL` by every verb that
+    writes the queue — `run`, `fill`, `manager` and `loop` — and carries the holder's pid, the
+    kernel's start stamp for that pid, the verb and when it started. A second writer refuses
+    at exit 2 and NAMES the holder; a lock whose holder is not running is taken over once,
+    with no wait, because a `SIGKILL`ed loop would otherwise stop the bench until somebody
+    noticed a file. One PROCESS is one writer, so `loop`'s own three verbs are not three.
+    Replay: `second-writer-refuses-naming-the-holder`.
+11. **One verb is the loop.** `nova-pulse loop` is one tick of `run`, then `fill`, then
+    `manager`, under one lock, then the launch-dead probe, then one `LOOP TICK` line. Every
+    placement on either road is held against the same `--machines` registry and `--lanes`
+    table, so a card refused on one road is refused on the other. A launched card whose job
+    directory never appeared inside the launch grace is given back to `pending` with its
+    marker, which releases its lane. Replays: `loop-tick-is-run-fill-manager-in-order`,
+    `launch-dead-releases-the-lane`.
 
 The exit of a pit stop is a trust batch: the fix cards of the stop rerun as one batch and every
 one scores `done` with its red line quoted, before the queue widens again

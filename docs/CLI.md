@@ -1225,7 +1225,7 @@ both forms.
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--deadline <s>] [--launch-grace <d>] [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--queue <dir>] [--repo <o/n>] [--session <id>] [--bench <name>]... [--only <glob>]... [--capacity <n>] [--launcher <path>] [--ssh <path>] [--deadline <s>] [--launch-grace <d>] [--once] [--dry-run] [--gh-config <dir>]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -1237,7 +1237,7 @@ exactly one tick, and without it the loop runs until it is killed. One line per
 tick:
 
 ```
-FILL tick=<n> <bench>:launched=<n>,failed=<n> ... ready=<n>
+FILL tick=<n> <bench>:launched=<n>,failed=<n> ... ready=<n> gated=<n>
 ```
 
 **A launcher that fails is not a card that ran.** The card goes back to `--ready`,
@@ -1326,12 +1326,116 @@ dry run over a directory of cards exercises the whole tick, lanes included:
 nova-pulse fill --ready ./queue/ready --launched ./queue/launched --lanes ./queue/control/lanes.tsv --bench bench-a --capacity 2 --launcher ./bin/echo-card --once
 ```
 
+**A card carrying `AFTER: PR<n> merged` is not launched until that PR is merged.**
+That is rule 4 of [SPEC-PULSE.md](SPEC-PULSE.md)'s "Rate and convergence", and until
+2026-09-18 the line was written by `manager` and counted by `status` and nothing
+anywhere read it: a card gated on a pull request that did not exist went out on a
+bench. The forge is asked once per distinct pull request per tick, and a card whose
+gate is shut stays in `--ready` and says which PR it waits on and what the forge
+called it:
+
+```
+FILL GATED card=card-<n>.md after=PR<n> state=OPEN
+```
+
+`gated=<n>` on the `FILL` line is how many were held that way. `--repo <o/n>` names
+the repository the gate is asked about; **with no forge to ask the gate stays shut**
+(`state=no-forge`), because a card whose dependency cannot be checked is exactly the
+card that was gated for a reason. When the forge says `MERGED` the card goes out and
+the `AFTER:` line comes off it as it goes, so nothing asks again.
+
+**`--dry-run` counts what the tick would do and changes nothing** — no card moved, no
+marker written, no launcher started, no lock taken — and the line carries
+`dry-run=yes`. `--ssh <path>` is the ssh the capacity probe runs, the same door every
+`fleet` verb takes. `--gh-config <dir>` is `GH_CONFIG_DIR` for the `gh` children, so a
+fill run from a service manager with a bare environment answers as somebody.
+
+**`--queue <dir>` is the queue whose lock this fill takes** — one writer per queue
+(see **loop** below). Left out, it is the parent of `--launched`, which is the queue's
+own layout.
+
 **`--session <id>` is stamped into every launched card's marker.** When `fill` moves a
 card into `--launched` it writes `<card>.launched` beside it — `lane`, `bench`, `label`,
 `session`, `card`, `at` — and that marker, not the card's own text, is what holds the
 lane. A live card whose text a worker rewrote still holds the lane it took, and a
 launcher that fails takes its marker with the card back to `--ready`. `harvest` reads
 the marker to release the lane and to know whose job it is looking at.
+
+### loop
+
+```
+nova-pulse loop --queue <dir> --machines <file> --lanes <file> --roots <dirs> [--repo <o/n>] [--branch <b>] [--policy <file>] [--bus <clone>] [--as <name>]
+                [--once | --deadline <d>] [--interval <d>] [--launch-grace <d>] [--bench <name>]... [--capacity <n>] [--launcher <path>] [--ssh <path>] [--gh-config <dir>] [--dry-run]
+```
+
+`loop` is `bin/pulse-loop.sh` as one verb. The script's body was three verbs — `run`
+(the tick), `fill` (capacity, the registry, the lanes) and `manager` (the shift) — and
+a person retiring the script had to start three loops, in the right order, on the
+right queue, with the right identity, and nothing made them agree. One tick is:
+
+1. **the lock**, once, for the whole loop;
+2. **`run`**, one tick: gate, harvest, sweep, reap, refill, launch, one `PULSE WIDTH` line;
+3. **`fill`**, one tick: every bench's capacity, the registry, the lanes, the gates;
+4. **`manager`**, one cycle — only when `--policy` names one;
+5. **the launch-dead probe**;
+6. **one line.**
+
+```
+LOOP TICK n=<i> ran=<n> filled=<n> harvested=<n> held=<n> refused=<n> dead=<n>
+```
+
+`ran=` is what the run tick placed, `filled=` what the fill tick placed, `held=` the
+cards a lane or a gate held, `refused=` the cards and benches a table refused, and
+`dead=` the launches the probe gave back. Each of the three keeps its own line and
+those lines go to `<queue>/pulse.log`, where the hand loop wrote them and where a
+person already looks; the console keeps this one.
+
+**Every placement is held against the same tables.** `--machines` and `--lanes` are
+required and never guessed. `fill --machines` refused a CI runner host by name while
+a `run` tick placed a card on that same host without a word, so Glenn's registry lock
+of 2026-09-18 held on one road into a bench and not the other. Both roads take a card
+through one guard now: the machine, then the lane, then the gate.
+
+**One writer per queue.** The loop takes `<queue>/.lock` with `O_EXCL`, carrying its
+pid, the kernel's start stamp for that pid, the verb and when it started. A second
+writer — another `loop`, a hand `fill`, a hand `manager`, a hand `run` — refuses at
+exit 2 and **names the holder**:
+
+```
+nova-pulse FILL REFUSED: the queue is locked by another writer (pid=4821 verb=loop since=2026-09-18T12:00:00Z); one writer per queue -- wait for it, or remove <queue>/.lock if that process is gone
+```
+
+A lock whose holder is gone is not a lock: it is taken over, once, with no wait — a
+`SIGKILL`ed loop would otherwise stop the bench until somebody noticed a file. Both
+halves must hold for a lock to stand, the pid running AND the process wearing that
+number being the one that wrote the file, because a pid is a small number the
+operating system hands out again. `loop` runs three verbs that each ask for the lock;
+one process is one writer, so the inner asks are handed a handle that releases
+nothing.
+
+**The launch-dead probe** is the script's `launch_check`. A card under `--launched`
+whose marker is older than `--launch-grace` (90 s by default) and whose job directory
+has never appeared on any root did not start — the runner refused it, the ssh died,
+the batch never ran. It goes back to `pending` and **its marker goes with it, so the
+lane it was holding is released**: a lane held by a card that never ran is a serial
+area stopped for as long as nobody looks. A card whose job directory is there is
+alive and is never touched here; `reap --deadline` owns the slow ones, 25 minutes out.
+
+```
+LOOP LAUNCH-DEAD card=card-<n>.md bench=<name> lane=<name> age=<d>: no job directory after the launch; requeued and its lane released
+```
+
+**`--once`** runs exactly one tick; **`--deadline <d>`** is how long the loop runs and
+one of the two is required. **`--interval <d>`** is the sleep between ticks, `10s` by
+default (SPEC-PULSE's manager tick). **`--dry-run`** reads everything and changes
+nothing — no bus advance, no card moved, no gate released, no lock taken — and every
+line carries `dry-run=yes`. **`--gh-config <dir>`** is `GH_CONFIG_DIR` for every `gh`,
+`git` and `nova-merge` child, which is line 4 of the script: `gh` answers as whoever
+that says.
+
+```
+nova-pulse loop --queue ./queue --machines ./queue/control/machines.tsv --lanes ./queue/control/lanes.tsv --roots ./swarm-root,./swarm-root-space --repo mas-bandwidth/nova-tools --branch dev --once --dry-run
+```
 
 ### fleet registry
 

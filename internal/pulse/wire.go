@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -32,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -68,10 +70,17 @@ type OpenIssue struct {
 // WiringInput is everything the wired seams need. Every interface field is optional: nil
 // takes the shipped implementation, and a test puts a fake in its place.
 type WiringInput struct {
-	Queue    string
-	Roots    string
-	Repo     string
-	Branch   string
+	Queue  string
+	Roots  string
+	Repo   string
+	Branch string
+	// Machines is the machines registry, and Lanes the lanes table. EVERY placement reads
+	// both (placement.go): a `run` tick used to put a card on whatever root it was given,
+	// while `fill --machines` refused that same host by name, so Glenn's registry lock of
+	// 2026-09-18 held on one road into a bench and not the other. Empty is a guard this
+	// bench has not wired, and the launcher says so once per shift rather than guessing.
+	Machines string
+	Lanes    string
 	Deadline time.Duration // the batch deadline; 0 is DefaultCardDeadline
 	Timeout  time.Duration // the bound on every child; 0 is childTimeout
 	Max      int
@@ -95,6 +104,7 @@ type WiringInput struct {
 type Wiring struct {
 	in    WiringInput
 	roots []string
+	said  map[string]bool // the once-per-shift notes already said
 }
 
 // NewWiring fills in the defaults and returns the seams. It makes no call of its own.
@@ -499,8 +509,26 @@ func (w *Wiring) cardExists(mark string, dirs ...string) bool {
 func (w *Wiring) Launch(tick int) (int, int, error) {
 	cfg := w.in.Config()
 	launched, free := 0, 0
+	guard, err := newPlacement(w.in.Machines, w.in.Lanes, filepath.Join(w.in.Queue, "launched"), w.in.Repo, w.in.PRs)
+	if err != nil {
+		return 0, 0, fmt.Errorf("the machines registry %s: %s", field(w.in.Machines), oneline.Err(err))
+	}
+	if strings.TrimSpace(w.in.Machines) == "" {
+		// Named once, never guessed: a launcher with no registry cannot tell a bench from a
+		// CI runner host, and a guard that silently does nothing reads as a guard.
+		w.once("machines", "LAUNCH NOTE no machines registry: pass --machines so a card cannot land on a runner host")
+	}
 	for _, root := range w.roots {
 		bench := benchOf(root)
+		if err := guard.bench(bench); err != nil {
+			var r *fleet.Refusal
+			if errors.As(err, &r) {
+				w.log(r.Line("LAUNCH"))
+			} else {
+				w.log("LAUNCH REFUSED bench=" + field(bench) + ": " + oneline.Err(err))
+			}
+			continue
+		}
 		slots, headroom := cfg.Slots[bench], cfg.Headroom[bench]
 		if slots <= 0 {
 			continue
@@ -520,14 +548,36 @@ func (w *Wiring) Launch(tick int) (int, int, error) {
 		}
 		rows := make([]CardRow, 0, take)
 		for _, card := range pending[:take] {
+			// THE SAME GUARD `fill` uses: the lane, then the gate (placement.go). A gated
+			// card stays in pending and says which PR it waits on; a lane already live
+			// holds its next card here exactly as it does on the fill road.
+			v := guard.admit(card)
+			switch v.Kind {
+			case "lane-unknown":
+				w.log(fmt.Sprintf("LAUNCH REFUSED card=%s lane=%s: the lanes table names no such lane (add it to %s or drop the LANE line)",
+					field(filepath.Base(card)), field(v.Lane), field(w.in.Lanes)))
+				continue
+			case "lane-held":
+				w.log(heldLine(card, v))
+				continue
+			case "gated":
+				w.log(gatedLine("LAUNCH", card, v))
+				continue
+			}
 			label := strings.TrimSuffix(filepath.Base(card), ".md")
-			moved := filepath.Join(w.in.Queue, "launched", filepath.Base(card))
+			base := filepath.Base(card)
+			moved := filepath.Join(w.in.Queue, "launched", base)
 			if err := os.MkdirAll(filepath.Dir(moved), 0o755); err != nil {
 				return launched, free, err
+			}
+			if v.Opened {
+				// The gate is spent the moment the forge says merged, so nothing asks again.
+				_ = os.WriteFile(card, []byte(v.Text), 0o644)
 			}
 			if err := os.Rename(card, moved); err != nil {
 				continue // another tick or another hand took it; never launch it twice
 			}
+			guard.take(v.Lane, base)
 			rows = append(rows, CardRow{Label: label, Slot: "-", Model: w.modelFor(moved), Card: moved})
 		}
 		if len(rows) == 0 {
@@ -586,9 +636,16 @@ func (w *Wiring) modelFor(card string) string {
 			return strings.TrimSpace(m)
 		}
 	}
+	// THE CLASS IS LINE 2, and it is nine marks. bin/pulse-loop.sh's model_for reads
+	// `sed -n '2p'` -- the card's kind line and nothing else -- and matches nine marks; this
+	// read the WHOLE card and knew six. So `release tester`, `technical writer` and
+	// `release editor` cards went to the code routes, and a code card whose body happened to
+	// say "a reader" went to the text ones (the manager dogfood, edge 8). A card's class is
+	// where the card declares it, never where a sentence in its body mentions it.
+	kind := cardKindLine(text)
 	list := "ROUTES-code"
-	for _, mark := range []string{"TEXT-ONLY", "a reader", "a writer", "spec reader", "spec editor", "docs editor"} {
-		if strings.Contains(text, mark) {
+	for _, mark := range textMarks {
+		if strings.Contains(kind, mark) {
 			list = "ROUTES-text"
 			break
 		}
@@ -618,6 +675,34 @@ func (w *Wiring) modelFor(card string) string {
 }
 
 // ---------------------------------------------------------------------------- the shared
+
+// textMarks is the nine marks that put a card on the text routes, bin/pulse-loop.sh's
+// model_for list byte for byte.
+var textMarks = []string{"TEXT-ONLY", "a reader", "a writer", "spec reader", "spec editor",
+	"docs editor", "release tester", "technical writer", "release editor"}
+
+// cardKindLine is line 2 of a card, which is where a card declares its kind. Line 1 is the
+// RESULT contract and the rest is the work.
+func cardKindLine(text string) string {
+	lines := strings.Split(text, "\n")
+	if len(lines) < 2 {
+		return ""
+	}
+	return lines[1]
+}
+
+// once logs one line per shift for a guard this bench has not wired. A note repeated every
+// tick is the poll the run verb exists to end.
+func (w *Wiring) once(key, line string) {
+	if w.said == nil {
+		w.said = map[string]bool{}
+	}
+	if w.said[key] {
+		return
+	}
+	w.said[key] = true
+	w.log(line)
+}
 
 // benchOf names the bench a root belongs to, which is how a root takes its slots and its
 // headroom from the configuration.
