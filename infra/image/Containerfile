@@ -12,7 +12,11 @@
 # Build (context is the repo root, so the staged harness binary is reachable):
 #   podman build -t nova-card:<sha> -f infra/image/Containerfile .
 #
-# See infra/image/README.md for the staging step and the run contract.
+# The image is only half of the sandbox. The run contract in
+# infra/image/README.md — read-only rootfs, tmpfs /tmp and $HOME, no-new-
+# privileges, all capabilities dropped, memory and pid caps, one bind mount and
+# no others — is the other half, and it is not optional. See that file for it
+# and for the staging step this build needs.
 
 FROM docker.io/library/ubuntu:24.04
 
@@ -24,6 +28,14 @@ ARG GO_VERSION=1.26.5
 ARG GO_SHA256=5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053
 ARG SBCL_VERSION=2.5.8
 ARG SBCL_SHA256=103fa33b913341791f0f61f5d500e1723ac986125e665b584efba760006fed67
+
+# The opencode harness is a vendor binary with no signature to check, staged
+# into the build context by hand. Pinning its sha256 is what we can do about
+# that: the build refuses anything but the exact 184,490,112-byte executable of
+# harness v1.18.20 that was reviewed, so a swapped, truncated or stale stage
+# fails the build instead of shipping.
+ARG OPENCODE_VERSION=1.18.20
+ARG OPENCODE_SHA256=5dce99ea079d925736e332b20f5bf869fe9a1fa67dc0a09027156b0ed8e41b16
 
 # The card user. Fixed uid/gid so the host can map onto it deterministically
 # (see the run contract in the README).
@@ -63,7 +75,10 @@ RUN curl -fsSL -o /tmp/sbcl.tar.bz2 \
 # The opencode harness binary, copied from the bench. It is staged into the
 # build context first (see README); it is not tracked in git — it is a 176 MB
 # vendor executable, and a source repository ships no built executables.
+# The sum is checked immediately after the copy, before anything can run it.
 COPY --chmod=0755 infra/image/opencode /usr/local/bin/opencode
+RUN printf '%s  /usr/local/bin/opencode\n' "${OPENCODE_SHA256}" | sha256sum -c - \
+ && test "$(/usr/local/bin/opencode --version)" = "${OPENCODE_VERSION}"
 
 # /usr/local/bin is on the default login-shell PATH, and the two Go symlinks
 # above live there, so `bash -lc` sees the whole toolchain even though
