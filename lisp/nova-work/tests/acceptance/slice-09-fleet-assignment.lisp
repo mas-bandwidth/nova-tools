@@ -54,18 +54,64 @@ receipt id and the digest of the received bytes. Test-only stand-in."
            (before (state-open-count (kernel-state k))))
       (multiple-value-bind (okp line code)
           (submit k (register-request :id "m-astra" :owner "glenn"
+                                      :connect "profile:astra"
                                       :roles '(:build :test) :permits '("coding")
                                       :excludes '("think") :limits '(:concurrent 2)
-                                      :facts nil :request "mreq-for"))
+                                      :facts '(:arch "arm64" :os "macos"
+                                               :declared-by "glenn"
+                                               :declared-at "2026-09-15T01:05:00Z")
+                                      :request "mreq-for"))
         (ok okp "configuring the member is admitted: ~A" line)
         (check-equal 0 code "register exit code"))
+      (multiple-value-bind (okp line code)
+          (submit k (register-request :id "m-beta" :owner "rowan"
+                                      :connect "profile:beta"
+                                      :roles '(:profile) :permits nil :excludes nil
+                                      :limits nil :facts nil
+                                      :request "mreq-for-2"))
+        (ok okp "a member that does not admit the kind is still configured: ~A" line)
+        (check-equal 0 code "second register exit code"))
       (let ((real (query-fleet k :for "coding")))
         (check-equal '("m-astra")
                      (mapcar (lambda (row) (getf row :id)) (fleet-ask-rows real))
-                     "the configured member is the recommendation")
+                     "only the member whose declared roles and permits admit the kind is recommended")
         (check-equal nil (fleet-ask-lease real) "the real ask is never a lease")
-        (ok (search "QUERY ROW m-astra kind=machine" (getf (first (fleet-ask-rows real)) :line))
-            "the row is the real QUERY ROW line"))
+        (let ((row (first (fleet-ask-rows real))))
+          (ok (search "QUERY ROW m-astra kind=machine" (getf row :line))
+              "the row is the real QUERY ROW line")
+          (ok (search "admits=coding" (getf row :line))
+              "every row printed under --for admits it")
+          (ok (search "arch=arm64" (getf row :line))
+              "the row carries the declared facts")
+          (ok (search "declared-at=2026-09-15T01:05:00Z" (getf row :line))
+              "the row carries the declaration's date, so the asker sees its age")
+          (check-equal "arm64" (getf (getf row :facts) :arch)
+                       "the row exposes the declared facts themselves")))
+      ;; `--node` narrows the ask to one member: an admitting member is one row,
+      ;; and a member that does not admit the kind is an empty answer, never a
+      ;; row claiming it admits what it does not, and never a lease.
+      (multiple-value-bind (okp line code)
+          (submit k (register-request :id "m-gamma" :owner "glenn"
+                                      :connect "profile:gamma"
+                                      :roles '(:build) :permits nil :excludes nil
+                                      :limits nil :facts nil
+                                      :request "mreq-for-3"))
+        (ok okp "a third member is admitted: ~A" line)
+        (check-equal 0 code "third register exit code"))
+      (let ((narrowed (query-fleet k :for "coding" :node "m-astra"))
+            (not-admitted (query-fleet k :for "coding" :node "m-gamma")))
+        (check-equal '("m-astra")
+                     (mapcar (lambda (row) (getf row :id)) (fleet-ask-rows narrowed))
+                     "--node narrows the recommendation to the admitting member")
+        (check-equal nil (fleet-ask-fail narrowed) "an admitting choice is not a refusal")
+        (check-equal '() (fleet-ask-rows not-admitted)
+                     "a member that does not admit the kind is an empty answer")
+        (check-equal nil (fleet-ask-fail not-admitted)
+                     "non-admission is not the excluded-choice refusal")
+        (check-equal 0 (fleet-ask-exit-code not-admitted)
+                     "an empty recommendation is not an error")
+        (check-equal nil (fleet-ask-lease not-admitted)
+                     "the narrowed ask writes no lease"))
       (check-equal before (state-open-count (kernel-state k))
                    "the ask writes no count"))))
 
@@ -87,7 +133,30 @@ receipt id and the digest of the received bytes. Test-only stand-in."
                    "the refusal names the member and the kind")
     (check-equal 1 (fleet-ask-exit-code ask) "the refusal exits 1")
     (check-equal '(:live-lease) (fleet-session-leases session)
-                 "the refusal writes no lease and disturbs no existing one")))
+                 "the refusal writes no lease and disturbs no existing one"))
+  ;; The real `query --ask fleet --for --node` over the configured fleet: an
+  ;; excluded member is refused, never an empty answer a caller could read as no
+  ;; machine, and the refusal writes no lease and moves no count.
+  (let ((k (machine-kernel :friends '("glenn"))))
+    (multiple-value-bind (okp line code)
+        (submit k (register-request :id "m-ex" :owner "glenn"
+                                    :connect "profile:ex"
+                                    :roles '(:build :test) :permits '("coding")
+                                    :excludes '("coding") :limits nil :facts nil
+                                    :request "mreq-ex"))
+      (ok okp "the excluding member is registered: ~A" line)
+      (check-equal 0 code "excluding register exit code"))
+    (let ((before (state-open-count (kernel-state k)))
+          (real (query-fleet k :for "coding" :node "m-ex")))
+      (ok (fleet-ask-fail real) "the real excluded choice is refused, not answered empty")
+      (check-equal '() (fleet-ask-rows real) "the real refusal carries no rows")
+      (check-string= "QUERY FAIL ask=fleet rows=0 shown=0: m-ex excludes coding"
+                     (fleet-ask-fail real)
+                     "the real refusal names the member and the kind")
+      (check-equal 1 (fleet-ask-exit-code real) "the real refusal exits 1")
+      (check-equal nil (fleet-ask-lease real) "the real refusal writes no lease")
+      (check-equal before (state-open-count (kernel-state k))
+                   "the real refusal writes no count"))))
 
 ;;; ------------------------------------------------------------------
 ;;; four-facts-four-verbs                           SPEC-WORK.md:3843,5680
