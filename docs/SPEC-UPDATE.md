@@ -96,6 +96,21 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     — one real DIFFERENT. **DIFFERENT for a model is a new weight under the same tag**:
     a differing digest is different weights, not a newer number — a digest has no order,
     so a model is never STALE. Listed, never pulled (rules 9, 11).
+4b. **A `tool` row that names only its executable is asked the verb a tool answers.**
+    An `installed` column of ONE token is a name, not a sentence: nothing in it says how
+    the binary is to be asked. Such a row — what `nova-version snapshot` writes and what
+    every hand-written manifest holds, `nova-swarm  tool  ~/.local/bin/nova-swarm` — is run
+    `<exe> version`, then `<exe> --version`, then BARE, and the first invocation whose
+    output carries an identity under rule 4 is the reading. Bare stays last, for a foreign
+    tool that prints its version with no argument at all. The whole ladder shares ONE
+    `--timeout`, so three rungs never cost three deadlines, and a rung answering
+    `not_found`, a spent budget, a timeout or a held pipe ends it, because those answers do
+    not change with the argument. A row whose `installed` column is a whole argv —
+    `go version`, `sops --version` — is the caller's sentence, run exactly as written,
+    once: rule 3's argv is never appended to. The mistake this removes, in one sentence:
+    every nova tool answers a bare invocation with a usage refusal (the banner is behind
+    `help`, not in front of every mistake), so the adoption pass read UNKNOWN for every one
+    of OUR OWN tools while each of them could say exactly which build it was (#1264).
 5. **Five kinds, and the kind decides what may happen.** `harness` (OpenCode), `engine`
    (ollama), `model` (a weight in the ollama library — checked, never pulled, rule 4a),
    `tool` (gh), `pin` (one of our tools' pinned version of another). One specimen each,

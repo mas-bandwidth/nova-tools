@@ -704,8 +704,15 @@ PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outsi
 POLICY OK backend=<name> read=<n> write=<n> bytes=<n> gpu=<none|metal>
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
 CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> hosts=none note=<one clause|->
-SANDBOX VERSION tool=nova-sandbox version=<n> backend=<name> platform=<os>
+nova-sandbox <build identity> <goos>/<goarch> <go version> backend=<name> platform=<os>
 ```
+
+`version` is SPEC.md's Conventions line, not a shape of its own: the four tokens
+every binary in the set prints, and then this tool's two named extras. It used to
+be `SANDBOX VERSION tool=… version=… backend=… platform=…`, which no reader of a
+version line could take apart — `nova-version snapshot` could not inventory a bin
+holding this binary at all (#1297). The backend and the platform a sandbox is
+judged by are not lost; they are said in the grammar the whole set shares.
 
 `SANDBOX OK` is printed **before** the command starts, so a log that ends in a
 crash still says what the wall was. It names `cmd=<name>` — the base name of

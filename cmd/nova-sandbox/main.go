@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
@@ -133,8 +134,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
-		fmt.Fprintf(stdout, "SANDBOX VERSION tool=nova-sandbox version=%s backend=%s platform=%s\n",
-			oneline.Field(buildVersion()), oneline.Field(sandbox.Backend), oneline.Field(runtime.GOOS))
+		// The same four tokens every other binary prints, then the two facts a
+		// sandbox is judged by as named extras. This line used to be a shape of its
+		// own -- `SANDBOX VERSION tool=... version=...` -- and a shape of its own is
+		// a shape every reader has to be taught: `nova-version snapshot` could not
+		// read it at all (#1297). The backend and the platform are not lost; they
+		// are now said in the grammar the whole set shares.
+		fmt.Fprintln(stdout, buildinfo.Line("nova-sandbox", version,
+			"backend="+sandbox.Backend, "platform="+runtime.GOOS))
 		return 0
 	case "check":
 		return checkVerb(stdout)
