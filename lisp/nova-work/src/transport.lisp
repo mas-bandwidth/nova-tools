@@ -826,6 +826,28 @@ handoff's stamp and `successor=<name>`, and exits fenced
                     (session-path session) (session-generation session) to commit pushed)
             released)))
 
+(defun session-identity-line (session)
+  "The `SESSION OK` identity line a running session prints and serves: identity,
+bounds and clip cadence are explicit and read, never remembered
+(SPEC-WORK.md:304-308)."
+  (let ((base (session-base session)))
+    (format nil "SESSION OK owner=~A generation=~D token=~A state=~(~A~) until=~A base=~A every=~A skew=~A max-bytes=~D max-depth=~D max-nodes=~D index-cache=~D page-bytes=~D page-records=~D closed-window=~A"
+            (session-owner session)
+            (session-generation session)
+            (session-token session)
+            (session-state session)
+            (session-until session)
+            (if (or (null base) (zerop (length base))) "nil" base)
+            (session-every session)
+            (session-skew session)
+            (session-max-bytes session)
+            (session-max-depth session)
+            (session-max-nodes session)
+            (session-index-cache session)
+            (session-page-bytes session)
+            (session-page-records session)
+            (session-closed-window session))))
+
 (defun endpoint-directory-for (socket-path)
   "The directory that holds SOCKET-PATH, as a directory namestring."
   (namestring (make-pathname :name nil :type nil :defaults (pathname socket-path))))
