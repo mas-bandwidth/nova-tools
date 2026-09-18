@@ -6,6 +6,7 @@ package main
 // note only leaves when a bus was named.
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -174,5 +175,60 @@ func TestTheFixerAndThePosterAreTheRealOnesWhenNoTestReplacesThem(t *testing.T) 
 	var poster fleet.BusPoster = fleetNewCertifyBus(certifyBusPoster{Bus: "/tmp/bus", As: "Rowan", To: "Glenn"})
 	if _, ok := poster.(certifyBusPoster); !ok {
 		t.Errorf("the production poster is %T", poster)
+	}
+}
+
+// TestStatusRunsFromAnywhereWithOnlyTheCertificatesFile: it touches no machine, so it must
+// not need the registry or a provisioning standard above the working directory. The first
+// person to run this branch found `--status` refusing from a directory where the tool was
+// perfectly able to read the record.
+func TestStatusRunsFromAnywhereWithOnlyTheCertificatesFile(t *testing.T) {
+	_, certs, _ := certifyFiles(t)
+	if err := os.WriteFile(certs, []byte(strings.Join([]string{
+		"space\tv0.17.0\th\tgo-test\tOK\tGO OK\t2026-09-18T17:30:00Z",
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withCertifyFakes(t, &certifyFakeRemote{}, certifyFakeForge{})
+	t.Chdir(t.TempDir()) // no repository above it, so no tools/bench-standard.sh
+	out, errs, code := runCertifyVerb(t, "--status", "--certs", certs)
+	all := out + errs
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, all)
+	}
+	if strings.Contains(all, "REFUSED") || strings.Contains(all, "is required") {
+		t.Errorf("--status refused although it reads one file:\n%s", all)
+	}
+	if !strings.Contains(all, "CERTIFY STATUS space go-test OK") {
+		t.Errorf("--status did not print the record:\n%s", all)
+	}
+}
+
+// TestTheLocalMachineIsCertifiedWithoutAnSSHAtTheVerb: the wiring, not the engine -- the
+// verb must hand the engine a local runner and this machine's name, or hulk certifying hulk
+// goes back through `ssh hulk`.
+func TestTheLocalMachineIsCertifiedWithoutAnSSHAtTheVerb(t *testing.T) {
+	machines, certs, standard := certifyFiles(t)
+	remote := &certifyFakeRemote{answers: spaceAnswers()}
+	local := &certifyFakeRemote{answers: spaceAnswers()}
+	withCertifyFakes(t, remote, certifyFakeForge{})
+	oldHost, oldLocal := fleetLocalHost, fleetNewCertifyLocal
+	fleetLocalHost = func() string { return "space" }
+	fleetNewCertifyLocal = func() fleet.Remote { return local }
+	t.Cleanup(func() { fleetLocalHost, fleetNewCertifyLocal = oldHost, oldLocal })
+	out, errs, code := runCertifyVerb(t, "--machines", machines, "--machine", "space",
+		"--certs", certs, "--standard", standard, "--no-fix")
+	all := out + errs
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, all)
+	}
+	if !strings.Contains(all, "CERTIFY NOTE machine=space transport=local") {
+		t.Errorf("the verb did not run the local machine locally:\n%s", all)
+	}
+	if len(remote.scripts) != 0 {
+		t.Errorf("the verb used ssh for the machine it is running on (%d scripts)", len(remote.scripts))
+	}
+	if len(local.scripts) == 0 {
+		t.Error("the verb wired no local runner, so nothing ran here")
 	}
 }

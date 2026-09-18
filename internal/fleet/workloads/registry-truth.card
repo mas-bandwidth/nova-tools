@@ -1,6 +1,7 @@
 roles: bench,runner,services,coordination
 expect: ^REGISTRY OK
 forge: registry
+where: coordinator
 
 # The forge decides this one. On 2026-09-18 space carried sixteen ONLINE space-nova-* runners
 # serving merge-group shards while machines.tsv called it `bench,services` -- so THE LOCK,

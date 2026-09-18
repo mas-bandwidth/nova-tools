@@ -135,6 +135,10 @@ The class is the FILE'S NAME and never a key, so two cards cannot claim one clas
   `reads:` is a refusal.
 - `reads:` — the wall's readable roots; `$HOME` is the machine's own.
 - `forge: runners|registry` — a question for the forge, not for a machine.
+- `where: machine|coordinator` — where the workload RUNS. The default is `machine`; a forge
+  question is always `coordinator`, and saying otherwise is a refusal. `gh` lives where the
+  coordinator is: the first real run of this verb went looking for it on a bench that has
+  never had it.
 - `report: yes` — a failure is a `WARN`, never a `FAIL`: measured, written, printed, and it
   gates nothing. Only `diag-size` carries it.
 
@@ -163,10 +167,27 @@ bytes, so either half moving expires every certificate written under the old pai
 goes through `internal/oneline`, so a tab or a newline in what a machine said cannot become
 a column or a row.
 
+**A transport failure is not a verdict.** `UNREACHABLE` is its own token and its own count:
+`CERTIFY <machine> <class> UNREACHABLE reason="Host key verification failed."`, **no
+certificate row**, no repair, and exit 3 — what every other fleet verb answers for a machine
+it could not reach. The first real run of this verb, by somebody who did not write it, wrote
+`CERTIFY hulk go-test FAIL evidence="Host key verification failed."` and a row whose build
+column held that sentence; a tool that cannot reach a machine knows nothing about it. The
+build column holds a parsed version or `-`, never a line. The first transport failure of a
+machine ends that machine's ssh work: its classes carry that reason, and its `coordinator`
+classes are still answered.
+
+**A machine certifies ITSELF without ssh.** When the machine named is the machine running the
+verb — by registry name, ssh target or short host name — the workload runs here through
+`bash -s`, and `CERTIFY NOTE machine=<m> transport=local reason=this-is-the-machine` says so
+once. hulk certifying hulk went through `ssh hulk` and died on its own host key.
+
 **The output.** One `CERTIFY <machine> <class> OK|FAIL|WARN evidence="..."` line per
 workload, `CERTIFY <machine> CURRENT classes=<n> build=<v>` for a machine `--if-stale`
-skipped, and `CERTIFY OK|FAIL machines=<n> ok=<n> fail=<n> warn=<n> skipped=<n>` at the end.
-Exit 1 on any FAIL, 2 on a refusal. A forge question with no forge wired is SKIPPED with
+skipped, and `CERTIFY OK|FAIL|UNREACHABLE machines=<n> ok=<n> fail=<n> warn=<n> skipped=<n>
+unreachable=<n> fixed=<n>` at the end. A dry run ends `CERTIFY DRY-RUN machines=<n>
+would=<n>` and **never** says OK: a run that reached nothing has no passes to report.
+Exit 1 on any FAIL, 3 when a machine could only not be reached, 2 on a refusal. A forge question with no forge wired is SKIPPED with
 `CERTIFY NOTE machine=<m> class=<c> skipped=no-forge` and writes no row — "this tool could
 not ask" is not "this machine is wrong".
 
@@ -200,8 +221,10 @@ mechanized"*). Three triggers:
 3. `fleet/launchd/com.rowan.fleet-certify.plist` runs `--all --if-stale` every six hours. A
    fleet with nothing to do costs one file read and one `nova-merge version` per machine.
 
-`--status` reads the record and reaches no machine: one line per machine and class, and
-exit 1 when any is stale, failed or missing. `--log <file>` writes one structured event per
+`--status` reads the record and reaches no machine, so it needs **only `--certs`**: with a
+registry it reports every machine and class the fleet is meant to hold (a class nobody has
+certified is `NONE`), without one it reports what the record carries. One line per machine
+and class, and exit 1 when any is stale, failed or missing. `--log <file>` writes one structured event per
 certificate AND per escalation through `internal/log` — the same Emitter `nova-pulse launch`
 uses — with `verb=certify`, `event=certify`, `bench=<machine>`, and the verdict in the level;
 an escalation is ERROR and carries the classes and the remedy.
@@ -244,7 +267,9 @@ loud:
    `path-noninteractive`; `go-on-path` → `path-noninteractive`; `release-path` →
    `nova-stamp`, `path-noninteractive`; `git-identity` → `git-identity`; `runner-path` →
    `runner-path-go` — is applied, on one `CERTIFY FIX machine=<m> round=<n> classes=<list>
-   items=<list> by-hand=<list>` line.
+   items=<list> by-hand=<list>` line. **Only a class that FAILED with evidence gathered from
+   the machine.** An `UNREACHABLE` class is never repaired: applying a remedy to a machine
+   nobody reached is a second ssh to the same closed door.
 2. The repaired classes are **certified again**, by the same workloads through the same wall
    (`--max-fix-rounds`, default 1). A repair is never credit: what the class holds after a
    fix is a real certificate or none.

@@ -58,13 +58,26 @@ type certifyFakeForge struct{ runners []fleet.RunnerStatus }
 func (f certifyFakeForge) Runners(string) ([]fleet.RunnerStatus, error) { return f.runners, nil }
 
 // withCertifyFakes wires both seams and the clock, and restores them.
+//
+// It also says this machine is NO machine of the registry. That is a safety rule, not a
+// convenience: the fleet's benches are called space, hulk and vision, the test registries
+// name them, and a shard running on one of them would otherwise take the local path and run
+// the real workloads against the real machine. A test that wants the local path says so by
+// setting fleetLocalHost itself, and replaces the local runner with a fake in the same
+// breath.
 func withCertifyFakes(t *testing.T, remote fleet.Remote, forge fleet.Forge) {
 	t.Helper()
 	oldRemote, oldForge, oldNow := fleetNewCertifyRemote, fleetNewCertifyForge, fleetNow
+	oldLocal, oldHost := fleetNewCertifyLocal, fleetLocalHost
 	fleetNewCertifyRemote = func(string) fleet.Remote { return remote }
 	fleetNewCertifyForge = func(time.Duration) fleet.Forge { return forge }
+	fleetNewCertifyLocal = func() fleet.Remote { return remote }
+	fleetLocalHost = func() string { return "" }
 	fleetNow = func() time.Time { return time.Date(2026, 9, 18, 18, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { fleetNewCertifyRemote, fleetNewCertifyForge, fleetNow = oldRemote, oldForge, oldNow })
+	t.Cleanup(func() {
+		fleetNewCertifyRemote, fleetNewCertifyForge, fleetNow = oldRemote, oldForge, oldNow
+		fleetNewCertifyLocal, fleetLocalHost = oldLocal, oldHost
+	})
 }
 
 func certifyFiles(t *testing.T) (machines, certs, standard string) {

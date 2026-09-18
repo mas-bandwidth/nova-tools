@@ -77,6 +77,7 @@ func cmdFleetStandard(args []string, stdout, stderr io.Writer) int {
 		return pulse.FleetStandardApply(pulse.ApplyInput{
 			Machines: *machines, Name: *machine, Items: splitItems(*items), SSH: *ssh,
 			Home: *home, GitName: *gitName, GitEmail: *gitEmail, DryRun: *dryRun,
+			Local: fleetNewCertifyLocal(), LocalHost: fleetLocalHost(),
 			Timeout: time.Duration(*timeout) * time.Second,
 			Stdout:  stdout, Stderr: stderr,
 		}).Code

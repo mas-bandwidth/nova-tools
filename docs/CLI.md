@@ -1683,15 +1683,39 @@ verdict). `--if-stale` skips a machine whose every class is current, where stale
 build or hash moved, the verdict was FAIL, or the row is older than `--max-age` (default
 24h). `fleet/launchd/com.rowan.fleet-certify.plist` runs `--all --if-stale` every six hours.
 
-`--status` reads the record and touches no machine, one line per machine and class, exit 1
-when any is stale, failed or missing. `--log <file>` writes one structured event per
-certificate AND per escalation through `internal/log`, the same stream `nova-pulse launch`
-writes; an escalation is ERROR and carries the classes and the remedy.
+**A transport failure is not a verdict.** `UNREACHABLE` is its own token, its own count and
+its own exit (3, what every fleet verb answers for a machine it could not reach):
+
+```
+CERTIFY hulk go-test UNREACHABLE reason="Host key verification failed."
+CERTIFY UNREACHABLE machines=1 ok=1 fail=0 warn=0 skipped=0 unreachable=10 fixed=0
+```
+
+**No certificate row is written**, no repair runs, and the build column holds a parsed
+version or `-` and never a sentence. The first transport failure of a machine ends that
+machine's ssh work — its classes carry that reason — while its `where: coordinator` classes
+are still answered, because the forge knows what it knows.
+
+**A machine certifies ITSELF without ssh.** When the machine named is the machine running the
+verb (by registry name, ssh target or short host name) the workload runs here through `bash
+-s`, and one `CERTIFY NOTE machine=<m> transport=local reason=this-is-the-machine` says so.
+
+**A dry run never says OK**: it ends `CERTIFY DRY-RUN machines=<n> would=<n>`, because a run
+that reached nothing has no passes to report.
+
+`--status` reads the record and touches no machine, so it needs **only `--certs`** — with a
+registry it reports every machine and class the fleet is meant to hold (`NONE` for one nobody
+has certified), without one it reports what the record carries. One line per machine and
+class, exit 1 when any is stale, failed or missing. `--log <file>` writes one structured
+event per certificate, per escalation and per unreachable class through `internal/log`, the
+same stream `nova-pulse launch` writes; an escalation is ERROR and carries the classes and
+the remedy.
 
 **Fix, then prove, then escalate.** `--fix` is on by default; `--no-fix` waives it. A FAIL
 whose class maps to an item of the provisioning standard — the mapping is a table in code,
 `internal/fleet.ItemsForClass` — runs `fleet standard --apply` for that machine and then
-certifies those classes ONCE more (`--max-fix-rounds`, default 1). A repair is never credit:
+certifies those classes ONCE more (`--max-fix-rounds`, default 1). Only a class that FAILED
+with evidence from the machine: an `UNREACHABLE` class is never repaired. A repair is never credit:
 the class is re-run by the same workload through the same wall.
 
 ```
@@ -1806,7 +1830,8 @@ Every remedy is idempotent (a second apply is `unchanged`) and nothing is ever d
   swaps binaries and re-certifies, and a repair loop is no place to start it.
 
 `--items <a,b>` narrows the run (an item this machine has no remedy for is a refusal, never
-a silent skip), and `--dry-run` reaches no machine and changes nothing.
+a silent skip), and `--dry-run` reaches no machine and changes nothing. A machine repairing
+ITSELF uses no ssh: the WALK line says `transport=local`.
 
 `fleet mirror` creates the bare mirror a card clones from, or fetches the one already
 there, and **deletes nothing**:
