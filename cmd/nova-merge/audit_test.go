@@ -80,13 +80,21 @@ var mergeAudit = audit.Config{
 		// above; its stderr is this binary's own stderr, so no line of its reaches the
 		// one line this verb prints.
 		`"github.com/mas-bandwidth/nova-tools/internal/pulse"`,
-		// classify.go calls the typed-decision client with a context deadline. context
-		// holds no writer: it carries only the deadline that bounds the provider call.
+		// classify.go calls the typed-decision client with a context deadline, and
+		// react.go's edges use context for CancelFunc plumbing. context holds no writer:
+		// it carries only the deadline that bounds the provider call.
 		`"context"`,
 		// classify.go asks the one typed decision through internal/decide; the package
 		// holds no writer this binary does not hand it, and its answer is rendered through
 		// classifyLine, whose every outside value is oneline.Field-escaped.
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// react.go's redis client edge writes nothing itself; it is read through its own
+		// API and this package prints only the escaped lines below, so it cannot write
+		// past oneline.
+		`"github.com/redis/go-redis/v9"`,
+		// react.go publishes and reads through internal/ci, whose values are rendered
+		// through oneline before this package prints them.
+		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
 	},
 	MinClassified: 60,
 }

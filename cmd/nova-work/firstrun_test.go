@@ -1,6 +1,11 @@
 // First-run tests for nova-work: the usage banner's `example:` block and the
 // docs/TESTS.md `### First run` transcript are RUN here rather than read, so an
 // example that has drifted out of the flag set is caught by a build.
+//
+// firstrun_test.go pins the onboarding standard (docs/ONBOARDING.md) for this binary:
+// the examples at the foot of the usage banner RUN, and a bare command refuses in one
+// line that names the door. The example's redis address is pointed at a miniredis, so
+// nothing here reaches a real instance.
 package main
 
 import (
@@ -9,7 +14,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
@@ -33,25 +43,55 @@ func localize(t *testing.T, line string) []string {
 	return strings.Fields(strings.ReplaceAll(line, "./work.work", plan))
 }
 
-func TestUsageBannerExamplesRun(t *testing.T) {
-	code, banner, stderr := runCLI(t, "help")
-	if code != 0 {
-		t.Fatalf("`nova-work help` must be exit 0, got %d; stderr: %s", code, stderr)
+// TestBareNovaWorkRefusesInOneLine: no verb is not an invocation, and the refusal says
+// where the usage is.
+func TestBareNovaWorkRefusesInOneLine(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run(nil, &out, &errb, production()); code != 2 {
+		t.Fatalf("a bare nova-work exits %d, want 2", code)
 	}
-	examples, err := onboarding.ExampleLines(banner, "nova-work")
+	if out.Len() != 0 {
+		t.Errorf("a bare nova-work wrote to stdout: %q", out.String())
+	}
+	if !strings.Contains(errb.String(), "run: nova-work help") {
+		t.Errorf("a bare nova-work names no door: %q", errb.String())
+	}
+	if lines := strings.Split(strings.TrimSuffix(errb.String(), "\n"), "\n"); len(lines) > 2 {
+		t.Errorf("a bare nova-work printed %d lines, want 1: %q", len(lines), errb.String())
+	}
+}
+
+// TestUsageBannerExamplesRun executes each line under `example:` with the test's deps.
+func TestUsageBannerExamplesRun(t *testing.T) {
+	var help, errb bytes.Buffer
+	if code := run([]string{"help"}, &help, &errb, production()); code != 0 {
+		t.Fatalf("nova-work help exit = %d, stderr=%s", code, errb.String())
+	}
+	examples, err := onboarding.ExampleLines(help.String(), "nova-work")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s\n\n%s", err, help.String())
+	}
+	mr := miniredis.RunT(t)
+	deps := Deps{
+		Now:  func() time.Time { return time.Now().UTC() },
+		Dial: func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Forge: func(_, _ string, _ time.Duration) ci.Forge {
+			return &fakeForge{}
+		},
 	}
 	for _, ex := range examples {
-		fields := localize(t, ex)
-		if len(fields) < 2 || fields[0] != "nova-work" {
-			t.Fatalf("usage example %q is not a nova-work command", ex)
+		args := localize(t, ex)[1:]
+		for i, a := range args {
+			if a == "127.0.0.1:6379" {
+				args[i] = mr.Addr()
+			}
 		}
-		code, stdout, stderr := runCLI(t, fields[1:]...)
-		if code != 0 {
-			t.Fatalf("the usage example %q does not run: exit %d, stderr: %s", ex, code, stderr)
+		var out, errs bytes.Buffer
+		code := run(args, &out, &errs, deps)
+		if code == 2 {
+			t.Errorf("the usage example %q does not run: exit 2\nstderr: %s", ex, errs.String())
 		}
-		if stdout == "" {
+		if out.Len() == 0 && errs.Len() == 0 {
 			t.Errorf("the usage example %q printed nothing", ex)
 		}
 	}
