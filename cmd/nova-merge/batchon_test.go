@@ -503,6 +503,64 @@ func TestBatchOnRefusalSaysSoWhenTheMachineSaidNothing(t *testing.T) {
 	absent(t, stdout, "BATCH OK")
 }
 
+// A TRANSPORT FAILURE IS NOT EVIDENCE THAT THE MACHINE HAS NOTHING (Stella's read of
+// #1443, P1). The probe asks the machine which of the suite's programs and files are there,
+// and it marked itself done and returned SILENTLY when the ask failed. Every answer was then
+// "no", so `Unavailable` reported go and sbcl missing, every step was SKIPPED OUT LOUD --
+// and the run went on to print BATCH OK over a suite that ran NOTHING AT ALL.
+//
+// That is the worst line this tool can print: a green verdict about a tree nobody checked.
+// Not knowing what a machine has is a gate that cannot run, which is exit 2.
+func TestBatchOnRefusesWhenTheMachineCouldNotSayWhatItHas(t *testing.T) {
+	o := newOnLab(t)
+	// Everything else on this machine is healthy; only the ask fails.
+	o.bench.fail = map[string]string{"command -v": "ssh_exchange_identification: Connection closed by remote host"}
+
+	exit, stdout, stderr := o.on("integration-probe", "--pr", "1")
+
+	if exit != 2 {
+		t.Fatalf("a machine that could not be asked what it has is exit 2, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	absent(t, stdout, "BATCH OK")
+	contains(t, stderr, "BATCH REFUSED")
+	// The refusal says what really happened, and never that the machine lacks a toolchain.
+	contains(t, stderr, "ssh_exchange_identification")
+	absent(t, stderr, "BATCH SKIP")
+	for _, never := range []string{"go is not on bench1", "sbcl is not on bench1"} {
+		absent(t, stderr, never)
+	}
+}
+
+// A MERGE THAT FAILED FOR SOME OTHER REASON KEEPS ITS OWN ERROR (Stella's read of #1443,
+// P3). The index is read AFTERWARDS only to tell a conflict from anything else, and its
+// answer replaced the merge's -- so a merge that died for a reason of its own reported
+// nothing about that reason at all.
+func TestBatchOnAMergeThatIsNotAConflictKeepsTheMergesOwnError(t *testing.T) {
+	o := newOnLab(t)
+	o.bench.fail = map[string]string{
+		"merge --no-ff --no-edit": "fatal: Unable to create '/x/.git/index.lock': File exists.",
+	}
+
+	exit, stdout, stderr := o.on("integration-mergefail", "--pr", "1")
+
+	if exit != 2 {
+		t.Fatalf("a merge that could not run is exit 2, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	absent(t, stdout, "BATCH OK")
+	contains(t, stderr, "BATCH REFUSED")
+	contains(t, stderr, "left no conflicting file")
+	// THE MERGE'S OWN WORDS, which is the whole finding: without them the reason is empty
+	// and the reader is told only that a merge failed.
+	contains(t, stderr, "index.lock")
+	// AND IT IS NEVER REPORTED AS A CONFLICT. A member dropped for "the merge conflicts with
+	// the members ahead" is a member whose author is told their diff clashed with somebody
+	// else's -- when what really happened was a lock file, a full disk or a permission on
+	// that bench. The index is what tells the two apart, and it said there was no conflict.
+	absent(t, stderr, "conflicts with the members ahead")
+	absent(t, stderr, "BATCH DROP")
+	absent(t, stdout, "dropped=1")
+}
+
 // WHAT COMES BACK IS CHECKED AT THE SEAM. A `cat` over ssh answers with whatever the far
 // side wrote on its stdout -- an empty file, a shell's complaint, half a transfer -- and
 // every one of those is a bundle that fails much later with a message about the wrong thing.

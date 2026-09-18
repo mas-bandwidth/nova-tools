@@ -458,7 +458,14 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	var skipped []string
 	var plan []batchStep
 	for _, step := range batchGate {
-		why := site.Unavailable(step)
+		why, err := site.Unavailable(step)
+		if err != nil {
+			// Not knowing what the machine has is a gate that CANNOT RUN, which is exit 2 --
+			// never a step skipped and never a verdict. Skipping every step whose program
+			// could not be asked about and printing BATCH OK is a green line about a suite
+			// that ran nothing (Stella's read of #1443, P1).
+			return batchRefused(stderr, err)
+		}
 		if why == "" {
 			plan = append(plan, step)
 			continue

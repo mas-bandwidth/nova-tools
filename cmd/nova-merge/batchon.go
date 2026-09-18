@@ -100,6 +100,7 @@ type remoteSite struct {
 	// The probe's answers, read once: which of the suite's programs this machine has, and
 	// which of its files this checkout holds.
 	probed   bool
+	probeErr error
 	haveProg map[string]bool
 	haveFile map[string]bool
 }
@@ -262,20 +263,26 @@ func (s *remoteSite) Merge(n int, message string) (bool, error) {
 	// no git identity anywhere dies on `git merge --no-ff` with "Committer identity unknown".
 	do := "git -c user.name=nova-merge -c user.email=nova-merge@localhost merge --no-ff --no-edit -m " +
 		merge.RemoteQuote(message) + " FETCH_HEAD"
-	if _, err := s.run(s.clone, do); err == nil {
+	_, mergeErr := s.run(s.clone, do)
+	if mergeErr == nil {
 		return true, nil
 	}
 	// A CONFLICT LEAVES UNMERGED PATHS IN THE INDEX, and anything else is a failure of the
 	// run rather than a member to drop -- the same reading hasConflicts does locally.
-	unmerged, err := s.run(s.clone, "git diff --name-only --diff-filter=U")
-	if err != nil {
-		return false, fmt.Errorf("the merge of pull/%d on %s failed and its index could not be read: %w", n, s.On(), err)
+	//
+	// THE INDEX IS READ TO CLASSIFY THE FAILURE, NEVER TO REPLACE IT (Stella's read of
+	// #1443, P3). The merge's own error is what says why the merge failed; the read after it
+	// only says which KIND of failure it was, and a merge that died of a lock file or a
+	// missing object reported nothing about that at all once its error had been dropped.
+	unmerged, indexErr := s.run(s.clone, "git diff --name-only --diff-filter=U")
+	if indexErr != nil {
+		return false, fmt.Errorf("the merge of pull/%d on %s failed (%w) and its index could not be read afterwards, so this gate cannot tell a conflict from a merge that could not run: %w", n, s.On(), mergeErr, indexErr)
 	}
 	if strings.TrimSpace(unmerged) == "" {
-		return false, fmt.Errorf("the merge of pull/%d on %s failed and left no conflicting file, so it is a merge that could not run rather than a member to drop", n, s.On())
+		return false, fmt.Errorf("the merge of pull/%d on %s failed and left no conflicting file, so it is a merge that could not run rather than a member to drop: %w", n, s.On(), mergeErr)
 	}
 	if _, err := s.run(s.clone, "git merge --abort"); err != nil {
-		return false, fmt.Errorf("the conflicting merge of pull/%d on %s could not be aborted: %w", n, s.On(), err)
+		return false, fmt.Errorf("the conflicting merge of pull/%d on %s could not be aborted, so the checkout there is mid-merge and the members after this one would be judged on it: %w", n, s.On(), err)
 	}
 	return false, nil
 }
@@ -308,21 +315,30 @@ func (s *remoteSite) Probe(command string) (string, bool) {
 // asked. It runs UNDER THE PRELUDE, so `command -v go` sees the same PATH the steps will --
 // a probe that looked at a bare non-interactive PATH would report a bench with go1.26.5
 // under ~/sdk as a bench with no go at all.
-func (s *remoteSite) Unavailable(step batchStep) string {
-	s.probe()
+func (s *remoteSite) Unavailable(step batchStep) (string, error) {
+	// AN ASK THAT FAILED IS NOT AN ANSWER OF "no" (Stella's read of #1443, P1). This used to
+	// mark the probe done and return silently on a transport failure, which left every
+	// answer false: `go` and `sbcl` were reported missing, every step was skipped out loud,
+	// and the run printed BATCH OK over a suite that had run NOTHING. A green verdict about
+	// a tree nobody checked is the worst line this tool can print.
+	if err := s.probe(); err != nil {
+		return "", err
+	}
 	if step.file != "" && !s.haveFile[step.file] {
-		return "this checkout holds no " + step.file
+		return "this checkout holds no " + step.file, nil
 	}
 	if step.needs != "" && !s.haveProg[step.needs] {
-		return step.needs + " is not on " + s.On() + " and is not under its ~/" + sdkDir
+		return step.needs + " is not on " + s.On() + " and is not under its ~/" + sdkDir, nil
 	}
-	return ""
+	return "", nil
 }
 
-// probe asks the machine, once, which of the suite's programs and files are there.
-func (s *remoteSite) probe() {
+// probe asks the machine, once, which of the suite's programs and files are there. The ask
+// is one script and one round trip for the whole suite, and its failure is REMEMBERED rather
+// than swallowed: every later caller gets the same answer, which is that nobody knows.
+func (s *remoteSite) probe() error {
 	if s.probed {
-		return
+		return s.probeErr
 	}
 	s.probed = true
 	var lines []string
@@ -341,7 +357,11 @@ func (s *remoteSite) probe() {
 	// no sbcl is a fact to report and not a seam that failed.
 	out, err := s.run(s.clone, strings.Join(lines, "; ")+"; true")
 	if err != nil {
-		return
+		// The script ends in `true`, so a machine that HAS none of these still exits zero.
+		// An error here is therefore the ask itself failing -- the connection, the shell,
+		// the checkout -- and never the answer "no".
+		s.probeErr = fmt.Errorf("%s could not be asked which of the suite's programs and files it has, so this gate cannot tell a machine without sbcl from a machine it could not reach: %w", s.On(), err)
+		return s.probeErr
 	}
 	for _, line := range strings.Split(out, "\n") {
 		kind, name, ok := strings.Cut(strings.TrimSpace(line), " ")
@@ -355,6 +375,7 @@ func (s *remoteSite) probe() {
 			s.haveFile[name] = true
 		}
 	}
+	return nil
 }
 
 // Step runs one step of the suite on the machine. A step's own variables (the windows cross

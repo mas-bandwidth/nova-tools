@@ -50,7 +50,13 @@ type batchSite interface {
 	// whether it succeeded. It is for the toolchain check and nothing else.
 	Probe(command string) (string, bool)
 	// Unavailable is why a step cannot run on this machine, or "" when it can.
-	Unavailable(step batchStep) string
+	//
+	// THE ERROR IS NOT A REASON A STEP CANNOT RUN; it is the gate being unable to find out
+	// (Stella's read of #1443, P1). A machine that could not be ASKED what it has is not a
+	// machine with nothing on it, and answering "" for every program there would skip every
+	// step and print a green verdict over a suite that ran nothing at all. A site that
+	// cannot answer says so, and the run stops.
+	Unavailable(step batchStep) (string, error)
 	// Step runs one step of the suite and answers its combined output.
 	Step(step batchStep) (string, error)
 	// Bring carries a green batch back to THIS machine, as a git bundle, and answers where
@@ -179,12 +185,14 @@ func (s *localSite) Probe(command string) (string, bool) {
 	return out, err == nil
 }
 
-func (s *localSite) Unavailable(step batchStep) string {
+// Unavailable on this machine is a filesystem read and a PATH lookup, neither of which can
+// fail in a way that is not an answer -- so the error is always nil here.
+func (s *localSite) Unavailable(step batchStep) (string, error) {
 	why, bin := stepUnavailable(step, s.clone)
 	if why == "" {
 		s.bins[step.name] = bin
 	}
-	return why
+	return why, nil
 }
 
 func (s *localSite) Step(step batchStep) (string, error) {
