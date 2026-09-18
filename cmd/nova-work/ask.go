@@ -199,6 +199,7 @@ func cmdAsks(args []string, stdout, stderr io.Writer) int {
 	as := fs.String("as", "", "the name you read the bus as; with --bus, whose asks these are")
 	busDir := fs.String("bus", "", "a bus checkout to read the sent notes from, the source of truth for what went out")
 	max := fs.Int("max", askMaxRows, "rows before one MORE line; 0 is every row")
+	maxNotes := fs.Int("max-notes", 0, "note files read per lane with --bus, newest first; 0 is every note")
 	maxBytes := fs.Int64("max-bytes", friends.DefaultMaxBytes, "the work set's byte ceiling")
 	now := fs.String("now", "", "the instant ages and deadlines are measured against, RFC3339; default this run's clock")
 	if err := fs.Parse(args); err != nil {
@@ -219,6 +220,9 @@ func cmdAsks(args []string, stdout, stderr io.Writer) int {
 	if *max < 0 {
 		return refuse(stderr, " asks", fmt.Sprintf("--max %d is not a count", *max))
 	}
+	if *maxNotes < 0 {
+		return refuse(stderr, " asks", fmt.Sprintf("--max-notes %d is not a count", *maxNotes))
+	}
 	at, ok := askNow(*now)
 	if !ok {
 		return refuse(stderr, " asks", fmt.Sprintf("--now %q is not an RFC3339 instant", *now))
@@ -232,9 +236,18 @@ func cmdAsks(args []string, stdout, stderr io.Writer) int {
 		rows = ws.Open(at)
 	}
 	if strings.TrimSpace(*busDir) != "" {
-		onBus, err := friends.OnBus(*busDir, *as, *owner, at, *max)
+		// --max is the ROW bound and is NOT passed here. It used to be, and it capped the
+		// files read instead: on a lane of 1,734 notes the default read the oldest fifty,
+		// found nothing open among them and printed `ASKS n=0` at a bench with four asks
+		// outstanding. The file bound is --max-notes, it is off by default, and when a
+		// caller does set it the run says on stderr which lane it bit and what to raise.
+		onBus, bounded, err := friends.OnBus(*busDir, *as, *owner, at, *maxNotes)
 		if err != nil {
 			return refuse(stderr, " asks", oneline.Err(err))
+		}
+		for _, b := range bounded {
+			fmt.Fprintf(stderr, "ASKS BOUNDED lane=%s notes=%d read=%d remedy=%q\n",
+				oneline.Field(b.Lane), b.Notes, b.Read, "raise --max-notes or drop it to read every note")
 		}
 		// The bus wins a tie: an ask recorded in a work set AND found on the bus is one
 		// ask, and the note is the thing that went out.

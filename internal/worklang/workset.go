@@ -46,6 +46,12 @@ type Unit struct {
 	// of the three ways a unit says it is done.
 	Status string
 	Needs  []string
+	// Branch is the :branch a unit's owner replies on, and Acceptance the :acceptance
+	// that says when it is finished. They are read HERE with every other key because
+	// there is ONE reader of this form: a key only the ask side read was the second
+	// reader of the work set, with its own idea of what a unit is.
+	Branch     string
+	Acceptance []string
 	// Deadline is the :deadline text EXACTLY as written. It is parsed by Check
 	// rather than here, because an unreadable deadline is a finding about one unit
 	// and never a refusal of the whole set.
@@ -147,6 +153,10 @@ func readUnit(form Form) Unit {
 			u.Status = atomText(val)
 		case "needs":
 			u.Needs = idList(val)
+		case "branch":
+			u.Branch = atomText(val)
+		case "acceptance":
+			u.Acceptance = textList(val)
 		case "deadline":
 			u.Deadline = val.Text()
 		case "done":
@@ -187,6 +197,28 @@ func idList(f Form) []string {
 		var out []string
 		for _, el := range f.List {
 			if (el.Kind == String || el.Kind == Symbol) && el.Value != "" {
+				out = append(out, el.Value)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// textList is an :acceptance value: a list of sentences, or one sentence written
+// bare. Unlike idList it keeps only strings -- an acceptance is prose a person wrote
+// and never a symbol -- and anything else contributes nothing rather than a guess.
+func textList(f Form) []string {
+	switch f.Kind {
+	case String:
+		if f.Value == "" {
+			return nil
+		}
+		return []string{f.Value}
+	case List:
+		var out []string
+		for _, el := range f.List {
+			if el.Kind == String && el.Value != "" {
 				out = append(out, el.Value)
 			}
 		}
