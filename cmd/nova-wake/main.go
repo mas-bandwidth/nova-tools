@@ -438,12 +438,32 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 // a directory a bus rather than a directory. The repository must be dir's OWN:
 // `git -C dir rev-parse` ascends to a parent repository, so a plain directory
 // under some other checkout would pass a discovery-only test.
+//
+// THE DIRECTORY ITSELF MUST BE THE WORK TREE ROOT, not merely live under some
+// unrelated repository. `git -C dir rev-parse --git-dir` walks UP to the nearest
+// ancestor with a .git, so a plain directory inside any checkout answered yes: on
+// a machine whose temp directory lives under a repo, `awake --bus <empty dir>`
+// treated the empty directory as a bus. A bus is its own repository.
 func isGitRepo(dir string) bool {
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		return false
 	}
-	cmd := exec.Command("git", "-C", dir, "rev-parse", "--git-dir")
-	return cmd.Run() == nil
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return false
+	}
+	top := strings.TrimSpace(string(out))
+	if resolved, err := filepath.EvalSymlinks(top); err == nil {
+		top = resolved
+	}
+	return top == abs
 }
 
 // laneNames is every from-<name>/ directory in the bus clone, sorted by name.

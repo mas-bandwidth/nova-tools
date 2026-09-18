@@ -155,6 +155,16 @@ and mark the job harvested, the `already-fixed` line naming the test the
 prints the remedy. Below the floor the class is `unknown` (the line reads
 `below=class`) and harvest runs the path that ran before the call.
 
+### nova-merge classify merge-group failure
+
+Classify one failed merge-group run by kind — flaky-under-load, own-change or
+environment — from the `--- FAIL` test names of its failed jobs, the package each
+test lives in, whether the pull request changed that package, and the runner name.
+The floor is 0.9. Above it `flaky-under-load` and `environment` print `rerun=yes`
+and `own-change` prints `park=yes`; below it the kind is `unknown`, `rerun=no`,
+`park=no`, and the line names the raw answer as `below=<name>`, so the pass keeps
+today's skip-and-rerun-versus-park behaviour.
+
 ### the space game intent layer
 
 Classify a player's intent (ships danger, collision, maneuver) into the

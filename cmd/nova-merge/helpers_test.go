@@ -93,6 +93,29 @@ func injectLockClock() {
 // verb waited: the wait is measured in injected time, never in wall time.
 var lockClk *lockClock
 
+// realLockClock puts the merge package's two wait seams back on the MACHINE's clock for
+// the rest of one test, and restores the injected one when that test ends.
+//
+// The injected clock is one instant shared by the whole process and every waiter's poll
+// advances it. That is what a timeout test wants -- a bounded wait runs to its end with
+// no wall time -- but it is wrong for the one test whose writers must really wait on each
+// other: three waiters polling a held lock advance the shared instant by three poll
+// intervals per round, so the whole 120 s bound passes in a few hundred real
+// microseconds and every waiter but the first is refused before the holder has finished
+// its write. On a fast, idle machine the holder wins that race and the test passes; on a
+// loaded one it does not, which is a test that asserts the machine (#1206 was green on CI
+// and red on the Studio the CI runners share).
+//
+// Only a test that does not call t.Parallel may use it: Go resumes the paused parallel
+// tests after the sequential ones have finished, so nothing else is reading the clock
+// while such a test runs.
+func realLockClock(t *testing.T) {
+	t.Helper()
+	merge.Now = time.Now
+	merge.Sleep = time.Sleep
+	t.Cleanup(injectLockClock)
+}
+
 type lab struct {
 	t      *testing.T
 	dir    string
@@ -102,10 +125,13 @@ type lab struct {
 	host   *merge.FakeHost
 	// queue, when set, is what a `simulate` run with no --entries reads; it is the fake
 	// gh of these tests, and it reaches nothing.
-	queue  QueueReader
-	now    time.Time
-	build  string
-	runner merge.Runner
+	queue QueueReader
+	// launcher is the fake the rebase verb's cards are handed to, so a test proves the
+	// launch without a bench.
+	launcher *fakeLauncher
+	now      time.Time
+	build    string
+	runner   merge.Runner
 	// urlFor, when set, is what RepoURL answers -- so a test can point init at a
 	// repository that is not there.
 	urlFor func(string) string
@@ -119,12 +145,13 @@ func newLab(t *testing.T) *lab {
 	dir := t.TempDir()
 	l := &lab{
 		t: t, dir: dir,
-		remote: filepath.Join(dir, "remote.git"),
-		work:   filepath.Join(dir, "work"),
-		lane:   filepath.Join(dir, "lane"),
-		host:   merge.NewFakeHost(),
-		now:    time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC),
-		build:  "aaaaaaaaaaaa",
+		remote:   filepath.Join(dir, "remote.git"),
+		work:     filepath.Join(dir, "work"),
+		lane:     filepath.Join(dir, "lane"),
+		host:     merge.NewFakeHost(),
+		launcher: &fakeLauncher{},
+		now:      time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC),
+		build:    "aaaaaaaaaaaa",
 	}
 	// The bare repository, its first commit and the clone are BUILT ONCE for the
 	// process and COPIED here. Building them is six git subprocesses, and 82 newLab
@@ -329,7 +356,9 @@ func (l *lab) deps() Deps {
 			}
 			return nil
 		},
-		BuildID: func() string { return l.build },
+		NewRebaseList: func(string, time.Duration) merge.RebaseList { return l.host },
+		Launcher:      l.launcher,
+		BuildID:       func() string { return l.build },
 	}
 }
 

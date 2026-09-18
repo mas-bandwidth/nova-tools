@@ -49,9 +49,17 @@ var workAudit = audit.Config{
 		// errors names ONE sentinel, errSendRefused, so a test can hand it to a fake
 		// sender and watch nothing be recorded; it prints nothing.
 		`"errors"`,
-		// time parses --deadline and --now and formats the stamps ask and asks print;
-		// every one of those goes out through an oneline field.
+		// time parses ask's --deadline and --now and formats the stamps ask and asks
+		// print, and it is the events verb's duration parsing and injected clock; every
+		// one of those goes out through an oneline field.
 		`"time"`,
+		// The events verb's other edges. context is CancelFunc plumbing for the deadline
+		// and writes nothing; the redis client and internal/ci are read and published
+		// through their own APIs, and this package prints only the escaped lines below,
+		// so none of them writes past oneline.
+		`"context"`,
+		`"github.com/redis/go-redis/v9"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,
