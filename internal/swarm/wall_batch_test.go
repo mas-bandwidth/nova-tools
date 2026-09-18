@@ -25,7 +25,7 @@ func TestAWallDeathIsNamedEndWall(t *testing.T) {
 			Body: "STEP 1\npwd && mkdir -p scratch\nSTEP 2\n" + wallAutoRejectLine + "\nError: The user rejected permission to use this specific tool call.\n"},
 		runnerStep{Op: "exit", N: 0},
 	)
-	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, errs := runBatch(t, tsv, root, runner, 5*time.Second) // wall-ok: the fake runner exits on its own; the 5s is the outer stop, not a bet on the machine
 	if code != 1 {
 		t.Fatalf("a walled card abstains and exits 1, got %d:\n%s", code, out)
 	}
@@ -56,7 +56,7 @@ func TestAWallSurvivedIsDone(t *testing.T) {
 		runnerStep{Op: "write", Path: "{root}/{slot}/native.log", Body: "STEP 1\n" + wallAutoRejectLine + "\n"},
 		publishCard("{job}"),
 	)
-	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second)
+	code, out, _ := runBatch(t, tsv, root, runner, 5*time.Second) // wall-ok: the fake runner exits on its own; the 5s is the outer stop, not a bet on the machine
 	if code != 0 {
 		t.Fatalf("a card that published despite the wall is done, got %d:\n%s", code, out)
 	}
