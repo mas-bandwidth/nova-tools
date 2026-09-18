@@ -795,6 +795,85 @@ fix and integration-4 is what it costs`.
 `pull_request` event in their text; a Windows runner reached through a reusable
 workflow or a matrix value built elsewhere would not be counted.
 
+### `darwin-sizes` — the darwin cap is measured on a quiet host, with a stated margin
+
+**The rule.** The numbers that decide the darwin merge leg's cost — the measured
+sizes in `testdata/ci/package-sizes-darwin.tsv`, the 40 s shard budget, and
+`DARWIN_TIMEOUT` in the Makefile — stay in one place and in step, and the ceiling
+is never less than the stated margin over the largest share the plan can hand one
+`go test`. The sizes are read on a QUIET host — no runner busy, no merge group in
+flight — and the margin over them is TWO, written down as a number rather than
+folded into the table. A measurement is a floor; a cap is a floor times a margin;
+neither is ever a guess.
+**The hurt.** 2026-09-18 16:41Z, merge-group run 35369433950 (batch 7, `#1360`):
+`test-hosted-merge (darwin, 0)` and `(darwin, 1)` were CANCELLED at the
+five-minute per-leg cap on superman, and a cancelled shard drops the whole group
+and restarts every PR behind it. The log does not say what the headline says:
+NO package came near the 100 s per-package ceiling. Shard 0 finished 27 packages
+summing 211.8 s of `go test` between 16:36:43 and 16:41:24 and was killed partway
+through the rest, its largest single invocation `cmd/nova-wake` at 50.7 s. What
+ran out was the SHARD'S SUM, and the sum is decided by how many ways each package
+is dealt. Dealing came off the LINUX table, and FOUR of the five largest darwin
+packages sit under its 40 s budget, so each was dealt three ways instead of six:
+`cmd/nova-wake` 24.6 s on hulk against 120.3 s measured on superman,
+`cmd/nova-merge` 7.7 against 68.8, `internal/swarm` 17.4 against 64.4 and
+`cmd/nova-bus` 10.0 against 54.2. The second half of the hurt
+is the machine's STATE: superman was in its post-power-on condition, Spotlight
+settling and XprotectService scanning fresh test binaries with sixteen runners
+live, so the numbers of that moment were the state's and not the host's. That is
+why the rule names the conditions and not only the number — and why the margin is
+measured rather than assumed, on the same host both ways: `cmd/nova-merge` is
+68.8 s whole on a quiet superman against about 147 s on the loaded superman of
+that run, which is 2.1x.
+**The test.** `TestDarwinMergeShardPlanIsDerivedFromMeasurements`
+(`internal/ci/darwin_shards_class_test.go`).
+**Its allowlist.** The sizes file itself, whose censored rows are LABELLED as
+floors rather than written as sizes; the forcing packages are named in the test,
+so they cannot quietly fall out of the table.
+**Its remedy lines.** `the Makefile declares no DARWIN_TIMEOUT; the darwin
+per-package ceiling has nowhere to live but a workflow line nobody can run`;
+`DARWIN_TIMEOUT = <d>, under 2x the largest per-invocation share the plan can
+hand one go test`; and `<file> does not say "quiet" anywhere in its header; a
+size is only a size if the header says what the machine was doing when it was
+read`.
+**Its narrowings.** Like its Windows sibling it checks that the numbers are
+measured and consistent, not that they are still TRUE: a package that doubles on
+an x64 Mac keeps its old row until somebody measures again, and only the run says
+so. It reads the table's header for the words `quiet` and `margin` rather than
+verifying the conditions, which no test can check after the fact.
+
+### `darwin-table` — the merge gate's darwin leg deals from the darwin table
+
+**The rule.** The merge group's darwin leg reads the FULL column of
+`testdata/ci/package-sizes-darwin.tsv`, takes its ceiling from
+`make -s darwin-timeout`, and deals an unmeasured or censored package across
+EVERY slot the group opened; only linux still keeps the Linux table, which is its
+own measurement.
+**The hurt.** The same run, 35369433950, and the same shape as `windows-table`
+one platform later: a leg dealing from a table measured on another machine. Linux
+could not have said otherwise — `cmd/nova-merge` is 7.7 s on hulk and 68.8 s on a
+quiet x64 Mac, `cmd/nova-bus` 10.0 s there and 54.2 s here — so four of the five
+packages that dominate this leg sat under the 40 s budget in the only table it
+read, and were dealt three ways instead of six. Three platforms are three
+measurements, and the last leg reading somebody else's numbers was the one that
+dropped the group.
+**The test.** `TestMergeGateDarwinLegDealsFromTheDarwinTable`
+(`internal/ci/darwin_shards_class_test.go`).
+**Its allowlist.** None.
+**Its remedy lines.** `the merge gate's shard plan never reads <sizes file>; its
+darwin leg would deal from the Linux column again, which is how run 35369433950's
+group was dropped`; `an unknown darwin size must be dealt across every slot and
+never guessed downward`; and `the merge gate's darwin leg does not take its
+ceiling from make -s darwin-timeout; the darwin number would be written twice and
+drift`.
+**Its narrowings.** It asserts the shell branch's text inside one named step, so
+a renamed step fails loudly rather than passing silently — the same trade its
+Windows sibling takes. The windows and darwin branches in that step are
+deliberately NOT factored into one parameterised helper: both tests read the step
+as TEXT and assert each leg's own table and column literally, and a shared `awk`
+taking the column as a variable would satisfy neither. Twenty lines of duplicated
+shell is the price of a rule a reviewer can see.
+
 ### `cache` — no cache step on a self-hosted runner
 
 **The rule.** Every `actions/cache` step in `ci.yml` carries

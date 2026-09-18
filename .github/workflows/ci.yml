@@ -633,9 +633,20 @@ jobs:
             # which, and one machine as the only darwin runner made it the clock of the
             # whole merge queue.
             labels: '["self-hosted","macOS"]'
-            # FIVE as well: 38 to 256 s in run 35354900090, the slowest leg
-            # inside 4:16 on a Studio also carrying the self-hosted matrix.
-            timeout: 5
+            # TEN since 2026-09-18, and batch 7 is what bought it. Five fitted
+            # this leg while it ran small groups (38 to 256 s in run
+            # 35354900090), and then merge-group run 35369433950 had darwin
+            # shards 0 AND 1 CANCELLED at exactly five minutes on superman: a
+            # thirteen-member batch's packages dealt into six shards BY COUNT off
+            # the Linux table, with cmd/nova-bus (10.0 s there, minutes on an x64
+            # Mac) inside shard 0. The real fix is below — this leg now deals
+            # from testdata/ci/package-sizes-darwin.tsv and takes its per-package
+            # ceiling from the Makefile's DARWIN_TIMEOUT — and TEN is what stays
+            # behind that plan as a hang detector rather than a budget. The
+            # asymmetry is the argument for the room: a cancelled shard drops the
+            # whole group and restarts every PR behind it, while a generous cap
+            # costs runner minutes only when something is genuinely wedged.
+            timeout: 10
           - name: windows
             runner: windows-latest
             # TWELVE, and it is the same lesson as the PR leg's ten, one tier
@@ -763,11 +774,41 @@ jobs:
         # predictor, so the windows leg deals from
         # testdata/ci/package-sizes-windows.tsv's FULL column and takes its
         # ceiling from the Makefile's WINDOWS_TIMEOUT (180 s, measured), while
-        # the linux and darwin legs keep the table and the 100 s that are theirs.
+        # the linux leg keeps the Linux table and the 100 s that are its own.
         # A Windows size that is censored ("100.0+", the run hit its timeout) or
         # missing ("-", never measured) gets the MAXIMUM shard count this group
         # opened: an unknown size must never be guessed downward, which is the
         # one mistake that dropped the group.
+        #
+        # AND SINCE 2026-09-18 THE DARWIN LEG READS ITS OWN TABLE TOO, for the
+        # same reason one tier later. In merge-group run 35369433950 (batch 7,
+        # PR #1360) darwin shards 0 and 1 were CANCELLED at the five-minute leg
+        # cap on superman. READ THE LOG BEFORE BELIEVING THE OBVIOUS STORY: no
+        # package came near the 100 s per-package ceiling. Shard 0 finished 27
+        # packages summing 211.8 s of `go test` between 16:36:43 and 16:41:24 and
+        # was killed partway through the rest, and its largest single invocation
+        # was cmd/nova-wake at 50.7 s. What ran out was the SHARD'S SUM — and the
+        # sum is decided by how many ways each package is dealt.
+        #
+        # That is what reading the Linux table cost here. A thirteen-member batch
+        # selects many packages, and FOUR of the five largest darwin packages sit
+        # under the 40 s budget on Linux, so each was dealt three ways instead of
+        # six: cmd/nova-wake 24.6 s on hulk against 120.3 s measured on superman,
+        # cmd/nova-merge 7.7 against 68.8, internal/swarm 17.4 against 64.4 and
+        # cmd/nova-bus 10.0 against 54.2. Six ways each is the difference between a
+        # shard that fits and a shard that drops the group. So darwin now deals
+        # from
+        # testdata/ci/package-sizes-darwin.tsv's FULL column, measured on the x64
+        # Macs that run this leg, and takes its per-package ceiling from the
+        # Makefile's DARWIN_TIMEOUT. Only the linux leg still reads
+        # package-sizes.tsv, which is its own measurement.
+        #
+        # THE TWO BRANCHES BELOW ARE DELIBERATELY NOT FACTORED INTO ONE. Each
+        # names its own table and its own column literally, because internal/ci's
+        # class tests read this step as TEXT and assert those literals; a shared
+        # awk parameterised by column would pass the tests by hiding the thing
+        # they check. Twenty lines of duplication is the price of a rule a
+        # reviewer can see.
         #
         # WHAT TO WATCH NEXT: how many slots a group opens is still plan-merge's
         # decision off the Linux table, so "the maximum" is 1, 3 or 6 and a
@@ -784,13 +825,20 @@ jobs:
           slots=${{ needs.plan-merge.outputs.slots }}
           sizes=$(cat testdata/ci/package-sizes.tsv)
           windows=$(cat testdata/ci/package-sizes-windows.tsv)
+          darwin=$(cat testdata/ci/package-sizes-darwin.tsv)
           leg=${{ matrix.leg.name }}
           if [ "$leg" = "windows" ]; then
             # One place holds the Windows ceiling: the Makefile. `?=` there lets
-            # this exported value win over the linux/darwin default of 100 s.
+            # this exported value win over the linux default of 100 s.
             MERGE_TIMEOUT=$(make -s windows-timeout)
             export MERGE_TIMEOUT
             echo "windows leg: per-package ceiling $MERGE_TIMEOUT, shards dealt from testdata/ci/package-sizes-windows.tsv"
+          elif [ "$leg" = "darwin" ]; then
+            # Same handshake, the darwin number: one place holds it, and it is
+            # the Makefile.
+            MERGE_TIMEOUT=$(make -s darwin-timeout)
+            export MERGE_TIMEOUT
+            echo "darwin leg: per-package ceiling $MERGE_TIMEOUT, shards dealt from testdata/ci/package-sizes-darwin.tsv"
           fi
           for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
             if [ "$leg" = "windows" ]; then
@@ -808,6 +856,25 @@ jobs:
                 *)
                   if awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then n=6; else n=3; fi
                   echo "$pkg: windows full ${secs}s, $n shard(s)"
+                  ;;
+              esac
+            elif [ "$leg" = "darwin" ]; then
+              # Column 3 is the FULL size, which is what this leg runs. The
+              # same three cases as windows, and for the same reason: run
+              # 35369433950 is what dealing darwin by the Linux number costs.
+              secs=$(printf '%s\n' "$darwin" | awk -F '\t' -v p="$pkg" '$1 == p { print $3; exit }')
+              case "$secs" in
+                ''|'-')
+                  echo "$pkg: no full darwin measurement, dealt across all $slots slot(s)"
+                  n=$slots
+                  ;;
+                *+)
+                  echo "$pkg: darwin full ${secs} (censored: at least that), dealt across all $slots slot(s)"
+                  n=$slots
+                  ;;
+                *)
+                  if awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then n=6; else n=3; fi
+                  echo "$pkg: darwin full ${secs}s, $n shard(s)"
                   ;;
               esac
             else

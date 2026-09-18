@@ -1,9 +1,7 @@
 package ci
 
 import (
-	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -110,11 +108,12 @@ const windowsShardBudget = 60.0
 // least this) or absent altogether. Both plans deal a censored or missing size
 // across every slot the group opened, because an unknown size must never be
 // guessed downward — that is the mistake that dropped integration-4's group.
-type windowsSize struct {
-	secs     float64
-	measured bool
-	censored bool
-}
+//
+// It is an ALIAS for the shared measuredSize since 2026-09-18, when the darwin
+// table arrived in the same three-column shape and the parser moved to
+// sizetable_test.go. The name stays because these tests read as Windows tests;
+// nothing about what they check changed.
+type windowsSize = measuredSize
 
 // readWindowsSizes parses testdata/ci/package-sizes-windows.tsv into its two
 // columns, keyed by import path, reporting every malformed row. It is the same
@@ -122,51 +121,7 @@ type windowsSize struct {
 // is a red run here first.
 func readWindowsSizes(t *testing.T, root string) (short, full map[string]windowsSize) {
 	t.Helper()
-	raw := readFile(t, filepath.Join(root, "testdata", "ci", "package-sizes-windows.tsv"))
-	short, full = map[string]windowsSize{}, map[string]windowsSize{}
-	read := func(n int, field string) (windowsSize, bool) {
-		if field == "-" {
-			return windowsSize{}, true
-		}
-		censored := strings.HasSuffix(field, "+")
-		secs, err := strconv.ParseFloat(strings.TrimSuffix(field, "+"), 64)
-		if err != nil {
-			t.Errorf("%s:%d: %q is neither a number of seconds, a censored number ending in +, nor - for unmeasured: %v", windowsSizesPath, n+1, field, err)
-			return windowsSize{}, false
-		}
-		return windowsSize{secs: secs, measured: true, censored: censored}, true
-	}
-	for n, line := range strings.Split(raw, "\n") {
-		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Split(line, "\t")
-		if len(fields) != 3 {
-			t.Errorf("%s:%d: want exactly three tab-separated fields (import path, short, full), got %d: %q", windowsSizesPath, n+1, len(fields), line)
-			continue
-		}
-		pkg := fields[0]
-		if !strings.HasPrefix(pkg, modulePath) {
-			t.Errorf("%s:%d: %q is not an import path in this module; the table is keyed the way `go list` prints, like its Linux sibling", windowsSizesPath, n+1, pkg)
-			continue
-		}
-		if _, dup := short[pkg]; dup {
-			t.Errorf("%s:%d: %s is measured twice; the plans read the first row and the second is a silent lie", windowsSizesPath, n+1, pkg)
-		}
-		// A measured package must still exist. A row for a package that has
-		// left is a row the plans will never read and nobody will ever correct.
-		dir := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(pkg, modulePath)))
-		if _, err := os.Stat(dir); err != nil {
-			t.Errorf("%s:%d: %s is in the table but not in the tree; delete the row", windowsSizesPath, n+1, pkg)
-		}
-		if v, ok := read(n, fields[1]); ok {
-			short[pkg] = v
-		}
-		if v, ok := read(n, fields[2]); ok {
-			full[pkg] = v
-		}
-	}
-	return short, full
+	return readSizeTable(t, root, windowsSizesPath)
 }
 
 // TestWindowsPRShardPlanIsDerivedFromMeasurements keeps the three numbers that
