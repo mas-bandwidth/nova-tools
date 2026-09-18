@@ -45,6 +45,11 @@ type Worker struct {
 	// CLASS (CARD-8390): `public` means this worker never sees private source
 	// (the public-class gate); `paid` is the default. Empty decodes as paid so
 	// no description written before the gate changes meaning by being re-read.
+	//
+	// CLASS (worker check): `class` is the one word public or paid, an OPTIONAL
+	// field a description may carry and the launcher never requires. `nova-swarm
+	// worker check` validates it when it is present. The two budgets below are
+	// the same fields worker check validates.
 	Class       string   `json:"class,omitempty"`
 	Harness     string   `json:"harness"`
 	HarnessArgs []string `json:"harness_args,omitempty"`
@@ -66,15 +71,8 @@ type Worker struct {
 	// assistant turns and max_cache_read caps the observed cache_read, and run
 	// stops the card at either with end=budget and a PROMPT-DEFECT line. Zero
 	// is unset; negative is refused at load.
-	//
-	// CLASS (worker check): `class` is the one word public or paid, an OPTIONAL
-	// field a description may carry and the launcher never requires. `nova-swarm
-	// worker check` validates it when it is present; no other verb reads it, so a
-	// description without it is exactly the description this tool ran before it
-	// existed. The two budgets above are the same fields worker check validates.
-	Class        string `json:"class,omitempty"`
-	MaxTurns     int    `json:"max_turns,omitempty"`
-	MaxCacheRead int    `json:"max_cache_read,omitempty"`
+	MaxTurns     int `json:"max_turns,omitempty"`
+	MaxCacheRead int `json:"max_cache_read,omitempty"`
 
 	// PROVIDER PHRASES: the second optional field, and it is the TRIAGE LINE'S (#103). A
 	// job that dies because the request did not fit is its own failure class, and the only
