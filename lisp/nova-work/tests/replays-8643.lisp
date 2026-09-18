@@ -79,26 +79,49 @@
 ;;; ------------------------------------------------------------------
 
 (deftest "compaction-keeps-the-last-copy" "docs/SPEC-WORK.md:5791"
-    "expected=newest-verified-kept;only-copy-never-removed;unverified-pruned;nothing-verified-prunes-nothing"
+    "expected=newest-verified-kept;only-copy-never-removed;unverified-pruned;nothing-verified-prunes-nothing;last-copy-per-retained-cut;newest-by-revision-not-list-order"
   ;; with two verified copies, compaction keeps the newest and may drop the older.
-  (let ((plan (compact-copies '((:id "sp-old" :verified t)
-                                (:id "sp-new" :verified t)))))
+  (let ((plan (compact-copies '((:id "sp-old" :verified t :revision 10)
+                                (:id "sp-new" :verified t :revision 20)))))
     (check-equal '("sp-new") (getf plan :keep) "the newest verified copy is kept")
     (check-equal '("sp-old") (getf plan :pruned) "the older verified copy may be dropped"))
+  ;; the newest is chosen by revision, not by the order the copies are listed in.
+  (let ((plan (compact-copies '((:id "sp-new" :verified t :revision 20)
+                                (:id "sp-old" :verified t :revision 10)))))
+    (check-equal '("sp-new") (getf plan :keep)
+                 "the newest verified copy is kept regardless of list order"))
   ;; the only recoverable copy is never removed.
-  (let ((plan (compact-copies '((:id "sp-only" :verified t)))))
+  (let ((plan (compact-copies '((:id "sp-only" :verified t :revision 5)))))
     (check-equal '("sp-only") (getf plan :keep) "the only recoverable copy is kept")
     (check-equal '() (getf plan :pruned) "the only recoverable copy is never removed"))
   ;; an unverified copy is not recoverable and is pruned; the verified copy stays.
-  (let ((plan (compact-copies '((:id "sp-bad" :verified nil)
-                                (:id "sp-good" :verified t)))))
+  (let ((plan (compact-copies '((:id "sp-bad" :verified nil :revision 99)
+                                (:id "sp-good" :verified t :revision 1)))))
     (check-equal '("sp-good") (getf plan :keep) "the verified copy is kept")
     (ok (member "sp-bad" (getf plan :pruned) :test #'equal)
-        "the unverified copy is pruned"))
+        "the unverified copy is pruned even when it is newer"))
   ;; with nothing verified, no recoverable copy exists and compaction removes nothing.
-  (let ((plan (compact-copies '((:id "a" :verified nil)))))
+  (let ((plan (compact-copies '((:id "a" :verified nil :revision 1)))))
     (check-equal '() (getf plan :pruned)
-                 "compaction removes nothing when nothing is recoverable")))
+                 "compaction removes nothing when nothing is recoverable"))
+  ;; a retained savepoint cut that only an older verified copy still covers is
+  ;; the only recoverable copy for that cut: it is kept beside the newest.
+  (let ((plan (compact-copies
+               (list (list :id "sp-new" :verified t :revision 20 :covers '("cut-9"))
+                     (list :id "sp-old" :verified t :revision 10 :covers '("cut-1"))))))
+    (check-equal '("sp-new" "sp-old") (sort (getf plan :keep) #'string<)
+                 "the last copy covering a retained cut is kept")
+    (check-equal '() (getf plan :pruned)
+                 "the retained cut makes the older copy recoverable"))
+  ;; once the newest copy also covers that cut, the older copy is redundant.
+  (let ((plan (compact-copies
+               (list (list :id "sp-new" :verified t :revision 20
+                           :covers '("cut-1" "cut-9"))
+                     (list :id "sp-old" :verified t :revision 10 :covers '("cut-1"))))))
+    (check-equal '("sp-new") (getf plan :keep)
+                 "a covered cut leaves no unique recoverable copy")
+    (check-equal '("sp-old") (getf plan :pruned)
+                 "the redundant older copy may be dropped")))
 
 ;;; ------------------------------------------------------------------
 ;;; copied-journal-grants-nothing                 SPEC-WORK.md:6017

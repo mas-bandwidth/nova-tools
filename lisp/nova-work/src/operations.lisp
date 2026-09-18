@@ -374,22 +374,6 @@ zero (SPEC-WORK.md:4852)."
           :gaps gaps :failed failed :cache-merged cache-merged :joined joined)))
 
 ;;; ------------------------------------------------------------------
-;;; Compaction keeps the last copy (SPEC-WORK.md:5791, 6280)
-;;; ------------------------------------------------------------------
-
-(defun compact-copies (copies)
-  "Plan a compaction that may never remove the only recoverable copy: the newest
-verified copy is kept, unverified and superseded copies are pruned, and when no
-copy is verified nothing is pruned (SPEC-WORK.md:5791, :6280)."
-  (let ((verified (remove-if-not (lambda (c) (getf c :verified)) copies)))
-    (if (null verified)
-        (list :keep (mapcar (lambda (c) (getf c :id)) copies) :pruned '())
-        (let ((keep (getf (car (last verified)) :id)))
-          (list :keep (list keep)
-                :pruned (remove keep (mapcar (lambda (c) (getf c :id)) copies)
-                                :test #'equal))))))
-
-;;; ------------------------------------------------------------------
 ;;; A copied journal grants nothing (SPEC-WORK.md:6017)
 ;;; ------------------------------------------------------------------
 

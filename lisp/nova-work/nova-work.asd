@@ -41,6 +41,7 @@
                (:file "src/control")
                (:file "src/roadmap")
                (:file "src/savepoint")
+               (:file "src/compaction")
                (:file "src/new-verbs")
                (:file "src/decide")
                (:file "src/replays-verdict-state")))

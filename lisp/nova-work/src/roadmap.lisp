@@ -414,7 +414,9 @@ absent or ambiguous marker refuses and publishes nothing
                    nil))))))
 
 ;;; ------------------------------------------------------------------
-;;; rotation-keeps-one-journal (docs/SPEC-WORK.md:5998, :6312, :6338)
+;;; the journal's record identities and chain (docs/SPEC-WORK.md:5998, :6312,
+;;; :6338). What a rotation keeps and what a compaction may drop lives in
+;;; compaction.lisp.
 ;;; ------------------------------------------------------------------
 
 (defstruct (journal-record (:constructor make-journal-record (&key (seq 1) (events '()))))
@@ -437,28 +439,6 @@ bytes (docs/SPEC-WORK.md:6296)."
 (defun journal-last-segment (chain)
   (car (last (journal-chain-segments chain))))
 
-(defun rotate-journal (chain)
-  "Rotate CHAIN: the new segment's header names the same journal id and copies
-the boundary record -- its sequence and hash -- so the chain and the savepoint
-cut stay reachable without scanning an old segment (docs/SPEC-WORK.md:5998,
-:6338)."
-  (let* ((segments (journal-chain-segments chain))
-         (old (car (last segments)))
-         (boundary (car (last (journal-segment-records old))))
-         (number (1+ (length segments)))
-         (header (list :journal-id (journal-chain-id chain)
-                       :segment number
-                       :copied-from (journal-segment-path old)
-                       :copied-boundary (and boundary
-                                             (list :seq (journal-record-seq boundary)
-                                                   :sha256 (journal-record-hash boundary)))))
-         (new (make-journal-segment
-               :path (format nil "~A.~D" (journal-chain-id chain) number)
-               :header header
-               :records (if boundary (list boundary) '()))))
-    (make-journal-chain :id (journal-chain-id chain)
-                        :segments (append segments (list new)))))
-
 (defun journal-append-record (chain record)
   "Append RECORD to the last segment, continuing the chain's sequence from the
 copied boundary."
@@ -473,25 +453,6 @@ copied boundary."
                                                      (list rec)))))
     (make-journal-chain :id (journal-chain-id chain)
                         :segments (append (butlast segments) (list new)))))
-
-(defun savepoint-cut-reachable-p (chain cut)
-  "The cut is reachable from the last segment's copied boundary record alone,
-with no scan of an old segment (docs/SPEC-WORK.md:5998, :6338)."
-  (let* ((header (journal-segment-header (journal-last-segment chain)))
-         (b (getf header :copied-boundary)))
-    (and b (integerp cut) (<= 0 cut (getf b :seq)))))
-
-(defun export-journal-bundle (chain &key from)
-  "The offline bundle. FROM names the file it is written from and changes no
-byte, so either file writes the same bundle (docs/SPEC-WORK.md:6001)."
-  (declare (ignore from))
-  (let* ((header (journal-segment-header (journal-last-segment chain)))
-         (b (getf header :copied-boundary)))
-    (canonical-string (list :journal-bundle
-                            :journal-id (journal-chain-id chain)
-                            :boundary (if b
-                                          (list :seq (getf b :seq) :sha256 (getf b :sha256))
-                                          +absent+)))))
 
 ;;; ------------------------------------------------------------------
 ;;; rule-2-unavailable-is-not-green (docs/SPEC-WORK.md:5019, :5033, :5633)
@@ -524,9 +485,8 @@ finding, exit 0 with `WORK OK` only when every rule was green
         (values 0 "WORK OK"))))
 
 ;;; The savepoint's create and list verbs live in savepoint.lisp; the journal's
-;;; record identities and its cut-reachability helper stay here.
-
-
+;;; record identities and its cut-reachability helper stay here; journal
+;;; rotation and savepoint compaction live in compaction.lisp.
 ;;; ------------------------------------------------------------------
 ;;; The roadmap view record and the `roadmap configure` verb
 ;;; (docs/SPEC-WORK.md:3078-3094, :3110-3124, :5994-5996)
