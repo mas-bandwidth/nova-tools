@@ -4,6 +4,12 @@ package pulse
 // capacity, cap it at FillCap, pop that many card-*.md from --ready in filename order, move
 // each to --launched and hand it to the launcher. One FILL line per tick, no model call.
 //
+// A card may name a LANE (`LANE: <name>`), and a lane is a serial queue over one area of
+// the codebase: at most one live card per lane at a time. A ready card whose lane already
+// has a live card -- one under --launched, or one launched earlier in this tick -- is held
+// in order with a FILL HELD line and stays ready. A LANE the lanes file does not name is
+// refused with the remedy. A card with no LANE is launched exactly as before.
+//
 // The two things that touch the world -- the capacity formula on a bench and the per-card
 // launch -- are injected seams (Capacity and CardLauncher), so a test drives the whole
 // tick against a fake ready directory, a fake clock and a fake launcher. No test opens an
@@ -46,7 +52,8 @@ type Capacity interface {
 // directories and stub seams.
 type FillInput struct {
 	Ready    string        // the queue/ready directory the card-*.md are popped from
-	Launched string        // the queue/launched directory they are moved into
+	Launched string        // the queue/launched directory they are moved into; its cards are live
+	Lanes    string        // the lanes file: <name>\t<path prefixes> per line; empty names no lane
 	Benches  []string      // the benches to fill, in order
 	Once     bool          // true runs exactly one tick and returns
 	Interval time.Duration // how long between ticks; 0 takes FillInterval
@@ -98,8 +105,10 @@ func Fill(in FillInput) int {
 	}
 
 	for tick := 1; ; tick++ {
-		line, err := fillTick(in, tick)
-		fmt.Fprintln(in.Stdout, line)
+		lines, err := fillTick(in, tick)
+		for _, line := range lines {
+			fmt.Fprintln(in.Stdout, line)
+		}
 		if err != nil {
 			fmt.Fprintf(in.Stderr, "FILL NOTE tick=%d: %s\n", tick, oneline.Err(err))
 		}
@@ -112,13 +121,18 @@ func Fill(in FillInput) int {
 }
 
 // fillTick is one turn: list ready once in filename order, then for each bench take up to
-// min(capacity, FillCap) cards and launch them. The move out of ready is the claim, so a
-// card another hand already took is skipped and never launched twice. It returns the one
-// FILL line and the first launcher error, if any.
-func fillTick(in FillInput, tick int) (string, error) {
+// min(capacity, FillCap) cards and launch them. A LANE card is launched only when its lane
+// has no live card; otherwise it is held, and the live card it is held behind is named. A
+// LANE the lanes file does not name is refused. The move out of ready is the claim, so a
+// card another hand already took is skipped and never launched twice. It returns the FILL
+// line first and then one FILL HELD line per held card, plus the first launcher error.
+func fillTick(in FillInput, tick int) ([]string, error) {
 	cards := readyCards(in.Ready)
+	lanes := laneTable(in.Lanes)
+	live := liveLanes(in.Launched)
 	idx := 0
 	var firstErr error
+	var held []string
 
 	parts := make([]string, 0, len(in.Benches))
 	for _, bench := range in.Benches {
@@ -141,11 +155,28 @@ func fillTick(in FillInput, tick int) (string, error) {
 		for want > 0 && idx < len(cards) {
 			card := cards[idx]
 			idx++
+			lane := cardLane(card)
+			if lane != "" {
+				if _, known := lanes[lane]; !known {
+					fmt.Fprintf(in.Stderr, "FILL REFUSED card=%d lane=%s remedy=%q\n",
+						cardNumber(card), oneline.Field(lane),
+						fmt.Sprintf("add the lane to %s or drop the LANE line", in.Lanes))
+					continue
+				}
+				if holder, isLive := live[lane]; isLive {
+					held = append(held, fmt.Sprintf("FILL HELD card=%d lane=%s live=%s",
+						cardNumber(card), oneline.Field(lane), oneline.Field(holder)))
+					continue
+				}
+			}
 			moved := filepath.Join(in.Launched, filepath.Base(card))
 			if err := os.Rename(card, moved); err != nil {
 				// Another tick or another hand took it first: the card is in exactly
 				// one place at every moment, and a card is never launched twice.
 				continue
+			}
+			if lane != "" {
+				live[lane] = filepath.Base(moved)
 			}
 			if err := in.Launcher.Launch(bench, moved); err != nil && firstErr == nil {
 				firstErr = fmt.Errorf("launch %s on %s: %w", field(filepath.Base(moved)), field(bench), err)
@@ -165,7 +196,62 @@ func fillTick(in FillInput, tick int) (string, error) {
 	}
 	b.WriteString(" ready=")
 	b.WriteString(strconv.Itoa(len(readyCards(in.Ready))))
-	return b.String(), firstErr
+	lines := append([]string{b.String()}, held...)
+	return lines, firstErr
+}
+
+// cardLane reads a card's `LANE: <name>` line, or "" when it names none. Only the exact
+// field prefix counts: a `LANES:` line is prose, not a lane.
+func cardLane(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "LANE:"); ok {
+			if lane := strings.TrimSpace(v); lane != "" {
+				return lane
+			}
+		}
+	}
+	return ""
+}
+
+// laneTable reads a lanes file: `<name>\t<path prefixes>` per line, `#` a comment and a
+// blank line skipped. Only the name is needed here; the prefixes are the area the lane
+// serializes. A missing file is an empty table, so a card naming a lane is then refused.
+func laneTable(path string) map[string]bool {
+	out := map[string]bool{}
+	if strings.TrimSpace(path) == "" {
+		return out
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, _, _ := strings.Cut(line, "\t")
+		if name = strings.TrimSpace(name); name != "" {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// liveLanes reads the lane of every card already under --launched: the launched directory
+// is the live set, and a live card's lane is read from its own card file.
+func liveLanes(launched string) map[string]string {
+	out := map[string]string{}
+	for _, card := range readyCards(launched) {
+		if lane := cardLane(card); lane != "" {
+			out[lane] = filepath.Base(card)
+		}
+	}
+	return out
 }
 
 // readyCards lists the ready card files in filename order, which is the order ls handed

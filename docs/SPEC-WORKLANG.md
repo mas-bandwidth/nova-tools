@@ -53,6 +53,14 @@ downgraded; `:tokens` has no default, `0` is refused (SPEC-SWARM's rule), a budg
 (local, a pinned-core ssh bench, unmetered) and which registered model route serves it. The route is
 a projection from facts and dated probe evidence, never a lease; the bench kind orders the ready queue.
 
+**Lanes.** A card may carry one `LANE: <name>` line, and the lanes file named by `--lanes` (default
+`queue/control/lanes.tsv`) names each area on its own line as `<name>\t<path prefixes>`; a lane is a
+`:resource` of capacity 1, a serial queue over the area those path prefixes name. `nova-pulse fill`
+launches at most one live card per lane at a time, holding the rest in order with `FILL HELD card=<n>
+lane=<name> live=<card>`; a live card's lane is read from its own card file under the live directory; a
+card without `LANE` is launched as today; a `LANE` no row of the lanes file names is refused with
+`FILL REFUSED card=<n> lane=<name> remedy="add the lane to <lanes file> or drop the LANE line"`.
+
 **The clip rule.** `:clip :per-node` is the only value that runs today: **after each node's card lands
 the kernel commits and harvests** — the session clips accepted events to the branch and the pool
 gathers `RESULT.md` — so a plan stopped mid-way leaves every completed node on the branch.
