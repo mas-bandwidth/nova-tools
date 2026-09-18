@@ -1215,12 +1215,21 @@ That rule is in [docs/SPEC-SWARM.md](SPEC-SWARM.md), where you can read it, and 
 deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
 would be the most dangerous thing in the pool.
 
+### Shared Go caches for native workers
+
+`nova-swarm native` creates `<root>/cache/go-mod` and `<root>/cache/go-build`
+and sets the child's `GOMODCACHE` and `GOCACHE` to those paths. Slots using the
+same `--root` share these caches. It also sets `GOTOOLCHAIN=local`, so the bench
+must already have the Go toolchain the task requires. `--no-shared-caches`
+omits these settings and restores per-slot defaults. Retain shared caches when
+retiring an individual slot; they are separate from its job evidence.
+
 ## nova-sandbox
 
-Runs one command under OS-enforced containment. The implemented backend uses
-`sandbox-exec` on macOS. Linux (Landlock) and Windows (AppContainer) are
-specified but not implemented in this release; those platforms refuse to wrap
-a command. Run `nova-sandbox check` to inspect your machine before use.
+Runs one command under OS-enforced containment using `sandbox-exec` on macOS
+or Landlock on supported Linux kernels. Windows has no implemented backend and
+refuses to wrap a command. Run `nova-sandbox check` to inspect backend availability
+on your machine before use.
 The contract is [docs/SPEC-SANDBOX.md](SPEC-SANDBOX.md), and `nova-swarm`
 reaches for it per job through `--sandbox`.
 
@@ -1301,7 +1310,7 @@ which is the fastest way to see the wall a set of flags actually makes.
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
-Five verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line.
+The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources`. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line.
 
 ### First run
 
@@ -1319,6 +1328,22 @@ What a first run gets wrong, and what each one wants:
 - **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this tool's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
 
 There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` ends in five lines a stranger can paste instead, and `sources` is the one verb that only looks.
+
+### Worker-pool usage
+
+```sh
+nova-tokens fold-pool --pool ./pool --ledger ./pool-usage.tsv
+```
+
+Reads `usage/*.tsv` under the named pool (or TSVs directly under that directory)
+and groups usage by day, provider, model and repository. `--since` takes an
+RFC3339 start timestamp. The ledger includes task counts, five separate token
+columns and cost; unreported values remain unknown. Repeating the same fold
+replaces matching aggregate rows rather than adding them again. Use a separate
+ledger for each pool: the aggregate key does not contain a pool ID.
+
+This ledger is distinct from the `sum --swarm-root` daily ledger above. See
+`nova-tokens help` for `profiles`, `session` and ledger-reporting options.
 
 ## nova-update
 
@@ -1364,11 +1389,31 @@ never means zero or current. Use your own explicit six-column manifest for your
 bench. There is no quickstart: a manifest and any snapshot path belong to the caller.
 
 Use `nova-version help` for filters, optional draft/delivery and limits. A plain report
-needs no bus. `nova-version snapshot --bin <dir> --out <manifest> [--owner <name>]`
-writes the six-column manifest a report reads, one line per `nova-*` executable in
-`--bin`; promote its `kind` by hand. Updates require an explicit
-`nova-update apply --file ... name`; models are listed for the owner to evaluate and
-pull themselves. No timer is installed.
+needs no bus. Updates require an explicit `nova-update apply --file ... name`;
+models are listed for the owner to evaluate and pull themselves. No timer is installed.
+
+### Capture and compare installed binaries
+
+```sh
+nova-version snapshot --bin ./bin --out ./before.tsv
+nova-version diff --from ./before.tsv --to ./after.tsv
+```
+
+Create `after.tsv` with a later snapshot of the directory you want to compare.
+`snapshot` runs `version` on the `nova-*` regular files in the explicit directory,
+with a five-second deadline per binary. It skips symlinks, refuses an unreadable
+version or mixed stamps, and writes `name`, `stamp`, `revision`, `platform` columns.
+`diff` reads two such files and reports changed, added or removed entries without
+executing the binaries.
+
+This four-column inventory is **not** the six-column manifest accepted by
+`report --file`; `snapshot` has no `--owner` flag. The report's `--snapshot` option
+below is a separate delivery-recovery file.
+
+At main revision `d576bf6bbabb`, snapshot's four-token version parser rejects
+`nova-merge`'s longer version line. [Issue #1297](https://github.com/mas-bandwidth/nova-tools/issues/1297)
+tracks that incompatibility. A refusal is not a complete inventory; keep the
+original evidence rather than rewriting a version line to make it pass.
 For recovery across process death, name `--snapshot`; retries retain the prepared
 note. Version statuses should go to your chosen integrator, with optional Cc;
 participation and updates remain voluntary.
@@ -1378,3 +1423,115 @@ and explicit argv; paths or arguments containing spaces belong in a wrapper scri
 `--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
 `--remote` and `--branch`. A busy snapshot wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
+
+
+## nova-secrets
+
+Stores encrypted credentials for named seats and delivers selected values to a
+child command. Use `nova-secrets help` for store setup, checks and `exec`; the
+contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).
+
+### Seal a replacement value
+
+```sh
+nova-secrets seal --store ./secrets --as worker --key /path/to/seat.key \
+  --sops /path/to/sops --name PROVIDER_API_KEY --no-pr
+```
+
+Run this in a prepared store with that seat and its recipients configured. Enter
+the value at the hidden terminal prompt; never put it in the command line. An
+explicit `--stdin` accepts a value through standard input instead. Encryption
+uses the store's SOPS configuration. `--no-pr` creates a branch and commits the
+encrypted change locally, without pushing or opening a pull request.
+
+Without `--no-pr`, the command pushes its branch, opens a PR and waits up to two
+minutes for the gate's approval, reporting progress while it waits. Once approved,
+it merges, returns to the previous store branch, pulls and checks that the seat
+can decrypt. An `open (gate not yet approved)` receipt means the PR is still
+pending; it does not mean the replacement is active.
+
+## nova-post
+
+Prepares outward messages for Ghost, Bluesky, email or Discord. `draft` saves the
+payload, `show` displays those saved bytes, and `send` checks the approval receipt
+before contacting the provider. See [SPEC-OUTBOUND.md](SPEC-OUTBOUND.md).
+
+```sh
+nova-post draft --channel email --target team --file ./message.md \
+  --drafts ./drafts --allowlist ./targets.tsv
+nova-post show --draft <hash-from-draft> --drafts ./drafts
+```
+
+Create the draft directory first. The allowlist contains one `channel<TAB>target`
+per line; `team` above must be an explicitly allowed target. Optional `--title`
+sets the title or subject. The draft's hash identifies the exact content.
+
+`send` requires `--draft`, `--drafts`, `--allowlist`, `--bus` and `--approval`.
+The shipped approval gate requires a bus note from Glenn carrying
+`APPROVE nova-post sha256=<hash>`, received less than 24 hours ago. It does not
+expose a flag for choosing another approver. Provider credentials are supplied
+through the child environment. Drafting and showing do not authorize a send.
+
+## nova-ci
+
+Reads Go test events and reports packages whose accumulated elapsed time exceeds
+a budget. It also reports its own build with `nova-ci version`.
+
+```sh
+nova-ci slowtests --budget 60 < ./test-events.jsonl
+nova-ci version
+```
+
+Save `go test -json` output in the input file and check that test run's exit status
+separately. `slowtests` checks timing, not whether the tests passed. The default
+budget is 60 seconds per package; exit 2 means an over-budget package or unusable
+input, and exit 0 means no package exceeded the budget. CI exceptions belong in
+the dated project policy, not in an assumed higher tool default.
+See [SPEC-CI.md](SPEC-CI.md).
+
+## nova-work
+
+The command provides a job dependency graph and a bounded `.work` reader.
+It checks plans as data, without evaluating Lisp code, and reports why a node
+is blocked. The broader scheduling design is in [SPEC-JOBS.md](SPEC-JOBS.md)
+and [SPEC-WORKLANG.md](SPEC-WORKLANG.md).
+
+```sh
+nova-work plan check --file ./work.work
+nova-work plan expand --file ./work.work --out ./cards
+nova-work ready --graph ./graph.json --node task-a
+```
+
+`plan check` and `plan expand` require a plan path; the default reader limits are
+65,536 bytes, 64 levels of nesting and 4,096 atoms (`--max-bytes`, `--max-depth`,
+`--max-nodes`). Unknown kinds, absent dependencies and dependency cycles refuse.
+`plan expand` writes card directories for explicit `:node` entries; it does not
+launch them. Existing cards are left unchanged when expanding again.
+
+The graph is a separate JSON file with a `nodes` array. `dependencies --graph
+<file>` reads it; adding `--node <id> --needs <id,id>` writes dependency edges.
+`ready` reads the graph and prints whether each requested node's dependencies
+are terminal and accepted; it does not acquire a lease or reserve a slot.
+`nova-work help` also describes `clip`, which commits and harvests a worker's
+result before resetting its worktree. Use that mutating workflow only with the
+intended worktree, branch, base and harvest destination.
+
+## nova-cairn
+
+Keeps explicit session checkpoints, their source pointers and a bounded index.
+It stores the caller's words; it does not summarize or consolidate memory.
+See [SPEC-CAIRN.md](SPEC-CAIRN.md).
+
+```sh
+nova-cairn open --store ./checkpoints --session session-1 --publish never
+nova-cairn append --store ./checkpoints --session session-1 --entry note-1 \
+  --file ./checkpoint.md --publish never
+nova-cairn index --store ./checkpoints --max 20
+nova-cairn receipt --store ./checkpoints --session session-1 --entry note-1
+```
+
+Reuse stable session and entry IDs for retries. The same ID and bytes are a
+duplicate; different bytes under an existing ID refuse. Each write requires an
+explicit publication policy. These examples choose local-only `never`. The current
+slice implements no transport: successful writes report `persisted=true` and
+`published=false`, even when another publication policy is recorded.

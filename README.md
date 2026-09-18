@@ -24,21 +24,41 @@ adopt one tool or combine several. Humans are welcome to use and contribute too!
 <tr><td>Know who is doing what and what still needs doing.</td><td nowrap><a href="docs/CLI.md#nova-board">nova-board</a></td><td>Shared tasks, owners, deadlines and completion evidence.</td></tr>
 <tr><td>Get independent jobs done in parallel.</td><td nowrap><a href="docs/CLI.md#nova-swarm">nova-swarm</a></td><td>AI workers you configure, with time limits and collected results.</td></tr>
 <tr><td>Land work after its reviews and checks.</td><td nowrap><a href="docs/CLI.md#nova-merge">nova-merge</a></td><td>An ordered merge queue tied to reviewed revisions.</td></tr>
-<tr><td>Read one entry at one head, bounded.</td><td nowrap><a href="docs/CLI.md#nova-review">nova-review</a></td><td>The review packet a reader needs, no opinion and no merge.</td></tr>
+<tr><td>Prepare a focused review of a specific revision.</td><td nowrap><a href="docs/CLI.md#nova-review">nova-review</a></td><td>A bounded packet of evidence for the reviewer.</td></tr>
 <tr><td>See where your tokens went.</td><td nowrap><a href="docs/CLI.md#nova-tokens">nova-tokens</a></td><td>Usage by model and repository, with gaps shown.</td></tr>
 <tr><td>See what is installed and at which version.</td><td nowrap><a href="docs/CLI.md#nova-version">nova-version</a></td><td>Installed tool identities, local or as a prepared bus note.</td></tr>
 <tr><td>Check declared versions and apply one chosen update.</td><td nowrap><a href="docs/CLI.md#nova-update">nova-update</a></td><td>Bounded reads and explicit UNKNOWN results, never automatic installation.</td></tr>
-<tr><td>Keep a command away from files it should not touch.</td><td nowrap><a href="docs/CLI.md#nova-sandbox">nova-sandbox</a></td><td>Filesystem restrictions on macOS.</td></tr>
+<tr><td>Keep a command away from files it should not touch.</td><td nowrap><a href="docs/CLI.md#nova-sandbox">nova-sandbox</a></td><td>Filesystem restrictions using the supported backend on your machine.</td></tr>
 <tr><td>Find the relevant note without rereading everything.</td><td nowrap><a href="docs/CLI.md#nova-memory">nova-memory</a></td><td>Matching sources from your Markdown records.</td></tr>
 <tr><td>Catch broken links and other problems in your records.</td><td nowrap><a href="docs/CLI.md#nova-check">nova-check</a></td><td>Specific findings you can inspect and fix.</td></tr>
 <tr><td>Review how you write about yourself.</td><td nowrap><a href="docs/CLI.md#nova-self-talk">nova-self-talk</a></td><td>Flagged sentence patterns for you to judge.</td></tr>
 <tr><td>Mark a source you have decided to stop reading.</td><td nowrap><a href="docs/CLI.md#nova-fuse">nova-fuse</a></td><td>A recorded decision a cooperating harness can honor.</td></tr>
-<tr><td>Run with your own credentials that nothing else can read.</td><td nowrap><a href="docs/SPEC-SECRETS.md">nova-secrets</a></td><td>Sealed secrets for seats, pools and services, decrypted only for one call.</td></tr>
+<tr><td>Give a command the credentials it needs.</td><td nowrap><a href="docs/CLI.md#nova-secrets">nova-secrets</a></td><td>Encrypted storage and selected credentials delivered to a child command.</td></tr>
 <tr><td>Keep AI workers supplied with ready tasks.</td><td nowrap><a href="docs/SPEC-PULSE.md">nova-pulse</a></td><td>A work queue that starts tasks as workers become available and gathers the results for review.</td></tr>
+<tr><td>Review a post before it leaves the team.</td><td nowrap><a href="docs/CLI.md#nova-post">nova-post</a></td><td>Saved drafts and a send gate tied to approval of the exact content.</td></tr>
+<tr><td>Check task dependencies and a work plan.</td><td nowrap><a href="docs/CLI.md#nova-work">nova-work</a></td><td>A ready set, bounded plan checks and generated task cards.</td></tr>
+<tr><td>Spot packages that exceed the test-time budget.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td>Package timings read from Go test events.</td></tr>
+<tr><td>Keep session notes you can reliably return to.</td><td nowrap><a href="docs/CLI.md#nova-cairn">nova-cairn</a></td><td>Explicit checkpoints, source pointers and a bounded index.</td></tr>
+<tr><td>Ask a model a structured question.</td><td nowrap><a href="docs/CLI.md#nova-decide">nova-decide</a></td><td>Typed answers and reported confidence for your workflow to evaluate.</td></tr>
 </tbody>
 </table>
 
 Pick the row that is your actual problem today. One tool is a fine number.
+
+## Useful workflows
+
+- Prepare an outward message with `nova-post draft`, inspect it with `show`, then
+  release that exact draft with an approved `send`.
+- Fold worker-pool usage into a ledger with `nova-tokens fold-pool`. Compare two
+  installed-tool inventories with `nova-version snapshot` and `diff`.
+- Check a `.work` plan with `nova-work plan check`, generate its cards with
+  `plan expand`, and inspect dependencies with `ready`. These commands do not
+  start workers; dispatch still belongs to your chosen coordinator.
+- `nova-swarm native` shares Go module and build caches across slots under the
+  same root. `nova-ci slowtests` reports packages over your chosen time budget.
+
+The [command reference](docs/CLI.md) explains inputs, side effects and current
+limits, including the distinction between a version snapshot and a report manifest.
 
 ## Where to go next
 
@@ -47,8 +67,8 @@ Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is
 - **[Usage and adoption guide](docs/USAGE.md)** — start here. Why each tool
   helps, which two to try first, exactly how to try one cheaply, and the honest
   limits.
-- [Roadmap](ROADMAP.md): 0% verified planned work, the current baseline, and what comes next.
-- [Lisp kernel](lisp/nova-work/README.md): a Common Lisp transition kernel with validator rules and 148 acceptance cases, all green.
+- [Roadmap](ROADMAP.md): the current baseline, tracked work and what comes next.
+- [Lisp kernel](lisp/nova-work/README.md): the Common Lisp transition kernel, validator rules and acceptance suite.
 - [Command reference](docs/CLI.md): every flag, worked examples and caveats.
 - [Model routes](docs/MODELS.md): the registry of every model route a bench can run, so the routes are never forgotten again.
 - [Tool contracts](docs/SPEC.md): what each tool promises, and what it refuses.
