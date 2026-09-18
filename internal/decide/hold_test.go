@@ -87,9 +87,15 @@ func setOf(values ...string) map[string]bool {
 }
 
 // (2) Security never falls through. A unit that touches a guard, secrets, the
-// sandbox, sudo, a deploy key or the network resolves to the designated rung on
+// sandbox, sudo, a deploy key or the network reaches the designated mind on
 // EVERY path: with Jev on and off, at any floor, and with prior attempts --
-// including prior attempts by the designated rung itself.
+// including prior attempts by the designated mind itself.
+//
+// What "reaches" means changed on 2026-09-18. It used to mean rung=johnny, and
+// that sent seven of the day's twenty units to a mind that is reserved and
+// takes no work. It now means read=johnny: the security read is attached on
+// every path, and the WORK goes to the rung the evidence supports -- which the
+// floor may move, like any other rung, without touching the read.
 func TestSecurityNeverFallsThrough(t *testing.T) {
 	reg := testRegistry(t)
 	touches := []Unit{
@@ -130,23 +136,30 @@ func TestSecurityNeverFallsThrough(t *testing.T) {
 				u.Files, u.Packages = 1, 1
 				u.Attempts = atts
 
+				// The read is attached whether the ladder can answer or not:
+				// a refusal is a decision that could not be made, and it still
+				// says who was to read the work.
 				rules, err := RouteRules(reg, u, floor)
-				if err != nil {
-					t.Fatalf("touch %d, attempts %s, floor %g: %v", i, aname, floor, err)
+				if rules.ReadField() != "johnny" {
+					t.Errorf("rules: touch %d, attempts %s, floor %g: read = %s, want johnny (%s)", i, aname, floor, rules.ReadField(), rules.Reason)
 				}
-				if rules.Rung.Name != "johnny" {
-					t.Errorf("rules: touch %d, attempts %s, floor %g: got %s, want johnny (%s)", i, aname, floor, rules.Rung.Name, rules.Reason)
-				}
-				if rules.SteppedUp {
-					t.Errorf("rules: touch %d, attempts %s, floor %g: the floor moved a security designation", i, aname, floor)
+				// A WAIT may name a reserved rung -- it is reporting an attempt
+				// the evidence says exists, and a wait is not permission to
+				// dispatch. What may never happen is DISPATCHING work to a mind
+				// that takes none.
+				if err == nil && rules.Dispatchable() && !rules.Rung.Usable() {
+					t.Errorf("rules: touch %d, attempts %s, floor %g: dispatched to %s, which takes no work (%s)", i, aname, floor, rules.Rung.Name, rules.Reason)
 				}
 				fake := &fakeDecider{choice: "flash", conf: 0.99}
-				jev, err := RouteJev(context.Background(), fake, reg, u, floor)
-				if err != nil {
-					t.Fatalf("jev: touch %d, attempts %s, floor %g: %v", i, aname, floor, err)
+				jev, jevErr := RouteJev(context.Background(), fake, reg, u, floor)
+				if (jevErr != nil) != (err != nil) {
+					t.Errorf("jev: touch %d, attempts %s, floor %g: the provider path answered differently from the rules (%v vs %v)", i, aname, floor, jevErr, err)
 				}
-				if jev.Rung.Name != "johnny" {
-					t.Errorf("jev: touch %d, attempts %s, floor %g: got %s (%s)", i, aname, floor, jev.Rung.Name, jev.Reason)
+				if jev.ReadField() != "johnny" {
+					t.Errorf("jev: touch %d, attempts %s, floor %g: read = %s (%s)", i, aname, floor, jev.ReadField(), jev.Reason)
+				}
+				if jevErr == nil && jev.Rung.Name != rules.Rung.Name {
+					t.Errorf("jev: touch %d, attempts %s, floor %g: security is the machinery's word, got %s not %s", i, aname, floor, jev.Rung.Name, rules.Rung.Name)
 				}
 				if fake.calls != 0 {
 					t.Errorf("jev: touch %d, attempts %s, floor %g: the provider was asked about security work", i, aname, floor)
