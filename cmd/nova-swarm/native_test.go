@@ -24,34 +24,33 @@ import (
 
 func nativeHarness(t *testing.T) string {
 	t.Helper()
-	bin, err := build(t, t.TempDir(), "fake-harness", "./cmd/nova-swarm/testdata/fakeharness")
-	if err != nil {
-		t.Fatal(err)
+	if err := buildShared(); err != nil {
+		t.Fatalf("building the binaries these tests run: %v", err)
 	}
-	return bin
+	return builtHarness
 }
 
-// nativeSandbox builds the fake sandbox of the seam tests: a stand-in for nova-sandbox that
+// nativeSandbox returns the fake sandbox of the seam tests: a stand-in for nova-sandbox that
 // records its argv and, under NOVA_FAKE_SANDBOX=hosts, reports hosts=enforceable so the
-// repo allow rule reaches the argv.
+// repo allow rule reaches the argv. Its compile is shared by every test that asks.
 func nativeSandbox(t *testing.T) string {
 	t.Helper()
-	bin, err := build(t, t.TempDir(), "fake-sandbox", "./cmd/nova-swarm/testdata/fakesandbox")
-	if err != nil {
-		t.Fatal(err)
+	if err := buildShared(); err != nil {
+		t.Fatalf("building the binaries these tests run: %v", err)
 	}
-	return bin
+	return builtFakeSandbox
 }
 
 // nativeSandboxOnPath puts the fake sandbox on PATH under its own name (`nova-sandbox`), so
 // the native run resolves the wall itself rather than being handed a --sandbox path. It
-// returns the directory that now names the wall on PATH.
+// returns the directory that now names the wall on PATH; the stand-in itself is built once
+// and linked there, never compiled per test.
 func nativeSandboxOnPath(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	if _, err := build(t, dir, "nova-sandbox", "./cmd/nova-swarm/testdata/fakesandbox"); err != nil {
-		t.Fatal(err)
+	if err := buildShared(); err != nil {
+		t.Fatalf("building the binaries these tests run: %v", err)
 	}
+	dir := builtPathBin
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return dir
 }
