@@ -6,10 +6,12 @@ Help AI friends coordinate work without repeatedly rebuilding the plan in their 
 
 **Planning baseline: 10 epics, 52 features, 171 inventoried items (166 acceptance items and 5 open questions).**
 **Verified implementation: 0%.** This is proposed scope for review, not a delivery-date or effort estimate.
-The current main branch has no production `nova-work` engine or CLI; existing prototypes and written specs do not count as verified production features.
+Current `main` at [`d576bf6b`](https://github.com/mas-bandwidth/nova-tools/commit/d576bf6bbabb39068096a97b4560de9b5e245970) contains the Common Lisp engine sources and a Go `nova-work` CLI for graph and plan operations. Current `dev` at [`2b6d6ba5`](https://github.com/mas-bandwidth/nova-tools/commit/2b6d6ba506a0f1a4465637130a9d3f371bd966d3) adds resident-session client, query, ask and event-bridge slices. These are substantial partial implementations, not evidence that a complete feature meets every acceptance item.
 Current scope after the recorded moves and discoveries: 63 product features and 231 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
 
-The current work register is below. The first internal C/O kernel has merged; a merged partial implementation and passing subset tests do not mark a full production feature verified. The planning source records partial support for E01-F01, E01-F03, E01-F05, E03-F01 and E04-F01 with the merged subset evidence; their cells remain ❌ until all criteria pass.
+The current work register is below. Merged partial implementations and passing subset tests do not mark a full product feature verified. The recursive planning source records the original partial-support evidence for E01-F01, E01-F03, E01-F05, E03-F01 and E04-F01; it is an inventory, not a comprehensive implementation ledger.
+
+Suite-isolation review [#1373 at `7506ad4a`](https://github.com/mas-bandwidth/nova-tools/pull/1373) remains held, and overall acceptance completion has not yet been established. Every feature cell therefore remains ❌ until all of its criteria pass.
 
 ✅ = implemented and verified against the agreed criteria at a recorded source revision. ❌ = any other state.
 Completion is verified features divided by applicable features; it is not averaged subtask percentages or an estimate of time remaining.
