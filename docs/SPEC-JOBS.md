@@ -164,6 +164,49 @@ a cadence.
 
 **Red tests.** `watch-returns-once-per-change`; `quiet-time-makes-no-model-call`.
 
+## 9. Redis ready set (the pull)
+
+**Game engine.** The ready set is a queue a producer appends to and a worker pulls
+from under its own lease; nobody hands a worker a task, because the worker pulling
+is the scheduling decision. The queue is the stream, the claim is one consumer
+group, and the lease is the one key that says which worker holds the item and
+until when. A worker that dies stops renewing, its lease lapses, and the next
+worker reclaims the item — there is no reaper to write and no coordinator to ask.
+
+**Nova.** Redis is the live-state store (SPEC-STATE wins for storage); the lease
+and steal rules are SPEC-JOBS's. `nova-work push --redis <addr> --card <file>
+[--priority <n>] [--needs <id,...>]` validates one card — its first line must open
+with `RESULT:` and its label (the file's name without its extension) must be
+`[A-Za-z0-9._-]+` — and appends it to the stream `cards:ready` with the fields
+`id`, `label`, `body`, `priority`, `needs` and `pushed-at`, printing
+`PUSH OK id=<stream id> label=<l>`. It is the only producer, and it refuses a card
+that could not be run rather than parking it in the ready set.
+
+`nova-swarm pull --redis <addr> --bench <name> --slot-root <dir> [--once]
+[--lease 45m]` reads as consumer `<bench>` in the one consumer group `benches` with
+`XREADGROUP` and a 30 s block, takes the lease key `lease:<entry id>` for the card
+with a TTL, renews it once a minute while the card runs, writes the card to
+`<slot-root>/<id>-<label>/cards/<label>.md`, runs it exactly as `nova-swarm native`
+does (the same flags, the same wall, the same harness), `XACK`s the entry when the
+run is over whether it passed or failed, and appends `id`, `label`, `bench`, `exit`,
+line 1 of the `RESULT.md`, the job path, and the commit sha and branch when the job
+touched a git checkout to the stream `cards:done`. A card whose lease has lapsed is
+reclaimed by the next bench with `XAUTOCLAIM`; a card whose lease is still held is
+left alone. `--once` handles one entry and exits; without it the loop blocks 30 s
+per `XREADGROUP` and stops at `--deadline`.
+
+Every Redis call goes through one interface, `internal/redisq.Client`, and its
+unit tests drive that same interface against `github.com/alicebob/miniredis/v2`,
+which runs in process: no test opens a socket to a network Redis.
+
+**Invariant.** A card is appended only after it passes the `RESULT:` and label
+checks; a card is run only by the bench that holds its lease; a lapsed lease is the
+only thing that lets another bench take it; and an ack never precedes a run, so a
+dead worker's card stays pending and is reclaimable.
+
+**Red tests.** `push-then-pull-round-trips-through-the-ready-set`;
+`a-lapsed-lease-lets-the-next-bench-reclaim`; `a-run-is-acked-only-after-it-happens`.
+
 ## Migration: push launcher to pull worker, in three steps
 
 Each step shadows the last, so the old launcher can be restored until the numbers move, and each

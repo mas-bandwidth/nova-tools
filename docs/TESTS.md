@@ -651,6 +651,12 @@ file the run writes, and every line below is read from local bytes alone.
 `cmd/nova-work/firstrun_test.go` writes the plan and runs each `$` line against
 it, so the `./work.work` below is a fresh file per run.
 
+`nova-work push` is the producer half of the ready set (docs/SPEC-JOBS.md,
+"Redis ready set (the pull)"): it appends one validated card to the
+`cards:ready` stream on the Redis instance `--redis` names, and a bench pulls it
+under a lease. A card whose first line is not a `RESULT:` line, or whose label
+is not `[A-Za-z0-9._-]+`, is refused and never reaches the stream.
+
 ### First run
 
 ```text
@@ -678,6 +684,12 @@ exit 2 before anything is written.
 ```text
 $ nova-work dependencies --graph ./deps.json --node b --needs a
 nova-work dependencies: rule 3: :deps edges contain a cycle: b -> a -> b; run: nova-work help
+
+$ nova-work push --redis 127.0.0.1:6379 --card ./card.md
+PUSH OK id=1726620000000-0 label=card
+
+$ nova-work push --redis 127.0.0.1:6379 --card ./notes.md
+PUSH REFUSED: the card notes does not open with a RESULT: line; its first line is just\x20some\x20prose
 ```
 
 ## nova-ci

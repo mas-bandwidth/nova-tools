@@ -1512,7 +1512,7 @@ See [SPEC-CI.md](SPEC-CI.md).
 `nova-work` is both the thin client of the resident work session ([docs/SPEC-WORK.md](SPEC-WORK.md), "The engine and its client") and the in-process reader of the job graph and bounded `.work` plans ([SPEC-JOBS.md](SPEC-JOBS.md), [SPEC-WORKLANG.md](SPEC-WORKLANG.md)). As a client it sends one request line over the Unix socket `--session` names and prints the session's one answer line, byte for byte; the session is the engine and owns every fact, so the client refuses to guess and second-guesses nothing. The graph and plan verbs read files as data, never as programs.
 
 ```
-nova-work: the thin client, the job graph and the bounded .work reader (see docs/SPEC-WORK.md, docs/SPEC-JOBS.md, docs/SPEC-WORKLANG.md)
+nova-work: the thin client, the job graph, the bounded .work reader, and the card verbs that feed the ready set (see docs/SPEC-WORK.md, docs/SPEC-JOBS.md, docs/SPEC-WORKLANG.md)
 
 usage:
   nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --cache <path> --repo <path> --remote <name> --branch <name>
@@ -1533,6 +1533,7 @@ usage:
   nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work push --redis <addr> --card <file> [--priority <n>] [--needs <id,...>]
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -1551,6 +1552,7 @@ verbs:
   nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
   nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
   nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
+  nova-work push           appends one card to the Redis `cards:ready` stream
 
 A node is ready only when every need is terminal accepted, and every row that cannot
 proceed prints its exact blocker and its resolver. A :deps cycle is refused before
@@ -1562,6 +1564,16 @@ and an unknown :kind is refused naming the field. :needs is the reference edge a
 :blocks its inverse, so the kernel derives whichever a node did not give; an absent
 need is refused naming the field and the id, and a :needs cycle is refused by validator
 rule 3, both at load before the graph is published.
+
+push reads one card file and appends it to the Redis `cards:ready` stream with
+the fields id, label, body, priority, needs and pushed-at. It refuses a card
+whose first line is not a RESULT line or whose label is not [A-Za-z0-9._-]+.
+The label is the card file's name without its extension.
+
+NO GUESSED ANYTHING. --redis is required because there is no default instance,
+and --card is required because a card in an argument is a card in the process
+table. A bench pulls work from the ready set under its own lease; this verb only
+makes the card available.
 
 flags:
   --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
