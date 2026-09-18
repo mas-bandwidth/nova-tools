@@ -731,6 +731,114 @@ The things a first run gets wrong, and what each one wants:
 - **a verb on a directory that is not a lane** — exit 2, with the whole `init`
   command in the refusal, and nothing written on the way past.
 
+### simulate
+
+```
+nova-merge simulate --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
+```
+
+`simulate` answers the one question a red merge queue asks: which entry is green
+on its own and red **on top of the entries ahead of it**. It fetches
+`origin/<base>`, makes a scratch worktree under the repository's own `.git` — never
+the system temp directory — squash-merges each entry's `pull/<n>/head` in queue
+order, and runs every check after each merge. The first entry whose checks fail is
+the poison, and the pass stops on it.
+
+`--repo` is a local clone whose origin holds the queue's heads. `--entries` is a
+file of pull request numbers, one per line; with no `--entries` the queue itself is
+read, one `gh api graphql` naming the base branch's merge queue. `--checks` is a
+comma-separated list of commands and defaults to
+`go build ./...,go test ./internal/ci/`, which is the hand loop this verb replaces,
+written out as it was run. `--timeout` is a duration **per check**, default `5m`.
+The scratch worktree is removed on the way out, and a removal that could not happen
+is one `SIMULATE NOTE` rather than a silence.
+
+Four lines, one per entry and one at the end:
+
+```
+SIMULATE OK #<n>
+SIMULATE CONFLICT #<n> with the entries ahead
+SIMULATE POISON #<n> check="<command>" <the check's first line>
+SIMULATE DONE entries=<n> ok=<n> conflicts=<n> poison=<#n|none>
+```
+
+A conflict is counted, the worktree is reset and the pass carries on, because an
+entry that will not merge is not the entry that turns the base red.
+
+**The exit codes are this verb's own, and they are the other way round.** Exit 2 is
+a poison this verb **found**; exit 1 is the verb that could not run at all. Every
+other nova-merge verb spends 2 on a bad invocation, but a tool that could not run is
+not a red queue, and the two answers must not share a number.
+
+### rebase, react and classify — the lane's three ticks
+
+```
+nova-merge rebase   --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
+nova-merge react    --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
+nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
+```
+
+**These three land with batch 3 (nova-tools #1308) and are not on `dev` yet.** The
+lines below are read off their source and are what the verbs print; until that batch
+merges, this section describes a binary your bench does not have.
+
+`rebase --once` is the hand rebase loop's tick as a verb: one pass over the
+repository's open pull requests, and for each one the host calls `DIRTY` whose head
+branch is `rowan/<something>` — `rowan/replays-*` excluded, it has its own verb — a
+card cut and launched, unless `--markers` already holds a file for that number.
+`--markers` is the whole memory of the pass, so a pull request is carded once and not
+once per tick; `--out` is where the cards go; `--queue` is the queue whose state file
+numbers them, under its lock, so two cutters never share a number. `--base` is `dev`
+by default and `--timeout` is 120 seconds. **`--once` is required**: this pass cuts
+what it finds now and never loops on its own. One line, and exit 0 whether it cut
+nothing or many:
+
+```
+REBASE tick cards=<n>
+REBASE NOTE PR #<n> card=<name> is cut and marked and was not launched: <reason>; launch it by hand, the marker stops a second cut
+```
+
+`react` is the lane's subscriber, and it holds no timer of its own: it blocks on the
+pub/sub channels until a message lands or `--deadline` is reached — 60 seconds by
+default — and acts once per message. A `pr-checks-done` that succeeded enqueues the
+pull request unless the skip set or a live hold key stops it; a `dev-moved` asks for
+a rebase unit for every pull request the move made `DIRTY`; a `card-done` does
+nothing, because the recorder and the harvester read the stream themselves. `--lane`
+is optional and is how the reactor learns the repository and base the `dev-moved` arm
+needs; without it only the enqueue arm runs.
+
+```
+REACT enqueue pr=<n> head=<sha>
+REACT skip pr=<n> head=<sha> reason=skip-set
+REACT hold pr=<n> head=<sha> reason=hold-key
+REACT rebase-wanted pr=<n> head=<sha> base=<sha>
+REACT OK once=true
+REACT OK once=false deadline=<n>s
+```
+
+**Returning at the deadline is the design and not a failure**, so a window in which
+nothing was published is still `REACT OK`, exit 0; `REACT FAIL` on stderr, exit 1, is
+the reactor that could not read its channels.
+
+`classify` asks one typed decision about **one failed merge-group run**: was the
+failure flaky under the queue's load, the environment, or the pull request's own
+change. It is advisory and it merges nothing. The floor is 0.90 and is not a flag —
+above it the kind drives the action, and below it the kind is `unknown`, neither
+action is taken, and the line names the raw answer it did not trust:
+
+```
+CLASSIFY run=<n> pr=<n> kind=<flaky-under-load|own-change|environment|unknown> conf=<x.xx> floor=0.90 rerun=<yes|no> park=<yes|no> [below=<the raw answer>]
+```
+
+`flaky-under-load` and `environment` are `rerun=yes park=no`; `own-change` is
+`rerun=no park=yes`. The evidence put to the route is bounded and public — the run,
+its failing jobs, their packages, whether the pull request changed those packages,
+and the runner — and never a secret and never a body. `--base-url` and `--key-env`
+are the decide route's, as everywhere else; a run the host cannot read, a route that
+will not answer, or a `--run` that is not a positive number is `CLASSIFY REFUSED`,
+exit 2. See [SPEC-DECIDE.md](SPEC-DECIDE.md), *Git and GitHub — classify, order,
+risk; never a merge*.
+
 ## nova-pulse
 
 One tool for parallel work: enumerate bounded work, cut cards, admit them
@@ -744,15 +852,6 @@ lists as available must run, or be marked (issue #515):
 ```
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
 ```
-
-### cut
-
-`pool` writes one candidate per line into `pool.tsv`, field 1 the locator the
-sources line declares (an `owner/repo` for the `issues` kind, never the source
-kind). `cut` renders each card from its typed template, and a template's
-`<source>` in the `STEP 1` clone URL renders that locator — `git clone -q
-https://github.com/mas-bandwidth/nova-tools.git .` — so every card clones the
-repo it is about (the dogfood probe's red line cloned `github.com/issues.git`).
 
 ### version
 
@@ -795,20 +894,139 @@ line with the swarm's reason.
 ### cut
 
 ```
-nova-pulse cut --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--local <tag>] [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --root <dir> (--pool <pool.tsv> | --issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--max <n>]
 ```
 
-`cut` writes one practice-17 card per `pool.tsv` candidate from its typed
-template, plus a `cards.tsv` naming the model by kind. `--max` bounds the
-number of cards cut, in pool order (default 20, `0` for all) — `--max 6` cuts
-six cards and the rest of the pool waits for the next call — and also caps the
-`CUT SKIPPED` lines printed. One line on success:
+`cut` reads **one** source and refuses none and refuses two: naming no source is
+`cut wants one source; it wants --pool, --issue, --rows or --branch-from`, and
+naming two is `cut reads one source; pass only one of ...`, both exit 2 with the
+whole list in the refusal. `--max` bounds the number of cards cut, in source order
+(default 20, `0` for all) — `--max 6` cuts six cards and the rest waits for the next
+call — and also caps the `CUT SKIPPED` lines printed.
+
+**`--pool`** writes one practice-17 card per `pool.tsv` candidate from its typed
+template, plus a `cards.tsv` naming the model by kind. `pool` wrote one candidate
+per line, field 1 the locator the sources line declares (an `owner/repo` for the
+`issues` kind, never the source kind), and a template's `<source>` in the `STEP 1`
+clone URL renders that locator — `git clone -q
+https://github.com/mas-bandwidth/nova-tools.git .` — so every card clones the repo
+it is about (the dogfood probe's red line cloned `github.com/issues.git`). One line
+on success:
 
 ```
 CUT OK cards=<n> skipped=<n> flash=<n> pro=<n> out=<dir>
 ```
 
-Exit 0 when every candidate was cut, 1 when any was skipped, 2 on a refusal.
+**`--issue`, `--rows` and `--branch-from`** are the **validated-template** form, and
+the template is the source's own name: `--issue` wants `<templates>/issue.md`,
+`--rows` wants `rows.md`, `--branch-from` wants `branch-from.md`, and a missing one
+is `CUT REFUSED: --templates wants <source>.md`. A template declares named slots —
+`issue`, `title`, `body`, `branch`, `base`, `row`, `replay` — and the source fills
+every one it declares.
+
+- `--issue <owner>/<repo>#<n>` reads that issue's title and body through `gh`,
+  verbatim, and derives the branch `rowan/issue-<n>-<slug of the title>` onto `dev`.
+- `--rows <file.tsv>` is one card per row: `label`, `base`, `row`, `replay`,
+  `branch`, tab separated. An empty `base` is `dev`, an empty `label` is the slug of
+  the row, and a separator or header row is skipped and counted as skipped.
+- `--branch-from <owner>/<repo>#<n>` reads that pull request's head ref through `gh`
+  and cuts one card on that exact branch onto `dev`.
+
+**Five checks run in order before a byte is written**, and the first that fails is
+the whole answer, exit 2, one line:
+
+```
+CUT REFUSED check=branch branch=<name> (pass --branch-from <pr>, or rename the issue)
+CUT REFUSED check=base path=<path> not at <base> (fix the row, or add the file)
+CUT REFUSED check=step1 (<what is wrong with the line>)
+CUT REFUSED check=slot slot=<name> (named slot with no value: fill it, or drop it from the template)
+CUT REFUSED check=result (the RESULT line is more than one line: fix the template)
+```
+
+The branch check is `git ls-remote origin <branch>`: a branch that already exists is
+a card that would collide, and it is refused. `--branch-from` names its exact head
+ref, so that one check is skipped for it and only for it. The base check is
+`git cat-file -e <base>:<path>` for every file a row names, so a card never asks a
+worker to edit a file that is not there. `step1` is parsed as one shell line
+in process, never run. Success is one line naming the source:
+
+```
+CUT OK cards=<n> from=<issue|rows|branch-from> skipped=<n> out=<dir>
+```
+
+Exit 0 when every candidate was cut, 1 when any was skipped, 2 on a refusal, for
+both forms.
+
+### fill
+
+```
+nova-pulse fill --ready <dir> --launched <dir> [--lanes <file>] [--bench <name>]... [--once]
+```
+
+`fill` is the tick that keeps the benches fed: it reads each bench's capacity over
+`ssh`, pops that many `card-*.md` from `--ready` in filename order, moves them into
+`--launched` and hands each to the per-card launcher. The move out of `--ready` is
+the claim, so a card another hand already took is skipped rather than launched
+twice. With no `--bench` the benches are `hulk`, `vision` and `space`; `--once` runs
+exactly one tick, and without it the loop runs until it is killed. One line per
+tick:
+
+```
+FILL tick=<n> <bench>:launched=<n> ... ready=<n>
+```
+
+**A card may name a lane, and a lane is a serial queue over one area of the
+codebase.** The line is `LANE: <name>` in the card's own text — the exact field
+prefix and nothing else, so a `LANES:` line is prose — and at most one card per lane
+is live at a time. A ready card whose lane already has a live card under
+`--launched` waits its turn, in order, and stays ready:
+
+```
+FILL HELD card=<n> lane=<name> live=<the card holding it>
+```
+
+`--lanes` names the lanes file, `queue/control/lanes.tsv` by default: one
+`<name><TAB><path prefixes>` per line, `#` a comment, blank lines skipped. The name
+is what `fill` matches; the prefixes are the area the lane serializes. **A lane the
+file does not name is a refusal, not a guess**, and the refusal carries the remedy:
+
+```
+FILL REFUSED card=<n> lane=<name> remedy="add the lane to <file> or drop the LANE line"
+```
+
+A missing lanes file is an empty table, so every card naming a lane is then refused
+by name — which is the file saying it has not been written yet, rather than a fill
+that serializes nothing. A card with no `LANE:` line is launched exactly as before.
+One bench takes at most 30 cards in a tick, whatever its capacity says, because the
+rest of the machine is not the fill's to spend.
+
+### fleet add
+
+```
+nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
+```
+
+`fleet add` is the one verb that admits a bench to the loop, and it admits it **only
+on a fully green fleet-probe record**. It reads the probe read-back, and unless
+every runner name in it is green it refuses, naming the runner that is not and the
+run it read:
+
+```
+FLEET REFUSED bench=<name> runner=<name> run=<id>: the fleet-probe is not all green (green=<n> of <n>)
+```
+
+On green it writes `PULSE_ROOTS` and the runner labels under `--queue`, and no other
+verb writes those two:
+
+```
+FLEET ADD bench=<name> run=<id> runners=<n>
+```
+
+The bench label is a bare argument and there is no default: `fleet add` with no
+label is exit 2 and refuses to guess, and so is a missing `--queue` or `--roots`.
+An unreadable probe record is `FLEET REFUSED bench=<name>: the fleet-probe record is
+unreadable`, which is the verb saying it has no evidence rather than admitting a
+bench on none (nova-tools #875).
 
 ### status
 

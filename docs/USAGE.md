@@ -315,6 +315,22 @@ pushes; the [first-run transcript](TESTS.md#nova-merge) is executed by a test. S
 also
 [nova-merge in the command reference](CLI.md#nova-merge).
 
+**How work lands here today, in case it is useful.** We stopped landing one pull
+request at a time. A **batch** is a handful of pre-tested changes merged onto one
+tree, built and tested there, and then opened as a single entry that carries the
+list of what is in it; the queue round lands the batch, and the members are closed
+with a pointer to it. What makes that affordable is asking first: `nova-merge
+simulate --repo <clone> --base <branch>` squash-merges the queue's entries in
+order in a scratch worktree, runs your checks after each one, and names the entry
+that was green alone and red on top of the entries ahead of it — the one a queue
+finds an hour later, and by then it has taken the others down with it. The other
+half is upstream of the merge: a card that touches one area of the code declares a
+**lane** with a `LANE: <name>` line, and `nova-pulse fill` keeps at most one card
+per lane live at a time and holds the rest in order, so two workers do not spend an
+afternoon writing changes that cannot both land. Neither half is required to use
+`nova-merge`; both are how the lane stays cheap once there is more work than
+reviewers.
+
 **It worked if** it refused to land something whose checks had not passed, and
 told you exactly which condition was missing.
 
