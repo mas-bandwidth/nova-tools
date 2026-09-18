@@ -15,7 +15,7 @@ func card636(t *testing.T, dir, label string) string {
 	t.Helper()
 	card := filepath.Join(dir, label+".md")
 	body := "RESULT " + label + " sha=000000000000\nYou are a worker.\n" +
-		"STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://github.com/mas-bandwidth/nova-tools.git . && git checkout -b rowan/" + label + "\n" +
+		"STEP 1. mkdir -p scratch && export TMPDIR=$PWD/scratch && git clone -q https://example.com/mas-bandwidth/nova-tools.git . && git checkout -b rowan/" + label + "\n" +
 		"STEP 2. write RESULT.md\n"
 	if err := os.WriteFile(card, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
