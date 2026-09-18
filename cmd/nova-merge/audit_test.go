@@ -109,6 +109,11 @@ var mergeAudit = audit.Config{
 		// react.go publishes and reads through internal/ci, whose values are rendered
 		// through oneline before this package prints them.
 		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
+		// internal/ci/slowtests is batch's reader of a `go test -json` stream, and it is
+		// THE SAME DECODER cmd/nova-ci reads CI's own stream with. It holds no writer:
+		// Parse decodes newline-delimited JSON into structs and returns them, and the
+		// package and test names it returns reach a line through oneline.Field.
+		`"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"`,
 	},
 	MinClassified: 60,
 }
