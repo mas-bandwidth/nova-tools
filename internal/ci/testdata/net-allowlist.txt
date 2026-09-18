@@ -46,3 +46,4 @@ internal/pulse/manager_test.go:71 url 2026-09-17 a github.com PR URL handed to a
 internal/pulse/pool_work_test.go:77 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
 internal/secrets/seal_test.go:89 url 2026-09-17 a github.com PR URL printed by a fake gh script, not a live call; predates the checker
 internal/swarm/admitrepo_test.go:122 url 2026-09-17 a github.com URL in a card RESULT fixture, not a live call; predates the checker
+cmd/nova-sandbox/worktree_test.go:52 url 2026-09-18 a github.com clone URL in a fake git remote fixture, not a live call; landed on dev after the checker
