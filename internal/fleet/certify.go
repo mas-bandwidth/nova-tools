@@ -476,6 +476,7 @@ type CertifyInput struct {
 	All       bool       // every machine in the registry, under its own roles
 	Workloads []Workload // the set to run; nil takes StandardWorkloads
 	Certs     string     // the certificates file appended to
+	Attempts  string     // the per-attempt trail; "" is attempts.log beside Certs
 	Hash      string     // the standard hash every row carries
 	Build     string     // the build every row carries; empty asks each machine its own
 	Bin       string     // the install directory the release puts the tools in; "" is $HOME/.local/bin
@@ -639,6 +640,7 @@ func Certify(in CertifyInput) int {
 			// not anybody can ssh to the bench.
 			if unreached != "" && w.Where != WhereCoordinator {
 				verdicts[w.Class], evidence[w.Class] = firstAnswer, unreached
+				in.appendAttempt(m, w.Class, firstAnswer, unreached)
 				fmt.Fprintf(in.Stderr, "CERTIFY %s %s %s reason=%s\n",
 					oneline.Field(m.Name), oneline.Field(w.Class), firstAnswer,
 					oneline.Quote(oneline.Cap(unreached, EvidenceCap)))
@@ -717,6 +719,7 @@ func (in CertifyInput) certifyOne(reg *Registry, m Machine, w Workload, build st
 		// ends knowing less than it did, and the record must say so rather than keep the
 		// older verdict as though it were this run's.
 		delete(rows, w.Class)
+		in.appendAttempt(m, w.Class, verdict, said)
 		fmt.Fprintf(in.Stderr, "CERTIFY %s %s %s reason=%s\n",
 			oneline.Field(m.Name), oneline.Field(w.Class), verdict,
 			oneline.Quote(oneline.Cap(said, EvidenceCap)))
@@ -731,6 +734,7 @@ func (in CertifyInput) certifyOne(reg *Registry, m Machine, w Workload, build st
 		Machine: m.Name, Build: build, Hash: in.Hash, Class: w.Class,
 		Verdict: verdict, Evidence: said, At: in.Now().UTC(),
 	}
+	in.appendAttempt(m, w.Class, verdict, said)
 	line := fmt.Sprintf("CERTIFY %s %s %s evidence=%s",
 		oneline.Field(m.Name), oneline.Field(w.Class), verdict,
 		oneline.Quote(oneline.Cap(said, EvidenceCap)))
@@ -741,6 +745,52 @@ func (in CertifyInput) certifyOne(reg *Registry, m Machine, w Workload, build st
 	// A WARN and a FAIL both go to stderr, where a person looking for what to do next looks.
 	// A WARN changes neither the count that gates nor the exit.
 	fmt.Fprintln(in.Stderr, line)
+}
+
+// appendAttempt writes ONE line per attempt, AS IT HAPPENS, beside the certificates.
+//
+// Holding the rows to one per (machine, class) is right for the record and wrong for the
+// trail: a run killed halfway through a machine would leave nothing of what it had already
+// learned, and the run that matters most is the one somebody interrupts because it is taking
+// too long. The trail is append-only, one line per attempt including the ones that write no
+// certificate at all (UNREACHABLE, TIMEOUT), and it is never read by the tool -- it is for
+// the person who comes back to a machine and asks what happened.
+//
+// A trail that cannot be written is a NOTE and not a refusal: the run has real work to do
+// and the record is the certificates file.
+func (in CertifyInput) appendAttempt(m Machine, class, verdict, evidence string) {
+	path := in.attemptsPath()
+	if path == "" {
+		return
+	}
+	line := strings.Join([]string{
+		in.Now().UTC().Format(time.RFC3339), dash(m.Name), dash(class), dash(verdict),
+		dash(oneline.Escape(oneline.Cap(evidence, EvidenceCap))),
+	}, "\t")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err == nil {
+		_, err = io.WriteString(f, line+"\n")
+		_ = f.Close()
+	}
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "CERTIFY NOTE attempts=unwritten path=%s err=%s\n",
+			oneline.Field(path), oneline.Quote(oneline.Cap(err.Error(), EvidenceCap)))
+	}
+}
+
+// attemptsPath is --attempts, or attempts.log beside the certificates file. A dry run writes
+// no trail, because it made no attempt.
+func (in CertifyInput) attemptsPath() string {
+	if in.DryRun {
+		return ""
+	}
+	if p := strings.TrimSpace(in.Attempts); p != "" {
+		return p
+	}
+	if strings.TrimSpace(in.Certs) == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(in.Certs), "attempts.log")
 }
 
 // writeRows puts one machine's pass on the record: one row per class, in class order, each
@@ -1220,18 +1270,22 @@ func answer(in CertifyInput, reg *Registry, m Machine, w Workload) (string, stri
 	} else {
 		out, err = runScript(in, m, w.Class, script)
 	}
+	// FINISHING COMES FIRST, before the matched line. `echo PROOF OK` followed by `exec
+	// sleep 3` under a 100ms bound printed the expected line, ran out of time, and was
+	// recorded OK with a certificate behind it: the marker said the work had STARTED, and a
+	// certificate is a claim that it FINISHED. A workload that printed its line and then ran
+	// out of time is TIMEOUT, never OK.
+	if errors.Is(err, ErrTimeout) {
+		return VerdictTimeout, oneline.Err(err)
+	}
 	// The evidence is the WHOLE LINE the expect matched, not the matched text: `^GO OK` is
 	// four characters and `GO OK go version go1.26.5 linux/amd64 ok 0.4s` is the answer a
 	// person reading the certificate in a month actually needs.
 	if line, ok := matchedLine(w.Expect, out); ok {
 		return VerdictOK, line
 	}
-	// Reaching the machine comes before judging it, and letting the work FINISH comes before
-	// both. The order is deliberate: a machine that printed the marker was reached and did
-	// finish, whatever else came back.
-	if errors.Is(err, ErrTimeout) {
-		return VerdictTimeout, oneline.Err(err)
-	}
+	// Reaching the machine comes before judging it: a machine that printed the marker WAS
+	// reached, whatever else came back.
 	if reason, bad := TransportFailure(out, err); bad {
 		return VerdictUnreachable, reason
 	}

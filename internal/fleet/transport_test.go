@@ -427,3 +427,102 @@ func timesOut(answers map[string]remoteAnswer, machine, class string) map[string
 	answers[machine+"|"+class] = remoteAnswer{err: context.DeadlineExceeded}
 	return answers
 }
+
+// TestAWorkloadThatPrintedItsLineAndThenRanOutOfTimeIsTimeout is Stella's second read
+// (stella-ee86e7fc3435), and it is the sharper half of the timeout: `echo PROOF OK` followed
+// by `exec sleep 3` under a 100ms bound printed the expected line, ran out of time, and was
+// recorded OK with a certificate behind it. The matched line was being accepted BEFORE the
+// timeout was looked at, on the reasoning that a machine which printed the marker had been
+// reached -- true, and beside the point. The work did not finish.
+func TestAWorkloadThatPrintedItsLineAndThenRanOutOfTimeIsTimeout(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "proof.card"), strings.Join([]string{
+		"roles: bench",
+		"expect: ^PROOF OK",
+		"",
+		"echo PROOF OK",
+		"exec sleep 3",
+	}, "\n")+"\n")
+	loads, err := ReadWorkloads(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certs := writeFile(t, "certs.tsv", "")
+	out, errs, code := runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "space", Certs: certs, Workloads: loads,
+		Remote: &fakeRemote{answers: map[string]remoteAnswer{
+			"space|build": {out: "nova-merge v0.17.0\n"},
+			// The machine printed the line and then never came back.
+			"space|proof": {out: "PROOF OK\n", err: context.DeadlineExceeded},
+		}},
+		Hash: "h", Now: fixedNow,
+	})
+	all := out + errs
+	if code != 3 {
+		t.Fatalf("exit = %d, want 3\n%s", code, all)
+	}
+	if !strings.Contains(all, "CERTIFY space proof TIMEOUT reason=") {
+		t.Errorf("a workload that printed its line and then ran out of time was not TIMEOUT:\n%s", all)
+	}
+	if strings.Contains(all, "CERTIFY space proof OK") {
+		t.Errorf("a half-finished workload was certified:\n%s", all)
+	}
+	if !strings.Contains(all, "timeout=1") {
+		t.Errorf("the closing line counts no timeout:\n%s", all)
+	}
+	if rows := mustRead(t, certs); len(rows) != 0 {
+		t.Errorf("a timed-out workload wrote %d certificate rows: %+v", len(rows), rows)
+	}
+}
+
+// TestEveryAttemptLeavesItsEvidenceAsItHappens: holding the rows to one per (machine, class)
+// is right for the RECORD and wrong for the TRAIL -- a run killed halfway through a machine
+// used to leave nothing of what it had already learned. Every attempt appends its evidence
+// as it happens, beside the certificates, so an interrupted pass is still readable.
+func TestEveryAttemptLeavesItsEvidenceAsItHappens(t *testing.T) {
+	answers := benchOK()
+	failing(answers, "space", "git-identity", "GIT IDENTITY name=- email=-")
+	certs := writeFile(t, "certs.tsv", "")
+	attempts := filepath.Join(filepath.Dir(certs), "attempts.log")
+	fixer := &fakeFixer{
+		changed: map[string][]string{ItemGitIdentity: nil},
+		after:   func() { answers["space|git-identity"] = benchOK()["space|git-identity"] },
+	}
+	_, _, code := runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "space", Certs: certs,
+		Remote: &fakeRemote{answers: answers}, Hash: "h", Now: fixedNow,
+		Fix: true, Fixer: fixer, Bus: &fakeBus{}, Lane: "fleet",
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	trail := readFile(t, attempts)
+	if trail == "" {
+		t.Fatalf("no attempts trail at %s; a run killed mid-machine leaves nothing", attempts)
+	}
+	var identity []string
+	for _, line := range strings.Split(strings.TrimSpace(trail), "\n") {
+		if strings.Contains(line, "\tgit-identity\t") {
+			identity = append(identity, line)
+		}
+	}
+	if len(identity) != 2 {
+		t.Fatalf("the trail holds %d git-identity attempts, want 2 (the failure and the proof after the repair):\n%s", len(identity), trail)
+	}
+	if !strings.Contains(identity[0], VerdictFail) || !strings.Contains(identity[0], "email=-") {
+		t.Errorf("the first attempt's evidence is not on the trail: %q", identity[0])
+	}
+	if !strings.Contains(identity[1], VerdictOK) {
+		t.Errorf("the second attempt is not on the trail: %q", identity[1])
+	}
+	// And the record itself still holds ONE row for that class.
+	rows := 0
+	for _, r := range mustRead(t, certs) {
+		if r.Class == "git-identity" {
+			rows++
+		}
+	}
+	if rows != 1 {
+		t.Errorf("the record holds %d git-identity rows, want 1", rows)
+	}
+}

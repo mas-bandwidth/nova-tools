@@ -89,6 +89,7 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 	all := f.fs.Bool("all", false, "")
 	workloads := f.fs.String("workloads", "", "")
 	certs := f.fs.String("certs", "", "")
+	attempts := f.fs.String("attempts", "", "")
 	standard := f.fs.String("standard", "", "")
 	build := f.fs.String("build", "", "")
 	repo := f.fs.String("repo", "mas-bandwidth/nova-tools", "")
@@ -222,7 +223,7 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 
 	return fleet.Certify(fleet.CertifyInput{
 		Machines: *machines, Only: *machine, All: *all, Workloads: loads,
-		Certs: *certs, Hash: hash, Build: *build, Bin: *bin, Repo: *repo,
+		Certs: *certs, Attempts: *attempts, Hash: hash, Build: *build, Bin: *bin, Repo: *repo,
 		Timeout: bound, DryRun: *dryRun, IfStale: *ifStale, MaxAge: age, Log: events,
 		Fix: wantFix, MaxFixRounds: *maxFixRounds, Fixer: fixer, Bus: poster, Lane: *lane,
 		Remote: fleetNewCertifyRemote(*ssh), Forge: fleetNewCertifyForge(bound),

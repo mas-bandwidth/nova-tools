@@ -1594,7 +1594,7 @@ failed for a job, 2 on a refusal.
 ### fleet certify
 
 ```
-nova-pulse fleet certify --machines <file> (--machine <name> | --all | --status) --certs <file> [--workloads <dir>] [--standard <file>] [--build <version>] [--bin <dir>] [--repo <owner/name>] [--ssh <path>] [--if-stale] [--max-age <d>] [--log <file>] [--timeout <d>] [--dry-run] [--no-fix] [--max-fix-rounds <n>] [--git-name <name>] [--git-email <addr>] [--bus <dir> --as <name> --to <names> [--lane <name>] [--bus-remote <r>] [--bus-branch <b>]]
+nova-pulse fleet certify --machines <file> (--machine <name> | --all | --status) --certs <file> [--attempts <file>] [--workloads <dir>] [--standard <file>] [--build <version>] [--bin <dir>] [--repo <owner/name>] [--ssh <path>] [--if-stale] [--max-age <d>] [--log <file>] [--timeout <d>] [--dry-run] [--no-fix] [--max-fix-rounds <n>] [--git-name <name>] [--git-email <addr>] [--bus <dir> --as <name> --to <names> [--lane <name>] [--bus-remote <r>] [--bus-branch <b>]]
 ```
 
 `fleet survey` asks a machine what it **has**. `fleet certify` makes it **do** the work its
@@ -1705,6 +1705,17 @@ UNREACHABLE or TIMEOUT writes nothing at all.
 
 **A `where: coordinator` workload never opens an ssh**, whether it asks the forge or runs a
 body: its body runs HERE. The branch is taken before the run, not after it.
+
+**Finishing comes before the matched line.** A workload that printed the line its `expect:`
+wanted and THEN ran out of time is `TIMEOUT`, never OK: the marker says the work started, and
+a certificate claims it finished. `echo PROOF OK` followed by `exec sleep 3` under a 100 ms
+bound was recorded OK with a certificate behind it.
+
+**Every attempt leaves its evidence as it happens.** One line per attempt is appended to
+`--attempts <file>` (by default `attempts.log` beside the certificates file), including the
+attempts that write no certificate at all, so a run killed halfway through a machine still
+says what it had learned: `at<TAB>machine<TAB>class<TAB>verdict<TAB>evidence`. The tool never
+reads it; it is for the person who comes back and asks what happened.
 
 **A machine certifies ITSELF without ssh.** When the machine named is the machine running the
 verb (by registry name, ssh target or short host name) the workload runs here through `bash
