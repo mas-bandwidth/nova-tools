@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 )
 
 // snapshotChildTimeout is the deadline one binary's `version` gets. It is a
@@ -41,14 +43,23 @@ func revisionOf(stamp string) string {
 	return "-"
 }
 
-// parseVersionLine parses the four-token Conventions line a binary's `version`
-// prints: <tool> <stamp> <goos>/<goarch> <go version>.
+// parseVersionLine takes apart the Conventions line a binary's `version` prints
+// -- <tool> <stamp> <goos>/<goarch> <go version>, and then any named extras --
+// through internal/buildinfo, the one place in this tree that both WRITES that
+// line and reads it.
+//
+// It used to demand exactly four tokens, and on 2026-09-18 that cost a whole
+// install: nova-merge prints a fifth `build=<hex>`, the sha256 of its own file,
+// and one snapshot of ~/.local/bin refused every binary in it (#1297). An extra
+// is a tool saying one more true thing about itself; every column this verb
+// writes is read out of the four tokens the whole set shares, so an extra
+// changes nothing here except that it is no longer a refusal.
 func parseVersionLine(s string) (stamp, revision, platform string, ok bool) {
-	f := strings.Fields(firstLine(s))
-	if len(f) != 4 || !strings.Contains(f[2], "/") {
+	f, ok := buildinfo.Parse(s)
+	if !ok {
 		return "", "", "", false
 	}
-	return f[1], revisionOf(f[1]), f[2], true
+	return f.Version, revisionOf(f.Version), f.Platform, true
 }
 
 // snapshotVerb inventories a directory of binaries by running each one's own
@@ -102,7 +113,7 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 		}
 		stamp, revision, platform, ok := parseVersionLine(p.Stdout)
 		if !ok {
-			return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read %s version (it printed no four-token version line) (repair the build there: go build ./cmd/%s)", e.Name(), e.Name()))
+			return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read %s version (it printed no version line: want `<tool> <stamp> <goos>/<goarch> <go version>` and then any key=value extras) (repair the build there: go build ./cmd/%s)", e.Name(), e.Name()))
 		}
 		rows = append(rows, snapRow{e.Name(), stamp, revision, platform})
 	}

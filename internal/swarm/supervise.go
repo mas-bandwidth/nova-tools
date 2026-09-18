@@ -127,11 +127,18 @@ func Supervise(in SuperviseInput) int {
 	argv := harnessArgs(in.Worker, jobDir)
 	dir := jobDir
 	if in.Sandbox != "" {
+		// The shared per-bench cache root lives beside the job directory and is a permitted
+		// write root (issue #1048, docs/SPEC-SANDBOX.md): the toolchain and modules are the
+		// same for every job under one pool, so they are downloaded once, not once per slot.
+		if err := EnsureCacheDirs(p.Dir); err != nil {
+			return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the shared cache directories could not be made: " + redactedReason(err)}, attest, 0, "")
+		}
 		job := SandboxJob{
 			Sandbox: in.Sandbox, PoolName: filepath.Base(p.Dir),
 			SlotDir: in.Worker.SlotDir(in.Slot), JobDir: jobDir,
 			DataHome: in.Worker.DataHome(in.Slot, in.Task), ReadRoots: in.Worker.ReadRoots,
-			Command: harness, Args: argv,
+			CacheDir: CacheRoot(p.Dir),
+			Command:  harness, Args: argv,
 		}
 		whole := job.SandboxCommand()
 		harness, argv = whole[0], whole[1:]
@@ -143,7 +150,7 @@ func Supervise(in SuperviseInput) int {
 	cmd := exec.Command(harness, argv...)
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = logFile, logFile
-	cmd.Env = childEnv(in.Worker, in.Slot, in.Task, in.Key)
+	cmd.Env = childEnv(in.Worker, in.Slot, in.Task, in.Key, p.Dir)
 	ownGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
@@ -497,10 +504,11 @@ func expandHarnessArg(a string, w Worker, prompt string) string {
 }
 
 // childEnv is the child's whole environment, built rather than inherited: the key in the
-// CHILD's environment only, the job's own data home, and PATH so the harness can find what
-// it runs. No path this tool uses comes from the environment (SPEC.md, no guessing); PATH is
-// here because a harness is a program and a program is found on one.
-func childEnv(w Worker, slot int, id, key string) []string {
+// CHILD's environment only, the job's own data home, the SHARED per-bench cache root
+// (issue #1048), and PATH so the harness can find what it runs. No path this tool uses comes
+// from the environment (SPEC.md, no guessing); PATH is here because a harness is a program
+// and a program is found on one.
+func childEnv(w Worker, slot int, id, key, root string) []string {
 	pathVal := os.Getenv("PATH")
 	if pathVal == "" {
 		pathVal = os.Getenv("Path")
@@ -519,6 +527,10 @@ func childEnv(w Worker, slot int, id, key string) []string {
 		// database from exactly that directory (rule 13 of SPEC-SWARM).
 		"HOME=" + w.DataHome(slot, id),
 	}
+	// ONE shared cache root for every job under this pool (issue #1048): GOMODCACHE,
+	// GOCACHE and NPM_CONFIG_CACHE point at <root>/cache, which is a write root beside the
+	// job directory, so 120 cards do not each download the Go toolchain and every module.
+	env = append(env, CacheEnv(root)...)
 	if runtime.GOOS == "windows" {
 		env = append(env, "Path="+pathVal)
 		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC"} {

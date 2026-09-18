@@ -52,8 +52,8 @@ usage:
   nova-tokens report  --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
                       --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
-  nova-tokens check   --out <dir> [--max <n>]
-  nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--max <n>]
+  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--max <n>]
+  nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
   nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
   nova-tokens fold-pool --pool <dir> --ledger <file> [--since <stamp>]
@@ -106,11 +106,24 @@ note whose predecessor set names them all clears it.
 This tool removes nothing. There is no month file, sum writes nothing, check names a
 stray and leaves it, and no verb deletes, truncates or trims any file.
 
+check counts what it does not name. A calendar day between the first and the last with no
+file is gap=<n>, and it is MISSING only when something says there was spend on it:
+--strict names every gap, --no-spend <file> (one YYYY-MM-DD per line, the days that had
+none) names the gaps your list does not account for. A *.md, a *.log or a pre-* archive
+directory beside the day files is notes=<n> rather than a stray; --strict names those too.
+A gate that cannot go green is a gate people stop reading, and both counts stay on the
+CHECK line, so nothing was hidden to make it green.
+
+sources --unattributed prints the path stems that were SEEN and matched no rule, heaviest
+first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
+is the evidence for improving the --repos file.
+
 example:
   nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
   nova-tokens check --out ./out
   nova-tokens sum --out ./out --month 2026-09
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
+  nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
   nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
 
 session is the coordinator's own window: it sums one Claude Code session jsonl per
@@ -892,6 +905,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	day := fs.String("day", "", "")
 	all := fs.Bool("all", false, "")
 	max := fs.Int("max", bounded.Default, "")
+	unattributed := fs.Bool("unattributed", false, "")
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := fs.Parse(args); err != nil {
@@ -912,11 +926,17 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
+	// The tally is switched on BEFORE any source is read, because it is taken inside the
+	// attribution ladder as the paths go past; there is no second walk of the transcripts.
+	if *unattributed {
+		rules.WatchUnattributed()
+	}
 	sources := sf.read(rules, now)
 
 	srcList := bounded.Capped(stdout, *max, "SOURCES", "source", maxRemedy("sources"))
 	unreadable := bounded.Capped(stderr, *max, "SOURCES", "unreadable", maxRemedy("sources"))
 	unparsed := bounded.Capped(stderr, *max, "SOURCES", "unparsed", maxRemedy("sources"))
+	stems := bounded.Capped(stdout, *max, "SOURCES", "unattributed", maxRemedy("sources"))
 	files, messages, rows := 0, 0, 0
 	for _, s := range sources {
 		srcList.Line(sourceLine("SOURCES", s))
@@ -937,8 +957,20 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	unparsed.More()
-	fmt.Fprintf(stdout, "SOURCES OK sources=%d files=%d messages=%d unreadable=%d unparsed=%d rows=%d\n",
-		len(sources), files, messages, unreadable.Total(), unparsed.Total(), rows)
+	// The listing that says WHICH paths `other` is made of. Without it a person reads
+	// `other=81%` on a day line and has nowhere to go but grep; with it the top stems ARE
+	// the rules the file is missing, written in the shape a rule matches.
+	unattributedField := tokens.Dash
+	if *unattributed {
+		for _, s := range rules.Unattributed() {
+			stems.Line(fmt.Sprintf("SOURCES UNATTRIBUTED stem=%s tokens=%d", oneline.Field(s.Stem), s.Count))
+		}
+		stems.More()
+		unattributedField = strconv.Itoa(rules.TotalUnattributed())
+	}
+	fmt.Fprintf(stdout, "SOURCES OK sources=%d files=%d messages=%d unreadable=%d unparsed=%d rows=%d unattributed=%s\n",
+		len(sources), files, messages, unreadable.Total(), unparsed.Total(), rows,
+		oneline.Field(unattributedField))
 	return 0
 }
 
@@ -1266,10 +1298,18 @@ func validMonth(m string) bool {
 // cmdCheck is the GATE. It says NO on any malformed file, any malformed row, any missing
 // day and any stray, and it prints the count line either way. A missing day is NAMED and
 // never filled: nobody folded it, and this tool does not invent what nobody measured.
+//
+// What `missing` and `stray` MEAN is internal/tokens/check.go's paragraph, and the short
+// of it is that a calendar gap and a person's README are counted here (gap=, notes=) and
+// named only under --strict or a --no-spend list. A gate that cannot go green is a gate
+// people learn to skip, and this one could not: 40 findings on reports/tokens, none of
+// them work anybody would do.
 func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("check")
 	out := fs.String("out", "", "")
 	max := fs.Int("max", bounded.Default, "")
+	strict := fs.Bool("strict", false, "")
+	noSpend := fs.String("no-spend", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -1279,10 +1319,22 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	r := &refusals{token: "CHECK"}
 	r.required("out", *out, wantsOut)
 	checkMax(r, *max)
+	if *strict && strings.TrimSpace(*noSpend) != "" {
+		r.add("--strict and --no-spend are two answers to one question: --strict names every calendar gap, --no-spend names the gaps your list does not account for; give one")
+	}
+	opt := tokens.CheckOptions{Strict: *strict}
+	if strings.TrimSpace(*noSpend) != "" {
+		days, err := tokens.ReadNoSpendFile(*noSpend)
+		if err != nil {
+			r.add("--no-spend " + *noSpend + ": " + err.Error())
+		} else {
+			opt.NoSpend = days
+		}
+	}
 	if len(r.list) > 0 {
 		return r.print(stderr)
 	}
-	res, err := tokens.Check(*out)
+	res, err := tokens.Check(*out, opt)
 	if err != nil {
 		r.add(err.Error())
 		return r.print(stderr)
@@ -1320,12 +1372,15 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	bad := files.Total() + rowsList.Total()
 	if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 {
-		fmt.Fprintf(stderr, "CHECK FAIL files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d\n",
-			res.Files, res.Rows, oneline.Field(first), oneline.Field(last), bad, len(res.Missing), len(res.Strays))
+		fmt.Fprintf(stderr, "CHECK FAIL files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d gap=%d notes=%d\n",
+			res.Files, res.Rows, oneline.Field(first), oneline.Field(last), bad,
+			len(res.Missing), len(res.Strays), len(res.Gaps), len(res.Notes))
 		return 1
 	}
-	fmt.Fprintf(stdout, "CHECK OK at=%s build=%s files=%d rows=%d first=%s last=%s missing=0 stray=0\n",
+	// gap= and notes= are on the OK line too, and that is the whole point: what the gate
+	// stopped naming it still counts, so nothing was hidden to make the line green.
+	fmt.Fprintf(stdout, "CHECK OK at=%s build=%s files=%d rows=%d first=%s last=%s missing=0 stray=0 gap=%d notes=%d\n",
 		oneline.Field(stamp(now)), oneline.Field(buildVersion()), res.Files, res.Rows,
-		oneline.Field(first), oneline.Field(last))
+		oneline.Field(first), oneline.Field(last), len(res.Gaps), len(res.Notes))
 	return 0
 }

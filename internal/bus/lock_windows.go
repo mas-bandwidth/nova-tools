@@ -5,7 +5,6 @@ package bus
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"syscall"
 )
 
@@ -45,6 +44,26 @@ func platformTransientLockCollision(err error) bool {
 		errors.Is(err, errorLockViolation)
 }
 
+// processAlive reports whether pid names a running process. OpenProcess fails
+// for a pid that is gone; ERROR_ACCESS_DENIED means the process exists but
+// cannot be queried, which is still alive. A handle that signals immediately is
+// a process that has already ended.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	h, err := syscall.OpenProcess(syscall.PROCESS_QUERY_INFORMATION|syscall.SYNCHRONIZE, false, uint32(pid))
+	if err != nil {
+		return errors.Is(err, errorAccessDenied)
+	}
+	defer syscall.CloseHandle(h)
+	event, err := syscall.WaitForSingleObject(h, 0)
+	if err != nil {
+		return false
+	}
+	return event == syscall.WAIT_TIMEOUT
+}
+
 func tryLockFile(f *os.File) (bool, bool, error) {
 	held, openErr := os.OpenFile(sentinel(f), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 	if openErr == nil {
@@ -63,9 +82,13 @@ func tryLockFile(f *os.File) (bool, bool, error) {
 }
 
 func unlockFile(f *os.File) {
-	_ = os.Remove(sentinel(f))
+	// A normal release must not leave the sentinel behind. On Windows a file
+	// that was just closed can still be in a delete-pending or
+	// sharing-violating state, so the removal is retried rather than dropped on
+	// the floor; otherwise the next run reads a lock this one already let go.
+	_ = removeLockFile(sentinel(f))
 }
 
 func sentinel(f *os.File) string {
-	return filepath.Clean(f.Name()) + ".held"
+	return sentinelPath(f.Name())
 }

@@ -111,6 +111,13 @@ func TestNoModTimeDecidesAnythingInThisPackage(t *testing.T) {
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
+		// THE ONE EXCEPTION (issue #1048, SPEC-SWARM rule 19): reap.go reads a harness log's
+		// AGE to decide whether a slot is finished. It is about disk, never about a report
+		// revision -- reap never touches a RESULT.md's identity, and the bytes-are-revision
+		// rule this test guards is unbroken.
+		if name == "reap.go" {
+			continue
+		}
 		raw, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

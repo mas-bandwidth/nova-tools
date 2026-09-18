@@ -145,6 +145,9 @@ func (p *Pass) merge(e *Entry, c Classification, baseSHA string, res *Result) bo
 	// dropped= on RUN OK is how many entries this pass took out of it.
 	p.drop(e)
 	res.Dropped++
+	if e.IsPR() {
+		res.DroppedIDs = append(res.DroppedIDs, e.PR)
+	}
 	return true
 }
 

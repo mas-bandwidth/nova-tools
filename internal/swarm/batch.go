@@ -74,6 +74,11 @@ type BatchInput struct {
 	// manual one so the idle kill and the deadline are events it chooses, never the
 	// machine's load (#916).
 	clock batchClock
+	// snapshot is the batch's process table reader. nil means the real kernel
+	// table (newProcSnapshot); a test injects a fake reader so process CPU
+	// activity and process tree lifecycle are deterministic events rather than
+	// scheduler races.
+	snapshot func() activitySnapshot
 }
 
 // batchClock is the batch's view of time: the idle window (Now), the whole-batch
@@ -311,10 +316,14 @@ func Batch(in BatchInput) int {
 				case now := <-tickC:
 					// The process table is read once per activity poll, outside the lock, and
 					// every card is asked of that one snapshot (issue #593).
-					var snap *procSnapshot
+					var snap activitySnapshot
 					var sampleSpan time.Duration
 					if now.Sub(lastSample) >= activityInterval(in.Idle) {
-						snap = newProcSnapshot()
+						if in.snapshot != nil {
+							snap = in.snapshot()
+						} else {
+							snap = newProcSnapshot()
+						}
 						sampleSpan = now.Sub(lastSample)
 						lastSample = now
 					}

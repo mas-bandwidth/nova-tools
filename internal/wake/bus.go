@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
 // The nova-bus this tool is written against is the nova-bus from its OWN
@@ -275,6 +277,26 @@ func (b *Bus) classify(out string, res *Result) {
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		// PROGRESS IS NOT PROTOCOL, AND THIS IS THE ONE PLACE THAT SAYS SO.
+		//
+		// This tool reads nova-bus's stdout and stderr TOGETHER on purpose, so
+		// that an INBOX REFUSED is never lost. That is also how a stderr-only
+		// PROGRESS line -- `INBOX WALK commits=1/1 notes=0 elapsed=3ms`, which
+		// nova-bus prints because a program over 0.1 s says what it is doing --
+		// reached the default case below, which PRINTS. It was relayed as
+		// `WAKE BUS LINE INBOX WALK ...` and counted as a change in the world,
+		// and the poll that found that "news" returned before the mail this
+		// watcher was waiting for came down.
+		//
+		// So the line is dropped HERE, by the shared registry in internal/bus
+		// that nova-bus's own test holds its stdout to. It is not counted: read
+		// is the lines of the PROTOCOL this poll read, and a sentence about how
+		// far a walk has got is not one of them. It is not exempt from the
+		// allow-list rule either -- the allow-list decides what is SUPPRESSED,
+		// and this decides what was never protocol to begin with.
+		if bus.IsProgress(line) {
 			continue
 		}
 		b.read++

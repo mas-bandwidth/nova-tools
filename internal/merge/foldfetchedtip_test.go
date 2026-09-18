@@ -27,6 +27,16 @@ func tipRead(who, head string) []byte {
 	return []byte(fmt.Sprintf(`{"who":%q,"verdict":"hold","note":"","at":"2026-09-14T01:02:03Z","head":%q}`+"\n", who, head))
 }
 
+// noReReadPause holds this package's Sleep still, so a test that asserts a malformed record
+// is retried does not spend the 50 ms pause between the two reads. The tests that use it are
+// not parallel; they replace the same seam foldreadonly_test.go replaces to drive the reread.
+func noReReadPause(t *testing.T) {
+	t.Helper()
+	old := Sleep
+	Sleep = func(time.Duration) {}
+	t.Cleanup(func() { Sleep = old })
+}
+
 func fetchedTipLab(t *testing.T) (lane, tip, recordPath string) {
 	t.Helper()
 	lane = t.TempDir()
@@ -55,6 +65,7 @@ func fetchedTipLab(t *testing.T) (lane, tip, recordPath string) {
 // promise. The checkout and state are deliberately stale and dirty; only the named commit
 // may decide the fold, even while a coordinator owns the checkout lock.
 func TestFoldFetchedTipUsesPinnedTreeWithoutCheckoutLock(t *testing.T) {
+	noReReadPause(t)
 	lane, tip, recordPath := fetchedTipLab(t)
 	statePath := filepath.Join(lane, StateName)
 	if err := os.WriteFile(recordPath, tipRead("worktree", strings.Repeat("b", 40)), 0o644); err != nil {
@@ -150,6 +161,7 @@ func (r *countingExec) count(args ...string) int {
 }
 
 func TestFoldFetchedTipRereadsOnlyProblemPaths(t *testing.T) {
+	noReReadPause(t)
 	lane, tip, _ := fetchedTipLab(t)
 	runner := &countingExec{}
 	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
