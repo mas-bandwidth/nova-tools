@@ -1675,13 +1675,18 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				return 0, r
 			}
 			var walk *walkProgress
-			if o.walkProgress {
+			// A continuation (`--after`) is an explicit resume of a bounded snapshot, and its
+			// refusals are the ONE line refuseContinuation prints, validated AFTER this walk:
+			// narrating the walk first would put a second line above a refusal the contract
+			// says is one. So the narration is for the ordinary inbox read and the resume
+			// stays quiet; the bound above still applies to both.
+			if o.walkProgress && o.after == "" {
 				walk = newWalkProgress(stderr, total)
 			}
 			changed, err := bus.ChangedSince(o.busDir, cursor.Commit)
 			if err != nil {
 				if walk != nil {
-					walk.finish(0, 0)
+					walk.abort()
 				}
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 				return 1, r
@@ -1693,7 +1698,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			open, err := bus.ReadOpen(o.busDir, me.Lane)
 			if err != nil {
 				if walk != nil {
-					walk.finish(total, 0)
+					walk.abort()
 				}
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 				return 1, r
@@ -1704,7 +1709,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			res, err = bus.InboxSince(o.busDir, c, me, changed, open, o.maxWords, legacy)
 			if err != nil {
 				if walk != nil {
-					walk.finish(total, 0)
+					walk.abort()
 				}
 				fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
 				return 2, r
@@ -2231,7 +2236,7 @@ func (p *walkProgress) emit(force bool) {
 	}
 	p.last = now
 	fmt.Fprintf(p.stderr, "INBOX WALK commits=%d/%d notes=%d elapsed=%s\n",
-		p.done, p.total, p.notes, now.Sub(p.start).Round(time.Millisecond))
+		p.done, p.total, p.notes, oneline.Field(now.Sub(p.start).Round(time.Millisecond).String()))
 }
 
 // advance records how far the walk has got and writes a throttled line, so the note parse
@@ -2253,6 +2258,16 @@ func (p *walkProgress) finish(done, notes int) {
 	p.done, p.notes = done, notes
 	p.mu.Unlock()
 	p.emit(true)
+}
+
+// abort stops the ticker without writing the closing line. A since-walk that ends in a
+// refusal is ONE line, the refusal, and the narration this run would have printed above it
+// is not the answer: the dev contract that every refusal is a single INBOX REFUSED line
+// predates the walk, and a run that cannot read the bus has nothing to report about how far
+// it got. The ticker is stopped the same way finish stops it so no goroutine is left behind.
+func (p *walkProgress) abort() {
+	close(p.stop)
+	p.stopped.Wait()
 }
 
 // printOpenEntries prints an open list in the order it is listed in -- the notes that carry

@@ -112,6 +112,12 @@ var messageBusAudit = audit.Config{
 		// pointer a test installs and waitLoop invokes, holds no writer, and reaches no
 		// stream -- the hook prints nothing, it only closes a channel.
 		`"bytes"`, `"encoding/base64"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"sync/atomic"`, `"time"`,
+		// sync is walkProgress's: a Mutex and a WaitGroup make the since-walk's
+		// once-a-second ticker and its closing line write one stderr line each rather
+		// than interleave mid-line. It holds no writer of its own and reaches no stream;
+		// every byte still goes through fmt.Fprintf at the emit site, where the elapsed
+		// duration is rendered through oneline.Field like every other line here.
+		`"sync"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at
