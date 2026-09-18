@@ -72,6 +72,7 @@ type nativeRunResult struct {
 	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
 	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
+	execRefusal  swarm.WallRefusal // the program the wall would not let the card RUN, zero when it let it (issue #1465)
 	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
 }
 
@@ -264,10 +265,25 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// provider config keeps its own bytes and its own rules beside them (internal/swarm/fence.go).
 	// On a walled bench the wall owns what the child may read, so only a --no-wall run takes
 	// the card's `READ:` paths: with no OS wall there is nothing else to open them.
+	// ISSUE #1463: AND THE READ ROOTS THE DESK NAMED, ON A WALLED RUN AS MUCH AS AN
+	// UNWALLED ONE. `read_roots` is the worker description's own declaration of what every
+	// job of this worker may READ -- a bench-local mirror, a corpus, the toolchain its Go
+	// cache flags are for. `worker check` accepted it and neither fence was told: the OS
+	// wall's read set was built without it (below), and this block took the card's `READ:`
+	// paths on a --no-wall run only, so the harness auto-rejected every read of a staged
+	// path the desk had granted and the card came back with the whole row owed.
+	//
+	// THE WALL IS STILL THE REAL BOUNDARY (SPEC-SANDBOX rule 1). The harness's fence is a
+	// second, weaker one, and a second fence that denies what the first one grants can only
+	// cost cards. What it is handed here is exactly what the wall is handed below and never
+	// more: the DESCRIPTION's roots, which a person wrote at the desk. The card's own
+	// `READ:` paths stay a --no-wall affair -- a card is the model's text, and a fence rule
+	// a card can widen for itself is no fence.
 	var reads []string
 	if cfg.noWall {
 		reads = swarm.CardReadPaths(cfg.card)
 	}
+	reads = append(reads, nativeReadRoots(cfg)...)
 	configSHA, reason := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
 	if reason != "" {
 		refuseNative(errOut, reason)
@@ -468,11 +484,23 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			}
 		}
 	}
+	// AND WHETHER THE GATE EVER RAN AT ALL (issue #1465). The two blocks above ask for the
+	// result FIRST, because a card that published despite a refusal routed around it and
+	// finished. This one does not, and that is the whole point: the card of #1465 published
+	// an honest RESULT.md saying its `go test` could not be built or run, the child exited
+	// 0, and the run said `NATIVE OK rc=0 harness=ok`. The published report IS the lie -- it
+	// is a report about work nothing compiled -- and the caller is refused rather than told
+	// OK (internal/swarm/wall.go, ExecRefused).
+	if raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log")); err == nil {
+		if er, ok := swarm.ExecRefused(raw); ok {
+			res.execRefusal = er
+		}
+	}
 	res.end = swarm.EndDone
 	if res.rc != 0 {
 		res.end = swarm.EndFailed
 	}
-	if (res.wallRefusal != swarm.WallRefusal{}) {
+	if (res.wallRefusal != swarm.WallRefusal{}) || (res.execRefusal != swarm.WallRefusal{}) {
 		res.end = swarm.EndWall
 	}
 
@@ -662,6 +690,14 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 	if fi, err := os.Stat("/opt/homebrew"); err == nil && fi.IsDir() {
 		argv = append(argv, "--read", "/opt/homebrew")
 	}
+	// The worker description's own read roots (issue #1463): the directories a person at the
+	// desk declared every job of this worker may read. A toolchain under a user directory is
+	// exactly this -- and the run that wrote issue #1465 died because the wall was never
+	// handed one. They are --read and never --write: a root the desk names is a reference,
+	// not a workspace.
+	for _, r := range nativeReadRoots(cfg) {
+		argv = append(argv, "--read", r)
+	}
 	for _, r := range cfg.repos {
 		argv = append(argv, "--repo", r)
 	}
@@ -735,6 +771,18 @@ func nativeCacheDir(cfg nativeRunConfig) string {
 		return ""
 	}
 	return filepath.Join(cfg.root, "cache")
+}
+
+// nativeReadRoots is what the worker description declared every job of this worker may READ
+// (issue #1463): absolute directories a person named at the desk -- a bench-local mirror, a
+// corpus, a toolchain under a user directory. `swarm.LoadWorker` has already refused a
+// relative entry, an empty one, one that does not exist and one that is not a directory, so
+// nothing is checked again here. A run with no description names none.
+func nativeReadRoots(cfg nativeRunConfig) []string {
+	if cfg.worker == nil {
+		return nil
+	}
+	return cfg.worker.ReadRoots
 }
 
 // keepNativeEnv says whether one inherited name survives into the native child: the names a

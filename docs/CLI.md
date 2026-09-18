@@ -2211,6 +2211,31 @@ must already have the Go toolchain the task requires. `--no-shared-caches`
 omits these settings and restores per-slot defaults. Retain shared caches when
 retiring an individual slot; they are separate from its job evidence.
 
+**The toolchain those three names are for must be inside the wall, and the run
+says so when it is not.** A Go toolchain installed under a user directory —
+`~/go/bin/go`, usually a symlink into an SDK tree — is under no system root, so
+name it in the worker description's `read_roots`; `native` passes every
+`read_roots` entry to the wall as a `--read` and into the harness's own
+permission block, walled or not. Name **both** the directory holding the
+launcher and the tree it resolves into: the kernel checks the grant against the
+resolved target.
+
+A run whose card could not execute what it was told to run is **refused**, never
+`NATIVE OK`:
+
+```
+NATIVE REFUSED: go-card the wall refused the card's own shell the program
+/home/glenn/go/bin/go at step=3, so the gate never executed its command and this
+run is not OK: the report under <job> is about work that nothing compiled.
+Remedy: name /home/glenn/go/bin and /home/glenn/nova-bench/sdk/go1.26.5 in the
+worker description's read_roots -- both, because the kernel checks the grant
+against the RESOLVED target and that program is a symlink into another tree, or
+run with --no-wall and own every read the child makes
+```
+
+The exit is 2 and the job directory is named, so the result and the usage row
+the child did write are still there to harvest.
+
 ## nova-sandbox
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS

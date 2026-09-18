@@ -1495,6 +1495,17 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
+	// A GATE THAT DID NOT EXECUTE ITS COMMAND CANNOT RETURN OK (issue #1465). This is the
+	// ONE refusal that lands AFTER the spend, and it is a refusal rather than a token on the
+	// OK line on purpose: the run of #1465 carried `rc=0 sandbox=landlock harness=ok` over a
+	// card whose `go test` the wall would not let it execute, and a coordinator reading
+	// dispositions and not prose shipped a commit nobody had compiled. There is no OK line
+	// here at all. The reason names the job directory, so the work and the usage row the
+	// child did produce are still harvestable.
+	if (res.execRefusal != swarm.WallRefusal{}) {
+		refuseNative(stderr, swarm.ExecRefusalReason(cfg.label, res.job, res.execRefusal))
+		return 2
+	}
 	// harness=<ok|silent> is ALWAYS present (issue #591): the usage suffix is the only
 	// optional tail, so a reader parses one fixed line and a silent harness is never OK.
 	fmt.Fprintf(stdout, "NATIVE OK label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s\n",

@@ -911,10 +911,19 @@ replaced), and its `permission.external_directory` allows:
   spellings — the harness's own matcher turns `*` into `.*`, which crosses `/`,
   so `<job>/*` already admits `<job>/scratch/*`; `/**` is written beside it
   because that is the spelling a person reads as "everything under here"; and
+- **every `read_roots` entry of the worker description**, walled or not, with
+  both wildcard spellings and the parent the fence asks about — the same roots
+  the wall's own `--read` list carries. `read_roots` is what a person at the
+  desk declared every job of this worker may read: a bench-local mirror, a
+  corpus, a toolchain under a user directory. The wall is still the real
+  boundary; a SECOND fence that denies what the first one grants can only cost
+  cards, and it cost one whole card and 148 seconds on 2026-09-18 (#1463); and
 - **on a `--no-wall` run only**, every absolute path the card named on a
   `READ:` line, and that path's parent with a `/*` on it, which is what the
   fence asks about for a file. A walled run takes none of them: the WALL owns
-  what the child may read (SPEC-SANDBOX rule 1), and the fence is not a wall.
+  what the child may read (SPEC-SANDBOX rule 1), the fence is not a wall, and a
+  fence rule a CARD can widen for itself is no fence — a card is the model's
+  text, where `read_roots` is the desk's own declaration.
 
 **Nothing ABOVE the job is ever named** — not the `jobs` parent. The harness
 resolves a card's `../scratch` after the card's own `cd repo`, so a parent rule
@@ -936,6 +945,25 @@ Everything else is still `ask`, which in a `run` is a rejection — and a
 rejection is now REPORTED: `native` reads its own capture and carries
 `fence=rejected path=<p>` on its `NATIVE OK` line, which the batch reads and
 scores `ABSTAIN reason=fence`, never `no-result`.
+
+**A gate that did not execute its command cannot return OK** (issue #1465). A
+`native` run reads its own capture for the words a SHELL uses when the wall
+denies it a path it was told to RUN — `/usr/bin/bash: line 1: <path>:
+Permission denied`, and the dash, zsh and Go `fork/exec` spellings of the same
+thing — and a run that holds one is **refused**. There is no `NATIVE OK` line
+at all; one `NATIVE REFUSED` names the program, the step the card had reached,
+the job directory the spend is sitting in, and the `read_roots` entries that
+would have let it run, resolving a symlinked toolchain to BOTH the launcher's
+directory and the tree it points into, because the kernel checks the grant
+against the resolved target.
+
+This is the ONE refusal that lands after the spend, and it is a refusal rather
+than another token on the OK line because the run it closes carried `rc=0
+sandbox=landlock harness=ok` over a Go card whose `go test` the wall would not
+let it execute: the card's own `RESULT.md` said so in prose, and a coordinator
+reading dispositions shipped a commit nobody had compiled. Unlike a wall death,
+it fires **with a published result beside it** — the published report is
+precisely the lie.
 
 **A local model is one slot, and it stays off the critical path.** The fault
 behind the silent-harness rule below (issue #591, landed in #604) was a local
