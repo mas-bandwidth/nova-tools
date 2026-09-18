@@ -1,0 +1,38 @@
+roles: bench
+expect: ^WALL TOOLCHAIN OK
+wall: yes
+reads: $HOME/sdk, $HOME/go, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew, /Library/Developer/CommandLineTools
+
+# THE HURT ITSELF, as its own class.
+#
+# hulk's card compiled a go1.26 module with go1.22 and said so only in a line nobody read:
+#   go: /usr/bin/go routed: go version go1.22.2 linux/amd64 (/home/gaffer/go/bin/go: Permission denied)
+# vision's had no fallback at all and could not compile Go. Both were SILENT failures of the
+# wall's read roots, not of the machine. go-test proves a module builds; this proves the
+# VERSION the wall lets through is the one go.mod asks for, which is the half that was
+# silent.
+set -eu
+GO=$(command -v go 2>/dev/null || true)
+if [ -z "$GO" ]; then
+  echo "WALL TOOLCHAIN FAIL no go is reachable inside the wall: PATH=$PATH"
+  exit 1
+fi
+GOT=$("$GO" version 2>&1)
+HAVE=$(echo "$GOT" | sed -n 's/.*go\([0-9][0-9.]*\).*/\1/p' | head -n 1)
+WANT=$(echo "$NOVA_GO" | sed -n 's/go\([0-9][0-9.]*\)/\1/p')
+LOWEST=$(printf '%s\n%s\n' "$WANT" "$HAVE" | sort -V 2>/dev/null | head -n 1)
+if [ "$LOWEST" != "$WANT" ] && [ "$HAVE" != "$WANT" ]; then
+  echo "WALL TOOLCHAIN FAIL inside the wall go is $GOT at $GO, below $NOVA_GO; name the SDK root in the card's read roots"
+  exit 1
+fi
+SBCL=$(command -v sbcl 2>/dev/null || true)
+if [ -z "$SBCL" ]; then
+  for candidate in "$NOVA_HOME"/sdk/sbcl*/run-sbcl.sh "$NOVA_HOME"/.local/bin/sbcl; do
+    if [ -x "$candidate" ]; then SBCL="$candidate"; break; fi
+  done
+fi
+if [ -z "$SBCL" ]; then
+  echo "WALL TOOLCHAIN FAIL go is $GOT but no sbcl is reachable inside the wall"
+  exit 1
+fi
+echo "WALL TOOLCHAIN OK $GOT at $GO, sbcl at $SBCL"

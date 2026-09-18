@@ -1671,6 +1671,102 @@ why; one still running is left where it is. A harvested job is marked `.harveste
 bench, so a second run opens no second PR. Exit is 0, 1 when a fetch, a push or the forge
 failed for a job, 2 on a refusal.
 
+### fleet certify
+
+```
+nova-pulse fleet certify --machines <file> (--machine <name> | --all | --status) --certs <file> [--workloads <dir>] [--standard <file>] [--build <version>] [--bin <dir>] [--repo <owner/name>] [--ssh <path>] [--if-stale] [--max-age <d>] [--log <file>] [--timeout <d>] [--dry-run]
+```
+
+`fleet survey` asks a machine what it **has**. `fleet certify` makes it **do** the work its
+roles imply — under the same wall a card gets — and writes down that it did.
+
+Why: on 2026-09-18 the first real Go card of the day died on hulk inside the swarm wall.
+`$HOME/sdk/go1.26.5` was not a readable root, so the only Go the card could reach was
+`/usr/bin/go` 1.22, which go.mod refuses by name. hulk met the provisioning standard and had
+passed every check ever run on it, because every one of them ran *outside* the wall over a
+plain ssh.
+
+A workload is a file, `<class>.card`, embedded in the tool or read from `--workloads`: front
+matter, one blank line, then the body the machine runs.
+
+```
+roles: bench
+expect: ^GO OK
+wall: yes
+reads: $HOME/sdk, $HOME/go, /usr, /bin
+
+set -eu
+...
+```
+
+`roles:` says which of `bench`, `runner`, `services`, `coordination` it applies to.
+`expect:` is a regexp held against what the machine said, line by line — **the verdict is
+what the machine said, never the exit code alone** — and the evidence kept is the whole line
+that matched. `wall: yes` runs the body inside `nova-sandbox` with a job directory of its
+own as the only `--write`, a `HOME` and a `--cwd` inside it, and each `reads:` root as a
+`--read`; a wall workload that names no reads is refused, because a toolchain outside the
+wall is the failure this verb exists to catch. `forge: runners|registry` is a question for
+the forge. `report: yes` makes a failure a `WARN` that gates nothing.
+
+The shipped classes, and the fault each one names:
+
+| class | roles | what it caught |
+|---|---|---|
+| `go-test` | bench | a two-file module built and tested inside the wall |
+| `wall-toolchain` | bench | hulk's card silently compiled a go1.26 module with go1.22 |
+| `c-build`, `cpp-build` | bench | compile **and run**, inside the wall |
+| `sbcl` | bench | `~/.local/bin/sbcl: Permission denied` inside the wall on two benches |
+| `git-push` | bench | a push into a bare repo made for the run and deleted after it |
+| `path-resolves` | all | `nova-merge` not on any non-interactive PATH; 18 stale `~/go/bin` shadows |
+| `go-on-path` | bench, runner | three machines had no `go` at all non-interactively |
+| `git-identity` | bench | `user.name`/`user.email` empty on all four Linux machines |
+| `services-reach` | bench | redis bound to 127.0.0.1; `space` resolving nowhere; evidence names the address tried |
+| `runner-online` | runner | the forge says every `<machine>-nova-*` is online, and names the one that is not |
+| `runner-path` | runner | 16 `.path` files with no Go; 16 runners with no unit behind them |
+| `registry-truth` | all | 16 online runners on a machine the registry called `bench,services` |
+| `diag-size` | runner | 15.7 GB of `_diag` — a `WARN`, on purpose |
+| `loki-ready`, `redis-ping`, `postgres-ready` | services | the stack answers locally |
+| `bus-push`, `release-path` | coordination | the bus is clean and in sync; `nova-update` is on PATH |
+
+One row per machine per class is appended to `--certs`:
+
+```
+machine<TAB>build<TAB>standard-hash<TAB>class<TAB>verdict<TAB>evidence<TAB>at
+```
+
+`build` is read from the machine (`nova-merge version`) unless `--build` names one.
+`standard-hash` is the sha256 over the provisioning standard file **and** every workload's
+bytes, so either half moving expires every certificate written under the old pair.
+
+```
+$ nova-pulse fleet certify --machines ./machines.tsv --machine hulk --certs ./certs.tsv
+CERTIFY hulk go-test OK evidence="GO OK go version go1.26.5 linux/amd64 ok 0.004s"
+CERTIFY hulk wall-toolchain FAIL evidence="WALL TOOLCHAIN FAIL inside the wall go is go1.22.2 ..."
+CERTIFY FAIL machines=1 ok=12 fail=1 warn=0 skipped=0
+```
+
+Exit 1 on any FAIL, 2 on a refusal. A forge question with no forge wired is skipped with
+`CERTIFY NOTE machine=<m> class=<c> skipped=no-forge` and writes no row.
+
+**The fill asks before every card.** A card's class is its own `workload: <class>` line, or
+what its `LANG:`/`LEG:` line implies, or `go-test`. A card whose class has no *current*
+certificate on the bench it was dealt is refused and stays ready:
+
+```
+FILL REFUSED bench=hulk reason=uncertified workload=go-test remedy="nova-pulse fleet certify --machine hulk"
+```
+
+**Mechanized, not remembered.** `nova-update release adopt` certifies by default — an adopt
+changes the build and so invalidates every certificate — with `--certify <registry> --certs
+<file> --standard <file>`, or `--no-certify` to waive it out loud (`certified=waived` on the
+verdict). `--if-stale` skips a machine whose every class is current, where stale means the
+build or hash moved, the verdict was FAIL, or the row is older than `--max-age` (default
+24h). `fleet/launchd/com.rowan.fleet-certify.plist` runs `--all --if-stale` every six hours.
+
+`--status` reads the record and touches no machine, one line per machine and class, exit 1
+when any is stale, failed or missing. `--log <file>` writes one structured event per
+certificate through `internal/log`, the same stream `nova-pulse launch` writes.
+
 ### fleet add
 
 ```
