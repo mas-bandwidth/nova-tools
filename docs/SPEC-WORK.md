@@ -2449,6 +2449,21 @@ arrives at the coordinator from a friend as a mutation request with a stable req
 the friend's expected revision; the coordinator serializes it like any other (Stella, *One
 coordinator, one live reader/writer*).
 
+### The work-set verbs are not session verbs *(Rowan's child, 2026-09-18)*
+
+Three verbs of this binary address a FILE rather than a session, and they are listed here so that
+nobody looks for them on the wire: `nova-work set check`, `nova-work attempt record | list` and
+`nova-work next`. They read and write the `(work-set "<id>" ... :units (...))` form a coordinator
+writes by hand, under the bounded reader's three bounds, and they hold no session, take no
+`--session`, draw no revision and publish no snapshot. Their contract is `docs/SPEC-WORKLANG.md`
+(Amendment 1, and "The writer" beneath it); the one concurrency they have is a lock beside the
+document itself, because a work set is a person's file and the only race is two writers on it.
+
+The seam between them and this spec is the same as the seam between a plan and a session: a work
+set is what a coordinator writes before there is a session, and a session's data is what the engine
+keeps once there is one. Nothing in this section applies to them, and nothing in SPEC-WORKLANG
+applies to a session.
+
 ## The resident session *(Stella, from her amendment at 60b9027; governs the execution model where it says more than the section above)*
 
 ### Keep the work set alive

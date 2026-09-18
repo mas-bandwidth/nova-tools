@@ -559,6 +559,83 @@ intersection, A8's atomic and nested grant, and A9's barrier-free pass are green
 uncertain reservation, A10's tool key, A11's harvest, A12's warm split and A14's refusal
 at load are still red.
 
+### The writer: `nova-work attempt` and `nova-work next` *(Rowan's child, 2026-09-18)*
+
+A3 and A4 landed as READERS. The grammar knew what an attempt record is and what `uncertain` means,
+and the only way a real work set could grow an `:attempts` list was a person typing s-expressions
+into their own document by hand — where the first mis-nested paren costs the whole file, because the
+reader refuses a set whole rather than half-reading it. These two verbs are their write side.
+
+**`nova-work attempt record --file <set.lisp> --unit <id> --by <mind> --outcome ok|failed|uncertain
+--proof <path|sha|url> [--rung <name>] [--usage <tsv>] [--pr <n>] [--started <stamp>]`** files one
+attempt on one unit and moves its `:state`. It edits the document IN PLACE by splicing bytes: every
+byte outside the edited unit comes back identical, and inside the unit every byte outside the edited
+key does too. A work set is a person's document — its comments, its blank lines and the column its
+keys line up at are the document — so the writer never re-renders what it is not touching.
+`nova-work attempt list --file <set.lisp> --unit <id>` reads the records back, one line each.
+
+The state machine is A4's own closed set and gets no second vocabulary beside it. There is no
+`running` state and no `done` state, because the grammar already names those `live` and `closed`:
+
+| outcome | `:state` after | why |
+| --- | --- | --- |
+| `green` (`ok`) | `closed` | the unit is finished |
+| `red` (`failed`) | `open` | it re-enters the ladder; the ladder IS the retry policy |
+| `refused` | `refused` | the mind refused it |
+| `abandoned` | `abandoned` | nobody is coming back to it |
+| `uncertain` | `uncertain` | termination is unproved, and the reservation is KEPT (A4) |
+
+`ok` and `failed` are the spellings a caller reaches for and `green` and `red` are the ones A3
+fixed; both are accepted at the flag and only the grammar's is ever written, so the document holds
+one vocabulary. A3's door is held on the way IN as well as out: an outcome other than `uncertain`
+with no `--proof` is refused NAMING THE WORD to write instead, before a byte is written. So is an
+attempt on a unit already `closed`, `refused` or `abandoned` — a reopened piece of work is a new id
+carrying `:was` (A2). The proof's kind is READ off its value (a url has a scheme, a sha is 7 to 64
+hex digits, everything else is a path) rather than asked for a second time.
+
+**A try that started and then ended is ONE try.** Where the unit's last attempt is still open — an
+`:outcome :uncertain` with no `:proof`, taken by this same mind — `record` CLOSES that record rather
+than appending beside it, keeping its `:n`, its `:rung` and the instant it actually began. An
+attempt is a record and not a counter, and a counter is exactly what two records for one try would
+be.
+
+**`nova-work next --file <set.lisp> --for <mind> --lanes <lanes.tsv> [--machines <registry>]
+[--kind <kind>] [--floor <f>] [--jev|--no-jev] [--take]`** is the *what do I do next* verb, and the
+first place all three halves of this language answer one question together: the graph says whose
+needs are closed, the kernel (`internal/jobs`, SPEC-JOBS section 9) says whose resources are free,
+and nova-decide's ladder (SPEC-DECIDE) says which mind does it. Four gates, each one a reading
+rather than a judgment:
+
+1. **ready** — not done, every need done (`WorkSet.Ready`). A4's three terminal states count as done
+   here beside the older `:done` and `:status` spellings; `uncertain` deliberately does not, because
+   a unit holding its reservation is not a unit that is over.
+2. **owned** — A13. The `:owner` is this mind, or `all`, or — for a child of a coordinating window —
+   the generic child spelling or nothing at all. A friend's unit is never handed to another mind:
+   the machinery routes to friends, and a friend's work is an ask rather than a card.
+3. **free** — A4 through A9. Every unit already `:live` or `:uncertain` takes its reservation FIRST,
+   and the candidates are admitted against what is left. That is what A4 means in practice: the
+   clock never frees capacity, only an outcome does.
+4. **routed** — the ladder vetoes a unit whose last attempt has not proved it terminated (Stella's
+   lease rule: a rung that may still be running is not a rung to step off) and says with what
+   confidence its first attempt is right. The answer is the candidate with the highest confidence,
+   ties in the order the author wrote them, so one file and one mind always give one unit.
+
+One line out: `NEXT unit=<id> lane=<l> rung=<r> conf=<c> take=<n|-> reason=<text>`, or `NEXT NONE
+reason=<text>` naming the GATE that emptied the set rather than saying there is nothing to do.
+`--for` names the OWNER and `rung=` names the mind the ladder would put on the work: two axes, and
+the line carries both, because a child reading `rung=johnny` on a unit it owns has learned something
+a merged field would have hidden. `--take` makes the answer an action — the attempt is opened, the
+unit goes `:live`, the lane and the writes are charged to it from that instant — under the set's own
+lock, held across the read and the write so that the unit a mind is told to do and the unit it is
+recorded as doing are one decision. A lock already held is a REFUSAL naming the path, never a wait:
+a waiter here would be the barrier A9 removes.
+
+*Red tests:* `worklang-attempt-record-round-trips-every-byte-but-the-edited-unit`;
+`worklang-a-taken-unit-is-live-with-one-open-attempt`;
+`worklang-the-state-machine-is-a4s-closed-set`; `next-answers-one-unit-for-one-mind`;
+`next-taking-a-unit-holds-its-lane-until-the-attempt-is-recorded`;
+`next-never-dispatches-a-unit-the-ladder-is-waiting-on`.
+
 ### Rule numbering is pinned
 
 `internal/docs/worklang_amendment_test.go` pins this part: the rules are A1 to A14 in order, each

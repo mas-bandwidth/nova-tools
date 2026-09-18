@@ -1,0 +1,12 @@
+merge	cmd/nova-merge internal/merge .github/scripts/plan-merge-slots.sh
+swarm	cmd/nova-swarm internal/swarm
+pulse	cmd/nova-pulse internal/pulse
+bus	cmd/nova-bus internal/bus
+ci	internal/ci .github/workflows tools/ci
+work	lisp/nova-work
+decide	internal/decide
+docs	docs
+sandbox	cmd/nova-sandbox internal/sandbox
+schema	test docs/measurements
+schema-go	internal
+schema-bench	bench

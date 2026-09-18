@@ -2232,6 +2232,12 @@ usage:
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work set check --file <path.lisp> [--minds <file>] [--lanes <file.tsv>] [--done <id>[,<id>...]] [--ready]
                       [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work attempt record --file <path.lisp> --unit <id> --by <mind> --outcome ok|failed|uncertain [--proof <path|sha|url>]
+                      [--rung <name>] [--usage <file.tsv>] [--pr <n>] [--started <stamp>]
+  nova-work attempt list   --file <path.lisp> --unit <id>
+  nova-work next      --file <path.lisp> --for <mind> --lanes <file.tsv> [--machines <registry>] [--done <id>[,<id>...]]
+                      [--kind <kind>] [--floor <0..1>] [--jev | --no-jev] [--usage <file.tsv>] [--log <file>]
+                      [--take [--by <mind>] [--started <stamp>]]
   nova-work ask  --owner <friend> --unit <id> --units <file> --bus <dir> --as <name>
                  [--deadline <stamp>] [--kind work|read] [--cc <names>] [--record <file.json>]
                  [--reply-branch <name>] [--remote <name>] [--branch <name>]
@@ -2258,6 +2264,9 @@ verbs:
   nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
   nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
   nova-work set check      reads the (work-set ...) form a coordinator writes and validates it whole
+  nova-work attempt record files ONE attempt on ONE unit and moves its :state (A3, A4)
+  nova-work attempt list   the unit's attempts, in order, with their termination proofs
+  nova-work next           the ONE unit this mind does next: ready, owned, admitted, routed
   nova-work ask            delivers ONE unit to the FRIEND who owns it, as a bus note
   nova-work asks           the open asks, oldest first, with their age and their deadline
   nova-work events         bridges the events, not ticks (cards:done stream + gh fallback poll)
@@ -2313,6 +2322,38 @@ merged) or when --done names it, and ready when it is not done and every need is
 Without --minds and without --lanes those two rules are OFF rather than run against a
 guessed file: there is no default registry and no discovery.
 
+attempt and next are the WRITE side of SPEC-WORKLANG's amendment. A3 made an attempt a
+RECORD with a termination proof and A4 made uncertain a state that keeps its reservation,
+and both landed as readers: the only way a real work set could grow an :attempts list was
+a person typing s-expressions into their own document by hand.
+
+attempt record files one attempt on one unit and edits the file IN PLACE by splicing
+bytes: every byte outside the edited unit comes back identical, and inside the unit every
+byte outside the edited key does too. A work set is a person's document -- its comments,
+its blank lines and the column its keys line up at are the document -- so the writer never
+re-renders what it is not touching. An outcome that claims to have ended without proving
+it is refused NAMING THE WORD to write instead (uncertain), and a unit already closed,
+refused or abandoned takes no further attempt: a reopened piece of work is a new id
+carrying :was (A2). The state machine is A4's own closed set and gets no second vocabulary
+beside it -- green closes the unit, red leaves it OPEN because the ladder is the retry
+policy, refused and abandoned are themselves, and uncertain keeps the reservation.
+
+A try that started and then ended is ONE try. Where the unit's last attempt is still open
+-- an :outcome :uncertain with no :proof, taken by this same mind -- record CLOSES that
+record rather than appending beside it, keeping its :n, its :rung and the instant it
+actually began.
+
+next is the what-do-I-do-next verb, and the first place all three halves of the work
+language answer one question together: the graph says whose needs are closed, the kernel
+(internal/jobs) says whose resources are free, and nova-decide's ladder says which mind
+does it. Four gates, each a reading rather than a judgment -- ready, owned, free, routed
+-- and ONE line out: NEXT unit= lane= rung= conf= take= reason=, or NEXT NONE naming the
+gate that emptied the set. Everything already :live or :uncertain holds its reservation
+BEFORE anything is admitted against what is left, which is what A4 means: the clock never
+frees capacity, only an outcome does. And a unit the ladder is waiting on is never
+dispatched (Stella's lease rule: a rung that may still be running is not a rung to step
+off).
+
 events publishes the family's three event channels from two sources: the cards:done
 stream (consumer group events) becomes card-done, and a poll of gh every --gh-poll
 becomes pr-checks-done on a changed check-suite conclusion and dev-moved on a changed
@@ -2345,6 +2386,29 @@ flags:
   --ready         set check: also print one SET READY line per unit of the ready set,
                   each carrying its admission verdict (admit=go, or admit=held with the
                   dimension or path that held it and the unit holding it).
+  --unit <id>     attempt record and attempt list: the unit, by the stable id A2 mints.
+  --by <mind>     attempt record: the mind the attempt is filed under. next --take: the
+                  mind the opened attempt is filed under; --for when absent.
+  --outcome <o>   attempt record: ok | failed | uncertain, and the grammar's own green,
+                  red, refused and abandoned. Every outcome but uncertain owes --proof.
+  --proof <p>     attempt record: the termination proof (A3). A url, a sha or a path,
+                  and which of the three is READ off the value rather than asked for.
+  --pr <n>        attempt record: the PR this attempt produced, written onto the record.
+  --for <mind>    next: the mind asking. It is the OWNER the unit must belong to, not
+                  the rung: rung= on the NEXT line is the ladder's answer, a different
+                  axis, and the line carries both.
+  --machines <f>  next: the registry of minds the ladder routes over; the embedded one
+                  when absent, exactly as nova-decide route reads it.
+  --kind <kind>   next: the decide kind a unit carrying no :kind of its own is routed
+                  as. The default is new-verb: a unit of a pit-stop set is a verb to
+                  build unless its author says otherwise.
+  --jev/--no-jev  next: ask Jev among the eligible rungs, or answer by the rules alone
+                  with no key and no network. Asking requires --usage and --log, because
+                  a call nobody can account for is refused rather than made.
+  --take          next: open the attempt on the unit chosen -- :state :live, the lane
+                  and the writes charged to it from that instant -- under the set's own
+                  lock, so the unit a mind is told to do and the unit it is recorded as
+                  doing are one decision.
   --out <dir>     plan expand: the directory to write one card per node into. Required;
                   a card already there is left byte-identical, so a re-expansion appends
                   only the new card and mints no id.
@@ -2385,6 +2449,8 @@ example:
   nova-work ready --node a --graph ./deps.json
   nova-work plan check --file ./work.work --max-bytes 65536
   nova-work set check --file ./work-set.lisp --ready
+  nova-work next --file ./units.lisp --for rowan-child --lanes ./lanes.tsv --no-jev --take
+  nova-work attempt record --file ./units.lisp --unit certify:verb --by rowan-child --outcome ok --proof 8a132e77 --pr 1369
   nova-work events --redis 127.0.0.1:6379 --once
 ```
 

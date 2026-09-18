@@ -82,8 +82,12 @@ type WorkSet struct {
 // unknown keys beside them, preserved so a later slice reads what this one
 // ignores.
 type Unit struct {
-	ID      string
+	ID string
+	// Offset and End are the unit form's own byte range in the file it was read
+	// from. They are what lets a writer edit ONE unit in place and leave every
+	// other byte of the document exactly as its author wrote it.
 	Offset  int
+	End     int
 	Fields  map[string]Form
 	Unknown map[string]Form
 
@@ -96,6 +100,10 @@ type Unit struct {
 // Attempt is one record of one try at a unit: which rung ran it, who owned it,
 // when it started, how it ended, and whether it proved termination.
 type Attempt struct {
+	// Offset and End are the record's own byte range, so a verb that CLOSES an
+	// open attempt rewrites that record and nothing else.
+	Offset   int
+	End      int
 	N        int64
 	Rung     string
 	Owner    string
@@ -253,7 +261,7 @@ func (w *WorkSet) WithoutAcceptance() []string {
 }
 
 func parseUnit(file string, form Form, strict bool) (Unit, error) {
-	u := Unit{Offset: form.Offset, Fields: map[string]Form{}, Unknown: map[string]Form{}}
+	u := Unit{Offset: form.Offset, End: form.End, Fields: map[string]Form{}, Unknown: map[string]Form{}}
 	if form.Kind != List || len(form.List) == 0 ||
 		!(form.List[0].Kind == Symbol && form.List[0].Value == "unit") {
 		if strict {
@@ -644,6 +652,17 @@ func (u Unit) Owner() string {
 	return ""
 }
 
+// Bytes returns the unit's own bytes out of the document it was read from: the
+// form exactly as its author wrote it, spacing and comments included. It is
+// what makes "every unit but the edited one is byte-identical" a reading rather
+// than an assertion.
+func (u Unit) Bytes(data []byte) []byte {
+	if u.Offset < 0 || u.End > len(data) || u.Offset >= u.End {
+		return nil
+	}
+	return data[u.Offset:u.End]
+}
+
 // Keys returns every key the unit's form carried, known or not, in written
 // order. It is what lets a later slice read what this one ignores without a
 // second reader over the same bytes.
@@ -706,7 +725,7 @@ func (u Unit) Attempts() []Attempt {
 		if entry.Kind != List {
 			continue
 		}
-		a := Attempt{}
+		a := Attempt{Offset: entry.Offset, End: entry.End}
 		a.N, _ = plistInt(entry.List, "n")
 		a.Rung, _ = plistString(entry.List, "rung")
 		a.Owner, _ = plistString(entry.List, "owner")

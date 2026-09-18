@@ -33,6 +33,11 @@ var workAudit = audit.Config{
 		// jobs holds the graph values this binary reads and prints through oneline
 		// fields; it writes nothing and reaches no network.
 		`"github.com/mas-bandwidth/nova-tools/internal/jobs"`,
+		// decide is the ladder `next` routes over. It is the seam onto
+		// nova-decide's own rules, it prints nothing itself, and every field of
+		// its answer that reaches a NEXT line goes through an oneline escape
+		// here -- the rung and the reason both.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 		// swarm holds clip: it commits the card's branch, harvests the result and
 		// resets the worktree with git, printing nothing; every path it is handed
 		// comes from a flag and the one CLIP line goes through oneline fields.
@@ -68,6 +73,11 @@ var workAudit = audit.Config{
 		// names and prints nothing: every name it yields reaches stdout only through an
 		// oneline field on a SET line in this package.
 		`"encoding/json"`,
+		// sort orders the candidates `next` chooses between -- by the ladder's
+		// confidence, ties in the order the author wrote them -- and orders the
+		// edits the attempt writer splices. It compares values and writes
+		// nothing.
+		`"sort"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,
