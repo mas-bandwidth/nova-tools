@@ -1,0 +1,29 @@
+# package-sizes-windows.tsv: measured seconds for `go test -short` on
+# windows-latest, the hosted image the test-windows-pr leg runs on. Its sibling
+# package-sizes.tsv records the idle-LINUX size and is a different measurement;
+# the two are kept apart because neither predicts the other. cmd/nova-bus is
+# 6.4 s on idle Linux and at least 100 s here; cmd/nova-swarm is 51.0 s there
+# and 37.0 s here. The difference is processes: the git-fixture packages spawn
+# one per case and Windows pays the most per process, while nova-swarm's heavy
+# cases are gated behind testing.Short() and skip on this leg. A multiplier over
+# the Linux column would be wrong in both directions, which is why these numbers
+# are measured and checked in rather than derived.
+#
+# CENSORED ROWS. 100.0 and 100.1 are not sizes, they are the 100 s per-package
+# timeout the leg carried when it took the measurement: the true size of those
+# four is AT LEAST that and is not known. The shard planner treats a row at or
+# over the shard budget as "shard it", so a censored row lands on the right side
+# of the decision without pretending to a precision it does not have. Replace a
+# censored row with a real number when a leg with a larger ceiling measures one.
+#
+# Measured on run of PR #1332 (integration-4), 2026-09-18, windows-latest,
+# `go test -short -count=1 -timeout 100s`.
+#
+# import path	seconds
+github.com/mas-bandwidth/nova-tools/cmd/nova-bus	100.1
+github.com/mas-bandwidth/nova-tools/cmd/nova-merge	100.0
+github.com/mas-bandwidth/nova-tools/cmd/nova-review	100.1
+github.com/mas-bandwidth/nova-tools/cmd/nova-wake	100.1
+github.com/mas-bandwidth/nova-tools/cmd/nova-swarm	37.0
+github.com/mas-bandwidth/nova-tools/internal/ci	26.0
+github.com/mas-bandwidth/nova-tools/cmd/nova-board	19.0

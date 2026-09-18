@@ -849,22 +849,52 @@ jobs:
     # one of them is found by running the changed packages once on Windows.
     #
     # CHEAP IS THE WHOLE DESIGN, because these are billed hosted minutes at 2x
-    # the Linux rate. ONE job, not a matrix. Only the packages the change
-    # touches and their in-repo importers, selected by
-    # .github/scripts/select-packages.sh — the same script, called the same way,
-    # as the self-hosted shards in test-packages, so there is one answer to
-    # "what does this change test" and not two. A change that touches no Go
-    # package at all pays one checkout and a path filter and skips the rest, so
-    # a docs or lisp PR costs nothing here. The tests run -short (the Makefile's
-    # test-pr target) with the 100 s per-package ceiling the other hosted legs
-    # use; the merge group still runs the same packages FULL, so this leg moves
-    # the feedback earlier and takes nothing away.
+    # the Linux rate. Only the packages the change touches and their in-repo
+    # importers, selected by .github/scripts/select-packages.sh — the same
+    # script, called the same way, as the self-hosted shards in test-packages,
+    # so there is one answer to "what does this change test" and not two. A
+    # change that touches no Go package at all pays one checkout and a path
+    # filter and skips the rest, so a docs or lisp PR costs nothing here. The
+    # tests run -short, through the Makefile's test-pr target; the merge group
+    # still runs the same packages FULL, so this leg moves the feedback earlier
+    # and takes nothing away.
+    #
+    # THREE SHARDS, and the number is measured rather than chosen. The leg
+    # shipped as one job. Its first real run (#1332, integration-4) did its work
+    # — it caught #1324's Windows install-skip assertion — and it also found
+    # four git-fixture packages sitting ON the 100 s per-package ceiling even
+    # under -short: cmd/nova-bus 100.1 s, cmd/nova-merge 100.0 s,
+    # cmd/nova-review 100.1 s, cmd/nova-wake 100.1 s, against nova-swarm 37 s,
+    # internal/ci 26 s, nova-board 19 s and everything else under 10 s. Windows
+    # pays the most per process and those packages spawn one per case. A single
+    # job over four of them is thirteen minutes of work under a six-minute cap.
+    # So the leg deals its work exactly as test-hosted-merge does: each
+    # package's tests are listed and dealt by index across the shards, and a
+    # slot with no tests for a package prints and exits 0. How many shards a
+    # package gets is DERIVED from testdata/ci/package-sizes-windows.tsv — the
+    # measurements above, checked in — and not guessed: at or over the 60 s
+    # shard budget it is dealt across all three, under it runs whole in one.
+    # A package that has never been measured on Windows is dealt across all
+    # three rather than guessed at, because the one predictor available is
+    # demonstrably wrong in both directions (nova-bus: 6.4 s on idle Linux,
+    # ≥100 s here; nova-swarm: 51.0 s there, 37 s here) and a slot with no tests
+    # for it costs a print.
+    #
+    # The worst case to watch is a go.mod change, which selects the whole tree:
+    # about 570 s of Windows work, ~190 s a shard, inside the cap but not by
+    # much. The next such PR measures it.
     #
     # Same head-repo guard as every other PR job: a fork PR skips rather than
     # running untrusted code on hosted compute. The concurrency group is the
     # workflow's, so a new push supersedes this leg with the rest of the run.
-    name: test-windows-pr
+    name: test-windows-pr (${{ matrix.shard }})
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        # Three, and only three: the shard count is the whole tuning, and every
+        # slot is billed Windows minutes.
+        shard: [0, 1, 2]
     runs-on: windows-latest
     # 6, the same cap test-hosted-pr carries and for the same reason: a hosted
     # runner starts cold (checkout, setup-go, cache restore) before it compiles
@@ -961,15 +991,77 @@ jobs:
           echo "windows leg: ${pkgs:-nothing to test for this change}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
 
-      - name: test the changed packages on windows
+      - name: test this shard of the changed packages on windows
         if: steps.filter.outputs.changed == 'true' && steps.pkgs.outputs.pkgs != ''
-        # -short with the 100 s per-package ceiling, both carried by the
-        # Makefile's test-pr target, so this leg and a friend's own `make
-        # test-pr` are the same command. The target's comment carries why
-        # -short is not a gap here: the Windows-only failures this leg exists
-        # for are ordinary unit tests, and the merge group runs these same
-        # packages full.
-        run: make test-pr PKGS="${{ steps.pkgs.outputs.pkgs }}"
+        shell: bash
+        # THE SHARD PLAN, derived from the measurements and not from a guess.
+        # For each selected package: its measured windows-latest size comes out
+        # of testdata/ci/package-sizes-windows.tsv (keyed by import path, like
+        # its idle-Linux sibling), and a package at or over the 60 s shard
+        # budget — or one that has never been measured there — has its tests
+        # listed and dealt by index across the three slots, exactly the scheme
+        # test-hosted-merge uses. A package under the budget runs WHOLE, in one
+        # slot, and those are dealt round-robin too so the small packages do not
+        # all pile onto slot 0 (this batch's set would have put 82 s of them
+        # there). A slot with no tests for a package says so and moves on.
+        #
+        # The run itself is `make test-pr`, so this leg and a friend's own
+        # `make test-pr` are the same command; PR_TIMEOUT (180 s, measured —
+        # see the Makefile) is the per-package ceiling, replacing the 100 s
+        # hosted convention that #1332 proved was under four of this tree's
+        # packages rather than over them.
+        run: |
+          set -euo pipefail
+          shard=${{ matrix.shard }}
+          slots=3
+          budget=60
+          sizes=testdata/ci/package-sizes-windows.tsv
+          mod=$(awk '$1 == "module" { print $2; exit }' go.mod)
+          small=0
+          for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
+            imp="$mod/${pkg#./}"
+            secs=$(awk -F '\t' -v p="$imp" '$1 == p { print $2; exit }' "$sizes")
+            if [ -z "$secs" ]; then
+              echo "$pkg: never measured on windows, dealt across $slots slots"
+              n=$slots
+            elif awk -v s="$secs" -v b="$budget" 'BEGIN { exit !(s >= b) }'; then
+              echo "$pkg: ${secs}s measured, dealt across $slots slots"
+              n=$slots
+            else
+              echo "$pkg: ${secs}s measured, runs whole in one slot"
+              n=1
+            fi
+            if [ "$n" -eq 1 ]; then
+              if [ $((small % slots)) -ne "$shard" ]; then
+                small=$((small + 1))
+                continue
+              fi
+              small=$((small + 1))
+              make test-pr PKGS="$pkg"
+              continue
+            fi
+            list=$(go test -list '.*' "$pkg") || exit 1
+            tests=$(printf '%s\n' "$list" | grep '^Test' | sort || true)
+            if [ -z "$tests" ]; then
+              if [ "$shard" -eq 0 ]; then
+                make test-pr PKGS="$pkg"
+              fi
+              continue
+            fi
+            names=""
+            i=0
+            for name in $tests; do
+              if [ $((i % n)) -eq "$shard" ]; then
+                if [ -n "$names" ]; then names="$names|$name"; else names="$name"; fi
+              fi
+              i=$((i + 1))
+            done
+            if [ -z "$names" ]; then
+              echo "shard $shard of $n: no tests from $pkg"
+              continue
+            fi
+            make test-pr PKGS="$pkg" RUN="^(${names})$"
+          done
 
   e2e:
     # THE SEQUENCES A FRIEND RUNS, end to end, one job. The sharded `test` job above runs
