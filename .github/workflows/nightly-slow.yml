@@ -28,6 +28,15 @@
 #                             EIGHT CI runners share the Mac this tree is built on —
 #                             a hosted runner is a throwaway VM, which is exactly the
 #                             machine that test wants.
+#   postgres  ubuntu          internal/decide's decision log against a REAL Postgres,
+#                             which keeps the in-memory fake the unit suite runs on
+#                             honest. It is a job of its own rather than a row of the
+#                             matrix above for one mechanical reason: it needs a
+#                             `services:` container, and service containers run on
+#                             Linux runners only — a `services:` block on the shared
+#                             job would be inherited by its macos legs and fail them.
+#                             The leg is still `tag: postgres` in a matrix, so the
+#                             class test reads it the same way it reads the others.
 #
 # A RED run here does not block anything: it opens (or updates) a single issue
 # titled "nightly tagged suite red <date>" for the morning. No aggregate gate, no
@@ -78,12 +87,59 @@ jobs:
       - name: tagged suite
         run: go test -tags ${{ matrix.tag }} -count=1 ./...
 
+  postgres:
+    # THE SAME LEG SHAPE, in its own job because it carries a service container.
+    # internal/decide's log has two halves: an in-memory fake the unit suite runs
+    # against, and the real-Postgres contract behind `//go:build postgres` that
+    # keeps the fake honest. The test is also behind a DSN in the environment, so
+    # it is pointed at a database deliberately and never inherits one; the service
+    # below is that database, made and thrown away with the runner.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            tag: postgres
+    name: ${{ matrix.tag }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: nova
+          POSTGRES_PASSWORD: nova
+          POSTGRES_DB: nova_decide_test
+        ports:
+          - 5432:5432
+        # Without the health check the steps start before the server accepts a
+        # connection, and the leg is red for a reason that is not the code.
+        options: >-
+          --health-cmd "pg_isready -U nova"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: tagged suite
+        # DECIDE_TEST_PG is internal/decide's own name for the DSN, separate from
+        # the LogDSNEnv a tool writes through on purpose. Unset, the test skips;
+        # this is the one place it is set.
+        env:
+          DECIDE_TEST_PG: postgres://nova:nova@127.0.0.1:5432/nova_decide_test?sslmode=disable
+        run: go test -tags ${{ matrix.tag }} -count=1 ./...
+
   report:
-    # ONE ISSUE PER DAY, not one per leg. The `test` matrix job above is
-    # `failure()` if ANY leg failed, and this job then makes sure there is
-    # exactly one open issue whose title names today: create it if absent,
-    # add a comment pointing at this run if it is already there.
-    needs: test
+    # ONE ISSUE PER DAY, not one per leg. The matrix jobs above are `failure()`
+    # if ANY leg failed, and this job then makes sure there is exactly one open
+    # issue whose title names today: create it if absent, add a comment pointing
+    # at this run if it is already there. EVERY leg job is a `needs:` here — a
+    # leg missing from this list is a leg whose red night nobody reads.
+    needs: [test, postgres]
     if: failure()
     runs-on: ubuntu-latest
     timeout-minutes: 5
