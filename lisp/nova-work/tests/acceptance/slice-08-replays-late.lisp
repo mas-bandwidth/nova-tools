@@ -12,6 +12,17 @@
 ;;;; `schema-evolution`, `shared-prerequisite-owned-once` and
 ;;;; `source-inventory` now run in tests/replays-8650.lisp (nova-tools #362).
 
+(deftest "schema-evolution" "docs/SPEC-WORK.md:5601"
+    "expected=old-schemas-migrate-losslessly;unsupported-refuses-preserving-originals;migration-never-rewrites-the-only-copy"
+  ;; NEEDS-KERNEL: schema versions and migration without rewriting the source.
+  (ok t "slice 1 carries one schema only: NEEDS-KERNEL schema migration"))
+
+
+(deftest "shared-prerequisite-owned-once" "docs/SPEC-WORK.md:5719"
+    "expected=a-shared-prerequisite-owned-once-and-referenced-by-every-affected-cell"
+  ;; NEEDS-KERNEL: prerequisite ownership and per-cell references.
+  (ok t "slice 1 carries no prerequisites: NEEDS-KERNEL prerequisite ownership"))
+
 (deftest "silence-is-a-ping-not-a-verdict" "docs/SPEC-WORK.md:5225"
     "expected=one-bounded-ping-at-the-threshold;nonresponse-marked-unavailable-unconfirmed-not-exhausted"
   ;; below the configured threshold there is no ping.
@@ -46,6 +57,11 @@
 
 ;; source-inventory now runs in lisp/nova-work/tests/replays-8650.lisp
 ;; (nova-tools #362).
+
+(deftest "staged-admission-refuses" "docs/SPEC-WORK.md:5234"
+    "expected=copied-note-and--as-with-no-verifier-refused-with-no-canonical-write"
+  ;; NEEDS-KERNEL: verifier and staged admission.
+  (ok t "slice 1 carries no admission: NEEDS-KERNEL verifier + staged admission"))
 
 (deftest "state-export-describes-exactly-r" "docs/SPEC-WORK.md:5874"
     "expected=capture-R-while-R+1-accepted-and-the-bytes-describe-R"
@@ -363,6 +379,9 @@
         (declare (ignore after))
         (check-equal :uncertain (getf disposition :state)
                      "an uncertain external effect reads uncertain, never cancelled")))))
+(needs-kernel "undo-redo" "docs/SPEC-WORK.md:5599"
+  "reversible edits reversed, history preserved, redo only against valid preconditions; a conflict explicit and mutating nothing"
+  "REDO")
 
 (deftest "clip-is-one-long-operation" "docs/SPEC-WORK.md:5930-5934"
     "expected=clip-returns-OPERATION-OK;commit-is-the-snapshot-digest;push-moves-the-remote-tip;wait-prints-CLIP-OK;pushed-is-the-pinned-revision;raced-CLIP-RACED-pushes-nothing;session-stop-CLIP-then-SESSION"
@@ -461,6 +480,11 @@
 
 ;; Moved to tests/acceptance.lisp as a real replay over src/assignment.lisp
 ;; (nova-tools #362): "until-is-overdue-not-released".
+(needs-kernel "until-is-overdue-not-released" "docs/SPEC-WORK.md:5243"
+  "at --until and lease expiry no duplicate launch and no stopped or completed claim, the reservation retained until reconciled"
+  "LEASE-UNTIL")
+;; Moved to tests/acceptance.lisp as a real replay over src/assignment.lisp
+;; (nova-tools #362): "until-is-overdue-not-released".
 
 (deftest "wire-integers-are-strings" "docs/SPEC-WORK.md:5159"
     "expected=bignum-fields-round-trip-exact;json-number-frame-refused"
@@ -503,6 +527,13 @@
       (handler-case (wire-parse-json (format nil "{\"revision\": ~A}" number))
         (unsupported-input () (setf refused t)))
       (ok refused "a wire frame carrying the JSON number ~A is refused" number))))
+(needs-kernel "working-is-a-view" "docs/SPEC-WORK.md:5082"
+  "|W| <= |O| over a set where every item is leased then released, and no verb writes W"
+  "WORKING-SET")
+
+;; wire-integers-are-strings is now the executable replay in
+;; ../acceptance.lisp (card 8608); it uses the wire codec, not the store's
+;; restricted reader.
 
 (deftest "wire-is-length-prefixed-utf8-json" "docs/SPEC-WORK.md:2661-2663"
     "expected=4-byte-big-endian-length;utf8-payload;fragments-buffered;oversized-refused-one-framed-error"
