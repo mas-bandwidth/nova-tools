@@ -129,6 +129,14 @@ cat: /Users/me/.config/anthropic/env: Operation not permitted
 
 The last run is the whole tool in three lines: the job's own write landed, and the same command could not read the key that was in neither list. Its exit status is the wrapped command's, which is 1 here because `cat` failed.
 
+### The disposable volume, and the one test that touches a disk
+
+`nova-sandbox run` makes an APFS volume per run and deletes it on every path out (SPEC-SANDBOX, "The run verb"). Its logic is unit-tested against a fake `diskutil`, so an ordinary `go test ./cmd/nova-sandbox/` creates no volumes. The one real end-to-end test is behind the `novadisk` build tag, because eight CI runners share the Mac this repository is built on and a suite that made and destroyed volumes on every run would be a hazard rather than a test. Run it by hand on a Mac when the disposable-volume body changes — it needs no `sudo`:
+
+    go test -tags novadisk -run TestARealRunLeavesNothingBehind ./cmd/nova-sandbox/
+
+Measured on the Studio, macOS 26 arm64, 2026-09-18: a 64m volume made, `sh -c 'echo hi > out; sleep 1'` run inside the wall with the volume as its only writable directory, and the volume gone from `/Volumes` and from `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
+
 ## nova-secrets
 
 Fixture: a throwaway secrets store git working copy and age private key, as in [SPEC-SECRETS.md](SPEC-SECRETS.md).
