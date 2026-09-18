@@ -1,5 +1,34 @@
 # The Windows bench standard
 
+> **PARKED 2026-09-18. Glenn: "drop the native windows CI runners. WSL only from
+> now on." WSL2 is the way.**
+>
+> This page was written for a NATIVE Windows bench and a host of self-hosted
+> **Windows** CI runners. Neither is being built. The Threadripper Pro joins the
+> fleet under **WSL2**, as a Linux bench with Linux CI runners labelled
+> `linux,X64,threadripper` — registry line `threadripper-wsl … linux/x64
+> bench,runner`, the Linux `tools/bench-standard.sh`, the Linux `fleet standard`
+> list, and nothing on this page. See `docs/spec-pulse/03-fleet.md`, "The runners
+> are Linux runners, everywhere, including on the Windows box".
+>
+> `ci.yml` dropped every `windows-latest` leg in the same ruling; the four class
+> tests that held them shut are parked in `docs/SPEC-CI.md` under "Parked class
+> tests", and what remains on the CL path is one cross-vet, `make vet-windows`.
+> `nova-update release build --platform windows-amd64` still builds — the code is
+> on `dev` via #1386 — but the fleet release no longer ships the platform, and
+> #1410 is parked with it.
+>
+> **The ruling overrides `W11` below**, the *"NEVER WSL"* rule this document is
+> written around: the argument there is that WSL2 brings a second operating
+> system, a second filesystem and a second toolchain to every friend on Windows,
+> and that containment which only holds inside WSL is containment somewhere else.
+> That argument is not refuted, it is OVERRULED — the fleet does not want a
+> Windows bench enough to pay for a second sandbox implementation, and the box we
+> have is worth more as 32 Linux cores than as the first native Windows one.
+> Everything below stands as the record of what a native Windows bench would have
+> needed, and is the page to read first if one is ever wanted again. Nothing
+> below is a live requirement.
+
 Everything a Windows machine needs before the loop may put work on it: the
 Windows half of `tools/bench-standard.sh` and of the provisioning standard in
 `docs/spec-pulse/03-fleet.md`, written **before the bench arrives** so that it is
