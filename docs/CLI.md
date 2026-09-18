@@ -1343,10 +1343,15 @@ is `delete-diag <path>` in the action log.
 
 The mistake it removes, measured on hulk on 2026-09-18: 24 runner directories held **3.5 GB**
 of `_diag` between them, 18,296 files, and the **oldest file on the whole bench was two days
-old**. A runner rolls its own diagnostics, so an age window alone can never bound the
-directory: the seven-day window the bench ran with bounded nothing at all, and neither would
-three. The cap is the rule that holds; the window is what keeps a quiet bench tidy. 2 GiB over
-hulk's 24 runners is a 48 GiB ceiling against the unbounded ~1.8 GB a day it writes.
+old**. A runner rolls its own diagnostics at a rate nobody chose, so neither rule alone is a
+bound. The seven-day window the bench ran with took nothing, ever. The two rules divide the
+job: on a busy bench the **window** is what bites, day by day — a `--dry-run` on hulk at
+`--diag-days 1` selects 10,391 files and 1.95 GB — while the **cap** is the backstop that
+holds a burst, or a runner that starts writing faster than anyone watches. A `--dry-run` at
+`--diag-max-bytes 104857600` selects 6,374 files and 1.198 GB, oldest first, starting at the
+oldest file on the bench. The shipped 2 GiB over hulk's 24 runners is a 48 GiB ceiling on a
+1.8 TB disk, and today it takes nothing, because no runner directory there is over 220 MB. A
+ceiling that is never reached is the point of a ceiling.
 
 Both flags refuse a value that is not a whole number of at least 1 — exit 2, naming the flag.
 A prune never runs on a guess.

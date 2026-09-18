@@ -76,12 +76,15 @@ type HygieneInput struct {
 //
 // Measured on hulk, 2026-09-18: 24 runner directories, 3.5 GB of `_diag`,
 // 18,296 files, and the OLDEST file on the bench two days old. A runner rolls
-// its own diagnostics, so an age window alone can never bound the directory —
-// seven days bounded nothing at all, and neither would three. The cap is the
-// rule that holds; the window is what keeps a quiet bench tidy.
+// its own diagnostics at a rate nobody chose, so the seven-day window the bench
+// ran with took nothing, ever, and neither would three days.
 //
-// 2 GiB per runner over hulk's 24 runners is a 48 GiB ceiling on a 1.8 TB disk,
-// against the unbounded ~1.8 GB a day it writes today.
+// The two rules divide the job. On a busy bench the window is what bites day by
+// day (a dry run on hulk at --diag-days 1 selects 10,391 files, 1.95 GB); the cap
+// is the backstop for a burst, or for a runner that starts writing faster than
+// anyone watches. 2 GiB per runner over hulk's 24 runners is a 48 GiB ceiling on
+// a 1.8 TB disk, and it takes nothing there today, because no runner directory is
+// over 220 MB. That is what a ceiling is for.
 const (
 	HygieneDiagDaysDefault     = 2
 	HygieneDiagMaxBytesDefault = int64(2 * 1024 * 1024 * 1024)

@@ -610,11 +610,18 @@ through `internal/safepath` below that runner's own `_diag`.
 
 The mistake that rule removes, measured on hulk on 2026-09-18: **24 runner directories held
 3.5 GB of `_diag`, 18,296 files, and the oldest file on the whole bench was two days old.** A
-runner rolls its own diagnostics, so an **age window alone can never bound the directory** —
-the seven-day window the bench ran with bounded nothing at all, and neither would three. The
-cap is the rule that holds; the window is what keeps a quiet bench tidy. The general lesson,
-and the one to carry to the next cleaner written: *a window over a tree that rotates itself is
-not a bound. Bound the size, and let the window take the leftovers.*
+runner rolls its own diagnostics at a rate nobody chose, so the **seven-day window the bench
+ran with took nothing, ever**, and neither would three days. The two rules divide the job. On
+a busy bench the window is what bites day by day: a `--dry-run` on hulk at `--diag-days 1`
+selects 10,391 files and 1.95 GB. The cap is the backstop for a burst, or for a runner that
+starts writing faster than anyone watches: a `--dry-run` at `--diag-max-bytes 104857600`
+selects 6,374 files and 1.198 GB, oldest first, from the oldest file on the bench. The shipped
+2 GiB takes nothing on hulk today, because no runner directory there is over 220 MB, and that
+is what a ceiling is for.
+
+The general lesson, and the one to carry to the next cleaner written: *a window over a tree
+that rotates itself is not a bound. Set the window from the rate the tree actually rotates at,
+and put a size ceiling behind it for the day the rate changes.*
 
 Refusals are exit 2, one remedy line each: without root, `FLEET REFUSED bench=<name> no-sudo
 (run it under sudo, or install the script by hand)`; without systemd, `FLEET REFUSED
