@@ -61,6 +61,7 @@ usage:
   nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
+  nova-swarm pull      --bench <dir> --worker <name> [--steal <dir>[,<dir>...] --capacity <n>] [--last-steal <stamp>]
    nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
    nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
    nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
@@ -71,6 +72,12 @@ usage:
    nova-swarm slots list --store <dir>
    nova-swarm worker    check <description.json> [--env] [--max <n>]
    nova-swarm pull     --stream <kind> --bench <name> (--redis <addr> | --dir <dir>) [--lane <lane>] [--wait <duration>]
+
+PULL TAKES ONE CARD BY RENAME. nova-swarm pull lists a bench's queue/ directory
+and takes one card by rename(<name>.card, taken/<worker>-<name>.card), atomic within
+the directory, so two workers cannot take one card; it drains its own taken/ before
+it reaches for another bench, and an idle worker steals from the fullest bench on the
+mirror's five-minute timer, never emptying the victim below its own capacity line.
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher
 that exited with tasks pending and nothing running, a reclaim with no usage file
@@ -210,10 +217,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdSlots(rest, stdout, stderr)
 	case "publish":
 		return cmdPublish(rest, stdout, stderr)
-	case "pull":
-		return cmdPull(rest, stdout, stderr)
 	case "profile":
 		return cmdProfile(rest, stdout, stderr)
+	case "pull":
+		return cmdPull(rest, stdout, stderr, now)
 	case "worker":
 		return cmdWorker(rest, stdout, stderr)
 	}
