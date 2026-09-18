@@ -18,10 +18,13 @@
 // atomic load and a return: no allocation, no lookup, nothing to pay on a
 // production path that is about to spawn ssh anyway.
 //
-// A TEST THAT WANTS A CHILD. A test that installs its own fake `ssh` on PATH
-// is not reaching a host, and it says so out loud with
-// `defer testguard.AllowHosts()()`. The declaration is the point: a reader of
-// the test sees that a child process is expected and that the child is a fake.
+// A TEST THAT WANTS A CHILD. A fake `ssh` written into t.TempDir() and put on
+// PATH is not a host, and this package can see that for itself: a program that
+// resolves INSIDE a temp directory is a fake, a program that resolves to
+// /usr/bin/ssh is the fleet. So the tests that already fake the seam that way
+// -- and the tools they run as child processes, which inherit the variable --
+// keep working untouched. A test whose fake lives anywhere else says so out
+// loud with `defer testguard.AllowHosts()()`.
 //
 // Every seam this package guards is held by
 // TestNoTestReachesAHostThroughAnUnfakedSeam in internal/ci, which reads the
@@ -31,6 +34,9 @@ package testguard
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -91,10 +97,85 @@ func RefuseHosts(program string, args ...string) {
 	if !refusing.Load() || allowed.Load() > 0 {
 		return
 	}
+	if isFakeProgram(program) {
+		return
+	}
 	panic(fmt.Sprintf(
 		"%s=1: a test reached a host through an unfaked seam: %s; "+
 			"inject the fake the seam takes, or install a fake on PATH and declare it with testguard.AllowHosts()",
 		EnvNoHost, commandLine(program, args)))
+}
+
+// isFakeProgram reports whether the program this seam is about to start lives
+// in a temp directory. That is what a fake ssh looks like in this repository:
+// a script written into t.TempDir() and put on PATH, or an absolute path under
+// it handed to --ssh. The real ssh comes from /usr/bin, /bin or Program Files
+// and never from there, so the two are told apart by WHERE THE PROGRAM IS
+// rather than by asking every honest test to declare itself.
+//
+// This is the narrowing to know about: a test that installs its fake somewhere
+// other than a temp directory is refused and must say `defer
+// testguard.AllowHosts()()`, and a test that constructs the real seam while
+// some other test's fake is on PATH is not caught. Both are cheap beside the
+// alternative, which is a rule every fake-installing test has to be edited for
+// -- and a rule that costs the honest test is one people learn to edit around.
+//
+// A program that cannot be resolved at all is NOT treated as a fake: the seam
+// was about to run something this machine does not have, and the panic says so
+// more clearly than the exec error would.
+func isFakeProgram(program string) bool {
+	path, err := exec.LookPath(program)
+	if err != nil {
+		return false
+	}
+	if !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return false
+		}
+		path = abs
+	}
+	for _, root := range tempRoots() {
+		if under(path, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// tempRoots are the directories a test's own files live under: the platform's
+// temp directory and, on a CI runner, the temp directory the workflow names.
+func tempRoots() []string {
+	roots := []string{os.TempDir()}
+	for _, env := range []string{"TMPDIR", "TMP", "TEMP", "RUNNER_TEMP"} {
+		if v := os.Getenv(env); v != "" {
+			roots = append(roots, v)
+		}
+	}
+	return roots
+}
+
+// under reports whether path is inside root, comparing the resolved forms so
+// that /var/folders and /private/var/folders (macOS) are the same place.
+func under(path, root string) bool {
+	if root == "" {
+		return false
+	}
+	path, root = resolve(path), resolve(root)
+	if !strings.HasSuffix(root, string(filepath.Separator)) {
+		root += string(filepath.Separator)
+	}
+	if runtime.GOOS == "windows" {
+		return strings.HasPrefix(strings.ToLower(path), strings.ToLower(root))
+	}
+	return strings.HasPrefix(path, root)
+}
+
+func resolve(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	return filepath.Clean(p)
 }
 
 // commandLine renders the child as one line, every word quoted, so a script on

@@ -16,6 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // benchCheck is one probe check's result.
@@ -111,6 +112,7 @@ func (p *prober) remote(host string, args ...string) (string, error) {
 	var argv []string
 	if host != "" && host != "local" {
 		argv = append([]string{"ssh", host}, args...)
+		testguard.RefuseHosts(argv[0], argv[1:]...)
 	} else {
 		argv = args
 	}

@@ -2,6 +2,8 @@ package testguard
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -44,6 +46,26 @@ func TestArmedGuardNamesTheCommandAndTheRemedy(t *testing.T) {
 		}
 	}()
 	RefuseHosts("ssh", "hulk", "bash -s")
+}
+
+// TestAFakeOnPATHIsNotAHost is the half that keeps the honest test cheap: the
+// repository's ssh fakes are scripts in t.TempDir() put on PATH, and a rule
+// that made every one of them declare itself would be a rule people edit
+// around. A program that resolves inside a temp directory is a fake; the fleet
+// is never there.
+func TestAFakeOnPATHIsNotAHost(t *testing.T) {
+	arm(t)
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "ssh")
+	if runtime.GOOS == "windows" {
+		fake += ".bat"
+	}
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	RefuseHosts("ssh", "hulk", "uptime") // must not panic
+	RefuseHosts(fake, "hulk", "uptime")  // named by absolute path, the same answer
 }
 
 func TestAllowHostsIsScopedAndNests(t *testing.T) {

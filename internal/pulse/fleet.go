@@ -29,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // fleetPowerDefaultTimeout bounds every ssh child when no --timeout is given.
@@ -179,6 +180,7 @@ func fleetSSH(ctx context.Context, program, target, script string) (string, erro
 	if program == "" {
 		program = "ssh"
 	}
+	testguard.RefuseHosts(program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
 	cmd := exec.CommandContext(ctx, program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
 	cmd.Stdin = strings.NewReader(script)
 	raw, err := cmd.CombinedOutput()
@@ -638,6 +640,7 @@ func (in FleetRebootInput) ssh(target, script string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	testguard.RefuseHosts(program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, script)
 	cmd := exec.CommandContext(ctx, program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, script)
 	raw, err := cmd.CombinedOutput()
 	return string(raw), err

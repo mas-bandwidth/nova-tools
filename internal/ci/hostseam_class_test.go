@@ -135,6 +135,14 @@ func TestNoTestReachesAHostThroughAnUnfakedSeam(t *testing.T) {
 				hostSeamAllowlistPath, key))
 		}
 	}
+	// The other half of the rule: the guard is armed for every run of the
+	// suite. A tree full of guard calls and a Makefile that never sets the
+	// variable is a rule that holds in the text and nowhere else.
+	makefile := readFile(t, filepath.Join(root, "Makefile"))
+	if !strings.Contains(makefile, "export NOVA_TEST_NO_HOST := 1") {
+		violations = append(violations, "Makefile: `export NOVA_TEST_NO_HOST := 1` is gone; every seam in the tree calls the guard and nothing arms it, so the rule holds in the text and nowhere else. ci.yml reaches every tier through make, so this one line is the whole CI path")
+	}
+
 	sort.Strings(violations)
 	for _, v := range violations {
 		t.Error(v)
@@ -162,17 +170,59 @@ func hostSeamReason(fn *ast.FuncDecl) string {
 	return ""
 }
 
-// sshFamilyWord reports whether an identifier carries an ssh-family word,
-// case-insensitively: fleetSSH, sshRun, scpFile, ExecSSH, publishOverSSH.
+// sshFamilyWord reports whether an identifier carries an ssh-family WORD:
+// fleetSSH, sshRun, scpFile, ExecSSH, publishOverSSH. The identifier is split
+// into its camel-case words first rather than searched as a substring, which is
+// not fussiness -- the substring form read `IsSHA`, `HarnessSHA256` and
+// `hasShebang` as ssh seams, and three false positives in the first sweep is
+// how a class test becomes one people edit around.
 func sshFamilyWord(name string) (string, bool) {
-	lower := strings.ToLower(name)
-	for _, p := range sshFamily {
-		if strings.Contains(lower, p) {
-			return p, true
+	for _, w := range identWords(name) {
+		for _, p := range sshFamily {
+			if strings.EqualFold(w, p) {
+				return p, true
+			}
 		}
 	}
 	return "", false
 }
+
+// identWords splits a Go identifier into camel-case words, keeping an acronym
+// run whole: SSHRunner is [SSH Runner], fleetSSH is [fleet SSH], IsSHA is
+// [Is SHA], HarnessSHA256 is [Harness SHA 256].
+func identWords(name string) []string {
+	var words []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			words = append(words, string(cur))
+			cur = nil
+		}
+	}
+	runes := []rune(name)
+	for i, r := range runes {
+		switch {
+		case r == '_':
+			flush()
+			continue
+		case isUpper(r) && i > 0 && !isUpper(runes[i-1]):
+			// aB: a new word starts at B.
+			flush()
+		case isUpper(r) && i > 0 && i+1 < len(runes) && isUpper(runes[i-1]) && isLower(runes[i+1]):
+			// ABc: the last capital of a run begins the next word.
+			flush()
+		case isDigit(r) != (i > 0 && isDigit(runes[i-1])):
+			flush()
+		}
+		cur = append(cur, r)
+	}
+	flush()
+	return words
+}
+
+func isUpper(r rune) bool { return r >= 'A' && r <= 'Z' }
+func isLower(r rune) bool { return r >= 'a' && r <= 'z' }
+func isDigit(r rune) bool { return r >= '0' && r <= '9' }
 
 // sshLiteralIn returns an ssh-family program named by a string literal anywhere
 // in fn's body. The match is the WHOLE literal, so prose mentioning ssh in a
@@ -252,6 +302,26 @@ func guardCallPos(fn *ast.FuncDecl) token.Pos {
 		return true
 	})
 	return pos
+}
+
+// TestNoHostSeamIsFoundByASubstring is the heuristic's own test: the names the
+// first sweep of this rule got wrong, and the names it must keep getting right.
+// A class test with false positives is one people learn to edit around, so the
+// narrowing is pinned here rather than discovered in a review.
+func TestNoHostSeamIsFoundByASubstring(t *testing.T) {
+	t.Parallel()
+	seams := []string{"fleetSSH", "sshRun", "sshOutput", "scpFile", "ExecSSH", "publishOverSSH", "SSHRunner", "powerWaitSSH", "rsyncTree", "ssh"}
+	for _, name := range seams {
+		if _, ok := sshFamilyWord(name); !ok {
+			t.Errorf("%s names an ssh-family word and must be read as a host seam (words: %q)", name, identWords(name))
+		}
+	}
+	innocent := []string{"IsSHA", "HarnessSHA256", "hasShebang", "ShardSHA", "flush", "crossesTheWire"}
+	for _, name := range innocent {
+		if p, ok := sshFamilyWord(name); ok {
+			t.Errorf("%s is not a host seam; the rule read %q in it (words: %q)", name, p, identWords(name))
+		}
+	}
 }
 
 func readHostSeamAllowlist(t *testing.T) map[string]bool {

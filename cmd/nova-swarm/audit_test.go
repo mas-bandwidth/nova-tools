@@ -126,6 +126,12 @@ var swarmAudit = audit.Config{
 		// the key travelling only on the Authorization header and never printed.
 		`"math"`, `"sort"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// testguard (bench.go) is the host guard: one atomic load on the way to an ssh
+		// child, and nothing at all when NOVA_TEST_NO_HOST is unset, which is every
+		// production run. It holds no writer and writes no stream. Its one output is a
+		// PANIC under the test guard, which the runtime writes, in a test process, on a
+		// path this binary never takes in production.
+		`"github.com/mas-bandwidth/nova-tools/internal/testguard"`,
 	},
 	MinClassified: 40,
 }
