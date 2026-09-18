@@ -12,9 +12,29 @@
 // fresh take -- the rungs below failed, or a design with one author. The `kinds`
 // column is that designation and nothing else.
 //
+// A designation on a RESERVED mind is a READ, never the work. Johnny is
+// reserved -- for a different view, and for the STOP a security read can call --
+// so the security kind attaches him as the READER and the work goes to the rung
+// the evidence supports. A designation that hands a reserved mind the work
+// itself is the routing bug of 2026-09-18: seven units the work set owns as
+// rowan-child were routed to a mind that does not take work.
+//
 // The registry is a DATA FILE. A path names one; an empty path is the default
 // embedded below, so the loop runs on a bench with no file of its own. Every
 // row is validated on the way in: a bad row is a refusal, never a guess.
+//
+// Beside the minds it holds two MEASURED tables, data for the same reason the
+// ladder is data:
+//
+//   - floors: the confidence floor PER KIND. One floor for every kind is one
+//     number standing in for ten different questions, and on 2026-09-18 it made
+//     13 of 13 provider answers escalate -- a 100% escalation rate against
+//     tune's own 0.7 cap. Each row carries the measurement behind it in `from`;
+//     a kind with no row keeps DefaultFloor, which is a floor with no rows
+//     behind it, and the log line says so.
+//   - rates: what one model's tokens cost, per million, so a usage row carries
+//     usd instead of a dash. A model with no rate is a dash and a NOTE naming
+//     the model and the remedy -- never a guessed price.
 package decide
 
 import (
@@ -100,9 +120,41 @@ func (m Mind) Owns(lane string) bool {
 	return false
 }
 
-// Registry is the ladder: every mind, in height then name order.
+// KindFloor is one kind's confidence floor and the measurement behind it. From
+// is not decoration: a floor nobody can trace is a feeling with a number on it,
+// and rule 8 says a floor is tuned from rows or it is not tuned at all.
+type KindFloor struct {
+	Kind  string  `json:"kind"`
+	Floor float64 `json:"floor"`
+	From  string  `json:"from,omitempty"`
+}
+
+// Rate is what one model's tokens cost, in US dollars per MILLION tokens, and
+// where the number was published. Per million rather than per token because
+// that is how a provider quotes it, and a rate copied from a page should read
+// like the page it was copied from.
+type Rate struct {
+	Model     string  `json:"model"`
+	Provider  string  `json:"provider,omitempty"`
+	InputUSD  float64 `json:"input_usd_per_mtok"`
+	OutputUSD float64 `json:"output_usd_per_mtok"`
+	From      string  `json:"from,omitempty"`
+}
+
+// Registry is the ladder: every mind, in height then name order, and the two
+// measured tables beside it -- the floor per kind, and the rate per model.
 type Registry struct {
-	Minds []Mind `json:"minds"`
+	Minds  []Mind      `json:"minds"`
+	Floors []KindFloor `json:"floors,omitempty"`
+	Rates  []Rate      `json:"rates,omitempty"`
+}
+
+// DefaultRegistryJSON is the embedded ladder's own bytes, for a caller that has
+// to merge into the document rather than into the parsed ladder -- the floor
+// proposal writing a registry on a bench that has never had a file of its own.
+// A copy, because the embedded bytes are the package's.
+func DefaultRegistryJSON() []byte {
+	return append([]byte(nil), defaultRegistryJSON...)
 }
 
 // DefaultRegistry is the embedded ladder, the one a bench with no registry file
@@ -179,6 +231,12 @@ func ParseRegistry(data []byte) (*Registry, error) {
 			return nil, fmt.Errorf("decide: bad registry: %s is asked by %q, want %s, %s or %s", m.Name, m.Ask, AskBus, AskCard, AskChild)
 		}
 	}
+	if err := validateFloors(reg.Floors); err != nil {
+		return nil, err
+	}
+	if err := validateRates(reg.Rates); err != nil {
+		return nil, err
+	}
 	sort.SliceStable(reg.Minds, func(i, j int) bool {
 		if reg.Minds[i].Height != reg.Minds[j].Height {
 			return reg.Minds[i].Height < reg.Minds[j].Height
@@ -186,6 +244,119 @@ func ParseRegistry(data []byte) (*Registry, error) {
 		return reg.Minds[i].Name < reg.Minds[j].Name
 	})
 	return &reg, nil
+}
+
+// validateFloors checks the floor table: one row per kind, a kind the ladder
+// knows, and a floor that is a confidence. A floor for a kind nobody routes is
+// a typo that would sit in the file being silently ignored, which is how a
+// floor stops meaning anything.
+func validateFloors(floors []KindFloor) error {
+	seen := make(map[string]bool, len(floors))
+	for i := range floors {
+		f := &floors[i]
+		f.Kind = strings.TrimSpace(f.Kind)
+		if f.Kind == "" {
+			return fmt.Errorf("decide: bad registry: floor row %d names no kind; it wants one of %s", i+1, strings.Join(Kinds, ", "))
+		}
+		if !KnownKind(f.Kind) {
+			return fmt.Errorf("decide: bad registry: floor row %d names kind %q, which is not one of %s", i+1, f.Kind, strings.Join(Kinds, ", "))
+		}
+		if seen[f.Kind] {
+			return fmt.Errorf("decide: bad registry: kind %s has two floors; one kind, one floor", f.Kind)
+		}
+		seen[f.Kind] = true
+		if err := ValidFloor(f.Floor); err != nil {
+			return fmt.Errorf("decide: bad registry: kind %s: %w", f.Kind, err)
+		}
+	}
+	return nil
+}
+
+// validateRates checks the rate table: one row per model, and a price that is a
+// price. A negative rate is not a discount, and a model named twice is two
+// answers to one question.
+func validateRates(rates []Rate) error {
+	seen := make(map[string]bool, len(rates))
+	for i := range rates {
+		r := &rates[i]
+		r.Model = strings.TrimSpace(r.Model)
+		r.Provider = strings.TrimSpace(r.Provider)
+		if r.Model == "" {
+			return fmt.Errorf("decide: bad registry: rate row %d names no model", i+1)
+		}
+		if seen[r.Model] {
+			return fmt.Errorf("decide: bad registry: model %s has two rates; one model, one rate", r.Model)
+		}
+		seen[r.Model] = true
+		if r.InputUSD < 0 || r.OutputUSD < 0 {
+			return fmt.Errorf("decide: bad registry: model %s has a negative rate (in %g, out %g per Mtok); a price is at or above zero", r.Model, r.InputUSD, r.OutputUSD)
+		}
+	}
+	return nil
+}
+
+// Where an effective floor came from. Every decision line carries it, because a
+// floor measured from rows and a floor nobody has ever measured are two
+// different claims and a reader cannot tell them apart from the number.
+const (
+	// FloorFromFlag is a floor the caller named on the command line. An
+	// explicit number beats a table: the person asking is looking at something
+	// the table does not know.
+	FloorFromFlag = "flag"
+	// FloorFromKind is the registry's floor for this unit's kind, measured.
+	FloorFromKind = "kind"
+	// FloorFromBuiltIn is DefaultFloor: no row, no measurement, a floor with
+	// nothing behind it.
+	FloorFromBuiltIn = "built-in"
+)
+
+// FloorFor is the registry's floor for one kind, and whether it holds one at
+// all. A kind with no row is not a kind with a floor of zero.
+func (r *Registry) FloorFor(kind string) (KindFloor, bool) {
+	kind = strings.TrimSpace(kind)
+	if r == nil || kind == "" {
+		return KindFloor{}, false
+	}
+	for _, f := range r.Floors {
+		if f.Kind == kind {
+			return f, true
+		}
+	}
+	return KindFloor{}, false
+}
+
+// ResolveFloor answers the floor one decision is gated on and says where it
+// came from: the caller's flag where they gave one, else this kind's measured
+// floor, else the built-in default.
+func ResolveFloor(reg *Registry, kind string, flagFloor float64, flagGiven bool) (float64, string) {
+	if flagGiven {
+		return flagFloor, FloorFromFlag
+	}
+	if f, ok := reg.FloorFor(kind); ok {
+		return f.Floor, FloorFromKind
+	}
+	return DefaultFloor, FloorFromBuiltIn
+}
+
+// RateFor is the rate table's row for one model. A model with no row is a dash
+// on the usage line and a NOTE, never a price somebody made up.
+func (r *Registry) RateFor(model string) (Rate, bool) {
+	model = strings.TrimSpace(model)
+	if r == nil || model == "" {
+		return Rate{}, false
+	}
+	for _, rate := range r.Rates {
+		if rate.Model == model {
+			return rate, true
+		}
+	}
+	return Rate{}, false
+}
+
+// USD is what a call of this many tokens cost at this rate. The counters are
+// per million, so the arithmetic is done once, here, and never at a call site.
+func (r Rate) USD(inputTokens, outputTokens int) float64 {
+	return float64(inputTokens)/1e6*r.InputUSD + float64(outputTokens)/1e6*r.OutputUSD
 }
 
 // ByName finds one mind.
