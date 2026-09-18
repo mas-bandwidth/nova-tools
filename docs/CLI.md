@@ -35,6 +35,7 @@ nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the materia
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>   # append one receipt, refusing a verb the list does not declare
 nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--require-all]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
+nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>]   # are we converging: one line per stream, now against --since, with the ratio and the trend
 ```
 
 ### First run
@@ -150,6 +151,49 @@ renamed, so two benches recording at once never interleave. `record` refuses a
 does, so a receipt is stranded at the moment it is written rather than found
 months later in a count. Keep the directory in a repository: it is the record,
 and it should outlive the bench.
+
+### Are we converging
+
+Glenn, 2026-09-15: *convergence is the health metric* — the contraction ratio
+per stream, every tick. `convergence` is that reading, mechanised: seven streams,
+each read from a real source, each printed as a number now, the same number at
+`--since`, the ratio between them and a trend in that stream's own direction of
+travel.
+
+```
+$ nova-check convergence --repo mas-bandwidth/nova-tools \
+    --ledger ~/rowan-new/reports/pitstop-tests-2026-09-17.md \
+    --receipts ~/rowan-working/dogfood \
+    --retired ~/rowan-working/bin/retired/README.md \
+    --bin ~/rowan-working/bin --repo-dir . \
+    --since 2026-09-18T00:00:00Z --state ~/rowan-working/convergence.json
+CONVERGENCE LANDING now=2 before=5 ratio=0.40 trend=contracting measure=rounds-per-batch batches=4 per-hour=0.25
+CONVERGENCE CLASSES now=29 before=27 ratio=1.07 trend=contracting measure=class-test-index-entries rev=04bb4e1c9f2a
+CONVERGENCE SCRIPTS now=42 before=66 ratio=0.64 trend=contracting measure=scripts-left-in-bin retired-in-window=24
+CONVERGENCE PRS now=11 before=14 ratio=0.79 trend=contracting measure=open-pull-requests closed=9 opened=6
+CONVERGENCE EDGES now=6 before=4 ratio=1.50 trend=widening measure=open-edges rounds=3 not-ok=2
+CONVERGENCE FLEET now=- before=- ratio=- trend=absent measure=units-off-the-one-build source=--versions
+CONVERGENCE LEDGER now=5 before=- ratio=- trend=flat measure=rows-not-yet-pass rows=31 open=5
+CONVERGENCE WARN streams=6 contracting=4 widening=EDGES absent=FLEET
+```
+
+**Reading it.** `ratio` is always `now/before`, whichever way the stream
+converges, so one column means one thing down the whole reading; `CLASSES` is
+the one stream that converges upwards, because a class made mechanical cannot
+come back. A stream whose source was not named is `trend=absent` with the flag
+that would have fed it, and is counted in `absent=` rather than as a zero — a
+number nobody measured, printed as a number, is worse than not printing it.
+`WARN` says a stream is widening; the exit code is 1 only when one has widened
+on **two consecutive ticks**, which is a fact about history, so it lives in
+`--state` and nowhere else. `--json` prints the same reading as one object.
+
+**What the flags want.** `--repo` is a name on a forge, never a directory;
+`--ledger` is the pit-stop ledger whose rows carry PASS, FAIL, PARTIAL or TODO;
+`--receipts` is the same directory `dogfood` reads; `--retired` is the retired
+scripts README, whose dated rows say what the window retired, and `--bin` is
+what is left. `--since` is an instant or a duration (`24h`), and there is no
+default, because the window is the whole question. The rules and the refusals
+are in [SPEC-CHECK.md](SPEC-CHECK.md).
 
 ## nova-self-talk
 
