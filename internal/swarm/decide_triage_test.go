@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -163,6 +164,14 @@ func TestTriageDecideReasonProviderError(t *testing.T) {
 	if strings.Contains(gotBody, "sk-abcdefgh12345678") {
 		t.Fatalf("request body leaks the redacted key: %q", gotBody)
 	}
+	// The HTTP provider call's usage is recorded in pool usage.tsv
+	rawUsage, err := os.ReadFile(p.Path("usage.tsv"))
+	if err != nil {
+		t.Fatalf("usage.tsv was not written: %v", err)
+	}
+	if !strings.Contains(string(rawUsage), "10\t3") {
+		t.Fatalf("usage.tsv missing tokens 10 and 3:\n%s", string(rawUsage))
+	}
 }
 
 // The same contract with no socket: the state triage builds starts with the
@@ -286,5 +295,144 @@ func TestTriageDecideBelowFloorAbstains(t *testing.T) {
 	}
 	if !strings.Contains(line, "result=ok") {
 		t.Fatalf("below the floor the pool's own class stands: %q", line)
+	}
+}
+
+// Provider usage from the Jev seam is recorded through the card-usage contract
+// (AppendCardUsage), matching nova-decide route (jev:swarm-usage).
+func TestTriageDecideRecordsProviderUsage(t *testing.T) {
+	p, id := decideTestPool(t, "starting up\nInternal server error\n")
+	customUsage := filepath.Join(t.TempDir(), "custom-usage.tsv")
+
+	withUsage := func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+		return map[string]decide.Answer{
+			"reason":      {Type: "choice", Choice: "provider_error", Probabilities: map[string]float64{"provider_error": 0.95}, Confidence: 0.95},
+			"needs_human": {Type: "noul", Noul: 0.10, Confidence: 0.10},
+		}, decide.Usage{InputTokens: 42, OutputTokens: 17, HasInput: true, HasOutput: true}, nil
+	}
+
+	var out, errOut bytes.Buffer
+	rc := Triage(TriageInput{
+		Pool: p, Max: 0, All: true,
+		Decide: true, Floor: 0.9, decideDo: withUsage,
+		UsagePath: customUsage,
+		Stdout: &out, Stderr: &errOut, Now: decideTestNow,
+	})
+	if rc != 0 {
+		t.Fatalf("triage rc = %d, stderr: %s", rc, errOut.String())
+	}
+
+	// Verify custom usage TSV was written
+	raw, err := os.ReadFile(customUsage)
+	if err != nil {
+		t.Fatalf("custom usage.tsv was not written: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("custom usage.tsv must hold header and 1 row, got %d:\n%s", len(lines), string(raw))
+	}
+	head := strings.Split(lines[0], "\t")
+	row := strings.Split(lines[1], "\t")
+	lookup := map[string]string{}
+	for i, col := range head {
+		if i < len(row) {
+			lookup[col] = row[i]
+		}
+	}
+	if lookup["job"] != id {
+		t.Errorf("job = %q, want %s", lookup["job"], id)
+	}
+	if lookup["attempt"] != "1" {
+		t.Errorf("attempt = %q, want 1", lookup["attempt"])
+	}
+	if lookup["provider"] != "typesafe" {
+		t.Errorf("provider = %q, want typesafe", lookup["provider"])
+	}
+	if lookup["model"] != decide.DefaultModel {
+		t.Errorf("model = %q, want %s", lookup["model"], decide.DefaultModel)
+	}
+	if lookup["tokens_in"] != "42" {
+		t.Errorf("tokens_in = %q, want 42", lookup["tokens_in"])
+	}
+	if lookup["tokens_out"] != "17" {
+		t.Errorf("tokens_out = %q, want 17", lookup["tokens_out"])
+	}
+	if lookup["rc"] != "0" {
+		t.Errorf("rc = %q, want 0", lookup["rc"])
+	}
+
+	// Verify pool usage.tsv was also written
+	poolRaw, err := os.ReadFile(p.Path("usage.tsv"))
+	if err != nil {
+		t.Fatalf("pool usage.tsv was not written: %v", err)
+	}
+	if !strings.Contains(string(poolRaw), id) || !strings.Contains(string(poolRaw), "typesafe") {
+		t.Fatalf("pool usage.tsv content mismatch:\n%s", string(poolRaw))
+	}
+
+	// Second run must be idempotent: does not duplicate usage rows for the same (task, attempt)
+	rc2 := Triage(TriageInput{
+		Pool: p, Max: 0, All: true,
+		Decide: true, Floor: 0.9, decideDo: withUsage,
+		UsagePath: customUsage,
+		Stdout: &out, Stderr: &errOut, Now: decideTestNow,
+	})
+	if rc2 != 0 {
+		t.Fatalf("second triage rc = %d", rc2)
+	}
+	raw2, _ := os.ReadFile(customUsage)
+	lines2 := strings.Split(strings.TrimRight(string(raw2), "\n"), "\n")
+	if len(lines2) != 2 {
+		t.Fatalf("second triage run must not duplicate usage row, got %d lines", len(lines2))
+	}
+}
+
+// A failed provider call still records its usage with rc=2 before failing.
+func TestTriageDecideUsageOnFailure(t *testing.T) {
+	p, id := decideTestPool(t, "starting up\nInternal server error\n")
+	usageFile := filepath.Join(t.TempDir(), "usage.tsv")
+
+	failedCall := func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+		return nil, decide.Usage{InputTokens: 100, OutputTokens: 0, HasInput: true, HasOutput: false}, fmt.Errorf("provider 500 error")
+	}
+
+	var out, errOut bytes.Buffer
+	rc := Triage(TriageInput{
+		Pool: p, Max: 0, All: true,
+		Decide: true, Floor: 0.9, decideDo: failedCall,
+		UsagePath: usageFile,
+		Stdout: &out, Stderr: &errOut, Now: decideTestNow,
+	})
+	if rc != 0 {
+		t.Fatalf("triage rc = %d", rc)
+	}
+
+	raw, err := os.ReadFile(usageFile)
+	if err != nil {
+		t.Fatalf("usage.tsv not written on failure: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("usage.tsv want 2 lines, got %d:\n%s", len(lines), string(raw))
+	}
+	head := strings.Split(lines[0], "\t")
+	row := strings.Split(lines[1], "\t")
+	lookup := map[string]string{}
+	for i, col := range head {
+		if i < len(row) {
+			lookup[col] = row[i]
+		}
+	}
+	if lookup["job"] != id {
+		t.Errorf("job = %q, want %s", lookup["job"], id)
+	}
+	if lookup["tokens_in"] != "100" {
+		t.Errorf("tokens_in = %q, want 100", lookup["tokens_in"])
+	}
+	if lookup["tokens_out"] != "-" {
+		t.Errorf("tokens_out = %q, want - for unreported counter", lookup["tokens_out"])
+	}
+	if lookup["rc"] != "2" {
+		t.Errorf("rc = %q, want 2 on failed call", lookup["rc"])
 	}
 }

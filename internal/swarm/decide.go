@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -164,14 +165,20 @@ func decideAttempt(p *Pool, sc Sidecar) int {
 	return 1
 }
 
+// usageProvider is who the tokens were spent with, in the usage file's own
+// vocabulary: the Jev endpoint is TypeSafe's.
+const usageProvider = "typesafe"
+
 // taskDecider carries one triage run's Decide call, floor and the set of
 // (task, attempt) pairs already logged, so a second run adds nothing.
 type taskDecider struct {
-	do    decideFunc
-	floor float64
-	pool  *Pool
-	now   func() time.Time
-	seen  map[string]bool
+	do        decideFunc
+	floor     float64
+	pool      *Pool
+	now       func() time.Time
+	usagePath string
+	seen      map[string]bool
+	seenUsage map[string]bool
 }
 
 // decideFunc is one typed decision: the seam the httptest fake in tests and
@@ -179,11 +186,19 @@ type taskDecider struct {
 // provider over the network.
 type decideFunc func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error)
 
-func newTaskDecider(p *Pool, do decideFunc, floor float64, now func() time.Time) *taskDecider {
+func newTaskDecider(p *Pool, do decideFunc, floor float64, now func() time.Time, usagePath string) *taskDecider {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	d := &taskDecider{do: do, floor: floor, pool: p, now: now, seen: map[string]bool{}}
+	d := &taskDecider{
+		do:        do,
+		floor:     floor,
+		pool:      p,
+		now:       now,
+		usagePath: usagePath,
+		seen:      map[string]bool{},
+		seenUsage: map[string]bool{},
+	}
 	raw, err := readRegular(p.Path(DecisionsFile))
 	if err != nil {
 		return d
@@ -193,7 +208,9 @@ func newTaskDecider(p *Pool, do decideFunc, floor float64, now func() time.Time)
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
 			continue
 		}
-		d.seen[fmt.Sprintf("%s\x00%d", e.Task, e.Attempt)] = true
+		key := fmt.Sprintf("%s\x00%d", e.Task, e.Attempt)
+		d.seen[key] = true
+		d.seenUsage[key] = true
 	}
 	return d
 }
@@ -203,7 +220,10 @@ func newTaskDecider(p *Pool, do decideFunc, floor float64, now func() time.Time)
 // answered without a reason: the caller then keeps today's bare line.
 func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok bool) {
 	state := buildDecideState(d.pool, sc)
-	answers, _, err := d.do(context.Background(), state, decideQuestions())
+	start := d.now()
+	answers, usage, err := d.do(context.Background(), state, decideQuestions())
+	end := d.now()
+	d.recordUsage(sc, start, end, usage, err != nil)
 	if err != nil {
 		return "", false
 	}
@@ -223,6 +243,44 @@ func (d *taskDecider) decideOne(sc Sidecar, class string) (suffix string, ok boo
 		oneline.Field(decision), reason.Confidence, human, d.floor)
 	d.log(sc, class, decision, reason.Confidence, human)
 	return suffix, true
+}
+
+// recordUsage appends one row to the usage TSV for this provider call through
+// the card-usage contract (AppendCardUsage), matching nova-decide route.
+func (d *taskDecider) recordUsage(sc Sidecar, start, end time.Time, usage decide.Usage, failed bool) {
+	attempt := decideAttempt(d.pool, sc)
+	key := fmt.Sprintf("%s\x00%d", sc.ID, attempt)
+	if d.seenUsage[key] || d.seen[key] {
+		return
+	}
+	row := UsageRow{
+		"job":      sc.ID,
+		"attempt":  strconv.Itoa(attempt),
+		"started":  Stamp(start),
+		"ended":    Stamp(end),
+		"rc":       "0",
+		"provider": usageProvider,
+		"model":    decide.DefaultModel,
+	}
+	if usage.HasInput || usage.InputTokens > 0 {
+		row["tokens_in"] = strconv.Itoa(usage.InputTokens)
+	}
+	if usage.HasOutput || usage.OutputTokens > 0 {
+		row["tokens_out"] = strconv.Itoa(usage.OutputTokens)
+	}
+	if failed {
+		row["rc"] = "2"
+	}
+	if d.usagePath != "" {
+		_ = AppendCardUsage(d.usagePath, row)
+	}
+	if sc.Job != "" {
+		_ = AppendCardUsage(filepath.Join(sc.Job, "usage.tsv"), row)
+	}
+	if d.pool != nil {
+		_ = AppendCardUsage(d.pool.Path("usage.tsv"), row)
+	}
+	d.seenUsage[key] = true
 }
 
 // log appends one JSON line per task to <pool>/decisions.log, idempotent per
