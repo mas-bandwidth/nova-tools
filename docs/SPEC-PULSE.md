@@ -983,7 +983,11 @@ depth and headroom, never from slot count alone.
     one step; release unlinks only a record whose nonce is still the handle's; stale recovery
     is serialized through `<queue>/.lock.take` and re-reads the holder under it; and
     reentrancy is by nonce, never by pid, because a recycled pid is not the same process.
-    Replay: `second-writer-refuses-naming-the-holder`.
+    **The take is a lock too**, held to every one of these rules: a record of its own, and
+    cleared only when its taker is PROVABLY GONE. Age is never evidence — a recoverer that is
+    merely slow, robbed of its take by the clock, puts two writers inside the recovery the
+    take exists to serialize. Replays: `second-writer-refuses-naming-the-holder`,
+    `lock-is-atomic-and-identity-checked`.
 11. **One verb is the loop.** `nova-pulse loop` is one tick of `run`, then `fill`, then
     `manager`, under one lock, then the launch-dead probe, then one `LOOP TICK` line. Every
     placement on either road is held against the same `--machines` registry and `--lanes`
@@ -1675,6 +1679,11 @@ handoff (rule **The manager tier**).
     `TestPausedPublisherIsNeverRobbed`, `TestOldOwnerReleaseDoesNotDeleteItsReplacement`,
     `TestCompetingTakeoverIsSerialized`, `TestReentrancyIsByNonceNotByPid`
     (`internal/pulse/queuelock_test.go`).
+57. `paused-taker-is-never-robbed`: a `<queue>/.lock.take` whose owner is ALIVE is never
+    cleared, however old the file is; one whose owner is gone is cleared by that record and
+    not by the clock; and a recovery releases only the take it wrote.
+    `TestPausedTakerIsNeverRobbed`, `TestDeadTakerIsClearedByIdentity`,
+    `TestRecoveryReleasesOnlyItsOwnTake` (`internal/pulse/queuelock_test.go`).
 51. `status-contraction-window-and-threshold-stay-visible` (#177: *avoid reacting to one
     arbitrary sampling instant; configurable windows and thresholds must stay visible*): every
     `CONTRACTION` line names the sustained window and the threshold that produced its verdict

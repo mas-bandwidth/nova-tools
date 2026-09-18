@@ -1449,10 +1449,13 @@ orphan, and deleted a live owner's lock. Four rules close that:
 2. **Release is identity-checked.** Every record carries a nonce, and a lock is
    unlinked only when the record on disk is still the one that handle wrote. An owner
    whose lock was recovered out from under it does not then delete its replacement's.
-3. **Stale recovery is serialized** through a second `O_EXCL` file,
-   `<queue>/.lock.take`, and the holder is read *again* under it, because the one the
-   caller saw may have been replaced in between. A `.lock.take` whose own holder died
-   is cleared once, after a minute.
+3. **Stale recovery is serialized** through `<queue>/.lock.take`, and the holder is
+   read *again* under it, because the one the caller saw may have been replaced in
+   between. The take is a lock too, held to these same rules: it carries its taker's
+   record, and it is cleared only when that taker is **provably gone** — never by
+   age. Age is not death: a recoverer that is merely slow, a stopped process, a
+   paused container, a machine that swapped, was robbed of the take while it was
+   alive and mid-recovery, which put two writers inside the thing the file excludes.
 4. **Reentrancy is by nonce, not by pid.** `loop` runs three verbs that each ask for
    the lock and one process is one writer — but "the holder's pid equals mine" would
    let a recycled pid walk into a lock this process never took. A lock is ours when

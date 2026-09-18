@@ -211,3 +211,8 @@ handoff (rule **The manager tier**).
     `TestPausedPublisherIsNeverRobbed`, `TestOldOwnerReleaseDoesNotDeleteItsReplacement`,
     `TestCompetingTakeoverIsSerialized`, `TestReentrancyIsByNonceNotByPid`
     (`internal/pulse/queuelock_test.go`).
+57. `paused-taker-is-never-robbed`: a `<queue>/.lock.take` whose owner is ALIVE is never
+    cleared, however old the file is; one whose owner is gone is cleared by that record and
+    not by the clock; and a recovery releases only the take it wrote.
+    `TestPausedTakerIsNeverRobbed`, `TestDeadTakerIsClearedByIdentity`,
+    `TestRecoveryReleasesOnlyItsOwnTake` (`internal/pulse/queuelock_test.go`).

@@ -242,12 +242,13 @@ func TestCompetingTakeoverIsSerialized(t *testing.T) {
 	queue := t.TempDir()
 	writeHolder(t, queue, deadPID, "loop")
 
-	// The second recoverer is already inside the recovery window: its .lock.take is there.
+	// A LIVE recoverer is already inside the window: its .lock.take is there and its owner
+	// is running.
 	take := filepath.Join(queue, TakeLockName)
-	if err := os.WriteFile(take, []byte("pid=1\n"), 0o644); err != nil {
+	if err := os.WriteFile(take, []byte("pid="+itoa(livePID)+"\nstart=-\nnonce=theirs\nverb=recover\nat=2026-09-18T12:00:00Z\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := lockQueueAt(queue, "fill", time.Now().UTC(), livePID)
+	_, err := LockQueue(queue, "fill")
 	var locked *LockedError
 	if !errors.As(err, &locked) {
 		t.Fatalf("two writers recovered one stale lock at once: err=%v", err)
@@ -256,15 +257,12 @@ func TestCompetingTakeoverIsSerialized(t *testing.T) {
 		t.Fatalf("the refusal does not say a recovery is in flight: %v", err)
 	}
 
-	// A recoverer that died mid-way leaves .lock.take behind; it is cleared once, past the
-	// stale bound, and the next turn takes the lock.
-	later := time.Now().UTC().Add(2 * takeStale)
-	if _, err := lockQueueAt(queue, "fill", later, livePID); err == nil {
-		t.Fatalf("an abandoned .lock.take was cleared and the lock taken on the same turn")
-	}
-	lock, err := lockQueueAt(queue, "fill", later, livePID)
+	// The recoverer dies. Now -- and only now, by its record and not by the clock -- its
+	// take is cleared and the next writer recovers the lock.
+	lockAlive = func(pid int, _ string) bool { return pid == os.Getpid() }
+	lock, err := LockQueue(queue, "fill")
 	if err != nil {
-		t.Fatalf("an abandoned recovery blocked the queue forever: %v", err)
+		t.Fatalf("a dead recovery blocked the queue forever: %v", err)
 	}
 	lock.Release()
 }
@@ -294,5 +292,79 @@ func TestReentrancyIsByNonceNotByPid(t *testing.T) {
 	(&QueueLock{path: path, nonce: "invented", own: true}).Release()
 	if got := readLockHolder(path); got.Nonce != "notours" {
 		t.Fatalf("a handle with an invented identity deleted somebody's lock: %+v", got)
+	}
+}
+
+// TestPausedTakerIsNeverRobbed: `.lock.take` IS A LOCK, and the first version gave it the
+// one rule the lock beside it is not allowed -- takeover by AGE. A recoverer that is simply
+// slow (a stopped process, a paused container, a machine that swapped) had its take removed
+// after a minute of wall clock while it was alive and mid-recovery, and then two writers
+// were inside the recovery the take exists to serialize. Age is not death: a taker is
+// cleared only when its own record says its owner is gone (Stella's re-read of #1430).
+func TestPausedTakerIsNeverRobbed(t *testing.T) {
+	teachLiveness(t)
+	queue := t.TempDir()
+	take := filepath.Join(queue, TakeLockName)
+	writeHolder(t, queue, deadPID, "loop") // the stale lock being recovered
+
+	// A LIVE taker, holding the recovery, whose file is an hour old.
+	if err := os.WriteFile(take, []byte("pid="+itoa(livePID)+"\nstart=-\nnonce=theirs\nverb=recover\nat=2026-09-18T11:00:00Z\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(take, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LockQueue(queue, "fill")
+	var locked *LockedError
+	if !errors.As(err, &locked) {
+		t.Fatalf("a live taker was robbed of the recovery: err=%v", err)
+	}
+	if got := readLockHolder(take); got.Nonce != "theirs" {
+		t.Fatalf("the live taker's record was taken by age: %+v", got)
+	}
+}
+
+// TestDeadTakerIsClearedByIdentity: the other half. A recoverer that really did die leaves
+// its take behind, and the queue may not be blocked forever -- but it is cleared because its
+// OWNER IS GONE, never because the clock moved.
+func TestDeadTakerIsClearedByIdentity(t *testing.T) {
+	teachLiveness(t)
+	queue := t.TempDir()
+	writeHolder(t, queue, deadPID, "loop")
+	if err := os.WriteFile(filepath.Join(queue, TakeLockName),
+		[]byte("pid="+itoa(deadPID)+"\nstart=-\nnonce=gone\nverb=recover\nat=2026-09-18T11:00:00Z\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Fresh mtime: it is not the clock that clears this, it is the dead pid.
+	lock, err := LockQueue(queue, "fill")
+	if err != nil {
+		t.Fatalf("a dead recoverer blocked the queue forever: %v", err)
+	}
+	defer lock.Release()
+	if _, err := os.Stat(filepath.Join(queue, TakeLockName)); !os.IsNotExist(err) {
+		t.Fatalf("the finished recovery left its take behind: %v", err)
+	}
+}
+
+// TestRecoveryReleasesOnlyItsOwnTake: the deferred cleanup removed `.lock.take`
+// unconditionally, so a recoverer that had already lost its take to a rightful clearing then
+// deleted the take of whoever replaced it -- two writers inside the recovery again, by the
+// very line meant to tidy up. Release is identity-checked, exactly as the lock's is.
+func TestRecoveryReleasesOnlyItsOwnTake(t *testing.T) {
+	teachLiveness(t)
+	queue := t.TempDir()
+	take := filepath.Join(queue, TakeLockName)
+	if err := os.WriteFile(take, []byte("pid="+itoa(livePID)+"\nstart=-\nnonce=somebodyelse\nverb=recover\nat=2026-09-18T12:00:00Z\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	releaseRecord(take, "ours")
+	if got := readLockHolder(take); got.Nonce != "somebodyelse" {
+		t.Fatalf("a recoverer's cleanup deleted somebody else's take: %+v", got)
+	}
+	releaseRecord(take, "somebodyelse")
+	if _, err := os.Stat(take); !os.IsNotExist(err) {
+		t.Fatalf("a recoverer could not release its own take: %v", err)
 	}
 }

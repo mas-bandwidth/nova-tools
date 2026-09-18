@@ -21,10 +21,13 @@ package pulse
 //     when the record on disk is still the one this handle wrote. An owner whose lock was
 //     recovered out from under it does not then delete its replacement's.
 //  3. STALE RECOVERY IS SERIALIZED. Deciding a lock is dead and taking it over happens under
-//     a second `O_EXCL` file, <queue>/.lock.take, so two recoverers cannot both unlink and
-//     both relink -- and the holder is read AGAIN under it, because the one the caller saw
-//     may have been replaced in between. A .lock.take whose own holder died is cleared once,
-//     past takeStale.
+//     <queue>/.lock.take, so two recoverers cannot both unlink and both relink -- and the
+//     holder is read AGAIN under it, because the one the caller saw may have been replaced
+//     in between. THE TAKE IS A LOCK TOO and is held to every rule here: its own record, and
+//     cleared only when its taker is provably gone. AGE IS NOT DEATH. It was cleared past a
+//     minute of wall clock for one day, and a recoverer that was merely slow -- a stopped
+//     process, a paused container, a machine that swapped -- was robbed of it while alive
+//     and mid-recovery, which is two writers inside the very thing it excludes.
 //  4. REENTRANCY IS BY NONCE, NOT BY PID. `loop` runs three verbs that each ask for this
 //     lock, and one process is one writer -- but a pid is a small number the operating
 //     system hands out again, and "the holder's pid equals mine" would let a recycled pid
@@ -66,13 +69,16 @@ var (
 // not a card-<n>.md, so every glob the queue verbs run steps over it.
 const QueueLockName = ".lock"
 
-// TakeLockName serializes stale recovery, and takeStale is how long a recovery may hold it
-// before it is itself treated as abandoned. Recovery is three system calls, so a minute is a
-// process that died in the middle of them and not one that is slow.
-const (
-	TakeLockName = ".lock.take"
-	takeStale    = time.Minute
-)
+// TakeLockName serializes stale recovery. IT IS A LOCK, and it is held to the same rule as
+// the one beside it: it carries its taker's record, it is cleared only when that taker is
+// provably gone, and it is released only by the taker that wrote it.
+//
+// It was cleared BY AGE for one day: past a minute of wall clock, whoever came along took
+// it. Age is not death. A recoverer that is merely slow -- a stopped process, a paused
+// container, a machine that swapped -- was robbed of the take while it was alive and
+// mid-recovery, and then two writers were inside the recovery the take exists to serialize
+// (Stella's re-read of #1430).
+const TakeLockName = ".lock.take"
 
 // held is the nonces THIS process is holding, by lock path. It is what makes reentrancy
 // exact: `loop` asks for the lock it already has, and a recycled pid cannot.
@@ -156,7 +162,7 @@ func lockQueueAt(queue, verb string, now time.Time, self int) (*QueueLock, error
 	// Two turns and no more: take it, or recover ONE stale holder and take it. A loop here
 	// would be a wait, and a wait with no deadline is the thing we do not write.
 	for turn := 0; turn < 2; turn++ {
-		nonce, err := publishLock(path, verb, now, self)
+		nonce, err := publishRecord(path, verb, now, self)
 		if err == nil {
 			// Only a lock THIS process holds goes in the registry; a caller standing in for
 			// another process must not leave our name on its lock.
@@ -181,11 +187,12 @@ func lockQueueAt(queue, verb string, now time.Time, self int) (*QueueLock, error
 	return nil, &LockedError{Path: path, Holder: readLockHolder(path)}
 }
 
-// publishLock writes the whole record to a temp file beside the lock and hard-links it onto
-// the lock name. `link` fails with ErrExist when the name is taken, so it is BOTH the
-// exclusion and the publication: the lock path never exists holding half a record, which is
-// the window the first version left open (Stella's cold read, defect 2).
-func publishLock(path, verb string, now time.Time, self int) (string, error) {
+// publishRecord writes the whole record to a temp file beside the name and hard-links it
+// onto it. `link` fails with ErrExist when the name is taken, so it is BOTH the exclusion
+// and the publication: the path never exists holding half a record, which is the window the
+// first version left open (Stella's cold read, defect 2). Both locks are taken this way --
+// <queue>/.lock and the <queue>/.lock.take that serializes its recovery.
+func publishRecord(path, verb string, now time.Time, self int) (string, error) {
 	nonce, err := lockNonce()
 	if err != nil {
 		return "", err
@@ -211,35 +218,70 @@ func publishLock(path, verb string, now time.Time, self int) (string, error) {
 	return nonce, nil
 }
 
-// recoverStale takes a dead holder's lock away, under its own O_EXCL file so two recoverers
-// cannot both unlink and both relink.
+// releaseRecord unlinks a record ONLY when it is still the one this nonce wrote. A cleanup
+// that removes the path whatever is at it is a cleanup that deletes the file of whoever
+// rightfully replaced you -- which is two writers inside the thing the file was excluding.
+func releaseRecord(path, nonce string) {
+	if nonce == "" || readLockHolder(path).Nonce != nonce {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+// clearDeadRecord removes a lock or a take whose owner is PROVABLY GONE, and only while it
+// is still the same gone owner. It never judges by age: a process is dead when the kernel
+// says so, and the clock says nothing at all about a process that is merely slow.
+func clearDeadRecord(path string, was LockHolder) bool {
+	if lockHolderLive(was) {
+		return false
+	}
+	if again := readLockHolder(path); again != was {
+		return false // it moved under us; it is not ours to clear
+	}
+	return os.Remove(path) == nil
+}
+
+// recoverStale takes a dead holder's lock away, under <queue>/.lock.take so two recoverers
+// cannot both unlink and both relink. The take is taken the same way the lock is, and it is
+// held to the same three rules: whole record or nothing, cleared only when its owner is
+// provably gone, released only by the taker that wrote it.
 func recoverStale(path string, now time.Time) error {
 	take := filepath.Join(filepath.Dir(path), TakeLockName)
-	f, err := os.OpenFile(take, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	nonce, err := publishRecord(take, "recover", now, os.Getpid())
 	if err != nil {
 		if !errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("cannot start the recovery of %s: %s", oneline.Field(path), oneline.Err(err))
 		}
-		// Somebody is already recovering. A recoverer that died mid-way leaves this behind,
-		// so it is cleared once past takeStale; this turn gives way either road.
-		if info, statErr := os.Stat(take); statErr == nil && now.Sub(info.ModTime()) > takeStale {
-			_ = os.Remove(take)
+		// Somebody else is recovering. A LIVE taker is never disturbed, however long it has
+		// been holding: age is not death, and a slow recoverer robbed of its take puts two
+		// writers inside the recovery this file exists to serialize.
+		taker := readLockHolder(take)
+		if !clearDeadRecord(take, taker) {
+			return &LockedError{Path: path, Holder: taker,
+				Why: "another writer is recovering a stale lock right now"}
 		}
-		return &LockedError{Path: path, Holder: readLockHolder(path),
-			Why: "another writer is recovering a stale lock right now"}
+		// The dead taker is gone. One more attempt, and if somebody beat us to it, we give
+		// way rather than loop: a wait with no deadline is the thing we do not write.
+		nonce, err = publishRecord(take, "recover", now, os.Getpid())
+		if err != nil {
+			return &LockedError{Path: path, Holder: readLockHolder(take),
+				Why: "another writer is recovering a stale lock right now"}
+		}
 	}
-	_, _ = f.WriteString(fmt.Sprintf("pid=%d\nat=%s\n", os.Getpid(), now.Format(time.RFC3339)))
-	_ = f.Close()
-	defer os.Remove(take)
+	defer releaseRecord(take, nonce)
 
-	// Read it AGAIN here: between the caller's read and this file, the dead holder may have
-	// been cleared by somebody else and a live one put in its place.
+	// Read the LOCK again here: between the caller's read and this take, the dead holder may
+	// have been cleared by somebody else and a live one put in its place.
 	holder := readLockHolder(path)
 	if lockHolderLive(holder) {
 		return &LockedError{Path: path, Holder: holder}
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("the stale lock %s could not be removed: %s", oneline.Field(path), oneline.Err(err))
+	if !clearDeadRecord(path, holder) {
+		if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
+			return nil // already gone: the next turn takes it
+		}
+		return &LockedError{Path: path, Holder: readLockHolder(path),
+			Why: "the stale lock moved while it was being recovered"}
 	}
 	return nil
 }
@@ -253,11 +295,7 @@ func (l *QueueLock) Release() {
 		return
 	}
 	l.own = false
-	if readLockHolder(l.path).Nonce != l.nonce {
-		forgetNonce(l.path)
-		return
-	}
-	_ = os.Remove(l.path)
+	releaseRecord(l.path, l.nonce)
 	forgetNonce(l.path)
 }
 
