@@ -232,7 +232,8 @@ emits; a verb that only reads does not. A read that emitted would double the fle
 to say that somebody looked at something.
 
 **What emits today.** The five below join the merge lane (`batch`, `queue`, `react`), the fill
-loop and `nova-work events`:
+loop, `nova-pulse launch` (its own start/refuse/done, though not yet one line per card
+admitted) and `nova-work events`:
 
 | tool | verb | kinds beside `start`/`done`/`refuse` | the message's own fields |
 | --- | --- | --- | --- |
