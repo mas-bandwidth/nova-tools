@@ -36,6 +36,13 @@ type Reactor struct {
 
 // NewReactor returns a reactor. A nil Enqueue lands PRs in the merge:queue set, which is
 // the exactly-once shape an approval needs.
+//
+// THAT SET IS NOT A MERGE QUEUE. It is this session's own list of pull requests whose checks
+// came back green, read by whoever builds the next batch; nothing in it reaches a forge.
+// Admission to the forge's merge queue is internal/merge.Enqueuer.Enqueue and its one
+// caller, `nova-merge land`, which takes a batch and nothing else (Glenn, 2026-09-18). A
+// caller that injected an Enqueue reaching a forge directly would be a second entrance, and
+// internal/ci's class rule refuses the spellings that used to build one.
 func NewReactor(rdb *redis.Client, forge Forge, enqueue func(context.Context, int, string) error, log io.Writer) *Reactor {
 	r := &Reactor{RDB: rdb, Forge: forge, Enqueue: enqueue, Log: log, sent: map[int]string{}}
 	if r.Enqueue == nil {
