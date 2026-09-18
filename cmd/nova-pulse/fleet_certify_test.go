@@ -340,6 +340,28 @@ func TestTheLaunchdAgentRunsTheVerbTheLoopNeeds(t *testing.T) {
 			t.Errorf("the agent's command carries no %q:\n%s", want, argv)
 		}
 	}
+	// THE ESCALATION HAS SOMEWHERE TO GO. `certify` does its repair round and then, for
+	// whatever still fails, writes one CERTIFY ESCALATE line and sends one note. Without
+	// `--bus`, `--as` and `--to` the note is never sent -- the run says
+	// `escalation=unsent reason=no-bus` and carries on -- so the six-hourly agent would
+	// find a broken bench, try the repairs, fail, and tell nobody. A line in a log file
+	// nobody opens is the loop half-built: the whole reason to mechanize certification is
+	// that a machine going bad reaches a person without one being at the terminal.
+	for _, want := range []string{
+		"--bus /Users/glenn/rowan-working/rowan-stella",
+		"--as Rowan",
+		"--to fleet",
+	} {
+		if !strings.Contains(argv, want) {
+			t.Errorf("the agent cannot escalate: its command carries no %q:\n%s", want, argv)
+		}
+	}
+	// --bus without --as, or without --to, is exit 2 at the flag check, which for a timer
+	// is a refusal every six hours and no certification at all. The three travel together.
+	hasBus := strings.Contains(argv, "--bus ")
+	if hasBus != strings.Contains(argv, "--as ") || hasBus != strings.Contains(argv, "--to ") {
+		t.Errorf("--bus, --as and --to do not all appear; `fleet certify` refuses that invocation at exit 2:\n%s", argv)
+	}
 	// Every flag in the argv must be one the verb actually takes, or the agent refuses with
 	// exit 2 every six hours and the only record of it is a log nobody opens.
 	for _, field := range p.Arrays[0].Strings {
