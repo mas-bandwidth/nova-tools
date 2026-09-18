@@ -45,11 +45,16 @@ func applyHome(t *testing.T) string {
 	if err := os.MkdirAll(gobin, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The shadows are written NOT EXECUTABLE, and that is a darwin lesson paid for on the
+	// studio shard: macOS scans every new binary, and a scan that starts while the remedy
+	// moves one holds the directory open long enough for the test's own TempDir cleanup to
+	// fail with "directory not empty". What the remedy reads is the NAME, so a plain file
+	// exercises it exactly as well.
 	for _, tool := range []string{"nova-merge", "nova-swarm", "nova-pulse"} {
-		writeFleetVerbsExe(t, filepath.Join(gobin, tool), "#!/bin/sh\necho 'v0.15.3'\n")
+		writeFleetVerbsFile(t, filepath.Join(gobin, tool), "v0.15.3 (a stale go install build)\n")
 	}
 	// Something that is NOT a nova tool, to prove the remedy moves what it says it moves.
-	writeFleetVerbsExe(t, filepath.Join(gobin, "staticcheck"), "#!/bin/sh\nexit 0\n")
+	writeFleetVerbsFile(t, filepath.Join(gobin, "staticcheck"), "not a nova tool\n")
 	writeFleetVerbsExe(t, filepath.Join(home, "sdk", "go1.26.5", "bin", "go"),
 		"#!/bin/sh\necho 'go version go1.26.5 linux/amd64'\n")
 	runner := filepath.Join(home, "runner-nova-tools-1")
@@ -309,4 +314,16 @@ func applyRead(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+// writeFleetVerbsFile writes a plain, non-executable file: see applyHome on why a fixture
+// that is moved must not be an executable on darwin.
+func writeFleetVerbsFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
