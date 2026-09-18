@@ -224,6 +224,7 @@ func TestFillDryRunHoldsALaneWithoutABench(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := run([]string{"fill",
 		"--ready", ready, "--launched", launched, "--lanes", lanes,
+		"--machines", fillMachines(t, dir, "bench-a"),
 		"--bench", "bench-a", "--capacity", "10", "--once",
 		"--launcher", filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),
 	}, &out, &errb, time.Now().UTC())
@@ -308,6 +309,7 @@ func TestLaunchPassesTheDeadlineFlag(t *testing.T) {
 	writeMainFile(t, ready, "card-001.md", "a card\n")
 	var out, errb bytes.Buffer
 	code := run([]string{"fill", "--ready", ready, "--launched", launched,
+		"--machines", fillMachines(t, dir, "bench-a"),
 		"--bench", "bench-a", "--capacity", "1", "--once", "--deadline", "600",
 		"--launch-grace", "0",
 		"--launcher", filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),

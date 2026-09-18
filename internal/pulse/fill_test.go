@@ -246,6 +246,7 @@ func TestFillReturnsAFailedLaunchToReady(t *testing.T) {
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched, Lanes: lanes,
 		Benches:  []string{"bench-a"},
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Once:     true,
 		Stdout:   &out,
 		Stderr:   &errb,
@@ -289,6 +290,7 @@ func TestFillReleasesTheLaneOfAFailedLaunch(t *testing.T) {
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched, Lanes: lanes,
 		Benches:  []string{"bench-a"},
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Once:     true,
 		Stdout:   &out,
 		Stderr:   &errb,
@@ -338,6 +340,7 @@ func TestFillRefusesAReadyFileTheGlobWouldSkip(t *testing.T) {
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched,
 		Benches:  []string{"bench-a"},
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Once:     true,
 		Stdout:   &out,
 		Stderr:   &errb,
@@ -369,6 +372,7 @@ func TestFillRefusesAnUnknownLaneOncePerLanesFile(t *testing.T) {
 	in := FillInput{
 		Ready: ready, Launched: launched, Lanes: lanes,
 		Benches:  []string{"bench-a"},
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Once:     true,
 		Capacity: laneCap{"bench-a": 10},
 		Launcher: &laneLauncher{},
@@ -422,6 +426,7 @@ func TestFillExitsOneWhenEveryBenchFailed(t *testing.T) {
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched,
 		Benches:  []string{"bench-a", "bench-b"},
+		Machines: machinesFile(t, dir, []string{"bench-a", "bench-b"}, nil),
 		Once:     true,
 		Stdout:   &out,
 		Stderr:   &errb,
@@ -480,6 +485,7 @@ func TestFillOnlyLaunchesTheCardsItWasGiven(t *testing.T) {
 	code := Fill(FillInput{
 		Ready: ready, Launched: launched,
 		Benches:  []string{"bench-a"},
+		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Only:     []string{"card-960*"},
 		Once:     true,
 		Stdout:   &out,
