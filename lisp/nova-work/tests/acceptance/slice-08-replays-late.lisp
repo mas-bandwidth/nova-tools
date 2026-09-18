@@ -1130,3 +1130,105 @@
       (check-equal emitted (cli-client-emitted client)
                    "the client's own emitted count is the bytes it printed")))
 )
+
+;;; ------------------------------------------------------------------
+;;; session-replay-bundle-intake  SPEC-WORK.md:2214-2218, :2240, :2249-2251
+;;; ------------------------------------------------------------------
+;;;
+;;; `session replay --from` is the request bus's intake: a bundle is applied
+;;; one request at a time, validated fresh against the live O; `--as` names the
+;;; coordinator and is recorded in `:generation-owner`, while the event's `:by`
+;;; stays the request's own author; a request whose node has accepted its own
+;;; event after the revision its `--expect` names is refused `stale`, but the
+;;; bundle's own earlier requests do not stale its later ones, and a retry of a
+;;; recorded request returns its recorded disposition and applies nothing.
+
+(defun replay-bundle-text (clipped-revision &rest requests)
+  (canonical-string
+   (append (list :request-bundle :base "sha-1" :clipped-revision clipped-revision
+                 :requests requests))))
+
+(defun replay-history-events (kernel)
+  (loop for record in (state-history (kernel-state kernel))
+        append (getf record :events)))
+
+(deftest "session-replay-bundle-intake" "docs/SPEC-WORK.md:2240,2249-2251"
+    "expected=each-request-applied-in-order;by-stays-author;generation-owner-is-replayer;stale-refused-per-node;bundles-own-earlier-requests-not-stale;retry-returns-recorded-disposition;max-bounds"
+  (let* ((kernel (fresh))
+         (session (make-wire-session :kernel kernel :pushed "shared-1")))
+    ;; A direct accepted event on t1 gives it a revision the bundle did not see.
+    (multiple-value-bind (okp line code)
+        (submit kernel (close-request :node "acme/work/f1/t1" :request "pre-1"
+                                      :evidence '("ev-pre")))
+      (ok okp "the pre-event is accepted: ~A" line)
+      (check-equal 0 code "the pre-event exits 0"))
+    ;; A request whose --expect is behind a node's own accepted event refuses
+    ;; `stale`, naming the current revision.
+    (let ((stale (read-request-bundle
+                  (replay-bundle-text
+                   0 '(:verb :event-reopen :node "acme/work/f1/t1" :by "rowan"
+                       :request "b-stale" :expect 0
+                       :stamp "2026-09-14T12:10:00Z" :reason "undo it")))))
+      (multiple-value-bind (all-ok lines code) (session-replay session stale :as "coord")
+        (ok (null all-ok) "a stale request refuses the replay")
+        (check-equal 1 code "a stale bundle exits 1")
+        (ok (search "stale" (first lines))
+            "the stale refusal names the current revision: ~A" (first lines))
+        (ok (search "current=" (first lines)) "the refusal prints the current revision")))
+    ;; A fresh bundle replays whole, in order: the bundle's own earlier request
+    ;; does not stale its later request on the same node.
+    (let ((bundle (read-request-bundle
+                   (replay-bundle-text
+                    2 '(:verb :event-reopen :node "acme/work/f1/t1" :by "rowan"
+                        :request "b-1" :expect 2
+                        :stamp "2026-09-14T12:20:00Z" :reason "regressed")
+                      '(:verb :state-to-doing :node "acme/work/f1/t1" :by "rowan"
+                        :request "b-2" :expect 2
+                        :stamp "2026-09-14T12:21:00Z" :reason "picked up"
+                        :evidence ("ev-b2"))))))
+      (multiple-value-bind (all-ok lines code) (session-replay session bundle :as "coord")
+        (ok all-ok "a fresh bundle replays whole: ~S" lines)
+        (check-equal 0 code "a fresh bundle exits 0")
+        (check-equal 2 (length lines) "one verdict per request")
+        ;; The event's :by is the bundle's author; :generation-owner is the
+        ;; coordinator `--as` named, because a replay moves a request and never
+        ;; re-authors it.
+        (let* ((events (replay-history-events kernel))
+               (reopen (find "b-1" events :key (lambda (e) (getf e :request))
+                             :test #'string=)))
+          (ok reopen "the replayed reopen is in the history")
+          (check-string= "rowan" (getf reopen :by)
+                         "the event's :by stays the bundle's author")
+          (check-string= "coord" (getf reopen :generation-owner)
+                         "the replayer is recorded in :generation-owner")))
+      ;; A retry of the same id and body returns the recorded disposition and
+      ;; applies no second event.
+      (let ((before (length (state-history (kernel-state kernel)))))
+        (multiple-value-bind (all-ok2 lines2 code2) (session-replay session bundle :as "coord")
+          (ok all-ok2 "the retry replays without error")
+          (check-equal 0 code2 "the retry exits 0")
+          (check-equal 2 (length lines2) "the retry answers each request")
+          (check-equal before (length (state-history (kernel-state kernel)))
+                       "the retry applies no second event"))))
+    ;; `--max` bounds how many requests the bundle applies.
+    (let* ((max-bundle (read-request-bundle
+                        (replay-bundle-text
+                         5 '(:verb :state-to-done :node "acme/work/f1/t2" :by "rowan"
+                             :request "m-1" :expect 5
+                             :stamp "2026-09-14T12:30:00Z" :reason "shipped"
+                             :evidence ("ev-m1"))
+                           '(:verb :event-reopen :node "acme/work/f1/t1" :by "rowan"
+                             :request "m-2" :expect 5
+                             :stamp "2026-09-14T12:31:00Z" :reason "regressed"))))
+           (before (length (state-history (kernel-state kernel)))))
+      (multiple-value-bind (all-ok lines code) (session-replay session max-bundle :as "coord" :max 1)
+        (declare (ignore code))
+        (ok all-ok "--max 1 replays the one admitted request")
+        (check-equal 1 (length lines) "--max 1 answers one request")
+        (check-equal (1+ before) (length (state-history (kernel-state kernel)))
+                     "--max 1 applies exactly one request")))
+    ;; A negative bound is refused like every other listing.
+    (handler-case
+        (progn (session-replay session (read-request-bundle (replay-bundle-text 5)) :as "coord" :max -1)
+               (fail "a negative --max was admitted"))
+      (unsupported-input () t))))

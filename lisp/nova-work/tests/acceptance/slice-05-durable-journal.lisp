@@ -188,15 +188,32 @@ TMPDIR can exceed, so try short roots first and create the first that works."
   ;; modes refused rather than reused; no listener on any network address.
   ;; A short relative base: the AF_UNIX sun_path is capped near 107 bytes and a
   ;; deep TMPDIR (the card sandbox) overflows it, so the endpoint cannot bind.
-  (let* ((base (or (short-socket-base (format nil "nw-~D" (random 1000000)))
-                   (let ((tmp (namestring (uiop:temporary-directory))))
-                     (if (< (length tmp) 80)
-                         (concatenate 'string tmp (format nil "n~D" (random 99999)))
-                         (format nil "n~D" (random 99999))))))
+  (let* ((tmp (namestring (uiop:temporary-directory)))
+         (cwd (sb-posix:getcwd))
+         (*default-pathname-defaults* (pathname tmp))
+         (base (or (short-socket-base (format nil "nw-~D" (random 1000000)))
+                   (if (< (length tmp) 80)
+                       (concatenate 'string tmp (format nil "n~D" (random 99999)))
+                       (format nil "nw-~D-~D" (sb-posix:getpid) (random 1000000)))))
          (dir (concatenate 'string base "/s"))
-         (sock (concatenate 'string dir "/w")))
+         (sock (concatenate 'string dir "/w"))
+         (wide (concatenate 'string base "/w"))
+         (d2 (concatenate 'string base "/d"))
+         (s2 (concatenate 'string d2 "/w")))
     (unwind-protect
          (progn
+           ;; Work under the temporary directory with a path short enough for an
+           ;; AF_UNIX socket: `probe-file` resolves a relative name against
+           ;; *DEFAULT-PATHNAME-DEFAULTS*, so it is bound to the same directory
+           ;; the filesystem calls are made relative to. Clear any path a prior
+           ;; run left behind so the fixture never silently reuses one.
+           (sb-posix:chdir tmp)
+           (ignore-errors (sb-posix:unlink sock))
+           (ignore-errors (sb-posix:rmdir dir))
+           (ignore-errors (sb-posix:unlink s2))
+           (ignore-errors (sb-posix:rmdir d2))
+           (ignore-errors (sb-posix:rmdir wide))
+           (ignore-errors (sb-posix:rmdir base))
            (unless (probe-file base) (sb-posix:mkdir base #o700))
            (let ((ep (make-session-endpoint dir sock)))
              (check-equal #o700 (session-endpoint-directory-mode ep)
@@ -241,31 +258,29 @@ TMPDIR can exceed, so try short roots first and create the first that works."
                                          :type :stream :protocol :tcp))))
                "AF_UNIX and AF_INET are different families")
            ;; A pre-existing directory with wider modes refuses rather than reuses.
-           (let ((wide (concatenate 'string base "/w")))
-             (sb-posix:mkdir wide #o755)
-             (handler-case
-                 (progn (make-session-endpoint wide (concatenate 'string wide "/w"))
-                        (ok nil "a 0755 directory must be refused"))
-               (nova-work-error (c) (declare (ignore c))
-                 (ok t "a pre-existing 0755 directory is refused"))))
+           (sb-posix:mkdir wide #o755)
+           (handler-case
+               (progn (make-session-endpoint wide (concatenate 'string wide "/w"))
+                      (ok nil "a 0755 directory must be refused"))
+             (nova-work-error (c) (declare (ignore c))
+               (ok t "a pre-existing 0755 directory is refused")))
            ;; A pre-existing socket path with wider modes refuses the same way.
-           (let* ((d2 (concatenate 'string base "/d"))
-                  (s2 (concatenate 'string d2 "/w")))
-             (sb-posix:mkdir d2 #o700)
-             (with-open-file (f s2 :direction :output :if-exists :supersede)
-               (declare (ignore f)))
-             (sb-posix:chmod s2 #o644)
-             (handler-case
-                 (progn (make-session-endpoint d2 s2)
-                        (ok nil "a 0644 socket must be refused"))
-               (nova-work-error (c) (declare (ignore c))
-                 (ok t "a pre-existing 0644 socket is refused")))))
+           (sb-posix:mkdir d2 #o700)
+           (with-open-file (f s2 :direction :output :if-exists :supersede)
+             (declare (ignore f)))
+           (sb-posix:chmod s2 #o644)
+           (handler-case
+               (progn (make-session-endpoint d2 s2)
+                      (ok nil "a 0644 socket must be refused"))
+             (nova-work-error (c) (declare (ignore c))
+               (ok t "a pre-existing 0644 socket is refused"))))
       (ignore-errors (sb-posix:unlink sock))
       (ignore-errors (sb-posix:rmdir dir))
-      (ignore-errors (sb-posix:rmdir (concatenate 'string base "/w")))
-      (ignore-errors (sb-posix:unlink (concatenate 'string base "/d/w")))
-      (ignore-errors (sb-posix:rmdir (concatenate 'string base "/d")))
-      (ignore-errors (sb-posix:rmdir base)))))
+      (ignore-errors (sb-posix:rmdir wide))
+      (ignore-errors (sb-posix:unlink s2))
+      (ignore-errors (sb-posix:rmdir d2))
+      (ignore-errors (sb-posix:rmdir base))
+      (ignore-errors (sb-posix:chdir cwd)))))
 
 ;;; wire-integers-are-strings, protocol-version-negotiated-or-refused,
 ;;; pipeline-replies-are-correlated and disconnect-is-not-a-rollback are the

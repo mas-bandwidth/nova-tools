@@ -680,6 +680,15 @@
    #:wire-frame-reader-feed
    #:wire-frame-reader-buffered
    #:wire-frame-error
+   ;; `session replay` bundle intake (SPEC-WORK.md:2240-2251): the request
+   ;; bundle and the replay that applies it under coordinator authority.
+   #:make-request-bundle
+   #:request-bundle-p
+   #:request-bundle-base
+   #:request-bundle-clipped-revision
+   #:request-bundle-requests
+   #:read-request-bundle
+   #:session-replay
    #:make-operation-registry
    #:operation-registry-p
    #:operation-registry-operations
