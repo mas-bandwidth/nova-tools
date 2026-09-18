@@ -104,7 +104,7 @@ func TestTheProgressRegistryMatchesTheLineThisProgramWrites(t *testing.T) {
 	t.Parallel()
 	for _, line := range []string{
 		"INBOX WALK commits=1/1 notes=0 elapsed=3ms",
-		`INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"`,
+		`INBOX WALK bounded commits=500 cursor=0edc81b7 behind=more-than-500 notes=0 remedy="raise --max-commits or close --before <instant>"`,
 	} {
 		if !bus.IsProgress(line) {
 			t.Errorf("internal/bus does not know this is progress, so no consumer does:\n%s", line)

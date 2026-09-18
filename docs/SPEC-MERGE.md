@@ -1521,7 +1521,7 @@ CLASSIFY FAIL run=<id> file=<path> pushed=false: <reason>; re-run the same verb 
 CLASSIFY REFUSED: <reason>
 ```
 
-**The refusals, exit 2, each with its one remedy line.** `queue` with no subcommand names every subverb; `hold` with an empty reason wants `nova-merge queue hold "<reason>"`; `skip` and `unskip` with no `<pr>` want `nova-merge queue skip <pr>...`; `front` on a pull request not in the lane wants `nova-merge add --lane <dir> --pr <n>`; any enqueue while held wants `nova-merge queue release`; `sweep` with no `--window` wants `--window <duration>`; `queue classify` with no `--run` or an unknown `--verdict` names the flag and the three classes; and any of them on a directory with no `state.json` gets rule 20's `refusing to guess` line and the `init` command.
+**The refusals, exit 2, each with its one remedy line.** An extra positional on a subverb whose line is all flags — `release`, `sweep`, `classify` — is refused **before the lane is opened**, naming the words it will not run: a line this tool will not run is a bad invocation, and a bad invocation is refused before any state is read, never after half of it has been written. The subverbs that read their own positionals (`hold`'s reason, `skip` and `unskip`'s numbers, `front`'s one number) are unchanged. `queue` with no subcommand names every subverb; `hold` with an empty reason wants `nova-merge queue hold "<reason>"`; `skip` and `unskip` with no `<pr>` want `nova-merge queue skip <pr>...`; `front` on a pull request not in the lane wants `nova-merge add --lane <dir> --pr <n>`; any enqueue while held wants `nova-merge queue release`; `sweep` with no `--window` wants `--window <duration>`; `queue classify` with no `--run` or an unknown `--verdict` names the flag and the three classes; and any of them on a directory with no `state.json` gets rule 20's `refusing to guess` line and the `init` command.
 
 ### Red tests
 
@@ -1534,7 +1534,7 @@ A card writes these first, each seen red before it is trusted; the network, the 
 5. A sweep with a stale red and a queue of six does not re-enqueue it; the same sweep with a queue of five does; a mutation that drops the bound turns the test red.
 6. The detector with a fake host: one test failed twice in a changed package plus an `own-change` classify parks the pull request (`QUEUE PARK` names test and issue) and a green re-sweep does not enqueue it, while a `flaky-under-load` classify never parks.
 7. `queue classify --run` against a fake remote: one immutable record, `CLASSIFY OK … pushed=true`, a second classification for the same run is a second file with the newest `at` winning, and an unknown `--verdict` is exit 2 naming the three classes.
-8. `queue` with no subverb, `hold ""`, `skip` with no `<pr>`, `front` on a missing pull request, `sweep` with no `--window` and `queue classify` with no `--run`: each exit 2 with its one remedy line, and the fake remote sees no push.
+8. `queue` with no subverb, `hold ""`, `skip` with no `<pr>`, `front` on a missing pull request, `sweep` with no `--window`, `queue classify` with no `--run`, and an extra positional on `release`, `sweep` or `classify`: each exit 2 with its one remedy line, the lane unchanged, and the fake remote sees no push.
 9. Two concurrent `hold`/`skip`/`front`/`sweep` writers: every write lands, `queue.json` parses at every read, a killed writer leaves the old queue whole (rule 1), and the sweep window is measured by a fake clock, never the wall clock.
 
 ## One entry to the merge queue (2026-09-18)

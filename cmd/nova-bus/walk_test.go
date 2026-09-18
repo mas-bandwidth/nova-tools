@@ -31,12 +31,14 @@ func TestInboxSinceWalkReportsProgressAndHonoursMaxCommits(t *testing.T) {
 	// The default bound stops the same walk at 500 commits: no listing, one remedy, exit 0.
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).
-		mustContain(t, "stderr", `INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"`)
+		mustContain(t, "stderr", `INBOX WALK bounded commits=500 cursor=`).
+		mustContain(t, "stderr", `behind=more-than-500 notes=0 remedy="raise --max-commits or close --before <instant>"`)
 
 	// A tighter bound stops at the number the caller gave, with the same remedy.
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--max-commits", "100").
 		mustCode(t, 0).
-		mustContain(t, "stderr", `INBOX WALK bounded commits=100 remedy="raise --max-commits or close --before <instant>"`)
+		mustContain(t, "stderr", `INBOX WALK bounded commits=100 cursor=`).
+		mustContain(t, "stderr", `behind=more-than-100 notes=0 remedy="raise --max-commits or close --before <instant>"`)
 }
 
 // TestAStaleCursorCostsTheBoundAndNotTheDistance is the second half of card 9376: the walk
@@ -89,7 +91,8 @@ func TestAStaleCursorCostsTheBoundAndNotTheDistance(t *testing.T) {
 	mark = bus.CommitsWalked()
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).
-		mustContain(t, "stderr", `INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"`)
+		mustContain(t, "stderr", `INBOX WALK bounded commits=500 cursor=`).
+		mustContain(t, "stderr", `behind=more-than-500 notes=0 remedy="raise --max-commits or close --before <instant>"`)
 	if got := bus.CommitsWalked() - mark; got != defaultMaxCommits+1 {
 		t.Fatalf("a bounded read walked %d commits over a cursor %d behind, want %d: the count is not asked with its bound", got, commits, defaultMaxCommits+1)
 	}

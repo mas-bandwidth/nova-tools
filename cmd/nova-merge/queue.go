@@ -46,6 +46,37 @@ func scanQueueArgs(args []string, known map[string]bool) (map[string]string, []s
 	return opts, pos, nil
 }
 
+// queueFlagsOnlySubverbs are the subverbs whose whole argument is flags. An extra word on
+// one of their lines is a refusal and not a word to drop.
+//
+// A dogfood run found `nova-merge queue release oops` releasing the hold and exiting 0:
+// scanQueueArgs hands back everything that is not a flag, and a subverb that does not read
+// its positionals drops them without a sound. So the caller who put an argument in the
+// wrong place, or typed a second one, got a MUTATION they did not ask for and a zero exit
+// telling them it went as they meant -- which is the worst of the three ways this could
+// have gone.
+//
+// The list is the FLAGS-ONLY half, named rather than inferred, so that adding a subverb is
+// a decision about which half it is in. The other half reads its own positionals and says
+// so itself: hold (the reason), skip and unskip (the numbers), front (exactly one number).
+var queueFlagsOnlySubverbs = map[string]bool{
+	"release":  true,
+	"sweep":    true,
+	"classify": true,
+}
+
+// refuseExtraQueuePositionals is the guard. It answers "refused" so the caller can return
+// its code, and it is called BEFORE the lane is opened: a line this tool will not run is a
+// bad invocation, and a bad invocation is refused before any state is read, never after
+// half of it has been written.
+func refuseExtraQueuePositionals(refuse func(io.Writer, string) int, stderr io.Writer, sub string, rest []string) (int, bool) {
+	if !queueFlagsOnlySubverbs[sub] || len(rest) == 0 {
+		return 0, false
+	}
+	return refuse(stderr, fmt.Sprintf("queue %s takes no argument of its own and got %d: %s; its whole line is flags: nova-merge queue --lane <dir> %s",
+		oneline.Field(sub), len(rest), oneline.Field(oneline.Cap(strings.Join(rest, " "), 80)), oneline.Field(sub))), true
+}
+
 func queueRefuse(stderr io.Writer, reason string) int {
 	fmt.Fprintf(stderr, "QUEUE REFUSED: %s\n", oneline.Escape(oneline.Cap(reason, oneline.TailBytes)))
 	return 2
@@ -84,6 +115,13 @@ func cmdQueue(args []string, stdout, stderr io.Writer, deps Deps) int {
 	opts, pos, err := scanQueueArgs(args, known)
 	if err != nil {
 		return queueRefuse(stderr, err.Error())
+	}
+	// Before --lane, before openLane, before the timeout: an extra word is a fact about
+	// the LINE and needs nothing from the disk to see.
+	if len(pos) > 0 {
+		if code, refused := refuseExtraQueuePositionals(queueRefuse, stderr, pos[0], pos[1:]); refused {
+			return code
+		}
 	}
 	lane := opts["lane"]
 	if strings.TrimSpace(lane) == "" {
@@ -486,9 +524,17 @@ func poison(ph poisonHost, recs map[string]merge.ClassRecord, pr merge.PR) (merg
 func cmdQueueClassify(args []string, stdout, stderr io.Writer, deps Deps) int {
 	known := map[string]bool{"lane": true, "timeout": true, "run": true, "head": true,
 		"verdict": true, "note": true, "pr": true, "branch": true, "test": true, "who": true}
-	opts, _, err := scanQueueArgs(args, known)
+	opts, pos, err := scanQueueArgs(args, known)
 	if err != nil {
 		return classifyRefuse(stderr, err.Error())
+	}
+	// `classify` is dispatched before the queue's own flags are scanned, so it needs the
+	// same guard on its own line: it is flags all the way and had been dropping anything
+	// that was not one.
+	if len(pos) > 0 {
+		if code, refused := refuseExtraQueuePositionals(classifyRefuse, stderr, "classify", pos); refused {
+			return code
+		}
 	}
 	lane := opts["lane"]
 	if strings.TrimSpace(lane) == "" {
