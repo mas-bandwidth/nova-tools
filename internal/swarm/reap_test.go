@@ -151,3 +151,30 @@ func TestReapRemovesASlotWhoseLogIsOlder(t *testing.T) {
 		t.Errorf("the stale slot's data/ was not removed")
 	}
 }
+
+// A reaped target that is a symlink out of the slot is a derivation the reaper must not
+// act on: safepath.RemoveUnder refuses the link, and the directory it pointed at survives.
+func TestReapRefusesASlotScratchSymlinkToOutside(t *testing.T) {
+	root := t.TempDir()
+	slotPath := filepath.Join(root, "5")
+	jobPath := filepath.Join(slotPath, "jobs", "card-e")
+	makeSlotFile(t, filepath.Join(slotPath, "data", "keep.bin"), 256)
+	makeSlotFile(t, filepath.Join(jobPath, "RESULT.md"), 64)
+
+	outside := t.TempDir()
+	makeSlotFile(t, filepath.Join(outside, "survivor"), 128)
+	link := filepath.Join(jobPath, "scratch")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := ReapSlots(ReapInput{Root: root, Older: time.Hour, Now: time.Now}); err == nil {
+		t.Fatalf("a slot scratch that is a symlink out of the slot was removed; it must be refused")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "survivor")); err != nil {
+		t.Errorf("the directory outside the slot was removed: %v", err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the refused symlink %s did not survive: err=%v", link, err)
+	}
+}

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // SHARED PER-BENCH CACHES (issue #1048). A native job downloads the Go toolchain and every
@@ -142,7 +144,7 @@ func ReapSlots(in ReapInput) (int, int64, error) {
 			if in.DryRun {
 				continue
 			}
-			if err := os.RemoveAll(target); err != nil {
+			if err := safepath.RemoveUnder(slotPath, target); err != nil {
 				return slots, freed, err
 			}
 		}
