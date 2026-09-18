@@ -231,6 +231,19 @@ func (f *flags) given(name string) bool {
 // first one already knew about.
 func (f *flags) want(hint string) { f.problems = append(f.problems, hint) }
 
+// reportFirst moves the problems recorded from index `from` on to the front of the list,
+// keeping the order within each group. A check that must RUN late because it touches the
+// filesystem still READS first when the banner lists it first: [175] makes the refusal
+// order a habit a reader builds, so where a check runs is an implementation detail and
+// where it prints is the contract.
+func (f *flags) reportFirst(from int) {
+	if from < 0 || from >= len(f.problems) {
+		return
+	}
+	moved := append([]string(nil), f.problems[from:]...)
+	f.problems = append(moved, f.problems[:from]...)
+}
+
 // need records a hint when the value is empty.
 func (f *flags) need(value, hint string) {
 	if strings.TrimSpace(value) == "" {
@@ -452,7 +465,14 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 	// flag is judged first: a first add that fat-fingers a flag is exactly the run
 	// with no board yet, and making the directory for a line that is about to be
 	// refused would answer a typo with an empty board.
+	//
+	// The backend is asked LAST but reports FIRST: [175] pins the refusal lines to
+	// the flag order the banner lists, and the banner opens with the backend. Doing
+	// the work late must not reorder what the reader sees, so the problems this call
+	// records are moved back to the front.
+	backendFirst := len(f.problems)
 	backend, kind, source := f.backend()
+	f.reportFirst(backendFirst)
 	if len(f.problems) > 0 {
 		return f.refused(stderr)
 	}
