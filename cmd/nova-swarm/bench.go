@@ -68,7 +68,7 @@ func cmdBenchProbe(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if row == nil {
-		fmt.Fprintf(stderr, "BENCH REFUSED: no bench %s in %s\n", oneline.Field(*bench), oneline.Field(*benches))
+		fmt.Fprintf(stderr, "BENCH REFUSED: no bench %s in %s; name a bench that file carries\n", oneline.Field(*bench), oneline.Field(*benches))
 		return 2
 	}
 	p := &prober{row: row}
@@ -334,7 +334,7 @@ func cmdBenchSize(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if row == nil {
-		fmt.Fprintf(stderr, "BENCH REFUSED: no bench %s in %s\n", oneline.Field(*bench), oneline.Field(*benches))
+		fmt.Fprintf(stderr, "BENCH REFUSED: no bench %s in %s; name a bench that file carries\n", oneline.Field(*bench), oneline.Field(*benches))
 		return 2
 	}
 	var rounds []swarm.SizeRound
@@ -354,7 +354,7 @@ func cmdBenchSize(args []string, stdout, stderr io.Writer) int {
 		prevCPM = r.CardsPerMin
 	}
 	if width == 0 {
-		fmt.Fprintf(stderr, "BENCH REFUSED: bench %s held no width: the first round broke a size rule\n", oneline.Field(row.Name))
+		fmt.Fprintf(stderr, "BENCH REFUSED: bench %s held no width: the first round broke a size rule; fix the size rule, then size the bench again\n", oneline.Field(row.Name))
 		return 1
 	}
 	stamp := benchNow().UTC().Format(time.RFC3339)

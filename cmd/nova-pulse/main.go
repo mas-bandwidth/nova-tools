@@ -508,7 +508,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if strings.TrimSpace(*capFlag) != "" {
 		d, err := time.ParseDuration(*capFlag)
 		if err != nil {
-			fmt.Fprintf(stderr, "WATCH REFUSED cap=%s (a duration like 90s or 5m)\n", oneline.Field(*capFlag))
+			fmt.Fprintf(stderr, "WATCH REFUSED cap=%s (give a duration like 90s or 5m)\n", oneline.Field(*capFlag))
 			return 2
 		}
 		capDur = d

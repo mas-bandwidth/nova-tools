@@ -1137,3 +1137,52 @@ so a cmd/nova-swarm edit (PR #1073) selects no shard to run its class tests`.
 **Its narrowings.** Two independent selections are pinned by two regular
 expressions over two files; a third path into the package set would need a third
 row here, and the test cannot know it exists.
+
+### `refusal-remedy` — every refusal line says what to do
+
+**The rule.** Every string literal in non-test Go under `cmd/` and `internal/`
+that begins a refusal line — `<TOOL> <VERB> REFUSED`, a leading `REFUSED:`, or a
+`REFUSED reason=` anywhere in it — carries a remedy: `remedy="…"` in the same
+format string, an imperative opening a clause (`(delete its jobs first)`, `; pass
+a writable --markers directory`), a command written the way it would be typed
+(`; run: nova-merge sweep --repo … --once`, or any `nova-<tool> <verb>`), or
+nothing at all but format verbs — the pass-through frame whose words, and whose
+remedy, live in the value it formats.
+**The hurt.** "Tell them what to do" (Glenn, 2026-09-17): a prompt, and a
+refusal, gives POSITIVE instructions with exact paths. A refusal that says only
+what is wrong hands the reader the job the tool was built to do. `nova-pulse
+wake` refused with `--registry <path>: …; refusing to guess` and never said
+which file it wanted; `fleet registry` refused an unknown role and never listed
+the roles; `nova-secrets` refused an unexpected argument seven different ways and
+never once named `nova-secrets help`. Each time a person or a child went and read
+the source to learn what to type — and a child that must read the source to
+answer a refusal is a card that stalls, which is the defect class behind "fix the
+prompt, not retry".
+**The test.** `TestEveryRefusalLineCarriesARemedy`, with
+`TestRefusalRemedyScannerReadsTheFixtures` as its red-test contract
+(`internal/ci/refusalremedy_class_test.go`). It reads the syntax tree, never the
+text: this repository's doc comments quote refusal lines constantly, and a text
+scan cannot tell documentation from output. Its first run over dev named 90
+refusals in 30 files; 84 were fixed by writing the remedy into the literal, and
+six are on the list below.
+**Its allowlist.** `internal/ci/testdata/refusalremedy_allowlist.txt`, keyed
+`<file>:<function>:<refusal token>` — never a line — with a reason after two
+spaces, checked in both directions so it only shrinks. It holds the refusals
+whose remedy is the NEXT line (`nova-sandbox`'s worktree and volume blocks), the
+cap-and-count tail of a bounded listing, and the two `FINALIZE REFUSED` lines
+that refuse to trust evidence, where nothing a caller can type would make the
+missing proof appear.
+**Its remedy line.** `put the thing to do in the literal, written the way it
+would be typed: remedy="…", a parenthesised imperative such as (run nova-pulse
+fleet registry --machines <file>), or a ; run: … tail`.
+**Its narrowings.** Three, all deliberate. (1) The PASS-THROUGH shape: a literal
+that is the prefix and nothing but format verbs, labels and punctuation passes
+unread, because following the formatted value to the `fmt.Errorf` that built it
+means becoming a type checker — a second tool, not a class test. The line is
+drawn where the WORDS are. (2) Literals handed to a refusal HELPER (`refuse(w,
+where, what)`, `refusal(w, token, err)`) do not themselves contain `REFUSED` and
+are invisible here; the helper's own format string is a pass-through and the
+words are at the call site. (3) The remedy is recognised by SHAPE, not by sense:
+an imperative at a clause boundary counts even if the advice is poor, and a
+bracket opening with a noun — `(the queue is held)` — does not count even when it
+is the whole answer.

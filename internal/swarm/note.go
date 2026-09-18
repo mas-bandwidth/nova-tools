@@ -49,10 +49,10 @@ func AppendNote(jobDir, text string, now time.Time) (int, error) {
 func FinalizeByHand(p *Pool, id string, now time.Time) (int, string) {
 	sc, found := p.FindAnywhere(id)
 	if !found {
-		return 1, fmt.Sprintf("FINALIZE REFUSED id=%s: no such task in %s", oneline.Field(id), oneline.Field(p.Dir))
+		return 1, fmt.Sprintf("FINALIZE REFUSED id=%s: no such task in %s; run: nova-swarm status --pool to list the tasks", oneline.Field(id), oneline.Field(p.Dir))
 	}
 	if sc.Job == "" {
-		return 1, fmt.Sprintf("FINALIZE REFUSED id=%s: this task has no job directory, so it never launched", oneline.Field(id))
+		return 1, fmt.Sprintf("FINALIZE REFUSED id=%s: this task has no job directory, so it never launched; run the task, then finalize it", oneline.Field(id))
 	}
 	var pr PidRecord
 	if err := ReadJSON(PidPath(sc.Job), &pr); err == nil {

@@ -1,0 +1,14 @@
+# The refusal lines that carry no remedy in their own literal, each with the
+# reason it is one. Written 2026-09-18 with the class test.
+#
+# The key is <file>:<function>:<refusal token> -- never a line number, so a merge
+# that shifts lines does not stale the list. The reason follows after two spaces.
+#
+# THE LIST ONLY SHRINKS. A new entry is a refusal, not a place to park a line
+# that does not say what to do; the fix is the remedy text, in the literal.
+
+cmd/nova-sandbox/worktree.go:worktreeOne:WORKTREE REFUSED  the remedy is the NEXT line: this Fprintf's second %s is worktreeRemedy, a multi-line block naming git worktree prune and the scratch directory
+cmd/nova-sandbox/reapverb.go:reapAll:SANDBOX REFUSED  the remedy is the NEXT line: this Fprintf's second %s is the volume-listing remedy block
+cmd/nova-swarm/bench.go:cmdBenchProbe:BENCH REFUSED  the cap-and-count tail of a bounded listing, `(more %d)`; the check's own line above it carries the remedy
+internal/swarm/note.go:FinalizeByHand:FINALIZE REFUSED  two of these four refuse to TRUST evidence -- the slot file is gone and no usage record proves a prior finalization -- and there is nothing a caller can type that would make the missing proof appear
+internal/swarm/triage.go:ResultByID:RESULT REFUSED  the remedy is what the harness said, printed beneath this line; the refusal says so in its own last clause

@@ -174,7 +174,7 @@ func (p *Pass) Run(n int) *Result {
 func (p *Pass) baseLine(res *Result) (baseSHA string, ok bool) {
 	baseSHA, err := p.BaseSHA()
 	if err != nil {
-		fmt.Fprintf(p.Stderr, "RUN REFUSED: the lane's base %s could not be read from %s: %s\n",
+		fmt.Fprintf(p.Stderr, "RUN REFUSED: the lane's base %s could not be read from %s: %s; check the remote and run the same verb again\n",
 			oneline.Field(p.State.Base), oneline.Field(p.Remote), oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		res.Stopped, res.Refused = true, true
 		res.Note = fmt.Sprintf("nova-merge status --lane %s  # the remote did not answer for %s; this pass looked at nothing", p.Lane, p.State.Base)
@@ -182,7 +182,7 @@ func (p *Pass) baseLine(res *Result) (baseSHA string, ok bool) {
 	}
 	checks, err := p.Host.Checks(baseSHA)
 	if err != nil {
-		fmt.Fprintf(p.Stderr, "RUN REFUSED: the base's checks could not be read: %s\n",
+		fmt.Fprintf(p.Stderr, "RUN REFUSED: the base's checks could not be read: %s; check the token gh uses and run the same verb again\n",
 			oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		res.Stopped, res.Refused = true, true
 		res.Note = fmt.Sprintf("nova-merge status --lane %s  # the host did not answer for the base; this pass looked at nothing", p.Lane)

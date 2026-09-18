@@ -107,7 +107,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 			Sources: tokens.SourcesOf(rows), Rows: rows,
 		}
 		if err := f.Save(*out); err != nil {
-			fmt.Fprintf(stderr, "TOKENS REFUSED: cannot write %s: %s\n", oneline.Field(tokens.Path(*out, d)), oneline.Err(err))
+			fmt.Fprintf(stderr, "TOKENS REFUSED: cannot write %s: %s; name a writable --out\n", oneline.Field(tokens.Path(*out, d)), oneline.Err(err))
 			exit = 1
 			continue
 		}

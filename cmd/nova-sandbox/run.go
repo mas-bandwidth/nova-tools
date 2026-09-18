@@ -617,7 +617,7 @@ func noDisposableBody(goos string) (line, remedy string, refused bool) {
 	if goos == "darwin" || goos == "windows" {
 		return "", "", false
 	}
-	return fmt.Sprintf("SANDBOX REFUSED reason=no_sandbox: the disposable place is darwin's APFS volume, made per run in the boot container and deleted on exit, or windows's Job Object plus per-run scratch; %s has no body here and this tool does not pretend an ordinary directory is one",
+	return fmt.Sprintf("SANDBOX REFUSED reason=no_sandbox: the disposable place is darwin's APFS volume, made per run in the boot container and deleted on exit, or windows's Job Object plus per-run scratch; %s has no body here and this tool does not pretend an ordinary directory is one; run this on darwin or windows",
 			oneline.Field(goos)),
 		"run: nova-sandbox --write <dir> -- <command> <args...>, naming the card's own image root as <dir>: on linux a card is already disposable because it runs INSIDE its image, and the image is the container",
 		true

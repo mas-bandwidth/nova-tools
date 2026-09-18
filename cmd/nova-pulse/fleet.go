@@ -309,7 +309,7 @@ func cmdFleetSurvey(args []string, stdout, stderr io.Writer) int {
 
 	list, err := readFleetBenches(*benches)
 	if err != nil {
-		fmt.Fprintf(stderr, "FLEET REFUSED: --benches %s: %s\n", oneline.Field(*benches), oneline.Err(err))
+		fmt.Fprintf(stderr, "FLEET REFUSED: --benches %s: %s; name a fleet file of name, ssh target, home, mac per line\n", oneline.Field(*benches), oneline.Err(err))
 		return 2
 	}
 	script, err := readBenchStandard()

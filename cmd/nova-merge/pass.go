@@ -212,12 +212,12 @@ func cmdDryRun(args []string, stdout, stderr io.Writer, deps Deps) int {
 	recs := merge.NewRecords(*f.lane, st.LaneBranch, "origin", merge.NewGit(*f.lane, f.dur(), deps.Runner), f.dur())
 	tip, err := recs.FetchTip()
 	if err != nil {
-		fmt.Fprintf(stderr, "RUN REFUSED: the lane branch could not be fetched: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "RUN REFUSED: the lane branch could not be fetched: %s; check the remote and run the same verb again\n", oneline.Err(err))
 		return 2
 	}
 	folded, err := recs.FoldTip(tip)
 	if err != nil {
-		fmt.Fprintf(stderr, "RUN REFUSED: the lane branch's records could not be folded: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "RUN REFUSED: the lane branch's records could not be folded: %s; fix the records on the lane branch, then run the same verb again\n", oneline.Err(err))
 		return 2
 	}
 	// The fold is IN MEMORY: the state on disk is not touched, so a survey leaves the
@@ -299,7 +299,7 @@ func cmdPacket(args []string, stdout, stderr io.Writer, deps Deps) int {
 		if *cardFile != "" {
 			b, err := os.ReadFile(*cardFile)
 			if err != nil {
-				fmt.Fprintf(stderr, "PACKET REFUSED: --card: %s\n", oneline.Err(err))
+				fmt.Fprintf(stderr, "PACKET REFUSED: --card: %s; name a card file this verb may read\n", oneline.Err(err))
 				return 2
 			}
 			card = string(b)

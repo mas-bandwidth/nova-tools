@@ -275,7 +275,7 @@ func TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse(t *testing.T)
 	}
 	over := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--bodies", "--max-bytes", "4194304").mustCode(t, 2)
-	if got := strings.TrimRight(over.stderr, "\n"); got != "INBOX REFUSED: --max-bytes 4194304 is over the ceiling 1048576" {
+	if got := strings.TrimRight(over.stderr, "\n"); got != "INBOX REFUSED: --max-bytes 4194304 is over the ceiling 1048576; give a smaller number" {
 		t.Fatalf("over-ceiling --max-bytes refusal is %q", got)
 	}
 	for _, r := range []result{zero, over} {

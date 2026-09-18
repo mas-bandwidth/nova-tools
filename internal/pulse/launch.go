@@ -64,7 +64,7 @@ func Launch(in LaunchInput) int {
 		return 2
 	}
 	if len(cards) == 0 {
-		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s holds no card; a pulse of no cards is a typo\n", oneline.Field(in.Cards))
+		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s holds no card; a pulse of no cards is a typo; name a cards file with at least one row\n", oneline.Field(in.Cards))
 		return 2
 	}
 	// STOP admission (SPEC-PULSE class C): while the bench is red, only the cards whose

@@ -23,7 +23,7 @@ import (
 func Cost(p *Pool, since string, max int, stdout, stderr io.Writer) int {
 	rows, err := p.ReadUsage()
 	if err != nil {
-		fmt.Fprintf(stderr, "COST REFUSED: the usage directory could not be read: %s\n", oneline.Escape(redactedReason(err)))
+		fmt.Fprintf(stderr, "COST REFUSED: the usage directory could not be read: %s; name a usage directory this user may read\n", oneline.Escape(redactedReason(err)))
 		return 2
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i]["job"] < rows[j]["job"] })

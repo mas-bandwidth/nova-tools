@@ -217,7 +217,7 @@ func (p *Pass) survey(res *Result) *Result {
 	}
 	baseSHA, err := p.BaseSHA()
 	if err != nil {
-		fmt.Fprintf(p.Stderr, "RUN REFUSED: the lane's base %s could not be read: %s\n", oneline.Field(p.State.Base), oneline.Err(err))
+		fmt.Fprintf(p.Stderr, "RUN REFUSED: the lane's base %s could not be read: %s; check the remote and run the same verb again\n", oneline.Field(p.State.Base), oneline.Err(err))
 		res.Stopped = true
 		return res
 	}

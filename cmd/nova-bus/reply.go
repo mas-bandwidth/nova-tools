@@ -199,11 +199,11 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 	if !found {
 		matches := bus.MatchOpenSubject(listing, o.replyTo)
 		if len(matches) == 0 {
-			fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %q is not an id on this bus, not a note that exists, and not the subject of a note on your listing; threads are named by id, and a slug is not a thread\n", oneline.Cap(o.replyTo, oneline.TailBytes))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %q is not an id on this bus, not a note that exists, and not the subject of a note on your listing; threads are named by id, and a slug is not a thread; give the id your inbox listing printed\n", oneline.Cap(o.replyTo, oneline.TailBytes))
 			return 1
 		}
 		if target, found = t.Resolve(matches[0].Target()); !found {
-			fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %q names a note on your listing that is not on the bus this run read\n", oneline.Cap(o.replyTo, oneline.TailBytes))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %q names a note on your listing that is not on the bus this run read; read the inbox again, then reply\n", oneline.Cap(o.replyTo, oneline.TailBytes))
 			return 1
 		}
 		if len(matches) > 1 {
@@ -220,7 +220,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 		sender = p.Name
 	}
 	if !o.toGiven && sender == me.Name {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %s is your own note, so the default To: would be you; a reply to your own note needs an explicit --to\n", oneline.Field(replyTargetName(target)))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %s is your own note, so the default To: would be you; a reply to your own note needs an explicit --to; give --to\n", oneline.Field(replyTargetName(target)))
 		return 1
 	}
 	// THE LISTING IS MATCHED BY PATH, and the name the draft writes comes from the entry it
@@ -276,7 +276,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 	path, err := publishDraft(o.draftDir, now.UTC().Format(bus.FileTimeLayout)+"-re-"+name+".md", []byte(content))
 	switch {
 	case errors.Is(err, bus.ErrDraftExists):
-		fmt.Fprintf(stderr, "DRAFT REFUSED: a draft already exists at %s; this tool never overwrites a draft\n",
+		fmt.Fprintf(stderr, "DRAFT REFUSED: a draft already exists at %s; this tool never overwrites a draft; move that draft, or name another --draft-dir\n",
 			oneline.Field(filepath.Join(o.draftDir, now.UTC().Format(bus.FileTimeLayout)+"-re-"+name+".md")))
 		return 1
 	case errors.Is(err, bus.ErrNoExclusivePublish):
@@ -392,18 +392,18 @@ func replyBodyFileProblems(path string) []error {
 func replyBody(path string, budget int, stderr io.Writer) ([]byte, int) {
 	f, err := os.Open(path)
 	if err != nil {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s cannot be read: %s\n", oneline.Field(path), oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s cannot be read: %s; name a file this user may read\n", oneline.Field(path), oneline.Err(err))
 		return nil, 2
 	}
 	defer f.Close()
 	buf := make([]byte, budget+1)
 	n, err := io.ReadFull(f, buf)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s cannot be read: %s\n", oneline.Field(path), oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s cannot be read: %s; name a file this user may read\n", oneline.Field(path), oneline.Err(err))
 		return nil, 2
 	}
 	if n == 0 {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s is empty; a reply with no body is not a reply\n", oneline.Field(path))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s is empty; a reply with no body is not a reply; write the body, then draft again\n", oneline.Field(path))
 		return nil, 1
 	}
 	if n > budget {

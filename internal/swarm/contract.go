@@ -60,7 +60,7 @@ func CheckResult(resultPath string, c Contract) (Outcome, error) {
 	out := Outcome{LineCount: len(lines)}
 	if len(lines) == 0 {
 		// An empty report has no line 1 to compare: refused, naming what was found.
-		out.Line = fmt.Sprintf("RESULT REFUSED %s line 1 is empty", oneline.Quote(c.Label))
+		out.Line = fmt.Sprintf("RESULT REFUSED %s line 1 is empty; write the contract line as line 1 of RESULT.md", oneline.Quote(c.Label))
 		return out, nil
 	}
 	out.Line2 = ""
@@ -73,7 +73,7 @@ func CheckResult(resultPath string, c Contract) (Outcome, error) {
 		if len(found) > 60 {
 			found = found[:60]
 		}
-		out.Line = fmt.Sprintf("RESULT REFUSED %s line 1 is %q", oneline.Quote(c.Label), found)
+		out.Line = fmt.Sprintf("RESULT REFUSED %s line 1 is %q; write the contract line as line 1 of RESULT.md", oneline.Quote(c.Label), found)
 		return out, nil
 	}
 	bound := c.MaxLines

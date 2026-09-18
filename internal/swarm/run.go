@@ -123,7 +123,7 @@ func Run(in RunInput) int {
 	// The start-up pass, before a single pending task is claimed.
 	slots, bad, err := p.SlotNumbers()
 	if err != nil {
-		fmt.Fprintf(errOut, "RUN REFUSED: the slot directory could not be read: %s\n", oneline.Escape(redactedReason(err)))
+		fmt.Fprintf(errOut, "RUN REFUSED: the slot directory could not be read: %s; check the pool's slot directory, then run again\n", oneline.Escape(redactedReason(err)))
 		return 2
 	}
 	for _, name := range bad {

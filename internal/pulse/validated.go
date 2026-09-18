@@ -55,7 +55,7 @@ func CutValidated(in CutValidatedInput) int {
 	tmplPath := filepath.Join(in.Templates, in.Source+".md")
 	raw, err := os.ReadFile(tmplPath)
 	if err != nil {
-		fmt.Fprintf(in.Stderr, "CUT REFUSED: --templates wants %s.md: %s\n", oneline.Field(in.Source), oneline.Err(err))
+		fmt.Fprintf(in.Stderr, "CUT REFUSED: --templates wants %s.md: %s; put the template there, then cut again\n", oneline.Field(in.Source), oneline.Err(err))
 		return 2
 	}
 	tmpl := string(raw)
@@ -82,7 +82,7 @@ func CutValidated(in CutValidatedInput) int {
 	for _, c := range cards {
 		name := c.label + ".md"
 		if err := os.WriteFile(filepath.Join(in.Out, name), []byte(renderValidated(tmpl, c)), 0o644); err != nil {
-			fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s\n", oneline.Field(name), oneline.Err(err))
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s; fix the card, then cut again\n", oneline.Field(name), oneline.Err(err))
 			return 2
 		}
 		rows = append(rows, CardRow{Label: c.label, Slot: SlotDash, Model: "-", Card: filepath.Join(in.Out, name)})

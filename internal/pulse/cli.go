@@ -208,7 +208,7 @@ func watchVerb(args []string, out, errs io.Writer) int {
 	if o.cap != "" {
 		d, err := time.ParseDuration(o.cap)
 		if err != nil {
-			fmt.Fprintf(errs, "WATCH REFUSED cap=%s (a duration like 90s or 5m)\n", o.cap)
+			fmt.Fprintf(errs, "WATCH REFUSED cap=%s (give a duration like 90s or 5m)\n", o.cap)
 			return 2
 		}
 		capDur = d

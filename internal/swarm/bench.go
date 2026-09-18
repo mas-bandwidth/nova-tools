@@ -165,7 +165,7 @@ func FriendNames(busDir string) ([]string, error) {
 func RefuseFriend(name string, friends []string) string {
 	for _, f := range friends {
 		if f == name {
-			return fmt.Sprintf("ADMIT REFUSED bench=%s is a friend", oneline.Field(name))
+			return fmt.Sprintf("ADMIT REFUSED bench=%s is a friend; name a bench, not a friend", oneline.Field(name))
 		}
 	}
 	return ""
